@@ -580,7 +580,6 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
-<<<<<<< HEAD
   it "does not read stdlib net/http Handle/HandleFunc as chi routes" do
     source = <<-GO
       package main
@@ -637,7 +636,9 @@ describe Noir::TreeSitterGoRouteExtractor do
       GO
 
     builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
-    builders.keys.sort.should eq(["addPingRoutes", "addUserRoutes"])
+    ks = builders.keys.to_a
+    ks.sort!
+    ks.should eq(["addPingRoutes", "addUserRoutes"])
     builders["addUserRoutes"].param.should eq("rg")
 
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
@@ -648,5 +649,21 @@ describe Noir::TreeSitterGoRouteExtractor do
 
     ping_v2 = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addPingRoutes", {"rg" => "/v2"})
     ping_v2.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v2/ping"}])
+  end
+
+  it "collects inline Group call-site as direct prefix for router builders" do
+    source = <<-GO
+      package routes
+      func getRoutes() {
+          addUserRoutes(router.Group("/v1"))
+      }
+      func addUserRoutes(rg *gin.RouterGroup) {
+          rg.GET("/u", h)
+      }
+      GO
+
+    builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
+    calls.should eq([{"addUserRoutes", "/v1"}])
   end
 end

@@ -55,7 +55,6 @@ module Analyzer::Go
           # route, and it determines which function bodies to exclude from
           # the free-floating TS extraction pass below. The target may be
           # a plain function (`adminRouter()`) or a struct value-method
-<<<<<<< HEAD
           # (`todosResource{}.Routes()`); each contributes a *skip key*
           # (qualified by receiver type for methods, so a same-named
           # `Routes()` on another type — or a top-level router builder

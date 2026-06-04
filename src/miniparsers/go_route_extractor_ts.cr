@@ -350,16 +350,46 @@ module Noir
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           fn = Noir::TreeSitter.field(node, "function")
-          next unless fn && Noir::TreeSitter.node_type(fn) == "identifier"
-          name = Noir::TreeSitter.node_text(fn, source)
-          next unless builders.includes?(name)
+          next unless fn
+          fn_name = Noir::TreeSitter.node_text(fn, source).split(".").last
+          next unless builders.includes?(fn_name)
+          name = fn_name
           args = Noir::TreeSitter.field(node, "arguments")
           next unless args
           first_arg = nil
           Noir::TreeSitter.each_named_child(args) { |a| first_arg ||= a }
           next unless first_arg
-          next unless Noir::TreeSitter.node_type(first_arg) == "identifier"
-          calls << {name, Noir::TreeSitter.node_text(first_arg, source)}
+          arg_text = if Noir::TreeSitter.node_type(first_arg) == "identifier"
+                       Noir::TreeSitter.node_text(first_arg, source)
+                     elsif Noir::TreeSitter.node_type(first_arg) == "call_expression"
+                       # Support inline `addX(router.Group("/v1"))` — treat the
+                       # literal prefix as the "arg" key (resolve will see it
+                       # starts with / and use directly).
+                       gfn = Noir::TreeSitter.field(first_arg, "function")
+                       if gfn && Noir::TreeSitter.node_text(gfn, source).split(".").last == "Group"
+                         gargs = Noir::TreeSitter.field(first_arg, "arguments")
+                         if gargs
+                           lit = nil
+                           Noir::TreeSitter.each_named_child(gargs) do |ga|
+                             if s = string_expr_text(ga, source, {} of String => String)
+                               if s.starts_with?("/")
+                                 lit = s
+                                 break
+                               end
+                             end
+                           end
+                           lit
+                         end
+                       end
+                     end
+          if arg_text
+            calls << {name, arg_text}
+          else
+            # Non-identifier, non-inline-Group arg (e.g. expr, func result,
+            # root router, etc.) — record so caller can apply "all sites must
+            # resolve" guard and fall back to whole-file pass.
+            calls << {name, "__unresolved__"}
+          end
         end
       end
       calls

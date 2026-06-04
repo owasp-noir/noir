@@ -72,7 +72,7 @@ module Analyzer::Go
                     if content.includes?("*gin.RouterGroup")
                       Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content).each do |fn, rb|
                         pset = dir_builder_prefixes[fn]?
-                        next unless pset && !pset.empty?
+                        next if pset.nil? || pset.empty?
                         next if cross_file_groups.has_key?(rb.param)
                         suppress_ranges << (rb.start_row..rb.end_row)
                         expand_builders << {fn, rb, pset}
@@ -111,7 +111,7 @@ module Analyzer::Go
                       # Skip lines inside an expanded router-builder body — its
                       # routes (and any params) are emitted, with the call-site
                       # prefix applied, by the expansion pass below.
-                      next if suppress_ranges.any? { |r| r.includes?(index) }
+                      next if suppress_ranges.any?(&.includes?(index))
 
                       details = Details.new(PathInfo.new(path, index + 1))
 
@@ -140,30 +140,7 @@ module Analyzer::Go
                         end
                       end
 
-                      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
-                        if line.includes?("#{pattern}(")
-                          add_param_to_endpoint(get_param(line), last_endpoint)
-                        end
-                      end
-
-                      # Body bindings: `c.BindJSON`, `c.ShouldBindJSON`,
-                      # `c.BindXML`, `c.ShouldBindXML`, `c.BindYAML`, etc.
-                      # all populate the request body. Emit a single "body"
-                      # indicator so downstream consumers know a body is
-                      # expected; the bound struct's fields stay opaque
-                      # without a deeper static-type pass.
-                      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
-                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-                      end
-
-                      if line.includes?("Cookie(") &&
-                         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-                        match = line.match(/Cookie\(\"(.*)\"\)/)
-                        if match
-                          cookie_name = match[1]
-                          last_endpoint.params << Param.new(cookie_name, "", "cookie")
-                        end
-                      end
+                      add_gin_param_patterns(line, last_endpoint)
                     end
 
                     # Expansion pass: emit each suppressed router-builder's
@@ -173,15 +150,26 @@ module Analyzer::Go
                     # `addPingRoutes(v2)` — yields both `/v1/ping` and
                     # `/v2/ping`.)
                     expand_builders.each do |fn, rb, pset|
+                      builder_emitted = [] of Endpoint
                       pset.each do |prefix|
                         Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
                           content, fn, {rb.param => prefix}, handle_method: "Handle"
                         ).each do |route|
                           rdetails = Details.new(PathInfo.new(path, route.line + 1))
                           Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                            result << Endpoint.new(route.path, verb, rdetails)
+                            ep = Endpoint.new(route.path, verb, rdetails)
+                            result << ep
+                            builder_emitted << ep
                           end
                         end
+                      end
+                      # Attach any Gin params (Query/Bind/Cookie/Param) and
+                      # (future) callees from the builder function body to the
+                      # expanded endpoints. Mirrors chi's attach_router_function_params
+                      # for Mount-expanded routes so that helpers with c.Query etc.
+                      # inside produce correct params on the prefixed endpoints.
+                      if !builder_emitted.empty?
+                        attach_gin_builder_params(builder_emitted, content, rb.start_row, rb.end_row)
                       end
                     end
                   end
@@ -199,6 +187,71 @@ module Analyzer::Go
       resolve_public_dirs(public_dirs)
 
       result
+    end
+
+    private def add_gin_param_patterns(line : String, target : Endpoint)
+      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
+        if line.includes?("#{pattern}(")
+          add_param_to_endpoint(get_param(line), target)
+        end
+      end
+      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+        add_param_to_endpoint(Param.new("body", "", "json"), target)
+      end
+      if line.includes?("Cookie(") &&
+         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
+        match = line.match(/Cookie\(\"(.*)\"\)/)
+        if match
+          target.params << Param.new(match[1], "", "cookie")
+        end
+      end
+    end
+
+    private def add_gin_param_patterns_to_many(line : String, targets : Array(Endpoint))
+      return if targets.empty?
+      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
+        if line.includes?("#{pattern}(")
+          p = get_param(line)
+          targets.each { |t| add_param_to_endpoint(p, t) }
+        end
+      end
+      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+        b = Param.new("body", "", "json")
+        targets.each { |t| add_param_to_endpoint(b, t) }
+      end
+      if line.includes?("Cookie(") &&
+         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
+        match = line.match(/Cookie\(\"(.*)\"\)/)
+        if match
+          c = Param.new(match[1], "", "cookie")
+          targets.each { |t| t.params << c }
+        end
+      end
+    end
+
+    private def attach_gin_builder_params(emitted : Array(Endpoint), content : String, start_row : Int32, end_row : Int32)
+      return if emitted.empty?
+      lines = content.lines
+      eps_by_line = Hash(Int32, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
+      emitted.each do |ep|
+        ep.details.code_paths.each do |cp|
+          if ln = cp.line
+            eps_by_line[ln.to_i - 1] << ep
+          end
+        end
+      end
+      return if eps_by_line.empty?
+      currents = [] of Endpoint
+      (start_row..[end_row, lines.size - 1].min).each do |i|
+        line = lines[i]?
+        next unless line
+        if eps = eps_by_line[i]?
+          currents = eps
+        end
+        if !currents.empty?
+          add_gin_param_patterns_to_many(line, currents)
+        end
+      end
     end
 
     # Builds `{dir => {builder_fn => set(prefixes)}}` for the package by
@@ -224,15 +277,29 @@ module Analyzer::Go
 
         group_map = package_groups[dir]? || Hash(String, String).new
         prefixes = Hash(String, Set(String)).new
+        unresolved = Set(String).new
         paths.each do |p|
           content = file_contents[p]?
           next unless content
           Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, builders).each do |fn, arg|
-            if prefix = group_map[arg]?
+            prefix = group_map[arg]?
+            if prefix.nil? && arg.starts_with?("/")
+              prefix = arg
+            end
+            if prefix
               (prefixes[fn] ||= Set(String).new) << prefix
+            else
+              # Unresolved or complex arg (including "__unresolved__" marker).
+              # This builder has at least one call site that didn't resolve
+              # to a known group prefix — guard will prevent expansion for it.
+              unresolved << fn
             end
           end
         end
+        # Only keep prefixes for builders where *every* call site resolved.
+        # Mixed (some resolved + some direct/root/complex) fall back to
+        # whole-file pass to avoid losing routes from the unresolved calls.
+        prefixes.reject! { |fn, _| unresolved.includes?(fn) }
         result[dir] = prefixes unless prefixes.empty?
       end
 
