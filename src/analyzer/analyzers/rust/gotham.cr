@@ -23,9 +23,15 @@ module Analyzer::Rust
       source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
+      # Gotham's framework repo parks route registrations inside
+      # `#[cfg(test)] mod tests { ... build_router(|route| { route.get(...) }) }`
+      # blocks (e.g. `router/builder/mod.rs`). Gate them out like the other
+      # Rust analyzers do, via the shared cfg(test) region scan.
+      test_regions = RustEngine.collect_cfg_test_regions(source)
+
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
-        walk_with_prefix(root, source, "", path, function_index, include_callee, endpoints)
+        walk_with_prefix(root, source, "", path, function_index, include_callee, endpoints, test_regions)
       end
 
       endpoints
@@ -44,15 +50,16 @@ module Analyzer::Rust
                                  path : String,
                                  function_index : Hash(String, LibTreeSitter::TSNode),
                                  include_callee : Bool,
-                                 endpoints : Array(Endpoint))
-      if Noir::TreeSitter.node_type(node) == "call_expression"
+                                 endpoints : Array(Endpoint),
+                                 test_regions : Array(Tuple(Int32, Int32)))
+      if Noir::TreeSitter.node_type(node) == "call_expression" && !RustEngine.inside_test_region?(node, test_regions)
         if scope = decode_scope(node, source)
           seg, block = scope
-          walk_with_prefix(block, source, join_paths(prefix, seg), path, function_index, include_callee, endpoints)
+          walk_with_prefix(block, source, join_paths(prefix, seg), path, function_index, include_callee, endpoints, test_regions)
           return
         end
         if block = decode_pipeline_closure(node, source)
-          walk_with_prefix(block, source, prefix, path, function_index, include_callee, endpoints)
+          walk_with_prefix(block, source, prefix, path, function_index, include_callee, endpoints, test_regions)
           return
         end
         if assoc = decode_associate(node, source)
@@ -81,7 +88,7 @@ module Analyzer::Rust
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_with_prefix(child, source, prefix, path, function_index, include_callee, endpoints)
+        walk_with_prefix(child, source, prefix, path, function_index, include_callee, endpoints, test_regions)
       end
     end
 
