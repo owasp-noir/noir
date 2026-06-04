@@ -34,14 +34,27 @@ module Analyzer::Rust
 
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
+        seen = Set(Int32).new
 
         walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "let_declaration"
-          value = Noir::TreeSitter.field(node, "value")
+          # Two route-bearing positions: a `let route = warp::path(...)`
+          # binding, and a filter-returning helper
+          # `fn list() -> impl Filter { warp::path!(...).and(...) }`
+          # whose tail expression IS the route (todos-style apps).
+          value =
+            case Noir::TreeSitter.node_type(node)
+            when "let_declaration"
+              Noir::TreeSitter.field(node, "value")
+            when "function_item"
+              function_tail_expression(node)
+            end
           next unless value
           next unless warp_chain?(value, source)
+          byte = LibTreeSitter.ts_node_start_byte(value).to_i
+          next if seen.includes?(byte)
+          seen.add(byte)
 
-          endpoint = build_endpoint(value, source, path, Noir::TreeSitter.node_start_row(node) + 1)
+          endpoint = build_endpoint(value, source, path, Noir::TreeSitter.node_start_row(value) + 1)
           next unless endpoint
 
           if include_callee
@@ -84,6 +97,15 @@ module Analyzer::Rust
 
       walk(value) do |node|
         case Noir::TreeSitter.node_type(node)
+        when "macro_invocation"
+          # `warp::path!("todos" / u64 / "items")` — the idiomatic
+          # multi-segment form. tree-sitter leaves the args as a flat
+          # `token_tree`; string literals are path segments and type
+          # tokens (`u64`, `String`, `Uuid`, …) are path params.
+          if path_macro?(node, source)
+            seg_count = parse_path_macro(node, source, path_parts, params)
+            has_path_end = true if seg_count > 0
+          end
         when "call_expression"
           fn_text = call_function_text(node, source)
           next unless fn_text
@@ -150,6 +172,91 @@ module Analyzer::Rust
       route = path_parts.empty? ? "/" : "/" + path_parts.join("/")
       details = Details.new(PathInfo.new(file_path, row))
       Endpoint.new(route, method, params, details)
+    end
+
+    # The trailing (no-semicolon) expression of a function body block —
+    # the value the function returns. Returns `nil` when the function
+    # ends in a statement (so we don't treat `warp::serve(...).run()` and
+    # other side-effecting tails as routes; the empty-path guard in
+    # build_endpoint also filters those, but this keeps the walk tight).
+    private def function_tail_expression(function : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      body = Noir::TreeSitter.field(function, "body")
+      return unless body && Noir::TreeSitter.node_type(body) == "block"
+      tail = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(body) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "line_comment", "block_comment"
+          # skip
+        else
+          tail = child
+        end
+      end
+      return unless tail
+      case Noir::TreeSitter.node_type(tail)
+      when "expression_statement", "let_declaration", "empty_statement"
+        nil
+      else
+        tail
+      end
+    end
+
+    # True when `node` is a `warp::path!(...)` / `path!(...)` macro.
+    private def path_macro?(node : LibTreeSitter::TSNode, source : String) : Bool
+      macro_node = Noir::TreeSitter.field(node, "macro")
+      return false unless macro_node
+      name = Noir::TreeSitter.node_text(macro_node, source).split("::").last
+      name == "path"
+    end
+
+    # Parse a `path!("a" / u64 / "b")` token tree, appending each string
+    # literal as a path segment and each type token as a `:param`
+    # placeholder. Returns the number of components appended. Param
+    # names follow the warp convention: a lone param is `param`, several
+    # become `param1`, `param2`, … .
+    private def parse_path_macro(node : LibTreeSitter::TSNode,
+                                 source : String,
+                                 path_parts : Array(String),
+                                 params : Array(Param)) : Int32
+      tt = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(node) do |child|
+        tt = child if Noir::TreeSitter.node_type(child) == "token_tree"
+      end
+      return 0 unless token_tree = tt
+
+      type_total = 0
+      Noir::TreeSitter.each_named_child(token_tree) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "primitive_type", "type_identifier", "scoped_type_identifier", "generic_type"
+          type_total += 1
+        end
+      end
+
+      count = 0
+      type_idx = 0
+      Noir::TreeSitter.each_named_child(token_tree) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "string_literal"
+          seg = string_content_text(child, source)
+          if seg && !seg.empty?
+            path_parts << seg
+            count += 1
+          end
+        when "primitive_type", "type_identifier", "scoped_type_identifier", "generic_type"
+          type_idx += 1
+          name = type_total > 1 ? "param#{type_idx}" : "param"
+          path_parts << ":#{name}"
+          params << Param.new(name, "", "path") unless params.any? { |p| p.name == name && p.param_type == "path" }
+          count += 1
+        end
+      end
+      count
+    end
+
+    private def string_content_text(string_literal : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(string_literal) do |grand|
+        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
+      end
+      nil
     end
 
     # `.map(handler)` / `.and_then(handler)` / `.then(handler)` — pull
