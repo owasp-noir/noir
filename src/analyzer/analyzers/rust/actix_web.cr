@@ -27,8 +27,19 @@ module Analyzer::Rust
     # sub-apps of an example monorepo don't cross-contaminate.
     @cross_file_scope_regs : Array(NamedTuple(ref: String, prefix: String))? = nil
 
+    # Cross-file `.configure()` prefixes. A scope delegates its body to a
+    # function in another file: `web::scope("/auth").configure(|cfg|
+    # auth_service::configure_server(cfg, ...))` /
+    # `web::scope("/api").configure(graphql_server::configure_endpoint)`. The
+    # builder routes (`cfg.service(web::resource("/x").route(...))`) live in
+    # that function's file, with no visible scope, so they lose the `/auth` /
+    # `/api` prefix. `analyze` records each configured fn's scope prefix(es)
+    # up front; the builder pass prepends them to routes emitted inside the fn.
+    @configure_fn_prefix : Hash(String, Array(String))? = nil
+
     def analyze
       @cross_file_scope_regs = build_cross_file_scope_registrations
+      @configure_fn_prefix = build_configure_fn_prefix
       super
     end
 
@@ -92,22 +103,27 @@ module Analyzer::Rust
         if source.includes?(".route(") || source.includes?("resource(")
           scope_prefixes = collect_scope_prefixes(root, source, test_regions)
           function_index = include_callee ? build_function_index(root, source) : Hash(String, LibTreeSitter::TSNode).new
+          # Map each builder route back to the `.configure`d fn that encloses
+          # it (only when there is at least one cross-file configure prefix).
+          configure_ranges = configure_active? ? build_fn_ranges(root, source) : nil
 
           walk_calls(root) do |call|
             next if RustEngine.inside_test_region?(call, test_regions)
 
             if builder_route = extract_builder_route(call, source, scope_prefixes)
               route_path, methods, handler_name = builder_route
-              canonical = canonicalize_actix_path(route_path)
               details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
-              methods.each do |raw_verb|
-                RustEngine.fan_out_verbs(raw_verb).each do |verb|
-                  endpoint = Endpoint.new(canonical, verb, details)
-                  extract_path_params(route_path, endpoint)
-                  if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
-                    attach_handler_callees(fn, source, path, endpoint)
+              configure_route_paths(route_path, call, configure_ranges).each do |rp|
+                canonical = canonicalize_actix_path(rp)
+                methods.each do |raw_verb|
+                  RustEngine.fan_out_verbs(raw_verb).each do |verb|
+                    endpoint = Endpoint.new(canonical, verb, details)
+                    extract_path_params(rp, endpoint)
+                    if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
+                      attach_handler_callees(fn, source, path, endpoint)
+                    end
+                    endpoints << endpoint
                   end
-                  endpoints << endpoint
                 end
               end
               next
@@ -119,14 +135,15 @@ module Analyzer::Rust
             # surfaces without fanning out seven near-duplicate endpoints.
             if resource_to = extract_resource_to(call, source, scope_prefixes)
               route_path, handler_name = resource_to
-              canonical = canonicalize_actix_path(route_path)
               details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
-              endpoint = Endpoint.new(canonical, "GET", details)
-              extract_path_params(route_path, endpoint)
-              if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
-                attach_handler_callees(fn, source, path, endpoint)
+              configure_route_paths(route_path, call, configure_ranges).each do |rp|
+                endpoint = Endpoint.new(canonicalize_actix_path(rp), "GET", details)
+                extract_path_params(rp, endpoint)
+                if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
+                  attach_handler_callees(fn, source, path, endpoint)
+                end
+                endpoints << endpoint
               end
-              endpoints << endpoint
             end
           end
         end
@@ -315,6 +332,126 @@ module Analyzer::Rust
       else
         [base]
       end
+    end
+
+    # ── cross-file `.configure(fn)` prefixes ─────────────────────────
+
+    private def configure_active? : Bool
+      m = @configure_fn_prefix
+      !!(m && !m.empty?)
+    end
+
+    # Scan the project for `web::scope("/p").configure(fn)` /
+    # `.configure(|cfg| mod::fn(cfg, ...))` and record each configured fn's
+    # composed scope prefix(es).
+    private def build_configure_fn_prefix : Hash(String, Array(String))
+      result = {} of String => Array(String)
+      all_files.each do |fpath|
+        next if File.directory?(fpath)
+        next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
+        next if RustEngine.test_path?(fpath)
+        src = read_file_content(fpath)
+        next unless src.includes?(".configure(") && src.includes?("scope(")
+        begin
+          test_regions = RustEngine.collect_cfg_test_regions(src)
+          Noir::TreeSitter.parse_rust(src) do |root|
+            scope_prefixes = collect_scope_prefixes(root, src, test_regions)
+            walk_calls(root) do |call|
+              next if RustEngine.inside_test_region?(call, test_regions)
+              fn = Noir::TreeSitter.field(call, "function")
+              next unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+              fld = Noir::TreeSitter.field(fn, "field")
+              next unless fld && Noir::TreeSitter.node_text(fld, src) == "configure"
+              receiver = Noir::TreeSitter.field(fn, "value")
+              next unless receiver
+              enc = enclosing_route_prefix(receiver, src, scope_prefixes)
+              next unless enc
+              prefix = enc[1]
+              next if prefix.empty? || prefix == "/"
+              args = Noir::TreeSitter.field(call, "arguments")
+              next unless args
+              first = nil.as(LibTreeSitter::TSNode?)
+              Noir::TreeSitter.each_named_child(args) { |a| first ||= a }
+              next unless first
+              leaf = configure_target_fn(first, src)
+              next unless leaf
+              bucket = (result[leaf] ||= [] of String)
+              bucket << prefix unless bucket.includes?(prefix)
+            end
+          end
+        rescue e
+          logger.debug "actix configure scan error #{fpath}: #{e}"
+        end
+      end
+      result
+    end
+
+    # The configured fn's leaf name from a `.configure(arg)` argument: a
+    # direct fn reference (`crate::mod::cfg_fn::<T>`) or a closure that calls
+    # one (`|cfg| mod::cfg_fn::<T>(cfg, ...)`).
+    private def configure_target_fn(arg : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(arg)
+      when "identifier", "scoped_identifier", "generic_function"
+        fn_node_leaf(arg, source)
+      when "closure_expression"
+        body = Noir::TreeSitter.field(arg, "body")
+        return unless body
+        found = nil.as(String?)
+        walk(body) do |c|
+          next if found
+          next unless Noir::TreeSitter.node_type(c) == "call_expression"
+          f = Noir::TreeSitter.field(c, "function")
+          found = fn_node_leaf(f, source) if f
+        end
+        found
+      end
+    end
+
+    private def fn_node_leaf(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "scoped_identifier"
+        Noir::TreeSitter.node_text(node, source).split("::").last
+      when "generic_function"
+        inner = Noir::TreeSitter.field(node, "function")
+        inner ? fn_node_leaf(inner, source) : nil
+      end
+    end
+
+    private def build_fn_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "function_item"
+        name_node = Noir::TreeSitter.field(n, "name")
+        next unless name_node
+        s = LibTreeSitter.ts_node_start_byte(n).to_i
+        e = LibTreeSitter.ts_node_end_byte(n).to_i
+        ranges << {s, e, Noir::TreeSitter.node_text(name_node, source)}
+      end
+      ranges
+    end
+
+    private def configure_route_paths(route_path : String,
+                                      call : LibTreeSitter::TSNode,
+                                      fn_ranges : Array(Tuple(Int32, Int32, String))?) : Array(String)
+      prefixes = configure_prefixes_for(call, fn_ranges)
+      return [route_path] if prefixes.nil? || prefixes.empty?
+      prefixes.map { |p| scoped_route_path(p, route_path) }
+    end
+
+    private def configure_prefixes_for(call : LibTreeSitter::TSNode,
+                                       fn_ranges : Array(Tuple(Int32, Int32, String))?) : Array(String)?
+      return unless fn_ranges
+      m = @configure_fn_prefix
+      return unless m
+      start = LibTreeSitter.ts_node_start_byte(call).to_i
+      best : Tuple(Int32, Int32, String)? = nil
+      fn_ranges.each do |r|
+        next unless start >= r[0] && start < r[1]
+        best = r if best.nil? || (r[1] - r[0]) < (best[1] - best[0])
+      end
+      best ? m[best[2]]? : nil
     end
 
     private def function_name(function : LibTreeSitter::TSNode, source : String) : String?
