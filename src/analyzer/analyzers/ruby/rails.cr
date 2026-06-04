@@ -179,7 +179,7 @@ module Analyzer::Ruby
         # Handle `end` (top of stack pops one). Closing a
         # `use_doorkeeper` block is where its routes are emitted, now
         # that any `skip_controllers`/`controllers` config is known.
-        if line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
+        if end_line?(line)
           unless stack.empty?
             popped = stack.pop
             if popped.kind == :doorkeeper
@@ -585,7 +585,19 @@ module Analyzer::Ruby
     # so it is left for the normal parser (its block opens a neutral frame).
     LOOP_OPENER = /^%([wi])[\[\(\{]([^\]\)\}]*)[\]\)\}]\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
 
-    private def expand_static_loops(lines : Array(String)) : Array(String)
+    # noir scans arbitrary untrusted repos, so loop unrolling must not be a DoS
+    # vector — expansion is multiplicative (elements ^ nesting). A crafted
+    # `routes.rb` with deep nesting or a huge `%w[...]` list could otherwise
+    # blow up CPU/memory. Real apps use tiny shallow lists (discourse's biggest
+    # is the 2-element `%w[users u]`), so modest caps preserve all genuine
+    # recall while bounding the worst case. Over a limit, the block is passed
+    # through unexpanded (the pre-unrolling behavior — a transparent frame).
+    MAX_LOOP_DEPTH  =      3
+    MAX_LOOP_VALUES =    100
+    MAX_LOOP_OUTPUT = 20_000
+
+    private def expand_static_loops(lines : Array(String), depth : Int32 = 0) : Array(String)
+      return lines if depth > MAX_LOOP_DEPTH
       return lines unless lines.any?(&.matches?(LOOP_OPENER))
 
       result = [] of String
@@ -598,24 +610,34 @@ module Analyzer::Ruby
 
           # Walk to the `end` that closes this `.each do`, mirroring the main
           # parser's one-block-open-per-line / `end`-pops-one model.
-          depth = 1
+          block_depth = 1
           body = [] of String
           cursor = index + 1
-          while cursor < lines.size && depth > 0
+          while cursor < lines.size && block_depth > 0
             body_line = lines[cursor]
             if end_line?(body_line)
-              depth -= 1
-              break if depth == 0
+              block_depth -= 1
+              break if block_depth == 0
             elsif opens_do_block?(body_line) || opens_keyword_block?(body_line)
-              depth += 1
+              block_depth += 1
             end
             body << body_line
             cursor += 1
           end
 
-          expanded_body = expand_static_loops(body)
-          values.each do |value|
-            expanded_body.each { |unrolled| result << substitute_loop_var(unrolled, var, value) }
+          if values.size > MAX_LOOP_VALUES || result.size > MAX_LOOP_OUTPUT
+            # Over budget: emit the block verbatim so the main parser handles
+            # it as a neutral frame instead of unrolling an attacker-sized fan-out.
+            (index..cursor).each { |i| result << lines[i] if i < lines.size }
+          else
+            expanded_body = expand_static_loops(body, depth + 1)
+            # Precompile the substitution once per loop var (Crystal recompiles
+            # an interpolated regex literal on every match).
+            pattern = Regex.new("\\#\\{\\s*#{Regex.escape(var)}\\s*\\}")
+            values.each do |value|
+              break if result.size > MAX_LOOP_OUTPUT
+              expanded_body.each { |unrolled| result << unrolled.gsub(pattern, value) }
+            end
           end
           index = cursor + 1 # skip the closing `end`
         else
@@ -625,10 +647,6 @@ module Analyzer::Ruby
       end
 
       result
-    end
-
-    private def substitute_loop_var(line : String, var : String, value : String) : String
-      line.gsub(/\#\{\s*#{Regex.escape(var)}\s*\}/, value)
     end
 
     private def end_line?(line : String) : Bool

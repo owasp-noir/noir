@@ -197,11 +197,10 @@ module Analyzer::Ruby
 
     private def push_grape_param(endpoint : Endpoint, param : Param)
       return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "path" }
-      # A `params do; requires :x; end` block already declared `:x` as a
-      # body (json/form) param; a later `params[:x]` read in the handler
-      # body must not re-add it as a separate `query` param. The declared
-      # type wins.
-      return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && (existing.param_type == "json" || existing.param_type == "form" || existing.param_type == "formData") }
+      # A `params do; requires :x; end` block already declared `:x` as a json
+      # body param; a later `params[:x]` read in the handler body must not
+      # re-add it as a separate `query` param. The declared type wins.
+      return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "json" }
       return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
       endpoint.push_param(param)
     end

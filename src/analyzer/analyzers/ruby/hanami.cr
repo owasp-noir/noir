@@ -123,9 +123,8 @@ module Analyzer::Ruby
     # a sub-router). Emit a best-effort GET at the mount prefix so the
     # mounted surface isn't invisible — same shape as the Rails analyzer.
     private def mount_endpoint(line : String, stack : Array(RouteFrame), details : Details) : Endpoint?
-      return unless line.starts_with?("mount")
-      return if line.size > 5 && (line[5].alphanumeric? || line[5] == '_')
-      return unless m = line.match(/\bat:\s*['"]([^'"]+)['"]/)
+      return unless call = route_call(line, ["mount"])
+      return unless m = call.match(/\bat:\s*['"]([^'"]+)['"]/)
 
       Endpoint.new(join_paths(current_path_prefix(stack), m[1]), "GET", details)
     end
