@@ -1,5 +1,5 @@
 import external_handlers
-from litestar import Controller, Litestar, get, post, put, delete, route, Router, websocket
+from litestar import Controller, Litestar, get, post, put, delete, route, Router, websocket, websocket_listener
 from litestar.connection import Request
 from litestar.handlers import WebsocketListener
 from litestar.params import Dependency
@@ -76,6 +76,11 @@ async def multi(request: Request) -> dict:
 @websocket("/ws/{room_id:str}")
 async def room_socket(socket: WebsocketListener, room_id: str, token: str) -> None:
     await socket.accept()
+
+
+@websocket_listener("/ws-listener")
+async def listener_socket() -> str:
+    return "ok"
 
 
 @get("/headers")

@@ -964,14 +964,31 @@ module Analyzer::Python
           function_define_line = lines[0]
           lines = lines[1..]
 
-          # Check if the decorator line contains an HTTP method
+          # Check the decorator stack above the def for HTTP methods.
+          # Walk every contiguous decorator line (not just the one
+          # directly above the def) so a method-restricting decorator
+          # under, say, `@login_required` is still seen.
           index = content_lines.index(function_define_line)
           if !index.nil?
-            while index > 0
-              index -= 1
-
+            restricted_methods = nil
+            index -= 1
+            while index >= 0
               preceding_definition = content_lines[index]
-              if preceding_definition.size > 0 && preceding_definition[0] == '@'
+              stripped = preceding_definition.lstrip
+              index -= 1
+              next if stripped.empty?                 # tolerate blank lines between stacked decorators
+              break unless stripped.starts_with?("@") # only the contiguous decorator stack
+
+              # `django.views.decorators.http` restrictors pin the exact
+              # verb set and, crucially, drop the implicit GET default —
+              # a `@require_POST` view answers 405 to GET, so emitting GET
+              # was a false positive (and POST was missed entirely because
+              # the bare `require_POST` token has no trailing delimiter for
+              # the generic scan below).
+              if methods = extract_django_require_methods(stripped)
+                restricted_methods ||= [] of ::String
+                methods.each { |m| restricted_methods << m unless restricted_methods.includes?(m) }
+              else
                 HTTP_METHODS.each do |http_method_name|
                   method_name_match = preceding_definition.downcase.match /[^a-zA-Z0-9](#{http_method_name})[^a-zA-Z0-9]/
                   if !method_name_match.nil?
@@ -979,8 +996,11 @@ module Analyzer::Python
                   end
                 end
               end
+            end
 
-              break
+            # A method-restricting decorator replaces the implicit GET.
+            if rm = restricted_methods
+              suspicious_http_methods = rm unless rm.empty?
             end
           end
 
@@ -1042,7 +1062,13 @@ module Analyzer::Python
             suspicious_http_methods << "GET"
             suspicious_http_methods << "POST"
           elsif class_define_line.includes? "Delete"
-            suspicious_http_methods << "DELETE"
+            # Django's generic `DeleteView` serves the confirmation page
+            # on GET and performs the delete on POST — it does NOT expose
+            # the HTTP DELETE verb. Emitting DELETE here was a false
+            # positive on every `class X(DeleteView)` (wagtail: 5). A view
+            # that genuinely handles HTTP DELETE defines `def delete(self,
+            # request, ...)`, which the explicit method-def scan below
+            # already picks up, so real DELETE endpoints are unaffected.
             suspicious_http_methods << "POST"
           elsif class_define_line.includes? "Create"
             suspicious_http_methods << "POST"
@@ -1391,6 +1417,34 @@ module Analyzer::Python
     private def append_code_path(details : Details, path_info : PathInfo)
       return if details.code_paths.any? { |existing| existing == path_info }
       details.add_path(path_info)
+    end
+
+    # Map a `django.views.decorators.http` restrictor decorator line to
+    # the exact HTTP verbs it allows, or nil when the decorator isn't a
+    # method restrictor. These decorators define the allowed-method set
+    # authoritatively (everything else 405s), so the caller uses the
+    # result to REPLACE the implicit GET default rather than add to it.
+    private def extract_django_require_methods(decorator : ::String) : Array(::String)?
+      if match = decorator.match(/@\s*(?:\w+\.)*require_http_methods\s*\(\s*(?:request_method_list\s*=\s*)?[\[(]([^\])]*)[\])]/)
+        methods = [] of ::String
+        match[1].scan(/[rf]?['"]([A-Za-z]+)['"]/) do |m|
+          verb = m[1].upcase
+          methods << verb if HTTP_METHODS.any? { |hm| hm.upcase == verb }
+        end
+        return methods.empty? ? nil : methods
+      end
+
+      # `@require_POST` / `@require_GET` — verb embedded in the name.
+      if match = decorator.match(/@\s*(?:\w+\.)*require_(GET|POST|HEAD)\b/i)
+        return [match[1].upcase]
+      end
+
+      # `@require_safe` allows GET + HEAD.
+      if decorator.matches?(/@\s*(?:\w+\.)*require_safe\b/)
+        return ["GET", "HEAD"]
+      end
+
+      nil
     end
 
     # Extract parameters from a line of code

@@ -11,7 +11,9 @@ from django.templatetags.static import static
 from django.utils import timezone
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST, require_http_methods
 from django.views.generic.detail import DetailView
+from django.views.generic.edit import DeleteView
 from django.views.generic.list import ListView
 from haystack.views import SearchView
 from rest_framework import mixins, viewsets
@@ -436,6 +438,23 @@ def delete_test(request):
         return 'delete'
 
     return "test"
+
+@require_POST
+def require_post_view(request):
+    # @require_POST pins this to POST only — GET must NOT be emitted.
+    return "ok"
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def require_methods_view(request):
+    # Restricted to exactly GET + POST by the decorator; the non-route
+    # @csrf_exempt above it must not defeat the decorator-stack walk.
+    return "ok"
+
+class WidgetDeleteView(DeleteView):
+    # Django's generic DeleteView serves GET (confirm) + POST (delete),
+    # never the HTTP DELETE verb.
+    model = Article
 
 def legacy_detail(request, legacy_id):
     preview = request.GET.get('preview')
