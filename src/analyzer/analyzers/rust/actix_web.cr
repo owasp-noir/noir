@@ -84,31 +84,49 @@ module Analyzer::Rust
         # prefix. Function index lets us follow `.to(handler)` to the
         # handler body for callee enrichment.
         #
-        # Skip the whole builder pass (two extra tree walks) on files
-        # that have no `.route(` text at all — the common
+        # Skip the whole builder pass (two extra tree walks) on files that
+        # have neither a `.route(` nor a `resource(` — the common
         # attribute-macro-only handler file — so the added scope-prefix
-        # machinery costs nothing where it can't apply.
-        if source.includes?(".route(")
+        # machinery costs nothing where it can't apply. `resource(` is needed
+        # for the verb-less `web::resource("/p").to(handler)` form.
+        if source.includes?(".route(") || source.includes?("resource(")
           scope_prefixes = collect_scope_prefixes(root, source, test_regions)
           function_index = include_callee ? build_function_index(root, source) : Hash(String, LibTreeSitter::TSNode).new
 
           walk_calls(root) do |call|
             next if RustEngine.inside_test_region?(call, test_regions)
 
-            builder_route = extract_builder_route(call, source, scope_prefixes)
-            next unless builder_route
-            route_path, methods, handler_name = builder_route
-            canonical = canonicalize_actix_path(route_path)
-            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
-            methods.each do |raw_verb|
-              RustEngine.fan_out_verbs(raw_verb).each do |verb|
-                endpoint = Endpoint.new(canonical, verb, details)
-                extract_path_params(route_path, endpoint)
-                if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
-                  attach_handler_callees(fn, source, path, endpoint)
+            if builder_route = extract_builder_route(call, source, scope_prefixes)
+              route_path, methods, handler_name = builder_route
+              canonical = canonicalize_actix_path(route_path)
+              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
+              methods.each do |raw_verb|
+                RustEngine.fan_out_verbs(raw_verb).each do |verb|
+                  endpoint = Endpoint.new(canonical, verb, details)
+                  extract_path_params(route_path, endpoint)
+                  if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
+                    attach_handler_callees(fn, source, path, endpoint)
+                  end
+                  endpoints << endpoint
                 end
-                endpoints << endpoint
               end
+              next
+            end
+
+            # `web::resource("/p").to(handler)` (optionally with `.wrap(...)`
+            # in between) registers `handler` for any method — actix's
+            # verb-less resource form. Emit a single GET so the route
+            # surfaces without fanning out seven near-duplicate endpoints.
+            if resource_to = extract_resource_to(call, source, scope_prefixes)
+              route_path, handler_name = resource_to
+              canonical = canonicalize_actix_path(route_path)
+              details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
+              endpoint = Endpoint.new(canonical, "GET", details)
+              extract_path_params(route_path, endpoint)
+              if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
+                attach_handler_callees(fn, source, path, endpoint)
+              end
+              endpoints << endpoint
             end
           end
         end
@@ -364,6 +382,66 @@ module Analyzer::Rust
       end
 
       {path_lit, methods, verb_handler_name(named[1], source)}
+    end
+
+    # `web::resource("/p").to(handler)` / `resource("/p").wrap(m).to(handler)`
+    # → `{composed_path, handler_name?}` or nil. The `.to` must sit on a
+    # `resource(...)` chain (not a `web::get().to(...)` verb expression); the
+    # resource path is composed with any enclosing scope prefix.
+    private def extract_resource_to(call : LibTreeSitter::TSNode,
+                                    source : String,
+                                    scope_prefixes : Hash(Int32, String)) : Tuple(String, String?)?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function && Noir::TreeSitter.node_type(function) == "field_expression"
+      field = Noir::TreeSitter.field(function, "field")
+      return unless field && Noir::TreeSitter.node_text(field, source) == "to"
+      receiver = Noir::TreeSitter.field(function, "value")
+      return unless receiver
+      res = find_resource_in_chain(receiver, source)
+      return unless res
+      res_node, res_path = res
+      full = scope_prefixes[node_byte(res_node)]? || res_path
+      {full, resource_to_handler(call, source)}
+    end
+
+    # Walk a `.to` receiver chain to its base `resource("/p")` call, skipping
+    # intermediate `.wrap(...)`/`.guard(...)` decorators. Returns the resource
+    # call node + its path string, or nil when the chain bottoms out at a verb
+    # constructor (`web::get()`) or anything that isn't a resource.
+    private def find_resource_in_chain(node : LibTreeSitter::TSNode, source : String) : Tuple(LibTreeSitter::TSNode, String)?
+      cursor = node
+      256.times do
+        return unless Noir::TreeSitter.node_type(cursor) == "call_expression"
+        fn = Noir::TreeSitter.field(cursor, "function")
+        return unless fn
+        case Noir::TreeSitter.node_type(fn)
+        when "identifier", "scoped_identifier"
+          if Noir::TreeSitter.node_text(fn, source).split("::").last == "resource"
+            seg = first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source) || ""
+            return {cursor, seg}
+          end
+          return
+        when "field_expression"
+          inner = Noir::TreeSitter.field(fn, "value")
+          return unless inner
+          cursor = inner
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    private def resource_to_handler(call : LibTreeSitter::TSNode, source : String) : String?
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      first = nil.as(LibTreeSitter::TSNode?)
+      Noir::TreeSitter.each_named_child(args) { |c| first ||= c }
+      return unless first
+      case Noir::TreeSitter.node_type(first)
+      when "identifier", "scoped_identifier"
+        Noir::TreeSitter.node_text(first, source)
+      end
     end
 
     # Build a map of each `scope(...)`/`resource(...)` call's start byte
