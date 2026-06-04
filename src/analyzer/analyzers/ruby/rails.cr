@@ -652,7 +652,7 @@ module Analyzer::Ruby
         content.each_line do |raw|
           line = strip_inline_comment(raw)
           next unless line.includes?("mount")
-          if m = line.match(/\bmount\s+(?:::)?([A-Z][A-Za-z0-9_:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]+)['"]/)
+          if m = line.match(/\bmount\b\s*\(?\s*(?:::)?([A-Z][A-Za-z0-9_:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]+)['"]/)
             const = m[1]
             map[const] = normalize_mount_prefix(m[2]) unless map.has_key?(const)
           end
