@@ -44,11 +44,57 @@ module Analyzer::Rust
     # PREFIX defined in another module) resolves to its real prefix instead
     # of dropping the constant and emitting just `/user`.
     @str_consts : Hash(String, String)? = nil
+    # Cross-file handler params + callees: salvo apps register routes in
+    # `routes/x.rs` (`.get(add_user)`) while the `#[handler] fn add_user`
+    # lives in `handler/x.rs`. The per-file function index can't see those, so
+    # such endpoints surfaced with zero params/callees. Built only when callee
+    # enrichment is requested (the ai-context path), keyed by handler name.
+    @global_handler_info : Hash(String, HandlerInfo)? = nil
+
+    record HandlerInfo,
+      callees : Array(Noir::RustCalleeExtractor::Entry),
+      params : Array(Param)
 
     def analyze
       @fn_external_prefix = build_fn_external_prefixes
       @str_consts = build_str_consts
+      @global_handler_info = callees_needed? ? build_global_handler_info : nil
       super
+    end
+
+    # Precompute params + callees for every `#[handler]` fn project-wide so a
+    # cross-file `.get(handler)` reference can still be enriched. Gated to
+    # files that actually carry a `#[handler]` so plain modules cost nothing.
+    private def build_global_handler_info : Hash(String, HandlerInfo)
+      info = {} of String => HandlerInfo
+      all_files.each do |fpath|
+        next if File.directory?(fpath)
+        next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
+        next if RustEngine.test_path?(fpath)
+        src = read_file_content(fpath)
+        next unless src.includes?("#[handler]")
+        begin
+          test_regions = RustEngine.collect_cfg_test_regions(src)
+          Noir::TreeSitter.parse_rust(src) do |root|
+            walk(root) do |n|
+              next unless Noir::TreeSitter.node_type(n) == "function_item"
+              next if RustEngine.inside_test_region?(n, test_regions)
+              name_node = Noir::TreeSitter.field(n, "name")
+              next unless name_node
+              name = Noir::TreeSitter.node_text(name_node, src)
+              next if info.has_key?(name)
+              tmp = Endpoint.new("", "")
+              extract_function_params(n, src, tmp)
+              body = Noir::TreeSitter.field(n, "body")
+              callees = body ? Noir::RustCalleeExtractorTS.callees_in_body(body, src, fpath) : [] of Noir::RustCalleeExtractor::Entry
+              info[name] = HandlerInfo.new(callees, tmp.params)
+            end
+          end
+        rescue e
+          logger.debug "salvo global handler scan error #{fpath}: #{e}"
+        end
+      end
+      info
     end
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -145,9 +191,20 @@ module Analyzer::Rust
           endpoint = Endpoint.new("/#{canonicalize_salvo_path(full_path).lstrip('/')}", method, details)
           extract_path_params(full_path, endpoint)
 
-          if handler_name && (handler_function = function_index[handler_name.split("::").last]?)
-            extract_function_params(handler_function, original_source, endpoint)
-            attach_handler_callees(handler_function, original_source, path, endpoint) if include_callee
+          if handler_name
+            leaf = handler_name.split("::").last
+            if handler_function = function_index[leaf]?
+              extract_function_params(handler_function, original_source, endpoint)
+              attach_handler_callees(handler_function, original_source, path, endpoint) if include_callee
+            elsif info = @global_handler_info.try(&.[leaf]?)
+              # The handler lives in another file (`routes/x.rs` references a
+              # `#[handler]` in `handler/x.rs`). Its params + callees were
+              # precomputed in the cross-file index.
+              info.params.each do |p|
+                endpoint.push_param(p) unless endpoint.params.any? { |x| x.name == p.name && x.param_type == p.param_type }
+              end
+              attach_rust_callees(endpoint, info.callees) if include_callee
+            end
           end
 
           endpoints << endpoint
@@ -445,15 +502,26 @@ module Analyzer::Rust
         when "call_expression"
           fn_text = call_function_text(node, source)
           next if fn_text.nil?
-          if fn_text == "req.query" && !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" }
+          # Strip a turbofish so `req.header::<&str>("x")` /
+          # `req.parse_json::<T>()` match like their bare forms.
+          base = fn_text.gsub(/::<[^>]*>/, "")
+          if (base == "req.query" || base.ends_with?(".parse_queries")) && !endpoint.params.any? { |p| p.name == "query" && p.param_type == "query" }
             endpoint.push_param(Param.new("query", "", "query"))
           end
-          if fn_text == "req.header" || fn_text.ends_with?("req.headers().get")
+          # Salvo's request-side body extractors: `req.parse_json::<T>()` /
+          # `req.extract::<T>()` (JSON) and `req.parse_form::<T>()` (form).
+          if (base.ends_with?(".parse_json") || base.ends_with?(".extract")) && !endpoint.params.any? { |p| p.name == "body" && p.param_type == "json" }
+            endpoint.push_param(Param.new("body", "", "json"))
+          end
+          if base.ends_with?(".parse_form") && !endpoint.params.any? { |p| p.name == "form" && p.param_type == "form" }
+            endpoint.push_param(Param.new("form", "", "form"))
+          end
+          if base == "req.header" || base.ends_with?("req.headers().get")
             if name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
               endpoint.push_param(Param.new(name, "", "header")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
             end
           end
-          if fn_text == "req.cookie"
+          if base == "req.cookie"
             if name = first_string_literal_text(Noir::TreeSitter.field(node, "arguments"), source)
               endpoint.push_param(Param.new(name, "", "cookie")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "cookie" }
             end
