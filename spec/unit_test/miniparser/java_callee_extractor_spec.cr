@@ -146,6 +146,36 @@ describe Noir::JavaCalleeExtractor do
       # overload to point at.
       handle.not_nil![2].should eq(3)
     end
+
+    it "uses target_line to pick the right overloaded handler body" do
+      source = <<-JAVA
+        package app;
+        class VisitResource {
+          public List<Visit> read(int petId) {
+            return repo.findByPetId(petId);
+          }
+          public Visits read(List<Integer> petIds) {
+            return repo.findByPetIdIn(petIds);
+          }
+        }
+        JAVA
+
+      # The second `read` spans rows 5-7 (0-based); pointing at row 5
+      # must resolve callees from that overload, not the first `read`.
+      with_target = [] of Tuple(String, String, Int32)
+      without_target = [] of Tuple(String, String, Int32)
+      with_java_root(source) do |root|
+        with_target = Noir::JavaCalleeExtractor.callees_in_method(
+          root, source, "VisitResource.java", "VisitResource", "read", 5
+        )
+        without_target = Noir::JavaCalleeExtractor.callees_in_method(
+          root, source, "VisitResource.java", "VisitResource", "read"
+        )
+      end
+      with_target.map(&.[0]).should eq(["repo.findByPetIdIn"])
+      # No hint → first overload.
+      without_target.map(&.[0]).should eq(["repo.findByPetId"])
+    end
   end
 
   describe ".callees_in_body" do

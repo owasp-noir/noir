@@ -324,6 +324,187 @@ describe Noir::TreeSitterJavaParameterExtractor do
     end
   end
 
+  describe "implicit (un-annotated) parameter binding" do
+    empty_fields = Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
+
+    it "binds an un-annotated scalar on GET as a query param" do
+      source = <<-JAVA
+        class C {
+            @GetMapping("/hr")
+            public List<Hr> getAllHrs(String keywords) { return null; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "getAllHrs", "GET", nil, empty_fields
+      )
+      params.map { |p| {p.name, p.param_type} }.should eq([{"keywords", "query"}])
+    end
+
+    it "binds an un-annotated wrapper-array on DELETE as a query param" do
+      source = <<-JAVA
+        class C {
+            @DeleteMapping("/")
+            public RespBean deleteByIds(Integer[] ids) { return null; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "deleteByIds", "DELETE", nil, empty_fields
+      )
+      params.map { |p| {p.name, p.param_type} }.should eq([{"ids", "query"}])
+    end
+
+    it "binds an un-annotated scalar on POST as a form param" do
+      source = <<-JAVA
+        class C {
+            @PostMapping("/login")
+            public String login(String username, String password) { return ""; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "login", "POST", nil, empty_fields
+      )
+      params.map { |p| {p.name, p.param_type} }.should eq([{"username", "form"}, {"password", "form"}])
+    end
+
+    it "emits an annotated wrapper-array param (@RequestParam Integer[])" do
+      source = <<-JAVA
+        class C {
+            @GetMapping("/x")
+            public String x(@RequestParam Integer[] ids) { return ""; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "x", "GET", nil, empty_fields
+      )
+      params.map { |p| {p.name, p.param_type} }.should eq([{"ids", "query"}])
+    end
+
+    it "drops an @AuthenticationPrincipal command object instead of expanding its fields" do
+      source = <<-JAVA
+        class C {
+            @PostMapping("/articles")
+            public Object create(@RequestBody NewArticle a, @AuthenticationPrincipal User user) { return null; }
+        }
+        JAVA
+      class_fields = {
+        "NewArticle" => [Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("title", "private", true, "")],
+        "User"       => [Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("password", "private", true, "")],
+      }
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "create", "POST", nil, class_fields
+      )
+      params.map(&.name).should eq(["title"])
+    end
+
+    it "skips framework argument-resolver types not present in the DTO index" do
+      source = <<-JAVA
+        class C {
+            @GetMapping("/")
+            public String list(Pageable pageable, Model model, String q) { return ""; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "list", "GET", nil, empty_fields
+      )
+      params.map(&.name).should eq(["q"])
+    end
+  end
+
+  describe "@RequestBody field-visibility binding" do
+    # A Lombok `@Getter`-only DTO has private fields and no setters.
+    getter_dto = <<-JAVA
+      class Body {
+          private String email;
+          private String password;
+      }
+      JAVA
+
+    it "expands every field for a JSON @RequestBody even without setters" do
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(getter_dto)
+      source = <<-JAVA
+        class C {
+            @PostMapping("/login")
+            public String login(@RequestBody Body body) { return ""; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "login", "POST", nil, class_fields
+      )
+      params.map { |p| {p.name, p.param_type} }.sort!.should eq([{"email", "json"}, {"password", "json"}])
+    end
+
+    it "keeps the setter/public gate for un-annotated form binding" do
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(getter_dto)
+      source = <<-JAVA
+        class C {
+            @PostMapping("/login")
+            public String login(Body body) { return ""; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "login", "POST", nil, class_fields
+      )
+      params.should be_empty
+    end
+  end
+
+  describe "record DTO components" do
+    it "indexes record components as bindable fields" do
+      source = <<-JAVA
+        public record CreateArticle(String title, String description, int rank) {}
+        JAVA
+      fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(source)["CreateArticle"]
+      fields.map(&.name).should eq(["title", "description", "rank"])
+    end
+
+    it "expands a record @RequestBody into its components" do
+      record_src = <<-JAVA
+        public record Body(String email, String password) {}
+        JAVA
+      class_fields = Noir::TreeSitterJavaParameterExtractor.extract_class_fields(record_src)
+      source = <<-JAVA
+        class C {
+            @PostMapping("/login")
+            public String login(@RequestBody Body body) { return ""; }
+        }
+        JAVA
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "C", "login", "POST", nil, class_fields
+      )
+      params.map(&.name).sort!.should eq(["email", "password"])
+    end
+  end
+
+  describe "overloaded handler disambiguation" do
+    overloaded = <<-JAVA
+      class VisitResource {
+          @GetMapping("owners/*/pets/{petId}/visits")
+          public List<Visit> read(@PathVariable int petId) { return null; }
+
+          @GetMapping("pets/visits")
+          public Visits read(@RequestParam List<Integer> petIds) { return null; }
+      }
+      JAVA
+
+    empty_fields = Hash(String, Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)).new
+
+    it "selects the overload whose body contains the route annotation line" do
+      # The second `read` overload's @GetMapping is on line 5 (0-based 4).
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        overloaded, "VisitResource", "read", "GET", nil, empty_fields, 4
+      )
+      params.map(&.name).should eq(["petIds"])
+    end
+
+    it "falls back to the first overload without a line hint" do
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        overloaded, "VisitResource", "read", "GET", nil, empty_fields
+      )
+      # First `read` takes a @PathVariable, which is not emitted as a param.
+      params.should be_empty
+    end
+  end
+
   describe ".extract_class_supertypes" do
     it "maps each class to its superclass simple name" do
       source = <<-JAVA

@@ -198,7 +198,22 @@ module Analyzer::Java
         candidates << RouteCandidate.new(router_name, "GET", endpoint)
       end
 
-      candidates.uniq
+      # A Vert.x Web route path is always anchored at the router root, so
+      # the path string passed to `router.get(...)`, `route(...)`,
+      # `mountSubRouter(...)`, etc. must start with `/`. Generic
+      # `<ident>.get/put/...` calls on collections (`map.put("ez", ...)`,
+      # `cache.get("key")`, `headers.get("X")`) share the verb-method
+      # spelling but never carry a slash-prefixed first argument, so the
+      # leading-slash gate filters them out without a type-tracking pass.
+      candidates.select { |candidate| vertx_route_path?(candidate.endpoint) }.uniq!
+    end
+
+    # Vert.x Web requires path-string routes to begin with `/` (regex
+    # routes go through `routeWithRegex`, which this analyzer doesn't
+    # model). Anything else is a collection/`Map` method that merely
+    # shares the `get`/`put`/`delete`/... spelling.
+    private def vertx_route_path?(endpoint : String) : Bool
+      endpoint.starts_with?('/')
     end
 
     private def extract_mounts(content : String, constants : Hash(String, String)) : Array(MountCandidate)
@@ -214,6 +229,7 @@ module Analyzer::Java
         child_router = args[1].strip[/\A\w+\z/]?
 
         next if endpoint.nil? || endpoint.empty? || child_router.nil? || child_router.empty?
+        next unless vertx_route_path?(endpoint)
 
         mounts << MountCandidate.new(parent_router, endpoint, child_router)
       end
