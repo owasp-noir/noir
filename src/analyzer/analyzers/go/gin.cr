@@ -4,6 +4,10 @@ module Analyzer::Go
   class Gin < GoEngine
     IMPORT_MARKER = "github.com/gin-gonic/gin"
 
+    # Shared read-only fallback for directories with no resolved
+    # router-builder prefixes (never mutated).
+    EMPTY_BUILDER_PREFIXES = Hash(String, Set(String)).new
+
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -13,6 +17,13 @@ module Analyzer::Go
       # O(1) lookup into `package_function_bodies` rather than re-
       # walking every sibling source file.
       package_function_bodies = collect_package_function_bodies(file_contents)
+      # Cross-file router-builder prefix resolution: `{dir => {builder_fn
+      # => set(call-site prefixes)}}`. Resolves the canonical gin layout
+      # where `func addXRoutes(rg *gin.RouterGroup)` helpers are called
+      # from a central function with a versioned group (`addUserRoutes(
+      # router.Group("/v1"))`). The prefix lives at the call site, so it
+      # must be grafted onto the helper's routes.
+      builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         WaitGroup.wait do |wg|
@@ -42,6 +53,32 @@ module Analyzer::Go
                     # /GetHeader/Cookie) to the most recently declared route —
                     # matching the legacy `last_endpoint` semantics.
                     cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+
+                    # Router-builder expansion: graft call-site prefixes onto
+                    # the routes of `func addXRoutes(rg *gin.RouterGroup)`
+                    # helpers DEFINED in this file. Only "case b" helpers are
+                    # expanded — those whose group parameter name is NOT
+                    # already a key in the package group map. ("Case a" helpers
+                    # whose parameter name happens to match a caller's group
+                    # variable, e.g. both named `v1`, are already resolved by
+                    # the whole-file pass below, so they're left untouched to
+                    # keep their params/callees.) Expanded helpers' bodies are
+                    # suppressed in the whole-file pass to avoid emitting the
+                    # prefix-less variant alongside the corrected one.
+                    dir = File.dirname(path)
+                    dir_builder_prefixes = builder_prefixes_by_dir[dir]? || EMPTY_BUILDER_PREFIXES
+                    expand_builders = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
+                    suppress_ranges = [] of Range(Int32, Int32)
+                    if content.includes?("*gin.RouterGroup")
+                      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content).each do |fn, rb|
+                        pset = dir_builder_prefixes[fn]?
+                        next if pset.nil? || pset.empty?
+                        next if cross_file_groups.has_key?(rb.param)
+                        suppress_ranges << (rb.start_row..rb.end_row)
+                        expand_builders << {fn, rb, pset}
+                      end
+                    end
+
                     # Gin also accepts `r.Handle(method, path, handler)`
                     # alongside the verb shortcuts (`r.GET`, etc.),
                     # so opt into the method-first decoder so those
@@ -71,6 +108,11 @@ module Analyzer::Go
                     end
 
                     lines.each_with_index do |line, index|
+                      # Skip lines inside an expanded router-builder body — its
+                      # routes (and any params) are emitted, with the call-site
+                      # prefix applied, by the expansion pass below.
+                      next if suppress_ranges.any?(&.includes?(index))
+
                       details = Details.new(PathInfo.new(path, index + 1))
 
                       # Emit endpoints for any verb route that begins on this
@@ -98,29 +140,42 @@ module Analyzer::Go
                         end
                       end
 
-                      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
-                        if line.includes?("#{pattern}(")
-                          add_param_to_endpoint(get_param(line), last_endpoint)
+                      add_gin_param_patterns(line, last_endpoint)
+                    end
+
+                    # Expansion pass: emit each suppressed router-builder's
+                    # routes once per resolved call-site prefix, with the
+                    # group parameter bound to that prefix. (A helper called
+                    # from two versioned groups — `addPingRoutes(v1)` and
+                    # `addPingRoutes(v2)` — yields both `/v1/ping` and
+                    # `/v2/ping`.)
+                    expand_builders.each do |fn, rb, pset|
+                      builder_emitted = [] of Endpoint
+                      pset.each do |prefix|
+                        Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
+                          content, fn, {rb.param => prefix}, handle_method: "Handle"
+                        ).each do |route|
+                          rdetails = Details.new(PathInfo.new(path, route.line + 1))
+                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                            ep = Endpoint.new(route.path, verb, rdetails)
+                            if entries = callees_by_route[route.line]?
+                              entries.each do |entry|
+                                name, callee_path, callee_line = entry
+                                ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                              end
+                            end
+                            result << ep
+                            builder_emitted << ep
+                          end
                         end
                       end
-
-                      # Body bindings: `c.BindJSON`, `c.ShouldBindJSON`,
-                      # `c.BindXML`, `c.ShouldBindXML`, `c.BindYAML`, etc.
-                      # all populate the request body. Emit a single "body"
-                      # indicator so downstream consumers know a body is
-                      # expected; the bound struct's fields stay opaque
-                      # without a deeper static-type pass.
-                      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
-                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-                      end
-
-                      if line.includes?("Cookie(") &&
-                         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-                        match = line.match(/Cookie\(\"(.*)\"\)/)
-                        if match
-                          cookie_name = match[1]
-                          last_endpoint.params << Param.new(cookie_name, "", "cookie")
-                        end
+                      # Attach any Gin params (Query/Bind/Cookie/Param) and callees
+                      # from the builder function body to the expanded endpoints.
+                      # Mirrors chi's attach_router_function_params for Mount-expanded
+                      # routes (callees were attached in the emit above using the
+                      # precomputed callees_by_route; params via the dedicated attach).
+                      if !builder_emitted.empty?
+                        attach_gin_builder_params(builder_emitted, content, rb.start_row, rb.end_row)
                       end
                     end
                   end
@@ -136,6 +191,142 @@ module Analyzer::Go
       end
 
       resolve_public_dirs(public_dirs)
+
+      result
+    end
+
+    private def add_gin_param_patterns(line : String, target : Endpoint)
+      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
+        if line.includes?("#{pattern}(")
+          add_param_to_endpoint(get_param(line), target)
+        end
+      end
+      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+        add_param_to_endpoint(Param.new("body", "", "json"), target)
+      end
+      if line.includes?("Cookie(") &&
+         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
+        match = line.match(/Cookie\(\"(.*)\"\)/)
+        if match
+          target.params << Param.new(match[1], "", "cookie")
+        end
+      end
+    end
+
+    private def add_gin_param_patterns_to_many(line : String, targets : Array(Endpoint))
+      return if targets.empty?
+      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
+        if line.includes?("#{pattern}(")
+          p = get_param(line)
+          targets.each { |t| add_param_to_endpoint(p, t) }
+        end
+      end
+      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+        b = Param.new("body", "", "json")
+        targets.each { |t| add_param_to_endpoint(b, t) }
+      end
+      if line.includes?("Cookie(") &&
+         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
+        match = line.match(/Cookie\(\"(.*)\"\)/)
+        if match
+          c = Param.new(match[1], "", "cookie")
+          targets.each { |t| t.params << c }
+        end
+      end
+    end
+
+    private def attach_gin_builder_params(emitted : Array(Endpoint), content : String, start_row : Int32, end_row : Int32)
+      return if emitted.empty?
+      lines = content.lines
+      eps_by_line = Hash(Int32, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
+      emitted.each do |ep|
+        ep.details.code_paths.each do |cp|
+          if ln = cp.line
+            eps_by_line[ln.to_i - 1] << ep
+          end
+        end
+      end
+      return if eps_by_line.empty?
+      currents = [] of Endpoint
+      in_inline = false
+      brace_count = 0
+      (start_row..[end_row, lines.size - 1].min).each do |i|
+        line = lines[i]?
+        next unless line
+        apply_now = false
+        if eps = eps_by_line[i]?
+          currents = eps
+          apply_now = true
+          if line.includes?("func(")
+            in_inline = true
+            brace_count = line.count("{") - line.count("}")
+            if brace_count <= 0
+              in_inline = false
+              brace_count = 0
+            end
+          end
+        elsif in_inline
+          brace_count += line.count("{") - line.count("}")
+          if brace_count <= 0
+            in_inline = false
+            brace_count = 0
+          end
+          apply_now = true
+        end
+        if !currents.empty? && apply_now
+          add_gin_param_patterns_to_many(line, currents)
+        end
+      end
+    end
+
+    # Builds `{dir => {builder_fn => set(prefixes)}}` for the package by
+    # (1) collecting every `func F(rg *gin.RouterGroup)` helper across the
+    # directory's files and (2) resolving each call site `F(arg)` to the
+    # prefix `arg` denotes via the directory group map. A helper called
+    # with several different groups accumulates each prefix.
+    private def resolve_router_builder_prefixes(file_contents : Hash(String, String),
+                                                package_groups : Hash(String, Hash(String, String))) : Hash(String, Hash(String, Set(String)))
+      result = Hash(String, Hash(String, Set(String))).new
+      files_by_dir = Hash(String, Array(String)).new
+      file_contents.each_key { |p| (files_by_dir[File.dirname(p)] ||= [] of String) << p }
+
+      files_by_dir.each do |dir, paths|
+        builders = Set(String).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content
+          next unless content.includes?("*gin.RouterGroup")
+          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content).each_key { |fn| builders << fn }
+        end
+        next if builders.empty?
+
+        group_map = package_groups[dir]? || Hash(String, String).new
+        prefixes = Hash(String, Set(String)).new
+        unresolved = Set(String).new
+        paths.each do |p|
+          content = file_contents[p]?
+          next unless content
+          Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(content, builders).each do |fn, arg|
+            prefix = group_map[arg]?
+            if prefix.nil? && arg.starts_with?("/")
+              prefix = arg
+            end
+            if prefix
+              (prefixes[fn] ||= Set(String).new) << prefix
+            else
+              # Unresolved or complex arg (including "__unresolved__" marker).
+              # This builder has at least one call site that didn't resolve
+              # to a known group prefix — guard will prevent expansion for it.
+              unresolved << fn
+            end
+          end
+        end
+        # Only keep prefixes for builders where *every* call site resolved.
+        # Mixed (some resolved + some direct/root/complex) fall back to
+        # whole-file pass to avoid losing routes from the unresolved calls.
+        prefixes.reject! { |fn, _| unresolved.includes?(fn) }
+        result[dir] = prefixes unless prefixes.empty?
+      end
 
       result
     end

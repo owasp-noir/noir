@@ -615,4 +615,55 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source, Set{"subResource.Routes"})
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/health"}])
   end
+
+  it "detects gin router-builder helpers and grafts call-site prefixes" do
+    source = <<-GO
+      package routes
+      func getRoutes() {
+          v1 := router.Group("/v1")
+          addUserRoutes(v1)
+          addPingRoutes(v1)
+          v2 := router.Group("/v2")
+          addPingRoutes(v2)
+      }
+      func addUserRoutes(rg *gin.RouterGroup) {
+          users := rg.Group("/users")
+          users.GET("/", h)
+      }
+      func addPingRoutes(rg *gin.RouterGroup) {
+          rg.GET("/ping", h)
+      }
+      GO
+
+    builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
+    ks = builders.keys.to_a
+    ks.sort!
+    ks.should eq(["addPingRoutes", "addUserRoutes"])
+    builders["addUserRoutes"].param.should eq("rg")
+
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
+    calls.sort.should eq([{"addPingRoutes", "v1"}, {"addPingRoutes", "v2"}, {"addUserRoutes", "v1"}])
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addUserRoutes", {"rg" => "/v1"})
+    routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v1/users/"}])
+
+    ping_v2 = Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(source, "addPingRoutes", {"rg" => "/v2"})
+    ping_v2.map { |r| {r.verb, r.path} }.should eq([{"GET", "/v2/ping"}])
+  end
+
+  it "collects inline Group call-site as direct prefix for router builders" do
+    source = <<-GO
+      package routes
+      func getRoutes() {
+          addUserRoutes(router.Group("/v1"))
+      }
+      func addUserRoutes(rg *gin.RouterGroup) {
+          rg.GET("/u", h)
+      }
+      GO
+
+    builders = Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(source)
+    calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
+    calls.should eq([{"addUserRoutes", "/v1"}])
+  end
 end
