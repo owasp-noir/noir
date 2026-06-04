@@ -1,0 +1,7 @@
+[package]
+name = "salvo_crossfn_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+salvo = "0.68"
