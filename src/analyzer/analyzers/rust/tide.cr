@@ -23,19 +23,27 @@ module Analyzer::Rust
       source = read_file_content(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
+      # Inline `#[cfg(test)] mod test { let mut app = tide::new();
+      # app.at("/x").get(h); }` blocks live right in `src/` here, so a
+      # path filter alone can't tell them apart — gate via the shared scan.
+      test_regions = RustEngine.collect_cfg_test_regions(source)
+
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
         var_paths = collect_route_variables(root, source)
+        nest_ranges = collect_nest_ranges(root, source)
 
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          next if RustEngine.inside_test_region?(node, test_regions)
           route = decode_route(node, source, var_paths)
           next unless route
           route_path, method, handler_arg = route
+          full_path = apply_nest_prefix(node, route_path, nest_ranges)
 
           details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-          endpoint = Endpoint.new(route_path, method, details)
-          extract_path_params(route_path, endpoint)
+          endpoint = Endpoint.new(full_path, method, details)
+          extract_path_params(full_path, endpoint)
 
           if handler_arg
             apply_handler(handler_arg, function_index, source, path, endpoint, include_callee)
@@ -48,8 +56,13 @@ module Analyzer::Rust
       endpoints
     end
 
+    # `serve_dir` / `serve_file` are static-mount terminals that respond
+    # to GET, registered the same `app.at("/p").serve_dir("dir")` way.
+    STATIC_VERBS = Set{"serve_dir", "serve_file"}
+
     # Returns `{path, METHOD, handler_arg_node}` for a valid routing
-    # call (either chain form or var.verb form), or `nil`.
+    # call (chain form, multi-verb chain, var.verb form, or a static
+    # serve_dir/serve_file mount), or `nil`.
     private def decode_route(call : LibTreeSitter::TSNode,
                              source : String,
                              var_paths : Hash(String, String)) : Tuple(String, String, LibTreeSitter::TSNode?)?
@@ -57,33 +70,92 @@ module Analyzer::Rust
       return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
       field = Noir::TreeSitter.field(fn_node, "field")
       return unless field
-      verb = Noir::TreeSitter.node_text(field, source).downcase
-      return unless HTTP_VERBS.includes?(verb)
+      name = Noir::TreeSitter.node_text(field, source).downcase
+      method =
+        if HTTP_VERBS.includes?(name)
+          name.upcase
+        elsif STATIC_VERBS.includes?(name)
+          "GET"
+        end
+      return unless method
 
       receiver = Noir::TreeSitter.field(fn_node, "value")
       return unless receiver
 
-      route_path = nil.as(String?)
-      case Noir::TreeSitter.node_type(receiver)
-      when "call_expression"
-        # `app.at("/path").<verb>(handler)` — receiver is the `.at(...)`
-        # call.
-        receiver_fn = Noir::TreeSitter.field(receiver, "function")
-        if receiver_fn && Noir::TreeSitter.node_type(receiver_fn) == "field_expression"
-          receiver_field = Noir::TreeSitter.field(receiver_fn, "field")
-          if receiver_field && Noir::TreeSitter.node_text(receiver_field, source) == "at"
-            route_path = first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
-          end
-        end
-      when "identifier"
-        var_name = Noir::TreeSitter.node_text(receiver, source)
-        route_path = var_paths[var_name]?
-      end
-
+      # Walk the receiver chain up through any intermediate verb calls
+      # (`app.at("/p").put(h).get(h2)` chains both PUT and GET on /p) to
+      # the `.at("path")` call or a route-variable identifier.
+      route_path = resolve_at_path(receiver, source, var_paths)
       return unless route_path
 
       handler_arg = first_named_argument(call)
-      {route_path, verb.upcase, handler_arg}
+      {route_path, method, handler_arg}
+    end
+
+    # Walk a verb call's receiver chain to the `.at("path")` that defines
+    # its path (skipping chained verbs), or resolve a route-variable
+    # identifier. Returns the path string or `nil`.
+    private def resolve_at_path(node : LibTreeSitter::TSNode,
+                                source : String,
+                                var_paths : Hash(String, String)) : String?
+      cursor = node
+      256.times do
+        case Noir::TreeSitter.node_type(cursor)
+        when "identifier"
+          return var_paths[Noir::TreeSitter.node_text(cursor, source)]?
+        when "call_expression"
+          cfn = Noir::TreeSitter.field(cursor, "function")
+          return unless cfn && Noir::TreeSitter.node_type(cfn) == "field_expression"
+          cfield = Noir::TreeSitter.field(cfn, "field")
+          fname = cfield ? Noir::TreeSitter.node_text(cfield, source) : ""
+          if fname == "at"
+            return first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+          end
+          receiver = Noir::TreeSitter.field(cfn, "value")
+          return unless receiver
+          cursor = receiver
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    # Collect `app.at("/pre").nest(arg)` mounts as `{arg_byte_range,
+    # local_prefix}`. Routes whose byte falls inside `arg` inherit the
+    # prefix (composed across nested mounts in apply_nest_prefix).
+    private def collect_nest_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        fn_node = Noir::TreeSitter.field(node, "function")
+        next unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+        field = Noir::TreeSitter.field(fn_node, "field")
+        next unless field && Noir::TreeSitter.node_text(field, source) == "nest"
+        receiver = Noir::TreeSitter.field(fn_node, "value")
+        next unless receiver
+        prefix = resolve_at_path(receiver, source, {} of String => String)
+        next unless prefix
+        args = Noir::TreeSitter.field(node, "arguments")
+        next unless args
+        arg = nil.as(LibTreeSitter::TSNode?)
+        Noir::TreeSitter.each_named_child(args) { |c| arg ||= c }
+        next unless mount = arg
+        ranges << {LibTreeSitter.ts_node_start_byte(mount).to_i, LibTreeSitter.ts_node_end_byte(mount).to_i, prefix}
+      end
+      ranges
+    end
+
+    # Prepend every enclosing nest prefix (outermost first) to a route.
+    private def apply_nest_prefix(node : LibTreeSitter::TSNode,
+                                  route_path : String,
+                                  ranges : Array(Tuple(Int32, Int32, String))) : String
+      return route_path if ranges.empty?
+      b = LibTreeSitter.ts_node_start_byte(node).to_i
+      enclosing = ranges.select { |s, e, _| b >= s && b < e }.sort_by { |s, _, _| s }
+      return route_path if enclosing.empty?
+      prefix = enclosing.map { |_, _, p| "/#{p.strip('/')}" }.join.rstrip('/')
+      "#{prefix}/#{route_path.lstrip('/')}"
     end
 
     # Walk `let <var> = …` bindings and record `var → path` for
