@@ -55,20 +55,28 @@ module Analyzer::Rust
           walk_with_prefix(block, source, prefix, path, function_index, include_callee, endpoints)
           return
         end
+        if assoc = decode_associate(node, source)
+          assoc_path, closure_body = assoc
+          process_associate(closure_body, source, join_paths(prefix, assoc_path), path, function_index, include_callee, endpoints)
+          # fall through to the generic child walk so any nested
+          # scope/route inside the closure is still visited.
+        end
         if route = decode_to_call(node, source)
-          route_path, method, handler_name = route
+          route_path, methods, handler_name = route
           full_path = join_paths(prefix, route_path)
 
-          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
-          endpoint = Endpoint.new(full_path, method, details)
-          extract_path_params(full_path, endpoint)
+          methods.each do |method|
+            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+            endpoint = Endpoint.new(full_path, method, details)
+            extract_path_params(full_path, endpoint)
 
-          if handler_function = function_index[handler_name]?
-            scan_function(handler_function, source, endpoint)
-            attach_handler_callees(handler_function, source, path, endpoint) if include_callee
+            if handler_name && (handler_function = function_index[handler_name]?)
+              scan_function(handler_function, source, endpoint)
+              attach_handler_callees(handler_function, source, path, endpoint) if include_callee
+            end
+
+            endpoints << endpoint
           end
-
-          endpoints << endpoint
         end
       end
 
@@ -131,30 +139,176 @@ module Analyzer::Rust
       route_path.starts_with?("/") ? route_path : "/#{route_path}"
     end
 
-    # `.<verb>("/x").to(handler)` → `{path, METHOD, handler_name}` or
-    # `nil`. Reaches up one level: the `.to` call's receiver should
-    # itself be a `.<verb>("...")` call.
-    private def decode_to_call(call : LibTreeSitter::TSNode, source : String) : Tuple(String, String, String)?
+    # Route terminals: `.to(handler)` binds a handler fn; `.to_file` /
+    # `.to_dir` / `.to_new_handler` bind static/dynamic handlers (no fn
+    # name, but still a real route).
+    TERMINAL_NAMES = Set{"to", "to_file", "to_dir", "to_new_handler", "to_async_borrowing"}
+
+    # `.<verb>("/x")[.with_*_extractor::<T>()]*.to(handler)` →
+    # `{path, [METHODS], handler_name?}` or `nil`. Walks the `.to`
+    # receiver chain UP through extractor / matcher methods
+    # (`with_path_extractor`, `with_query_string_extractor`, …) to the
+    # verb call, so a typed-extractor pipeline between verb and `.to`
+    # doesn't break detection. Handles the `get_or_head` convenience verb
+    # and the multi-method `request(vec![Method::GET, …], "/p")` form.
+    private def decode_to_call(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String), String?)?
       fn_node = Noir::TreeSitter.field(call, "function")
       return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
       field = Noir::TreeSitter.field(fn_node, "field")
-      return unless field && Noir::TreeSitter.node_text(field, source) == "to"
+      return unless field && TERMINAL_NAMES.includes?(Noir::TreeSitter.node_text(field, source))
 
       receiver = Noir::TreeSitter.field(fn_node, "value")
-      return unless receiver && Noir::TreeSitter.node_type(receiver) == "call_expression"
+      return unless receiver
+      verb_call = find_verb_call(receiver, source)
+      return unless verb_call
+      route_path, methods = verb_call
 
-      verb_fn = Noir::TreeSitter.field(receiver, "function")
-      return unless verb_fn && Noir::TreeSitter.node_type(verb_fn) == "field_expression"
-      verb_field = Noir::TreeSitter.field(verb_fn, "field")
-      return unless verb_field
-      verb = Noir::TreeSitter.node_text(verb_field, source).downcase
-      return unless HTTP_VERBS.includes?(verb)
+      handler = Noir::TreeSitter.node_text(field, source) == "to" ? first_identifier_argument(call, source) : nil
+      {route_path, methods, handler}
+    end
 
-      route_path = first_string_literal_text(Noir::TreeSitter.field(receiver, "arguments"), source)
-      return unless route_path
-      handler = first_identifier_argument(call, source)
-      return unless handler
-      {route_path, verb.upcase, handler}
+    # A method call's `{field_name, receiver}`, peeling a `generic_function`
+    # turbofish wrapper (`x.with_path_extractor::<T>()` parses as a
+    # generic_function whose function is the `x.with_path_extractor`
+    # field_expression). Returns `nil` for non-method calls.
+    private def method_field_and_receiver(call : LibTreeSitter::TSNode, source : String) : Tuple(String, LibTreeSitter::TSNode?)?
+      fn = Noir::TreeSitter.field(call, "function")
+      return unless fn
+      fn = Noir::TreeSitter.field(fn, "function") if Noir::TreeSitter.node_type(fn) == "generic_function"
+      return unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+      field = Noir::TreeSitter.field(fn, "field")
+      return unless field
+      {Noir::TreeSitter.node_text(field, source), Noir::TreeSitter.field(fn, "value")}
+    end
+
+    # Walk a `.to` receiver chain up through intermediate (non-verb)
+    # method calls until a verb call is found; return its `{path, [methods]}`.
+    private def find_verb_call(node : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String))?
+      cursor = node
+      256.times do
+        return unless cursor && Noir::TreeSitter.node_type(cursor) == "call_expression"
+        mfr = method_field_and_receiver(cursor, source)
+        return unless mfr
+        if decoded = decode_verb_call(cursor, source)
+          return decoded
+        end
+        cursor = mfr[1]
+      end
+      nil
+    end
+
+    # Decode a single verb call: `.get("/p")`, `.get_or_head("/p")`, or
+    # `.request(vec![Method::GET, Method::HEAD], "/p")`. Returns
+    # `{path, [METHODS]}` or `nil` if the field isn't a verb.
+    private def decode_verb_call(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String))?
+      mfr = method_field_and_receiver(call, source)
+      return unless mfr
+      name = mfr[0].downcase
+
+      if HTTP_VERBS.includes?(name)
+        path = first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source)
+        return unless path
+        return {path, [name.upcase]}
+      end
+
+      if name == "get_or_head"
+        path = first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source)
+        return unless path
+        return {path, ["GET", "HEAD"]}
+      end
+
+      if name == "request"
+        args = Noir::TreeSitter.field(call, "arguments")
+        return unless args
+        named = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        return if named.size < 2
+        methods = parse_method_vec(named[0], source)
+        return if methods.empty?
+        path = first_string_literal_text(named[1], source)
+        return unless path
+        return {path, methods}
+      end
+
+      nil
+    end
+
+    # `vec![Method::GET, Method::HEAD]` → `["GET", "HEAD"]`. tree-sitter
+    # leaves a `vec!` body as a flat `token_tree` (no `scoped_identifier`
+    # nodes), so we scan the macro text for the verb constants directly.
+    private def parse_method_vec(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      text = Noir::TreeSitter.node_text(node, source)
+      methods = [] of String
+      text.scan(/\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b/) do |m|
+        methods << m[1]
+      end
+      methods.uniq
+    end
+
+    # `route.associate("/path", |assoc| { assoc.get().to(h); ... })` →
+    # `{path, closure_body}`. Each `assoc.<verb>()` inside the closure
+    # carries no path of its own — they all register under `/path`.
+    private def decode_associate(call : LibTreeSitter::TSNode, source : String) : Tuple(String, LibTreeSitter::TSNode)?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+      field = Noir::TreeSitter.field(fn_node, "field")
+      return unless field && Noir::TreeSitter.node_text(field, source) == "associate"
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      assoc_path = first_string_literal_text(args, source)
+      return unless assoc_path
+      body = closure_body(args)
+      return unless body
+      {assoc_path, body}
+    end
+
+    # Emit endpoints for an `associate` closure: every `assoc.<verb>().to(h)`
+    # (or `.to_file` / `.to_dir`) inside registers under `assoc_path`.
+    private def process_associate(closure_body : LibTreeSitter::TSNode,
+                                  source : String,
+                                  assoc_path : String,
+                                  path : String,
+                                  function_index : Hash(String, LibTreeSitter::TSNode),
+                                  include_callee : Bool,
+                                  endpoints : Array(Endpoint))
+      walk(closure_body) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        fn_node = Noir::TreeSitter.field(node, "function")
+        next unless fn_node && Noir::TreeSitter.node_type(fn_node) == "field_expression"
+        field = Noir::TreeSitter.field(fn_node, "field")
+        next unless field && TERMINAL_NAMES.includes?(Noir::TreeSitter.node_text(field, source))
+
+        methods = associate_verb_methods(Noir::TreeSitter.field(fn_node, "value"), source)
+        next if methods.empty?
+        handler = Noir::TreeSitter.node_text(field, source) == "to" ? first_identifier_argument(node, source) : nil
+
+        methods.each do |method|
+          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
+          endpoint = Endpoint.new(assoc_path, method, details)
+          extract_path_params(assoc_path, endpoint)
+          if handler && (handler_function = function_index[handler]?)
+            scan_function(handler_function, source, endpoint)
+            attach_handler_callees(handler_function, source, path, endpoint) if include_callee
+          end
+          endpoints << endpoint
+        end
+      end
+    end
+
+    # Inside an associate closure, the verb call (`assoc.get()`,
+    # `assoc.get_or_head()`) has no path argument — return just its methods.
+    private def associate_verb_methods(node : LibTreeSitter::TSNode?, source : String) : Array(String)
+      cursor = node
+      256.times do
+        return [] of String unless cursor && Noir::TreeSitter.node_type(cursor) == "call_expression"
+        mfr = method_field_and_receiver(cursor, source)
+        return [] of String unless mfr
+        name = mfr[0].downcase
+        return [name.upcase] if HTTP_VERBS.includes?(name)
+        return ["GET", "HEAD"] if name == "get_or_head"
+        cursor = mfr[1]
+      end
+      [] of String
     end
 
     private def extract_path_params(route : String, endpoint : Endpoint)

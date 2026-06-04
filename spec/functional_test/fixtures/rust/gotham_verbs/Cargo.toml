@@ -1,0 +1,7 @@
+[package]
+name = "gotham_verbs_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+gotham = "0.7"
