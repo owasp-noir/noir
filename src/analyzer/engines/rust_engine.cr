@@ -63,6 +63,11 @@ module Analyzer::Rust
     # the shared engine so the rest of the Rust family benefits.
     def self.test_path?(path : String) : Bool
       return true if path.includes?("/tests/")
+      # Cargo's `benches/` directory holds `cargo bench` harnesses
+      # (`Router::new().route(...)` scaffolding for throughput tests),
+      # never production endpoints — axum/tide park route-building
+      # benchmarks here. Exclude it like `tests/`.
+      return true if path.includes?("/benches/")
       base = File.basename(path)
       base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
     end

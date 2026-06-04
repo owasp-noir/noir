@@ -1,0 +1,8 @@
+[package]
+name = "axum_aide_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+aide = { version = "0.13", features = ["axum"] }
