@@ -21,8 +21,8 @@ describe Noir::TreeSitterAdonisJsExtractor do
       TS
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
-    routes.map(&.verb).sort.should eq(["DELETE", "GET", "PATCH", "POST", "PUT"])
-    routes.map(&.path).uniq.should eq(["/wildcard"])
+    routes.map(&.verb).sort!.should eq(["DELETE", "GET", "PATCH", "POST", "PUT"])
+    routes.map(&.path).uniq!.should eq(["/wildcard"])
   end
 
   it "applies group prefixes, including nested groups with .prefix" do
@@ -37,7 +37,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       TS
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path} }.sort.should eq([
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/api/v1/users"},
       {"POST", "/api/v1/blog/posts"},
     ].sort)
@@ -49,7 +49,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       TS
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path} }.sort.should eq([
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/articles"},
       {"POST", "/articles"},
       {"GET", "/articles/:id"},
@@ -64,7 +64,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
       TS
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path} }.sort.should eq([
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/tags"},
       {"GET", "/tags/:id"},
     ].sort)
@@ -77,7 +77,7 @@ describe Noir::TreeSitterAdonisJsExtractor do
 
     routes = Noir::TreeSitterAdonisJsExtractor.extract_routes(source)
     # index (GET /tags), store (POST /tags), show (GET /tags/:id) remain.
-    routes.map { |r| {r.verb, r.path} }.sort.should eq([
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/tags"},
       {"GET", "/tags/:id"},
       {"POST", "/tags"},

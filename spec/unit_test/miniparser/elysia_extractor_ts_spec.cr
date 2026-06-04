@@ -11,7 +11,7 @@ describe Noir::TreeSitterElysiaExtractor do
       TS
 
     routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path} }.sort.should eq([
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/users"},
       {"POST", "/users"},
     ].sort)
@@ -29,7 +29,7 @@ describe Noir::TreeSitterElysiaExtractor do
       TS
 
     routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
-    routes.map { |r| {r.verb, r.path} }.sort.should eq([
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
       {"GET", "/api/v1/health"},
       {"POST", "/api/v1/submit"},
     ].sort)
@@ -42,7 +42,7 @@ describe Noir::TreeSitterElysiaExtractor do
       TS
 
     routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
-    routes.select { |r| r.path == "/any" }.map(&.verb).sort.should eq(
+    routes.select { |r| r.path == "/any" }.map(&.verb).sort!.should eq(
       ["DELETE", "GET", "PATCH", "POST", "PUT"]
     )
   end

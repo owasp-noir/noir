@@ -40,8 +40,8 @@ describe Noir::TreeSitterHapiExtractor do
       JS
 
     routes = Noir::TreeSitterHapiExtractor.extract_routes(source)
-    routes.map(&.verb).sort.should eq(["PATCH", "PUT"])
-    routes.map(&.path).uniq.should eq(["/users/{id}"])
+    routes.map(&.verb).sort!.should eq(["PATCH", "PUT"])
+    routes.map(&.path).uniq!.should eq(["/users/{id}"])
   end
 
   it "fans out the wildcard method into the standard verb set" do
@@ -54,7 +54,7 @@ describe Noir::TreeSitterHapiExtractor do
       JS
 
     routes = Noir::TreeSitterHapiExtractor.extract_routes(source)
-    routes.map(&.verb).sort.should eq(["DELETE", "GET", "PATCH", "POST", "PUT"])
+    routes.map(&.verb).sort!.should eq(["DELETE", "GET", "PATCH", "POST", "PUT"])
   end
 
   it "ignores unknown HTTP method strings" do
