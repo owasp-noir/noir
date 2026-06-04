@@ -1,0 +1,9 @@
+[package]
+name = "poem_nest_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+poem = "3"
+poem-openapi = "5"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

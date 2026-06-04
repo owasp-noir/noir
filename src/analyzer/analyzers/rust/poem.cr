@@ -50,20 +50,33 @@ module Analyzer::Rust
           end
         end
 
+        # poem-openapi handlers live in an `impl Api` block mounted with
+        # `Route::new().nest("/api", api_service)` where
+        # `api_service = OpenApiService::new(Api, ...)`. Resolve each impl
+        # type's nest prefix so `#[oai(path = "/users")]` surfaces at its
+        # real `/api/users` URL.
+        oai_prefixes = collect_oai_nest_prefixes(root, source)
+        impl_ranges = oai_prefixes.empty? ? nil : build_impl_ranges(root, source)
+
         each_routing_pair(root) do |attr_item, function|
           next if RustEngine.inside_test_region?(attr_item, test_regions)
           route = decode_oai_attribute(attr_item, source)
           next unless route
           route_path, method, attr_row = route
 
-          details = Details.new(PathInfo.new(path, attr_row))
-          normalized = normalize_path(route_path)
-          endpoint = Endpoint.new(normalized, method, details)
-          extract_path_params(route_path, endpoint)
-          scan_function(function, source, endpoint)
-          attach_handler_callees(function, source, path, endpoint) if include_callee
+          prefixes = impl_ranges ? enclosing_impl_prefixes(attr_item, impl_ranges, oai_prefixes) : nil
+          raw_paths = prefixes && !prefixes.empty? ? prefixes.map { |p| join_nest_path(p, route_path) } : [route_path]
 
-          endpoints << endpoint
+          raw_paths.each do |raw_path|
+            details = Details.new(PathInfo.new(path, attr_row))
+            normalized = normalize_path(raw_path)
+            endpoint = Endpoint.new(normalized, method, details)
+            extract_path_params(raw_path, endpoint)
+            scan_function(function, source, endpoint)
+            attach_handler_callees(function, source, path, endpoint) if include_callee
+
+            endpoints << endpoint
+          end
         end
       end
 
@@ -312,6 +325,138 @@ module Analyzer::Rust
         index[name] = node unless index.has_key?(name)
       end
       index
+    end
+
+    # ── poem-openapi nest prefix composition ─────────────────────────
+
+    # `{impl_type => [nest prefix]}` from `.nest("/api", api_service)` where
+    # `api_service` (or an inline `OpenApiService::new(Api, ...)`) wraps the
+    # `impl Api` whose `#[oai]` methods we emit. Only `let`s bound to an
+    # `OpenApiService::new(...)` map to a struct — `let ui =
+    # api_service.swagger_ui()` doesn't, so the swagger UI mounted at `/`
+    # never drags the API impl down to the root.
+    private def collect_oai_nest_prefixes(root : LibTreeSitter::TSNode, source : String) : Hash(String, Array(String))
+      var_struct = {} of String => String
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "let_declaration"
+        pat = Noir::TreeSitter.field(n, "pattern")
+        val = Noir::TreeSitter.field(n, "value")
+        next unless pat && val
+        next unless Noir::TreeSitter.node_text(val, source).includes?("OpenApiService::new")
+        if st = openapi_service_struct(val, source)
+          var_struct[Noir::TreeSitter.node_text(pat, source)] = st
+        end
+      end
+
+      result = {} of String => Array(String)
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "call_expression"
+        fnf = Noir::TreeSitter.field(n, "function")
+        next unless fnf && Noir::TreeSitter.node_type(fnf) == "field_expression"
+        fld = Noir::TreeSitter.field(fnf, "field")
+        next unless fld && Noir::TreeSitter.node_text(fld, source) == "nest"
+        args = Noir::TreeSitter.field(n, "arguments")
+        next unless args
+        named = [] of LibTreeSitter::TSNode
+        Noir::TreeSitter.each_named_child(args) { |c| named << c }
+        next if named.size < 2
+        prefix = string_content_from_string_literal(named[0], source)
+        next unless prefix
+        st = resolve_nest_struct(named[1], var_struct, source)
+        next unless st
+        bucket = (result[st] ||= [] of String)
+        bucket << prefix unless bucket.includes?(prefix)
+      end
+      result
+    end
+
+    # The struct passed as the first argument of `OpenApiService::new(...)`
+    # found anywhere inside `node` (`OpenApiService::new(Api::default(), ...)`
+    # -> "Api").
+    private def openapi_service_struct(node : LibTreeSitter::TSNode, source : String) : String?
+      found = nil.as(String?)
+      walk(node) do |c|
+        next if found
+        next unless Noir::TreeSitter.node_type(c) == "call_expression"
+        fn = Noir::TreeSitter.field(c, "function")
+        next unless fn && Noir::TreeSitter.node_text(fn, source).split("::").last(2) == ["OpenApiService", "new"]
+        args = Noir::TreeSitter.field(c, "arguments")
+        next unless args
+        first = nil.as(LibTreeSitter::TSNode?)
+        Noir::TreeSitter.each_named_child(args) { |a| first ||= a }
+        found = first ? struct_type_of(first, source) : nil
+      end
+      found
+    end
+
+    private def struct_type_of(node : LibTreeSitter::TSNode, source : String) : String?
+      case Noir::TreeSitter.node_type(node)
+      when "identifier", "type_identifier"
+        Noir::TreeSitter.node_text(node, source)
+      when "scoped_identifier", "scoped_type_identifier"
+        Noir::TreeSitter.node_text(node, source).split("::").first
+      when "call_expression", "generic_function"
+        fn = Noir::TreeSitter.field(node, "function")
+        fn ? struct_type_of(fn, source) : nil
+      end
+    end
+
+    private def resolve_nest_struct(arg : LibTreeSitter::TSNode, var_struct : Hash(String, String), source : String) : String?
+      if Noir::TreeSitter.node_text(arg, source).includes?("OpenApiService::new")
+        return openapi_service_struct(arg, source)
+      end
+      base = base_identifier(arg, source)
+      base ? var_struct[base]? : nil
+    end
+
+    private def base_identifier(node : LibTreeSitter::TSNode, source : String) : String?
+      cursor = node
+      256.times do
+        case Noir::TreeSitter.node_type(cursor)
+        when "identifier"
+          return Noir::TreeSitter.node_text(cursor, source)
+        when "field_expression", "call_expression"
+          inner = Noir::TreeSitter.field(cursor, Noir::TreeSitter.node_type(cursor) == "call_expression" ? "function" : "value")
+          return unless inner
+          cursor = inner
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    private def build_impl_ranges(root : LibTreeSitter::TSNode, source : String) : Array(Tuple(Int32, Int32, String))
+      ranges = [] of Tuple(Int32, Int32, String)
+      walk(root) do |n|
+        next unless Noir::TreeSitter.node_type(n) == "impl_item"
+        type_node = Noir::TreeSitter.field(n, "type")
+        next unless type_node
+        tname = Noir::TreeSitter.node_text(type_node, source).split("<").first.split("::").last
+        s = LibTreeSitter.ts_node_start_byte(n).to_i
+        e = LibTreeSitter.ts_node_end_byte(n).to_i
+        ranges << {s, e, tname}
+      end
+      ranges
+    end
+
+    private def enclosing_impl_prefixes(node : LibTreeSitter::TSNode,
+                                        impl_ranges : Array(Tuple(Int32, Int32, String)),
+                                        oai_prefixes : Hash(String, Array(String))) : Array(String)?
+      start = LibTreeSitter.ts_node_start_byte(node).to_i
+      best : Tuple(Int32, Int32, String)? = nil
+      impl_ranges.each do |r|
+        next unless start >= r[0] && start < r[1]
+        best = r if best.nil? || (r[1] - r[0]) < (best[1] - best[0])
+      end
+      best ? oai_prefixes[best[2]]? : nil
+    end
+
+    private def join_nest_path(prefix : String, path : String) : String
+      pfx = (prefix.starts_with?("/") ? prefix : "/#{prefix}").rstrip("/")
+      return path.starts_with?("/") ? path : "/#{path}" if pfx.empty?
+      suffix = path.lstrip("/")
+      suffix.empty? ? pfx : "#{pfx}/#{suffix}"
     end
 
     private def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
