@@ -27,6 +27,11 @@ module Analyzer::Kotlin
         end
       end
 
+      # Resolve `$OTHER_CONST` interpolations now that every file's
+      # constants are collected, so a shared `Paths.kt` chain like
+      # `const val STATIC_URL = "$PUBLIC_URL/static"` yields `/public/static`.
+      string_constants = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(string_constants)
+
       file_list.each do |path|
         next unless File.exists?(path)
 

@@ -236,6 +236,48 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_empty
   end
 
+  it "expands $VAR interpolations inside constant values (transitively)" do
+    consts = {
+      "PUBLIC_URL"  => "/public",
+      "STATIC_URL"  => "$PUBLIC_URL/static",
+      "ACCOUNT_URL" => "${PUBLIC_URL}/account",
+      "PROP"        => "${spring.config}", # Spring property placeholder stays untouched
+    }
+    expanded = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(consts)
+    expanded["STATIC_URL"].should eq("/public/static")
+    expanded["ACCOUNT_URL"].should eq("/public/account")
+    expanded["PROP"].should eq("${spring.config}")
+  end
+
+  it "composes a class-level @RequestMapping prefix from a cross-file bare const" do
+    source = <<-KT
+      @RestController
+      @RequestMapping(path = [PUBLIC_URL])
+      class AuthController {
+          @PostMapping("/register")
+          fun register(): String = ""
+      }
+      KT
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, {"PUBLIC_URL" => "/public"})
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"POST", "/public/register"},
+    ])
+  end
+
+  it "resolves a $CONST interpolation inside an inline mapping path literal" do
+    source = <<-KT
+      @RestController
+      class VersionController {
+          @GetMapping(path = ["$PUBLIC_URL/version"])
+          fun version(): String = ""
+      }
+      KT
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, {"PUBLIC_URL" => "/public"})
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/public/version"},
+    ])
+  end
+
   it "skips @FeignClient interfaces (outbound clients, not server routes)" do
     source = <<-KT
       @FeignClient(value = "example-api")

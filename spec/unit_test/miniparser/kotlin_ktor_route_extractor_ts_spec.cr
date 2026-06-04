@@ -455,5 +455,23 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
 
       Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source).should be_empty
     end
+
+    it "treats a typed verb WITH a string path as a normal body route, not a resource" do
+      # `post<EmailRequest>("/push/email") { }` (kopapi typed-body DSL):
+      # the `<Type>` names the request body, the string is the real path.
+      # Must NOT be mistaken for resource routing and dropped.
+      source = <<-KT
+        fun Route.notificationRoutes() {
+            post<EmailRequest>("/push/email") { request -> }
+            put<UpdateUser>("/users/{id}") { }
+        }
+        KT
+
+      routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+      routes.map { |r| {r.verb, r.path, r.receive_type} }.should eq([
+        {"POST", "/push/email", "EmailRequest"},
+        {"PUT", "/users/{id}", "UpdateUser"},
+      ])
+    end
   end
 end

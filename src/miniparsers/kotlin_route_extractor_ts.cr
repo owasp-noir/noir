@@ -103,6 +103,40 @@ module Noir
       constants
     end
 
+    # Resolve Kotlin string-template interpolations inside collected
+    # constant values, e.g. `const val STATIC_URL = "$PUBLIC_URL/static"`
+    # with `PUBLIC_URL = "/public"` becomes `/public/static`. The regex
+    # capture in `extract_string_constants` stores the raw `$PUBLIC_URL`
+    # text, so without this a path built from such a constant keeps the
+    # literal `$VAR` (or, as an inline annotation literal, mis-parses it
+    # as a `{VAR}` path placeholder). Unresolved references (e.g. Spring
+    # `${config.property}` placeholders) are left untouched. Bounded
+    # iterations resolve transitive chains.
+    def expand_constant_interpolations(constants : Hash(String, String)) : Hash(String, String)
+      return constants unless constants.any? { |_, v| v.includes?('$') }
+      result = constants.dup
+      3.times do
+        changed = false
+        result.each do |name, value|
+          next unless value.includes?('$')
+          expanded = expand_interpolation(value, result)
+          if expanded != value
+            result[name] = expanded
+            changed = true
+          end
+        end
+        break unless changed
+      end
+      result
+    end
+
+    private def expand_interpolation(value : String, constants : Hash(String, String)) : String
+      value.gsub(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/) do
+        ident = $~[1]? || $~[2]?
+        (ident && constants[ident]?) || $~[0]
+      end
+    end
+
     # `_from(root, source)` — accept a pre-parsed root so the Kotlin
     # Spring analyzer can amortise the parse across multiple
     # extractions on the same file. Tree lifetime is the caller's
@@ -723,9 +757,14 @@ module Noir
                                      local_string_constants : Hash(String, String)) : String?
       case Noir::TreeSitter.node_type(node)
       when "string_literal"
-        decode_string_literal(node, source)
+        decode_string_literal(node, source, string_constants, local_string_constants)
       when "simple_identifier"
-        local_string_constants[Noir::TreeSitter.node_text(node, source)]?
+        # A bare const reference. Spring controllers idiomatically keep
+        # their path constants in a shared `Paths.kt` and reference them
+        # unqualified (`@RequestMapping(path = [PUBLIC_URL])`), so fall
+        # back to the cross-file constant map when the name isn't local.
+        name = Noir::TreeSitter.node_text(node, source)
+        local_string_constants[name]? || string_constants[name]?
       when "navigation_expression"
         text = Noir::TreeSitter.node_text(node, source)
         local_string_constants[text]? || fully_qualified_constant(text, string_constants)
@@ -820,17 +859,29 @@ module Noir
     end
 
     # Kotlin `string_literal` wraps content in `string_content`
-    # children, same shape as Java.
-    private def decode_string_literal(node : LibTreeSitter::TSNode, source : String) : String
+    # children, same shape as Java. A `$VAR` / `${VAR}` interpolation
+    # that names a known compile-time constant (e.g.
+    # `@GetMapping("$PUBLIC_URL/version")`) resolves to the constant's
+    # value; anything else (a real runtime template) is preserved as a
+    # `{VAR}` placeholder. Literal `{id}` path params live in
+    # `string_content`, so they're never affected by this resolution.
+    private def decode_string_literal(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      constants : Hash(String, String)? = nil,
+                                      local_constants : Hash(String, String)? = nil) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_content"
             io << Noir::TreeSitter.node_text(child, source)
           when "interpolated_identifier", "interpolated_expression"
-            io << '{'
-            io << Noir::TreeSitter.node_text(child, source).strip
-            io << '}'
+            ident = Noir::TreeSitter.node_text(child, source).strip
+            resolved = (local_constants.try &.[ident]?) || (constants.try &.[ident]?)
+            if resolved
+              io << resolved
+            else
+              io << '{' << ident << '}'
+            end
           end
         end
       end
