@@ -140,9 +140,13 @@ expected_endpoints = [
     Param.new("X-Ping", "", "header"),
   ]),
 
-  # Unresolved `#{action}` loop-variable interpolation collapses to a
-  # `{placeholder}` instead of leaking raw Ruby into the URL.
-  Endpoint.new("/repo/:id/{action}", "GET", [
+  # `%w[browse annotate].each do |action|` unrolls to one route per literal
+  # element with `#{action}` substituted — never leaking raw Ruby or a
+  # fabricated `{action}` path param into the URL.
+  Endpoint.new("/repo/:id/browse", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+  Endpoint.new("/repo/:id/annotate", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
 
@@ -193,7 +197,7 @@ total_endpoints = 1 +  # root
                   4 +  # posts/1/comments + nested likes from concern
                   2 +  # /up + /ping
                   2 +  # optional-segment routes /feed + /report/rss
-                  1 +  # %w[...].each loop route with normalized #{action}
+                  2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
                   20 + # devise_for :users
                   1 +  # mount sidekiq
                   1 +  # multiline parenthesized get

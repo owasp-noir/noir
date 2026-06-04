@@ -1,4 +1,5 @@
 require "../../../miniparsers/csharp_callee_extractor"
+require "../../../minilexers/csharp_lexer"
 
 module Analyzer::CSharp::Common
   # Standard .NET test-source conventions:
@@ -69,14 +70,19 @@ module Analyzer::CSharp::Common
     SERVICE_TYPE_SUFFIXES.any? { |suffix| base.ends_with?(suffix) }
   end
 
-  protected def build_signature(lines : Array(String), start_index : Int32) : Tuple(String, Int32)
+  # `masked` is the string/comment-blanked twin of `lines` (from
+  # `CSharpLexer#masked_lines`). Delimiter counting runs over `masked` so a
+  # `(` inside a string default (`expr = "2 * (3 + 4"`) can't keep the paren
+  # counter open and run the signature away, while the returned text is built
+  # from the real `lines`.
+  protected def build_signature(lines : Array(String), masked : Array(String), start_index : Int32) : Tuple(String, Int32)
     signature = lines[start_index]
-    paren_count = signature.count('(') - signature.count(')')
+    paren_count = masked[start_index].count('(') - masked[start_index].count(')')
     index = start_index + 1
 
     while paren_count > 0 && index < lines.size
       signature += " " + lines[index]
-      paren_count += lines[index].count('(') - lines[index].count(')')
+      paren_count += masked[index].count('(') - masked[index].count(')')
       index += 1
     end
 
@@ -148,13 +154,17 @@ module Analyzer::CSharp::Common
   # close paren so an expression body (`(int id) => Repo.Find(id)`) doesn't
   # leak the call's own arguments into the parameter list.
   protected def extract_balanced_param_list(signature : String) : String?
-    open = signature.index('(')
+    # Count parens over the masked signature so a `(`/`)` inside a string
+    # default value doesn't unbalance the parameter-list bounds. The masked
+    # twin is character-aligned with `signature`, so the slice indices apply.
+    masked = Noir::CSharpLexer.new(signature).masked
+    open = masked.index('(')
     return unless open
 
     depth = 0
     i = open
-    while i < signature.size
-      case signature[i]
+    while i < masked.size
+      case masked[i]
       when '('
         depth += 1
       when ')'
@@ -166,7 +176,10 @@ module Analyzer::CSharp::Common
     nil
   end
 
-  protected def extract_method_block(lines : Array(String), start_index : Int32) : String
+  # Counts braces over `masked` (string/comment-blanked) so a `}` inside a
+  # string literal (`var json = T("a } b");`) can't terminate the block early
+  # and drop every callee below it. The emitted text comes from raw `lines`.
+  protected def extract_method_block(lines : Array(String), masked : Array(String), start_index : Int32) : String
     io = String::Builder.new
     brace = 0
     started = false
@@ -174,17 +187,18 @@ module Analyzer::CSharp::Common
 
     while index < lines.size
       line = lines[index]
-      brace += line.count('{') - line.count('}')
-      started ||= brace > 0 || line.includes?("{")
+      m = masked[index]
+      brace += m.count('{') - m.count('}')
+      started ||= brace > 0 || m.includes?("{")
       io << line
       io << '\n'
-      if started && brace <= 0 && line.includes?("}")
+      if started && brace <= 0 && m.includes?("}")
         break
       end
       # Expression-bodied member (`=> expr;`): there is no brace block, so the
       # statement terminator ends it. Without this guard the scanner would run
       # to end-of-file and swallow every following member.
-      if !started && line.includes?(";")
+      if !started && m.includes?(";")
         break
       end
       index += 1
@@ -198,30 +212,33 @@ module Analyzer::CSharp::Common
   # (`=> expr;`). Returns `{block, start_line_index, skip_first_line}` —
   # the caller passes `skip_first_line` through to the callee scanner so a
   # brace body's own declaration line isn't recorded as a self-callee.
-  protected def extract_callable_body(lines : Array(String), start_index : Int32) : Tuple(String, Int32, Bool)
+  protected def extract_callable_body(lines : Array(String), masked : Array(String), start_index : Int32) : Tuple(String, Int32, Bool)
     i = start_index
     while i < lines.size
-      line = lines[i]
-      if line.includes?("{")
+      m = masked[i]
+      if m.includes?("{")
         # Brace body: hand the `{`-line to the scanner with skip_first so
         # the method name on that line isn't recorded as its own callee.
-        return {extract_method_block(lines, i), i, true}
-      elsif arrow = line.index("=>")
+        return {extract_method_block(lines, masked, i), i, true}
+      elsif arrow = m.index("=>")
         # Expression body: crop everything up to and including `=>` on the
-        # first line, then read until the statement terminator.
+        # first line, then read until the statement terminator. Delimiter
+        # depth and the `;` terminator are read from `masked` so braces/parens
+        # and semicolons inside string literals don't end the body early.
         io = String::Builder.new
         depth = 0
         j = i
         while j < lines.size
           raw = lines[j]
+          mraw = masked[j]
           text = j == i ? raw[(arrow + 2)..]? || "" : raw
           io << text << '\n'
-          depth += raw.count('(') - raw.count(')') + raw.count('{') - raw.count('}')
-          break if depth <= 0 && raw.includes?(";")
+          depth += mraw.count('(') - mraw.count(')') + mraw.count('{') - mraw.count('}')
+          break if depth <= 0 && mraw.includes?(";")
           j += 1
         end
         return {io.to_s, i, false}
-      elsif line.includes?(";")
+      elsif m.includes?(";")
         # Abstract/interface declaration with no body.
         return {"", i, false}
       end

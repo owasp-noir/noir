@@ -1,4 +1,5 @@
 require "../../engines/php_engine"
+require "../../../minilexers/php_lexer"
 
 module Analyzer::Php
   class Laravel < PhpEngine
@@ -121,14 +122,19 @@ module Analyzer::Php
                                        base_line : Int32 = 1,
                                        imports : Hash(String, String) = EMPTY_IMPORTS) : Array(Endpoint)
       endpoints = [] of Endpoint
-      route_groups = extract_route_groups(content)
-      # Pre-compute byte ranges that are inside PHP comments
-      # (`//`, `#`, `/* */`) or string literals (`'...'`, `"..."`).
-      # The per-loop verb scans below check each match against this
-      # set so a route-shaped pattern that lives in a docstring,
-      # a `// Route::get(...)` comment, or a `"Try Route::get(...)"`
-      # string doesn't surface as a real endpoint.
-      skip_ranges = compute_php_skip_ranges(content)
+      # One structural pass over this file/body. `PhpLexer` masks strings,
+      # comments and heredoc/nowdoc bodies a single time; every
+      # balanced-delimiter, statement-end and skip-range query below reuses
+      # the same lexer instead of re-scanning the raw text per route.
+      lexer = Noir::PhpLexer.new(content)
+      route_groups = extract_route_groups(content, lexer)
+      # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
+      # string literals (`'...'`, `"..."`) or heredoc/nowdoc bodies. The
+      # per-loop verb scans below check each match against this set so a
+      # route-shaped pattern that lives in a docstring, a `// Route::get(...)`
+      # comment, a `"Try Route::get(...)"` string, or a `<<<SQL … SQL`
+      # heredoc doesn't surface as a real endpoint.
+      skip_ranges = lexer.skip_ranges
 
       # 1. Simple routes: Route::get, Route::post, etc.
       verb_regex = /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
@@ -142,7 +148,7 @@ module Analyzer::Php
           route_path = route_match[2]
           full_path = build_full_path(prefix, route_path)
           route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
           params = extract_brace_path_params(full_path)
 
           methods.each do |http_method|
@@ -167,7 +173,7 @@ module Analyzer::Php
           route_path = route_match[3]
           full_path = build_full_path(build_full_path(prefix, route_prefix), route_path)
           route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
           params = extract_brace_path_params(full_path)
 
           methods.each do |http_method|
@@ -191,7 +197,7 @@ module Analyzer::Php
           route_path = route_match[2]
           full_path = build_full_path(prefix, route_path)
           route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
           params = extract_brace_path_params(full_path)
 
           methods.each do |http_method|
@@ -215,7 +221,7 @@ module Analyzer::Php
           route_path = route_match[1]
           full_path = build_full_path(prefix, route_path)
           route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line)
+          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
           params = extract_brace_path_params(full_path)
 
           methods.each do |http_method|
@@ -264,7 +270,7 @@ module Analyzer::Php
       end
 
       # 2. Resource routes
-      resource_calls = extract_resource_route_calls(content, "resource", skip_ranges)
+      resource_calls = extract_resource_route_calls(content, "resource", skip_ranges, lexer)
       resource_calls.each do |call|
         next if inside_laravel_group_body?(call.start_pos, route_groups) ||
                 inside_php_skip_range?(call.start_pos, skip_ranges)
@@ -277,7 +283,7 @@ module Analyzer::Php
         endpoints.concat(create_resource_endpoints(full_resource_path.lstrip('/'), file_path, route_line, actions, param_name))
       end
 
-      api_resource_calls = extract_resource_route_calls(content, "apiResource", skip_ranges)
+      api_resource_calls = extract_resource_route_calls(content, "apiResource", skip_ranges, lexer)
       api_resource_calls.each do |call|
         next if inside_laravel_group_body?(call.start_pos, route_groups) ||
                 inside_php_skip_range?(call.start_pos, skip_ranges)
@@ -439,7 +445,7 @@ module Analyzer::Php
       imports
     end
 
-    private def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32) : Tuple(String?, Int32, Int32?)
+    private def extract_inline_closure_body(content : String, pos : Int32, base_line : Int32, lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
       return {nil, pos, nil} unless pos < content.size
 
       scan_pos = pos
@@ -450,10 +456,10 @@ module Analyzer::Php
 
       closure_regex = /\A(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?(?::\s*[^{=]+)?\{/i
       match = content[scan_pos..].match(closure_regex)
-      return extract_arrow_closure_body(content, scan_pos, pos, base_line) unless match
+      return extract_arrow_closure_body(content, scan_pos, pos, base_line, lexer) unless match
 
       brace_pos = scan_pos + match[0].size - 1
-      body_end = find_matching_php_close_brace(content, brace_pos)
+      body_end = lexer.matching_delimiter(brace_pos)
       return {nil, pos, nil} unless body_end
 
       body_start_line = base_line + newline_count_before(content, brace_pos)
@@ -463,83 +469,18 @@ module Analyzer::Php
     private def extract_arrow_closure_body(content : String,
                                            scan_pos : Int32,
                                            fallback_pos : Int32,
-                                           base_line : Int32) : Tuple(String?, Int32, Int32?)
+                                           base_line : Int32,
+                                           lexer : Noir::PhpLexer) : Tuple(String?, Int32, Int32?)
       arrow_regex = /\A(?:static\s+)?fn\s*\([^)]*\)\s*(?::\s*[^=]+)?=>/i
       match = content[scan_pos..].match(arrow_regex)
       return {nil, fallback_pos, nil} unless match
 
       body_start = scan_pos + match[0].size
-      body_end = find_arrow_expression_end(content, body_start)
+      body_end = lexer.expression_end(body_start)
       return {nil, fallback_pos, nil} unless body_end > body_start
 
       body_start_line = base_line + newline_count_before(content, body_start)
       {content[body_start...body_end], body_end, body_start_line}
-    end
-
-    private def find_arrow_expression_end(content : String, start_pos : Int32) : Int32
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_string = false
-      in_line_comment = false
-      in_block_comment = false
-      escaped = false
-      quote = '\0'
-      pos = start_pos
-
-      while pos < content.size
-        char = content[pos]
-        next_char = content[pos + 1]?
-
-        if in_line_comment
-          in_line_comment = false if char == '\n'
-        elsif in_block_comment
-          if char == '*' && next_char == '/'
-            in_block_comment = false
-            pos += 1
-          end
-        elsif in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '/' && next_char == '/'
-          in_line_comment = true
-          pos += 1
-        elsif char == '/' && next_char == '*'
-          in_block_comment = true
-          pos += 1
-        elsif char == '#'
-          in_line_comment = true
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '('
-          paren_depth += 1
-        elsif char == ')'
-          return pos if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-          paren_depth -= 1 if paren_depth > 0
-        elsif char == ',' || char == ';'
-          return pos if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-        elsif char == '['
-          bracket_depth += 1
-        elsif char == ']'
-          return pos if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-          bracket_depth -= 1 if bracket_depth > 0
-        elsif char == '{'
-          brace_depth += 1
-        elsif char == '}'
-          return pos if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-          brace_depth -= 1 if brace_depth > 0
-        end
-
-        pos += 1
-      end
-
-      content.size
     end
 
     private def newline_count_before(content : String, pos : Int32) : Int32
@@ -548,84 +489,24 @@ module Analyzer::Php
       content[0...pos].count('\n')
     end
 
-    # Walk `content` once and return the byte ranges occupied by PHP
-    # comments (`//…`, `#…`, `/* … */`) and string literals
-    # (single- and double-quoted, with backslash escapes). The verb-
-    # scanning loops use `inside_php_skip_range?` to drop matches
-    # that fall inside any of these ranges — `// Route::get(...)` and
-    # `$x = "Route::get(...)"` were surfacing as real routes pre-fix.
-    private def compute_php_skip_ranges(content : String) : Array(Range(Int32, Int32))
-      ranges = [] of Range(Int32, Int32)
-      i = 0
-      size = content.size
-      while i < size
-        char = content[i]
-        next_char = i + 1 < size ? content[i + 1] : '\0'
-
-        if char == '/' && next_char == '/'
-          start = i
-          i += 2
-          while i < size && content[i] != '\n'
-            i += 1
-          end
-          ranges << (start..i - 1)
-        elsif char == '#'
-          start = i
-          i += 1
-          while i < size && content[i] != '\n'
-            i += 1
-          end
-          ranges << (start..i - 1)
-        elsif char == '/' && next_char == '*'
-          start = i
-          i += 2
-          while i < size - 1
-            if content[i] == '*' && content[i + 1] == '/'
-              i += 2
-              break
-            end
-            i += 1
-          end
-          ranges << (start..i - 1)
-        elsif char == '"' || char == '\''
-          quote = char
-          start = i
-          i += 1
-          escaped = false
-          while i < size
-            c = content[i]
-            if escaped
-              escaped = false
-            elsif c == '\\'
-              escaped = true
-            elsif c == quote
-              i += 1
-              break
-            end
-            i += 1
-          end
-          ranges << (start..i - 1)
-        else
-          i += 1
-        end
-      end
-      ranges
-    end
-
-    # True when `pos` falls inside any skip range. Cheap on the
-    # ~few-hundred-range count seen in real Laravel routes files.
+    # True when `pos` falls inside any skip range (PHP comment, string
+    # literal or heredoc/nowdoc body — see `PhpLexer#skip_ranges`). Cheap on
+    # the ~few-hundred-range count seen in real Laravel routes files.
     private def inside_php_skip_range?(pos : Int32, ranges : Array(Range(Int32, Int32))) : Bool
       ranges.any?(&.covers?(pos))
     end
 
-    private def extract_route_groups(content : String) : Array(RouteGroup)
+    private def extract_route_groups(content : String, lexer : Noir::PhpLexer) : Array(RouteGroup)
       groups = [] of RouteGroup
       group_regex = /Route::(?:\w+\s*\([^;]*?\)\s*->\s*)*group\s*\(/mi
       pos = 0
 
       while group_match = content.match(group_regex, pos)
         group_start = group_match.begin(0)
-        body_info = extract_group_closure_body_after(content, group_match.end(0))
+        # Only treat a `Route::group(` as real when it is code — one inside a
+        # string/comment/heredoc would otherwise register a bogus group range
+        # that swallows or mis-prefixes the real routes around it.
+        body_info = lexer.in_code?(group_start) ? extract_group_closure_body_after(content, group_match.end(0), lexer) : nil
         if body_info
           body, body_start, body_end = body_info
           prelude = content[group_start...body_start]
@@ -639,7 +520,7 @@ module Analyzer::Php
       groups
     end
 
-    private def extract_group_closure_body_after(content : String, pos : Int32) : Tuple(String, Int32, Int32)?
+    private def extract_group_closure_body_after(content : String, pos : Int32, lexer : Noir::PhpLexer) : Tuple(String, Int32, Int32)?
       return unless pos < content.size
 
       context = content[pos..]
@@ -657,7 +538,7 @@ module Analyzer::Php
       return if pre_function.includes?(";")
 
       brace_pos = pos + function_match.end(0) - 1
-      body_end = find_matching_php_close_brace(content, brace_pos)
+      body_end = lexer.matching_delimiter(brace_pos)
       return unless body_end
 
       {content[(brace_pos + 1)...body_end], brace_pos + 1, body_end}
@@ -746,7 +627,8 @@ module Analyzer::Php
 
     private def extract_resource_route_calls(content : String,
                                              method_name : String,
-                                             skip_ranges : Array(Range(Int32, Int32))) : Array(ResourceRouteCall)
+                                             skip_ranges : Array(Range(Int32, Int32)),
+                                             lexer : Noir::PhpLexer) : Array(ResourceRouteCall)
       calls = [] of ResourceRouteCall
       regex = Regex.new("Route::#{method_name}\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE)
       pos = 0
@@ -755,7 +637,7 @@ module Analyzer::Php
         if inside_php_skip_range?(route_match.begin(0), skip_ranges)
           pos = route_match.end(0)
         else
-          statement_end = find_php_statement_end(content, route_match.begin(0))
+          statement_end = lexer.statement_end(route_match.begin(0))
           statement = content[route_match.begin(0)...statement_end]
           calls << ResourceRouteCall.new(route_match[1], statement, route_match.begin(0))
           pos = statement_end > route_match.end(0) ? statement_end : route_match.end(0)
@@ -763,69 +645,6 @@ module Analyzer::Php
       end
 
       calls
-    end
-
-    private def find_php_statement_end(content : String, start_pos : Int32) : Int32
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_string = false
-      in_line_comment = false
-      in_block_comment = false
-      escaped = false
-      quote = '\0'
-      pos = start_pos
-
-      while pos < content.size
-        char = content[pos]
-        next_char = content[pos + 1]?
-
-        if in_line_comment
-          in_line_comment = false if char == '\n'
-        elsif in_block_comment
-          if char == '*' && next_char == '/'
-            in_block_comment = false
-            pos += 1
-          end
-        elsif in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-        elsif char == '/' && next_char == '/'
-          in_line_comment = true
-          pos += 1
-        elsif char == '/' && next_char == '*'
-          in_block_comment = true
-          pos += 1
-        elsif char == '#'
-          in_line_comment = true
-        elsif char == '"' || char == '\''
-          in_string = true
-          quote = char
-        elsif char == '('
-          paren_depth += 1
-        elsif char == ')'
-          paren_depth -= 1 if paren_depth > 0
-        elsif char == '['
-          bracket_depth += 1
-        elsif char == ']'
-          bracket_depth -= 1 if bracket_depth > 0
-        elsif char == '{'
-          brace_depth += 1
-        elsif char == '}'
-          brace_depth -= 1 if brace_depth > 0
-        elsif char == ';' && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-          return pos + 1
-        end
-
-        pos += 1
-      end
-
-      content.size
     end
 
     private def resource_actions_for_statement(statement : String, api : Bool) : Array(String)

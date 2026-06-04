@@ -15,9 +15,10 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
+      code_lines = scala_code_lines(content)
 
-      lines.each_with_index do |line, index|
-        stripped = scala_code_line(line)
+      lines.each_with_index do |_line, index|
+        stripped = code_lines[index]? || ""
 
         offset = 0
         while m = stripped.match(/(?<![.\w])Method\.([A-Z]+)/, offset)

@@ -20,6 +20,13 @@ expected_endpoints = [
     Param.new("account_id", "", "path"),
     Param.new("expand", "", "query"),
   ]),
+  # `requires :title` -> json (NOT duplicated as query by the later
+  # `params[:title]` read); `headers["X-Request-Id"]` literal -> header;
+  # the bare-variable `headers[token_header]` subscript is NOT captured.
+  Endpoint.new("/articles", "POST", [
+    Param.new("title", "", "json"),
+    Param.new("X-Request-Id", "", "header"),
+  ]),
   Endpoint.new("/v2/status", "GET"),
   # Symbol verb path (`get :ping`) is a literal segment, not a `{ping}` param.
   Endpoint.new("/v2/status/ping", "GET"),
@@ -27,5 +34,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/ruby/grape/", {
   :techs     => 1,
-  :endpoints => 12,
+  :endpoints => 13,
 }, expected_endpoints).perform_tests

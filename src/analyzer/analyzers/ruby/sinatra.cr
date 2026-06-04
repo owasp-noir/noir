@@ -139,17 +139,23 @@ module Analyzer::Ruby
       line_to_params(content).first? || Param.new("", "", "")
     end
 
+    # `params[:splat]` (the `*` wildcard matches) and `params[:captures]`
+    # (regex route captures) are Sinatra's framework bindings for the
+    # route pattern itself, not user-supplied query fields — the `*`/regex
+    # segment is already modeled in the URL.
+    SINATRA_RESERVED_PARAMS = Set{"splat", "captures"}
+
     private def line_to_params(content : String) : Array(Param)
       params = [] of Param
 
       content.scan(/param\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
         name = (m[1]? || m[2]?).to_s.strip
-        params << Param.new(name, "", "query") unless name.empty?
+        params << Param.new(name, "", "query") unless name.empty? || SINATRA_RESERVED_PARAMS.includes?(name)
       end
 
       content.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
         name = (m[1]? || m[2]?).to_s.strip
-        params << Param.new(name, "", "query") unless name.empty?
+        params << Param.new(name, "", "query") unless name.empty? || SINATRA_RESERVED_PARAMS.includes?(name)
       end
 
       content.scan(/params\.fetch\s*\(\s*(?::(\w+)|['"]([^'"]+)['"])/) do |m|

@@ -21,6 +21,10 @@ wrk = "wrk"
 mis = "mis"
 falsk = "falsk"
 nin = "nin"
+# `directorys`/`directoryes` appear in a comment in rails.cr as examples of
+# the *incorrect* plural forms (contrasted with the y->ies rule).
+directorys = "directorys"
+directoryes = "directoryes"
 
 [files]
 extend-exclude = [

@@ -28,14 +28,15 @@ module Analyzer::Scala
     private def extract_routes_from_content(path : String, content : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = content.split('\n')
+      code_lines = scala_code_lines(content)
       consumed_until = -1
 
       lines.each_with_index do |_, index|
         next if index <= consumed_until
-        code = scala_code_line(lines[index])
+        code = code_lines[index]? || ""
         next unless match = code.match(BASE_ENDPOINT_RE)
         col = match.begin || 0
-        chain_text, last_line = collect_chain(lines, index, col)
+        chain_text, last_line = collect_chain(lines, code_lines, index, col)
         consumed_until = last_line
 
         endpoint = parse_chain(chain_text, path, index + 1)
@@ -45,13 +46,13 @@ module Analyzer::Scala
       endpoints
     end
 
-    private def collect_chain(lines : Array(String), start : Int32, col : Int32) : Tuple(String, Int32)
-      head = scala_code_line(lines[start])
+    private def collect_chain(lines : Array(String), code_lines : Array(String), start : Int32, col : Int32) : Tuple(String, Int32)
+      head = code_lines[start]? || ""
       first = col < head.size ? head[col..] : ""
       parts = [first]
       idx = start + 1
       while idx < lines.size
-        code = scala_code_line(lines[idx])
+        code = code_lines[idx]? || ""
         if code.lstrip.starts_with?(".")
           parts << code
           idx += 1

@@ -74,6 +74,16 @@ article_show = Endpoint.new("/articles/:slug", "GET", [
   ep.push_callee(Callee.new("ArticleRepository.find_by_slug"))
 end
 
+widgets_build = Endpoint.new("/widgets/:id/build", "POST", [
+  Param.new("id", "", "path"),
+  Param.new("quantity", "", "json"),
+]).tap do |ep|
+  ep.push_callee(Callee.new("response.render"))
+  ep.push_callee(Callee.new("request.params"))
+end
+
+sidekiq = Endpoint.new("/sidekiq", "GET")
+
 expected_endpoints = [
   root,
   interpolated,
@@ -88,6 +98,8 @@ expected_endpoints = [
   users_create,
   users_login,
   article_show,
+  widgets_build,
+  sidekiq,
 ]
 
 FunctionalTester.new("fixtures/ruby/hanami_advanced/", {

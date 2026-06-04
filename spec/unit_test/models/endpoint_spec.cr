@@ -124,6 +124,20 @@ describe "Endpoint equality" do
     end
   end
 
+  describe "#push_param" do
+    it "dedups by (name, param_type) but keeps distinct params" do
+      endpoint = Endpoint.new("/p", "GET")
+      endpoint.push_param(Param.new("id", "", "query"))
+      endpoint.push_param(Param.new("id", "later", "query")) # dup (name, type) — dropped
+      endpoint.push_param(Param.new("id", "", "path"))       # same name, different type — kept
+      endpoint.push_param(Param.new("name", "", "query"))    # different name — kept
+
+      endpoint.params.size.should eq 3
+      endpoint.params.count { |p| p.name == "id" && p.param_type == "query" }.should eq 1
+      endpoint.params.count { |p| p.name == "id" && p.param_type == "path" }.should eq 1
+    end
+  end
+
   describe "#add_tag" do
     it "dedups by (name, tagger) but keeps distinct tags" do
       endpoint = Endpoint.new("/tagged", "GET")

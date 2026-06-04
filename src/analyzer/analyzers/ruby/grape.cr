@@ -4,6 +4,20 @@ module Analyzer::Ruby
   class Grape < RubyEngine
     GRAPE_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
+    # Crystal recompiles an interpolated regex literal (`/^#{verb}.../`)
+    # on every evaluation — ~11000x slower than a precompiled one — so
+    # matching the verb DSL inside the per-line loop used to recompile
+    # 14 regexes for every line of every Grape file. Build the per-verb
+    # patterns once at load time instead. `_WITH_PATH` matches
+    # `get '/users' do` (capturing the path literal/symbol); `_BARE_DO`
+    # matches the path-less `get do` form.
+    GRAPE_VERB_WITH_PATH = GRAPE_VERBS.to_h do |verb|
+      {verb, /^#{verb}\b(?:\s+(['":][\w\/\-:]+[\'""]?))?(?:\s*,[^#]*?)?\s*do\b/}
+    end
+    GRAPE_VERB_BARE_DO = GRAPE_VERBS.to_h do |verb|
+      {verb, /^#{verb}\s+do\b/}
+    end
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -79,7 +93,13 @@ module Analyzer::Ruby
 
         verb_handled = false
         GRAPE_VERBS.each do |verb|
-          if m = stripped.match(/^#{verb}\b(?:\s+(['":][\w\/\-:]+[\'""]?))?(?:\s*,[^#]*?)?\s*do\b/)
+          # Cheap prefix gate before the (precompiled) anchored regexes:
+          # skips the regex work entirely for the vast majority of lines
+          # that don't open with a verb keyword.
+          next unless stripped.starts_with?(verb)
+          next if stripped.size > verb.size && (stripped[verb.size].alphanumeric? || stripped[verb.size] == '_')
+
+          if m = stripped.match(GRAPE_VERB_WITH_PATH[verb])
             raw_match = (m[1]? || "").to_s
             raw_path = grape_literal_or_param_path(raw_match)
             ep_path = build_path(class_prefix, version_prefix, prefix_segments, raw_path)
@@ -104,7 +124,7 @@ module Analyzer::Ruby
             break
           end
 
-          if m = stripped.match(/^#{verb}\s+do\b/)
+          if m = stripped.match(GRAPE_VERB_BARE_DO[verb])
             ep_path = build_path(class_prefix, version_prefix, prefix_segments, "")
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
@@ -130,20 +150,21 @@ module Analyzer::Ruby
         next if verb_handled
 
         if le = last_endpoint
-          line.scan(/\bparams\[['"]?:?([\w-]+)['"]?\]/) do |match|
-            if match.size > 1
-              push_grape_param(le, Param.new(match[1], "", "query"))
-            end
+          # Require a symbol (`:name`) or string (`'name'`/`"name"`) key.
+          # The old `['"]?:?` made both optional, so a bare-variable
+          # subscript like `headers[key]` (where `key` is a local) was
+          # mis-captured as a literal header named `key`.
+          line.scan(/\bparams\[\s*(?::([\w-]+)|['"]([\w-]+)['"])\s*\]/) do |match|
+            name = (match[1]? || match[2]?).to_s
+            push_grape_param(le, Param.new(name, "", "query")) unless name.empty?
           end
-          line.scan(/\bheaders\[['"]?:?([\w-]+)['"]?\]/) do |match|
-            if match.size > 1
-              push_grape_param(le, Param.new(match[1], "", "header"))
-            end
+          line.scan(/\bheaders\[\s*(?::([\w-]+)|['"]([\w-]+)['"])\s*\]/) do |match|
+            name = (match[1]? || match[2]?).to_s
+            push_grape_param(le, Param.new(name, "", "header")) unless name.empty?
           end
-          line.scan(/\bcookies\[['"]?:?([\w-]+)['"]?\]/) do |match|
-            if match.size > 1
-              push_grape_param(le, Param.new(match[1], "", "cookie"))
-            end
+          line.scan(/\bcookies\[\s*(?::([\w-]+)|['"]([\w-]+)['"])\s*\]/) do |match|
+            name = (match[1]? || match[2]?).to_s
+            push_grape_param(le, Param.new(name, "", "cookie")) unless name.empty?
           end
         end
 
@@ -176,6 +197,10 @@ module Analyzer::Ruby
 
     private def push_grape_param(endpoint : Endpoint, param : Param)
       return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "path" }
+      # A `params do; requires :x; end` block already declared `:x` as a json
+      # body param; a later `params[:x]` read in the handler body must not
+      # re-add it as a separate `query` param. The declared type wins.
+      return if param.param_type == "query" && endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == "json" }
       return if endpoint.params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
       endpoint.push_param(param)
     end
