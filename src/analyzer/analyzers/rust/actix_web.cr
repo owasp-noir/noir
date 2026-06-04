@@ -27,18 +27,20 @@ module Analyzer::Rust
 
           route = extract_route(attr, source)
           next unless route
-          route_path, method, attr_row = route
+          route_path, methods, attr_row = route
 
           handler_name = function_name(function, source)
           prefixes = handler_name ? scoped_services[handler_name]? : nil
 
-          if prefixes && !prefixes.empty?
-            prefixes.each do |prefix|
-              endpoint_path = scoped_route_path(prefix, route_path)
-              endpoints << build_attribute_endpoint(endpoint_path, method, attr_row, path, function, source, include_callee)
+          methods.each do |method|
+            if prefixes && !prefixes.empty?
+              prefixes.each do |prefix|
+                endpoint_path = scoped_route_path(prefix, route_path)
+                endpoints << build_attribute_endpoint(endpoint_path, method, attr_row, path, function, source, include_callee)
+              end
+            else
+              endpoints << build_attribute_endpoint(route_path, method, attr_row, path, function, source, include_callee)
             end
-          else
-            endpoints << build_attribute_endpoint(route_path, method, attr_row, path, function, source, include_callee)
           end
         end
 
@@ -47,18 +49,41 @@ module Analyzer::Rust
         # registrations. The attribute walk above only catches the
         # `#[get(...)]` macro form, so manual builder-style routes
         # were silently dropped.
-        walk_calls(root) do |call|
-          next if RustEngine.inside_test_region?(call, test_regions)
+        #
+        # Real apps nest these under one or more `scope("/api")` /
+        # `scope("/v4")` layers (`scope("/a").service(scope("/b")
+        # .route(...))`), so a flat receiver-chain walk only sees the
+        # innermost scope. `collect_scope_prefixes` threads the prefix
+        # top-down through `.service(...)` once per file; the builder
+        # pass then looks up each scope/resource call's *fully composed*
+        # prefix. Function index lets us follow `.to(handler)` to the
+        # handler body for callee enrichment.
+        #
+        # Skip the whole builder pass (two extra tree walks) on files
+        # that have no `.route(` text at all — the common
+        # attribute-macro-only handler file — so the added scope-prefix
+        # machinery costs nothing where it can't apply.
+        if source.includes?(".route(")
+          scope_prefixes = collect_scope_prefixes(root, source, test_regions)
+          function_index = include_callee ? build_function_index(root, source) : Hash(String, LibTreeSitter::TSNode).new
 
-          builder_route = extract_builder_route(call, source)
-          next unless builder_route
-          route_path, methods = builder_route
-          details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
-          methods.each do |raw_verb|
-            RustEngine.fan_out_verbs(raw_verb).each do |verb|
-              endpoint = Endpoint.new(route_path, verb, details)
-              extract_path_params(route_path, endpoint)
-              endpoints << endpoint
+          walk_calls(root) do |call|
+            next if RustEngine.inside_test_region?(call, test_regions)
+
+            builder_route = extract_builder_route(call, source, scope_prefixes)
+            next unless builder_route
+            route_path, methods, handler_name = builder_route
+            canonical = canonicalize_actix_path(route_path)
+            details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(call) + 1))
+            methods.each do |raw_verb|
+              RustEngine.fan_out_verbs(raw_verb).each do |verb|
+                endpoint = Endpoint.new(canonical, verb, details)
+                extract_path_params(route_path, endpoint)
+                if include_callee && handler_name && (fn = function_index[handler_name.split("::").last]?)
+                  attach_handler_callees(fn, source, path, endpoint)
+                end
+                endpoints << endpoint
+              end
             end
           end
         end
@@ -75,7 +100,7 @@ module Analyzer::Rust
                                          source : String,
                                          include_callee : Bool) : Endpoint
       details = Details.new(PathInfo.new(file_path, attr_row))
-      endpoint = Endpoint.new(route_path, method, details)
+      endpoint = Endpoint.new(canonicalize_actix_path(route_path), method, details)
 
       extract_path_params(route_path, endpoint)
       extract_function_params(function, source, endpoint)
@@ -154,11 +179,17 @@ module Analyzer::Rust
     end
 
     # Walks `call_expression` nodes whose receiver chain looks like
-    # `<owner>.route(<path_lit>, web::<verb>().to(<handler>))` (i.e.,
-    # `App::new().route(...)`, `web::scope("/x").route(...)`,
-    # `web::resource("/y").route(...)`) and returns
-    # `{path, [verbs]}`. Returns `nil` when the shape doesn't match.
-    private def extract_builder_route(call : LibTreeSitter::TSNode, source : String) : Tuple(String, Array(String))?
+    # `<owner>.route(<path_lit>, <verb>().to(<handler>))` (i.e.,
+    # `App::new().route(...)`, `scope("/x").route(...)`,
+    # `resource("/y").route(...)`) and returns
+    # `{path, [verbs], handler_name?}`. Returns `nil` when the shape
+    # doesn't match. The enclosing scope/resource prefix is resolved
+    # from `scope_prefixes`, which carries the *fully composed* prefix
+    # (so nested `scope("/a").service(scope("/b").route(...))` lands at
+    # `/a/b/...`).
+    private def extract_builder_route(call : LibTreeSitter::TSNode,
+                                      source : String,
+                                      scope_prefixes : Hash(Int32, String)) : Tuple(String, Array(String), String?)?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "field_expression"
@@ -173,44 +204,224 @@ module Analyzer::Rust
       Noir::TreeSitter.each_named_child(args) { |c| named << c }
       return if named.empty?
 
+      receiver = Noir::TreeSitter.field(function, "value")
+
       # Two argument shapes:
-      #   1. `.route("/path", web::verb().to(handler))` — path is
+      #   1. `.route("/path", verb().to(handler))` — path is
       #      positional[0], verb-call is positional[1].
-      #   2. `.route(web::verb().to(handler))` (resource builder) —
-      #      path is on the parent `web::resource("/x")` call which
-      #      sits as the receiver of this field_expression.
+      #   2. `.route(verb().to(handler))` (resource builder) — path
+      #      lives on the parent `resource("/x")` call sitting as the
+      #      receiver of this field_expression.
       if named.size == 1
-        receiver = Noir::TreeSitter.field(function, "value")
         return unless receiver
-        path_lit = extract_resource_path(receiver, source)
-        return unless path_lit
+        enc = enclosing_route_prefix(receiver, source, scope_prefixes)
+        return unless enc
+        path_lit = enc[1]
         methods = extract_web_verbs(named[0], source)
         return if methods.empty?
-        if scope_prefix = extract_scope_prefix(receiver, source)
-          path_lit = scoped_route_path(scope_prefix, path_lit)
-        end
-        return {path_lit, methods}
+        return {path_lit, methods, verb_handler_name(named[0], source)}
       end
 
-      path_lit = first_string_literal_text(named[0], source)
+      # actix uses `.route("", ...)` to register at the scope root; an
+      # empty string literal has no `string_content` child, so resolve
+      # it to "" explicitly rather than dropping the route.
+      path_lit = path_arg_text(named[0], source)
       return unless path_lit
 
       methods = extract_web_verbs(named[1], source)
       return if methods.empty?
 
-      # If the receiver chain contains a `web::scope("/x")` call,
-      # prepend that prefix to the route path. Same idea as Axum's
-      # `.nest(...)` (still out of scope here) but easier because
-      # actix puts scope and route on the same builder chain.
-      receiver = Noir::TreeSitter.field(function, "value")
-      if receiver
-        scope_prefix = extract_scope_prefix(receiver, source)
-        if scope_prefix
-          path_lit = scoped_route_path(scope_prefix, path_lit)
-        end
+      # If the receiver chain contains a `scope("/x")` call, prepend
+      # its fully composed prefix to the route path.
+      if receiver && (enc = enclosing_route_prefix(receiver, source, scope_prefixes))
+        path_lit = scoped_route_path(enc[1], path_lit)
       end
 
-      {path_lit, methods}
+      {path_lit, methods, verb_handler_name(named[1], source)}
+    end
+
+    # Build a map of each `scope(...)`/`resource(...)` call's start byte
+    # to its fully composed path prefix, threading the prefix top-down
+    # through `.service(...)` arguments. Only chains rooted on a
+    # non-scope base (`cfg`, `App::new()`, a variable) are entered;
+    # nested scopes are reached purely through `.service`, so each one's
+    # prefix is unambiguous and long scope chains aren't re-walked.
+    private def collect_scope_prefixes(root : LibTreeSitter::TSNode,
+                                       source : String,
+                                       test_regions : Array(Tuple(Int32, Int32))) : Hash(Int32, String)
+      map = {} of Int32 => String
+      walk_calls(root) do |call|
+        next if RustEngine.inside_test_region?(call, test_regions)
+        next unless router_chain_root?(call, source)
+        kind, _, _ = resolve_chain_base(call, source)
+        next unless kind == :other
+        register_scope_chain(call, "", map, source)
+      end
+      map
+    end
+
+    # The outermost method of a builder chain we want to enter as a
+    # root: `cfg.service(...)`, `App::new().service(...).route(...)`,
+    # `.configure(...)`. Anything else is ignored (the config-fn body
+    # is walked independently, so we don't follow the reference).
+    private def router_chain_root?(call : LibTreeSitter::TSNode, source : String) : Bool
+      fn = Noir::TreeSitter.field(call, "function")
+      return false unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+      field = Noir::TreeSitter.field(fn, "field")
+      return false unless field
+      name = Noir::TreeSitter.node_text(field, source)
+      name == "service" || name == "route" || name == "configure"
+    end
+
+    # Record this chain's scope/resource prefix and recurse into every
+    # `.service(arg)` argument with the composed prefix.
+    private def register_scope_chain(expr : LibTreeSitter::TSNode,
+                                     inherited : String,
+                                     map : Hash(Int32, String),
+                                     source : String)
+      kind, seg, base_node = resolve_chain_base(expr, source)
+      prefix =
+        if (kind == :scope || kind == :resource) && seg
+          scoped_route_path(inherited, seg)
+        else
+          inherited
+        end
+      if (kind == :scope || kind == :resource) && base_node
+        map[node_byte(base_node)] = prefix
+      end
+
+      cursor = expr
+      256.times do
+        break unless Noir::TreeSitter.node_type(cursor) == "call_expression"
+        fn = Noir::TreeSitter.field(cursor, "function")
+        break unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+        field = Noir::TreeSitter.field(fn, "field")
+        if field && Noir::TreeSitter.node_text(field, source) == "service"
+          if sargs = Noir::TreeSitter.field(cursor, "arguments")
+            Noir::TreeSitter.each_named_child(sargs) do |arg|
+              register_scope_chain(arg, prefix, map, source) if Noir::TreeSitter.node_type(arg) == "call_expression"
+            end
+          end
+        end
+        receiver = Noir::TreeSitter.field(fn, "value")
+        break unless receiver
+        cursor = receiver
+      end
+    end
+
+    # Walk a builder chain down its receiver spine to the base call and
+    # classify it: `{:scope|:resource|:other, path_segment?, base_node}`.
+    private def resolve_chain_base(expr : LibTreeSitter::TSNode, source : String) : Tuple(Symbol, String?, LibTreeSitter::TSNode?)
+      cursor = expr
+      256.times do
+        return {:other, nil, nil} unless Noir::TreeSitter.node_type(cursor) == "call_expression"
+        fn = Noir::TreeSitter.field(cursor, "function")
+        return {:other, nil, nil} unless fn
+        case Noir::TreeSitter.node_type(fn)
+        when "field_expression"
+          receiver = Noir::TreeSitter.field(fn, "value")
+          return {:other, nil, nil} unless receiver
+          cursor = receiver
+        when "identifier", "scoped_identifier"
+          name = Noir::TreeSitter.node_text(fn, source).split("::").last
+          case name
+          when "scope"
+            return {:scope, first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source), cursor}
+          when "resource"
+            return {:resource, first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source), cursor}
+          else
+            return {:other, nil, cursor}
+          end
+        else
+          return {:other, nil, nil}
+        end
+      end
+      {:other, nil, nil}
+    end
+
+    # Find the nearest enclosing `scope(...)` / `resource(...)` call in a
+    # `.route` receiver chain and return its `{kind, full_prefix}`, where
+    # `full_prefix` is the composed prefix from `scope_prefixes` (falling
+    # back to the call's own path segment for standalone chains not
+    # reached via `.service`).
+    private def enclosing_route_prefix(receiver : LibTreeSitter::TSNode,
+                                       source : String,
+                                       scope_prefixes : Hash(Int32, String)) : Tuple(Symbol, String)?
+      cursor = receiver
+      256.times do
+        return unless Noir::TreeSitter.node_type(cursor) == "call_expression"
+        fn = Noir::TreeSitter.field(cursor, "function")
+        return unless fn
+        case Noir::TreeSitter.node_type(fn)
+        when "field_expression"
+          inner = Noir::TreeSitter.field(fn, "value")
+          return unless inner
+          cursor = inner
+        when "identifier", "scoped_identifier"
+          name = Noir::TreeSitter.node_text(fn, source).split("::").last
+          if name == "scope" || name == "resource"
+            seg = first_string_literal_text(Noir::TreeSitter.field(cursor, "arguments"), source)
+            full = scope_prefixes[node_byte(cursor)]? || seg
+            return unless full
+            return {name == "scope" ? :scope : :resource, full}
+          end
+          return
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    # The `.to(handler)` / `.to(handler).method(...)` handler name from a
+    # `<verb>().to(handler)` expression, for callee enrichment.
+    private def verb_handler_name(node : LibTreeSitter::TSNode, source : String) : String?
+      found : String? = nil
+      walk(node) do |call|
+        next if found
+        next unless Noir::TreeSitter.node_type(call) == "call_expression"
+        fn = Noir::TreeSitter.field(call, "function")
+        next unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+        field = Noir::TreeSitter.field(fn, "field")
+        next unless field && Noir::TreeSitter.node_text(field, source) == "to"
+        cargs = Noir::TreeSitter.field(call, "arguments")
+        next unless cargs
+        Noir::TreeSitter.each_named_child(cargs) do |arg|
+          case Noir::TreeSitter.node_type(arg)
+          when "identifier", "scoped_identifier"
+            found = Noir::TreeSitter.node_text(arg, source)
+          when "generic_function"
+            inner = Noir::TreeSitter.field(arg, "function")
+            found = Noir::TreeSitter.node_text(inner, source) if inner
+          end
+          break if found
+        end
+      end
+      found
+    end
+
+    private def node_byte(node : LibTreeSitter::TSNode) : Int32
+      LibTreeSitter.ts_node_start_byte(node).to_i
+    end
+
+    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        index[name] = node unless index.has_key?(name)
+      end
+      index
+    end
+
+    # Normalise actix path-param syntax for the emitted URL:
+    #   `{id:\d+}`  -> `{id}`   (typed / regex constraint)
+    #   `{tail:.*}` -> `{tail}`
+    #   `{rest}*`   -> `{rest}` (tail-match suffix)
+    private def canonicalize_actix_path(route : String) : String
+      route.gsub(/\{([^{}:]+)(?::[^{}]*)?\}\*?/) { "{#{$~[1].strip}}" }
     end
 
     # Walks the receiver chain looking for the nearest enclosing
@@ -221,9 +432,12 @@ module Analyzer::Rust
         fn = Noir::TreeSitter.field(cursor, "function")
         return unless fn
         case Noir::TreeSitter.node_type(fn)
-        when "scoped_identifier"
-          text = Noir::TreeSitter.node_text(fn, source)
-          if text.ends_with?("::scope")
+        when "scoped_identifier", "identifier"
+          # `web::scope("/x")` (scoped) or bare `scope("/x")` from a
+          # glob / selective import (`use actix_web::web::*` or
+          # `use actix_web::web::scope`).
+          name = Noir::TreeSitter.node_text(fn, source).split("::").last
+          if name == "scope"
             args = Noir::TreeSitter.field(cursor, "arguments")
             return unless args
             named = [] of LibTreeSitter::TSNode
@@ -270,36 +484,6 @@ module Analyzer::Rust
       "#{clean_prefix}/#{suffix}"
     end
 
-    # Find the path string carried by a `web::resource(<path>)` call.
-    # Walks downward in case the receiver itself is a chain of method
-    # calls layered on top of the resource builder (e.g.
-    # `web::resource("/x").guard(...)`).
-    private def extract_resource_path(node : LibTreeSitter::TSNode, source : String) : String?
-      cursor = node
-      while Noir::TreeSitter.node_type(cursor) == "call_expression"
-        fn = Noir::TreeSitter.field(cursor, "function")
-        return unless fn
-        case Noir::TreeSitter.node_type(fn)
-        when "scoped_identifier"
-          text = Noir::TreeSitter.node_text(fn, source)
-          return unless text.ends_with?("::resource")
-          args = Noir::TreeSitter.field(cursor, "arguments")
-          return unless args
-          named = [] of LibTreeSitter::TSNode
-          Noir::TreeSitter.each_named_child(args) { |c| named << c }
-          return if named.empty?
-          return first_string_literal_text(named[0], source)
-        when "field_expression"
-          inner = Noir::TreeSitter.field(fn, "value")
-          return unless inner
-          cursor = inner
-        else
-          return
-        end
-      end
-      nil
-    end
-
     # Pulls every `web::<verb>()` call from a chain like
     # `web::get().to(handler)` or
     # `web::get().or(web::post()).to(handler)`. Walks downward
@@ -309,13 +493,24 @@ module Analyzer::Rust
       walk_calls(node) do |call|
         function = Noir::TreeSitter.field(call, "function")
         next unless function
-        # `web::get()` is a `call_expression` whose function is a
-        # `scoped_identifier` ending in a verb.
-        if Noir::TreeSitter.node_type(function) == "scoped_identifier"
+        case Noir::TreeSitter.node_type(function)
+        when "scoped_identifier"
+          # `web::get()` is a `call_expression` whose function is a
+          # `scoped_identifier` ending in a verb.
           text = Noir::TreeSitter.node_text(function, source)
           if (last = text.split("::").last?) && HTTP_VERBS.includes?(last)
             verbs << last.upcase
           end
+        when "identifier"
+          # Bare `get()` / `post()` — actix re-exports the route
+          # constructors under `web::`, so a glob import
+          # (`use actix_web::web::*;`) makes them unqualified
+          # identifiers. We only reach here through a `.route(...)`
+          # verb-expression argument, so a bare verb name is
+          # unambiguously a route constructor (not `map.get(k)`, which
+          # is a method call / `field_expression`).
+          text = Noir::TreeSitter.node_text(function, source)
+          verbs << text.upcase if HTTP_VERBS.includes?(text)
         end
       end
       verbs.uniq
@@ -328,11 +523,13 @@ module Analyzer::Rust
       end
     end
 
-    # `#[get("/x")]` → `{"/x", "GET", attr_row_1based}`. Returns `nil`
-    # for non-routing attributes (`#[derive(...)]`, `#[tokio::main]`,
-    # …) so the iterator just skips past them.
+    # `#[get("/x")]` → `{"/x", ["GET"], attr_row_1based}`. The generic
+    # `#[route("/x", method = "GET", method = "POST")]` form yields one
+    # entry per declared method. Returns `nil` for non-routing
+    # attributes (`#[derive(...)]`, `#[tokio::main]`, …) so the iterator
+    # just skips past them.
     private def extract_route(attr_item : LibTreeSitter::TSNode,
-                              source : String) : Tuple(String, String, Int32)?
+                              source : String) : Tuple(String, Array(String), Int32)?
       attr = find_named_child(attr_item, "attribute")
       return unless attr
 
@@ -341,27 +538,98 @@ module Analyzer::Rust
       # / self / super / crate / metavariable). There is no `path:`
       # field — the named fields are `arguments` (the `(...)` token
       # tree) and `value` (for `#[key = expr]` shapes).
-      verb = nil.as(String?)
+      name = nil.as(String?)
       Noir::TreeSitter.each_named_child(attr) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier", "scoped_identifier"
-          verb = Noir::TreeSitter.node_text(child, source).downcase
+          name = Noir::TreeSitter.node_text(child, source).split("::").last.downcase
           break
         end
       end
-      return unless verb
-      return unless HTTP_VERBS.includes?(verb)
+      return unless name
 
       arguments = Noir::TreeSitter.field(attr, "arguments")
       route_path = first_string_literal_text(arguments, source)
       return unless route_path
-      {route_path, verb.upcase, Noir::TreeSitter.node_start_row(attr_item) + 1}
+      row = Noir::TreeSitter.node_start_row(attr_item) + 1
+
+      if HTTP_VERBS.includes?(name)
+        return {route_path, [name.upcase], row}
+      end
+
+      # Generic `#[route("/p", method = "GET", method = "POST")]` /
+      # `#[actix_web::route(...)]`: collect each `method = "VERB"`.
+      if name == "route"
+        methods = extract_route_macro_methods(arguments, source)
+        return if methods.empty?
+        return {route_path, methods, row}
+      end
     end
 
-    # Path params like `/users/{id}`.
+    # Walk a `#[route("/p", method = "GET", method = "POST")]` argument
+    # token tree, collecting every value that follows a `method` key.
+    private def extract_route_macro_methods(arguments : LibTreeSitter::TSNode?, source : String) : Array(String)
+      methods = [] of String
+      return methods unless arguments
+      saw_method = false
+      walk_calls_all(arguments) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "identifier"
+          saw_method = Noir::TreeSitter.node_text(child, source) == "method"
+        when "string_literal"
+          if saw_method
+            if v = string_content_of(child, source)
+              methods << v.upcase
+            end
+            saw_method = false
+          end
+        end
+      end
+      methods.uniq
+    end
+
+    # Full text of a string literal, concatenating every
+    # `string_content` and `escape_sequence` child. tree-sitter-rust
+    # splits a literal at each escape (`"/page-{id:\d+}"` → content
+    # `/page-{id:`, escape `\d`, content `+}`), so reading only the
+    # first `string_content` truncates paths that carry an escape (e.g.
+    # a regex-constrained param). Returns nil for a literal with no
+    # content children (genuinely empty `""`).
+    private def string_content_of(string_literal : LibTreeSitter::TSNode, source : String) : String?
+      parts = [] of String
+      Noir::TreeSitter.each_named_child(string_literal) do |grand|
+        case Noir::TreeSitter.node_type(grand)
+        when "string_content", "escape_sequence"
+          parts << Noir::TreeSitter.node_text(grand, source)
+        end
+      end
+      parts.empty? ? nil : parts.join
+    end
+
+    # The route-path argument of a `.route(path, ...)` call. A bare
+    # string literal yields its content, an empty literal `""` yields
+    # "" (actix's "register at the scope root" form), and anything that
+    # isn't a string literal yields nil so the route is skipped.
+    private def path_arg_text(node : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(node) == "string_literal"
+      string_content_of(node, source) || ""
+    end
+
+    # Walk every node (named children, any depth) and yield each.
+    private def walk_calls_all(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      block.call(node)
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_calls_all(child, &block)
+      end
+    end
+
+    # Path params like `/users/{id}`, the typed/regex `/users/{id:\d+}`
+    # form, and the tail-match `/files/{path:.*}` form — all normalise
+    # to the bare param name.
     def extract_path_params(route : String, endpoint : Endpoint)
-      route.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
+      route.scan(/\{([A-Za-z_]\w*)(?::[^{}]*)?\}/) do |match|
+        name = match[1]
+        endpoint.push_param(Param.new(name, "", "path")) unless endpoint.params.any? { |p| p.name == name && p.param_type == "path" }
       end
     end
 
@@ -473,12 +741,7 @@ module Analyzer::Rust
       walk(node) do |child|
         next if result
         next unless Noir::TreeSitter.node_type(child) == "string_literal"
-        Noir::TreeSitter.each_named_child(child) do |grand|
-          if Noir::TreeSitter.node_type(grand) == "string_content"
-            result = Noir::TreeSitter.node_text(grand, source)
-            break
-          end
-        end
+        result = string_content_of(child, source)
       end
       result
     end
