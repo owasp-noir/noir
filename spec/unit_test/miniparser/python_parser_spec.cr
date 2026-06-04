@@ -124,6 +124,46 @@ describe PythonParser do
       end
     end
 
+    it "re-prefixes a submodule's OWN globals on `from . import sub`" do
+      with_tmpdir do |root|
+        File.write(File.join(root, "sub.py"), "sub_bp = Blueprint(\"sub\")\n")
+        app = File.join(root, "app.py")
+        content = "from . import sub\n"
+        File.write(app, content)
+
+        parsers = Hash(String, PythonParser).new
+        parser = PythonParser.new(app, content, parsers)
+
+        # The submodule's own definition is reachable as `sub.<name>`.
+        parser.@global_variables.has_key?("sub.sub_bp").should be_true
+        parser.@global_variables["sub.sub_bp"].type.should eq("Blueprint")
+      end
+    end
+
+    it "does NOT re-prefix a submodule's transitively re-exported globals" do
+      # Guards the fix for the F^D global-key explosion: when `app`
+      # imports `mid` as a submodule, only `mid`'s OWN definitions
+      # become `mid.<key>` — `mid`'s wildcard re-exports from `deep`
+      # must not be re-prefixed into `mid.<deep-name>`, or each import
+      # level compounds the transitive set and a re-export-heavy package
+      # melts the scanner (redash: 357s → 1.8s after this fix).
+      with_tmpdir do |root|
+        File.write(File.join(root, "deep.py"), "deep_bp = Blueprint(\"deep\")\n")
+        File.write(File.join(root, "mid.py"), "from deep import *\nmid_bp = Blueprint(\"mid\")\n")
+        app = File.join(root, "app.py")
+        content = "from . import mid\n"
+        File.write(app, content)
+
+        parsers = Hash(String, PythonParser).new
+        parser = PythonParser.new(app, content, parsers)
+
+        parser.@global_variables.has_key?("mid.mid_bp").should be_true
+        # `deep_bp` reached `mid` only via wildcard re-export, so it is
+        # NOT one of `mid`'s own globals and must not appear re-prefixed.
+        parser.@global_variables.has_key?("mid.deep_bp").should be_false
+      end
+    end
+
     it "deduplicates revisits via the @visited tracking" do
       with_tmpdir do |root|
         # `app.py` and `b.py` both `from . import a`. Loading via
