@@ -199,7 +199,7 @@ describe "EndpointOptimizer" do
 
       ruby_params = result[0].params
       ruby_params.count { |p| p.name == "id" }.should eq(1)
-      ruby_params.find { |p| p.name == "id" }.not_nil!.param_type.should eq("path")
+      ruby_params.find! { |p| p.name == "id" }.param_type.should eq("path")
       ruby_params.any? { |p| p.name == "token" && p.param_type == "query" }.should be_true
 
       result[1].params.count { |p| p.name == "id" }.should eq(2) # path + query both kept
