@@ -73,6 +73,22 @@ module Analyzer::Python
               if line.includes?(".add_handlers(")
                 extract_url_patterns_from_add_handlers(lines, line_index, path)
               end
+
+              # Module-level handler lists registered from ELSEWHERE.
+              # Large Tornado apps (jupyterhub, jupyter-server, the
+              # tornado demos) define routes as a top-level
+              # `default_handlers = [(r"/api/x", XHandler), ...]` /
+              # `handlers = [...]` / `url_patterns = [...]` and aggregate
+              # the list in a different module, so there's no local
+              # `Application(...)` to anchor on — the entire API was
+              # missed (jupyterhub: 66 handler tuples → 0). Detect the
+              # assignment by its conventional name and extract its
+              # tuples directly; the handler-class gate in
+              # `extract_routes_from_lines` keeps non-route lists out.
+              list_match = line.match /^(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=\[/
+              if list_match && tornado_handler_list_name?(list_match[1])
+                extract_routes_from_lines(lines, line_index, path)
+              end
             end
           end
         end
@@ -200,6 +216,12 @@ module Analyzer::Python
     end
 
     private def extract_routes_from_lines(lines : Array(::String), start_index : Int32, file_path : ::String)
+      # Ensure the route bucket exists. Application/add_handlers callers
+      # initialise it themselves, but the module-level handler-list pass
+      # calls in here directly — without this guard `@routes[file_path]
+      # << …` raised "Missing hash key" and aborted the whole analyzer.
+      @routes[file_path] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+
       # Two-pass on the URLPatterns block:
       #   1. The legacy per-line scan below handles single-line
       #      `(r"/x", Handler)` tuples and the "handler on next
@@ -277,7 +299,12 @@ module Analyzer::Python
         if pattern_match
           route_path = pattern_match[2]
           handler_class = pattern_match[3].strip
-          @routes[file_path] << {i, "ALL", route_path, handler_class}
+          # Gate on the 2nd element looking like a RequestHandler class.
+          # Without this, `self.log.debug("Writing PID %i to %s", pid)`
+          # and similar `("format string", lowercase_arg)` calls were
+          # mistaken for route tuples and surfaced as phantom GET
+          # endpoints (jupyterhub app.py log messages).
+          @routes[file_path] << {i, "ALL", route_path, handler_class} if tornado_handler_ref?(handler_class)
         elsif partial_match = line.match(/\(\s*r?(["'])(.*?)\1\s*,\s*$/)
           # Route tuple split across lines — handler on next line
           j = i + 1
@@ -286,7 +313,7 @@ module Analyzer::Python
           end
           if j < lines.size
             handler_match = lines[j].strip.match(/^([a-zA-Z_][a-zA-Z0-9_.]*)/)
-            if handler_match
+            if handler_match && tornado_handler_ref?(handler_match[1].strip)
               @routes[file_path] << {i, "ALL", partial_match[2], handler_match[1].strip}
             end
           end
@@ -311,6 +338,7 @@ module Analyzer::Python
         next unless match.size >= 3
         route_path = match[1]
         handler_class = match[2]
+        next unless tornado_handler_ref?(handler_class)
         next if existing_routes.includes?({route_path, handler_class})
         @routes[file_path] << {start_index, "ALL", route_path, handler_class}
         existing_routes << {route_path, handler_class}
@@ -320,10 +348,34 @@ module Analyzer::Python
         next unless match.size >= 3
         route_path = match[1]
         handler_class = match[2]
+        next unless tornado_handler_ref?(handler_class)
         next if existing_routes.includes?({route_path, handler_class})
         @routes[file_path] << {start_index, "ALL", route_path, handler_class}
         existing_routes << {route_path, handler_class}
       end
+    end
+
+    # Whether `handler` looks like a Tornado RequestHandler class
+    # reference (the 2nd element of a `(pattern, handler)` route tuple).
+    # Tornado handlers are CamelCase classes — possibly dotted
+    # (`web.RequestHandler`, `handlers.ApiHandler`) — so the final
+    # segment must start with an uppercase letter. This rejects the
+    # lowercase args / format strings that `("...", x)` shaped non-route
+    # calls (logging, config tuples) would otherwise smuggle in.
+    private def tornado_handler_ref?(handler : ::String) : Bool
+      last = handler.split(".").last
+      return false if last.empty?
+      first = last[0]
+      first.ascii_uppercase?
+    end
+
+    # Conventional names for a module-level Tornado handler list that is
+    # registered from another module (no local `Application(...)`).
+    private def tornado_handler_list_name?(name : ::String) : Bool
+      n = name.downcase
+      n.ends_with?("handlers") || n.ends_with?("routes") ||
+        n.ends_with?("urls") || n.ends_with?("url_patterns") ||
+        n.ends_with?("urlpatterns") || n == "patterns"
     end
 
     private def extract_endpoints_from_handler(file_path : ::String, route_path : ::String, handler_class : ::String) : Array(Endpoint)
