@@ -365,6 +365,25 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
     ])
   end
 
+  it "surfaces staticResources / staticFiles mounts as GET routes" do
+    source = <<-KT
+      routing {
+          staticResources("/assets", "files")
+          staticFiles("/r", File("uploads"))
+          route("/v1") {
+              staticResources("/static", "web") { }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/assets"},
+      {"GET", "/r"},
+      {"GET", "/v1/static"},
+    ])
+  end
+
   describe "type-safe resource routing" do
     it "resolves @Resource routes, composing nested + parent paths" do
       source = <<-KT
