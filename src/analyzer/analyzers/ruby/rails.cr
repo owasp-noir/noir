@@ -586,7 +586,7 @@ module Analyzer::Ruby
     LOOP_OPENER = /^%([wi])[\[\(\{]([^\]\)\}]*)[\]\)\}]\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
 
     private def expand_static_loops(lines : Array(String)) : Array(String)
-      return lines unless lines.any? { |l| l.matches?(LOOP_OPENER) }
+      return lines unless lines.any?(&.matches?(LOOP_OPENER))
 
       result = [] of String
       index = 0
@@ -615,7 +615,7 @@ module Analyzer::Ruby
 
           expanded_body = expand_static_loops(body)
           values.each do |value|
-            expanded_body.each { |body_line| result << substitute_loop_var(body_line, var, value) }
+            expanded_body.each { |unrolled| result << substitute_loop_var(unrolled, var, value) }
           end
           index = cursor + 1 # skip the closing `end`
         else
