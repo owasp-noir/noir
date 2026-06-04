@@ -86,8 +86,16 @@ module Analyzer::Ruby
       stack : Array(Frame)
 
     @controller_data_cache = Hash(String, ControllerData).new
+    # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
+    # path it is mounted at (`/polls`). A Rails engine's `routes.draw` block
+    # holds engine-relative paths; the `mount` that anchors them usually
+    # lives in a different file (a plugin.rb, the host app's routes), so we
+    # resolve it cross-file once up front.
+    @engine_mount_prefixes = Hash(String, String).new
 
     def analyze
+      @engine_mount_prefixes = build_engine_mount_map
+
       framework_roots = discover_framework_roots("config/routes.rb")
       framework_roots = [@base_path] if framework_roots.empty?
 
@@ -145,7 +153,7 @@ module Analyzer::Ruby
       # `controllers foo: 'bar'` remaps the implementing controller.
       doorkeeper_skip = Set(String).new
       doorkeeper_controllers = Hash(String, String).new
-      logical_route_lines(routes_path).each do |raw_line|
+      expand_static_loops(logical_route_lines(routes_path)).each do |raw_line|
         line = raw_line.strip
         next if line.empty?
 
@@ -171,7 +179,7 @@ module Analyzer::Ruby
         # Handle `end` (top of stack pops one). Closing a
         # `use_doorkeeper` block is where its routes are emitted, now
         # that any `skip_controllers`/`controllers` config is known.
-        if line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
+        if end_line?(line)
           unless stack.empty?
             popped = stack.pop
             if popped.kind == :doorkeeper
@@ -200,6 +208,21 @@ module Analyzer::Ruby
         # Outermost: Rails.application.routes.draw do ... end
         if line.starts_with?("Rails.application.routes.draw")
           stack << Frame.new(:neutral) if opens_block
+          next
+        end
+
+        # Mountable engine: `SomeEngine.routes.draw do ... end`. Its routes
+        # are relative to where the host `mount`s the engine, so resolve the
+        # mount prefix (built cross-file in @engine_mount_prefixes) and push
+        # it as a scope. Unknown mounts (engine shipped as a library, host
+        # not in scan) fall back to a transparent frame — same as before.
+        if opens_block && (em = line.match(/^(?:::)?([A-Z][A-Za-z0-9_:]*)\.routes\.draw\b/))
+          mount_prefix = @engine_mount_prefixes[em[1]]?
+          if mount_prefix && !mount_prefix.empty?
+            stack << Frame.new(:scope, path: mount_prefix)
+          else
+            stack << Frame.new(:neutral)
+          end
           next
         end
 
@@ -362,8 +385,11 @@ module Analyzer::Ruby
             url_segment = options["path"]? || name
             singular = (kind_kw == "resource")
             child_path = singular ? url_segment : "#{url_segment}/1"
+            # A `module:` on the resources line also scopes nested
+            # resources/routes inside its block, so carry it on the frame's
+            # controller_subdir for children to inherit.
             stack << Frame.new(:resources, path: child_path, resource_name: name,
-              controller_path: existing_controller_path)
+              controller_path: existing_controller_path, controller_subdir: options["module"]? || "")
           end
           next
         end
@@ -408,12 +434,45 @@ module Analyzer::Ruby
             next
           end
 
-          # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`
-          if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
+          # `get :action, to: "ctrl#action"` outside any resource block —
+          # e.g. inside a bare `namespace :apps`. The symbol is a literal
+          # path segment (`/api/v1/apps/verify_credentials`), not a resource
+          # action. Requires an explicit destination so a bare `get :foo`
+          # with no controller context isn't fabricated into a route.
+          if (am = rest.match(/^\s*:(\w+)\b/)) && explicit_route_destination?(rest)
+            segment = am[1]
+            prefix = current_path_prefix_for_route(stack, route_scope)
+            url = prefix.empty? ? "/#{segment}" : "/#{prefix}/#{segment}"
+
+            ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+            ctrl_path = nil.as(String?)
+            action_name = nil.as(String?)
+            action_params = [] of Param
+            if ctrl_action
+              ctrl_name, action = ctrl_action
+              ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+              action_name = action
+              action_params = params_for_action(ctrl_path, action, verb)
+            end
+
+            endpoint = Endpoint.new(url, verb, action_params, details)
+            attach_callees_for_action(endpoint, ctrl_path, action_name) if action_name
+            @result << endpoint
+            next
+          end
+
+          # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`.
+          # The path literal may be empty (`get "" => "admin#index"` maps a
+          # namespace to its bare prefix), so accept `*` not `+`.
+          if sm = rest.match(/^\s*['"]([^'"]*)['"]/)
             path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
             prefix = current_path_prefix_for_route(stack, route_scope)
             path_part = path.starts_with?("/") ? path : "/#{path}"
             url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+            # `get ""` / `get "/"` inside a namespace/scope composes to a
+            # bare `/prefix/`; collapse the redundant trailing slash so the
+            # URL matches the real route (`/admin`, not `/admin/`).
+            url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
 
             ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
             action_params = [] of Param
@@ -451,11 +510,12 @@ module Analyzer::Ruby
         # same path/controller#action.
         if call = route_call(line, ["match"])
           rest = call[1]
-          if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
+          if sm = rest.match(/^\s*['"]([^'"]*)['"]/)
             path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
             prefix = current_path_prefix_for_route(stack, parse_options(rest)["on"]?)
             path_part = path.starts_with?("/") ? path : "/#{path}"
             url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+            url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
 
             match_verbs = parse_match_verbs(rest)
             ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
@@ -511,6 +571,119 @@ module Analyzer::Ruby
       end.join("|")
 
       "#{path}##{stack_key}"
+    end
+
+    # A `%w[...].each do |var|` / `%i[...].each_with_index do |var, i|`
+    # block over a STATIC literal list unrolls to one copy of its body per
+    # element with the loop variable's `#{var}` interpolations substituted.
+    # discourse alone wraps ~46 routes in `%w[users u].each` — without this,
+    # `get "#{root_path}/..."` leaks `{root_path}` into ~130 endpoints (a
+    # fabricated path param) AND the real /users + /u variants are lost.
+    #
+    # Only literal `%w`/`%i` receivers are expanded: a dynamic
+    # `Model.scopes.each do |s|` cannot be resolved to values at parse time,
+    # so it is left for the normal parser (its block opens a neutral frame).
+    LOOP_OPENER = /^%([wi])[\[\(\{]([^\]\)\}]*)[\]\)\}]\s*\.each(?:_with_index)?\s+do\s*\|\s*([a-z_]\w*)[^|]*\|\s*$/
+
+    # noir scans arbitrary untrusted repos, so loop unrolling must not be a DoS
+    # vector — expansion is multiplicative (elements ^ nesting). A crafted
+    # `routes.rb` with deep nesting or a huge `%w[...]` list could otherwise
+    # blow up CPU/memory. Real apps use tiny shallow lists (discourse's biggest
+    # is the 2-element `%w[users u]`), so modest caps preserve all genuine
+    # recall while bounding the worst case. Over a limit, the block is passed
+    # through unexpanded (the pre-unrolling behavior — a transparent frame).
+    MAX_LOOP_DEPTH  =      3
+    MAX_LOOP_VALUES =    100
+    MAX_LOOP_OUTPUT = 20_000
+
+    private def expand_static_loops(lines : Array(String), depth : Int32 = 0) : Array(String)
+      return lines if depth > MAX_LOOP_DEPTH
+      return lines unless lines.any?(&.matches?(LOOP_OPENER))
+
+      result = [] of String
+      index = 0
+      while index < lines.size
+        line = lines[index]
+        if m = line.match(LOOP_OPENER)
+          var = m[3]
+          values = m[2].split(/\s+/).reject(&.empty?)
+
+          # Walk to the `end` that closes this `.each do`, mirroring the main
+          # parser's one-block-open-per-line / `end`-pops-one model.
+          block_depth = 1
+          body = [] of String
+          cursor = index + 1
+          while cursor < lines.size && block_depth > 0
+            body_line = lines[cursor]
+            if end_line?(body_line)
+              block_depth -= 1
+              break if block_depth == 0
+            elsif opens_do_block?(body_line) || opens_keyword_block?(body_line)
+              block_depth += 1
+            end
+            body << body_line
+            cursor += 1
+          end
+
+          if values.size > MAX_LOOP_VALUES || result.size > MAX_LOOP_OUTPUT
+            # Over budget: emit the block verbatim so the main parser handles
+            # it as a neutral frame instead of unrolling an attacker-sized fan-out.
+            (index..cursor).each { |i| result << lines[i] if i < lines.size }
+          else
+            expanded_body = expand_static_loops(body, depth + 1)
+            # Precompile the substitution once per loop var (Crystal recompiles
+            # an interpolated regex literal on every match).
+            pattern = Regex.new("\\#\\{\\s*#{Regex.escape(var)}\\s*\\}")
+            values.each do |value|
+              break if result.size > MAX_LOOP_OUTPUT
+              expanded_body.each { |unrolled| result << unrolled.gsub(pattern, value) }
+            end
+          end
+          index = cursor + 1 # skip the closing `end`
+        else
+          result << line
+          index += 1
+        end
+      end
+
+      result
+    end
+
+    private def end_line?(line : String) : Bool
+      line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
+    end
+
+    # Scan the files that declare engine mounts (`config/routes.rb`,
+    # `plugin.rb` — discourse pins every plugin's `mount X::Engine, at:`
+    # there) and build the engine-constant -> mount-path map. Forms handled:
+    #   mount X::Engine, at: "/p"        mount X::Engine => "/p"
+    #   Discourse::Application.routes.append { mount X::Engine, at: "/p" }
+    private def build_engine_mount_map : Hash(String, String)
+      map = Hash(String, String).new
+      all_files.each do |file|
+        base = File.basename(file)
+        next unless base == "plugin.rb" || base.ends_with?("routes.rb")
+        next unless File.exists?(file)
+        content = read_file_content(file)
+        next unless content.includes?("mount")
+
+        content.each_line do |raw|
+          line = strip_inline_comment(raw)
+          next unless line.includes?("mount")
+          if m = line.match(/\bmount\b\s*\(?\s*(?:::)?([A-Z][A-Za-z0-9_:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]+)['"]/)
+            const = m[1]
+            map[const] = normalize_mount_prefix(m[2]) unless map.has_key?(const)
+          end
+        end
+      end
+      map
+    end
+
+    private def normalize_mount_prefix(at : String) : String
+      prefix = at.strip
+      return "" if prefix.empty? || prefix == "/"
+      prefix = prefix.rchop('/') if prefix.size > 1 && prefix.ends_with?('/')
+      prefix.lchop('/')
     end
 
     private def logical_route_lines(routes_path : String) : Array(String)
@@ -704,6 +877,15 @@ module Analyzer::Ruby
                                      options : Hash(String, String)) : String?
       singular = (kind_kw == "resource")
       controller_subdir = current_controller_subdir(stack)
+      # `module:` on a `resources`/`resource` line nests the controller
+      # under an extra namespace directory WITHOUT changing the URL —
+      # `resources :accounts, module: :lists` is served by
+      # `Lists::AccountsController` (app/controllers/.../lists/accounts_controller.rb).
+      # The namespace/scope `module:` is already folded into the stack via
+      # `controller_subdir`; the per-line one is not, so apply it here.
+      if line_module = options["module"]?
+        controller_subdir = controller_subdir.empty? ? line_module : "#{controller_subdir}/#{line_module}"
+      end
       ctrl_override = options["controller"]?
       file_base = if ctrl_override
                     ctrl_override.includes?('/') ? ctrl_override : (controller_subdir.empty? ? ctrl_override : "#{controller_subdir}/#{ctrl_override}")
@@ -721,6 +903,10 @@ module Analyzer::Ruby
       unless ctrl_override
         candidates << "#{framework_root}/app/controllers/#{file_base}s_controller.rb"
         candidates << "#{framework_root}/app/controllers/#{file_base}es_controller.rb"
+        # Irregular y->ies plural: a singular `resource :directory` is backed
+        # by `DirectoriesController` (directories_controller.rb), never
+        # `directorys`/`directoryes`.
+        candidates << "#{framework_root}/app/controllers/#{file_base.rchop('y')}ies_controller.rb" if file_base.ends_with?('y')
       end
 
       existing_controller_path = candidates.find { |c| File.exists?(c) }
@@ -1063,6 +1249,15 @@ module Analyzer::Ruby
             pm[1].split(',').each do |raw|
               name = raw.gsub(/[:\s'"]/, "")
               next if name.empty? || this_method.empty?
+              # A permit list entry is always a lowercase symbol/string key
+              # (`:title`, `tag_ids`). Splat-of-constant args
+              # (`permit(*PERMITTED_PARAMS)`, `permit(:a, *Filter::KEYS)`)
+              # and the garbage left by naive comma-splitting of nested
+              # `key: [...]` forms survive the quote/colon strip as
+              # `*PERMITTED_PARAMS` / `*FilterKEYS` / `address[city`. Drop
+              # anything that isn't a clean identifier so those don't leak
+              # in as fabricated param names.
+              next unless name.matches?(/\A[a-z_][a-z0-9_]*\z/)
               params_body_by_action[this_method] ||= [] of Param
               params_body_by_action[this_method] << Param.new(name, "", param_type)
               params_query_by_action[this_method] ||= [] of Param
@@ -1245,14 +1440,25 @@ module Analyzer::Ruby
     private def build_helper_call_map(method_bodies : Hash(String, Array(String)), defined_actions : Set(String)) : Hash(String, Array(String))
       helper_calls = Hash(String, Array(String)).new
 
+      # Tokenize each method body once into the set of identifiers it
+      # references, then test action names by set membership. The previous
+      # shape compiled an interpolated `/\b#{candidate}\b/` and rescanned
+      # the whole body for every (method × action) pair — O(M·A) recompiled
+      # regexes per controller, quadratic in the action count. Whole-token
+      # set membership is equivalent to the `\b…\b` word-boundary match for
+      # identifier names while running in O(M·body + M·A).
       method_bodies.each do |method_name, body_lines|
-        body = body_lines.join("\n")
+        tokens = Set(String).new
+        body_lines.each do |line|
+          line.scan(/[A-Za-z_]\w*[!?=]?/) { |m| tokens << m[0] }
+        end
+
+        matches = [] of String
         defined_actions.each do |candidate|
           next if candidate == method_name
-          next unless body.matches?(/\b#{Regex.escape(candidate)}\b/)
-          helper_calls[method_name] ||= [] of String
-          helper_calls[method_name] << candidate unless helper_calls[method_name].includes?(candidate)
+          matches << candidate if tokens.includes?(candidate)
         end
+        helper_calls[method_name] = matches unless matches.empty?
       end
 
       helper_calls

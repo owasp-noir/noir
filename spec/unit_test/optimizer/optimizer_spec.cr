@@ -180,6 +180,31 @@ describe "EndpointOptimizer" do
       end
     end
 
+    it "reconciles ruby path params against same-named query/body params" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      ruby_details = Details.new
+      ruby_details.technology = "ruby_rails"
+      other_details = Details.new
+      other_details.technology = "lucky"
+
+      endpoints = [
+        # Rack frameworks merge path captures into params, so the body
+        # `params[:id]` for /users/:id IS the path value — drop the query dup.
+        Endpoint.new("/users/:id", "GET", [Param.new("id", "", "query"), Param.new("token", "", "query")], ruby_details),
+        # Non-ruby (Lucky) keeps separate typed path/query buckets — keep both.
+        Endpoint.new("/users/:id", "GET", [Param.new("id", "", "query")], other_details),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+
+      ruby_params = result[0].params
+      ruby_params.count { |p| p.name == "id" }.should eq(1)
+      ruby_params.find! { |p| p.name == "id" }.param_type.should eq("path")
+      ruby_params.any? { |p| p.name == "token" && p.param_type == "query" }.should be_true
+
+      result[1].params.count { |p| p.name == "id" }.should eq(2) # path + query both kept
+    end
+
     it "names catch-all path variables without the leading asterisk" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

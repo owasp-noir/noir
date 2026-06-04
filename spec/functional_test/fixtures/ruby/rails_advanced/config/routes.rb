@@ -94,10 +94,11 @@ Rails.application.routes.draw do
   get "feed(.:format)", to: "monitor#ping"
   get "report(/:section)/rss", to: "monitor#ping"
 
-  # Unresolved `#{...}` interpolation (a `.each` loop variable, like
-  # Redmine's repository routes) must normalize to a `{placeholder}` and
-  # never leak raw Ruby into the URL. The `.each do` block is also a
-  # transparent scope — the route after it keeps the root prefix.
+  # A `%w[...].each do |action|` loop over a literal list (like Redmine's
+  # repository routes) unrolls to one route per element with `#{action}`
+  # substituted — never leaking raw Ruby or a fabricated `{action}` path
+  # param into the URL. The `.each do` block is also a transparent scope —
+  # the route after it keeps the root prefix.
   %w[browse annotate].each do |action|
     get "repo/:id/#{action}", to: "monitor#ping"
   end

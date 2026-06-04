@@ -376,6 +376,24 @@ class EndpointOptimizer
         end
       end
 
+      # Reconcile path params against same-named query/body params for
+      # Ruby frameworks. Rack/Rails frameworks (Rails, Sinatra, Hanami,
+      # Roda, Grape) merge captured path segments into a single `params`
+      # hash, so a handler that reads `params[:id]` for a `/users/:id`
+      # route is reading the path value — not a separate query/body field.
+      # Once the path type is known, the duplicate non-path entry is
+      # redundant. This is NOT done globally: frameworks with separate
+      # path/query/body buckets (Lucky's typed params, Express
+      # `req.params` vs `req.query`) legitimately carry both.
+      tech = new_endpoint.details.technology
+      if tech && tech.starts_with?("ruby_")
+        path_names = new_endpoint.params.compact_map { |p| p.param_type == "path" ? p.name : nil }
+        unless path_names.empty?
+          path_name_set = path_names.to_set
+          new_endpoint.params.reject! { |p| p.param_type != "path" && path_name_set.includes?(p.name) }
+        end
+      end
+
       final << new_endpoint
     end
 
