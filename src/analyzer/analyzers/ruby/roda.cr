@@ -4,6 +4,21 @@ module Analyzer::Ruby
   class Roda < RubyEngine
     HTTP_METHOD_MATCHERS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
+    # Precompile the per-verb routing-tree regexes once at load time.
+    # Crystal recompiles an interpolated regex literal on every match, so
+    # the `r.<verb>` matchers used to rebuild 21 regexes for every line of
+    # every route block. `_BLOCK` = `r.get "x" do |..|`/`{`, `_STRING` =
+    # `r.get "path"`, `_BARE` = `r.get` (do/brace/slash/eol).
+    RODA_VERB_BLOCK = HTTP_METHOD_MATCHERS.to_h do |verb|
+      {verb, /\br\.#{verb}\s+(.+?)\s*(?:do\b\s*(?:\|([^|]*)\|)?|\{\s*(?:\|([^|]*)\|)?)/}
+    end
+    RODA_VERB_STRING = HTTP_METHOD_MATCHERS.to_h do |verb|
+      {verb, /\br\.#{verb}\s+['"]([^'"]+)['"]/}
+    end
+    RODA_VERB_BARE = HTTP_METHOD_MATCHERS.to_h do |verb|
+      {verb, /\br\.#{verb}\b\s*(?:do\b|\{|\/|$)/}
+    end
+
     alias PrefixEntry = NamedTuple(depth: Int32, segments: Array(String), path_params: Array(String))
 
     def analyze
@@ -93,8 +108,12 @@ module Analyzer::Ruby
         return @result.size - 1
       end
 
+      # Every routing matcher below requires the `r.` request receiver, so
+      # skip the whole verb sweep for lines that cannot contain one.
+      return -1 unless line.includes?("r.")
+
       HTTP_METHOD_MATCHERS.each do |verb|
-        if m = line.match(/\br\.#{verb}\s+(.+?)\s*(?:do\b\s*(?:\|([^|]*)\|)?|\{\s*(?:\|([^|]*)\|)?)/)
+        if m = line.match(RODA_VERB_BLOCK[verb])
           segments, path_params = parse_on_args(m[1], m[2]? || m[3]?)
           unless segments.empty? && path_params.empty?
             url = build_url(collect_segments(prefix_stack), nil, segments)
@@ -107,7 +126,7 @@ module Analyzer::Ruby
           end
         end
 
-        if m = line.match(/\br\.#{verb}\s+['"]([^'"]+)['"]/)
+        if m = line.match(RODA_VERB_STRING[verb])
           url = build_url(collect_segments(prefix_stack), m[1], nil)
           ep = build_endpoint(url, verb.upcase, path, index)
           apply_path_params(ep, prefix_stack)
@@ -116,7 +135,7 @@ module Analyzer::Ruby
           return @result.size - 1
         end
 
-        if line =~ /\br\.#{verb}\b\s*(?:do\b|\{|\/|$)/
+        if line =~ RODA_VERB_BARE[verb]
           url = build_url(collect_segments(prefix_stack), nil, nil)
           url = "/" if url.empty?
           ep = build_endpoint(url, verb.upcase, path, index)

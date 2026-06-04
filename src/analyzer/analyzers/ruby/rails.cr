@@ -362,8 +362,11 @@ module Analyzer::Ruby
             url_segment = options["path"]? || name
             singular = (kind_kw == "resource")
             child_path = singular ? url_segment : "#{url_segment}/1"
+            # A `module:` on the resources line also scopes nested
+            # resources/routes inside its block, so carry it on the frame's
+            # controller_subdir for children to inherit.
             stack << Frame.new(:resources, path: child_path, resource_name: name,
-              controller_path: existing_controller_path)
+              controller_path: existing_controller_path, controller_subdir: options["module"]? || "")
           end
           next
         end
@@ -408,12 +411,18 @@ module Analyzer::Ruby
             next
           end
 
-          # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`
-          if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
+          # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`.
+          # The path literal may be empty (`get "" => "admin#index"` maps a
+          # namespace to its bare prefix), so accept `*` not `+`.
+          if sm = rest.match(/^\s*['"]([^'"]*)['"]/)
             path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
             prefix = current_path_prefix_for_route(stack, route_scope)
             path_part = path.starts_with?("/") ? path : "/#{path}"
             url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+            # `get ""` / `get "/"` inside a namespace/scope composes to a
+            # bare `/prefix/`; collapse the redundant trailing slash so the
+            # URL matches the real route (`/admin`, not `/admin/`).
+            url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
 
             ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
             action_params = [] of Param
@@ -451,11 +460,12 @@ module Analyzer::Ruby
         # same path/controller#action.
         if call = route_call(line, ["match"])
           rest = call[1]
-          if sm = rest.match(/^\s*['"]([^'"]+)['"]/)
+          if sm = rest.match(/^\s*['"]([^'"]*)['"]/)
             path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
             prefix = current_path_prefix_for_route(stack, parse_options(rest)["on"]?)
             path_part = path.starts_with?("/") ? path : "/#{path}"
             url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"
+            url = url.rchop('/') if url.size > 1 && url.ends_with?('/')
 
             match_verbs = parse_match_verbs(rest)
             ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
@@ -704,6 +714,15 @@ module Analyzer::Ruby
                                      options : Hash(String, String)) : String?
       singular = (kind_kw == "resource")
       controller_subdir = current_controller_subdir(stack)
+      # `module:` on a `resources`/`resource` line nests the controller
+      # under an extra namespace directory WITHOUT changing the URL —
+      # `resources :accounts, module: :lists` is served by
+      # `Lists::AccountsController` (app/controllers/.../lists/accounts_controller.rb).
+      # The namespace/scope `module:` is already folded into the stack via
+      # `controller_subdir`; the per-line one is not, so apply it here.
+      if line_module = options["module"]?
+        controller_subdir = controller_subdir.empty? ? line_module : "#{controller_subdir}/#{line_module}"
+      end
       ctrl_override = options["controller"]?
       file_base = if ctrl_override
                     ctrl_override.includes?('/') ? ctrl_override : (controller_subdir.empty? ? ctrl_override : "#{controller_subdir}/#{ctrl_override}")
@@ -721,6 +740,10 @@ module Analyzer::Ruby
       unless ctrl_override
         candidates << "#{framework_root}/app/controllers/#{file_base}s_controller.rb"
         candidates << "#{framework_root}/app/controllers/#{file_base}es_controller.rb"
+        # Irregular y->ies plural: a singular `resource :directory` is backed
+        # by `DirectoriesController` (directories_controller.rb), never
+        # `directorys`/`directoryes`.
+        candidates << "#{framework_root}/app/controllers/#{file_base.rchop('y')}ies_controller.rb" if file_base.ends_with?('y')
       end
 
       existing_controller_path = candidates.find { |c| File.exists?(c) }
@@ -1063,6 +1086,15 @@ module Analyzer::Ruby
             pm[1].split(',').each do |raw|
               name = raw.gsub(/[:\s'"]/, "")
               next if name.empty? || this_method.empty?
+              # A permit list entry is always a lowercase symbol/string key
+              # (`:title`, `tag_ids`). Splat-of-constant args
+              # (`permit(*PERMITTED_PARAMS)`, `permit(:a, *Filter::KEYS)`)
+              # and the garbage left by naive comma-splitting of nested
+              # `key: [...]` forms survive the quote/colon strip as
+              # `*PERMITTED_PARAMS` / `*FilterKEYS` / `address[city`. Drop
+              # anything that isn't a clean identifier so those don't leak
+              # in as fabricated param names.
+              next unless name.matches?(/\A[a-z_][a-z0-9_]*\z/)
               params_body_by_action[this_method] ||= [] of Param
               params_body_by_action[this_method] << Param.new(name, "", param_type)
               params_query_by_action[this_method] ||= [] of Param
@@ -1245,14 +1277,25 @@ module Analyzer::Ruby
     private def build_helper_call_map(method_bodies : Hash(String, Array(String)), defined_actions : Set(String)) : Hash(String, Array(String))
       helper_calls = Hash(String, Array(String)).new
 
+      # Tokenize each method body once into the set of identifiers it
+      # references, then test action names by set membership. The previous
+      # shape compiled an interpolated `/\b#{candidate}\b/` and rescanned
+      # the whole body for every (method × action) pair — O(M·A) recompiled
+      # regexes per controller, quadratic in the action count. Whole-token
+      # set membership is equivalent to the `\b…\b` word-boundary match for
+      # identifier names while running in O(M·body + M·A).
       method_bodies.each do |method_name, body_lines|
-        body = body_lines.join("\n")
+        tokens = Set(String).new
+        body_lines.each do |line|
+          line.scan(/[A-Za-z_]\w*[!?=]?/) { |m| tokens << m[0] }
+        end
+
+        matches = [] of String
         defined_actions.each do |candidate|
           next if candidate == method_name
-          next unless body.matches?(/\b#{Regex.escape(candidate)}\b/)
-          helper_calls[method_name] ||= [] of String
-          helper_calls[method_name] << candidate unless helper_calls[method_name].includes?(candidate)
+          matches << candidate if tokens.includes?(candidate)
         end
+        helper_calls[method_name] = matches unless matches.empty?
       end
 
       helper_calls
