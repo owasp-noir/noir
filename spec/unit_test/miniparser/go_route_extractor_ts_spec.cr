@@ -558,4 +558,25 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
     routes.map { |r| {r.verb, r.path} }.should eq([{"GET", "/ok"}])
   end
+
+  it "decodes chi MethodFunc/HandleFunc/Handle net-http registrations" do
+    source = <<-GO
+      package main
+      func main() {
+          r := chi.NewRouter()
+          r.Route("/api", func(r chi.Router) {
+              r.MethodFunc("GET", "/health", health)
+              r.HandleFunc("/everything", everything)
+          })
+          r.Handle("/metrics", promhttp.Handler())
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/api/everything"},
+      {"ANY", "/metrics"},
+      {"GET", "/api/health"},
+    ].sort)
+  end
 end
