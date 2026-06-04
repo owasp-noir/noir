@@ -461,6 +461,15 @@ module Noir
             walk(body, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
           end
           return
+        when active && (name == "staticResources" || name == "staticFiles")
+          # `staticResources("/assets", "files")` / `staticFiles("/r", dir)`
+          # mount a static directory at a URL prefix — surface that prefix
+          # as a GET route (the served files aren't enumerable from
+          # source). The remote path is the first string argument.
+          if path = static_mount_path(node, source)
+            routes << Route.new("GET", join_paths(prefix, path), Noir::TreeSitter.node_start_row(node), nil, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
+          end
+          return
         when name == "install"
           # `install(Routing) { ... }` contributes routes, so descend as
           # routing. Every other plugin config block (CachingHeaders,
@@ -1095,6 +1104,22 @@ module Noir
             end
           end
         end
+      end
+      nil
+    end
+
+    # First string argument of a static-content call, whether or not it
+    # carries a trailing config lambda. `staticResources("/r", "dir")`
+    # keeps the args on the call's own `call_suffix`; the braced form
+    # `staticResources("/", "dir") { ... }` parses the args onto an inner
+    # `call_expression` instead, so check both.
+    private def static_mount_path(call : LibTreeSitter::TSNode, source : String) : String?
+      if value = first_string_argument(call, source)
+        return value
+      end
+      first = first_named_child(call)
+      if first && Noir::TreeSitter.node_type(first) == "call_expression"
+        return first_string_argument(first, source)
       end
       nil
     end

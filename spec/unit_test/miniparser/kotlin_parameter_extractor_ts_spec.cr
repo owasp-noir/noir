@@ -306,6 +306,46 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
       fields["User"].map(&.name).sort!.should eq(["email", "name"])
     end
+
+    it "excludes computed properties (custom getter, no backing field)" do
+      source = <<-KT
+        class BaseEntity {
+            var id: Int? = null
+            val isNew: Boolean
+                get() = this.id == null
+            val inlineComputed: Int get() = 1
+        }
+        KT
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)
+      # `id` is a stored field; `isNew` (sibling getter) and
+      # `inlineComputed` (inline getter) are derived, not bindable.
+      fields["BaseEntity"].map(&.name).should eq(["id"])
+    end
+  end
+
+  describe "#extract_class_supertypes" do
+    it "maps a class to its superCLASS (constructor-invoked supertype)" do
+      source = <<-KT
+        open class Person : BaseEntity() {
+            var firstName = ""
+        }
+        class Owner : Person() {
+            var address = ""
+        }
+        KT
+      supers = Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes(source)
+      supers["Owner"].should eq("Person")
+      supers["Person"].should eq("BaseEntity")
+    end
+
+    it "ignores interface supertypes (no constructor invocation)" do
+      source = <<-KT
+        class Handler : Runnable, Serializable {
+            var x = ""
+        }
+        KT
+      Noir::TreeSitterKotlinParameterExtractor.extract_class_supertypes(source).has_key?("Handler").should be_false
+    end
   end
 
   describe "#extract_package_name and #extract_imports" do

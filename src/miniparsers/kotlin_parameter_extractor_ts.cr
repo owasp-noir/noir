@@ -127,6 +127,62 @@ module Noir
       results
     end
 
+    # Map each class to the simple name of its superCLASS (the supertype
+    # invoked with `()`, e.g. `class Owner : Person()` → `{"Owner" =>
+    # "Person"}`). Interface supertypes (`: Foo` without parens) carry no
+    # bindable fields and are skipped. Drives the DTO index's cross-file
+    # inheritance merge so a command object that extends a base class
+    # inherits its bindable fields.
+    def extract_class_supertypes(source : String) : Hash(String, String)
+      results = Hash(String, String).new
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        results = extract_class_supertypes_from(root, source)
+      end
+      results
+    end
+
+    def extract_class_supertypes_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, String)
+      results = Hash(String, String).new
+      walk_class_containers(root) do |decl|
+        next unless Noir::TreeSitter.node_type(decl) == "class_declaration"
+        name = type_identifier_text(decl, source)
+        next if name.empty?
+        sup = superclass_name(decl, source)
+        results[name] = sup unless sup.empty?
+      end
+      results
+    end
+
+    # The superclass simple name from a class declaration's supertype
+    # list. Kotlin spells a base CLASS as a `constructor_invocation`
+    # (`Person()`); interfaces are bare `user_type`s and are ignored.
+    private def superclass_name(decl : LibTreeSitter::TSNode, source : String) : String
+      count = LibTreeSitter.ts_node_named_child_count(decl)
+      count.times do |i|
+        child = LibTreeSitter.ts_node_named_child(decl, i.to_u32)
+        ty = Noir::TreeSitter.node_type(child)
+        next unless ty.includes?("delegation")
+        name = constructor_super_in(child, source, 0)
+        return name unless name.empty?
+      end
+      ""
+    end
+
+    private def constructor_super_in(node : LibTreeSitter::TSNode, source : String, depth : Int32) : String
+      return "" if depth > 4
+      if Noir::TreeSitter.node_type(node) == "constructor_invocation"
+        Noir::TreeSitter.each_named_child(node) do |c|
+          return leaf_type_name(c, source) if Noir::TreeSitter.node_type(c) == "user_type"
+        end
+        return ""
+      end
+      Noir::TreeSitter.each_named_child(node) do |c|
+        name = constructor_super_in(c, source, depth + 1)
+        return name unless name.empty?
+      end
+      ""
+    end
+
     # Walk method formal parameters + synthesised `params=`/`headers=`
     # constraints on the method's mapping annotation. Returns the
     # combined parameter list in the order the legacy analyzer
@@ -484,31 +540,62 @@ module Noir
 
       # 2. Class-body `property_declaration`s.
       if body = class_body_of(decl)
+        last_prop_name : String? = nil
         Noir::TreeSitter.each_named_child(body) do |member|
-          next unless Noir::TreeSitter.node_type(member) == "property_declaration"
-          name = ""
-          init = ""
-          Noir::TreeSitter.each_named_child(member) do |child|
-            case Noir::TreeSitter.node_type(child)
-            when "variable_declaration"
-              Noir::TreeSitter.each_named_child(child) do |sub|
-                if Noir::TreeSitter.node_type(sub) == "simple_identifier"
-                  name = Noir::TreeSitter.node_text(sub, source)
-                  break
-                end
-              end
-            when "simple_identifier"
-              name = Noir::TreeSitter.node_text(child, source) if name.empty?
-            when "string_literal"
-              init = decode_string_literal(child, source) if init.empty?
+          case Noir::TreeSitter.node_type(member)
+          when "getter", "setter", "property_accessor"
+            # A standalone accessor parsed as a sibling belongs to the
+            # property just before it (`val isNew: Boolean\n  get() =
+            # ...`) — that property is computed, not a backing field, so
+            # drop it. Common on JPA base entities; without this it would
+            # surface as a phantom param through the inheritance merge.
+            if (lf = fields.last?) && last_prop_name && lf.name == last_prop_name
+              fields.pop
             end
+            last_prop_name = nil
+          when "property_declaration"
+            last_prop_name = nil
+            # Inline accessor form (`val x get() = ...` on one line) keeps
+            # the getter as a child of the property_declaration.
+            next if property_has_accessor?(member)
+            name = ""
+            init = ""
+            Noir::TreeSitter.each_named_child(member) do |child|
+              case Noir::TreeSitter.node_type(child)
+              when "variable_declaration"
+                Noir::TreeSitter.each_named_child(child) do |sub|
+                  if Noir::TreeSitter.node_type(sub) == "simple_identifier"
+                    name = Noir::TreeSitter.node_text(sub, source)
+                    break
+                  end
+                end
+              when "simple_identifier"
+                name = Noir::TreeSitter.node_text(child, source) if name.empty?
+              when "string_literal"
+                init = decode_string_literal(child, source) if init.empty?
+              end
+            end
+            next if name.empty?
+            fields << FieldInfo.new(name, "public", true, init)
+            last_prop_name = name
+          else
+            last_prop_name = nil
           end
-          next if name.empty?
-          fields << FieldInfo.new(name, "public", true, init)
         end
       end
 
       fields
+    end
+
+    # True when a `property_declaration` carries a custom getter/setter —
+    # i.e. a computed property with no backing field, which must not be
+    # treated as a bindable request field.
+    private def property_has_accessor?(member : LibTreeSitter::TSNode) : Bool
+      Noir::TreeSitter.each_named_child(member) do |child|
+        ty = Noir::TreeSitter.node_type(child)
+        return true if ty == "getter" || ty == "setter" || ty == "property_accessor"
+      end
+      false
     end
 
     # ---- formal parameter walk ---------------------------------------
@@ -824,10 +911,21 @@ module Noir
     # Kotlin Spring + Ktor + http4k analyzers running concurrently
     # on the same codebase.
     @@shared_cache = Hash(String, Index).new
+    # Per-file `class -> superclass simple name` map, cached alongside
+    # the field index so a DTO file is parsed once for both. Drives the
+    # cross-file inheritance merge below (mirrors TreeSitterJavaDtoIndex).
+    @@shared_super_cache = Hash(String, Hash(String, String)).new
     @@shared_cache_mutex = Mutex.new
 
+    # Backstop against pathological supertype graphs — far above any real
+    # DTO hierarchy depth/fan-out.
+    MAX_INHERITANCE_RESOLUTIONS = 512
+
     def self.clear_cache!
-      @@shared_cache_mutex.synchronize { @@shared_cache.clear }
+      @@shared_cache_mutex.synchronize do
+        @@shared_cache.clear
+        @@shared_super_cache.clear
+      end
     end
 
     def initialize
@@ -840,60 +938,206 @@ module Noir
       Index.new
     end
 
-    # Variant taking a pre-parsed root so the Kotlin Spring analyzer
-    # can share the parse across the route + parameter walks.
-    # Sibling files still parse independently — but sibling parses
-    # go through the process-wide cache so concurrent analyzers
-    # don't double-up.
+    # Variant taking a pre-parsed root so the Kotlin Spring analyzer can
+    # share the parse across the route + parameter walks. Sibling files
+    # still parse independently — but go through the process-wide cache
+    # so concurrent analyzers don't double-up.
     def build_for_with_root(path : String, content : String, root : LibTreeSitter::TSNode) : Index
       result = Index.new
+      # `supers[class] = superclass simple name`; `origin[class] = the
+      # file that defined it` — the latter lets the inheritance pass
+      # resolve a superclass through the SUBCLASS's imports (Owner imports
+      # `model.Person` even though the controller that pulled Owner in
+      # never mentions the `model` package).
+      supers = Hash(String, String).new
+      origin = Hash(String, String).new
+
       package_name = TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
       imports = TreeSitterKotlinParameterExtractor.extract_imports_from(root, content)
 
-      # Seed the shared cache for the current file from the
-      # already-parsed root so this and any concurrent analyzer's
-      # `related_files` loop reuses it.
+      # Seed the shared caches for the current file from the already-parsed
+      # root so this and any concurrent analyzer's loop reuses it.
       current_fields = TreeSitterKotlinParameterExtractor.extract_class_fields_from(root, content)
+      current_supers = TreeSitterKotlinParameterExtractor.extract_class_supertypes_from(root, content)
       @@shared_cache_mutex.synchronize do
         @@shared_cache[path] ||= current_fields
+        @@shared_super_cache[path] ||= current_supers
       end
 
       Noir::ImportGraph.related_files(path, package_name, imports, "kt") do |file|
-        merge!(result, classes_in(file, path, content))
+        fields, file_supers = load_file(file)
+        absorb!(result, supers, origin, fields, file_supers, file)
       end
 
+      resolve_inheritance!(result, supers, origin)
       result
     end
 
-    private def classes_in(file : String, current_path : String, current_content : String) : Index
-      cached = @@shared_cache_mutex.synchronize { @@shared_cache[file]? }
-      return cached if cached
+    # Pull a file's `{fields, supertypes}` from the shared cache, parsing
+    # it once on a miss. Both maps populate together so a DTO file is
+    # never parsed twice.
+    private def load_file(file : String) : {Index, Hash(String, String)}
+      cached_fields, cached_supers = @@shared_cache_mutex.synchronize do
+        {@@shared_cache[file]?, @@shared_super_cache[file]?}
+      end
+      return {cached_fields, cached_supers} if cached_fields && cached_supers
 
-      fields = parse_classes_for(file, current_path, current_content)
+      fields = Index.new
+      supertypes = Hash(String, String).new
+      body = file_body(file)
+      Noir::TreeSitter.parse_kotlin(body) do |root|
+        fields = TreeSitterKotlinParameterExtractor.extract_class_fields_from(root, body)
+        supertypes = TreeSitterKotlinParameterExtractor.extract_class_supertypes_from(root, body)
+      end
 
       @@shared_cache_mutex.synchronize do
         @@shared_cache[file] ||= fields
-        @@shared_cache[file]
+        @@shared_super_cache[file] ||= supertypes
+        {@@shared_cache[file], @@shared_super_cache[file]}
       end
-    end
-
-    private def parse_classes_for(file : String, current_path : String, current_content : String) : Index
-      body =
-        if file == current_path
-          current_content
-        else
-          CodeLocator.instance.content_for(file) ||
-            File.read(file, encoding: "utf-8", invalid: :skip)
-        end
-      TreeSitterKotlinParameterExtractor.extract_class_fields(body)
     rescue File::NotFoundError
-      Index.new
+      {Index.new, Hash(String, String).new}
     end
 
-    private def merge!(into : Index, src : Index)
-      src.each do |name, fields|
-        into[name] ||= fields
+    private def file_body(file : String) : String
+      CodeLocator.instance.content_for(file) ||
+        File.read(file, encoding: "utf-8", invalid: :skip)
+    end
+
+    private def absorb!(result : Index,
+                        supers : Hash(String, String),
+                        origin : Hash(String, String),
+                        fields : Index,
+                        file_supers : Hash(String, String),
+                        file : String)
+      fields.each do |name, fs|
+        unless result.has_key?(name)
+          result[name] = fs
+          origin[name] ||= file
+        end
       end
+      file_supers.each do |name, sup|
+        supers[name] ||= sup
+        origin[name] ||= file
+      end
+    end
+
+    # Merge inherited fields into each subclass: first pull in files that
+    # define still-unresolved superclasses (following supertype edges the
+    # controller never imported directly), then fold each chain into one
+    # flattened field list.
+    private def resolve_inheritance!(result : Index,
+                                     supers : Hash(String, String),
+                                     origin : Hash(String, String))
+      return if supers.empty?
+
+      pull_superclass_files!(result, supers, origin)
+
+      memo = Hash(String, Array(TreeSitterKotlinParameterExtractor::FieldInfo)).new
+      (result.keys.to_set | supers.keys.to_set).each do |cls|
+        merged = effective_fields(cls, result, supers, memo, Set(String).new)
+        result[cls] = merged unless merged.empty?
+      end
+    end
+
+    private def pull_superclass_files!(result : Index,
+                                       supers : Hash(String, String),
+                                       origin : Hash(String, String))
+      attempted = Set(String).new
+      pending = supers.keys.to_a
+      iterations = 0
+
+      until pending.empty? || iterations > MAX_INHERITANCE_RESOLUTIONS
+        iterations += 1
+        cls = pending.shift
+        sup = supers[cls]?
+        next unless sup
+        next if result.has_key?(sup) || supers.has_key?(sup)
+        next unless attempted.add?(sup)
+        file = origin[cls]?
+        next unless file
+
+        pending.concat(load_superclass_files(result, supers, origin, file))
+      end
+    end
+
+    private def load_superclass_files(result : Index,
+                                      supers : Hash(String, String),
+                                      origin : Hash(String, String),
+                                      subclass_file : String) : Array(String)
+      added = [] of String
+      package_name, imports = file_package_imports(subclass_file)
+
+      Noir::ImportGraph.related_files(subclass_file, package_name, imports, "kt") do |file|
+        fields, file_supers = load_file(file)
+        fields.each do |name, fs|
+          unless result.has_key?(name)
+            result[name] = fs
+            origin[name] ||= file
+            added << name
+          end
+        end
+        file_supers.each do |name, sup|
+          unless supers.has_key?(name)
+            supers[name] = sup
+            origin[name] ||= file
+            added << name
+          end
+        end
+      end
+
+      added
+    end
+
+    private def file_package_imports(file : String) : {String, Array(Noir::ImportGraph::ImportRef)}
+      package_name = ""
+      imports = [] of Noir::ImportGraph::ImportRef
+      body = file_body(file)
+      Noir::TreeSitter.parse_kotlin(body) do |root|
+        package_name = TreeSitterKotlinParameterExtractor.extract_package_name_from(root, body)
+        imports = TreeSitterKotlinParameterExtractor.extract_imports_from(root, body)
+      end
+      {package_name, imports}
+    rescue File::NotFoundError
+      {"", [] of Noir::ImportGraph::ImportRef}
+    end
+
+    # Own fields plus the (already-flattened) superclass fields, deduped
+    # by name so an overriding field wins. `visiting` guards supertype
+    # cycles; `memo` keeps the walk linear.
+    private def effective_fields(cls : String,
+                                 result : Index,
+                                 supers : Hash(String, String),
+                                 memo : Hash(String, Array(TreeSitterKotlinParameterExtractor::FieldInfo)),
+                                 visiting : Set(String)) : Array(TreeSitterKotlinParameterExtractor::FieldInfo)
+      if cached = memo[cls]?
+        return cached
+      end
+
+      own = result[cls]? || [] of TreeSitterKotlinParameterExtractor::FieldInfo
+      sup = supers[cls]?
+
+      if sup.nil? || sup == cls || visiting.includes?(cls)
+        memo[cls] = own
+        return own
+      end
+
+      visiting << cls
+      parent = effective_fields(sup, result, supers, memo, visiting)
+      visiting.delete(cls)
+
+      if parent.empty?
+        memo[cls] = own
+        return own
+      end
+
+      names = own.map(&.name).to_set
+      combined = own.dup
+      parent.each do |field|
+        combined << field unless names.includes?(field.name)
+      end
+      memo[cls] = combined
+      combined
     end
   end
 end
