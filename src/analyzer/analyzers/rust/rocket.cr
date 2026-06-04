@@ -55,19 +55,30 @@ module Analyzer::Rust
       attr = find_named_child(attr_item, "attribute")
       return unless attr
 
-      verb = nil.as(String?)
+      attr_name = nil.as(String?)
       Noir::TreeSitter.each_named_child(attr) do |child|
         case Noir::TreeSitter.node_type(child)
         when "identifier", "scoped_identifier"
-          verb = Noir::TreeSitter.node_text(child, source).downcase
+          attr_name = Noir::TreeSitter.node_text(child, source).downcase
           break
         end
       end
-      return unless verb
-      return unless HTTP_VERBS.includes?(verb)
+      return unless attr_name
 
       arguments = Noir::TreeSitter.field(attr, "arguments")
       return unless arguments
+
+      verb =
+        if HTTP_VERBS.includes?(attr_name)
+          attr_name
+        elsif attr_name == "route"
+          # Generic `#[route(GET, uri = "/p")]` / `#[route("/p",
+          # method = GET)]`. Only standard HTTP verbs are emitted; custom
+          # WebDAV-style methods (PROPFIND, VERSION-CONTROL) are skipped.
+          http_verb_in_token_tree(arguments, source)
+        end
+      return unless verb
+
       route_path, data_param = parse_token_tree(arguments, source)
       return unless route_path
       {route_path, verb.upcase, data_param, Noir::TreeSitter.node_start_row(attr_item) + 1}
@@ -101,6 +112,27 @@ module Analyzer::Rust
       end
 
       {route_path, data_param}
+    end
+
+    # Find the first HTTP verb in a `#[route(...)]` argument list — the
+    # leading `GET` of the legacy form or the `method = GET` value of the
+    # modern form. Checks identifiers and verb-valued string literals;
+    # returns the lowercased verb or nil (custom non-HTTP methods skipped).
+    private def http_verb_in_token_tree(arguments : LibTreeSitter::TSNode, source : String) : String?
+      result : String? = nil
+      Noir::TreeSitter.each_named_child(arguments) do |child|
+        next if result
+        case Noir::TreeSitter.node_type(child)
+        when "identifier", "scoped_identifier"
+          v = Noir::TreeSitter.node_text(child, source).split("::").last.downcase
+          result = v if HTTP_VERBS.includes?(v)
+        when "string_literal"
+          if (s = string_content(child, source)) && HTTP_VERBS.includes?(s.downcase)
+            result = s.downcase
+          end
+        end
+      end
+      result
     end
 
     private def strip_angle_brackets(value : String?) : String?
