@@ -42,6 +42,7 @@ SPEC_FRIENDLY_NAMES = {
   "azure_functions"      => "Azure Functions",
   "cloudflare_wrangler"  => "Cloudflare Workers (wrangler)",
   "istio_virtualservice" => "Istio VirtualService",
+  "kamal"                => "Kamal",
   "k8s_gateway_api"      => "Kubernetes Gateway API (HTTPRoute)",
   "k8s_ingress"          => "Kubernetes Ingress",
   "nginx"                => "Nginx",
