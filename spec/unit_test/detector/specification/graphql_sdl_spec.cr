@@ -48,6 +48,22 @@ describe "Detect GraphQL SDL" do
     instance.detect("ops.graphql", content).should be_false
   end
 
+  it "rejects operation documents with SDL keyword field names" do
+    content = <<-GQL
+      query GetStore {
+        store {
+          id
+          type
+          schema {
+            enum
+          }
+        }
+      }
+      GQL
+
+    instance.detect("ops.graphql", content).should be_false
+  end
+
   it "rejects non-graphql files" do
     instance.applicable?("schema.json").should be_false
   end
