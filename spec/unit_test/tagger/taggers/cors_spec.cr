@@ -50,6 +50,45 @@ describe "CorsTagger" do
       endpoint.tags[0].name.should eq("cors")
     end
 
+    it "tags endpoint with access-control-allow-credentials" do
+      tagger = CorsTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/data", "OPTIONS", [
+        Param.new("access-control-allow-credentials", "true", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("cors")
+    end
+
+    it "tags endpoint with access-control-request-headers" do
+      tagger = CorsTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/data", "OPTIONS", [
+        Param.new("Access-Control-Request-Headers", "X-Custom", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("cors")
+    end
+
+    it "tags a CGI-style HTTP_ORIGIN header" do
+      tagger = CorsTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/data", "GET", [
+        Param.new("HTTP_ORIGIN", "https://example.com", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("cors")
+    end
+
     it "does not tag endpoint without CORS parameters" do
       tagger = CorsTagger.new(default_tagger_options)
 

@@ -13,11 +13,16 @@ class ApiDocsTagger < Tagger
   # generic `/docs` documentation site is not (FastAPI apps are still
   # caught via `/openapi.json` / `/redoc`).
   DOC_SEGMENTS = Set{
-    "swagger", "swagger-ui", "swaggerui", "swagger-resources",
+    "swagger", "swagger-ui", "swagger-resources",
     "openapi", "openapi3", "redoc", "graphiql", "rapidoc",
-    "wsdl", "wadl", "api-docs", "api_docs", "apidocs",
+    "wsdl", "wadl", "api-docs", "api-doc",
     "asyncapi", "api-json", "api-yaml", "apispec", "apispec_1",
   }
+
+  # Separator-insensitive lookup so `/swagger_ui`, `/swaggerui`,
+  # `/open-api`, and `/api_docs` all match regardless of whether the
+  # source used `-`, `_`, or no separator at all.
+  DOC_SEGMENTS_NORMALIZED = DOC_SEGMENTS.map(&.gsub(/[-_]/, "")).to_set
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -27,7 +32,7 @@ class ApiDocsTagger < Tagger
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       segments = doc_segments(endpoint.url)
-      check = segments.any? { |seg| DOC_SEGMENTS.includes?(seg) } ||
+      check = segments.any? { |seg| DOC_SEGMENTS_NORMALIZED.includes?(seg.gsub(/[-_]/, "")) } ||
               api_schema?(segments)
 
       if check
@@ -46,10 +51,24 @@ class ApiDocsTagger < Tagger
   end
 
   # `schema` is too generic to match on its own (GraphQL `/schema`,
-  # resource schema routes), so only flag it alongside an `api`/`openapi`
-  # segment — the drf-spectacular `/api/schema/` shape.
+  # resource schema routes), so only flag the drf-spectacular
+  # `/api/schema/` shape: a `schema` segment directly preceded by an
+  # `api`/`openapi` token or a version token (`/api/v1/schema`). This
+  # keeps the documentation endpoint while excluding data-schema
+  # sub-resources like `/api/forms/{id}/schema` that merely return a
+  # JSON Schema for a resource.
   private def api_schema?(segments : Array(String)) : Bool
-    segments.includes?("schema") &&
-      (segments.includes?("api") || segments.includes?("openapi"))
+    idx = segments.index("schema")
+    return false unless idx
+    return false unless segments.includes?("api") || segments.includes?("openapi")
+
+    prev = idx > 0 ? segments[idx - 1] : nil
+    return false unless prev
+    prev == "api" || prev == "openapi" || version_segment?(prev)
+  end
+
+  # A version path token such as `v1`, `v2`, `v10`.
+  private def version_segment?(segment : String) : Bool
+    !!(segment =~ /\Av\d+\z/)
   end
 end
