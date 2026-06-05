@@ -9,34 +9,41 @@ require "../../models/endpoint"
 class PaymentTagger < Tagger
   # Path segments that strongly imply a payment/financial surface.
   # Matched as whole path segments after splitting on `/`, `-`, `_`, `.`.
+  # `withdrawal(s)` (the noun) stays here; the bare verb `withdraw` is
+  # ambiguous (withdraw an application/registration/bid) and lives below.
   STRONG_PATH_PARTS = Set{
     "payment", "payments", "checkout", "billing", "invoice", "invoices",
-    "refund", "refunds", "payout", "payouts", "withdraw", "withdrawal",
-    "withdrawals", "paypal", "stripe", "braintree",
+    "refund", "refunds", "payout", "payouts", "withdrawal", "withdrawals",
+    "paypal", "stripe", "braintree", "pay", "purchase", "purchases",
   }
 
   # Path segments that often — but not always — mean money: a DB
   # "transaction", a newsletter/web-push "subscription", a battery
-  # "charge". Require a corroborating money parameter before flagging.
+  # "charge", a non-financial "withdraw"/"transfer", an unpaid "order".
+  # Require a corroborating money parameter before flagging.
   AMBIGUOUS_PATH_PARTS = Set{
     "charge", "charges", "transaction", "transactions",
-    "subscription", "subscriptions",
+    "subscription", "subscriptions", "withdraw", "transfer", "transfers",
+    "deposit", "deposits", "wallet", "wallets", "order", "orders",
   }
 
   # Parameter names that strongly imply payment handling on their own
-  # (card data, gateway tokens, payment-method references).
+  # (card data, gateway tokens, payment-method references, bank details).
   STRONG_PARAM_NAMES = Set{
     "card_number", "cardnumber", "cc_number", "ccnumber",
     "cvv", "cvc", "cvv2", "cvn", "csc", "security_code",
-    "card_security_code", "payment_method", "payment_method_id",
-    "payment_intent", "stripe_token", "paypal_token", "card_token",
+    "card_security_code", "card_cvc", "card_expiry", "card_holder",
+    "cardholder_name", "payment_method", "payment_method_id",
+    "payment_method_nonce", "payment_intent", "setup_intent",
+    "stripe_token", "paypal_token", "card_token",
+    "iban", "routing_number", "sort_code",
   }
 
   # Generic money parameters. Weak on their own (and so never trip the
   # tagger by themselves), but enough to corroborate an ambiguous path.
   MONEY_PARAM_NAMES = Set{
     "amount", "currency", "currency_code", "price", "total",
-    "subtotal", "balance",
+    "subtotal", "balance", "total_amount", "amount_due", "grand_total",
   }
 
   def initialize(options : Hash(String, YAML::Any))
