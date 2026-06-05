@@ -117,6 +117,30 @@ describe "DebugTagger" do
       endpoint.tags[0].name.should eq("debug")
     end
 
+    it "tags an Xdebug remote-debug trigger parameter" do
+      tagger = DebugTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/data", "GET", [
+        Param.new("XDEBUG_SESSION_START", "phpstorm", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("debug")
+    end
+
+    it "tags a Laravel Debugbar path" do
+      tagger = DebugTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/_debugbar/open", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("debug")
+    end
+
     it "tags when two distinct weak diagnostic tokens co-occur" do
       tagger = DebugTagger.new(default_tagger_options)
 

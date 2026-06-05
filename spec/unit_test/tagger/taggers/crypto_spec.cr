@@ -70,6 +70,46 @@ describe "CryptoTagger" do
       endpoint.tags[0].name.should eq("crypto")
     end
 
+    it "tags modern and legacy primitive paths (sha3, chacha20, rc4, 3des, pkcs12)" do
+      tagger = CryptoTagger.new(default_tagger_options)
+
+      endpoints = [
+        Endpoint.new("/api/sha3/digest", "POST"),
+        Endpoint.new("/v1/chacha20/encrypt", "POST"),
+        Endpoint.new("/legacy/rc4", "POST"),
+        Endpoint.new("/cipher/3des", "POST"),
+        Endpoint.new("/keys/export.pkcs12", "GET"),
+      ]
+
+      tagger.perform(endpoints)
+
+      endpoints.each { |ep| ep.tags.map(&.name).should contain("crypto") }
+    end
+
+    it "tags a JOSE jwe/jws path" do
+      tagger = CryptoTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/token/jwe", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("crypto")
+    end
+
+    it "tags an endpoint with a pubkey/privkey parameter" do
+      tagger = CryptoTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/op", "POST", [
+        Param.new("privkey", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("crypto")
+    end
+
     it "tags when two distinct weak signals co-occur" do
       tagger = CryptoTagger.new(default_tagger_options)
 

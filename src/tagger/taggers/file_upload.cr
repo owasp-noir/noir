@@ -10,7 +10,11 @@ class FileUploadTagger < Tagger
 
   UPLOAD_PARAM_TYPES = Set{"file", "form", "body", "json"}
   UPLOAD_METHODS     = Set{"POST", "PUT", "PATCH"}
-  UPLOAD_PATH_PARTS  = Set{"upload", "uploads", "attach", "attachment", "attachments", "import", "imports", "avatar", "photo", "photos", "media"}
+  UPLOAD_PATH_PARTS  = Set{
+    "upload", "uploads", "attach", "attachment", "attachments",
+    "import", "imports", "avatar", "photo", "photos", "media",
+    "file", "files", "image", "images", "picture", "pictures",
+  }
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -34,9 +38,14 @@ class FileUploadTagger < Tagger
   end
 
   private def upload_param?(param : Param) : Bool
-    name = normalize_param_name(param.name)
     return false unless UPLOAD_PARAM_TYPES.includes?(param.param_type)
 
+    # A param whose type *is* `file` is a file input regardless of its
+    # name — analyzers emit the raw variable name there (`$_FILES['cv']`,
+    # `$request->files->get('resume')`), which won't appear in WORDS.
+    return true if param.param_type == "file"
+
+    name = normalize_param_name(param.name)
     WORDS.includes?(name) || name.ends_with?("_file") || name.ends_with?("_files")
   end
 
