@@ -32,6 +32,14 @@ module Noir
         # bundles — so a large frontend tree doesn't pay parser cost
         # for files that can't host an endpoint.
         return [] of Endpoint unless route_call_candidate?(content)
+        # Skip minified/bundled assets (webpack/rollup/esbuild output,
+        # `*.min.js`, generated single-line blobs). They never define
+        # hand-written routes, and tokenizing a multi-megabyte bundle is
+        # the dominant scan cost when a small Express/Fastify/... server
+        # lives inside a large frontend monorepo — a single ~1.6 MB
+        # `public/lib/*.js` bundle can keep `parse_routes` busy for
+        # seconds (issue #1903).
+        return [] of Endpoint if minified_content?(content)
         # Skip mock-server fixtures (pretender/mirage/MSW/nock).
         # Their `server.get(...)` / handler-builder calls match the
         # parser's route shape but are not real registrations; on
@@ -339,6 +347,36 @@ module Noir
         content.matches?(FLEXIBLE_ROUTE_CALL_PATTERN)
     end
 
+    # Byte length above which a single source line is treated as
+    # machine-generated. Hand-written JS/TS keeps lines well under this
+    # even in dense route tables (noir's own widest fixture line is
+    # ~150 bytes); webpack/rollup/esbuild bundles and `*.min.js` assets
+    # routinely pack tens of thousands of bytes onto one line, so 5000
+    # leaves a wide safety margin against skipping real source.
+    MINIFIED_LINE_THRESHOLD = 5000
+
+    # True when `content` looks like a minified/bundled asset rather
+    # than hand-written source: it contains at least one line whose byte
+    # length reaches MINIFIED_LINE_THRESHOLD. Such files (browser
+    # bundles served from `public/`, `*.min.js`, generated single-line
+    # blobs) never host hand-written route registrations, and lexing a
+    # multi-megabyte bundle is the dominant cost when a small server
+    # sits inside a large frontend tree (issue #1903). Iterates bytes
+    # with an early exit, so a real minified file is rejected within its
+    # first long line instead of being tokenized in full.
+    def self.minified_content?(content : String, threshold : Int32 = MINIFIED_LINE_THRESHOLD) : Bool
+      run = 0
+      content.each_byte do |byte|
+        if byte == 0x0a_u8 # '\n'
+          run = 0
+        else
+          run += 1
+          return true if run >= threshold
+        end
+      end
+      false
+    end
+
     # Test-fixture libraries whose API mimics route registration:
     # `pretender`/`miragejs` expose `server.get("/x", ...)`, MSW and
     # nock expose handler builders, sinon-via-faker likewise. When
@@ -408,6 +446,18 @@ module Noir
       "require(\"undici\")", "require('undici')",
       "from \"request\"", "from 'request'",
       "require(\"request\")", "require('request')",
+      # Apollo REST data sources. A `class FooAPI extends
+      # RESTDataSource` makes *outbound* calls — `this.get('/users')`,
+      # `this.post('/orders', body)` — whose verb-DSL shape matches the
+      # parser's route hint but registers nothing. Generated BFF data
+      # sources under `**DataSource.ts` are the canonical offenders
+      # (issue #1903); their only HTTP-server-shaped import is the
+      # datasource lib itself, so the server-import exemption below
+      # never keeps them alive by mistake.
+      "from \"apollo-datasource-rest\"", "from 'apollo-datasource-rest'",
+      "require(\"apollo-datasource-rest\")", "require('apollo-datasource-rest')",
+      "from \"@apollo/datasource-rest\"", "from '@apollo/datasource-rest'",
+      "require(\"@apollo/datasource-rest\")", "require('@apollo/datasource-rest')",
     ]
 
     # Real HTTP-server library imports. When any of these is present
@@ -479,6 +529,15 @@ module Noir
       # HTTP-server-import exemption keeps the rare case of a SSR
       # entrypoint that genuinely runs express alive.
       "/app/javascript/",
+      # Web-served static root. By framework convention (Next.js, CRA,
+      # Vite, Express `express.static('public')`, ...) anything under a
+      # `public/` directory is browser-facing static output —
+      # webpack/rollup bundles, vendored libs, `*.min.js` — never a
+      # route registration. A small Express server inside a monorepo
+      # otherwise pays parser cost for every `apps/*/public/lib/*.js`
+      # asset (issue #1903). The HTTP-server-import exemption keeps the
+      # rare hand-written server script that genuinely imports express.
+      "/public/",
     ]
 
     # Hard test-file markers: when the filename itself follows a
@@ -1081,6 +1140,11 @@ module Noir
                                  content.includes?(".register(") || content.includes?(".register (") ||
                                  content.includes?("ServeStaticModule.forRoot") ||
                                  content.includes?("serveStatic")
+
+      # Bundled/minified assets occasionally carry a `.use(`/`.register(`
+      # substring from packed library code; never run the static-mount
+      # regexes across a multi-megabyte single line (issue #1903).
+      return static_paths if minified_content?(content)
 
       # Express patterns:
       # app.use('/static', express.static('public'))

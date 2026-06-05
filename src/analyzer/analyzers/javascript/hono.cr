@@ -24,11 +24,14 @@ module Analyzer::Javascript
           end
 
           # Extract app.on() patterns not handled by JSRouteExtractor.
-          # The primary extractor already gates on `test_stub_only?`;
-          # this auxiliary pass has its own regex walk, so it has to
-          # repeat the same gate — without it, `app.on('GET', '/x10',
-          # ...)` from hono's own `*.test.ts` suites slips through.
-          unless Noir::JSRouteExtractor.test_stub_only?(path, content)
+          # The primary extractor already gates on `test_stub_only?` and
+          # minified bundles; this auxiliary pass has its own regex
+          # walk, so it has to repeat the same gates — without the stub
+          # gate, `app.on('GET', '/x10', ...)` from hono's own
+          # `*.test.ts` suites slips through, and without the minified
+          # gate a multi-MB bundle pays the full scan (issue #1903).
+          unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
+                 Noir::JSRouteExtractor.minified_content?(content)
             extract_on_routes(path, content, result, callees_by_route)
           end
 

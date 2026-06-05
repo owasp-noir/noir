@@ -241,10 +241,71 @@ describe Noir::JSRouteExtractor do
     end
   end
 
+  describe "minified_content?" do
+    it "is false for ordinary multi-line source" do
+      content = <<-JS
+        const express = require("express");
+        const app = express();
+        app.get("/users", (req, res) => res.json([]));
+        JS
+      Noir::JSRouteExtractor.minified_content?(content).should be_false
+    end
+
+    it "is true for a single line past the threshold" do
+      # One 6 KB line, no newlines — the webpack/rollup bundle signature.
+      content = "var app=e();" + ("var _pad=function(a,b){return a+b};" * 200) +
+                "app.get('/x',h);"
+      Noir::JSRouteExtractor.minified_content?(content).should be_true
+    end
+
+    it "detects a long line even when later lines are short" do
+      long_line = "a" * 6000
+      content = "const ok = 1;\n#{long_line}\nconst also = 2;\n"
+      Noir::JSRouteExtractor.minified_content?(content).should be_true
+    end
+
+    it "respects a custom threshold" do
+      content = "x" * 100
+      Noir::JSRouteExtractor.minified_content?(content, 50).should be_true
+      Noir::JSRouteExtractor.minified_content?(content, 200).should be_false
+    end
+  end
+
   describe "extract_routes" do
     it "returns empty for non-existent file" do
       routes = Noir::JSRouteExtractor.extract_routes("/nonexistent/file.js")
       routes.size.should eq(0)
+    end
+
+    it "skips minified bundles even when they contain route shapes" do
+      # The packed `app.get('/leak', ...)` on one long line must not be
+      # tokenized or extracted (issue #1903). extract_routes guards on
+      # File.exists?, so write a real temp file to exercise the path.
+      content = "!function(e){var app=e();" +
+                ("var _0x=function(a,b){return a.concat(b)};" * 200) +
+                "app.get('/leak',function(q,r){r.send('x')});}(window);"
+      file = File.tempfile("bundle", ".js", &.print(content))
+      begin
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        routes.size.should eq(0)
+      ensure
+        file.delete
+      end
+    end
+
+    it "still extracts routes from ordinary express source" do
+      content = <<-JS
+        const express = require("express");
+        const app = express();
+        app.get("/users", (req, res) => res.json([]));
+        JS
+      file = File.tempfile("app", ".js", &.print(content))
+      begin
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        routes.any? { |r| r.url == "/users" && r.method == "GET" }.should be_true
+      ensure
+        file.delete
+      end
     end
   end
 
@@ -536,6 +597,65 @@ describe Noir::JSRouteExtractor do
         JS
       Noir::JSRouteExtractor.test_stub_only?(
         "/app/.github/actions/check-results/dist/index.js",
+        content
+      ).should be_true
+    end
+
+    it "skips browser scripts under public/ without a server import" do
+      # Regression #1903: `apps/*/public/lib/*.js` browser bundles
+      # carry `app.get(...)`-shaped calls but are static output, never
+      # route registrations. No express import → no exemption.
+      content = <<-JS
+        const app = window.__bus;
+        app.get("/public-leak", (q, r) => r.render());
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/repo/apps/web/public/lib/widget.js",
+        content
+      ).should be_true
+    end
+
+    it "keeps public/ files that genuinely import a server lib" do
+      # Exemption guard: the rare hand-written SSR entrypoint that lives
+      # under public/ and actually runs express should still scan.
+      content = <<-JS
+        import express from "express";
+        const app = express();
+        app.get("/real", (req, res) => res.json([]));
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/repo/apps/web/public/server.js",
+        content
+      ).should be_false
+    end
+
+    it "skips Apollo RESTDataSource outbound clients" do
+      # Regression #1903: generated BFF data sources extend
+      # RESTDataSource and call `this.get('/x')` / `this.post('/y')` as
+      # OUTBOUND requests. The `@apollo/datasource-rest` import marks
+      # them as clients, not servers.
+      content = <<-TS
+        import { RESTDataSource } from "@apollo/datasource-rest";
+        export class UsersAPI extends RESTDataSource {
+          getUser(id: string) { return this.get(`/users/${id}`); }
+          createUser(b: object) { return this.post("/users", { body: b }); }
+        }
+        TS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/repo/packages/bff/src/UsersDataSource.ts",
+        content
+      ).should be_true
+    end
+
+    it "also recognizes the legacy apollo-datasource-rest package name" do
+      content = <<-JS
+        const { RESTDataSource } = require("apollo-datasource-rest");
+        class API extends RESTDataSource {
+          getThing() { return this.get("/thing"); }
+        }
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/repo/src/datasources/thing.js",
         content
       ).should be_true
     end

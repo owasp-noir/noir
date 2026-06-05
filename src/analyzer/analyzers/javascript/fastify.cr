@@ -36,8 +36,12 @@ module Analyzer::Javascript
 
           # Auxiliary pass for `fastify.route({ method, url })` shapes
           # the parser doesn't yet handle (multi-line config objects
-          # and the `methods: ['GET','POST']` array form).
-          unless Noir::JSRouteExtractor.test_stub_only?(path, content)
+          # and the `methods: ['GET','POST']` array form). Skip test
+          # stubs (their `.route(` calls aren't registrations) and
+          # minified bundles (a multi-MB single line is pure scan cost,
+          # never a real config — issue #1903).
+          unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
+                 Noir::JSRouteExtractor.minified_content?(content)
             extract_route_configs(path, content, result)
           end
 

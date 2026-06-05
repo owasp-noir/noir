@@ -81,6 +81,10 @@ module Analyzer::Javascript
     # routing-controllers' `this.route` builder) don't accidentally
     # fire — the latter takes no quoted-method first argument.
     private def extract_parse_server_routes(path : String, content : String, result : Array(Endpoint))
+      # Cheap guard: the Parse Server idiom is literally `this.route(`.
+      # Skip the full-content regex scan on every other file so a large
+      # frontend tree doesn't pay it once per JS/TS file (issue #1903).
+      return unless content.includes?("this.route(")
       pattern = /(^|[^.\w])this\.route\(\s*['"]([A-Z]+)['"]\s*,\s*['"]([^'"]+)['"]/m
       seen = Set(Tuple(String, String)).new
       content.scan(pattern) do |m|
