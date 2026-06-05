@@ -790,7 +790,15 @@ module Analyzer::Python
     end
 
     private def flask_relevant_source?(source : ::String) : Bool
-      return true if source.includes?("flask")
+      # Strip # comments (to EOL) before relevance heuristics. This prevents
+      # explanatory comments (in fixtures, docs, or real code) that mention
+      # framework names from causing mis-attribution. E.g. a FastAPI file
+      # whose comment says "flask" would otherwise bypass the competing-import
+      # guard and emit duplicate routes under python_flask tech (which then
+      # wins dedup non-deterministically depending on fiber completion order).
+      clean = source.gsub(/#.*?(?:\n|\z)/m, "\n")
+
+      return true if clean.includes?("flask")
       # A file that imports a competing decorator-based framework (and
       # never mentions flask) is NOT Flask — its `@app.get`/`@router.post`
       # decorators belong to that framework's analyzer. Without this
@@ -801,9 +809,9 @@ module Analyzer::Python
       # params. The route's real owner still emits it correctly, so this
       # only drops the duplicate mislabel (jupyterhub examples/service-
       # fastapi was reported as python_flask).
-      return false if source.matches?(/^\s*(?:from|import)\s+(?:fastapi|sanic|litestar|starlette|quart|robyn)\b/m)
-      return true if source.matches?(/^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m)
-      return true if source.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
+      return false if clean.matches?(/^\s*(?:from|import)\s+(?:fastapi|sanic|litestar|starlette|quart|robyn)\b/m)
+      return true if clean.matches?(/^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m)
+      return true if clean.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
 
       false
     end
