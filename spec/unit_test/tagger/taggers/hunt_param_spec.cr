@@ -334,5 +334,81 @@ describe "HuntParamTagger" do
 
       endpoint.params[0].tags.any? { |t| t.name == "idor" && t.tagger == "Hunt" }.should be_false
     end
+
+    it "tags compound url/uri parameter names as SSRF" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/proxy", "POST", [
+        Param.new("redirectUrl", "http://example.com", "query"),
+        Param.new("callback_uri", "http://example.com", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.any? { |t| t.name == "ssrf" && t.tagger == "Hunt" }.should be_true
+      endpoint.params[1].tags.any? { |t| t.name == "ssrf" && t.tagger == "Hunt" }.should be_true
+    end
+
+    it "does not treat curl-like names ending in url as SSRF" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/run", "POST", [
+        Param.new("curl", "1", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("ssrf")
+    end
+
+    it "tags compound identifier query parameters as IDOR" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/orders", "GET", [
+        Param.new("userId", "42", "query"),
+        Param.new("account_id", "7", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.any? { |t| t.name == "idor" && t.tagger == "Hunt" }.should be_true
+      endpoint.params[1].tags.any? { |t| t.name == "idor" && t.tagger == "Hunt" }.should be_true
+    end
+
+    it "does not promote compound body identifiers to IDOR" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/update", "POST", [
+        Param.new("userId", "42", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("idor")
+    end
+
+    it "tags compound file parameter names as file inclusion" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/download", "GET", [
+        Param.new("file_path", "/etc/passwd", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.any? { |t| t.name == "file-inclusion" && t.tagger == "Hunt" }.should be_true
+    end
+
+    it "does not treat a bare number parameter as IDOR" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/page", "GET", [
+        Param.new("number", "5", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("idor")
+    end
   end
 end

@@ -12,6 +12,22 @@ class JwtTagger < Tagger
     "captcha_token", "recaptcha_token", "turnstile_token",
   }
 
+  # Substrings that mark a `*_token` param as an opaque, non-JWT token:
+  # CSRF/anti-bot tokens, Rails/Devise lifecycle tokens (password reset,
+  # email confirmation, account unlock/activation, remember-me, invites),
+  # and API pagination cursors. These are random strings, not signed JWTs,
+  # so counting them as JWT signals produces false positives on otherwise
+  # auth-shaped routes.
+  NON_JWT_TOKEN_HINTS = %w[
+    csrf xsrf captcha recaptcha turnstile authenticity nonce
+    reset unlock confirmation verification invitation activation remember unsubscribe
+    page pagination next continuation cursor sync
+  ]
+
+  # HTTP auth schemes that are not bearer/JWT; when an Authorization value
+  # advertises one of these, the header is not a JWT signal.
+  NON_BEARER_SCHEMES = /\A\s*(basic|digest|negotiate|ntlm|hoba|aws4|hmac)\b/i
+
   AUTH_PATH_PARTS = Set{"auth", "authenticate", "authentication", "login", "signin", "sign_in", "token", "refresh", "jwt"}
 
   def initialize(options : Hash(String, YAML::Any))
@@ -39,11 +55,29 @@ class JwtTagger < Tagger
   private def jwt_signal?(param : Param) : Bool
     name = normalize_param_name(param.name)
     return false if EXCLUDED_TOKEN_NAMES.includes?(name)
+
+    if name == "authorization"
+      # A populated Authorization header carrying Basic/Digest/etc. is not
+      # a JWT; only treat it as a signal when the value is absent or
+      # bearer-like.
+      return false if non_bearer_authorization?(param.value)
+      return true
+    end
+
     return true if STRONG_NAMES.includes?(name)
+
+    # Anything below is a generic `token`/`*_token` name. Drop the
+    # well-known opaque tokens before counting it as a JWT signal.
+    return false if NON_JWT_TOKEN_HINTS.any? { |hint| name.includes?(hint) }
     return true if name == "token"
-    return true if name.ends_with?("_token") && !name.includes?("csrf") && !name.includes?("captcha")
+    return true if name.ends_with?("_token")
 
     false
+  end
+
+  private def non_bearer_authorization?(value : String) : Bool
+    return false if value.empty?
+    !!value.match(NON_BEARER_SCHEMES)
   end
 
   private def bearer_or_jwt_value?(value : String) : Bool

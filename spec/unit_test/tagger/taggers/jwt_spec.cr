@@ -171,5 +171,62 @@ describe "JwtTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "does not tag Devise-style reset/confirmation tokens on auth routes" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      reset = Endpoint.new("/auth/password/edit", "GET", [
+        Param.new("reset_password_token", "abc123", "query"),
+      ])
+      confirm = Endpoint.new("/auth/confirmation", "GET", [
+        Param.new("confirmation_token", "abc123", "query"),
+      ])
+      unlock = Endpoint.new("/auth/unlock", "GET", [
+        Param.new("unlock_token", "abc123", "query"),
+      ])
+
+      tagger.perform([reset, confirm, unlock])
+
+      reset.tags.size.should eq(0)
+      confirm.tags.size.should eq(0)
+      unlock.tags.size.should eq(0)
+    end
+
+    it "does not tag API pagination tokens" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/items", "GET", [
+        Param.new("page_token", "CAEaBg", "query"),
+        Param.new("next_token", "CAEaBg", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "does not tag a Basic auth Authorization header as JWT" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/login", "POST", [
+        Param.new("Authorization", "Basic dXNlcjpwYXNz", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "still tags an empty Authorization header on an auth route" do
+      tagger = JwtTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/login", "POST", [
+        Param.new("Authorization", "", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.map(&.name).should contain("jwt")
+    end
   end
 end

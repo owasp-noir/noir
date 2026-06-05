@@ -117,5 +117,79 @@ describe "GraphqlTagger" do
 
       endpoint.tags.size.should eq(1)
     end
+
+    it "tags a single query parameter whose value is a GraphQL document" do
+      tagger = GraphqlTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api", "POST", [
+        Param.new("query", "{ users { id name } }", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("graphql")
+    end
+
+    it "tags a named-operation mutation body on a generic URL" do
+      tagger = GraphqlTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/data", "POST", [
+        Param.new("query", "mutation CreateUser($n: String!) { createUser(name: $n) { id } }", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.map(&.name).should contain("graphql")
+    end
+
+    it "tags a canonical query + variables body" do
+      tagger = GraphqlTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api", "POST", [
+        Param.new("query", "", "json"),
+        Param.new("variables", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.map(&.name).should contain("graphql")
+    end
+
+    it "tags a standalone __schema introspection parameter" do
+      tagger = GraphqlTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api", "POST", [
+        Param.new("__schema", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.map(&.name).should contain("graphql")
+    end
+
+    it "does not treat a JSON-object query value as a GraphQL document" do
+      tagger = GraphqlTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/search", "POST", [
+        Param.new("query", %({"term": "shoes"}), "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "does not match gql as a loose substring" do
+      tagger = GraphqlTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/gqlgenerator", "GET", [
+        Param.new("page", "1", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end
