@@ -4,6 +4,11 @@ require "../../models/endpoint"
 class HuntParamTagger < Tagger
   PATH_ALLOWED_TAGS     = Set{"idor", "file-inclusion"}
   BODY_LIKE_PARAM_TYPES = Set{"json", "form", "body"}
+  # IDOR identifier-suffix matching (`userId`, `account_id`) only makes
+  # sense for inputs that address an object directly. Query and path
+  # params qualify; body params stay suppressed to mirror the bare-`id`
+  # heuristic below.
+  IDOR_SUFFIX_PARAM_TYPES = Set{"path", "query"}
 
   TAG_DEFINITIONS = {
     "ssti" => {
@@ -19,7 +24,7 @@ class HuntParamTagger < Tagger
       "description" => "This parameter may be vulnerable to SQL Injection attacks.",
     },
     "idor" => {
-      "words"       => ["id", "user", "account", "number", "order", "false", "doc", "key", "group", "profile", "edit", "report"],
+      "words"       => ["id", "user", "account", "order", "doc", "key", "group", "profile", "edit", "report"],
       "description" => "This parameter may be vulnerable to Insecure Direct Object Reference (IDOR) attacks.",
     },
     "file-inclusion" => {
@@ -69,10 +74,33 @@ class HuntParamTagger < Tagger
     # cased (ID, URL, userId). Normalize so `--use-taggers hunt` doesn't
     # silently miss case variants the way other taggers don't.
     return true if words.includes?(param.name.downcase)
-    return false unless tag_name == "idor"
-    return false unless param.param_type == "path"
 
-    identifier_suffix_like?(param.name)
+    # Compound names are the common shape in real codebases
+    # (`redirectUrl`, `file_path`, `userId`). Match the high-confidence,
+    # low-noise classes on a token basis so these aren't silently dropped
+    # the way an exact-match-only list would.
+    case tag_name
+    when "ssrf"
+      return true if name_tokens(param.name).any? { |token| token == "url" || token == "uri" }
+    when "file-inclusion"
+      return true if name_tokens(param.name).includes?("file")
+    when "idor"
+      if IDOR_SUFFIX_PARAM_TYPES.includes?(param.param_type)
+        return true if identifier_suffix_like?(param.name)
+      end
+    end
+
+    false
+  end
+
+  # Split a parameter name into lowercase word tokens, honoring snake_case,
+  # kebab-case, dotted, and camelCase boundaries (`redirectUrl` ->
+  # ["redirect", "url"], `file_path` -> ["file", "path"]).
+  private def name_tokens(name : String) : Array(String)
+    name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2")
+      .split(/[^A-Za-z0-9]+/)
+      .reject(&.empty?)
+      .map(&.downcase)
   end
 
   private def identifier_suffix_like?(name : String) : Bool
