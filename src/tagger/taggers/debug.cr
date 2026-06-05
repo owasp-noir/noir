@@ -18,12 +18,19 @@ class DebugTagger < Tagger
     "debug", "debugger", "xdebug", "actuator", "pprof", "heapdump",
     "heapdumps", "threaddump", "threaddumps", "phpinfo", "profiler",
     "jolokia", "telescope", "loggers", "configprops",
+    "debugbar", "clockwork", "wdt",
   }
 
   # A debug toggle parameter (`?debug=true`, `?xdebug=...`) flips an
   # endpoint into a debug/verbose mode regardless of its path.
   # `__debugger__` is Werkzeug's interactive-console (RCE) marker.
-  STRONG_PARAM_NAMES = Set{"debug", "xdebug", "debug_mode", "debugger", "__debugger__"}
+  # The `xdebug_session*` / `xdebug_profile` triggers (sent as cookie,
+  # GET, or POST param) switch Xdebug into remote-debug or profiling mode
+  # — a well-known production exposure.
+  STRONG_PARAM_NAMES = Set{
+    "debug", "xdebug", "debug_mode", "debugger", "__debugger__",
+    "xdebug_session", "xdebug_session_start", "xdebug_profile", "xdebug_trigger",
+  }
 
   # `internal` / `_internal` is matched only as a standalone slash
   # segment (not the `-`/`_` split used elsewhere), so `/internal/jobs`
@@ -36,7 +43,7 @@ class DebugTagger < Tagger
   # when two *distinct* weak tokens co-occur.
   WEAK_PATH_PARTS = Set{
     "metrics", "monitor", "monitoring", "diagnostics", "diagnostic",
-    "trace", "traces", "console", "dump", "dumps",
+    "trace", "traces", "console", "dump", "dumps", "prometheus",
   }
 
   def initialize(options : Hash(String, YAML::Any))

@@ -152,6 +152,32 @@ describe "FileUploadTagger" do
       endpoint.tags[0].name.should eq("file_upload")
     end
 
+    it "tags a param whose type is \"file\" regardless of its name" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      # PHP `$_FILES['cv']` / Symfony `$request->files->get('resume')`
+      # surface the raw variable name, which is not in WORDS.
+      endpoint = Endpoint.new("/upload.php", "POST", [
+        Param.new("cv", "", "file"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("file_upload")
+    end
+
+    it "tags POST endpoint with an images path" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/images", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("file_upload")
+    end
+
     it "tags PATCH endpoint with avatar body parameter" do
       tagger = FileUploadTagger.new(default_tagger_options)
 

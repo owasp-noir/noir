@@ -13,21 +13,30 @@ class CryptoTagger < Tagger
   # Unambiguous crypto path segments — one is enough. Matched as whole
   # segments after splitting on `/`, `-`, `_`, `.`. Includes named
   # primitives (aes/rsa/sha256/bcrypt/…) and key-management verbs that
-  # carry no benign meaning as a standalone path segment.
+  # carry no benign meaning as a standalone path segment. Legacy/weak
+  # algorithms (md5/sha1/rc4/3des/blowfish) are kept on purpose — surfacing
+  # an endpoint that still uses one is the point of this tag. Each named
+  # primitive carries a digit or is otherwise distinctive enough to never
+  # collide with a benign word as a whole path segment.
   STRONG_PATH_PARTS = Set{
     "encrypt", "decrypt", "encryption", "decryption", "cipher",
-    "crypto", "cryptography", "hmac", "jwks", "jwk", "jwt", "keystore",
-    "kms", "pgp", "gpg", "unseal", "x509",
-    "aes", "rsa", "dsa", "ecdsa", "ed25519", "sha1", "sha256", "sha512",
-    "md5", "bcrypt", "argon2", "scrypt", "pbkdf2",
+    "crypto", "cryptography", "hmac", "jwks", "jwk", "jwt", "jws", "jwe",
+    "keystore", "kms", "pgp", "gpg", "unseal", "x509",
+    "pkcs7", "pkcs8", "pkcs12", "pfx",
+    "aes", "rsa", "dsa", "ecdsa", "ecdh", "ed25519", "ed448",
+    "x25519", "x448", "curve25519", "secp256k1",
+    "sha1", "sha224", "sha256", "sha384", "sha512", "sha3", "keccak",
+    "ripemd", "ripemd160", "md5", "blake2", "blake3",
+    "rc4", "3des", "blowfish", "twofish", "chacha20", "salsa20",
+    "bcrypt", "argon2", "scrypt", "pbkdf2", "hkdf", "totp", "hotp",
   }
 
   # Parameter names that imply a crypto operation on their own (the
   # plaintext/ciphertext payloads, named key material, passphrases).
   STRONG_PARAM_NAMES = Set{
     "plaintext", "ciphertext", "cleartext", "public_key", "private_key",
-    "secret_key", "signing_key", "encryption_key", "decryption_key",
-    "passphrase", "pem", "hmac",
+    "pubkey", "privkey", "secret_key", "signing_key", "encryption_key",
+    "decryption_key", "passphrase", "pem", "hmac",
   }
 
   # Weaker signals: meaningful for crypto but also seen elsewhere. Tag
