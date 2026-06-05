@@ -50,7 +50,9 @@ module Analyzer::Specification
       end
 
       # kamal-proxy probes the app's health endpoint (default `/up`) on
-      # every deploy, so it is always a live, reachable route.
+      # every deploy, so it is always a live, reachable route. It is
+      # configured independently of `path_prefix`, so emit it verbatim
+      # rather than composing it under a prefix.
       emit(healthcheck_path(proxy), HEALTHCHECK_METHOD, "healthcheck", hosts, protocol, service, app_port, details)
     end
 

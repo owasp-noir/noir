@@ -1,5 +1,4 @@
 require "../../../models/detector"
-require "../../../utils/yaml"
 require "../../../models/code_locator"
 
 module Detector::Specification
@@ -7,7 +6,6 @@ module Detector::Specification
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless kamal_markers?(file_contents)
-      return false unless valid_yaml?(file_contents)
       return false unless kamal_config?(file_contents)
 
       CodeLocator.instance.push("kamal-spec", filename)

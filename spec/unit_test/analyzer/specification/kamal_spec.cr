@@ -98,4 +98,48 @@ describe "Kamal Analyzer" do
 
     endpoints.should be_empty
   end
+
+  it "treats a custom-certificate ssl hash as https" do
+    endpoints = analyze_kamal <<-YAML
+      service: my-app
+      image: acme/my-app
+      proxy:
+        host: app.example.com
+        ssl:
+          certificate_pem: CERT
+          private_key_pem: KEY
+      YAML
+
+    endpoints.should_not be_empty
+    endpoints.each(&.protocol.should(eq("https")))
+  end
+
+  it "keeps protocol http when ssl is explicitly disabled" do
+    endpoints = analyze_kamal <<-YAML
+      service: my-app
+      image: acme/my-app
+      proxy:
+        host: app.example.com
+        ssl: false
+      YAML
+
+    endpoints.should_not be_empty
+    endpoints.each(&.protocol.should(eq("http")))
+  end
+
+  it "deduplicates a host repeated across host and hosts" do
+    endpoints = analyze_kamal <<-YAML
+      service: my-app
+      image: acme/my-app
+      proxy:
+        host: app.example.com
+        hosts:
+          - app.example.com
+          - www.example.com
+      YAML
+
+    endpoints.each do |e|
+      tag_descriptions(e, "kamal-host").should eq ["app.example.com, www.example.com"]
+    end
+  end
 end
