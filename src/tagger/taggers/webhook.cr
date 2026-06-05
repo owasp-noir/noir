@@ -12,9 +12,14 @@ class WebhookTagger < Tagger
 
   # Weaker path segments shared with non-webhook routes. Require a POST
   # (or other write) method before flagging on these alone.
+  #
+  # `notification(s)` are intentionally excluded: an in-app notifications
+  # resource (`POST /api/notifications`, `DELETE /notifications/{id}`) is
+  # far more common than a notification *webhook*, and it is a write, so
+  # the method gate doesn't help. The verb form `notify` is kept — it is
+  # the canonical callback term for payment IPNs (`notify_url`).
   MEDIUM_PATH_PARTS = Set{
-    "hook", "hooks", "callback", "callbacks", "notify", "notification",
-    "notifications",
+    "hook", "hooks", "callback", "callbacks", "notify",
   }
 
   # Webhooks are delivered as non-GET requests. Gate the weaker path
@@ -26,10 +31,23 @@ class WebhookTagger < Tagger
   # Provider-specific signature/event headers. Any one is a strong
   # webhook indicator on its own.
   SIGNATURE_HEADERS = Set{
+    # GitHub / GitLab / Bitbucket / generic
     "x_hub_signature", "x_hub_signature_256", "x_signature",
-    "x_webhook_signature", "stripe_signature", "x_slack_signature",
-    "x_github_event", "x_gitlab_event", "x_gitlab_token",
-    "x_event_key", "paypal_transmission_sig",
+    "x_webhook_signature", "webhook_signature", "x_hook_signature",
+    "x_event_key", "x_github_event", "x_gitlab_event", "x_gitlab_token",
+    # Payments
+    "stripe_signature", "paypal_transmission_sig",
+    "x_razorpay_signature", "x_paystack_signature",
+    "x_square_hmacsha256_signature",
+    # Chat / comms
+    "x_slack_signature", "x_line_signature", "x_zm_signature",
+    "x_signature_ed25519", "x_telegram_bot_api_secret_token",
+    # E-commerce / SaaS / infra
+    "x_shopify_hmac_sha256", "x_shopify_topic",
+    "x_wc_webhook_signature", "x_wc_webhook_topic",
+    "x_twilio_signature", "x_twilio_email_event_webhook_signature",
+    "x_amz_sns_message_type", "x_mandrill_signature",
+    "svix_id", "svix_signature", "svix_timestamp",
   }
 
   def initialize(options : Hash(String, YAML::Any))

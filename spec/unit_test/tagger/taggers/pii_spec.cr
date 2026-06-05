@@ -100,5 +100,60 @@ describe "PiiTagger" do
       endpoint.tags.size.should eq(1)
       endpoint.tags[0].name.should eq("pii")
     end
+
+    it "normalizes camelCase strong names (dateOfBirth)" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/kyc", "POST", [
+        Param.new("dateOfBirth", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("pii")
+    end
+
+    it "tags two camelCase medium names (firstName + lastName)" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/profile", "POST", [
+        Param.new("firstName", "", "json"),
+        Param.new("lastName", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("pii")
+    end
+
+    it "matches a strong token inside a compound name (customerSsn)" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/customer", "POST", [
+        Param.new("customerSsn", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("pii")
+    end
+
+    it "does not tag a benign token that merely contains a PII substring" do
+      tagger = PiiTagger.new(default_tagger_options)
+
+      # `lesson` contains the substring "ssn" but is a single token, so
+      # token matching must not fire on it.
+      endpoint = Endpoint.new("/api/courses", "POST", [
+        Param.new("lessonId", "", "json"),
+        Param.new("lessonName", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end
