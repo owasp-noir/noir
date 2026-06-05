@@ -7,6 +7,14 @@ module Detector::Specification
     # `sdl_document?`. A broad keyword-only check is too loose: generated
     # operation documents often select fields named `type`, `schema`, or
     # `enum`, and those field names can appear at the start of an indented line.
+    #
+    # `sdl_document?` walks the document with a small state machine:
+    # - tracks brace depth (only outside strings) so keywords inside selections,
+    #   fragments, or default values are ignored
+    # - skips block strings (""") and regular strings ("...") so that string
+    #   literals containing SDL-like keywords, #, or {}/ do not affect detection
+    #   or depth (e.g. default values or descriptions with example SDL)
+    # - strips # comments only when not inside a string
     SDL_DECLARATION = /^(?:(?:extend\s+)?(?:type|input|interface|enum|scalar)\s+[A-Za-z_][A-Za-z0-9_]*\b|(?:extend\s+)?union\s+[A-Za-z_][A-Za-z0-9_]*\s*=|directive\s+@[A-Za-z_][A-Za-z0-9_]*\b|(?:extend\s+)?schema\b)/
 
     def detect(filename : String, file_contents : String) : Bool
@@ -21,9 +29,10 @@ module Detector::Specification
     private def sdl_document?(file_contents : String) : Bool
       depth = 0
       in_block_string = false
+      in_string = false
 
       file_contents.each_line do |line|
-        candidate, in_block_string = detection_line(line, in_block_string)
+        candidate, in_block_string, in_string = detection_line(line, in_block_string, in_string)
         if depth == 0 && candidate.strip.match(SDL_DECLARATION)
           return true
         end
@@ -34,22 +43,66 @@ module Detector::Specification
       false
     end
 
-    private def detection_line(line : String, in_block_string : Bool) : Tuple(String, Bool)
-      return {"", true} if in_block_string && !line.includes?("\"\"\"")
-      return {"", false} if in_block_string
+    # Returns the "visible" code portion of the line (strings and comments excised)
+    # and the updated string states for the *next* line.
+    private def detection_line(line : String, in_block_string : Bool, in_string : Bool) : Tuple(String, Bool, Bool)
+      visible = String::Builder.new
+      i = 0
+      curr_block = in_block_string
+      curr_str = in_string
 
-      if triple_start = line.index("\"\"\"")
-        before = line[0...triple_start]
-        rest = line[(triple_start + 3)..]
-        if rest && rest.includes?("\"\"\"")
-          return {before, false}
+      while i < line.size
+        if curr_block
+          # inside block string: skip until we see closing """
+          if i + 2 < line.size && line[i] == '"' && line[i + 1] == '"' && line[i + 2] == '"'
+            curr_block = false
+            i += 3
+            next
+          end
+          i += 1
+          next
         end
-        return {before, true}
+
+        if curr_str
+          # inside regular "string": skip until unescaped closing "
+          ch = line[i]
+          if ch == '\\' && i + 1 < line.size
+            i += 2
+            next
+          end
+          if ch == '"'
+            curr_str = false
+            i += 1
+            next
+          end
+          i += 1
+          next
+        end
+
+        # not inside any string
+        ch = line[i]
+        if ch == '"'
+          if i + 2 < line.size && line[i + 1] == '"' && line[i + 2] == '"'
+            curr_block = true
+            i += 3
+            next
+          else
+            curr_str = true
+            i += 1
+            next
+          end
+        end
+
+        if ch == '#'
+          # comment: stop here, do not include # or rest of line in visible code
+          break
+        end
+
+        visible << ch
+        i += 1
       end
 
-      comment_start = line.index('#')
-      return {line[0...comment_start], false} if comment_start
-      {line, false}
+      {visible.to_s, curr_block, curr_str}
     end
 
     private def update_depth(line : String, current : Int32) : Int32
