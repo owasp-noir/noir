@@ -79,6 +79,38 @@ describe "ApiDocsTagger" do
       endpoint.tags[0].name.should eq("api_docs")
     end
 
+    it "tags an underscore-separated swagger_ui endpoint" do
+      tagger = ApiDocsTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/swagger_ui.html", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("api_docs")
+    end
+
+    it "tags a versioned drf /api/v1/schema endpoint" do
+      tagger = ApiDocsTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/v1/schema/", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("api_docs")
+    end
+
+    it "does not tag a data-schema sub-resource under /api" do
+      tagger = ApiDocsTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/forms/42/schema", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
     it "does not tag a bare schema segment without api/openapi context" do
       tagger = ApiDocsTagger.new(default_tagger_options)
 

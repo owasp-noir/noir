@@ -59,6 +59,30 @@ describe "AdminTagger" do
       endpoint.tags[0].name.should eq("admin")
     end
 
+    it "tags a camelCase privilege-mutation parameter" do
+      tagger = AdminTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/users/42", "PATCH", [
+        Param.new("isSuperuser", "true", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("admin")
+    end
+
+    it "tags a superadmin path segment" do
+      tagger = AdminTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/superadmin/settings", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("admin")
+    end
+
     it "tags a weak privilege parameter only on a state-changing method" do
       tagger = AdminTagger.new(default_tagger_options)
 
