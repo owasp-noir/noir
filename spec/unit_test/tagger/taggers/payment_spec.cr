@@ -112,5 +112,78 @@ describe "PaymentTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "tags a /pay path" do
+      tagger = PaymentTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/pay", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("payment")
+    end
+
+    it "tags a /purchase path" do
+      tagger = PaymentTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/purchase", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("payment")
+    end
+
+    it "tags an endpoint carrying bank-transfer details (IBAN)" do
+      tagger = PaymentTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/beneficiaries", "POST", [
+        Param.new("iban", "DE89...", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("payment")
+    end
+
+    it "tags an ambiguous /orders path when a money parameter corroborates" do
+      tagger = PaymentTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/orders", "POST", [
+        Param.new("total", "42", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("payment")
+    end
+
+    it "tags a wallet withdrawal carrying an amount" do
+      tagger = PaymentTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/wallet/withdraw", "POST", [
+        Param.new("amount", "100", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("payment")
+    end
+
+    it "does not tag a non-financial withdraw without a money parameter" do
+      tagger = PaymentTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/applications/123/withdraw", "POST", [
+        Param.new("reason", "changed my mind", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end

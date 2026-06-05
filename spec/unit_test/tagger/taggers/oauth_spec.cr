@@ -173,5 +173,81 @@ describe "OAuthTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "tags the authorization-code redirect handler on a callback path" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/users/auth/google/callback", "GET", [
+        Param.new("code", "abc123", "query"),
+        Param.new("state", "xyz", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "tags an /oauth path carrying a single OAuth parameter" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/oauth/authorize", "GET", [
+        Param.new("client_id", "my-app", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "tags the OAuth device-flow token endpoint" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/oauth/token", "POST", [
+        Param.new("grant_type", "urn:ietf:params:oauth:grant-type:device_code", "form"),
+        Param.new("device_code", "GmRh...", "form"),
+        Param.new("client_id", "my-app", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "does not tag a generic callback receiving only a code" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/payment/callback", "GET", [
+        Param.new("code", "settled", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "does not tag a bearer-protected resource served from an oauth host" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("https://oauth.example.com/api/users", "GET", [
+        Param.new("access_token", "ya29...", "query"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "does not tag an OIDC discovery document with no OAuth parameters" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/.well-known/openid-configuration", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end

@@ -26,7 +26,10 @@ class McpTagger < Tagger
     segments = path_segments(path)
 
     return true if segments.includes?("mcp")
-    return true if path.includes?("model-context-protocol")
+    # Match the spelled-out name regardless of the separator used
+    # (`model-context-protocol`, `model_context_protocol`, or the squashed
+    # `modelcontextprotocol`).
+    return true if path.gsub(/[-_]/, "").includes?("modelcontextprotocol")
 
     legacy_mcp_endpoint?(endpoint, segments, legacy_prefixes)
   end

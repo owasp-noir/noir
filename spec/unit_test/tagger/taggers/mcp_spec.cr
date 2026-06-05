@@ -58,6 +58,17 @@ describe "McpTagger" do
       endpoint.tags[0].name.should eq("mcp")
     end
 
+    it "tags model-context-protocol paths written with underscores" do
+      tagger = McpTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/model_context_protocol", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("mcp")
+    end
+
     it "tags legacy SSE transport pairs" do
       tagger = McpTagger.new(default_tagger_options)
 
