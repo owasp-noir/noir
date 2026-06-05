@@ -17,6 +17,12 @@ class EndpointOptimizer
     end
   end
 
+  # A URL that already carries its own scheme + authority
+  # (e.g. `https://host/path`). The HAR / OAS detectors emit these, so
+  # the optimizer must not prepend a target, collapse the `//` after the
+  # scheme, or treat the leading segment as a path.
+  ABSOLUTE_URL_RE = /\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//
+
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     @pvalue_rules = initialize_pvalue_rules
   end
@@ -110,14 +116,11 @@ class EndpointOptimizer
       # Backslash-escaped dots (re_path `r"\.json"`) → literal dot.
       url = url.gsub("\\.", ".")
 
-      # Final double-slash collapse in case the rewrites left an
-      # adjacent pair (e.g., trimming a leading `^` after `/`).
-      # Skip when the URL carries a scheme like `https://` — the
-      # HAR / OAS detectors emit absolute URLs and the `//` after
-      # the colon is structural, not a path separator.
-      unless url.matches?(/\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//)
-        url = url.gsub_repeatedly("//", "/")
-      end
+      # Final path double-slash collapse in case the rewrites left an
+      # adjacent pair (e.g., trimming a leading `^` after `/`). Skip
+      # absolute URLs entirely — the HAR / OAS detectors emit them and
+      # the `//` after the scheme is structural, not a path separator.
+      url = collapse_path_slashes(url) unless url.matches?(ABSOLUTE_URL_RE)
 
       endpoint.url = url
       endpoints[idx] = endpoint
@@ -188,8 +191,14 @@ class EndpointOptimizer
     endpoints.each do |endpoint|
       tiny_tmp = endpoint
 
-      # Check if method is allowed, otherwise default to GET
-      if !allowed_methods.includes?(tiny_tmp.method.upcase)
+      # Normalize the HTTP method to upper case. This makes the dedup
+      # key case-insensitive (`get` and `GET` for the same URL are one
+      # endpoint, not two) and keeps the emitted method canonical.
+      # Unknown verbs fall back to GET.
+      upcased_method = tiny_tmp.method.upcase
+      if allowed_methods.includes?(upcased_method)
+        tiny_tmp.method = upcased_method
+      else
         @logger.debug_sub "  - Invalid HTTP method: '#{tiny_tmp.method}' for '#{tiny_tmp.url}', defaulting to GET"
         tiny_tmp.method = "GET"
       end
@@ -207,15 +216,19 @@ class EndpointOptimizer
 
       # Duplicate check
       unless tiny_tmp.url.empty?
-        absolute_url = tiny_tmp.url.matches?(/\A[a-zA-Z][a-zA-Z0-9+.\-]*:\/\//)
+        absolute_url = tiny_tmp.url.matches?(ABSOLUTE_URL_RE)
 
-        # Check start with slash
-        if !absolute_url && tiny_tmp.url[0] != "/"
+        # Ensure a leading slash for relative URLs. Compare against the
+        # `'/'` char literal — comparing the `Char` returned by `[]` to
+        # the `"/"` string is always true, which would prepend a slash
+        # even to already-rooted URLs (the double-slash collapse below
+        # papered over it).
+        if !absolute_url && tiny_tmp.url[0] != '/'
           tiny_tmp.url = "/#{tiny_tmp.url}"
         end
 
-        # Check double slash
-        tiny_tmp.url = tiny_tmp.url.gsub_repeatedly("//", "/") unless absolute_url
+        # Collapse accidental double slashes in the path.
+        tiny_tmp.url = collapse_path_slashes(tiny_tmp.url) unless absolute_url
 
         key = {tiny_tmp.method, tiny_tmp.url}
 
@@ -252,11 +265,25 @@ class EndpointOptimizer
 
       endpoints.each do |endpoint|
         tmp_endpoint = endpoint
-        if tmp_endpoint.url.includes? target_url
-          tmp_endpoint.url = tmp_endpoint.url.gsub(target_url, "")
+
+        # An endpoint that already carries its own scheme + host (HAR /
+        # OAS absolute URLs) is self-contained. Prefixing the target or
+        # collapsing its scheme `//` would corrupt it, so pass it
+        # through untouched.
+        if tmp_endpoint.url.matches?(ABSOLUTE_URL_RE)
+          tmp << tmp_endpoint
+          next
         end
 
-        tmp_endpoint.url = tmp_endpoint.url.gsub_repeatedly("//", "/")
+        # Strip the target only when it is an actual leading prefix.
+        # `gsub` here would also rewrite a target host that merely
+        # appears inside a query value (e.g.
+        # `/proxy?next=https://host/x`), dropping it from the path.
+        if tmp_endpoint.url.starts_with?(target_url)
+          tmp_endpoint.url = tmp_endpoint.url[target_url.size..]
+        end
+
+        tmp_endpoint.url = collapse_path_slashes(tmp_endpoint.url)
         unless tmp_endpoint.url.empty?
           if target_url[-1] == '/' && tmp_endpoint.url[0] == '/'
             tmp_endpoint.url = tmp_endpoint.url[1..]
@@ -282,127 +309,125 @@ class EndpointOptimizer
     endpoints.each do |endpoint|
       new_endpoint = endpoint
 
-      # Handle {param} patterns. The placeholder may sit at a segment
+      # `{param}` patterns. The placeholder may sit at a segment
       # boundary (`/{id}`) or share a segment with sibling variables
       # separated by a comma — Spring's matrix-style `@GetMapping(
       # "/bbox/{xMin},{yMin},{xMax},{yMax}")` packs four into one
       # segment, so allow a leading `,` as well as `/` (otherwise only
       # the first variable in the segment is captured).
-      scans = endpoint.url.scan(/[\/,]\{([^}]+)\}/).flatten
-      scans.each do |match|
-        # Strip a leading `*` from catch-all path variables. Spring,
+      endpoint.url.scan(/[\/,]\{([^}]+)\}/).each do |match|
+        raw = match[1]
+        # Strip a leading `*` from catch-all path variables (Spring,
         # Armeria and ASP.NET all spell the rest-of-path capture as
-        # `{*name}` (e.g. `/files/{*path}`); the parameter is named
-        # `name`, not `*name`.
-        param = match[1].split(":")[0].lstrip('*')
+        # `{*name}`, e.g. `/files/{*path}`) and any inline regex/type
+        # constraint after `:`. The parameter is named `name`, not
+        # `*name` or `name:regex`.
+        param = raw.split(":")[0].lstrip('*')
         next if param.empty?
-        new_value = apply_pvalue("path", param, "")
-        unless new_value.empty?
-          new_endpoint.url = new_endpoint.url.gsub("{#{match[1]}}", new_value)
-        end
-
-        new_param = Param.new(param, "", "path")
-        unless path_param_present?(new_endpoint.params, param)
-          new_endpoint.params << new_param
-        end
+        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "{#{raw}}", param)
       end
 
-      # Handle /:param patterns
-      scans = endpoint.url.scan(/\/:([^\/{}]+)/).flatten
-      scans.each do |match|
-        # The capture greedily includes any literal suffix that follows the
-        # param within the same segment (e.g. Play's `/:lang.json` or
-        # `/:id.gif`). Path param names are identifiers, so keep only the
-        # leading identifier and drop the extension/format suffix.
-        param = leading_path_param(match[1])
+      # `/:param` patterns.
+      endpoint.url.scan(/\/:([^\/{}]+)/).each do |match|
+        raw = match[1]
+        # The capture greedily includes any literal suffix that follows
+        # the param within the same segment (e.g. Play's `/:lang.json`
+        # or `/:id.gif`). Path param names are identifiers, so keep only
+        # the leading identifier and drop the extension/format suffix.
+        param = leading_path_param(raw)
         next unless param
-
-        new_value = apply_pvalue("path", param, "")
-        unless new_value.empty?
-          new_endpoint.url = new_endpoint.url.gsub(":#{match[1]}", new_value)
-        end
-
-        new_param = Param.new(param, "", "path")
-        unless path_param_present?(new_endpoint.params, param)
-          new_endpoint.params << new_param
-        end
+        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, ":#{raw}", param)
       end
 
-      # Handle <param> patterns (Django/Marten style)
-      scans = endpoint.url.scan(/<([^>]+)>/).flatten
-      scans.each do |match|
-        parts = match[1].split(":")
-        if parts.size > 1
-          # Handle both Django style <type:name> and Marten style <name:type>
-          # Check if first part looks like a type (int, str, slug, uuid, etc.)
-          if parts[0] =~ /^(int|str|string|slug|uuid|float|bool|path)$/
-            # Django style: <type:name>
-            param = parts[1]
-          else
-            # Marten style: <name:type>
-            param = parts[0]
-          end
-        else
-          param = parts[0]
-        end
-
+      # `<param>` patterns (Django / Marten style).
+      endpoint.url.scan(/<([^>]+)>/).each do |match|
+        raw = match[1]
+        param = angle_bracket_param(raw)
         # Skip regex fragments. Play declares constrained path params as
-        # `$name<regex>`, so the framework analyzer already recorded `name`;
-        # the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not a param name.
+        # `$name<regex>`, so the framework analyzer already recorded
+        # `name`; the `<regex>` body (e.g. `\w{8}`, `[\w-]{2,6}`) is not
+        # a param name.
         next unless valid_path_param_name?(param)
-
-        new_value = apply_pvalue("path", param, "")
-        unless new_value.empty?
-          new_endpoint.url = new_endpoint.url.gsub("<#{match[1]}>", new_value)
-        end
-
-        new_param = Param.new(param, "", "path")
-        unless path_param_present?(new_endpoint.params, param)
-          new_endpoint.params << new_param
-        end
+        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "<#{raw}>", param)
       end
 
-      # Handle /*param patterns (wildcard/glob parameters)
-      scans = endpoint.url.scan(/\/\*([^\/]+)/).flatten
-      scans.each do |match|
+      # `/*param` patterns (wildcard / glob).
+      endpoint.url.scan(/\/\*([^\/]+)/).each do |match|
+        raw = match[1]
         # Only named splats are parameters (`/files/*path` -> `path`).
         # A bare glob like Armeria's `glob:/glob/**` captures `*`, and
         # a gRPC resource template leaves a trailing `}` — neither is a
         # real parameter name.
-        next unless valid_path_param_name?(match[1])
-        new_value = apply_pvalue("path", match[1], "")
-        unless new_value.empty?
-          new_endpoint.url = new_endpoint.url.gsub("*#{match[1]}", new_value)
-        end
-
-        new_param = Param.new(match[1], "", "path")
-        unless path_param_present?(new_endpoint.params, match[1])
-          new_endpoint.params << new_param
-        end
+        next unless valid_path_param_name?(raw)
+        new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "*#{raw}", raw)
       end
 
-      # Reconcile path params against same-named query/body params for
-      # Ruby frameworks. Rack/Rails frameworks (Rails, Sinatra, Hanami,
-      # Roda, Grape) merge captured path segments into a single `params`
-      # hash, so a handler that reads `params[:id]` for a `/users/:id`
-      # route is reading the path value — not a separate query/body field.
-      # Once the path type is known, the duplicate non-path entry is
-      # redundant. This is NOT done globally: frameworks with separate
-      # path/query/body buckets (Lucky's typed params, Express
-      # `req.params` vs `req.query`) legitimately carry both.
-      tech = new_endpoint.details.technology
-      if tech && tech.starts_with?("ruby_")
-        path_names = new_endpoint.params.compact_map { |p| p.param_type == "path" ? p.name : nil }
-        unless path_names.empty?
-          path_name_set = path_names.to_set
-          new_endpoint.params.reject! { |p| p.param_type != "path" && path_name_set.includes?(p.name) }
-        end
-      end
+      reconcile_ruby_path_params(new_endpoint)
 
       final << new_endpoint
     end
 
     final
+  end
+
+  # Substitute a configured path-param value into the URL when one is
+  # set, then record the param (deduped by name). Returns the updated
+  # URL; `params` is mutated in place — it is the endpoint's own array
+  # reference, so the push persists on the caller's struct.
+  private def register_path_param(url : String, params : Array(Param), placeholder : String, name : String) : String
+    value = apply_pvalue("path", name, "")
+    url = url.gsub(placeholder, value) unless value.empty?
+    params << Param.new(name, "", "path") unless path_param_present?(params, name)
+    url
+  end
+
+  # Resolve the param name from a `<...>` capture, handling both Django
+  # `<type:name>` and Marten `<name:type>` ordering. When the first
+  # `:`-segment is a known converter type it's Django ordering; otherwise
+  # the name comes first.
+  private def angle_bracket_param(raw : String) : String
+    parts = raw.split(":")
+    return parts[0] if parts.size <= 1
+    parts[0] =~ /^(int|str|string|slug|uuid|float|bool|path)$/ ? parts[1] : parts[0]
+  end
+
+  # Reconcile path params against same-named query/body params for Ruby
+  # frameworks. Rack/Rails frameworks (Rails, Sinatra, Hanami, Roda,
+  # Grape) merge captured path segments into a single `params` hash, so a
+  # handler that reads `params[:id]` for a `/users/:id` route is reading
+  # the path value — not a separate query/body field. Once the path type
+  # is known, the duplicate non-path entry is redundant. This is NOT done
+  # globally: frameworks with separate path/query/body buckets (Lucky's
+  # typed params, Express `req.params` vs `req.query`) carry both.
+  private def reconcile_ruby_path_params(endpoint : Endpoint) : Nil
+    tech = endpoint.details.technology
+    return unless tech && tech.starts_with?("ruby_")
+
+    path_names = endpoint.params.compact_map { |p| p.param_type == "path" ? p.name : nil }
+    return if path_names.empty?
+
+    path_name_set = path_names.to_set
+    endpoint.params.reject! { |p| p.param_type != "path" && path_name_set.includes?(p.name) }
+  end
+
+  # Collapse accidental duplicate slashes in the *path* only. A query or
+  # fragment may legitimately embed an absolute URL — e.g. an OAuth
+  # callback `/cb?redirect_uri=https://app/x` — whose `//` must survive.
+  # Callers gate this on the URL being relative, so the leading
+  # `scheme://` is never in play here.
+  private def collapse_path_slashes(url : String) : String
+    return url unless url.includes?("//")
+
+    query = url.index('?')
+    fragment = url.index('#')
+    cut = if query && fragment
+            Math.min(query, fragment)
+          else
+            query || fragment
+          end
+
+    return url.gsub_repeatedly("//", "/") unless cut
+    url[0...cut].gsub_repeatedly("//", "/") + url[cut..]
   end
 
   # A path param name is a plain identifier; anything else (a regex fragment,

@@ -42,6 +42,29 @@ describe "EndpointOptimizer" do
       result[0].method.should eq("ANY")
     end
 
+    it "canonicalizes valid methods to upper case" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "get"),
+        Endpoint.new("/test", "Post"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.map(&.method).should eq(["GET", "POST"])
+    end
+
+    it "deduplicates endpoints whose methods differ only in case" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/api/users", "get"),
+        Endpoint.new("/api/users", "GET"), # same endpoint, different casing
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.size.should eq(1)
+      result[0].method.should eq("GET")
+    end
+
     it "normalizes URLs with slashes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
@@ -62,6 +85,18 @@ describe "EndpointOptimizer" do
 
       result = optimizer.optimize_endpoints(endpoints)
       result[0].url.should eq("https://api.example.com/v1/users")
+    end
+
+    it "collapses path slashes without touching an embedded URL in the query" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        # The double slash in `https://` inside the query value must
+        # survive; only the redundant `//` in the path is collapsed.
+        Endpoint.new("//auth//callback?redirect_uri=https://app.example/cb", "GET"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].url.should eq("/auth/callback?redirect_uri=https://app.example/cb")
     end
 
     it "strips Spring inline regex constraints from path variables" do
@@ -124,6 +159,35 @@ describe "EndpointOptimizer" do
 
       result = optimizer.combine_url_and_endpoints(endpoints)
       result[0].url.should eq("/api/users")
+    end
+
+    it "strips the target only as a leading prefix, not inside query values" do
+      options["url"] = YAML::Any.new("https://example.com")
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        # The target host appears in a query value, not as a prefix — a
+        # blanket gsub would drop it and corrupt the redirect target.
+        Endpoint.new("/proxy?next=https://example.com/login", "GET"),
+        # Already-prefixed endpoint should be de-duplicated to a single prefix.
+        Endpoint.new("https://example.com/api/users", "GET"),
+      ]
+
+      result = optimizer.combine_url_and_endpoints(endpoints)
+      result[0].url.should eq("https://example.com/proxy?next=https://example.com/login")
+      result[1].url.should eq("https://example.com/api/users")
+    end
+
+    it "passes through absolute endpoint URLs on a different host" do
+      options["url"] = YAML::Any.new("https://example.com")
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("https://cdn.other.com/assets/app.js", "GET"),
+      ]
+
+      result = optimizer.combine_url_and_endpoints(endpoints)
+      # The scheme `//` must survive (no collapse) and the target must
+      # not be prepended onto a self-contained absolute URL.
+      result[0].url.should eq("https://cdn.other.com/assets/app.js")
     end
   end
 
