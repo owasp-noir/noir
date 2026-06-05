@@ -83,7 +83,7 @@ describe "CryptoTagger" do
 
       tagger.perform(endpoints)
 
-      endpoints.each { |ep| ep.tags.map(&.name).should contain("crypto") }
+      endpoints.each(&.tags.map(&.name).should(contain("crypto")))
     end
 
     it "tags a JOSE jwe/jws path" do
