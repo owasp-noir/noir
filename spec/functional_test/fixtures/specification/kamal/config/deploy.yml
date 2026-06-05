@@ -1,0 +1,38 @@
+# Kamal deploy configuration (https://kamal-deploy.org)
+service: shadow-app
+image: acme/shadow-app
+
+servers:
+  web:
+    - 192.168.0.1
+    - 192.168.0.2
+  job:
+    hosts:
+      - 192.168.0.3
+    cmd: bin/jobs
+
+proxy:
+  ssl: true
+  host: shadow.example.com
+  app_port: 3000
+  healthcheck:
+    path: /healthz
+    interval: 3
+    timeout: 5
+
+registry:
+  username: acme
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+env:
+  clear:
+    PORT: 3000
+  secret:
+    - RAILS_MASTER_KEY
+
+accessories:
+  db:
+    image: mysql:8.0
+    host: 192.168.0.4
+    port: 3306
