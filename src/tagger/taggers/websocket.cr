@@ -1,9 +1,32 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+# Flags WebSocket endpoints — long-lived, bidirectional channels whose
+# threat model (origin checks on the handshake, per-message authz, no
+# CSRF token on the upgrade) differs from a request/response route.
 class WebsocketTagger < Tagger
-  WORDS        = ["sec-websocket-key", "sec-websocket-accept", "sec-websocket-version"]
+  # AsyncAPI specs carry the raw server protocol (`ws`, `wss`,
+  # `websocket`); HTTP analyzers set `ws`. Accept every spelling so
+  # `wss`/`websocket` endpoints aren't missed.
   WS_PROTOCOLS = Set{"ws", "wss", "websocket"}
+
+  # Handshake headers that appear essentially *only* in a WebSocket
+  # upgrade, so a single one is conclusive. `Sec-WebSocket-Key` (client)
+  # and `Sec-WebSocket-Accept` (server) are reserved for the handshake.
+  STRONG_HEADERS = Set{"sec_websocket_key", "sec_websocket_accept"}
+
+  # Also part of the handshake but individually a touch less conclusive;
+  # two together flag the endpoint.
+  WEAK_HEADERS = Set{
+    "sec_websocket_version", "sec_websocket_protocol",
+    "sec_websocket_extensions",
+  }
+
+  # Transport-library markers that survive in the URL even when the
+  # analyzer leaves the protocol as plain HTTP — Socket.IO and SockJS run
+  # an HTTP handshake before upgrading, so their routes are emitted as
+  # ordinary HTTP endpoints.
+  URL_MARKERS = ["socket.io", "sockjs"]
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -12,34 +35,44 @@ class WebsocketTagger < Tagger
 
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
-      tmp_params = [] of String
-
-      # AsyncAPI specs carry the raw server protocol (`ws`, `wss`,
-      # `websocket`), while HTTP analyzers set `ws`. Normalize case and
-      # accept all WebSocket protocol spellings so `wss`/`websocket`
-      # endpoints aren't missed.
-      if WS_PROTOCOLS.includes?(endpoint.protocol.downcase)
+      if websocket?(endpoint)
         tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")
         endpoint.add_tag(tag)
-      else
-        endpoint.params.each do |param|
-          tmp_params.push param.name.to_s.downcase
-        end
-
-        words_set = Set.new(WORDS)
-        tmp_params_set = Set.new(tmp_params)
-        intersection = words_set & tmp_params_set
-
-        # Require at least two WebSocket-related headers to flag the
-        # endpoint when the protocol metadata is missing (e.g. for
-        # plain HTTP endpoints that happen to mention Sec-WebSocket-*).
-        check = intersection.size >= 2
-
-        if check
-          tag = Tag.new("websocket", "WebSocket endpoint for real-time, bidirectional communication between clients and servers, enabling efficient data exchanges.", "WebSocket")
-          endpoint.add_tag(tag)
-        end
       end
     end
+  end
+
+  private def websocket?(endpoint : Endpoint) : Bool
+    return true if WS_PROTOCOLS.includes?(endpoint.protocol.downcase)
+    return true if url_marker?(endpoint.url)
+    header_websocket?(endpoint)
+  end
+
+  private def url_marker?(url : String) : Bool
+    lowered = url.downcase
+    URL_MARKERS.any? { |marker| lowered.includes?(marker) }
+  end
+
+  # A single conclusive handshake header (`Sec-WebSocket-Key`/`-Accept`),
+  # an explicit `Upgrade: websocket`, or any two weaker handshake headers
+  # mark the endpoint when the protocol metadata is missing.
+  private def header_websocket?(endpoint : Endpoint) : Bool
+    strong = 0
+    weak = 0
+    upgrade = false
+
+    endpoint.params.each do |param|
+      next unless param.param_type == "header"
+      name = param.name.downcase.tr("-", "_")
+      if STRONG_HEADERS.includes?(name)
+        strong += 1
+      elsif WEAK_HEADERS.includes?(name)
+        weak += 1
+      elsif name == "upgrade" && param.value.downcase.includes?("websocket")
+        upgrade = true
+      end
+    end
+
+    strong >= 1 || upgrade || weak >= 2
   end
 end

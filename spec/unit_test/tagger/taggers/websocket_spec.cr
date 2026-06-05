@@ -75,7 +75,7 @@ describe "WebsocketTagger" do
       endpoint.tags[0].name.should eq("websocket")
     end
 
-    it "requires at least 2 matching headers" do
+    it "tags on a single conclusive handshake header (Sec-WebSocket-Key)" do
       tagger = WebsocketTagger.new(default_tagger_options)
 
       endpoint = Endpoint.new("/chat", "GET", [
@@ -84,7 +84,70 @@ describe "WebsocketTagger" do
 
       tagger.perform([endpoint])
 
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("websocket")
+    end
+
+    it "tags on Sec-WebSocket-Accept alone" do
+      tagger = WebsocketTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/chat", "GET", [
+        Param.new("Sec-WebSocket-Accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+    end
+
+    it "requires at least 2 weak handshake headers" do
+      tagger = WebsocketTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/chat", "GET", [
+        Param.new("sec-websocket-version", "13", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
       endpoint.tags.size.should eq(0)
+    end
+
+    it "tags on two weak handshake headers" do
+      tagger = WebsocketTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/chat", "GET", [
+        Param.new("sec-websocket-version", "13", "header"),
+        Param.new("sec-websocket-protocol", "chat", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+    end
+
+    it "tags on an explicit Upgrade: websocket header" do
+      tagger = WebsocketTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/chat", "GET", [
+        Param.new("Upgrade", "websocket", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+    end
+
+    it "tags Socket.IO / SockJS URLs even when protocol stays http" do
+      ["/socket.io/", "/sockjs/info"].each do |path|
+        tagger = WebsocketTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(path, "GET")
+        endpoint.protocol = "http"
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("websocket")
+      end
     end
 
     it "does not tag endpoint without WebSocket indicators" do

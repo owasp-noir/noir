@@ -91,5 +91,42 @@ describe "WebhookTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "tags on newer provider signature headers" do
+      ["X-Shopify-Hmac-Sha256", "Svix-Signature", "X-Razorpay-Signature",
+       "X-Line-Signature", "X-Amz-Sns-Message-Type"].each do |header|
+        tagger = WebhookTagger.new(default_tagger_options)
+        endpoint = Endpoint.new("/integrations/x", "POST", [
+          Param.new(header, "", "header"),
+        ])
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("webhook")
+      end
+    end
+
+    it "does not tag an in-app notifications resource (FP guard)" do
+      ["POST", "DELETE", "PUT"].each do |method|
+        tagger = WebhookTagger.new(default_tagger_options)
+        endpoint = Endpoint.new("/api/notifications", method)
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(0)
+      end
+    end
+
+    it "still tags a POST /notify (payment IPN callback)" do
+      tagger = WebhookTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/payment/notify", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("webhook")
+    end
   end
 end

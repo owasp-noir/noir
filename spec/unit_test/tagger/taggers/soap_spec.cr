@@ -78,5 +78,52 @@ describe "SoapTagger" do
       endpoint1.tags.size.should eq(1)
       endpoint2.tags.size.should eq(0)
     end
+
+    it "tags WSDL / ASMX URLs" do
+      ["/service?wsdl", "/Service.wsdl", "/Account.asmx"].each do |url|
+        tagger = SoapTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(url, "GET")
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("soap")
+      end
+    end
+
+    it "tags a SOAP 1.2 Content-Type header" do
+      tagger = SoapTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/webservice", "POST", [
+        Param.new("Content-Type", "application/soap+xml; charset=utf-8", "header"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("soap")
+    end
+
+    it "does not tag a bare 'soap' path segment (store listing FP)" do
+      tagger = SoapTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/products/soap", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "ignores a soapaction-like name on a non-header param" do
+      tagger = SoapTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/data", "POST", [
+        Param.new("soapaction", "x", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end
