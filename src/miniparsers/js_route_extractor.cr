@@ -38,15 +38,24 @@ module Noir
         # the dominant scan cost when a small Express/Fastify/... server
         # lives inside a large frontend monorepo — a single ~1.6 MB
         # `public/lib/*.js` bundle can keep `parse_routes` busy for
-        # seconds (issue #1903).
-        return [] of Endpoint if minified_content?(content)
+        # seconds (issue #1903). Unlike `test_stub_only?`, this skip is
+        # intentionally NOT re-enabled by an HTTP-server import: a
+        # minified single line is never the canonical hand-written
+        # server even if it bundles express's own source.
+        if minified_content?(content)
+          STDERR.puts "Skipping #{file_path} for route extraction (minified/bundled asset)" if debug
+          return [] of Endpoint
+        end
         # Skip mock-server fixtures (pretender/mirage/MSW/nock).
         # Their `server.get(...)` / handler-builder calls match the
         # parser's route shape but are not real registrations; on
         # Ember-based projects (Discourse, etc.) these files account
         # for the bulk of analysis time and produce only false
         # positives.
-        return [] of Endpoint if test_stub_only?(file_path, content)
+        if test_stub_only?(file_path, content)
+          STDERR.puts "Skipping #{file_path} for route extraction (test-stub/non-server marker)" if debug
+          return [] of Endpoint
+        end
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
         callees_by_route = if include_callees
@@ -347,34 +356,61 @@ module Noir
         content.matches?(FLEXIBLE_ROUTE_CALL_PATTERN)
     end
 
-    # Byte length above which a single source line is treated as
-    # machine-generated. Hand-written JS/TS keeps lines well under this
-    # even in dense route tables (noir's own widest fixture line is
-    # ~150 bytes); webpack/rollup/esbuild bundles and `*.min.js` assets
-    # routinely pack tens of thousands of bytes onto one line, so 5000
-    # leaves a wide safety margin against skipping real source.
+    # Byte length above which a single source line is considered "long".
+    # Hand-written JS/TS keeps lines well under this even in dense route
+    # tables (noir's own widest fixture line is ~150 bytes); webpack/
+    # rollup/esbuild bundles and `*.min.js` assets routinely pack tens of
+    # thousands of bytes onto one line, so 5000 leaves a wide margin.
+    # NB: the metric is bytes, not characters — a dense single-line
+    # non-Latin blob (>=5000 bytes but fewer chars) can trip it, which is
+    # acceptable since real route registrations are ASCII verbs/paths.
     MINIFIED_LINE_THRESHOLD = 5000
 
-    # True when `content` looks like a minified/bundled asset rather
-    # than hand-written source: it contains at least one line whose byte
-    # length reaches MINIFIED_LINE_THRESHOLD. Such files (browser
-    # bundles served from `public/`, `*.min.js`, generated single-line
-    # blobs) never host hand-written route registrations, and lexing a
-    # multi-megabyte bundle is the dominant cost when a small server
-    # sits inside a large frontend tree (issue #1903). Iterates bytes
-    # with an early exit, so a real minified file is rejected within its
-    # first long line instead of being tokenized in full.
-    def self.minified_content?(content : String, threshold : Int32 = MINIFIED_LINE_THRESHOLD) : Bool
+    # Average bytes-per-line above which a file is considered *dominated*
+    # by long lines, i.e. a bundle rather than hand-written source that
+    # merely carries one fat literal (a big inline JSON seed, an embedded
+    # base64 data URI, a long regex). Real code keeps the average low
+    # because it has many short lines around any such literal.
+    MINIFIED_AVG_LINE_THRESHOLD = 1000
+
+    # True when `content` looks like a minified/bundled asset rather than
+    # hand-written source. Two conditions must BOTH hold so we never drop
+    # the routes of a normal file that just happens to carry one long
+    # line (issue #1903 review):
+    #   1. at least one line reaches MINIFIED_LINE_THRESHOLD bytes, and
+    #   2. the file's average line length reaches
+    #      MINIFIED_AVG_LINE_THRESHOLD — long lines dominate, newline
+    #      density is low.
+    # webpack/rollup output and `*.min.js` satisfy both (the whole file
+    # is one or a few enormous lines); a route module with a 7 KB inline
+    # payload amid dozens of short route lines satisfies neither, so its
+    # real endpoints survive. Skipping such a file is purely a parser
+    # optimization — small files lex fast regardless — so there is no
+    # need to skip one merely because it embeds a fat literal.
+    def self.minified_content?(content : String,
+                               line_threshold : Int32 = MINIFIED_LINE_THRESHOLD,
+                               avg_threshold : Int32 = MINIFIED_AVG_LINE_THRESHOLD) : Bool
+      bytesize = content.bytesize
+      # Too small to contain a long-enough line — also skips the scan on
+      # the vast majority of source files for free.
+      return false if bytesize < line_threshold
+
+      longest = 0
       run = 0
+      lines = 1
       content.each_byte do |byte|
         if byte == 0x0a_u8 # '\n'
+          longest = run if run > longest
           run = 0
+          lines += 1
         else
           run += 1
-          return true if run >= threshold
         end
       end
-      false
+      longest = run if run > longest
+
+      return false if longest < line_threshold
+      (bytesize // lines) >= avg_threshold
     end
 
     # Test-fixture libraries whose API mimics route registration:

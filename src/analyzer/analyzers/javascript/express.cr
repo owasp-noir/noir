@@ -85,6 +85,10 @@ module Analyzer::Javascript
       # Skip the full-content regex scan on every other file so a large
       # frontend tree doesn't pay it once per JS/TS file (issue #1903).
       return unless content.includes?("this.route(")
+      # And, mirroring the fastify/hono auxiliary passes, don't walk the
+      # regex across a multi-MB minified single line that merely packs a
+      # `this.route(` substring from library code.
+      return if Noir::JSRouteExtractor.minified_content?(content)
       pattern = /(^|[^.\w])this\.route\(\s*['"]([A-Z]+)['"]\s*,\s*['"]([^'"]+)['"]/m
       seen = Set(Tuple(String, String)).new
       content.scan(pattern) do |m|
