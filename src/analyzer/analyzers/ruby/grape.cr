@@ -41,7 +41,7 @@ module Analyzer::Ruby
       class_prefix = ""
       version_prefix = ""
       pending_params = [] of String
-      in_params_block = false
+      params_block_depth = 0
       last_endpoint : Endpoint? = nil
       lines = content.lines
 
@@ -50,19 +50,26 @@ module Analyzer::Ruby
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
-        if in_params_block
-          if stripped == "end" || stripped.starts_with?("end ")
-            in_params_block = false
-            next
-          end
-          stripped.scan(/(?:requires|optional)\s+[:\'"]([\w]+)[\'"]?/) do |m|
-            pending_params << m[1] if m.size > 1
+        if params_block_depth > 0
+          # Grape allows nested validation blocks (`requires :x, type: Hash do
+          # ... end`), so the params block closes only when depth returns to 0.
+          # A plain boolean let the first inner `end` close it early, leaking the
+          # remaining `end`(s) to the main parser, which then popped the
+          # enclosing namespace/resource prefix frame.
+          if stripped == "end" || stripped.starts_with?("end ") || stripped.starts_with?("end#")
+            params_block_depth -= 1
+            next if params_block_depth <= 0
+          else
+            params_block_depth += ruby_do_block_open_delta(stripped)
+            stripped.scan(/(?:requires|optional)\s+[:\'"]([\w]+)[\'"]?/) do |m|
+              pending_params << m[1] if m.size > 1
+            end
           end
           next
         end
 
         if stripped == "params do" || stripped.starts_with?("params do")
-          in_params_block = true
+          params_block_depth = 1
           next
         end
 
