@@ -517,6 +517,12 @@ module LLM
       "gpt-oss-20b"  => 128000,
       "default"      => 4000,
     },
+    # OpenRouter proxies many large-context frontier models whose exact ids we
+    # don't control, so use a generous model-agnostic default rather than the
+    # 4000-token global default (which over-shards bundles).
+    "openrouter" => {
+      "default" => 128000,
+    },
     "default" => 4000,
   }
 

@@ -20,7 +20,7 @@ class ConfigInitializer
     ai_context
     nolog
     no_spinner
-    send_req
+    probe # legacy `send_req` is migrated to `probe` before this coercion runs
     all_taggers
     status_codes
     passive_scan

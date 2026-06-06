@@ -829,7 +829,12 @@ module Analyzer::AI
       end
 
       response = if adapter.supports_context?
-                   ctx_key = "#{@provider}:#{@model}:#{kind}"
+                   # BUNDLE_ANALYZE runs one fiber per bundle concurrently and they
+                   # would all share this one key — reusing a single KV-context
+                   # across independent bundles contaminates results (and races the
+                   # adapter's @contexts Hash). Disable context reuse for that kind;
+                   # each request already carries the full system + bundle prompt.
+                   ctx_key = kind == "BUNDLE_ANALYZE" ? nil : "#{@provider}:#{@model}:#{kind}"
                    adapter.request_with_context(system_prompt, payload, format, ctx_key)
                  else
                    messages = [{"role" => "system", "content" => system_prompt}, {"role" => "user", "content" => payload}]

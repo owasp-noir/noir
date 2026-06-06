@@ -279,9 +279,9 @@ module Noir::ImportGraph::Python
           # Parse `import (\n a,\n b,\n c)` pattern — track
           # bytes from the opening `(` to the matching `)`.
           index = offset + round_bracket_index + 1
-          while index < content.size && content[index] != ')'
-            index += 1
-          end
+          # Single index() call instead of an O(n^2) per-char walk over the
+          # remaining file (String#[](Int) is O(n) on multi-byte content).
+          index = content.index(')', index) || content.size
           imports = content[(offset + round_bracket_index + 1)..(index - 1)].strip
         end
 

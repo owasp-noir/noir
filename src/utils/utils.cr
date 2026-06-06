@@ -9,11 +9,18 @@ def get_relative_path(base_path : String, path : String) : String
                       # This avoids an issue where `.sub(".", "")` would remove the dot from file extensions.
                       path
                     else
-                      # For other base paths, remove the base path prefix.
+                      # Remove the base path prefix, anchored to the START only.
+                      # `String#sub` replaces the first match anywhere, so an
+                      # unanchored double-sub corrupted paths where base_path
+                      # recurred inside a dir/file name.
                       base = base_path.ends_with?("/") ? base_path : "#{base_path}/"
-                      path
-                        .sub(base, "")
-                        .sub(base_path, "") # Fallback if base doesn't end with /
+                      if path.starts_with?(base)
+                        path[base.size..]
+                      elsif path.starts_with?(base_path)
+                        path[base_path.size..]
+                      else
+                        path
+                      end
                     end
 
   # Then, normalize the resulting path.
@@ -55,7 +62,9 @@ end
 # Safely checks if a regex matches a string within a given timeout.
 # This helps mitigate ReDoS (Regular Expression Denial of Service) attacks.
 def regex_matches_with_timeout?(regex : Regex, input : String, timeout : Time::Span = 500.milliseconds) : Bool
-  result_channel = Channel(Bool).new
+  # Buffered (capacity 1): on timeout the caller stops receiving, so an
+  # unbuffered send from the late-finishing fiber would block forever (fiber leak).
+  result_channel = Channel(Bool).new(1)
 
   spawn do
     result_channel.send(regex.matches?(input))
