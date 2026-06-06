@@ -41,7 +41,7 @@ allow_extensions = ["jpg", "jpeg", "png", "gif", "svg", "webp"]
 [highlight]
 enabled = true
 theme = "atom-one-dark"
-use_cdn = true
+use_cdn = false
 
 # =============================================================================
 # OpenGraph & Twitter Cards
