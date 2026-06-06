@@ -73,7 +73,10 @@ module Analyzer::Cpp
         route_path = route_match[1]
         normalized_path, path_params = normalize_path(route_path)
         details = Details.new(PathInfo.new(path, index + 1))
-        route_offset = line_offsets[index] + (route_match.begin(0) || 0)
+        # line_offsets is byte-based; begin(0) is a char index within the line —
+        # convert the line prefix to its byte length so route_offset is a true
+        # byte offset consistent with the byte-based extractor/search below.
+        route_offset = line_offsets[index] + line[0, (route_match.begin(0) || 0)].bytesize
         search_start = route_offset + route_match[0].bytesize
 
         # The websocket handler is a chain of `.onopen/.onmessage/...` lambdas
@@ -136,11 +139,13 @@ module Analyzer::Cpp
     end
 
     private def next_route_offset(source : String, search_start : Int32) : Int32
+      # search_start is a byte offset; use byte_index so the returned limit stays
+      # in byte space (consistent with the byte-based lambda extractor).
       offsets = [
-        source.index("CROW_ROUTE", search_start),
-        source.index("CROW_BP_ROUTE", search_start),
-        source.index("CROW_WEBSOCKET_ROUTE", search_start),
-        source.index("route_dynamic", search_start),
+        source.byte_index("CROW_ROUTE", search_start),
+        source.byte_index("CROW_BP_ROUTE", search_start),
+        source.byte_index("CROW_WEBSOCKET_ROUTE", search_start),
+        source.byte_index("route_dynamic", search_start),
       ].compact
       offsets.min? || source.bytesize
     end
