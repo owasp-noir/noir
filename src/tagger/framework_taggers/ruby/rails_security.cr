@@ -192,9 +192,9 @@ class RailsSecurityTagger < FrameworkTagger
   #   except: "create" | except: ["create"]
   private def action_in_filter?(line : String, action_name : String?) : Bool
     return false if action_name.nil?
-    return true if line.includes?(":#{action_name}")
-    return true if line.includes?("\"#{action_name}\"")
-    return true if line.includes?("'#{action_name}'")
+    # Whole-token match (symbol/quote prefix + delimiter) so action `create`
+    # is NOT matched by `:create_comment` / `except: [:show_all]`.
+    return true if line.matches?(/(?::|"|')#{Regex.escape(action_name)}(?:"|'|,|\s|\]|\)|$)/)
     if m = line.match(/%[iIwW]\[([^\]]*)\]/)
       return m[1].split.includes?(action_name)
     end

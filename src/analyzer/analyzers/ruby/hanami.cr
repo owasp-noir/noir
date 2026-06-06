@@ -418,17 +418,29 @@ module Analyzer::Ruby
     end
 
     private def scan_action_params(endpoint : Endpoint, lines : Array(String))
-      in_params_block = false
+      params_depth = 0
 
       lines.each do |line|
-        # Detect params block
-        if line.strip == "params do"
-          in_params_block = true
-          next
-        elsif line.strip == "end" && in_params_block
-          in_params_block = false
+        stripped = line.strip
+        # dry-validation params blocks nest (`required(:address).hash do ...
+        # end`), so track depth and exit only on the OUTERMOST `end`. A plain
+        # boolean exited on the first inner `end`, dropping later params and
+        # fabricating query params from DSL lines still inside the block.
+        if params_depth == 0 && stripped == "params do"
+          params_depth = 1
           next
         end
+
+        if params_depth > 0
+          if closes_ruby_block?(stripped)
+            params_depth -= 1
+            next if params_depth == 0
+          else
+            params_depth += ruby_do_block_open_delta(stripped)
+          end
+        end
+
+        in_params_block = params_depth > 0
 
         # Extract params from params block
         # Matches required(:name) or optional(:name) - validation methods like
