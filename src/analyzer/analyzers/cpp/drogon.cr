@@ -93,7 +93,7 @@ module Analyzer::Cpp
                     ["GET"]
                   end
 
-        match_start = match.begin(0) || 0
+        match_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         line_number = Noir::CppCalleeExtractor.line_number_for(content, match_start)
         callees = include_callee ? callees_for_block_after(content, path, match_start) : [] of Noir::CppCalleeExtractor::Entry
         route_params = params_for_register_handler(content, match_start)
@@ -219,14 +219,14 @@ module Analyzer::Cpp
 
     private def each_macro_call(content : String, macro_name : String, &block : Array(String), Int32 ->)
       content.scan(/\b#{macro_name}\s*\(/) do |match|
-        call_start = match.begin(0) || 0
+        call_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         open_paren = Noir::CppCalleeExtractor.find_next_code_char(content, '(', call_start)
         next unless open_paren
 
         close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
         next unless close_paren
 
-        args = split_top_level_args(content[(open_paren + 1)...close_paren])
+        args = split_top_level_args(content.byte_slice(open_paren + 1, close_paren - open_paren - 1))
         block.call(args, call_start)
       end
     end
@@ -269,7 +269,7 @@ module Analyzer::Cpp
     private def controller_scopes(content : String) : Array(ControllerScope)
       scopes = [] of ControllerScope
       content.scan(/\b(?:class|struct)\s+([A-Za-z_][A-Za-z0-9_]*)\b/) do |match|
-        class_start = match.begin(0) || 0
+        class_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         open_brace = Noir::CppCalleeExtractor.find_next_code_char(content, '{', class_start)
         next unless open_brace
 
@@ -290,7 +290,7 @@ module Analyzer::Cpp
     private def enclosing_namespaces(content : String, target : Int32) : Array(String)
       found = [] of Tuple(Int32, String)
       content.scan(/\bnamespace\s+([A-Za-z_][A-Za-z0-9_]*(?:\s*::\s*[A-Za-z_][A-Za-z0-9_]*)*)\s*\{/) do |match|
-        ns_start = match.begin(0) || 0
+        ns_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         open_brace = Noir::CppCalleeExtractor.find_next_code_char(content, '{', ns_start)
         next unless open_brace
         next if open_brace >= target
@@ -342,7 +342,9 @@ module Analyzer::Cpp
     end
 
     private def handler_target_for_register_handler(content : String, search_start : Int32) : HandlerTarget?
-      handler_index = content.index("registerHandler", search_start)
+      # search_start is a BYTE offset; byte_index keeps it in byte space so the
+      # result feeds the byte-based find_next_code_char below consistently.
+      handler_index = content.byte_index("registerHandler", search_start)
       return unless handler_index
 
       open_paren = Noir::CppCalleeExtractor.find_next_code_char(content, '(', handler_index)
@@ -351,7 +353,7 @@ module Analyzer::Cpp
       close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
       return unless close_paren
 
-      args = split_top_level_args(content[(open_paren + 1)...close_paren])
+      args = split_top_level_args(content.byte_slice(open_paren + 1, close_paren - open_paren - 1))
       return if args.size < 2
 
       raw_handler = args[1].strip
@@ -442,7 +444,7 @@ module Analyzer::Cpp
     private def extract_method_body_in_range(content : String, method_pattern : String, range : SourceRange) : Tuple(String, Int32)?
       range_start, range_end = range
       content.scan(/\b#{method_pattern}\s*\(/) do |match|
-        match_start = match.begin(0) || 0
+        match_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         next if match_start < range_start || match_start >= range_end
         next if call_context?(content, match_start)
 
@@ -455,7 +457,7 @@ module Analyzer::Cpp
         body_open = Noir::CppCalleeExtractor.find_next_code_char(content, '{', close_paren + 1)
         next unless body_open
         next if body_open > range_end
-        next unless method_suffix?(content[(close_paren + 1)...body_open])
+        next unless method_suffix?(content.byte_slice(close_paren + 1, body_open - close_paren - 1))
 
         semicolon = Noir::CppCalleeExtractor.find_next_code_char(content, ';', close_paren + 1)
         next if semicolon && semicolon < body_open
@@ -463,7 +465,7 @@ module Analyzer::Cpp
         body_close = Noir::CppCalleeExtractor.find_matching_delimiter(content, body_open, '{', '}')
         next unless body_close
 
-        return {content[(body_open + 1)...body_close], Noir::CppCalleeExtractor.line_number_for(content, body_open)}
+        return {content.byte_slice(body_open + 1, body_close - body_open - 1), Noir::CppCalleeExtractor.line_number_for(content, body_open)}
       end
 
       nil
@@ -471,7 +473,7 @@ module Analyzer::Cpp
 
     private def class_body_range(content : String, class_name : String) : SourceRange?
       content.scan(/\b(?:class|struct)\s+#{Regex.escape(class_name)}\b/) do |match|
-        class_start = match.begin(0) || 0
+        class_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         open_brace = Noir::CppCalleeExtractor.find_next_code_char(content, '{', class_start)
         next unless open_brace
 

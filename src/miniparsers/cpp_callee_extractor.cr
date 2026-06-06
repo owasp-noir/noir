@@ -57,19 +57,21 @@ module Noir::CppCalleeExtractor
     close_index = find_matching_delimiter(source, open_index, '{', '}', limit)
     return unless close_index
 
-    {source[(open_index + 1)...close_index], line_number_for(source, open_index)}
+    # open_index/close_index are BYTE offsets (the scanners use byte_at); slice
+    # by bytes — char-indexing here corrupts/crashes on multi-byte UTF-8 source.
+    {source.byte_slice(open_index + 1, close_index - open_index - 1), line_number_for(source, open_index)}
   end
 
   def extract_lambda_block_after(source : String, start_index : Int32, limit : Int32 = source.bytesize) : Tuple(String, Int32)?
     open_index = find_next_code_char(source, '{', start_index, limit)
     return unless open_index
     return if find_next_code_char(source, ';', start_index, open_index)
-    return unless source[start_index...open_index].includes?('[')
+    return unless source.byte_slice(start_index, open_index - start_index).includes?('[')
 
     close_index = find_matching_delimiter(source, open_index, '{', '}', limit)
     return unless close_index
 
-    {source[(open_index + 1)...close_index], line_number_for(source, open_index)}
+    {source.byte_slice(open_index + 1, close_index - open_index - 1), line_number_for(source, open_index)}
   end
 
   def find_next_code_char(source : String, target : Char, start_index : Int32, limit : Int32 = source.bytesize) : Int32?
