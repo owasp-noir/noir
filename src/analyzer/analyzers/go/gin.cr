@@ -24,6 +24,7 @@ module Analyzer::Go
       # router.Group("/v1"))`). The prefix lives at the call site, so it
       # must be grafted onto the helper's routes.
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups)
+      framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         WaitGroup.wait do |wg|
@@ -43,7 +44,8 @@ module Analyzer::Go
                   next if GoEngine.go_test_file?(path)
                   if File.exists?(path)
                     content = file_contents[path]? || read_file_content(path)
-                    next unless content.includes?(IMPORT_MARKER)
+                    dir = File.dirname(path)
+                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "Static"])
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
@@ -52,7 +54,7 @@ module Analyzer::Go
                     # line loop below can attribute body params (Query/PostForm
                     # /GetHeader/Cookie) to the most recently declared route —
                     # matching the legacy `last_endpoint` semantics.
-                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    cross_file_groups = ts_groups_for_directory(package_groups, dir)
 
                     # Router-builder expansion: graft call-site prefixes onto
                     # the routes of `func addXRoutes(rg *gin.RouterGroup)`
@@ -65,7 +67,6 @@ module Analyzer::Go
                     # keep their params/callees.) Expanded helpers' bodies are
                     # suppressed in the whole-file pass to avoid emitting the
                     # prefix-less variant alongside the corrected one.
-                    dir = File.dirname(path)
                     dir_builder_prefixes = builder_prefixes_by_dir[dir]? || EMPTY_BUILDER_PREFIXES
                     expand_builders = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
                     suppress_ranges = [] of Range(Int32, Int32)
@@ -96,7 +97,7 @@ module Analyzer::Go
                     # function bodies via the per-directory map.
                     route_rows = Set(Int32).new
                     routes_by_line.each_key { |row| route_rows << row }
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+                    external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
                     callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
                     # Gin uses `r.Static("/url", "./dir")`. Pick these up
