@@ -20,6 +20,14 @@ class Admin::RefundsController < ApplicationController
     request.headers['X-Template']
   end
 
+  def inline_summary
+    request.headers['X-Inline-Summary']
+  end
+
+  def inline_preview
+    request.headers['X-Inline-Preview']
+  end
+
   def purge
     request.headers['X-Confirm']
     params["id"]
