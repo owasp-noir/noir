@@ -67,8 +67,11 @@ module Noir
       package_name = ""
       current_type = ""
       current_depth = 0
+      # Scrubbed copy (strings/comments blanked, newlines preserved) for brace
+      # counting, so a `}` inside a const string value can't close the type early.
+      scrubbed_lines = visible_kotlin_code(source).lines
 
-      source.each_line do |line|
+      source.each_line.with_index do |line, idx|
         if package_name.empty?
           if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
             package_name = match[1]
@@ -91,9 +94,10 @@ module Noir
         end
 
         unless current_type.empty?
-          current_depth += line.count("{")
-          current_depth -= line.count("}")
-          if current_depth <= 0 && line.includes?("}")
+          structural = scrubbed_lines[idx]? || line
+          current_depth += structural.count("{")
+          current_depth -= structural.count("}")
+          if current_depth <= 0 && structural.includes?("}")
             current_type = ""
             current_depth = 0
           end
@@ -438,12 +442,16 @@ module Noir
         name = match[1]
         expr = lines[i][(match.end(0) || line.size)..]? || ""
         j = i
+        broke_on_decl = false
         unless expr.includes?(".path(")
           j = i + 1
           while j < lines.size
             visible_next_line = visible_lines[j]
-            break if visible_next_line.match(/^\s*(?:[A-Za-z_][A-Za-z0-9_<>.]*\s+)*fun\b/)
-            break if visible_next_line.match(/^\s*(?:class|object|interface|companion\s+object)\b/)
+            if visible_next_line.match(/^\s*(?:[A-Za-z_][A-Za-z0-9_<>.]*\s+)*fun\b/) ||
+               visible_next_line.match(/^\s*(?:class|object|interface|companion\s+object)\b/)
+              broke_on_decl = true
+              break
+            end
             break if visible_next_line.strip == "}"
             expr += "\n#{lines[j]}"
             break if visible_next_line.includes?(".path(")
@@ -455,7 +463,9 @@ module Noir
           helpers[name] = route
         end
 
-        i = j + 1
+        # If the scan stopped ON a new declaration line, re-examine it rather than
+        # skipping it — otherwise a back-to-back PredicateSpec helper is missed.
+        i = broke_on_decl ? j : j + 1
       end
 
       helpers

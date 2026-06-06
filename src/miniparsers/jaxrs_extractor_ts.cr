@@ -586,17 +586,9 @@ module Noir
           when "string_literal", "identifier", "field_access", "scoped_identifier", "binary_expression", "parenthesized_expression"
             result = resolve_path_value(child, source, constants, current_class)
           when "element_value_pair"
-            key = ""
-            value : LibTreeSitter::TSNode? = nil
-            Noir::TreeSitter.each_named_child(child) do |sub|
-              case Noir::TreeSitter.node_type(sub)
-              when "identifier"
-                key = Noir::TreeSitter.node_text(sub, source) if key.empty?
-              else
-                value = sub if value.nil?
-              end
-            end
-            if key == "value" && value
+            key = Noir::TreeSitter.field(child, "key")
+            value = Noir::TreeSitter.field(child, "value")
+            if key && value && Noir::TreeSitter.node_text(key, source) == "value"
               result = resolve_path_value(value, source, constants, current_class)
             end
           end
@@ -720,6 +712,7 @@ module Noir
 
       ann_kind : Symbol? = nil
       ann_arg : String? = nil
+      ann_format : String? = nil
       default_value : String? = nil
 
       each_annotation(param, source) do |name, args, _|
@@ -732,11 +725,11 @@ module Noir
           ann_kind = :context
         elsif name == "DefaultValue"
           default_value = first_string_arg(args, source, constants, current_class)
-        elsif format = PARAM_ANNOTATION_FORMAT[name]?
+        elsif fmt = PARAM_ANNOTATION_FORMAT[name]?
           ann_kind = :param
+          ann_format = fmt
           ann_arg = first_string_arg(args, source, constants, current_class)
           ann_arg ||= ""
-          sink << Param.new(ann_arg.presence || param_name, default_value || "", format)
         end
       end
 
@@ -753,7 +746,9 @@ module Noir
         end
         return
       when :param
-        # already emitted above
+        # Emit here (not inside the loop) so @DefaultValue is captured
+        # regardless of annotation order on the parameter.
+        sink << Param.new((ann_arg || "").presence || param_name, default_value || "", ann_format || "query")
         return
       end
 

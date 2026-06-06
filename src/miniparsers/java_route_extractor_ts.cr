@@ -589,7 +589,8 @@ module Noir
         close_idx = find_matching_delimiter(visible_source, open_idx, '(', ')')
         if close_idx
           expr = source[open_idx..close_idx]
-          line = source.byte_slice(0, open_idx).count('\n')
+          # open_idx is a CHAR index; char-slice for the line count too.
+          line = source[0, open_idx].count('\n')
           yield expr, line
           offset = close_idx + 1
         else
@@ -674,39 +675,37 @@ module Noir
     end
 
     private def split_gateway_args(args : String) : Array(String)
+      # Char-indexed: `args` may contain multi-byte path literals, so a byte loop
+      # with char slices (`args[start...i]`) mis-slices and can raise IndexError.
       parts = [] of String
       start = 0
       depth = 0
       in_string = false
       escape = false
-      bytes = args.to_slice
-      i = 0
-      while i < bytes.size
-        byte = bytes[i]
+      args.each_char_with_index do |char, i|
         if in_string
           if escape
             escape = false
-          elsif byte == '\\'.ord
+          elsif char == '\\'
             escape = true
-          elsif byte == '"'.ord
+          elsif char == '"'
             in_string = false
           end
         else
-          case byte
-          when '"'.ord
+          case char
+          when '"'
             in_string = true
-          when '('.ord, '['.ord, '{'.ord
+          when '(', '[', '{'
             depth += 1
-          when ')'.ord, ']'.ord, '}'.ord
+          when ')', ']', '}'
             depth -= 1 if depth > 0
-          when ','.ord
+          when ','
             if depth == 0
               parts << args[start...i].strip
               start = i + 1
             end
           end
         end
-        i += 1
       end
       parts << args[start..].strip
       parts.reject(&.empty?)
@@ -733,79 +732,75 @@ module Noir
     end
 
     private def visible_java_code(source : String) : String
-      slash = '/'.ord.to_u8
-      star = '*'.ord.to_u8
-      double_quote = '"'.ord.to_u8
-      single_quote = '\''.ord.to_u8
-      backslash = '\\'.ord.to_u8
-      newline = '\n'.ord.to_u8
-      space = ' '.ord.to_u8
-
-      bytes = source.to_slice
+      # Blank out comments and string/char literals (so their contents can't be
+      # mistaken for code), emitting exactly ONE output char per input char so
+      # char positions stay aligned with `source` — the gateway scan derives
+      # char indices here and char-slices `source` with them.
+      chars = source.chars
       mode = :code
-      quote = 0_u8
+      quote = '\0'
       escaped = false
       i = 0
 
       String.build(source.bytesize) do |io|
-        while i < bytes.size
-          byte = bytes[i]
+        while i < chars.size
+          char = chars[i]
 
           case mode
           when :line_comment
-            if byte == newline
-              io.write_byte(byte)
+            if char == '\n'
+              io << char
               mode = :code
             else
-              io.write_byte(space)
+              io << ' '
             end
             i += 1
           when :block_comment
-            if byte == newline
-              io.write_byte(byte)
+            if char == '\n'
+              io << char
               i += 1
-            elsif i + 1 < bytes.size && byte == star && bytes[i + 1] == slash
-              io.write_byte(space)
-              io.write_byte(space)
+            elsif char == '*' && chars[i + 1]? == '/'
+              io << ' '
+              io << ' '
               i += 2
               mode = :code
             else
-              io.write_byte(space)
+              io << ' '
               i += 1
             end
           when :string
-            if byte == quote && !escaped
-              io.write_byte(space)
+            if char == quote && !escaped
+              io << ' '
               i += 1
               mode = :code
             else
-              io.write_byte(byte == newline ? byte : space)
+              io << (char == '\n' ? '\n' : ' ')
               if escaped
                 escaped = false
               else
-                escaped = byte == backslash
+                escaped = char == '\\'
               end
               i += 1
             end
           else
-            if i + 1 < bytes.size && byte == slash && bytes[i + 1] == slash
-              io.write_byte(space)
-              io.write_byte(space)
+            if char == '/' && chars[i + 1]? == '/'
+              io << ' '
+              io << ' '
               i += 2
               mode = :line_comment
-            elsif i + 1 < bytes.size && byte == slash && bytes[i + 1] == star
-              io.write_byte(space)
-              io.write_byte(space)
+            elsif char == '/' && chars[i + 1]? == '*'
+              io << ' '
+              io << ' '
               i += 2
               mode = :block_comment
-            elsif byte == double_quote || byte == single_quote
-              io.write_byte(space)
-              quote = byte
+            elsif char == '"' || char == '\''
+              io << ' '
+              quote = char
               escaped = false
               i += 1
               mode = :string
             else
-              io.write_byte(byte)
+              io << char
               i += 1
             end
           end
@@ -817,42 +812,42 @@ module Noir
                                         open_idx : Int32,
                                         open_char : Char,
                                         close_char : Char) : Int32?
+      # Char-indexed (open_idx comes from char-based String#index and the result
+      # is char-sliced by callers). visible_java_code preserves char positions,
+      # so char index N in visible_source == char index N in source. ASCII-identical.
       depth = 1
-      i = open_idx + 1
-      bytes = code.to_slice
-      open_byte = open_char.ord
-      close_byte = close_char.ord
-      double_quote = '"'.ord
-      single_quote = '\''.ord
-      backslash = '\\'.ord
       in_string = false
-      quote = 0
+      quote = '\0'
       escape = false
+      result = nil
 
-      while i < bytes.size && depth > 0
-        byte = bytes[i]
+      code.each_char_with_index do |char, i|
+        next if i <= open_idx
         if in_string
           if escape
             escape = false
-          elsif byte == backslash
+          elsif char == '\\'
             escape = true
-          elsif byte == quote
+          elsif char == quote
             in_string = false
           end
         else
-          if byte == double_quote || byte == single_quote
+          if char == '"' || char == '\''
             in_string = true
-            quote = byte
-          elsif byte == open_byte
+            quote = char
+          elsif char == open_char
             depth += 1
-          elsif byte == close_byte
+          elsif char == close_char
             depth -= 1
           end
         end
-        i += 1
+        if depth == 0
+          result = i
+          break
+        end
       end
 
-      depth == 0 ? i - 1 : nil
+      result
     end
 
     # Iterate annotations attached to a declaration. Yields
