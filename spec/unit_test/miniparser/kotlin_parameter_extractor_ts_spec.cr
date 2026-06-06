@@ -236,6 +236,31 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         {"userIds", "query"},
       ])
     end
+
+    it "indexes methods recovered from split constructor annotations" do
+      source = <<-KT
+        package com.example
+
+        @RestController
+        class C
+        @Autowired constructor(private val service: Service) {
+            @GetMapping("/x")
+            fun get(@RequestParam(value = "q") query: String): String = ""
+        }
+        KT
+
+      params = [] of Param
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        method = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, source)["C#get"]
+        params = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
+          method, source, "GET", nil, {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)
+        )
+      end
+
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"q", "query"},
+      ])
+    end
   end
 
   describe "#extract_consumes" do

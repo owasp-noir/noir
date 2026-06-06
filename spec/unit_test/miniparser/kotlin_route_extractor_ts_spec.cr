@@ -299,4 +299,38 @@ describe Noir::TreeSitterKotlinRouteExtractor do
       {"GET", "/real/ping"},
     ])
   end
+
+  it "recovers routes from non-abstract controllers with split constructor annotations" do
+    source = <<-KT
+      package com.example
+
+      @RestController
+      @RequestMapping("/api")
+      class UserController
+      @Autowired constructor(private val service: UserService) {
+          @GetMapping("/{id}")
+          fun show(@PathVariable id: Long): String = ""
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.class_name, r.method_name} }.should eq([
+      {"GET", "/api/{id}", "UserController", "show"},
+    ])
+  end
+
+  it "does not recover routes from abstract split-constructor base controllers" do
+    source = <<-KT
+      package com.example
+
+      @RestController
+      abstract class AbstractController<T : Any>
+      @Autowired constructor(private val service: Service<T>) {
+          @GetMapping("/{id}")
+          fun show(@PathVariable id: Long): String = ""
+      }
+      KT
+
+    Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_empty
+  end
 end
