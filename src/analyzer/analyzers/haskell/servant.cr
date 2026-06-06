@@ -319,16 +319,26 @@ module Analyzer::Haskell
         end
 
         if i + 1 < chars.size && c == '{' && chars[i + 1] == '-'
+          # Replace the comment with whitespace, PRESERVING newlines, so a
+          # multi-line `{- -}` doesn't collapse lines and shift every later
+          # endpoint's reported line number (mirrors scotty.cr).
           brace_depth += 1
+          result << ' '
+          result << ' '
           i += 2
           while i < chars.size && brace_depth > 0
             if i + 1 < chars.size && chars[i] == '-' && chars[i + 1] == '}'
               brace_depth -= 1
+              result << ' '
+              result << ' '
               i += 2
             elsif i + 1 < chars.size && chars[i] == '{' && chars[i + 1] == '-'
               brace_depth += 1
+              result << ' '
+              result << ' '
               i += 2
             else
+              result << (chars[i] == '\n' ? '\n' : ' ')
               i += 1
             end
           end
@@ -359,17 +369,27 @@ module Analyzer::Haskell
       found.to_a
     end
 
+    # `visited` only blocks cycles along one path, not repeated sibling
+    # expansions (`type A = B :<|> B` doubles each level -> O(2^N)). Cap the
+    # total expanded size so a crafted alias chain can't hang/OOM the scan;
+    # real Servant bodies expand to far under this, so output is unchanged.
+    MAX_EXPANSION_BYTES = 1_000_000
+
     private def expand_references(body : String, type_aliases : Hash(String, TypeAlias)) : String
-      do_expand(body, type_aliases, Set(String).new)
+      do_expand(body, type_aliases, Set(String).new, [MAX_EXPANSION_BYTES])
     end
 
-    private def do_expand(body : String, type_aliases : Hash(String, TypeAlias), visited : Set(String)) : String
+    private def do_expand(body : String, type_aliases : Hash(String, TypeAlias), visited : Set(String), budget : Array(Int32)) : String
       body.gsub(/\b([A-Z][A-Za-z0-9_']*)\b/) do |raw, m|
         name = m[1]
-        if type_aliases.has_key?(name) && !visited.includes?(name)
+        if budget[0] <= 0
+          raw # budget exhausted: leave the reference unexpanded
+        elsif type_aliases.has_key?(name) && !visited.includes?(name)
           new_visited = visited.dup
           new_visited << name
-          "(#{do_expand(type_aliases[name][:body], type_aliases, new_visited)})"
+          sub = type_aliases[name][:body]
+          budget[0] -= sub.bytesize
+          "(#{do_expand(sub, type_aliases, new_visited, budget)})"
         else
           raw
         end
