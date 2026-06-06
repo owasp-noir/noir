@@ -6,11 +6,15 @@ module Analyzer::Haskell
   class Yesod < Analyzer
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
+    # A handler name can occur in more than one file; keep all bodies and only
+    # attach callees when the name resolves unambiguously (mirrors scotty.cr),
+    # rather than last-write-wins overwriting across files.
+    alias HandlerBodies = Hash(String, Array(HandlerBody))
 
     def analyze
       processed_route_files = Set(String).new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      handler_bodies = include_callee ? build_handler_bodies : {} of String => HandlerBody
+      handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
 
       all_files.each do |path|
         next if File.directory?(path)
@@ -55,15 +59,15 @@ module Analyzer::Haskell
       File.basename(path) == "routes" && File.dirname(path).ends_with?("/config")
     end
 
-    private def build_handler_bodies : Hash(String, HandlerBody)
-      handlers = {} of String => HandlerBody
+    private def build_handler_bodies : HandlerBodies
+      handlers = HandlerBodies.new
 
       all_files.each do |path|
         next if File.directory?(path)
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
-          handlers[body[:name]] = body
+          (handlers[body[:name]] ||= [] of HandlerBody) << body
         end
       end
 
@@ -95,7 +99,7 @@ module Analyzer::Haskell
     private def process_route_content(source_path : String,
                                       content : String,
                                       include_callee : Bool,
-                                      handler_bodies : Hash(String, HandlerBody))
+                                      handler_bodies : HandlerBodies)
       scope_stack = [{indent: -1, raw_segments: [] of String}]
 
       logical_route_lines(content).each do |entry|
@@ -140,10 +144,13 @@ module Analyzer::Haskell
                                        method : String,
                                        route_name : String,
                                        methodless_route : Bool,
-                                       handler_bodies : Hash(String, HandlerBody))
+                                       handler_bodies : HandlerBodies)
       handler_name = handler_name_for(method, route_name, methodless_route)
-      handler_body = handler_bodies[handler_name]?
-      return unless handler_body
+      bodies = handler_bodies[handler_name]?
+      # Only attach when the name is unambiguous; a name defined in multiple
+      # files would otherwise pull callees from the wrong file's body.
+      return unless bodies && bodies.size == 1
+      handler_body = bodies.first
 
       callees = Noir::HaskellCalleeExtractor.callees_for_body(
         handler_body[:body],
