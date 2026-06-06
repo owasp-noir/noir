@@ -35,13 +35,16 @@ module Analyzer::Clojure
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      seen = Set(String).new
       all_files.each do |path|
         next unless clojure_file?(path)
 
         content = read_file_content(path)
         next unless pedestal_source?(content)
 
+        # Per-file dedup (the key has no path component); a shared set across
+        # files drops legitimate same-method+route endpoints (and their params)
+        # from every file after the first.
+        seen = Set(String).new
         function_callees = include_callee ? Noir::ClojureCalleeExtractor.function_callees(content, path) : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)).new
         walk_forms(content, 0, content.bytesize, "", path, seen, include_callee, function_callees)
       end
