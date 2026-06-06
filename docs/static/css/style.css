@@ -1282,8 +1282,9 @@ p:has(> .member-card) {
     border: 1px solid var(--border-light);
     border-radius: 14px;
     overflow: hidden;
-    /* the accent shows through the thin gap between panes = the divider line */
-    background: linear-gradient(135deg, var(--accent), #c4b5fd);
+    /* this shows through the hairline gap between panes = the divider line,
+       tinted to match the card border so it reads as a subtle seam */
+    background: var(--border-light);
     box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.85);
 }
 .split-pane {
@@ -1306,14 +1307,14 @@ p:has(> .member-card) {
         opacity 0.5s ease,
         filter 0.5s ease;
 }
-/* default diagonal split (steep slash through the centre); the ~0.25% gap
-   between the two panes is what shows the thin accent divider line */
+/* default diagonal split (steep slash through the centre); the ~0.15% gap
+   between the two panes is what shows the hairline divider line */
 .split-a {
     clip-path: polygon(0 0, 72% 0, 28% 100%, 0 100%);
     z-index: 1;
 }
 .split-b {
-    clip-path: polygon(72.25% 0, 100% 0, 100% 100%, 28.25% 100%);
+    clip-path: polygon(72.15% 0, 100% 0, 100% 100%, 28.15% 100%);
     z-index: 1;
 }
 /* tags pinned to each side's corner */
@@ -1383,7 +1384,7 @@ p:has(> .member-card) {
     z-index: 2;
 }
 .hero-showcase:has(.split-a:hover) .split-b {
-    clip-path: polygon(100% 0, 100% 0, 100% 100%, 87.75% 100%);
+    clip-path: polygon(100% 0, 100% 0, 100% 100%, 87.15% 100%);
 }
 .hero-showcase:has(.split-a:hover) .split-b img {
     filter: saturate(0.6) brightness(0.7);
@@ -1399,7 +1400,7 @@ p:has(> .member-card) {
     z-index: 2;
 }
 .hero-showcase:has(.split-b:hover) .split-a {
-    clip-path: polygon(0 0, 11.75% 0, 0 100%, 0 100%);
+    clip-path: polygon(0 0, 11.85% 0, 0 100%, 0 100%);
 }
 .hero-showcase:has(.split-b:hover) .split-a img {
     filter: saturate(0.6) brightness(0.7);
@@ -1436,8 +1437,8 @@ p:has(> .member-card) {
         position: static;
         display: flex;
         flex-direction: column;
-        gap: 2px;
-        background: var(--accent);
+        gap: 1px;
+        background: var(--border-light);
         box-shadow: none;
     }
     .split-pane {
