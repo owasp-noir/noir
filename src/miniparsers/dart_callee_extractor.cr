@@ -55,7 +55,9 @@ module Noir::DartCalleeExtractor
     if arrow_index && (!semicolon || arrow_index < semicolon) && (!open_brace || arrow_index < open_brace)
       body_start = arrow_index + 2
       body_end = semicolon || limit
-      return {source[body_start...body_end], body_start, body_end}
+      # body_start/body_end are BYTE offsets (the scanners use byte_at), so slice
+      # by bytes — char-indexing here corrupts/crashes on multi-byte UTF-8 source.
+      return {source.byte_slice(body_start, body_end - body_start), body_start, body_end}
     end
 
     if open_brace && (!semicolon || open_brace < semicolon)
@@ -63,7 +65,8 @@ module Noir::DartCalleeExtractor
       return unless close_brace
 
       body_start = open_brace + 1
-      return {source[body_start...close_brace], body_start, close_brace + 1}
+      # byte offsets -> slice by bytes (see note above).
+      return {source.byte_slice(body_start, close_brace - body_start), body_start, close_brace + 1}
     end
 
     nil

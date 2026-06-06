@@ -95,7 +95,8 @@ module Analyzer::Dart
 
     private def callees_for_on_request(content : String, path : String) : Array(Noir::DartCalleeExtractor::Entry)
       content.scan(/\bonRequest\s*\(/) do |match|
-        match_start = match.begin(0) || 0
+        # match.begin is a CHAR index; the extractor scans by BYTE offset.
+        match_start = (match.begin(0).try { |i| content.char_index_to_byte_index(i) }) || 0
         open_paren = Noir::DartCalleeExtractor.find_next_code_char(content, '(', match_start)
         next unless open_paren
 
@@ -115,7 +116,7 @@ module Analyzer::Dart
       # the most useful callee — without this it would be lost entirely.
       if m = content.match(/\bonRequest\s*=\s*([^;]+);/)
         rhs = m[1].strip
-        line = Noir::DartCalleeExtractor.line_number_for(content, m.begin(0) || 0)
+        line = Noir::DartCalleeExtractor.line_number_for(content, (m.begin(0).try { |i| content.char_index_to_byte_index(i) }) || 0)
         return assignment_callees(rhs, path, line)
       end
 

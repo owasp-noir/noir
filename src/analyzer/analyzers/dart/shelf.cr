@@ -272,7 +272,10 @@ module Analyzer::Dart
     private def annotation_callees(content : String,
                                    annotation_close : Int32,
                                    path : String) : Array(Noir::DartCalleeExtractor::Entry)
-      body_info = Noir::DartCalleeExtractor.extract_body_after(content, annotation_close + 1)
+      # annotation_close is a CHAR index; extract_body_after scans by BYTE offset.
+      close_b = content.char_index_to_byte_index(annotation_close + 1)
+      return [] of Noir::DartCalleeExtractor::Entry unless close_b
+      body_info = Noir::DartCalleeExtractor.extract_body_after(content, close_b)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
 
       body, body_start, _ = body_info
@@ -288,12 +291,20 @@ module Analyzer::Dart
       ranges = [] of ClassRange
       cleaned.scan(/\bclass\s+([A-Za-z_]\w*)/) do |m|
         name = m[1]
-        header_end = m.end(0)
+        header_end = m.end(0) # char offset
         next unless header_end
-        open = Noir::DartCalleeExtractor.find_next_code_char(cleaned, '{', header_end)
-        next unless open
-        close = Noir::DartCalleeExtractor.find_matching_delimiter(cleaned, open, '{', '}')
-        next unless close
+        # DartCalleeExtractor scans/returns BYTE offsets; convert char->byte going
+        # in and byte->char coming out so the stored ranges stay in CHAR space and
+        # line up with the char-based match offsets compared in enclosing_class.
+        header_end_b = cleaned.char_index_to_byte_index(header_end)
+        next unless header_end_b
+        open_b = Noir::DartCalleeExtractor.find_next_code_char(cleaned, '{', header_end_b)
+        next unless open_b
+        close_b = Noir::DartCalleeExtractor.find_matching_delimiter(cleaned, open_b, '{', '}')
+        next unless close_b
+        open = cleaned.byte_index_to_char_index(open_b)
+        close = cleaned.byte_index_to_char_index(close_b)
+        next unless open && close
         ranges << {name: name, start: open, finish: close}
       end
       ranges
@@ -432,7 +443,10 @@ module Analyzer::Dart
         return [{stripped, path, line}] of Noir::DartCalleeExtractor::Entry
       end
 
-      body_info = Noir::DartCalleeExtractor.extract_body_after(file_content, close_paren - handler_arg.size)
+      # close_paren is a CHAR index; extract_body_after scans by BYTE offset.
+      start_b = file_content.char_index_to_byte_index(close_paren - handler_arg.size)
+      return [] of Noir::DartCalleeExtractor::Entry unless start_b
+      body_info = Noir::DartCalleeExtractor.extract_body_after(file_content, start_b)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
 
       body, body_start, _ = body_info
