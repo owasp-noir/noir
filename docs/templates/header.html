@@ -3,6 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {% if not env("HWARO_DEV", default="") %}
+  {# CSP via <meta> because GitHub Pages cannot set response headers. Header-only
+     directives (frame-ancestors / X-Content-Type-Options / HSTS) are out of scope
+     here. 'unsafe-inline' on script-src is required by the hwaro-emitted
+     `hljs.highlightAll()` call and the on-demand Mermaid loader; cdn.jsdelivr.net
+     is allowed solely so Mermaid diagram pages can pull the renderer. Set
+     HWARO_DEV=1 (e.g. `HWARO_DEV=1 hwaro serve -i docs`) to drop the CSP locally
+     so hwaro's live-reload script can run. #}
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; form-action 'self'">
+  {% endif %}
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#050507">
   <meta name="description" content="{{ page.description | default(site.description) }}">
@@ -60,9 +70,9 @@
   <link rel="manifest" href="{{ base_url }}/site.webmanifest">
   <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="{{ base_url }}/rss.xml">
   <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="{{ base_url }}/ko/rss.xml">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="preload" href="{{ base_url }}/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{{ base_url }}/fonts/inter-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="{{ base_url }}/css/fonts.css">
   <link rel="stylesheet" href="{{ base_url }}/css/style.css">
   {{ highlight_css }}
   {{ auto_includes_css }}

@@ -35,7 +35,7 @@
     --header-h: 56px;
     --sidebar-w: 260px;
     --toc-w: 220px;
-    --content-max: 1000px;
+    --content-max: 840px;
 
     /* Fonts */
     --font-sans:
@@ -55,6 +55,9 @@
 }
 html {
     scroll-behavior: smooth;
+    /* Offset anchor / TOC jumps so the target lands below the fixed header
+       instead of being hidden under it. */
+    scroll-padding-top: calc(var(--header-h) + 1.25rem);
 }
 body {
     font-family: var(--font-sans);
@@ -496,47 +499,75 @@ body {
    Prose Styles (Content)
    ========================================================================== */
 .docs-article h1 {
-    font-size: 2rem;
-    font-weight: 700;
+    font-size: 2.05rem;
+    font-weight: 800;
     margin: 0 0 1.5rem 0;
     letter-spacing: -0.025em;
-    line-height: 1.25;
+    line-height: 1.2;
     color: var(--text-primary);
+    text-wrap: balance;
+    /* Faint top-light on the title, like ink catching the light. */
+    background: linear-gradient(180deg, #ffffff 0%, #c4c4d2 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 .docs-article h2 {
-    font-size: 1.35rem;
-    font-weight: 600;
-    margin: 2.5rem 0 1rem 0;
+    font-size: 1.4rem;
+    font-weight: 700;
+    margin: 2.75rem 0 1rem 0;
     padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border);
+    /* A drawn rule that fades to the right rather than a flat box border. */
+    border-bottom: 1px solid transparent;
+    border-image: linear-gradient(
+            90deg,
+            var(--border-light),
+            var(--border) 55%,
+            transparent 92%
+        )
+        1;
     letter-spacing: -0.015em;
     color: var(--text-primary);
+    text-wrap: balance;
 }
 .docs-article h3 {
-    font-size: 1.1rem;
-    font-weight: 600;
+    font-size: 1.12rem;
+    font-weight: 700;
     margin: 2rem 0 0.75rem 0;
+    letter-spacing: -0.01em;
     color: var(--text-primary);
+    text-wrap: balance;
 }
 .docs-article h4 {
-    font-size: 0.95rem;
-    font-weight: 600;
-    margin: 1.5rem 0 0.5rem 0;
-    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 700;
+    margin: 1.6rem 0 0.5rem 0;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
 }
 .docs-article p {
     margin: 0 0 1rem 0;
     color: var(--text-secondary);
     line-height: 1.75;
+    text-wrap: pretty;
 }
 .docs-article a {
     color: var(--accent);
     text-decoration: none;
-    transition: color 0.15s;
+    /* Underline drawn as a stroke that grows from the left on hover. */
+    background-image: linear-gradient(var(--accent-hover), var(--accent-hover));
+    background-repeat: no-repeat;
+    background-position: 0 100%;
+    background-size: 0% 1px;
+    padding-bottom: 1px;
+    transition:
+        color 0.18s,
+        background-size 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .docs-article a:hover {
     color: var(--accent-hover);
-    text-decoration: underline;
+    background-size: 100% 1px;
 }
 .docs-article strong {
     color: var(--text-primary);
@@ -549,6 +580,9 @@ body {
 }
 .docs-article li {
     margin-bottom: 0.35rem;
+}
+.docs-article li::marker {
+    color: var(--accent);
 }
 .docs-article li > ul,
 .docs-article li > ol {
@@ -676,11 +710,15 @@ body {
 
 /* Blockquote */
 .docs-article blockquote {
-    border-left: 2px solid var(--text-muted);
-    padding: 0.5rem 1rem;
-    margin: 0 0 1rem 0;
-    background: var(--bg-surface);
-    border-radius: 0 4px 4px 0;
+    border-left: 2px solid var(--accent);
+    padding: 0.7rem 1.1rem;
+    margin: 1.25rem 0;
+    background: linear-gradient(
+        90deg,
+        var(--accent-dim),
+        var(--bg-surface) 45%
+    );
+    border-radius: 0 6px 6px 0;
     color: var(--text-secondary);
 }
 .docs-article blockquote p:last-child {
@@ -689,14 +727,17 @@ body {
 
 /* Tables */
 .docs-article table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 0 0 1.25rem 0;
-    font-size: 0.875rem;
-}
-.docs-article :where(table) {
+    /* display:block + overflow:auto gives small screens a horizontal scroll
+       and lets the rounded outer frame clip cleanly. */
     display: block;
-    overflow-x: auto;
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    margin: 0 0 1.5rem 0;
+    font-size: 0.875rem;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    overflow: auto;
 }
 
 /* Supported-tech card grid (language_and_frameworks) */
@@ -785,22 +826,27 @@ body {
 }
 .docs-article th {
     text-align: left;
-    padding: 0.6rem 0.75rem;
+    padding: 0.6rem 0.85rem;
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border-light);
     color: var(--text-primary);
     font-weight: 600;
-    font-size: 0.8rem;
+    font-size: 0.76rem;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
 }
 .docs-article td {
-    padding: 0.5rem 0.75rem;
+    padding: 0.55rem 0.85rem;
     border-bottom: 1px solid var(--border);
     color: var(--text-secondary);
+    vertical-align: top;
+}
+.docs-article tr:last-child td {
+    border-bottom: none;
 }
 .docs-article tr:hover td {
-    background: var(--bg-surface);
+    background: var(--accent-dim);
 }
 
 /* Images */
@@ -824,10 +870,12 @@ body {
 .alert {
     display: flex;
     gap: 0.75rem;
-    padding: 1rem 1.25rem;
+    padding: 0.9rem 1.1rem;
     border-radius: 6px;
     margin: 1.25rem 0;
-    border-left: 2px solid;
+    /* Quiet full frame + a heavier coloured rule on the leading edge. */
+    border: 1px solid var(--border-light);
+    border-left-width: 2px;
     font-size: 0.88rem;
     line-height: 1.6;
 }
@@ -847,14 +895,14 @@ body {
 }
 .alert-info {
     background: var(--info-bg);
-    border-color: var(--info-border);
+    border-left-color: var(--info-border);
 }
 .alert-info .alert-icon {
     color: var(--info-border);
 }
 .alert-warning {
     background: var(--warning-bg);
-    border-color: var(--warning-border);
+    border-left-color: var(--warning-border);
 }
 .alert-warning .alert-icon {
     color: var(--warning-border);
