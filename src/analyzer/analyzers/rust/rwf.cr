@@ -83,6 +83,9 @@ module Analyzer::Rust
           when :crud, :rest
             REST_ROUTES.each do |suffix, http_method|
               route_path = "#{reg.path.rstrip('/')}#{suffix}"
+              # Root-mounted collection routes: "/".rstrip('/') + "" == "" — emit
+              # "/" rather than an invalid empty URL.
+              route_path = "/" if route_path.empty?
               details = Details.new(PathInfo.new(path, reg.row))
               endpoint = Endpoint.new(route_path, http_method, details)
               extract_path_params(route_path, endpoint)

@@ -583,10 +583,14 @@ module Analyzer::Rust
 
     # Build a map of each `scope(...)`/`resource(...)` call's start byte
     # to its fully composed path prefix, threading the prefix top-down
-    # through `.service(...)` arguments. Only chains rooted on a
-    # non-scope base (`cfg`, `App::new()`, a variable) are entered;
-    # nested scopes are reached purely through `.service`, so each one's
-    # prefix is unambiguous and long scope chains aren't re-walked.
+    # through `.service(...)` arguments. Chains rooted on a non-scope
+    # base (`cfg`, `App::new()`, a variable) carry no inherited prefix;
+    # chains rooted *directly* at a `scope(...)`/`resource(...)` (a
+    # helper that returns a configured `Scope`) are entered too so their
+    # own segment seeds the prefix. A nested scope is reached both as a
+    # `.service` argument of its parent (composed prefix) and as its own
+    # standalone chain root (bare segment); `register_scope_chain` keeps
+    # whichever produced the longer prefix, so the composed one wins.
     private def collect_scope_prefixes(root : LibTreeSitter::TSNode,
                                        source : String,
                                        test_regions : Array(Tuple(Int32, Int32))) : Hash(Int32, String)
@@ -594,8 +598,6 @@ module Analyzer::Rust
       walk_calls(root) do |call|
         next if RustEngine.inside_test_region?(call, test_regions)
         next unless router_chain_root?(call, source)
-        kind, _, _ = resolve_chain_base(call, source)
-        next unless kind == :other
         register_scope_chain(call, "", map, source)
       end
       map
@@ -628,7 +630,13 @@ module Analyzer::Rust
           inherited
         end
       if (kind == :scope || kind == :resource) && base_node
-        map[node_byte(base_node)] = prefix
+        key = node_byte(base_node)
+        # Longest-prefix-wins: the same scope is registered both as its
+        # parent's `.service` argument (fully composed) and as its own
+        # standalone chain root (bare segment). Keep the composed one so
+        # the standalone walk can't overwrite it with a shorter prefix.
+        existing = map[key]?
+        map[key] = prefix if existing.nil? || prefix.size > existing.size
       end
 
       cursor = expr

@@ -170,8 +170,33 @@ module Analyzer::Rust
     private def router_emit?(call : LibTreeSitter::TSNode, source : String) : Bool
       name = field_call_name(call, source)
       return false unless name
+      # `fallback`/`fallback_service` are common method names on non-router
+      # types and emit a path-less `/*`; require a plausibly-router receiver to
+      # avoid phantom endpoints from e.g. `Config{..}.fallback(handler)`.
+      if name == "fallback" || name == "fallback_service"
+        return router_chain_receiver?(call, source)
+      end
       return true if ROUTER_EMIT_NAMES.includes?(name)
       BUILDER_ROUTE_EMIT_NAMES.includes?(name) && route_builder_receiver?(call, source)
+    end
+
+    # Conservative receiver check: reject only clearly-non-router receivers
+    # (struct literals, arrays, scalar literals); accept router variables,
+    # fields, self, and any call chain (real routers are `Router::new()...` or a
+    # router variable, so this keeps zero false negatives on those forms).
+    private def router_chain_receiver?(call : LibTreeSitter::TSNode, source : String) : Bool
+      fn = Noir::TreeSitter.field(call, "function")
+      return false unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+      recv = Noir::TreeSitter.field(fn, "value")
+      return false unless recv
+      case Noir::TreeSitter.node_type(recv)
+      when "struct_expression", "array_expression",
+           "integer_literal", "float_literal", "string_literal",
+           "boolean_literal", "char_literal", "unit_expression"
+        false
+      else
+        true
+      end
     end
 
     # Walks Axum router builder chains with an active path prefix.
@@ -582,11 +607,17 @@ module Analyzer::Rust
 
     private def string_literal_text(node : LibTreeSitter::TSNode, source : String) : String?
       return unless Noir::TreeSitter.node_type(node) == "string_literal"
-      content = nil.as(String?)
+      # tree-sitter-rust splits a literal with escapes into multiple children
+      # ("/a\tb" -> string_content "/a", escape_sequence "\t", string_content "b").
+      # Concatenate every segment instead of keeping only the last one.
+      parts = [] of String
       Noir::TreeSitter.each_named_child(node) do |child|
-        content = Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "string_content"
+        case Noir::TreeSitter.node_type(child)
+        when "string_content", "escape_sequence"
+          parts << Noir::TreeSitter.node_text(child, source)
+        end
       end
-      content
+      parts.empty? ? nil : parts.join
     end
 
     private def build_router_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)

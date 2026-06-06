@@ -489,7 +489,9 @@ module Analyzer::Rust
       path_part = parts[0]
       query_part = parts[1]?
 
-      path_part.scan(/<(\w+)>/) do |match|
+      # Tolerate the trailing-segments form `<name..>` so the captured name
+      # matches the `{name}` placeholder canonicalize_rocket_path emits.
+      path_part.scan(/<(\w+)(?:\.\.)?>/) do |match|
         name = match[1]
         params << Param.new(name, "", "path") unless params.any? { |p| p.name == name && p.param_type == "path" }
       end

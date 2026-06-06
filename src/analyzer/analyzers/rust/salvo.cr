@@ -459,6 +459,12 @@ module Analyzer::Rust
               depth -= 1 if route[j] == '}'
               j += 1
             end
+            if depth > 0
+              # Unbalanced '{' (no matching '}'): emit the rest verbatim rather
+              # than dropping the final char / producing an empty `{}`.
+              io << route[i..]
+              break
+            end
             inner = route[(i + 1)...(j - 1)]
             stars = inner.starts_with?("**") ? "**" : inner.starts_with?("*") ? "*" : ""
             name = inner.lstrip('*').split(/[:|]/, 2).first
