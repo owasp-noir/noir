@@ -58,20 +58,6 @@ class LLMEndpointOptimizer < EndpointOptimizer
     final_endpoints
   end
 
-  # Find endpoints that would benefit from LLM optimization
-  private def find_optimization_candidates(endpoints : Array(Endpoint)) : Array(Endpoint)
-    candidates = [] of Endpoint
-
-    endpoints.each do |endpoint|
-      # Check for non-standard URL patterns that might need refinement
-      if has_non_standard_patterns(endpoint)
-        candidates << endpoint
-      end
-    end
-
-    candidates
-  end
-
   # Check if an endpoint has non-standard patterns that could benefit from LLM optimization
   private def has_non_standard_patterns(endpoint : Endpoint) : Bool
     url = endpoint.url
@@ -185,19 +171,6 @@ class LLMEndpointOptimizer < EndpointOptimizer
   rescue ex : Exception
     @logger.debug "Failed to parse LLM optimization response: #{ex.message}"
     endpoint
-  end
-
-  # Check if two endpoints represent the same logical endpoint for replacement
-  private def matches_endpoint_identity(original : Endpoint, optimized : Endpoint) : Bool
-    # Match by method and similar URL structure (before optimization)
-    return false unless original.method == optimized.method
-
-    # For identity matching, use a flexible comparison that accounts for
-    # parameter names and basic URL structure
-    original_base = original.url.gsub(/\{[^}]+\}/, "{param}").gsub(/:[\w]+/, ":param").gsub(/<[^>]+>/, "<param>")
-    optimized_base = optimized.url.gsub(/\{[^}]+\}/, "{param}").gsub(/:[\w]+/, ":param").gsub(/<[^>]+>/, "<param>")
-
-    original_base == optimized_base
   end
 
   # Setup LLM adapter based on configuration
