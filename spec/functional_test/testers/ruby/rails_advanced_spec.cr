@@ -106,6 +106,12 @@ expected_endpoints = [
   Endpoint.new("/refunds/new/template", "GET", [
     Param.new("X-Template", "", "header"),
   ]),
+  Endpoint.new("/refunds/inline_summary", "GET", [
+    Param.new("X-Inline-Summary", "", "header"),
+  ]),
+  Endpoint.new("/refunds/1/inline_preview", "POST", [
+    Param.new("X-Inline-Preview", "", "header"),
+  ]),
 
   # Rails concerns: `concern :commentable do resources :comments end`
   # should not emit top-level `/comments` routes, and applying the concern
@@ -128,6 +134,9 @@ expected_endpoints = [
     Param.new("X-Health", "", "header"),
   ]),
   Endpoint.new("/ping", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
+  Endpoint.new("/legacy_ping", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
 
@@ -192,10 +201,10 @@ total_endpoints = 1 +  # root
                   5 +  # internal/statements except:[destroy]
                   1 +  # /scans only:[index] via controller override
                   2 +  # multiline resources options
-                  3 +  # inline collection/member/new custom routes
+                  5 +  # inline collection/member/new custom routes
                   6 +  # posts
                   4 +  # posts/1/comments + nested likes from concern
-                  2 +  # /up + /ping
+                  3 +  # /up + /ping + legacy string-via match
                   2 +  # optional-segment routes /feed + /report/rss
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
                   20 + # devise_for :users

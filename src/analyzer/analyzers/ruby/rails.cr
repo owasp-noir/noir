@@ -92,16 +92,19 @@ module Analyzer::Ruby
     # lives in a different file (a plugin.rb, the host app's routes), so we
     # resolve it cross-file once up front.
     @engine_mount_prefixes = Hash(String, String).new
+    @known_files = Set(String).new
 
     def analyze
-      @engine_mount_prefixes = build_engine_mount_map
+      files = all_files
+      @known_files = Set(String).new(files)
+      @engine_mount_prefixes = build_engine_mount_map(files)
 
-      framework_roots = discover_framework_roots("config/routes.rb")
+      framework_roots = discover_framework_roots(files, "config/routes.rb")
       framework_roots = [@base_path] if framework_roots.empty?
 
       framework_roots.each do |framework_root|
         begin
-          get_public_files(framework_root).each do |file|
+          get_public_files(files, framework_root).each do |file|
             if file =~ /\/public\/(.*)/
               relative_path = $1
               details = Details.new(PathInfo.new(file))
@@ -113,7 +116,7 @@ module Analyzer::Ruby
         end
 
         routes_path = "#{framework_root}/config/routes.rb"
-        next unless File.exists?(routes_path)
+        next unless known_file?(routes_path)
 
         parse_routes_file(routes_path, framework_root)
       end
@@ -125,6 +128,44 @@ module Analyzer::Ruby
       parsed_route_files = Set(String).new
       concern_resources = {} of String => Array(ConcernResource)
       parse_routes_file(routes_path, framework_root, parsed_route_files, [] of Frame, concern_resources)
+    end
+
+    private def known_file?(path : String) : Bool
+      return @known_files.includes?(path) unless @known_files.empty?
+      File.exists?(path)
+    end
+
+    private def discover_framework_roots(files : Array(String), anchor : String) : Array(String)
+      suffix = anchor.starts_with?("/") ? anchor : "/#{anchor}"
+      roots = [] of String
+
+      files.each do |file|
+        next unless file.ends_with?(suffix)
+        next unless base_paths.any? do |base|
+                      prefix = base.ends_with?("/") ? base : "#{base}/"
+                      file.starts_with?(prefix) || file == "#{base}#{suffix}"
+                    end
+
+        root = file[0, file.size - suffix.size]
+        roots << root unless roots.includes?(root)
+      end
+
+      roots
+    end
+
+    private def get_public_files(files : Array(String), base_path : String) : Array(String)
+      project_public_roots = Set(String).new
+      files.each do |file|
+        next unless File.basename(file) == "Gemfile"
+        next unless file.starts_with?(base_path)
+        project_public_roots << File.join(File.dirname(file), "public")
+      end
+
+      files.select do |file|
+        next false unless file.starts_with?(base_path)
+        next false if FileHelper::PUBLIC_FILE_IGNORE.includes?(File.basename(file))
+        project_public_roots.any? { |root| file.starts_with?(root + "/") }
+      end
     end
 
     private def parse_routes_file(routes_path : String, framework_root : String,
@@ -153,7 +194,7 @@ module Analyzer::Ruby
       # `controllers foo: 'bar'` remaps the implementing controller.
       doorkeeper_skip = Set(String).new
       doorkeeper_controllers = Hash(String, String).new
-      expand_static_loops(logical_route_lines(routes_path)).each do |raw_line|
+      expand_inline_route_blocks(expand_static_loops(logical_route_lines(routes_path))).each do |raw_line|
         line = raw_line.strip
         next if line.empty?
 
@@ -232,7 +273,7 @@ module Analyzer::Ruby
           draw_names = parse_symbol_list(call[1])
           draw_names.each do |draw_name|
             draw_path = File.join(framework_root, "config", "routes", "#{draw_name}.rb")
-            parse_routes_file(draw_path, framework_root, parsed_route_files, stack, concern_resources) if File.exists?(draw_path)
+            parse_routes_file(draw_path, framework_root, parsed_route_files, stack, concern_resources) if known_file?(draw_path)
           end
           next
         end
@@ -649,6 +690,26 @@ module Analyzer::Ruby
       result
     end
 
+    # Rails commonly writes compact inline route scopes:
+    # `collection { get "preview" }` / `member { post :use }`.
+    # The parser is stack-based, so normalize these to the same do/end
+    # structure before route extraction.
+    INLINE_ROUTE_BLOCK = /^(member|collection|new)\s*\{\s*(.+?)\s*\}\s*$/
+
+    private def expand_inline_route_blocks(lines : Array(String)) : Array(String)
+      result = [] of String
+      lines.each do |line|
+        if m = line.match(INLINE_ROUTE_BLOCK)
+          result << "#{m[1]} do"
+          result << m[2].strip
+          result << "end"
+        else
+          result << line
+        end
+      end
+      result
+    end
+
     private def end_line?(line : String) : Bool
       line == "end" || line.starts_with?("end ") || line.starts_with?("end;") || line.starts_with?("end#")
     end
@@ -658,12 +719,11 @@ module Analyzer::Ruby
     # there) and build the engine-constant -> mount-path map. Forms handled:
     #   mount X::Engine, at: "/p"        mount X::Engine => "/p"
     #   Discourse::Application.routes.append { mount X::Engine, at: "/p" }
-    private def build_engine_mount_map : Hash(String, String)
+    private def build_engine_mount_map(files : Array(String)) : Hash(String, String)
       map = Hash(String, String).new
-      all_files.each do |file|
+      files.each do |file|
         base = File.basename(file)
         next unless base == "plugin.rb" || base.ends_with?("routes.rb")
-        next unless File.exists?(file)
         content = read_file_content(file)
         next unless content.includes?("mount")
 
@@ -909,7 +969,7 @@ module Analyzer::Ruby
         candidates << "#{framework_root}/app/controllers/#{file_base.rchop('y')}ies_controller.rb" if file_base.ends_with?('y')
       end
 
-      existing_controller_path = candidates.find { |c| File.exists?(c) }
+      existing_controller_path = candidates.find { |c| known_file?(c) }
       candidates.each do |ctrl_path|
         @result += controller_to_endpoint(
           ctrl_path, @url, url_segment,
@@ -959,7 +1019,7 @@ module Analyzer::Ruby
     end
 
     private def parse_route_verbs(rest : String, default_verbs : Array(String)) : Array(String)
-      via_match = rest.match(/:?via\s*(?:=>|:)\s*(\[[^\]]+\]|%i[\[\(][^\]\)]*[\]\)]|:\w+)/)
+      via_match = rest.match(/:?via\s*(?:=>|:)\s*(\[[^\]]+\]|%i[\[\(][^\]\)]*[\]\)]|:\w+|['"][A-Za-z_]+['"])/)
       return default_verbs unless via_match
       tail = via_match[1]
       verbs = [] of String
@@ -1126,7 +1186,7 @@ module Analyzer::Ruby
     )
       @result = [] of Endpoint
 
-      return @result unless File.exists?(path)
+      return @result unless known_file?(path)
 
       data = extract_controller_data(path)
       defined_actions = data.defined_actions
@@ -1211,7 +1271,7 @@ module Analyzer::Ruby
       method_bodies = Hash(String, Array(String)).new
       param_type = "form"
 
-      unless File.exists?(path)
+      unless known_file?(path)
         empty = ControllerData.new(param_type, params_method, params_body_by_action, params_query_by_action,
           defined_actions, helper_calls_by_action, callees_by_action, action_lines)
         @controller_data_cache[path] = empty
@@ -1576,7 +1636,7 @@ module Analyzer::Ruby
         candidates << "#{framework_root}/app/controllers/#{subdir}/#{ctrl_name}_controller.rb"
       end
       candidates << "#{framework_root}/app/controllers/#{ctrl_name}_controller.rb"
-      candidates.find { |c| File.exists?(c) }
+      candidates.find { |c| known_file?(c) }
     end
 
     private def action_allowed?(name : String, only : Array(String), except : Array(String)) : Bool

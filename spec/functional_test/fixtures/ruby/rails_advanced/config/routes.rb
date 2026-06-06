@@ -71,6 +71,8 @@ Rails.application.routes.draw do
   resources :refunds, controller: "admin/refunds", only: [] do
     get :summary, on: :collection
     get :preview
+    collection { get :inline_summary }
+    member { post :inline_preview }
 
     new do
       get :template
@@ -87,6 +89,7 @@ Rails.application.routes.draw do
 
   get "up" => "rails/health#show"
   get "ping", to: "monitor#ping"
+  match "legacy_ping", to: "monitor#ping", via: "get"
 
   # Optional route segments are Rails DSL, not URL: `(.:format)` and the
   # nested `(/:section)` must be peeled to the required base path, and the
