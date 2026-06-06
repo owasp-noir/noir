@@ -12,6 +12,7 @@ module Analyzer::Kotlin
     def analyze
       webflux_base_path_map = Hash(String, String).new
       string_constants = Hash(String, String).new
+      local_string_constants = Hash(String, Hash(String, String)).new
       dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
       file_list = all_files()
@@ -22,7 +23,9 @@ module Analyzer::Kotlin
         next if KotlinEngine.test_path?(path)
 
         content = read_file_content(path)
-        Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content).each do |name, value|
+        constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content)
+        local_string_constants[path] = constants
+        constants.each do |name, value|
           string_constants[name] ||= value
         end
       end
@@ -39,7 +42,7 @@ module Analyzer::Kotlin
           process_directory(path, webflux_base_path_map)
         elsif path.ends_with?(".#{KOTLIN_EXTENSION}")
           next if KotlinEngine.test_path?(path)
-          process_kotlin_file(path, dto_builder, webflux_base_path_map, string_constants)
+          process_kotlin_file(path, dto_builder, webflux_base_path_map, string_constants, local_string_constants[path]?)
         end
       end
 
@@ -155,7 +158,8 @@ module Analyzer::Kotlin
     private def process_kotlin_file(path : String,
                                     dto_builder : Noir::TreeSitterKotlinDtoIndex,
                                     webflux_base_path_map : Hash(String, String),
-                                    string_constants : Hash(String, String))
+                                    string_constants : Hash(String, String),
+                                    local_string_constants : Hash(String, String)?)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       content = read_file_content(path)
 
@@ -171,9 +175,14 @@ module Analyzer::Kotlin
         next if package_name.empty?
 
         webflux_base_path = find_base_path(path, webflux_base_path_map)
-        dto_index = dto_builder.build_for_with_root(path, content, root)
 
-        routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(root, content, string_constants)
+        routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes_from(
+          root, content, string_constants, local_string_constants
+        )
+        next if routes.empty?
+
+        dto_index = dto_builder.build_for_with_root(path, content, root)
+        method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, content)
 
         # Pin the parameter format to the FIRST verb seen for each
         # (class, method) — for multi-verb `@RequestMapping(method =
@@ -194,13 +203,26 @@ module Analyzer::Kotlin
           # verb default (POST → form, others → query) is applied
           # per-parameter inside the extractor so an explicit @RequestBody
           # on a POST resolves to json instead of being dragged to form.
-          parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
-            root, content, route.class_name, route.method_name
-          )
+          method = method_nodes[key]?
+          parameter_format =
+            if method
+              Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from_method(method, content)
+            else
+              Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
+                root, content, route.class_name, route.method_name
+              )
+            end
 
-          parameters = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
-            root, content, route.class_name, route.method_name, format_verb, parameter_format, dto_index
-          )
+          parameters =
+            if method
+              Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from_method(
+                method, content, format_verb, parameter_format, dto_index
+              )
+            else
+              Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
+                root, content, route.class_name, route.method_name, format_verb, parameter_format, dto_index
+              )
+            end
 
           # Drop the trailing `/` on webflux_base_path when the route
           # path already starts with one, so the join doesn't produce

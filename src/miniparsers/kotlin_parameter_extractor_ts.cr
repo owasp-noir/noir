@@ -210,6 +210,14 @@ module Noir
                                        class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
       method = find_function(root, source, class_name, method_name)
       return [] of Param unless method
+      extract_method_parameters_from_method(method, source, verb, parameter_format, class_fields)
+    end
+
+    def extract_method_parameters_from_method(method : LibTreeSitter::TSNode,
+                                              source : String,
+                                              verb : String,
+                                              parameter_format : String?,
+                                              class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
       params = collect_method_params(method, source, verb, parameter_format, class_fields)
       append_constraint_params(method, source, verb, params)
       params
@@ -228,6 +236,10 @@ module Noir
     def extract_consumes_from(root : LibTreeSitter::TSNode, source : String, class_name : String, method_name : String) : String?
       method = find_function(root, source, class_name, method_name)
       return unless method
+      extract_consumes_from_method(method, source)
+    end
+
+    def extract_consumes_from_method(method : LibTreeSitter::TSNode, source : String) : String?
       ann = mapping_annotation_on(method, source)
       return unless ann
       args = annotation_args(ann)
@@ -303,7 +315,96 @@ module Noir
       results
     end
 
+    def index_functions_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      result = Hash(String, LibTreeSitter::TSNode).new
+      walk_class_containers(root) do |decl|
+        class_name = type_identifier_text(decl, source)
+        next if class_name.empty?
+        body = class_body_of(decl)
+        next unless body
+        Noir::TreeSitter.each_named_child(body) do |member|
+          next unless Noir::TreeSitter.node_type(member) == "function_declaration"
+          method_name = function_name(member, source)
+          next if method_name.empty?
+          result["#{class_name}##{method_name}"] ||= member
+        end
+      end
+      index_orphan_functions_from(root, source, result)
+      result
+    end
+
     # ---- private helpers ----------------------------------------------
+
+    private def index_orphan_functions_from(root : LibTreeSitter::TSNode,
+                                            source : String,
+                                            result : Hash(String, LibTreeSitter::TSNode))
+      orphan_class : String? = nil
+      Noir::TreeSitter.each_named_child(root) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "class_declaration", "object_declaration", "interface_declaration"
+          if class_body_of(child).nil? && !abstract_type?(child, source)
+            class_name = type_identifier_text(child, source)
+            orphan_class = class_name.empty? ? nil : class_name
+          else
+            orphan_class = nil
+          end
+        when "ERROR"
+          if class_name = orphan_class
+            collect_orphan_function_nodes(child, source, class_name, result)
+          end
+          orphan_class = nil
+        when "prefix_expression"
+          if class_name = split_constructor_class_name(child, source)
+            collect_orphan_function_nodes(child, source, class_name, result)
+          end
+          orphan_class = nil
+        when "annotation"
+          # Constructor annotations may be parsed as a sibling between
+          # the no-body class_declaration and the call_expression that
+          # carries the class body. Keep the orphan class context alive.
+        when "call_expression"
+          if class_name = orphan_class
+            collect_orphan_function_nodes(child, source, class_name, result)
+          end
+          orphan_class = nil
+        else
+          orphan_class = nil
+        end
+      end
+    end
+
+    private def split_constructor_class_name(node : LibTreeSitter::TSNode, source : String) : String?
+      text = Noir::TreeSitter.node_text(node, source)
+      return unless text.includes?(" constructor")
+      return unless text.includes?(" fun ")
+      return if text.match(/\babstract\s+class\b/)
+      match = text.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/)
+      match.try &.[1]
+    end
+
+    private def collect_orphan_function_nodes(node : LibTreeSitter::TSNode,
+                                              source : String,
+                                              class_name : String,
+                                              result : Hash(String, LibTreeSitter::TSNode))
+      if Noir::TreeSitter.node_type(node) == "function_declaration"
+        method_name = function_name(node, source)
+        result["#{class_name}##{method_name}"] ||= node unless method_name.empty?
+        return
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_orphan_function_nodes(child, source, class_name, result)
+      end
+    end
+
+    private def abstract_type?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      if mods = find_modifiers(decl)
+        Noir::TreeSitter.each_named_child(mods) do |child|
+          return true if Noir::TreeSitter.node_text(child, source) == "abstract"
+        end
+      end
+      false
+    end
 
     private def walk_class_containers(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
       ty = Noir::TreeSitter.node_type(node)

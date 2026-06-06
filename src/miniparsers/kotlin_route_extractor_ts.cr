@@ -145,10 +145,13 @@ module Noir
     # Spring analyzer can amortise the parse across multiple
     # extractions on the same file. Tree lifetime is the caller's
     # responsibility.
-    def extract_routes_from(root : LibTreeSitter::TSNode, source : String, string_constants = Hash(String, String).new) : Array(Route)
+    def extract_routes_from(root : LibTreeSitter::TSNode,
+                            source : String,
+                            string_constants = Hash(String, String).new,
+                            local_string_constants : Hash(String, String)? = nil) : Array(Route)
       routes = [] of Route
-      local_string_constants = extract_string_constants(source)
-      walk_classes(root, source, "", routes, string_constants, local_string_constants)
+      file_constants = local_string_constants || extract_string_constants(source)
+      walk_classes(root, source, "", routes, string_constants, file_constants)
       collect_gateway_routes(source, string_constants, routes)
       routes
     end
@@ -176,20 +179,113 @@ module Noir
       # a class_declaration without `modifiers`. Falling through
       # `each_named_child` would lose the class-level mapping prefix.
       pending = [] of LibTreeSitter::TSNode
+      orphan_class : Tuple(String, String)? = nil
       count = LibTreeSitter.ts_node_named_child_count(node)
       count.times do |i|
         child = LibTreeSitter.ts_node_named_child(node, i.to_u32)
         case Noir::TreeSitter.node_type(child)
         when "class_declaration", "object_declaration", "interface_declaration"
           process_class(child, source, outer_prefix, pending, routes, string_constants, local_string_constants)
+          orphan_class = recoverable_orphan_class(child, source, outer_prefix, pending, string_constants, local_string_constants)
           pending = [] of LibTreeSitter::TSNode
         when "prefix_expression"
-          pending << child if prefix_expression_has_annotation?(child)
+          if recover_split_constructor_prefix(child, source, outer_prefix, routes, string_constants, local_string_constants)
+            pending = [] of LibTreeSitter::TSNode
+          else
+            pending << child if prefix_expression_has_annotation?(child)
+          end
+          orphan_class = nil
+        when "ERROR"
+          if ctx = orphan_class
+            class_name, class_prefix = ctx
+            collect_recovered_function_routes(child, source, class_name, class_prefix, routes, string_constants, local_string_constants)
+          else
+            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants)
+          end
+          pending = [] of LibTreeSitter::TSNode
+          orphan_class = nil
+        when "annotation"
+          pending = [] of LibTreeSitter::TSNode unless orphan_class
+        when "call_expression"
+          if ctx = orphan_class
+            class_name, class_prefix = ctx
+            collect_recovered_function_routes(child, source, class_name, class_prefix, routes, string_constants, local_string_constants)
+          else
+            walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants)
+          end
+          pending = [] of LibTreeSitter::TSNode
+          orphan_class = nil
         else
           pending = [] of LibTreeSitter::TSNode
+          orphan_class = nil
           walk_classes(child, source, outer_prefix, routes, string_constants, local_string_constants)
         end
       end
+    end
+
+    private def recoverable_orphan_class(node : LibTreeSitter::TSNode,
+                                         source : String,
+                                         outer_prefix : String,
+                                         pending : Array(LibTreeSitter::TSNode),
+                                         string_constants : Hash(String, String),
+                                         local_string_constants : Hash(String, String)) : Tuple(String, String)?
+      return if class_body(node)
+      return if feign_client?(node, source)
+      return if abstract_type?(node, source)
+
+      class_name = type_identifier_text(node, source)
+      return if class_name.empty?
+
+      class_prefix = class_mapping_prefix(node, source, pending, string_constants, local_string_constants)
+      {class_name, join_paths(outer_prefix, class_prefix)}
+    end
+
+    private def abstract_type?(decl : LibTreeSitter::TSNode, source : String) : Bool
+      if mods = find_modifiers(decl)
+        Noir::TreeSitter.each_named_child(mods) do |child|
+          return true if Noir::TreeSitter.node_text(child, source) == "abstract"
+        end
+      end
+      false
+    end
+
+    private def recover_split_constructor_prefix(node : LibTreeSitter::TSNode,
+                                                 source : String,
+                                                 outer_prefix : String,
+                                                 routes : Array(Route),
+                                                 string_constants : Hash(String, String),
+                                                 local_string_constants : Hash(String, String)) : Bool
+      text = Noir::TreeSitter.node_text(node, source)
+      return false unless text.includes?(" constructor")
+      return false unless text.includes?(" fun ")
+      return false if text.match(/\babstract\s+class\b/)
+      match = text.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/)
+      return false unless match
+
+      class_prefix = split_constructor_prefix(node, source, string_constants, local_string_constants)
+      collect_recovered_function_routes(
+        node, source, match[1], join_paths(outer_prefix, class_prefix), routes, string_constants, local_string_constants
+      )
+      true
+    end
+
+    private def split_constructor_prefix(node : LibTreeSitter::TSNode,
+                                         source : String,
+                                         string_constants : Hash(String, String),
+                                         local_string_constants : Hash(String, String)) : String
+      collect_stray_annotations(node, source).each do |entry|
+        name, args = entry
+        next unless ANNOTATION_VERBS.has_key?(name)
+        next unless args
+        buf = [] of String
+        collect_string_values(args, source, buf, string_constants, local_string_constants)
+        return buf.first unless buf.empty?
+      end
+      text = Noir::TreeSitter.node_text(node, source)
+      if match = text.match(/@(?:[A-Za-z_][A-Za-z0-9_.]*\.)?RequestMapping\s*\(\s*"([^"]*)"/)
+        return match[1]
+      end
+      ""
     end
 
     private def process_class(node : LibTreeSitter::TSNode,
@@ -219,6 +315,23 @@ module Noir
             walk_classes(member, source, prefix, routes, string_constants, local_string_constants)
           end
         end
+      end
+    end
+
+    private def collect_recovered_function_routes(node : LibTreeSitter::TSNode,
+                                                  source : String,
+                                                  class_name : String,
+                                                  class_prefix : String,
+                                                  routes : Array(Route),
+                                                  string_constants : Hash(String, String),
+                                                  local_string_constants : Hash(String, String))
+      if Noir::TreeSitter.node_type(node) == "function_declaration"
+        collect_function_routes(node, source, class_name, class_prefix, routes, string_constants, local_string_constants)
+        return
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_recovered_function_routes(child, source, class_name, class_prefix, routes, string_constants, local_string_constants)
       end
     end
 
