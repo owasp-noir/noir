@@ -56,6 +56,55 @@ describe "Apache httpd Analyzer" do
     tag_descriptions(endpoints[0], "apache-rewrite-target").should eq ["/new/$1"]
   end
 
+  it "extracts proxy, script alias, and redirect directives" do
+    endpoints = analyze_apache <<-CONF
+      <VirtualHost *:443>
+          ServerName proxy.example.com
+          ProxyPass /api http://backend:8080/
+          ProxyPassMatch ^/ws/(.*)$ ws://backend/$1
+          ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
+          Redirect permanent /old https://example.com/new
+          RedirectMatch 301 ^/legacy/(.*)$ /new/$1
+      </VirtualHost>
+      CONF
+
+    pairs = endpoints.map { |e| {e.url, tag_descriptions(e, "apache-path-type").first} }.sort!
+    pairs.should eq([
+      {"/api", "proxy"},
+      {"/cgi-bin/", "script-alias"},
+      {"/old", "redirect"},
+      {"^/legacy/(.*)$", "redirect-regex"},
+      {"^/ws/(.*)$", "proxy-regex"},
+    ])
+    endpoints.each do |e|
+      tag_descriptions(e, "apache-host").should eq ["proxy.example.com"]
+    end
+  end
+
+  it "skips location-scoped proxy targets and non-url alias arguments" do
+    endpoints = analyze_apache <<-CONF
+      <Location /backend>
+          ProxyPass http://backend:8080/
+      </Location>
+      <LocationMatch "^/files/(.*)$">
+          Alias /var/www/files/$1
+      </LocationMatch>
+      CONF
+
+    endpoints.map(&.url).sort!.should eq ["/backend", "^/files/(.*)$"]
+  end
+
+  it "skips no-substitution and static asset rewrites" do
+    endpoints = analyze_apache <<-CONF, ".htaccess"
+      RewriteRule .* - [env=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+      RewriteRule ^(?:build|tests)/.* - [R=404,L]
+      RewriteRule ^(.*css_[a-zA-Z0-9-_]+)\\.css$ $1\\.css\\.br [QSA]
+      RewriteRule ^remote/(.*) remote.php [L]
+      CONF
+
+    endpoints.map(&.url).should eq ["^remote/(.*)"]
+  end
+
   it "supports multiple ServerAlias hosts" do
     endpoints = analyze_apache <<-CONF
       <VirtualHost *:80>

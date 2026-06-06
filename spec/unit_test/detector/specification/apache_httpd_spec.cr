@@ -28,6 +28,18 @@ describe "Detect Apache httpd config" do
     instance.detect(".htaccess", htaccess).should be_true
   end
 
+  it "detects Apache config templates case-insensitively" do
+    locator = CodeLocator.instance
+    locator.clear "apache-httpd-spec"
+
+    instance.detect("conf/extra.conf.in", "  proxypass /api http://backend\n").should be_true
+    locator.all("apache-httpd-spec").should eq ["conf/extra.conf.in"]
+  end
+
+  it "ignores directives that only appear in comments" do
+    instance.detect("commented.conf", "# ProxyPass /api http://backend\n").should be_false
+  end
+
   it "rejects .conf without Apache directives" do
     instance.detect("config.conf", "key = value\nfoo=bar\n").should be_false
   end
