@@ -101,7 +101,7 @@ module Analyzer::CSharp::MinimalApiSupport
       return {route, methods}
     end
 
-    inline_prefix = extract_inline_group_prefix(block)
+    inline_prefix = extract_inline_group_prefix(block, group_prefixes)
     if match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"/m)
       receiver = match[1]?
       route = apply_group_prefix(match[3], receiver, group_prefixes)
@@ -120,7 +120,7 @@ module Analyzer::CSharp::MinimalApiSupport
   end
 
   private def extract_map_methods_route(block : String, group_prefixes : Hash(String, String)) : Tuple(String?, Array(String))
-    inline_prefix = extract_inline_group_prefix(block)
+    inline_prefix = extract_inline_group_prefix(block, group_prefixes)
 
     if match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"\s*,\s*([\s\S]+?)(?:=>|\);)/m)
       receiver = match[1]?
@@ -144,13 +144,25 @@ module Analyzer::CSharp::MinimalApiSupport
     methods.uniq
   end
 
-  private def extract_inline_group_prefix(block : String) : String
+  private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, String)) : String
     map_index = block.index(/\.?\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
     return "" unless map_index
 
     prefix_source = block[0...map_index]
     parts = prefix_source.scan(/MapGroup\s*\(\s*@?"([^"]+)"/).map(&.[1]?.to_s)
     return "" if parts.empty?
+
+    # A chained `group.MapGroup("/sub").Map*(...)` registration carries the
+    # accumulated prefix of the leading receiver variable (e.g. `admin` ->
+    # `/admin`) which the verb-regex receiver can't see (it resolves to the
+    # `)` of the chained call). Resolve and prepend it so the route keeps the
+    # full `/admin/sub/...` path instead of dropping to `/sub/...`.
+    if head = prefix_source.match(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*MapGroup\s*\(/)
+      if head_prefix = group_prefixes[head[1]]?
+        parts.unshift(head_prefix)
+      end
+    end
+
     join_route_parts_array(parts)
   end
 

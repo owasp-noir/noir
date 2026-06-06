@@ -15,23 +15,30 @@ module Analyzer::Crystal
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
       last_endpoint = Endpoint.new("", "")
-      current_scopes = [] of String
+      scope_stack = [] of NamedTuple(prefix: String, indent: Int32)
 
       lines.each_with_index do |line, index|
         details = Details.new(PathInfo.new(path, index + 1))
 
-        # Handle scope statements
-        if line.includes?("scope ") && line.includes?(" do")
-          scope_match = line.match(/scope\s+['"](.+?)['"]/)
-          if scope_match && scope_match[1]?
-            current_scopes << scope_match[1]
+        # Open a scope block, recording its indentation.
+        if scope_match = line.match(/^(\s*)scope\s+['"](.+?)['"].*\bdo\b/)
+          scope_stack << {prefix: scope_match[2], indent: scope_match[1].size}
+          next
+        end
+
+        # Close the innermost scope only when an `end` lines up with the
+        # indentation of the `scope ... do` that opened it; inner if/case/def/do
+        # `end`s sit at a deeper indent and must not pop the scope.
+        unless scope_stack.empty?
+          if end_match = line.match(/^(\s*)end\b/)
+            if end_match[1].size == scope_stack.last[:indent]
+              scope_stack.pop
+              next
+            end
           end
         end
 
-        # Handle end statements (basic detection)
-        if line.strip == "end" && current_scopes.size > 0
-          current_scopes.pop
-        end
+        current_scopes = scope_stack.map(&.[:prefix])
 
         # Parse HTTP method calls
         endpoint = line_to_endpoint(line, current_scopes)
@@ -222,7 +229,8 @@ module Analyzer::Crystal
       # Match HTTP method calls: get "/path", Controller
       %w[get post put patch delete options head].each do |method|
         if content.includes?("#{method} ") && content.includes?("\"")
-          if match = content.match(/#{method}\s+['"](.+?)['"]/)
+          # Require a token boundary so `input "/x"` isn't read as `put "/x"`.
+          if match = content.match(/(?:^|[^.\w])#{method}\s+['"](.+?)['"]/)
             path = normalize_crystal_interpolation(match[1])
             full_path = scope_prefix + path
             return Endpoint.new(full_path, method.upcase)
@@ -237,7 +245,7 @@ module Analyzer::Crystal
       scope_prefix = scopes.join("")
 
       if content.includes?("ws ") && content.includes?("\"")
-        if match = content.match(/ws\s+['"](.+?)['"]/)
+        if match = content.match(/(?:^|[^.\w])ws\s+['"](.+?)['"]/)
           path = normalize_crystal_interpolation(match[1])
           full_path = scope_prefix + path
           endpoint = Endpoint.new(full_path, "GET")

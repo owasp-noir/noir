@@ -549,30 +549,60 @@ module Analyzer::Fsharp
       find_matching_delimiter(text, open_idx, '[', ']')
     end
 
+    # Returns the index of the closing quote if chars[i] opens a genuine F#
+    # char literal ('c', '\n', '\\', 'A', '\x41', ...); nil if the apostrophe is
+    # a generic type param (`<'T>`) or a tick identifier (`route'`), which must
+    # NOT be treated as a string delimiter.
+    private def fsharp_char_literal_close(chars : Array(Char), i : Int32) : Int32?
+      if i > 0
+        prev = chars[i - 1]
+        return nil if prev.alphanumeric? || prev == '_' || prev == '\'' || prev == '<'
+      end
+      return nil if i + 1 >= chars.size
+
+      if chars[i + 1] == '\\'
+        j = i + 2
+        limit = i + 10
+        while j < chars.size && j <= limit
+          return j if chars[j] == '\''
+          j += 1
+        end
+        nil
+      else
+        (i + 2 < chars.size && chars[i + 2] == '\'') ? i + 2 : nil
+      end
+    end
+
     private def find_matching_delimiter(text : String, open_idx : Int32,
                                         opener : Char, closer : Char) : Int32?
-      return unless open_idx < text.size && text[open_idx] == opener
+      chars = text.chars
+      return unless open_idx < chars.size && chars[open_idx] == opener
       depth = 1
       i = open_idx + 1
       in_string = false
-      string_quote = '\0'
 
-      while i < text.size && depth > 0
-        c = text[i]
+      while i < chars.size && depth > 0
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
-          in_string = false if c == string_quote
+          in_string = false if c == '"'
           i += 1
           next
         end
 
+        # An apostrophe is usually a generic param (<'T>) or a tick identifier
+        # (route'), not a string. Only skip it when it opens a real char literal.
+        if c == '\''
+          i = (close = fsharp_char_literal_close(chars, i)) ? close + 1 : i + 1
+          next
+        end
+
         case c
-        when '"', '\''
+        when '"'
           in_string = true
-          string_quote = c
         when opener
           depth += 1
         when closer
@@ -611,11 +641,25 @@ module Analyzer::Fsharp
           next
         end
 
-        if c == '"' || c == '\''
+        if c == '"'
           in_string = true
           string_quote = c
           result << c
           i += 1
+          next
+        end
+
+        # Apostrophe: a generic param (<'T>) or tick identifier (route') is NOT
+        # a string — passing it through verbatim keeps later comments strippable.
+        # Only a genuine char literal is copied as an opaque unit.
+        if c == '\''
+          if close = fsharp_char_literal_close(chars, i)
+            (i..close).each { |k| result << chars[k] }
+            i = close + 1
+          else
+            result << c
+            i += 1
+          end
           next
         end
 

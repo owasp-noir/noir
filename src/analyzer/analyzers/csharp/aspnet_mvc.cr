@@ -161,11 +161,13 @@ module Analyzer::CSharp
     private def extract_parameters(full_signature : String, http_method : String) : Array(Param)
       parameters = [] of Param
 
-      # Extract parameter list from signature
-      match = full_signature.match(/\((.*?)\)/)
-      return parameters unless match
+      # Extract parameter list (paren-depth aware so a param with an inner ')'
+      # — a method-call default like `id = GetDefault()` or a tuple type
+      # `(int,int) pair` — isn't truncated at the first ')').
+      param_list = extract_balanced_param_list(full_signature)
+      return parameters unless param_list
 
-      param_list = match[1].strip
+      param_list = param_list.strip
       return parameters if param_list.empty?
 
       # Determine default parameter type based on HTTP method

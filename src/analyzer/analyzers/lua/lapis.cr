@@ -675,17 +675,21 @@ module Analyzer::Lua
         # Lua / MoonScript line comment: --
         # MoonScript also supports `--` and Lua block comments use --[[ ... ]]
         if i + 1 < chars.size && c == '-' && chars[i + 1] == '-'
-          # Block form: --[[ ... ]]
-          if i + 3 < chars.size && chars[i + 2] == '[' && chars[i + 3] == '['
-            4.times { result << ' ' }
-            i += 4
-            while i + 1 < chars.size && !(chars[i] == ']' && chars[i + 1] == ']')
+          # Block form: --[[ ... ]], --[=[ ... ]=], --[==[ ... ]==], ...
+          # Use the leveled detector so a `--[=[ ... ]=]` comment isn't misread
+          # as a line comment (which leaks its body as phantom routes).
+          if comment_level = lua_long_bracket_open?(chars, i + 2)
+            opener_size = comment_level + 2
+            (opener_size + 2).times { result << ' ' } # blank `--` + opener
+            i += 2 + opener_size
+            while i < chars.size
+              if chars[i] == ']' && lua_long_bracket_close?(chars, i, comment_level)
+                (comment_level + 2).times { result << ' ' }
+                i += comment_level + 2
+                break
+              end
               result << (chars[i] == '\n' ? '\n' : ' ')
               i += 1
-            end
-            if i + 1 < chars.size
-              2.times { result << ' ' }
-              i += 2
             end
             next
           end
@@ -708,10 +712,11 @@ module Analyzer::Lua
       return 1 if offset <= 0
       limit = offset > content.size ? content.size : offset
       count = 1
-      i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
-        i += 1
+      # each_char advances in O(1); the old content[i] loop was O(n^2) on
+      # multi-byte (UTF-8) content, stalling large CJK files with many routes.
+      content.each_char_with_index do |ch, i|
+        break if i >= limit
+        count += 1 if ch == '\n'
       end
       count
     end
