@@ -136,10 +136,16 @@ module Analyzer::Dart
       close_paren = find_matching_paren(class_body, open_paren)
       return [] of Noir::DartCalleeExtractor::Entry unless close_paren
 
-      body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, close_paren + 1)
+      # close_paren is a CHAR index (find_matching_paren is char-based); the
+      # extractor scans/returns BYTE offsets. Convert at the boundary so the
+      # body slice is correct and line_for_offset (char-based) gets char offsets.
+      start_byte = class_body.char_index_to_byte_index(close_paren + 1)
+      return [] of Noir::DartCalleeExtractor::Entry unless start_byte
+      body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, start_byte)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
       body, body_start, _ = body_info
-      start_line = line_for_offset(file_content, class_body_start + body_start)
+      body_start_char = class_body.byte_index_to_char_index(body_start) || 0
+      start_line = line_for_offset(file_content, class_body_start + body_start_char)
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
@@ -350,11 +356,14 @@ module Analyzer::Dart
                                         class_body_start : Int32,
                                         close_paren : Int32,
                                         file_content : String) : Array(Noir::DartCalleeExtractor::Entry)
-      body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, close_paren + 1)
+      start_byte = class_body.char_index_to_byte_index(close_paren + 1)
+      return [] of Noir::DartCalleeExtractor::Entry unless start_byte
+      body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, start_byte)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
 
       body, body_start, _ = body_info
-      start_line = line_for_offset(file_content, class_body_start + body_start)
+      body_start_char = class_body.byte_index_to_char_index(body_start) || 0
+      start_line = line_for_offset(file_content, class_body_start + body_start_char)
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
@@ -489,7 +498,9 @@ module Analyzer::Dart
           result << ' '
           result << ' '
           i += 2
-          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
+          # Scan to EOF; the old `i + 1 < chars.size` bound left the final char
+          # of an UNTERMINATED block comment un-blanked (leaked as live code).
+          while i < chars.size && !(chars[i] == '*' && i + 1 < chars.size && chars[i + 1] == '/')
             result << (chars[i] == '\n' ? '\n' : ' ')
             i += 1
           end
