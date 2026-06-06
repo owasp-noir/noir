@@ -74,7 +74,10 @@
   <link rel="preload" href="{{ base_url }}/fonts/inter-600-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ base_url }}/css/fonts.css">
   <link rel="stylesheet" href="{{ base_url }}/css/style.css">
-  {{ highlight_css }}
+  {# hwaro's `highlight_css`/`highlight_js` emit root-absolute /assets/ paths that
+     ignore the base_url subpath, 404ing under /noir/. Reference the vendored
+     assets via base_url ourselves instead. #}
+  <link rel="stylesheet" href="{{ base_url }}/assets/css/highlight/atom-one-dark.min.css">
   {{ auto_includes_css }}
 </head>
 <body>
