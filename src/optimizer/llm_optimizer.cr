@@ -33,44 +33,29 @@ class LLMEndpointOptimizer < EndpointOptimizer
 
     @logger.info "Applying LLM-based optimization for non-standard paths and parameters."
 
-    # Filter endpoints that might benefit from LLM optimization
-    candidates = find_optimization_candidates(endpoints)
+    # Filter endpoints that might benefit from LLM optimization, recording their
+    # positions. Writing each optimized result back by index avoids the previous
+    # identity-normalized find(), which collapsed distinct param names
+    # (/api/{userID} and /api/{orderID} both -> /api/{param}) and clobbered
+    # sibling endpoints with the first match.
+    candidate_indexes = [] of Int32
+    endpoints.each_with_index do |endpoint, i|
+      candidate_indexes << i if has_non_standard_patterns(endpoint)
+    end
 
-    if candidates.empty?
+    if candidate_indexes.empty?
       @logger.debug_sub "No endpoints found that would benefit from LLM optimization."
       return endpoints
     end
 
-    @logger.debug_sub "Found #{candidates.size} endpoints that may benefit from LLM optimization."
+    @logger.debug_sub "Found #{candidate_indexes.size} endpoints that may benefit from LLM optimization."
 
-    optimized_endpoints = [] of Endpoint
-
-    candidates.each do |endpoint|
-      optimized_endpoint = llm_optimize_single_endpoint(endpoint)
-      optimized_endpoints << optimized_endpoint
-    end
-
-    # Replace optimized endpoints in the original array
-    final_endpoints = endpoints.map do |endpoint|
-      optimized = optimized_endpoints.find { |opt| matches_endpoint_identity(endpoint, opt) }
-      optimized || endpoint
+    final_endpoints = endpoints.dup
+    candidate_indexes.each do |idx|
+      final_endpoints[idx] = llm_optimize_single_endpoint(final_endpoints[idx])
     end
 
     final_endpoints
-  end
-
-  # Find endpoints that would benefit from LLM optimization
-  private def find_optimization_candidates(endpoints : Array(Endpoint)) : Array(Endpoint)
-    candidates = [] of Endpoint
-
-    endpoints.each do |endpoint|
-      # Check for non-standard URL patterns that might need refinement
-      if has_non_standard_patterns(endpoint)
-        candidates << endpoint
-      end
-    end
-
-    candidates
   end
 
   # Check if an endpoint has non-standard patterns that could benefit from LLM optimization
@@ -186,19 +171,6 @@ class LLMEndpointOptimizer < EndpointOptimizer
   rescue ex : Exception
     @logger.debug "Failed to parse LLM optimization response: #{ex.message}"
     endpoint
-  end
-
-  # Check if two endpoints represent the same logical endpoint for replacement
-  private def matches_endpoint_identity(original : Endpoint, optimized : Endpoint) : Bool
-    # Match by method and similar URL structure (before optimization)
-    return false unless original.method == optimized.method
-
-    # For identity matching, use a flexible comparison that accounts for
-    # parameter names and basic URL structure
-    original_base = original.url.gsub(/\{[^}]+\}/, "{param}").gsub(/:[\w]+/, ":param").gsub(/<[^>]+>/, "<param>")
-    optimized_base = optimized.url.gsub(/\{[^}]+\}/, "{param}").gsub(/:[\w]+/, ":param").gsub(/<[^>]+>/, "<param>")
-
-    original_base == optimized_base
   end
 
   # Setup LLM adapter based on configuration

@@ -86,17 +86,7 @@ class OutputBuilderDiff < OutputBuilder
           io << "[#{section}]\n"
           endpoints.as_a.each do |endpoint|
             io << "\n[[#{section}.endpoint]]\n"
-            endpoint.as_h.each do |key, value|
-              case value.raw
-              when String, Int64, Float64, Bool
-                io << "#{key} = #{toml_value(value)}\n"
-              when Array
-                io << "#{key} = ["
-                items = value.as_a.map { |item| toml_value(item) }
-                io << items.join(", ")
-                io << "]\n"
-              end
-            end
+            io << generate_table_content(endpoint.as_h)
           end
           io << "\n"
         end
@@ -105,16 +95,40 @@ class OutputBuilderDiff < OutputBuilder
     result
   end
 
+  private def generate_table_content(data : Hash(String, JSON::Any)) : String
+    String.build do |io|
+      data.each do |key, value|
+        case value.raw
+        when String, Int64, Float64, Bool
+          io << "#{key} = #{toml_value(value)}\n"
+        when Array
+          io << "#{key} = ["
+          io << value.as_a.map { |item| toml_value(item) }.join(", ")
+          io << "]\n"
+        when Hash
+          io << "#{key} = { "
+          io << value.as_h.map { |k, v| "#{k} = #{toml_value(v)}" }.join(", ")
+          io << " }\n"
+        end
+      end
+    end
+  end
+
   private def toml_value(value : JSON::Any) : String
     case raw = value.raw
     when String
-      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"")}")
+      # Escape control chars so a multi-line value can't break the TOML document.
+      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"").gsub("\b", "\\b").gsub("\t", "\\t").gsub("\n", "\\n").gsub("\f", "\\f").gsub("\r", "\\r")}")
     when Int64, Float64
       raw.to_s
     when Bool
       raw.to_s
     when Nil
       %("")
+    when Array
+      "[#{raw.map { |item| toml_value(item) }.join(", ")}]"
+    when Hash
+      "{ #{raw.map { |k, v| "#{k} = #{toml_value(v)}" }.join(", ")} }"
     else
       %("#{raw}")
     end

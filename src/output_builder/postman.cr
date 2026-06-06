@@ -17,6 +17,11 @@ class OutputBuilderPostman < OutputBuilder
           # Handle <type:param> format - convert to :param
           match = part.match(/<[^:>]+:(\w+)>/)
           match ? ":#{match[1]}" : part
+        elsif part.starts_with?("{") && part.ends_with?("}")
+          # Handle {name} / {name:constraint} - convert to Postman's :name so the
+          # `variable` entry actually links to the URL placeholder.
+          match = part.match(/\A\{(\w+)(?::[^}]+)?\}\z/)
+          match ? ":#{match[1]}" : part
         else
           part
         end
