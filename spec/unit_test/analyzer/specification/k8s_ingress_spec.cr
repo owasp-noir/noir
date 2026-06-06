@@ -86,4 +86,104 @@ describe "Kubernetes Ingress Analyzer" do
     endpoints[0].url.should eq "/probe"
     tag_descriptions(endpoints[0], "ingress-path-type").should eq ["exact"]
   end
+
+  it "extracts legacy extensions v1beta1 ingress paths" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: extensions/v1beta1
+      kind: Ingress
+      metadata: {name: legacy}
+      spec:
+        rules:
+          - host: legacy.example.com
+            http:
+              paths:
+                - path: /legacy
+                  backend:
+                    serviceName: legacy
+                    servicePort: http
+      YAML
+
+    endpoints.size.should eq 1
+    endpoints[0].url.should eq "/legacy"
+    tag_descriptions(endpoints[0], "ingress-host").should eq ["legacy.example.com"]
+  end
+
+  it "uses root path for defaultBackend and backend paths without explicit path" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata: {name: defaults}
+      spec:
+        defaultBackend:
+          service:
+            name: default-service
+            port:
+              number: 80
+        rules:
+          - http:
+              paths:
+                - backend:
+                    service:
+                      name: api
+                      port:
+                        number: 80
+      YAML
+
+    endpoints.map(&.url).sort!.should eq ["/", "/"]
+    tag_descriptions(endpoints[0], "ingress-source").should eq ["default-backend"]
+    tag_descriptions(endpoints[1], "ingress-source").should eq ["rule"]
+  end
+
+  it "extracts templated Helm ingress paths with safe defaults" do
+    endpoints = analyze_ingress <<-YAML
+      {{- if .Values.server.ingress.enabled }}
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: {{ include "argo-cd.server.fullname" . }}
+      spec:
+        rules:
+          - host: {{ tpl (.Values.server.ingress.hostname) $ }}
+            http:
+              paths:
+                - path: {{ .Values.server.ingress.path }}
+                  pathType: {{ default "Prefix" .Values.server.ingress.pathType }}
+                  backend:
+                    service:
+                      name: {{ include "argo-cd.server.fullname" . }}
+                - path: /grpc
+                  pathType: Exact
+                  backend:
+                    service:
+                      name: grpc
+      {{- end }}
+      YAML
+
+    endpoints.map(&.url).sort!.should eq ["/", "/grpc"]
+    sources = endpoints.map { |e| tag_descriptions(e, "ingress-source").first }
+    sources.uniq!
+    sources.should eq ["template"]
+    tag_descriptions(endpoints.find! { |e| e.url == "/" }, "ingress-path-type").should eq ["prefix"]
+    tag_descriptions(endpoints.find! { |e| e.url == "/grpc" }, "ingress-path-type").should eq ["exact"]
+  end
+
+  it "extracts ingress paths from Kubernetes List items" do
+    endpoints = analyze_ingress <<-YAML
+      apiVersion: v1
+      kind: List
+      items:
+        - apiVersion: networking.k8s.io/v1
+          kind: Ingress
+          metadata: {name: listed}
+          spec:
+            rules:
+              - http:
+                  paths:
+                    - path: /listed
+                      pathType: Prefix
+      YAML
+
+    endpoints.size.should eq 1
+    endpoints[0].url.should eq "/listed"
+  end
 end
