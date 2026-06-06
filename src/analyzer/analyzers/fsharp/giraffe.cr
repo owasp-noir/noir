@@ -556,9 +556,9 @@ module Analyzer::Fsharp
     private def fsharp_char_literal_close(chars : Array(Char), i : Int32) : Int32?
       if i > 0
         prev = chars[i - 1]
-        return nil if prev.alphanumeric? || prev == '_' || prev == '\'' || prev == '<'
+        return if prev.alphanumeric? || prev == '_' || prev == '\'' || prev == '<'
       end
-      return nil if i + 1 >= chars.size
+      return if i + 1 >= chars.size
 
       if chars[i + 1] == '\\'
         j = i + 2
