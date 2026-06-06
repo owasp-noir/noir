@@ -65,6 +65,30 @@ describe "Nginx Analyzer" do
     ])
   end
 
+  it "preserves hash characters in regex locations" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location ~* (?:#.*#|\\.(?:bak|conf|log)|~)$ {
+              deny all;
+          }
+      }
+      CONF
+
+    endpoints.map(&.url).should eq(["(?:#.*#|\\.(?:bak|conf|log)|~)$"])
+  end
+
+  it "skips internal named and templated locations" do
+    endpoints = analyze_nginx <<-CONF
+      server {
+          location @fallback { proxy_pass http://fallback; }
+          location {{ .Path }} { proxy_pass http://backend; }
+          location /public { proxy_pass http://public; }
+      }
+      CONF
+
+    endpoints.map(&.url).should eq(["/public"])
+  end
+
   it "tracks multiple server blocks independently" do
     endpoints = analyze_nginx <<-CONF
       server {

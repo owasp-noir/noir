@@ -4,9 +4,10 @@ require "../../../models/code_locator"
 module Detector::Specification
   class Nginx < Detector
     # `.conf` is by far the most common extension for Nginx fragments;
-    # a tilde-prefixed `nginx.conf` (no extension) is the canonical
-    # main file in many distributions. Accept both.
-    EXTENSIONS = {".conf"}
+    # `.tmpl`/`.template` files are common in docker-gen and deployment
+    # repositories that render Nginx configs from templates.
+    EXTENSIONS  = {".conf", ".tmpl", ".template"}
+    LOCATION_RE = /^\s*location\s+(?:(?:=|~\*|~|\^~)\s+)?\S+/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -31,12 +32,28 @@ module Detector::Specification
     end
 
     private def nginx_shape?(content : String) : Bool
-      # Distinguish from Apache `.conf` files (which use directive
-      # blocks like `<Directory>`) and unrelated configs by requiring
-      # at least one nginx-specific directive.
-      content.includes?("location ") &&
-        (content.includes?("server ") || content.includes?("server{") ||
-          content.includes?("http {") || content.includes?("http{"))
+      # Include fragments often contain only `location` blocks, so scan
+      # executable directives instead of requiring a top-level server/http block.
+      content.each_line do |raw|
+        line = strip_template_actions(strip_comment(raw))
+        return true if line.matches?(LOCATION_RE)
+      end
+      false
+    end
+
+    private def strip_comment(line : String) : String
+      previous = '\0'
+      line.each_char_with_index do |ch, idx|
+        if ch == '#' && (idx == 0 || previous.whitespace? || previous.in?(';', '{', '}'))
+          return line[0...idx]
+        end
+        previous = ch
+      end
+      line
+    end
+
+    private def strip_template_actions(line : String) : String
+      line.gsub(/\{\{.*?\}\}/, "")
     end
   end
 end

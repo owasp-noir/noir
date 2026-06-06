@@ -34,14 +34,13 @@ module Analyzer::Specification
     private record Frame, kind : String, value : String, line : Int32
 
     private def process_content(content : String, details : Details)
-      lines = content.lines
       stack = [] of Frame
       server_names = [] of String
       server_tls = false
       server_depth = 0
 
-      lines.each_with_index do |raw, idx|
-        line = strip_comment(raw).strip
+      content.each_line.with_index do |raw, idx|
+        line = strip_template_actions(strip_comment(raw)).strip
         next if line.empty?
 
         # Pre-handle a trailing `}` so we pop the closing frame
@@ -70,9 +69,12 @@ module Analyzer::Specification
           server_tls = true if balanced.matches?(LISTEN_TLS_RE)
         elsif m = LOCATION_RE.match(balanced)
           modifier = m[1]? || ""
-          location = m[2].gsub(/[{};]\z/, "")
-          stack << Frame.new("location", location, idx + 1)
-          emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
+          raw_location = m[2]
+          location = normalize_location_path(raw_location)
+          unless location.empty? || internal_location?(raw_location) || internal_location?(location)
+            stack << Frame.new("location", location, idx + 1)
+            emit_location(details, location, modifier, METHOD_ANY, server_names, server_tls, idx + 1)
+          end
         elsif m = METHOD_BLOCK_RE.match(balanced)
           method = m[1].upcase
           if loc = current_location(stack)
@@ -97,8 +99,26 @@ module Analyzer::Specification
     end
 
     private def strip_comment(line : String) : String
-      idx = line.index('#')
-      idx.nil? ? line : line[0...idx]
+      previous = '\0'
+      line.each_char_with_index do |ch, idx|
+        if ch == '#' && (idx == 0 || previous.whitespace? || previous.in?(';', '{', '}'))
+          return line[0...idx]
+        end
+        previous = ch
+      end
+      line
+    end
+
+    private def strip_template_actions(line : String) : String
+      line.gsub(/\{\{.*?\}\}/, "")
+    end
+
+    private def normalize_location_path(path : String) : String
+      path.gsub(/[{};]\z/, "")
+    end
+
+    private def internal_location?(path : String) : Bool
+      path.starts_with?("@") || path.includes?("{{") || path.includes?("}}")
     end
 
     private def emit_location(details : Details, path : String, modifier : String, method : String, hosts : Array(String), tls : Bool, line : Int32)
