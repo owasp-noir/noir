@@ -1175,32 +1175,28 @@ p:has(> .member-card) {
     overflow: hidden;
     border-bottom: 1px solid var(--border);
 }
-.hero-split {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0;
+/* centred intro stacked above a full-width landscape showcase */
+.hero-inner {
     width: 100%;
-    max-width: 1200px;
+    max-width: 1120px;
     margin: 0 auto;
-    min-height: calc(100vh - var(--header-h));
-}
-.hero-text {
+    padding: 4.5rem 2rem 4rem;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    padding: 4rem 3rem 4rem 4rem;
-    border-right: 1px solid var(--border);
-}
-.hero-visual {
-    display: flex;
     align-items: center;
-    justify-content: center;
-    padding: 4rem 4rem 4rem 3rem;
-    background: var(--bg-sidebar);
+    gap: 3rem;
+}
+.hero-intro {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 800px;
 }
 .hero-eyebrow {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 0.5rem;
     margin-bottom: 1.5rem;
 }
@@ -1222,142 +1218,251 @@ p:has(> .member-card) {
     border-color: var(--border);
 }
 .hero-title {
-    margin-bottom: 1.75rem;
+    margin-bottom: 1.5rem;
 }
 .hero-title-line {
     display: block;
-    font-size: clamp(2.2rem, 4vw, 3.8rem);
+    font-size: clamp(2rem, 5vw, 4rem);
     font-weight: 900;
     letter-spacing: -0.04em;
-    line-height: 1;
+    line-height: 1.04;
     color: var(--text-primary);
 }
 .hero-title-accent {
     color: var(--accent);
 }
 .hero-desc {
-    font-size: 0.9rem;
+    font-size: 0.98rem;
     color: var(--text-secondary);
     line-height: 1.65;
     margin-bottom: 2rem;
-    max-width: 380px;
+    max-width: 560px;
 }
 
-/* Terminal in hero */
-.hero-terminal {
-    background: #08080c;
-    border: 1px solid var(--border-light);
-    border-radius: 8px;
-    overflow: hidden;
-    text-align: left;
-    width: 100%;
-    max-width: 480px;
+/* Hero diagonal split — one landscape showcase whose two screenshots are
+   divided by a diagonal. Hovering a side expands it to reveal the whole image;
+   a thin sliver of the other stays hoverable so you can switch back.
+   The stage matches the image aspect ratio, so there is no empty letterbox. */
+.hero-showcase {
+    position: relative;
+    /* sized by whichever is smallest so it never exceeds ~60vh tall on short
+       screens while keeping the exact image aspect ratio */
+    width: min(1080px, 100%, calc(60vh * 1904 / 1162));
+    aspect-ratio: 1904 / 1162;
+    margin: 0 auto;
+    isolation: isolate;
 }
-.hero-terminal-bar {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0.55rem 0.85rem;
-    background: #0e0e14;
-    border-bottom: 1px solid var(--border);
-}
-.terminal-dot {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #222;
-}
-.terminal-dot:nth-child(1) {
-    background: #ff5f57;
-}
-.terminal-dot:nth-child(2) {
-    background: #febc2e;
-}
-.terminal-dot:nth-child(3) {
-    background: #28c840;
-}
-.terminal-title {
-    margin-left: auto;
-    font-size: 0.68rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-}
-.hero-terminal-body {
-    padding: 1rem 1.2rem;
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    line-height: 1.8;
-    color: var(--text-secondary);
-}
-.terminal-line {
-    white-space: nowrap;
-    overflow: hidden;
-}
-.t-prompt {
-    color: var(--accent);
-    margin-right: 0.5rem;
-}
-.t-info {
-    color: #3b82f6;
-}
-.t-success {
-    color: #34d399;
-    font-weight: 600;
-}
-.t-dim {
-    opacity: 0.4;
-}
-.t-method {
-    display: inline-block;
-    width: 52px;
-    text-align: center;
-    font-size: 0.68rem;
-    font-weight: 700;
-    padding: 0 4px;
-    border-radius: 3px;
-    margin-right: 0.5rem;
-}
-.t-get {
-    color: #34d399;
-}
-.t-post {
-    color: #60a5fa;
-}
-.t-put {
-    color: #fbbf24;
-}
-.t-del {
-    color: #f87171;
-}
-.t-tag {
-    display: inline-block;
-    padding: 0 5px;
-    border-radius: 2px;
-    font-size: 0.62rem;
-    font-weight: 700;
-    background: rgba(245, 158, 11, 0.1);
-    color: #f59e0b;
-    text-transform: uppercase;
-    margin-left: 0.5rem;
-}
-.terminal-cursor::after {
+.hero-showcase::before {
     content: "";
-    display: inline-block;
-    width: 7px;
-    height: 14px;
-    background: var(--accent);
-    animation: blink 1s step-end infinite;
-    vertical-align: text-bottom;
+    position: absolute;
+    inset: -14% -8% -18%;
+    background: radial-gradient(
+        50% 50% at 50% 42%,
+        rgba(129, 140, 248, 0.3),
+        transparent 70%
+    );
+    filter: blur(60px);
+    z-index: 0;
+    pointer-events: none;
+    animation: showcaseGlow 9s ease-in-out infinite;
 }
-@keyframes blink {
+@keyframes showcaseGlow {
+    0%,
+    100% {
+        opacity: 0.65;
+    }
     50% {
-        opacity: 0;
+        opacity: 1;
+    }
+}
+.split-stage {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border: 1px solid var(--border-light);
+    border-radius: 14px;
+    overflow: hidden;
+    /* the accent shows through the thin gap between panes = the divider line */
+    background: linear-gradient(135deg, var(--accent), #c4b5fd);
+    box-shadow: 0 40px 90px -30px rgba(0, 0, 0, 0.85);
+}
+.split-pane {
+    position: absolute;
+    inset: 0;
+    background: #08080c;
+    overflow: hidden;
+    transition: clip-path 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: clip-path;
+}
+.split-pane img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    /* stage matches the image aspect ratio, so cover fills it with no crop */
+    object-fit: cover;
+    object-position: center;
+    transition:
+        opacity 0.5s ease,
+        filter 0.5s ease;
+}
+/* default diagonal split (steep slash through the centre); the ~0.25% gap
+   between the two panes is what shows the thin accent divider line */
+.split-a {
+    clip-path: polygon(0 0, 72% 0, 28% 100%, 0 100%);
+    z-index: 1;
+}
+.split-b {
+    clip-path: polygon(72.25% 0, 100% 0, 100% 100%, 28.25% 100%);
+    z-index: 1;
+}
+/* tags pinned to each side's corner */
+.split-tag {
+    position: absolute;
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.32rem 0.72rem;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--text-primary);
+    background: rgba(8, 8, 12, 0.7);
+    border: 1px solid var(--border-light);
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+.split-a .split-tag {
+    top: 1.5rem;
+    left: 1.5rem;
+}
+.split-b .split-tag {
+    bottom: 1.5rem;
+    right: 1.5rem;
+    color: var(--accent-hover);
+}
+/* "hover to reveal" cue, fades out once the visitor interacts */
+.split-hint {
+    position: absolute;
+    z-index: 3;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    padding: 0.3rem 0.8rem;
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    background: rgba(8, 8, 12, 0.55);
+    border: 1px solid var(--border-light);
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    pointer-events: none;
+    animation: splitHintPulse 2.6s ease-in-out infinite;
+    transition: opacity 0.4s ease;
+}
+@keyframes splitHintPulse {
+    0%,
+    100% {
+        opacity: 0.55;
+    }
+    50% {
+        opacity: 0.95;
+    }
+}
+
+/* hover A → reveal (almost) all of image 1; image 2 keeps a corner sliver */
+.hero-showcase:has(.split-a:hover) .split-a {
+    clip-path: polygon(0 0, 100% 0, 87% 100%, 0 100%);
+    z-index: 2;
+}
+.hero-showcase:has(.split-a:hover) .split-b {
+    clip-path: polygon(100% 0, 100% 0, 100% 100%, 87.75% 100%);
+}
+.hero-showcase:has(.split-a:hover) .split-b img {
+    filter: saturate(0.6) brightness(0.7);
+}
+.hero-showcase:has(.split-a:hover) .split-b .split-tag,
+.hero-showcase:has(.split-a:hover) .split-hint {
+    opacity: 0;
+}
+
+/* hover B → reveal (almost) all of image 2; image 1 keeps a corner sliver */
+.hero-showcase:has(.split-b:hover) .split-b {
+    clip-path: polygon(13% 0, 100% 0, 100% 100%, 0 100%);
+    z-index: 2;
+}
+.hero-showcase:has(.split-b:hover) .split-a {
+    clip-path: polygon(0 0, 11.75% 0, 0 100%, 0 100%);
+}
+.hero-showcase:has(.split-b:hover) .split-a img {
+    filter: saturate(0.6) brightness(0.7);
+}
+.hero-showcase:has(.split-b:hover) .split-a .split-tag,
+.hero-showcase:has(.split-b:hover) .split-hint {
+    opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .split-pane,
+    .split-pane img,
+    .split-tag,
+    .split-hint {
+        transition: none;
+    }
+    .split-hint {
+        animation: none;
+    }
+}
+
+/* Touch / no-hover devices can't reveal on hover — drop the diagonal and
+   stack both screenshots full-width with a thin accent seam between them. */
+@media (hover: none), (max-width: 768px) {
+    .hero-showcase {
+        width: 100%;
+        max-width: 560px;
+        aspect-ratio: auto;
+    }
+    .hero-showcase::before {
+        display: none;
+    }
+    .split-stage {
+        position: static;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        background: var(--accent);
+        box-shadow: none;
+    }
+    .split-pane {
+        position: relative;
+        inset: auto;
+        clip-path: none !important;
+        aspect-ratio: 1904 / 1162;
+        transition: none;
+    }
+    .split-pane img {
+        position: absolute;
+        filter: none !important;
+    }
+    .split-hint {
+        display: none;
+    }
+    .split-tag {
+        opacity: 1 !important;
     }
 }
 
 /* Hero buttons */
 .hero-actions {
     display: flex;
+    justify-content: center;
     gap: 0.75rem;
     flex-wrap: wrap;
 }
@@ -1981,24 +2086,12 @@ p:has(> .member-card) {
 }
 
 @media (max-width: 960px) {
-    /* Hero stacks vertically on smaller screens */
-    .hero-split {
-        grid-template-columns: 1fr;
-        min-height: auto;
-    }
-    .hero-text {
-        border-right: none;
-        border-bottom: 1px solid var(--border);
-        padding: 4rem 2rem 3rem;
-    }
-    .hero-visual {
-        padding: 3rem 2rem;
-    }
-    .hero-terminal {
-        max-width: 100%;
+    .hero-inner {
+        padding: 3.5rem 1.5rem 3rem;
+        gap: 2.5rem;
     }
     .hero-title-line {
-        font-size: clamp(2rem, 6vw, 3rem);
+        font-size: clamp(2rem, 6vw, 3.2rem);
     }
 }
 
@@ -2026,15 +2119,12 @@ p:has(> .member-card) {
     }
 
     /* Landing: Hero */
-    .hero-text {
-        padding: 3rem 1.25rem 2rem;
-    }
-    .hero-visual {
-        padding: 2rem 1.25rem;
+    .hero-inner {
+        padding: 3rem 1.25rem 2.5rem;
     }
     .hero-actions {
         flex-direction: column;
-        align-items: stretch;
+        align-self: stretch;
     }
     .hero-btn {
         justify-content: center;
@@ -2151,27 +2241,17 @@ p:has(> .member-card) {
 }
 
 @media (max-width: 480px) {
-    .hero-text {
-        padding: 2.5rem 1rem 1.5rem;
-    }
-    .hero-visual {
-        padding: 1.5rem 1rem;
+    .hero-inner {
+        padding: 2.5rem 1rem 2rem;
     }
     .hero-title-line {
-        font-size: 1.8rem;
+        font-size: 1.9rem;
     }
     .hero-desc {
-        font-size: 0.84rem;
+        font-size: 0.88rem;
     }
-    .hero-eyebrow {
-        flex-direction: column;
-        gap: 0.4rem;
-    }
-    .hero-terminal-body {
-        padding: 0.75rem;
-    }
-    .terminal-line {
-        font-size: 0.7rem;
+    .split-tag {
+        font-size: 0.62rem;
     }
     .docs-article pre {
         padding: 0.75rem 1rem;
@@ -2981,3 +3061,4 @@ p:has(> .member-card) {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
+
