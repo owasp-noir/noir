@@ -52,7 +52,8 @@ module Analyzer::Clojure
         method = METHOD_KEYWORDS[match[1].downcase]
         route = decode_string(match[2])
         next unless route.starts_with?('/')
-        offset = match.begin(0) || 0
+        # byte offset (line_number_for uses byte_slice; begin(0) is a char index)
+        offset = match.byte_begin(0)
         emit_endpoint(content, path, offset, method, route, seen)
       end
     end

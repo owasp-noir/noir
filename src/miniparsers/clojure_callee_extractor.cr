@@ -300,7 +300,9 @@ module Noir::ClojureCalleeExtractor
       i += 1
     end
 
-    {source[index...i], i}
+    # `index`/`i` are byte offsets (advanced via byte_at), so slice by bytes —
+    # char-indexing here corrupts every name after a multi-byte UTF-8 char.
+    {source.byte_slice(index, i - index), i}
   end
 
   private def skip_ws_and_comments(source : String, index : Int32, limit : Int32) : Int32
