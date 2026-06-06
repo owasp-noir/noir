@@ -55,8 +55,11 @@ module Analyzer::Python
     # Parses the definition of a function from the source lines starting at a given index
     def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition?
       parameters = [] of FunctionParameter
-      def_line = source_lines[start_index]
-      return unless def_line.includes?("def ")
+      def_line = source_lines[start_index]?
+      # A real `def`/`async def` header always contains `(`; requiring it (and
+      # guarding the out-of-range index) prevents `split("(", 2)[1]` IndexError
+      # when a bogus fallback line merely contains the substring "def ".
+      return unless def_line && def_line.includes?("def ") && def_line.includes?("(")
 
       # Extract the function name and parameter line
       name = def_line.split("def ", 2)[1].split("(", 2)[0].strip

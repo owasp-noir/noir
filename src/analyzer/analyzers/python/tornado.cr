@@ -656,7 +656,7 @@ module Analyzer::Python
 
       # JSON body parsing: tornado.escape.json_decode or json.loads
       if (line.includes?("json_decode") || line.includes?("json.loads")) && line.includes?("self.request.body")
-        params << Param.new("", "", "json")
+        params << Param.new("body", "", "json")
       end
     end
   end

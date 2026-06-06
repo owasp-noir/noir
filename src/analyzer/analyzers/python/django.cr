@@ -1256,7 +1256,12 @@ module Analyzer::Python
 
         if stripped.starts_with?("@action") || stripped == ")" || stripped.includes?("url_path") || stripped.includes?("methods") || stripped.includes?("detail")
           decorator_source = collect_preceding_decorator_source(lines, index)
-          next unless decorator_source.includes?("@action")
+          # A bare `next` here would skip the trailing `index -= 1`, spinning the
+          # `while` forever on guard matches that lack an @action decorator.
+          unless decorator_source.includes?("@action")
+            index -= 1
+            next
+          end
 
           args_match = decorator_source.match(/@action\s*\((.*?)\)/m)
           args = args_match ? args_match[1] : ""
