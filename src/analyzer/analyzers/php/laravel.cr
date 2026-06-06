@@ -498,7 +498,10 @@ module Analyzer::Php
 
     private def extract_route_groups(content : String, lexer : Noir::PhpLexer) : Array(RouteGroup)
       groups = [] of RouteGroup
-      group_regex = /Route::(?:\w+\s*\([^;]*?\)\s*->\s*)*group\s*\(/mi
+      # `[^;()]*` (not `[^;]*?`) keeps each chained-call repetition unambiguous,
+      # avoiding exponential backtracking (ReDoS) on long fluent chains that
+      # don't terminate in `group(`.
+      group_regex = /Route::(?:\w+\s*\([^;()]*\)\s*->\s*)*group\s*\(/mi
       pos = 0
 
       while group_match = content.match(group_regex, pos)

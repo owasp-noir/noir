@@ -54,24 +54,47 @@ module Analyzer::Php
       working_content = content
 
       # 1. Group routes: $routes->group('prefix', [opts]?, function($routes) { ... })
-      group_pattern = /\$routes->group\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*(\[(?:[^\[\]]|\[[^\[\]]*\])*\]))?\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/mi
-      working_content.scan(group_pattern).each do |match|
+      # Match only the header up to the opening `{`, then balance braces with the
+      # engine's matcher. The old fixed-depth regex silently failed on 4+ levels
+      # of brace nesting, so inner routes lost the group prefix entirely.
+      group_header = /\$routes->group\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*(\[(?:[^\[\]]|\[[^\[\]]*\])*\]))?\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi
+      loop do
+        match = working_content.match(group_header)
+        break unless match
+        start = match.begin(0) || 0
+        brace_pos = start + match[0].size - 1 # index of the opening '{'
+        close = find_matching_php_close_brace(working_content, brace_pos)
+        unless close
+          # Unbalanced/truncated source: drop just the header to avoid looping.
+          working_content = working_content[0...start] + working_content[(start + match[0].size)..]
+          next
+        end
         group_prefix = normalize_route(match[1])
         group_options = match[2]?
-        group_content = match[3]
+        group_content = working_content[(brace_pos + 1)...close]
         group_namespace = extract_group_namespace(group_options) || controller_namespace
         new_prefix = build_full_path(prefix, group_prefix)
         endpoints.concat(analyze_routes_content(group_content, new_prefix, file_path, include_callee, group_namespace))
+        # Strip the entire group call (through its closing brace) so step 3+ never re-scans it.
+        working_content = working_content[0...start] + working_content[(close + 1)..]
       end
-      working_content = working_content.gsub(group_pattern, "")
 
       # 2. Environment routes: $routes->environment('env', function($routes) { ... }) — preserve prefix
-      env_pattern = /\$routes->environment\s*\(\s*['"][^'"]+['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{((?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*)\}/mi
-      working_content.scan(env_pattern).each do |match|
-        env_content = match[1]
+      env_header = /\$routes->environment\s*\(\s*['"][^'"]+['"]\s*,\s*(?:static\s+)?function\s*\([^)]*\)\s*(?:use\s*\([^)]*\)\s*)?\{/mi
+      loop do
+        match = working_content.match(env_header)
+        break unless match
+        start = match.begin(0) || 0
+        brace_pos = start + match[0].size - 1
+        close = find_matching_php_close_brace(working_content, brace_pos)
+        unless close
+          working_content = working_content[0...start] + working_content[(start + match[0].size)..]
+          next
+        end
+        env_content = working_content[(brace_pos + 1)...close]
         endpoints.concat(analyze_routes_content(env_content, prefix, file_path, include_callee, controller_namespace))
+        working_content = working_content[0...start] + working_content[(close + 1)..]
       end
-      working_content = working_content.gsub(env_pattern, "")
 
       # 3. HTTP verb routes: $routes->get/post/put/patch/delete/options/head('path', ...)
       verb_pattern = /\$routes->(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"](?:\s*,\s*(.*?))?\s*\)/mi
