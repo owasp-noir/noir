@@ -63,6 +63,11 @@ module Analyzer::Python
           file_content = fetch_file_content(path)
           lines = file_content.lines
           if flask_relevant_source?(file_content)
+            extract_flask_appbuilder_exposed_endpoints(path, file_content).each do |endpoint|
+              result << endpoint
+            end
+            next if flask_appbuilder_only_source?(file_content)
+
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
             view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
@@ -800,7 +805,8 @@ module Analyzer::Python
       # wins dedup non-deterministically depending on fiber completion order).
       clean = source.gsub(/#.*?(?:\n|\z)/m, "\n")
 
-      return true if clean.includes?("flask")
+      return true if clean.matches?(/^\s*(?:from|import)\s+flask(?:\b|[._])/m)
+      return true if clean.includes?("@expose(")
       # A file that imports a competing decorator-based framework (and
       # never mentions flask) is NOT Flask — its `@app.get`/`@router.post`
       # decorators belong to that framework's analyzer. Without this
@@ -816,6 +822,17 @@ module Analyzer::Python
       return true if clean.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
 
       false
+    end
+
+    private def flask_appbuilder_only_source?(source : ::String) : Bool
+      return false unless source.includes?("@expose(")
+
+      clean = source.gsub(/#.*?(?:\n|\z)/m, "\n")
+      return false if clean.matches?(/\b(?:Flask|Blueprint|Api|Namespace)\s*\(/)
+      return false if clean.matches?(/^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m)
+      return false if clean.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
+
+      true
     end
 
     private def extract_flask_static_url_path(constructor_line : ::String) : ::String?
@@ -835,6 +852,131 @@ module Analyzer::Python
       normalized = "/#{normalized}" unless normalized.starts_with?("/")
       normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
       normalized == "/" ? "/*" : "#{normalized}/*"
+    end
+
+    private def extract_flask_appbuilder_exposed_endpoints(path : ::String, source : ::String) : Array(Endpoint)
+      return [] of Endpoint unless source.includes?("@expose(")
+
+      endpoints = [] of Endpoint
+      lines = source.split("\n")
+      class_indent : Int32? = nil
+      route_base = ""
+
+      lines.each_with_index do |line, index|
+        stripped = line.lstrip
+        next if stripped.starts_with?("#")
+        indent = line.size - stripped.size
+
+        if stripped.matches?(/^class\s+([A-Za-z_][A-Za-z0-9_]*)\b/)
+          class_indent = indent
+          route_base = ""
+          next
+        end
+
+        if current_indent = class_indent
+          if !stripped.empty? && indent <= current_indent && !stripped.starts_with?("@")
+            class_indent = nil
+            route_base = ""
+          end
+        end
+
+        next unless class_indent
+
+        if route_base_match = stripped.match(/^route_base\s*=\s*[rf]?['"]([^'"]*)['"]/)
+          route_base = route_base_match[1]
+          next
+        end
+
+        if resource_name_match = stripped.match(/^resource_name\s*=\s*[rf]?['"]([^'"]*)['"]/)
+          route_base = "/api/v1/#{resource_name_match[1]}"
+          next
+        end
+
+        next unless stripped.starts_with?("@expose")
+
+        expose_call = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
+        expose = parse_flask_appbuilder_expose_call(expose_call)
+        next unless expose
+
+        expose_path, methods = expose
+        full_path = join_flask_paths(route_base, expose_path)
+        normalized_path, path_params = normalize_flask_path_params(full_path)
+        methods.each do |method|
+          params = path_params.dup
+          if def_line = find_def_line(lines, index)
+            if codeblock = parse_code_block(lines[def_line..])
+              params.concat(get_filtered_params(method, extract_request_params(codeblock.split("\n"))))
+            end
+          end
+
+          endpoints << Endpoint.new(normalized_path, method, params, Details.new(PathInfo.new(path, index + 1)))
+        end
+      end
+
+      endpoints
+    end
+
+    private def parse_flask_appbuilder_expose_call(line : ::String) : Tuple(::String, Array(::String))?
+      match = line.match(/@expose\s*\((.*)\)\s*$/m)
+      return unless match
+
+      args = split_python_call_args(match[1])
+      route_path = ""
+      args.each do |arg|
+        stripped = arg.strip
+        next if stripped.empty?
+        break if stripped.matches?(/^[A-Za-z_][A-Za-z0-9_]*\s*=/)
+        if string_match = stripped.match(/^[rf]?['"]([^'"]*)['"]/)
+          route_path = string_match[1]
+          break
+        end
+      end
+
+      args.each do |arg|
+        if url_match = arg.match(/^\s*(?:url|rule)\s*=\s*[rf]?['"]([^'"]*)['"]/)
+          route_path = url_match[1]
+          break
+        end
+      end
+
+      route_path = "/" if route_path.empty?
+      methods = [] of ::String
+      args.each do |arg|
+        next unless arg.matches?(/^\s*methods\s*=/)
+        arg.scan(/['"]([A-Za-z]+)['"]/) do |method_match|
+          method = method_match[1].upcase
+          methods << method if HTTP_METHODS.any? { |known| known.upcase == method }
+        end
+      end
+      methods << "GET" if methods.empty?
+
+      {route_path, methods.uniq}
+    end
+
+    private def join_flask_paths(prefix : ::String, path : ::String) : ::String
+      return normalize_joined_flask_path(path) if prefix.empty?
+      return normalize_joined_flask_path(prefix) if path.empty? || path == "/"
+
+      normalized_prefix = prefix.ends_with?("/") ? prefix[0...-1] : prefix
+      normalized_path = path.starts_with?("/") ? path : "/#{path}"
+      normalize_joined_flask_path("#{normalized_prefix}#{normalized_path}")
+    end
+
+    private def normalize_joined_flask_path(path : ::String) : ::String
+      normalized = path.gsub(/\/+/, "/")
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized
+    end
+
+    private def normalize_flask_path_params(path : ::String) : Tuple(::String, Array(Param))
+      params = [] of Param
+      normalized = path.gsub(/<(?:(?:[^:<>]+):)?([A-Za-z_][A-Za-z0-9_]*)>/) do
+        name = $~[1]
+        params << Param.new(name, "", "path") unless params.any? { |param| param.name == name && param.param_type == "path" }
+        "{#{name}}"
+      end
+
+      {normalized, params}
     end
 
     private def clone_path_api_instances(path_api_instances : Hash(::String, Hash(::String, ::String))) : Hash(::String, Hash(::String, ::String))

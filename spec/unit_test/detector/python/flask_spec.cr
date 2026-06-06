@@ -8,4 +8,8 @@ describe "Detect Python Flask" do
   it "detect_flask - app.py" do
     instance.detect("app.py", "from flask import Flask").should be_true
   end
+
+  it "detect_flask_appbuilder - app.py" do
+    instance.detect("app.py", "from flask_appbuilder.api import expose").should be_true
+  end
 end
