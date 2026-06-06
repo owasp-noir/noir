@@ -131,9 +131,12 @@ module Analyzer::Rust
           if fn_text == "warp::query"
             type_name = first_type_argument(node, source) || "query"
             params << Param.new(type_name, "", "query") unless params.any? { |p| p.name == type_name && p.param_type == "query" }
-          elsif fn_text == "warp::body::json" || fn_text == "warp::body::form"
+          elsif fn_text == "warp::body::json"
             type_name = first_type_argument(node, source) || "body"
             params << Param.new(type_name, "", "json") unless params.any? { |p| p.name == type_name && p.param_type == "json" }
+          elsif fn_text == "warp::body::form"
+            type_name = first_type_argument(node, source) || "body"
+            params << Param.new(type_name, "", "form") unless params.any? { |p| p.name == type_name && p.param_type == "form" }
           end
         when "scoped_identifier"
           text = Noir::TreeSitter.node_text(node, source)
