@@ -105,15 +105,16 @@ module Analyzer::Go
 
                       ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
                        "GetInt64", "GetUint64", "GetBool", "GetFloat"].each do |pattern|
-                        match = line.match(/#{pattern}\(\"(.*)\"\)/)
-                        if match
-                          param_name = match[1]
-                          last_endpoint.params << Param.new(param_name, "", "query")
+                        # Quote-bounded + scan so two accessor calls on one line
+                        # each yield their own param (greedy `(.*)` captured across
+                        # both, producing one garbage name).
+                        line.scan(/#{pattern}\("([^"]*)"\)/) do |m|
+                          last_endpoint.params << Param.new(m[1], "", "query")
                         end
                       end
 
                       if line.includes?("GetCookie(")
-                        match = line.match(/GetCookie\(\"(.*)\"\)/)
+                        match = line.match(/GetCookie\(\"([^"]*)\"\)/)
                         if match
                           cookie_name = match[1]
                           last_endpoint.params << Param.new(cookie_name, "", "cookie")
@@ -121,7 +122,7 @@ module Analyzer::Go
                       end
 
                       if line.includes?("GetSecureCookie(")
-                        match = line.match(/GetSecureCookie\(\"(.*)\"\)/)
+                        match = line.match(/GetSecureCookie\(\"([^"]*)\"\)/)
                         if match
                           cookie_name = match[1]
                           last_endpoint.params << Param.new(cookie_name, "", "cookie")

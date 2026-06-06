@@ -204,9 +204,10 @@ module Analyzer::Go
       if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
         add_param_to_endpoint(Param.new("body", "", "json"), target)
       end
-      if line.includes?("Cookie(") &&
-         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-        match = line.match(/Cookie\(\"(.*)\"\)/)
+      # Read accessor only: `.Cookie("name")`. The `.Cookie(` anchor excludes
+      # Header.Get/Cookie.Get; the SetCookie exclusion avoids the write API.
+      if line.includes?(".Cookie(") && !line.includes?("SetCookie(")
+        match = line.match(/\.Cookie\s*\(\s*"([^"]*)"/)
         if match
           target.params << Param.new(match[1], "", "cookie")
         end
@@ -225,9 +226,9 @@ module Analyzer::Go
         b = Param.new("body", "", "json")
         targets.each { |t| add_param_to_endpoint(b, t) }
       end
-      if line.includes?("Cookie(") &&
-         !line.includes?("Header.Get") && !line.includes?("Cookie.Get")
-        match = line.match(/Cookie\(\"(.*)\"\)/)
+      # Read accessor only (see add_gin_param_patterns).
+      if line.includes?(".Cookie(") && !line.includes?("SetCookie(")
+        match = line.match(/\.Cookie\s*\(\s*"([^"]*)"/)
         if match
           c = Param.new(match[1], "", "cookie")
           targets.each { |t| t.params << c }

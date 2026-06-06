@@ -199,12 +199,19 @@ class GoAuthTagger < FrameworkTagger
     url = endpoint.url
 
     @middleware_scopes.each do |scope|
-      if url.starts_with?(scope[:prefix])
+      if prefix_covers?(scope[:prefix], url)
         return scope[:description]
       end
     end
 
     nil
+  end
+
+  # Segment-aware prefix match so "/api" guards "/api/x" but not "/apiv2".
+  # The root scope "/" guards every endpoint.
+  private def prefix_covers?(prefix : String, url : String) : Bool
+    return true if prefix == "/"
+    url == prefix || url.starts_with?("#{prefix}/")
   end
 
   private def normalize_prefix(segments : Array(String)) : String
