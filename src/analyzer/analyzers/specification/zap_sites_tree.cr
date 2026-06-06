@@ -31,20 +31,24 @@ module Analyzer::Specification
     end
 
     def process_node(node, details)
-      if node.as_h.has_key?("url") && node.as_h.has_key?("method")
-        path = node["url"].as_s
-        method = node["method"].as_s.upcase || "GET"
+      # Use safe accessors: a single malformed node (scalar child, non-array
+      # `children`, non-string `method`) must skip that branch, not raise and
+      # abort the whole sites-tree (the only rescue is at the file level).
+      h = node.as_h?
+      return unless h
+
+      if h.has_key?("url") && h.has_key?("method")
+        path = node["url"].as_s? || ""
+        method = node["method"].as_s?.try(&.upcase) || "GET"
 
         if !path.empty?
           uri = URI.parse(path)
           params = [] of Param
-          if node.as_h.has_key?("data")
-            data = node["data"].as_s
+          if data = node["data"]?.try(&.as_s?)
             begin
               data.split("&").each do |param|
                 param_name = param.split("=")[0]
-                param = Param.new(param_name.to_s, "", "form")
-                params << param
+                params << Param.new(param_name.to_s, "", "form")
               end
             rescue
             end
@@ -54,12 +58,9 @@ module Analyzer::Specification
         end
       end
 
-      if node.as_h.has_key?("children")
-        children = node["children"].as_a
-        if children.size > 0
-          children.each do |child|
-            process_node(child, details)
-          end
+      if children = node["children"]?.try(&.as_a?)
+        children.each do |child|
+          process_node(child, details)
         end
       end
     end

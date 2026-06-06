@@ -122,6 +122,9 @@ module Analyzer::Specification
     # Follows `$ref` and flattens `allOf` so referenced/composed schemas
     # surface their members.
     private def collect_schema_props_json(root : JSON::Any, schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+      # JSON Schema allows boolean `items` etc.; a scalar node makes the
+      # `["..."]?` subscripts below raise "Expected Hash".
+      return unless schema.as_h?
       if ref = schema["$ref"]?.try(&.as_s?)
         return if seen.includes?(ref)
         seen << ref
@@ -155,6 +158,9 @@ module Analyzer::Specification
     end
 
     private def collect_schema_props_yaml(root : YAML::Any, schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+      # JSON Schema allows boolean `items` etc.; a scalar node makes the
+      # `[...]?` subscripts below raise "Expected Hash".
+      return unless schema.as_h?
       if ref_node = schema[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           return if seen.includes?(ref)

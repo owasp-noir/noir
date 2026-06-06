@@ -84,7 +84,11 @@ module Analyzer::Specification
       # what slice of the capture the user cares about.
       return if @url.empty? || !full_url.includes?(@url)
 
-      endpoint_path = full_url.gsub(@url, "")
+      # Strip the user URL as a LEADING prefix only — gsub removed every
+      # occurrence, mangling paths where the prefix recurs (e.g. a redirect param).
+      endpoint_path = full_url.starts_with?(@url) ? full_url[@url.size..]? || "" : full_url
+      endpoint_path = "/#{endpoint_path}" unless endpoint_path.starts_with?("/")
+      endpoint_path = "/" if endpoint_path.empty?
       endpoint = Endpoint.new(endpoint_path, method)
 
       headers = request["headers"]?

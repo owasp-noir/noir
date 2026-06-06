@@ -18,6 +18,11 @@ module Analyzer::Specification
           yaml_obj = YAML.parse(content)
           source_dir = File.dirname(raml_spec)
 
+          # A non-mapping root (scalar/array/empty) makes the YAML `[...]?`
+          # lookups below raise "Expected Array or Hash" and, with no per-spec
+          # rescue, aborts every other RAML spec. Skip it cleanly instead.
+          next unless yaml_obj.as_h?
+
           base_path = base_path_from(yaml_obj)
           default_media = media_types_from(yaml_obj[YAML::Any.new("mediaType")]?)
           types = yaml_obj[YAML::Any.new("types")]? || YAML::Any.new(nil)

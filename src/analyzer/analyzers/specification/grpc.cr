@@ -88,18 +88,35 @@ module Analyzer::Specification
       in_string = false
       while pos < content.size
         ch = content[pos]
-        if ch == '"' && (pos == 0 || content[pos - 1] != '\\')
-          in_string = !in_string
-        elsif !in_string
-          case ch
-          when '{'
-            depth += 1
-          when '}'
-            depth -= 1
-            if depth == 0
-              return content[(open_pos + 1)..(pos - 1)]
+        if in_string
+          # A quote closes the string only when preceded by an EVEN number of
+          # backslashes (`\\"` toggles, `\"` does not).
+          if ch == '"'
+            bs = 0
+            bp = pos - 1
+            while bp >= 0 && content[bp] == '\\'
+              bs += 1
+              bp -= 1
             end
+            in_string = false if bs.even?
           end
+        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '/'
+          # Line comment: skip to EOL so a stray `}` or `"` can't shift state.
+          nl = content.index('\n', pos)
+          pos = nl.nil? ? content.size : nl
+          next
+        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '*'
+          # Block comment: skip to the closing */.
+          close = content.index("*/", pos + 2)
+          pos = close.nil? ? content.size : close + 2
+          next
+        elsif ch == '"'
+          in_string = true
+        elsif ch == '{'
+          depth += 1
+        elsif ch == '}'
+          depth -= 1
+          return content[(open_pos + 1)..(pos - 1)] if depth == 0
         end
         pos += 1
       end
@@ -208,8 +225,18 @@ module Analyzer::Specification
       # Match google.api.http option
       return mappings unless options_block.includes?("google.api.http")
 
+      # Restrict the primary rule's `body:` to the portion before any
+      # additional_bindings, so a body declared only inside a binding does not
+      # leak into the parent mapping (mis-classifying its fields as JSON body).
+      primary_scope =
+        if ab_idx = options_block.index("additional_bindings")
+          options_block[0...ab_idx]
+        else
+          options_block
+        end
+
       body_value : String? = nil
-      if body_match = options_block.match(/body\s*:\s*"([^"]*)"/)
+      if body_match = primary_scope.match(/body\s*:\s*"([^"]*)"/)
         body_value = body_match[1]
       end
 

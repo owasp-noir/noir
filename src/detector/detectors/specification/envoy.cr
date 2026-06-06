@@ -41,8 +41,12 @@ module Detector::Specification
     end
 
     private def find_virtual_hosts_yaml(data : YAML::Any) : Bool
+      # A non-mapping root (array/scalar) makes String-key `[]?` raise; guard it
+      # — the detector runs in a worker fiber with no rescue, so a raise there
+      # kills the worker and loses results for this file.
+      return false unless data.as_h?
       # route_config.virtual_hosts (Envoy bootstrap / static config)
-      if rc = data["route_config"]?
+      if (rc = data["route_config"]?) && rc.as_h?
         if vh = rc["virtual_hosts"]?
           return virtual_hosts_valid_yaml?(vh)
         end
@@ -57,6 +61,7 @@ module Detector::Specification
       if resources = data["resources"]?
         if arr = resources.as_a?
           arr.each do |resource|
+            next unless resource.as_h?
             if vh = resource["virtual_hosts"]?
               return virtual_hosts_valid_yaml?(vh)
             end
@@ -70,6 +75,7 @@ module Detector::Specification
     private def virtual_hosts_valid_yaml?(vh : YAML::Any) : Bool
       if arr = vh.as_a?
         arr.each do |host|
+          next unless host.as_h?
           return true if host["domains"]?
         end
       end
@@ -77,7 +83,8 @@ module Detector::Specification
     end
 
     private def find_virtual_hosts_json(data : JSON::Any) : Bool
-      if rc = data["route_config"]?
+      return false unless data.as_h?
+      if (rc = data["route_config"]?) && rc.as_h?
         if vh = rc["virtual_hosts"]?
           return virtual_hosts_valid_json?(vh)
         end
@@ -90,6 +97,7 @@ module Detector::Specification
       if resources = data["resources"]?
         if arr = resources.as_a?
           arr.each do |resource|
+            next unless resource.as_h?
             if vh = resource["virtual_hosts"]?
               return virtual_hosts_valid_json?(vh)
             end
@@ -103,6 +111,7 @@ module Detector::Specification
     private def virtual_hosts_valid_json?(vh : JSON::Any) : Bool
       if arr = vh.as_a?
         arr.each do |host|
+          next unless host.as_h?
           return true if host["domains"]?
         end
       end

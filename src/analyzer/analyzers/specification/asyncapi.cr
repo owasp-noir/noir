@@ -119,7 +119,7 @@ module Analyzer::Specification
     end
 
     private def resolve_channel_path_json(root : JSON::Any, channel_ref : JSON::Any?, channels : Hash(String, JSON::Any)) : String
-      return "" unless channel_ref
+      return "" unless channel_ref && channel_ref.as_h?
       if ref = channel_ref["$ref"]?.try(&.as_s?)
         # Try to read `address` from the referenced channel, else
         # use the last path segment as the channel key.
@@ -138,7 +138,9 @@ module Analyzer::Specification
 
     private def collect_message_payload_json(root : JSON::Any, message : JSON::Any, params : Array(Param), seen : Set(String) = Set(String).new)
       msg = message
-      while ref = msg["$ref"]?.try(&.as_s?)
+      # `msg` may be reassigned to a $ref target that resolves to a scalar;
+      # gate every subscript on as_h? so a non-object never raises "Expected Hash".
+      while msg.as_h? && (ref = msg["$ref"]?.try(&.as_s?))
         return if seen.includes?(ref)
         seen << ref
         if resolved = resolve_ref_json(root, ref)
@@ -147,12 +149,15 @@ module Analyzer::Specification
           return
         end
       end
-      if payload = msg["payload"]?
+      if msg.as_h? && (payload = msg["payload"]?)
         collect_schema_props_json(root, payload, "json", params)
       end
     end
 
     private def collect_schema_props_json(root : JSON::Any, schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+      # A scalar schema (e.g. JSON-Schema boolean, or an allOf element `true`)
+      # makes the `["..."]?` subscripts below raise "Expected Hash".
+      return unless schema.as_h?
       if ref = schema["$ref"]?.try(&.as_s?)
         return if seen.includes?(ref)
         seen << ref
@@ -263,7 +268,7 @@ module Analyzer::Specification
     end
 
     private def resolve_channel_path_yaml(root : YAML::Any, channel_ref : YAML::Any?) : String
-      return "" unless channel_ref
+      return "" unless channel_ref && channel_ref.as_h?
       if ref_node = channel_ref[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           if resolved = resolve_ref_yaml(root, ref)
@@ -286,7 +291,9 @@ module Analyzer::Specification
 
     private def collect_message_payload_yaml(root : YAML::Any, message : YAML::Any, params : Array(Param), seen : Set(String) = Set(String).new)
       msg = message
-      while ref_node = msg[YAML::Any.new("$ref")]?
+      # `msg` may be reassigned to a $ref target that resolves to a scalar;
+      # gate every subscript on as_h? so a non-object never raises "Expected Hash".
+      while msg.as_h? && (ref_node = msg[YAML::Any.new("$ref")]?)
         ref = ref_node.as_s?
         break unless ref
         return if seen.includes?(ref)
@@ -297,12 +304,15 @@ module Analyzer::Specification
           return
         end
       end
-      if payload_node = msg[YAML::Any.new("payload")]?
+      if msg.as_h? && (payload_node = msg[YAML::Any.new("payload")]?)
         collect_schema_props_yaml(root, payload_node, "json", params)
       end
     end
 
     private def collect_schema_props_yaml(root : YAML::Any, schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+      # A scalar schema (e.g. JSON-Schema boolean, or an allOf element `true`)
+      # makes the `[...]?` subscripts below raise "Expected Hash".
+      return unless schema.as_h?
       if ref_node = schema[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
           return if seen.includes?(ref)
