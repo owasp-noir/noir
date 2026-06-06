@@ -4,19 +4,16 @@ template = "landing"
 +++
 
 <section class="hero">
-  <div class="hero-split">
-    <div class="hero-text">
+  <div class="hero-inner">
+    <div class="hero-intro">
       <div class="hero-eyebrow">
         <span class="hero-badge">v1.0.0</span>
         <span class="hero-badge hero-badge-owasp">OWASP Project</span>
       </div>
       <h1 class="hero-title">
-        <span class="hero-title-line">Endpoint를</span>
-        <span class="hero-title-line">사냥하고,</span>
-        <span class="hero-title-line">Shadow API를</span>
-        <span class="hero-title-line">드러내고,</span>
-        <span class="hero-title-line hero-title-accent">공격 표면을</span>
-        <span class="hero-title-line hero-title-accent">매핑합니다.</span>
+        <span class="hero-title-line">Endpoint를 사냥하고,</span>
+        <span class="hero-title-line">Shadow API를 드러내고,</span>
+        <span class="hero-title-line hero-title-accent">공격 표면을 매핑합니다.</span>
       </h1>
       <p class="hero-desc">50개 이상의 프레임워크 소스 코드를 분석해 엔드포인트, 파라미터, 숨겨진 라우트를 찾아냅니다. 결과는 리뷰어, AI 감사자, 실제 라우트가 필요한 DAST 스캐너에 그대로 전달됩니다.</p>
       <div class="hero-actions">
@@ -30,26 +27,17 @@ template = "landing"
         </a>
       </div>
     </div>
-    <div class="hero-visual">
-      <div class="hero-terminal">
-        <div class="hero-terminal-bar">
-          <span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span>
-          <span class="terminal-title">noir</span>
+    <div class="hero-showcase">
+      <div class="split-stage">
+        <div class="split-pane split-a">
+          <img src="./images/landing/1.webp" alt="소스 코드를 사람이 읽기 좋은 엔드포인트 목록으로 변환" width="1904" height="1162" loading="eager" decoding="async" fetchpriority="high">
+          <span class="split-tag">source &rarr; endpoints</span>
         </div>
-        <div class="hero-terminal-body">
-          <div class="terminal-line"><span class="t-prompt">$</span> noir scan .</div>
-          <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Detected 1 technologies: crystal_kemal</div>
-          <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Analysis Started. Code Analyzer: 1 in use</div>
-          <div class="terminal-line"><span class="t-success">Finally identified 6 endpoints.</span> <span class="t-dim">in 0.0032s</span></div>
-          <div class="terminal-line"></div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /</div>
-          <div class="terminal-line"><span class="t-method t-post">POST</span> /query</div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /token</div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /socket <span class="t-tag">websocket</span></div>
-          <div class="terminal-line"><span class="t-method t-post">POST</span> /admin/config <span class="t-tag">shadow</span></div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /admin/debug <span class="t-tag">shadow</span></div>
-          <div class="terminal-line terminal-cursor"></div>
+        <div class="split-pane split-b">
+          <img src="./images/landing/2.webp" alt="엔드포인트별 AI 컨텍스트: callee, guard, 보안 시그널" width="1904" height="1162" loading="lazy" decoding="async">
+          <span class="split-tag">ai context</span>
         </div>
+        <span class="split-hint">hover to reveal</span>
       </div>
     </div>
   </div>

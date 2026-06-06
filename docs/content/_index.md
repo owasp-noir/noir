@@ -4,19 +4,16 @@ template = "landing"
 +++
 
 <section class="hero">
-  <div class="hero-split">
-    <div class="hero-text">
+  <div class="hero-inner">
+    <div class="hero-intro">
       <div class="hero-eyebrow">
         <span class="hero-badge">v1.0.0</span>
         <span class="hero-badge hero-badge-owasp">OWASP Project</span>
       </div>
       <h1 class="hero-title">
-        <span class="hero-title-line">Hunt</span>
-        <span class="hero-title-line">Endpoints.</span>
-        <span class="hero-title-line">Expose</span>
-        <span class="hero-title-line">Shadow APIs.</span>
-        <span class="hero-title-line hero-title-accent">Map the</span>
-        <span class="hero-title-line hero-title-accent">Attack Surface.</span>
+        <span class="hero-title-line">Hunt Endpoints.</span>
+        <span class="hero-title-line">Expose Shadow APIs.</span>
+        <span class="hero-title-line hero-title-accent">Map the Attack Surface.</span>
       </h1>
       <p class="hero-desc">Discovers endpoints, parameters, and hidden routes from source code across 50+ frameworks. The inventory goes to reviewers, AI auditors, and DAST scanners that need a real route list.</p>
       <div class="hero-actions">
@@ -30,26 +27,17 @@ template = "landing"
         </a>
       </div>
     </div>
-    <div class="hero-visual">
-      <div class="hero-terminal">
-        <div class="hero-terminal-bar">
-          <span class="terminal-dot"></span><span class="terminal-dot"></span><span class="terminal-dot"></span>
-          <span class="terminal-title">noir</span>
+    <div class="hero-showcase">
+      <div class="split-stage">
+        <div class="split-pane split-a">
+          <img src="./images/landing/1.webp" alt="Noir turns source code into a clean, human-readable endpoint inventory" width="1904" height="1162" loading="eager" decoding="async" fetchpriority="high">
+          <span class="split-tag">source &rarr; endpoints</span>
         </div>
-        <div class="hero-terminal-body">
-          <div class="terminal-line"><span class="t-prompt">$</span> noir scan .</div>
-          <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Detected 1 technologies: crystal_kemal</div>
-          <div class="terminal-line t-dim">  <span class="t-info">INFO</span> Analysis Started. Code Analyzer: 1 in use</div>
-          <div class="terminal-line"><span class="t-success">Finally identified 6 endpoints.</span> <span class="t-dim">in 0.0032s</span></div>
-          <div class="terminal-line"></div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /</div>
-          <div class="terminal-line"><span class="t-method t-post">POST</span> /query</div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /token</div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /socket <span class="t-tag">websocket</span></div>
-          <div class="terminal-line"><span class="t-method t-post">POST</span> /admin/config <span class="t-tag">shadow</span></div>
-          <div class="terminal-line"><span class="t-method t-get">GET</span> /admin/debug <span class="t-tag">shadow</span></div>
-          <div class="terminal-line terminal-cursor"></div>
+        <div class="split-pane split-b">
+          <img src="./images/landing/2.webp" alt="Per-endpoint AI context: callees, guards, and security signals" width="1904" height="1162" loading="lazy" decoding="async">
+          <span class="split-tag">ai context</span>
         </div>
+        <span class="split-hint">hover to reveal</span>
       </div>
     </div>
   </div>
