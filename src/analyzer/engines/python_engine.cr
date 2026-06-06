@@ -33,6 +33,8 @@ module Analyzer::Python
       return true if relative_path.starts_with?("tests/")
       return true if relative_path.includes?("/test/")
       return true if relative_path.starts_with?("test/")
+      return true if relative_path.includes?("/test_utils/")
+      return true if relative_path.starts_with?("test_utils/")
       base = File.basename(path)
       return true if base == "tests.py"
       return true if base.starts_with?("test_") && base.ends_with?(".py")
