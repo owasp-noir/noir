@@ -201,18 +201,36 @@ module Analyzer::Go
       in_string = false
       while pos < content.size
         ch = content[pos]
-        if ch == '"' && (pos == 0 || content[pos - 1] != '\\')
-          in_string = !in_string
-        elsif !in_string
-          case ch
-          when '{'
-            depth += 1
-          when '}'
-            depth -= 1
-            if depth == 0
-              return content[(open_pos + 1)..(pos - 1)]
+        if in_string
+          # A quote closes the string only when preceded by an EVEN number of
+          # backslashes (so `\\"` = literal backslash + terminator toggles, but
+          # `\"` = escaped quote does not).
+          if ch == '"'
+            bs = 0
+            bp = pos - 1
+            while bp >= 0 && content[bp] == '\\'
+              bs += 1
+              bp -= 1
             end
+            in_string = false if bs.even?
           end
+        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '/'
+          # Line comment: skip to EOL so a stray `}` or `"` can't shift state.
+          nl = content.index('\n', pos)
+          pos = nl.nil? ? content.size : nl
+          next
+        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '*'
+          # Block comment: skip to the closing */.
+          close = content.index("*/", pos + 2)
+          pos = close.nil? ? content.size : close + 2
+          next
+        elsif ch == '"'
+          in_string = true
+        elsif ch == '{'
+          depth += 1
+        elsif ch == '}'
+          depth -= 1
+          return content[(open_pos + 1)..(pos - 1)] if depth == 0
         end
         pos += 1
       end

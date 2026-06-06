@@ -99,10 +99,11 @@ module Analyzer::Go
                             result << new_endpoint
                             last_endpoint = new_endpoint
 
-                            route.path.scan(/\{([a-zA-Z0-9_]+)(?::([^}]+))?\}/) do |match_data|
-                              param_name = match_data[1]
-                              param_pattern = match_data[2]?
-                              last_endpoint.params << Param.new(param_name, param_pattern || "", "path")
+                            route.path.scan(/\{([a-zA-Z0-9_]+)(?::[^}]+)?\}/) do |match_data|
+                              # The `value` field holds an example value, not a
+                              # route regex constraint — leave it empty (matches
+                              # fasthttp/other Go analyzers).
+                              last_endpoint.params << Param.new(match_data[1], "", "path")
                             end
                           end
                         end
