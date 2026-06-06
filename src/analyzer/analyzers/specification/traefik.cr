@@ -217,7 +217,9 @@ module Analyzer::Specification
           next
         end
 
-        if depth == 0 && input.byte_slice(i, delimiter.size) == delimiter
+        # `i` is a CHAR index (input[i]); use char-based slicing, not byte_slice,
+        # so a multi-byte char before a `||` doesn't desync delimiter detection.
+        if depth == 0 && input[i, delimiter.size]? == delimiter
           parts << current.strip unless current.strip.empty?
           current = ""
           i += delimiter.size

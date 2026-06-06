@@ -49,6 +49,8 @@ module Analyzer::Specification
     end
 
     private def process_route_json(route : JSON::Any, details : Details)
+      # Skip non-object array entries; subscripting a scalar raises "Expected Hash".
+      return unless route.as_h?
       paths = route_paths_json(route)
       return if paths.empty?
       methods = route_methods_json(route)
@@ -63,6 +65,8 @@ module Analyzer::Specification
     end
 
     private def process_route_yaml(route : YAML::Any, details : Details)
+      # Skip non-object array entries; subscripting a scalar raises "Expected Hash".
+      return unless route.as_h?
       paths = route_paths_yaml(route)
       return if paths.empty?
       methods = route_methods_yaml(route)

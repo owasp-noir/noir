@@ -50,6 +50,11 @@ module Analyzer::Specification
       types_node = find_child(definitions, "types")
       return element_fields unless types_node
 
+      # Track type references explicitly instead of overloading "a 1-element
+      # array means a reference" — a real single-field structure was being
+      # mistaken for a reference and overwritten with an unrelated type's fields.
+      references = {} of String => String
+
       each_child(types_node, "schema") do |schema|
         each_child(schema, "element") do |elem|
           name = elem["name"]?
@@ -59,7 +64,8 @@ module Analyzer::Specification
             collect_sequence_fields(complex_type, fields)
           elsif type_attr = elem["type"]?
             # Reference to a named complexType — resolved in a second pass.
-            element_fields[name] = [type_attr] of String
+            references[name] = strip_prefix(type_attr)
+            element_fields[name] = [] of String
             next
           end
           element_fields[name] = fields
@@ -75,12 +81,10 @@ module Analyzer::Specification
       end
 
       # Second pass: elements that referenced a named type get its fields.
-      element_fields.each do |name, fields|
-        next unless fields.size == 1
-        ref = strip_prefix(fields.first)
+      references.each do |name, ref|
         next if ref == name
         if resolved = element_fields[ref]?
-          element_fields[name] = resolved.dup unless resolved.size == 1 && strip_prefix(resolved.first) == name
+          element_fields[name] = resolved.dup
         end
       end
 
