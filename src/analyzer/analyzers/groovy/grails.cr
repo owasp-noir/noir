@@ -412,8 +412,10 @@ module Analyzer::Groovy
     # for every recognized DSL form. `prefix` accumulates `group` blocks
     # so nested mappings inherit the outer URL prefix.
     private def emit_mapping_endpoints(path : String, content : String,
-                                       text : String, prefix : String)
-      remaining = consume_groups(path, content, text, prefix)
+                                       text : String, prefix : String, base_offset : Int32 = 0)
+      # `text` may be a group-body SUBSTRING; base_offset is its start offset in
+      # `content` so match offsets resolve to real file line numbers.
+      remaining = consume_groups(path, content, text, prefix, base_offset)
 
       # Verb-prefixed mappings: `get '/users'(controller: ..., action: ...)`.
       # An optional `name <id>:` prefix names the mapping for reverse URL
@@ -423,7 +425,7 @@ module Analyzer::Groovy
       remaining.scan(pattern) do |match|
         verb = match[1].upcase
         url_pattern = prefix + match[3]
-        line = line_for_offset(content, match.begin(0) || 0)
+        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
           Details.new(PathInfo.new(path, line)))
@@ -442,7 +444,7 @@ module Analyzer::Groovy
 
         url_pattern = prefix + match[2]
         body_args = match[3]
-        line = line_for_offset(content, match.begin(0) || 0)
+        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
 
         if body_args.match(/\bresources:\s*['"]/)
           RESOURCES_ENDPOINTS.each do |ep|
@@ -494,7 +496,7 @@ module Analyzer::Groovy
         url_pattern = prefix + match[2]
         body_block = match[3]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
-        line = line_for_offset(content, match.begin(0) || 0)
+        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
         verb = extract_method_assignment(body_block) || "GET"
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
@@ -507,7 +509,7 @@ module Analyzer::Groovy
     # copy of `text` with those blocks blanked out so the caller's
     # subsequent regex passes do not double-process them.
     private def consume_groups(path : String, content : String,
-                               text : String, prefix : String) : String
+                               text : String, prefix : String, base_offset : Int32 = 0) : String
       mutable = text
       cursor = 0
       while m = mutable.match(/group\s+(['"])([^'"]+)\1\s*,?\s*\{/, cursor)
@@ -521,7 +523,7 @@ module Analyzer::Groovy
 
         if close_brace
           block_body = mutable[(open_brace + 1)...close_brace]
-          emit_mapping_endpoints(path, content, block_body, prefix + group_prefix)
+          emit_mapping_endpoints(path, content, block_body, prefix + group_prefix, base_offset + open_brace + 1)
           replacement = " " * (close_brace + 1 - match_start)
           mutable = mutable[0...match_start] + replacement + mutable[(close_brace + 1)..]
           cursor = match_start + replacement.size

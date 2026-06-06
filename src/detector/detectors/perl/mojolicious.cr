@@ -26,7 +26,7 @@ module Detector::Perl
     end
 
     def applicable?(filename : String) : Bool
-      filename.ends_with?(".pl") || filename.ends_with?(".pm") || filename.ends_with?(".t") || File.basename(filename) == "cpanfile" || File.basename(filename) == "Makefile.PL" || File.basename(filename) == "dist.ini" || File.basename(filename) == "META.json" || File.basename(filename) == "META.yml"
+      filename.ends_with?(".pl") || filename.ends_with?(".pm") || filename.ends_with?(".psgi") || filename.ends_with?(".t") || File.basename(filename) == "cpanfile" || File.basename(filename) == "Makefile.PL" || File.basename(filename) == "dist.ini" || File.basename(filename) == "META.json" || File.basename(filename) == "META.yml"
     end
 
     def set_name

@@ -339,7 +339,32 @@ module Analyzer::Swift
     end
 
     private def code_line(line : String) : String
-      line.split("//", 2).first
+      # String-aware: only truncate at a `//` OUTSIDE a string literal, so a path
+      # like "api//v2" or a "https://..." redirect arg isn't cut (which made
+      # call_arguments fail and silently drop the route / group prefix).
+      in_string = false
+      escaped = false
+      quote = '"'
+      index = 0
+      while index < line.size
+        char = line[index]
+        if in_string
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+        elsif char == '"' || char == '\''
+          in_string = true
+          quote = char
+        elsif char == '/' && line[index + 1]? == '/'
+          return line[0...index]
+        end
+        index += 1
+      end
+      line
     end
 
     private def extract_named_handler_params(route_line : String,

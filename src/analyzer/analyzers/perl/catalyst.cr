@@ -104,6 +104,9 @@ module Analyzer::Perl
     private def collect_actions(content : String, file_path : String) : Array(RouteAction)
       raw_lines = content.lines
       lines = sanitize_perl_lines(raw_lines)
+      # Count braces over a string/comment/regex-stripped (line-aligned) view so
+      # an unbalanced brace inside a literal can't truncate/extend a sub body.
+      code_lines = code_only_lines(lines)
       package_configs = collect_controller_configs(lines)
       actions = [] of RouteAction
       package_name = ""
@@ -137,8 +140,9 @@ module Analyzer::Perl
           while body_index < lines.size
             body_line = lines[body_index]
             body_lines << body_line
-            brace_depth += brace_delta(body_line)
-            opened = true if body_line.includes?("{")
+            code_line = code_lines[body_index]? || ""
+            brace_depth += brace_delta(code_line)
+            opened = true if code_line.includes?("{")
             break if opened && brace_depth <= 0
             body_index += 1
           end
@@ -577,6 +581,12 @@ module Analyzer::Perl
         delta -= 1 if char == '}'
       end
       delta
+    end
+
+    # Line-aligned copy with strings/comments/regexes blanked (newlines kept),
+    # so brace counting ignores braces inside literals. Mirrors dancer2.cr.
+    private def code_only_lines(sanitized : Array(String)) : Array(String)
+      Noir::PerlCalleeExtractor.strip_non_code(sanitized.join('\n')).lines
     end
   end
 end
