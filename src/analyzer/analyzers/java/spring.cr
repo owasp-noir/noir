@@ -1095,31 +1095,32 @@ module Analyzer::Java
     # Find the matching `)` for the `(` at `open_idx`, skipping
     # string literals so `"(foo)"` doesn't perturb depth.
     private def find_matching_paren(code : String, open_idx : Int32) : Int32?
+      # Scan by CHARACTER (not byte): open_idx comes from char-based String#index
+      # / MatchData and callers char-slice with the returned index. A byte scan
+      # corrupts both on multi-byte UTF-8 (i18n comments/literals). ASCII-identical.
       depth = 1
-      i = open_idx + 1
-      bytes = code.to_slice
       in_string = false
       escape = false
-      while i < bytes.size && depth > 0
-        c = bytes[i]
+      code.each_char_with_index do |c, i|
+        next if i <= open_idx
         if in_string
           if escape
             escape = false
-          elsif c == '\\'.ord
+          elsif c == '\\'
             escape = true
-          elsif c == '"'.ord
+          elsif c == '"'
             in_string = false
           end
         else
           case c
-          when '"'.ord then in_string = true
-          when '('.ord then depth += 1
-          when ')'.ord then depth -= 1
+          when '"' then in_string = true
+          when '(' then depth += 1
+          when ')' then depth -= 1
           end
         end
-        i += 1
+        return i if depth.zero?
       end
-      depth == 0 ? i - 1 : nil
+      nil
     end
 
     private def path_configs_for(file_list : Array(String)) : Hash(String, SpringPathConfig)

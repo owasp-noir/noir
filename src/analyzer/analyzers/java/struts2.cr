@@ -702,7 +702,9 @@ module Analyzer::Java
     end
 
     private def line_number_for(content : String, offset : Int32) : Int32
-      content.byte_slice(0, offset).count('\n') + 1
+      # Callers pass CHAR offsets (match.begin / String#index); char-slice so
+      # multi-byte chars before `offset` don't under-count newlines.
+      content[0, offset].count('\n') + 1
     end
 
     private def matching_brace(content : String, open_index : Int32) : Int32?

@@ -254,38 +254,42 @@ module Analyzer::Java
     end
 
     private def find_matching_paren(code : String, open_idx : Int32) : Int32?
+      # Scan by CHARACTER (not byte): open_idx is a char index and the caller
+      # char-slices with the returned index. ASCII-identical to the byte loop.
       depth = 1
-      i = open_idx + 1
-      bytes = code.to_slice
       in_string = false
       escape = false
-      while i < bytes.size && depth > 0
-        c = bytes[i]
+      code.each_char_with_index do |char, idx|
+        next if idx <= open_idx
         if in_string
           if escape
             escape = false
-          elsif c == '\\'.ord
+          elsif char == '\\'
             escape = true
-          elsif c == '"'.ord
+          elsif char == '"'
             in_string = false
           end
         else
-          case c
-          when '"'.ord then in_string = true
-          when '('.ord then depth += 1
-          when ')'.ord then depth -= 1
+          case char
+          when '"' then in_string = true
+          when '(' then depth += 1
+          when ')'
+            depth -= 1
+            return idx if depth.zero?
           end
         end
-        i += 1
       end
-      depth == 0 ? i - 1 : nil
+      nil
     end
 
     private def enable_webjars_call?(content : String, marker : Int32) : Bool
+      # marker is a CHAR index; use char-based slicing (byte_slice would misread
+      # the prefix when a multi-byte char precedes the call). `content[start, n]`
+      # clamps at end-of-string instead of raising.
       match =
-        if content.byte_slice(marker).starts_with?("enableWebjars")
+        if content[marker, 13] == "enableWebjars"
           "enableWebjars"
-        elsif content.byte_slice(marker).starts_with?("enableWebJars")
+        elsif content[marker, 13] == "enableWebJars"
           "enableWebJars"
         else
           return false
