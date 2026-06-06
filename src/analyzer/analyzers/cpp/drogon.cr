@@ -226,7 +226,7 @@ module Analyzer::Cpp
         close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
         next unless close_paren
 
-        args = split_top_level_args(content[(open_paren + 1)...close_paren])
+        args = split_top_level_args(content.byte_slice(open_paren + 1, close_paren - open_paren - 1))
         block.call(args, call_start)
       end
     end
@@ -342,7 +342,9 @@ module Analyzer::Cpp
     end
 
     private def handler_target_for_register_handler(content : String, search_start : Int32) : HandlerTarget?
-      handler_index = content.index("registerHandler", search_start)
+      # search_start is a BYTE offset; byte_index keeps it in byte space so the
+      # result feeds the byte-based find_next_code_char below consistently.
+      handler_index = content.byte_index("registerHandler", search_start)
       return unless handler_index
 
       open_paren = Noir::CppCalleeExtractor.find_next_code_char(content, '(', handler_index)
@@ -351,7 +353,7 @@ module Analyzer::Cpp
       close_paren = Noir::CppCalleeExtractor.find_matching_delimiter(content, open_paren, '(', ')')
       return unless close_paren
 
-      args = split_top_level_args(content[(open_paren + 1)...close_paren])
+      args = split_top_level_args(content.byte_slice(open_paren + 1, close_paren - open_paren - 1))
       return if args.size < 2
 
       raw_handler = args[1].strip
@@ -455,7 +457,7 @@ module Analyzer::Cpp
         body_open = Noir::CppCalleeExtractor.find_next_code_char(content, '{', close_paren + 1)
         next unless body_open
         next if body_open > range_end
-        next unless method_suffix?(content[(close_paren + 1)...body_open])
+        next unless method_suffix?(content.byte_slice(close_paren + 1, body_open - close_paren - 1))
 
         semicolon = Noir::CppCalleeExtractor.find_next_code_char(content, ';', close_paren + 1)
         next if semicolon && semicolon < body_open
@@ -463,7 +465,7 @@ module Analyzer::Cpp
         body_close = Noir::CppCalleeExtractor.find_matching_delimiter(content, body_open, '{', '}')
         next unless body_close
 
-        return {content[(body_open + 1)...body_close], Noir::CppCalleeExtractor.line_number_for(content, body_open)}
+        return {content.byte_slice(body_open + 1, body_close - body_open - 1), Noir::CppCalleeExtractor.line_number_for(content, body_open)}
       end
 
       nil
