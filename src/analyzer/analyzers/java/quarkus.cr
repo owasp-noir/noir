@@ -486,42 +486,38 @@ module Analyzer::Java
                                         open_idx : Int32,
                                         open_char : Char,
                                         close_char : Char) : Int32?
+      # Scan by CHARACTER (not byte): open_idx is a char index from String#index
+      # and callers char-slice with / range-compare the returned index. A byte
+      # scan corrupts both on multi-byte UTF-8. ASCII-identical.
       depth = 1
-      i = open_idx + 1
-      bytes = code.to_slice
-      open_byte = open_char.ord
-      close_byte = close_char.ord
-      double_quote = '"'.ord
-      single_quote = '\''.ord
-      backslash = '\\'.ord
       in_string = false
-      quote = 0
+      quote = '\0'
       escape = false
 
-      while i < bytes.size && depth > 0
-        byte = bytes[i]
+      code.each_char_with_index do |ch, i|
+        next if i <= open_idx
         if in_string
           if escape
             escape = false
-          elsif byte == backslash
+          elsif ch == '\\'
             escape = true
-          elsif byte == quote
+          elsif ch == quote
             in_string = false
           end
         else
-          if byte == double_quote || byte == single_quote
+          if ch == '"' || ch == '\''
             in_string = true
-            quote = byte
-          elsif byte == open_byte
+            quote = ch
+          elsif ch == open_char
             depth += 1
-          elsif byte == close_byte
+          elsif ch == close_char
             depth -= 1
           end
         end
-        i += 1
+        return i if depth == 0
       end
 
-      depth == 0 ? i - 1 : nil
+      nil
     end
 
     private def bean_index_for(path : String,

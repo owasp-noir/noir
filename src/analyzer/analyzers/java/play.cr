@@ -498,7 +498,9 @@ module Analyzer::Java
         when ')', ']', '}'
           depth -= 1 if depth > 0
         else
-          return i if depth == 0 && text.byte_slice(i, operator.size) == operator
+          # `i` is a CHAR index; char-slice (byte_slice would treat i as a byte
+          # offset and desync the match when a multi-byte char precedes it).
+          return i if depth == 0 && text[i, operator.size] == operator
         end
         i += 1
       end
