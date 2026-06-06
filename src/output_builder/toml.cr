@@ -78,7 +78,9 @@ class OutputBuilderToml < OutputBuilder
   private def toml_value(value : JSON::Any) : String
     case raw = value.raw
     when String
-      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"")}")
+      # TOML basic strings can't contain raw newlines/control chars — escape
+      # them so a multi-line snippet/description doesn't break the document.
+      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"").gsub("\b", "\\b").gsub("\t", "\\t").gsub("\n", "\\n").gsub("\f", "\\f").gsub("\r", "\\r")}")
     when Int64, Float64
       raw.to_s
     when Bool

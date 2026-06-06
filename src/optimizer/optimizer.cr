@@ -237,7 +237,7 @@ class EndpointOptimizer
           @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
           duplicate_count += 1
           tiny_tmp.params.each do |param|
-            existing_param = dup.params.find { |dup_param| dup_param.name == param.name }
+            existing_param = dup.params.find { |dup_param| dup_param.name == param.name && dup_param.param_type == param.param_type }
             unless existing_param
               dup.params << param
             end
