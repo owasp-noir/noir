@@ -7,6 +7,9 @@ expected_endpoints = [
   Endpoint.new("/v1/users", "ANY"),
   Endpoint.new("/admin/.*", "ANY"),
   Endpoint.new("/static", "ANY"),
+  Endpoint.new("/cgi-bin/", "ANY"),
+  Endpoint.new("/backend", "ANY"),
+  Endpoint.new("/legacy/(.*)", "ANY"),
   Endpoint.new("/api/(.*)", "ANY"),
 ]
 
