@@ -120,6 +120,12 @@ module Noir
       routes
     end
 
+    # Blank out string/char literal contents (keeping the quotes) so structural
+    # brace counting ignores braces that live inside a string value.
+    private def structural_only(line : String) : String
+      line.gsub(/"(?:[^"\\]|\\.)*"/, %("")).gsub(/'(?:[^'\\]|\\.)*'/, "''")
+    end
+
     def extract_string_constants(source : String) : Hash(String, String)
       constants = Hash(String, String).new
       package_name = ""
@@ -149,9 +155,12 @@ module Noir
         end
 
         unless current_type.empty?
-          current_depth += line.count("{")
-          current_depth -= line.count("}")
-          if current_depth <= 0 && line.includes?("}")
+          # Count braces on a string-blanked copy so a `}` inside a const string
+          # value (regex/JSON/template) can't close the enclosing type early.
+          structural = structural_only(line)
+          current_depth += structural.count("{")
+          current_depth -= structural.count("}")
+          if current_depth <= 0 && structural.includes?("}")
             current_type = ""
             current_depth = 0
           end
@@ -458,7 +467,12 @@ module Noir
           return
         when active && name == "route"
           path_arg = call_string_argument(node, source, string_constants, local_string_constants)
-          return if path_arg.nil? && call_has_value_arguments?(node)
+          # Skip `route(unknownArg) { … }` overloads whose sole value
+          # argument is neither a string path nor an HTTP method — but let
+          # the path-less method form `route(HttpMethod.Get) { handle { } }`
+          # (which inherits the enclosing prefix) flow through to the
+          # method-route handling below.
+          return if path_arg.nil? && call_has_value_arguments?(node) && call_http_method_argument(node, source).nil?
           new_prefix = path_arg ? join_paths(prefix, path_arg) : prefix
           if body = call_lambda_body(node)
             if method = call_http_method_argument(node, source)
