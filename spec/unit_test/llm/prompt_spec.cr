@@ -365,7 +365,7 @@ describe LLM do
       end
 
       it "contains all expected providers" do
-        expected = %w[openai xai anthropic azure github ollama google cohere vllm lmstudio default]
+        expected = %w[openai xai anthropic azure github ollama google cohere vllm lmstudio openrouter default]
         (limits.keys - expected).should be_empty
       end
     end
