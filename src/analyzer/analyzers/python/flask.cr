@@ -405,8 +405,9 @@ module Analyzer::Python
                   fn_methods = [] of ::String
                   fn_methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
                   if fn_methods_match
-                    fn_methods_match[1].scan(/['"]([A-Z]+)['"]/) do |method_match|
-                      fn_methods << method_match[1]
+                    fn_methods_match[1].scan(/['"]([A-Za-z]+)['"]/) do |method_match|
+                      method = method_match[1].upcase
+                      fn_methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
                     end
                   end
                   fn_methods << "GET" if fn_methods.empty?
@@ -441,8 +442,9 @@ module Analyzer::Python
                   methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
                   if methods_match
                     methods_str = methods_match[1]
-                    methods_str.scan(/['"]([A-Z]+)['"]/) do |method_match|
-                      methods << method_match[1]
+                    methods_str.scan(/['"]([A-Za-z]+)['"]/) do |method_match|
+                      method = method_match[1].upcase
+                      methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
                     end
                   end
 
@@ -853,7 +855,14 @@ module Analyzer::Python
 
         own_prefixes = own_api_instances[path]? || api_instances
         changed = true
-        while changed
+        # Bound the fixpoint loop: an acyclic mount graph converges in at most
+        # `mounts.size` propagation passes. A circular mount (A registers B and
+        # B registers A) would otherwise grow the prefix every pass and never
+        # converge -> infinite loop + unbounded memory on cyclic input.
+        iterations = 0
+        max_iterations = mounts.size + 1
+        while changed && iterations < max_iterations
+          iterations += 1
           changed = false
           mounts.each do |mount|
             parent_name, child_name, mount_prefix = mount
@@ -1176,11 +1185,10 @@ module Analyzer::Python
 
               field_pos_list.each_with_index do |field_pos, index|
                 field_begin_pos = field_pos[0]
-                field_end_pos = -1
-                if field_pos_list.size != 0 && index != field_pos_list.size - 1
-                  next_field_start_pos = field_pos_list[index + 1][0]
-                  field_end_pos += next_field_start_pos + field_pos[1]
-                end
+                # End the slice exactly before the next field begins. The old
+                # `-1 + next_start + field_pos[1]` over-extended well past the
+                # next field, leaking its default value into this one.
+                field_end_pos = (index == field_pos_list.size - 1) ? -1 : field_pos_list[index + 1][0] - 1
 
                 field_literal = parameter_dict_literal[field_begin_pos..field_end_pos]
                 field_key_literal, field_value_literal = field_literal.split(":", 2)
