@@ -9,8 +9,8 @@
      here. 'unsafe-inline' on script-src is required by the hwaro-emitted
      `hljs.highlightAll()` call and the on-demand Mermaid loader; cdn.jsdelivr.net
      is allowed solely so Mermaid diagram pages can pull the renderer. Set
-     HWARO_DEV=1 (e.g. `HWARO_DEV=1 hwaro serve -i docs`) to drop the CSP locally
-     so hwaro's live-reload script can run. #}
+     HWARO_DEV=1 (e.g. `HWARO_DEV=1 hwaro serve` from docs/) to drop the CSP
+     locally so hwaro's live-reload script can run. #}
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; form-action 'self'">
   {% endif %}
   <meta name="color-scheme" content="dark">
