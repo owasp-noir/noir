@@ -156,6 +156,38 @@ module Analyzer::Go
       package_groups[dir]? || Hash(String, String).new
     end
 
+    GO_HTTP_ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|ANY|Any|All)\s*\(/
+
+    # Per-package directories that import a target framework. Some real
+    # projects hide the concrete framework type behind a local interface, so
+    # the file that calls `router.GET(...)` may not import Gin/Echo itself.
+    def framework_package_dirs(file_contents : Hash(String, String), import_marker : String) : Set(String)
+      dirs = Set(String).new
+      file_contents.each do |path, content|
+        dirs << File.dirname(path) if content.includes?(import_marker)
+      end
+      dirs
+    end
+
+    # Cheap gate before the tree-sitter route pass. Handler-only files often
+    # import Gin/Echo for `*gin.Context` / `echo.Context`, but they cannot emit
+    # endpoints unless they contain a route/static registration call.
+    def go_route_source_candidate?(content : String, extra_methods : Array(String)) : Bool
+      return true if content.matches?(GO_HTTP_ROUTE_CALL_RE)
+      extra_methods.any? do |method|
+        content.matches?(/\.#{Regex.escape(method)}\s*\(/)
+      end
+    end
+
+    def framework_route_source_candidate?(content : String,
+                                          dir : String,
+                                          framework_dirs : Set(String),
+                                          import_marker : String,
+                                          extra_methods : Array(String)) : Bool
+      return false unless content.includes?(import_marker) || framework_dirs.includes?(dir)
+      go_route_source_candidate?(content, extra_methods)
+    end
+
     # --- Cross-file function body pre-pass --------------------------------
     #
     # Walks every cached `.go` source in `file_contents` and collects
