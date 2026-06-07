@@ -11,8 +11,13 @@ module Analyzer::Javascript
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      project_roots = discover_js_project_roots(
+        ["\"next\""],
+        ["next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs"]
+      )
 
       parallel_file_scan(EXTENSIONS) do |path|
+        next unless path_under_project_roots?(path, project_roots)
         next if ignored_next_path?(path)
 
         if app_router_file?(path)
