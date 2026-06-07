@@ -385,7 +385,7 @@ module Analyzer::Scala
     # Process a Play routes file
     private def process_routes_file(path : String,
                                     controller_methods : Hash(ScopedKey, ControllerMethod),
-                                    routes_by_key : Hash(String, Array(String)),
+                                    routes_by_key : Hash(ScopedKey, Array(String)),
                                     prefix : String,
                                     seen : Set(String))
       return if seen.includes?(path)
@@ -438,27 +438,28 @@ module Analyzer::Scala
       seen.delete(path)
     end
 
-    private def index_routes_files(routes_files : Array(String)) : Hash(String, Array(String))
-      index = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
+    private def index_routes_files(routes_files : Array(String)) : Hash(ScopedKey, Array(String))
+      index = Hash(ScopedKey, Array(String)).new { |hash, key| hash[key] = [] of String }
 
       routes_files.each do |path|
+        base_path = configured_base_for(path)
         basename = File.basename(path)
-        index[basename] << path
+        index[{base_path, basename}] << path
 
         if basename == "routes" || basename == "routes.conf"
-          index["Routes"] << path
-          index["router.Routes"] << path
+          index[{base_path, "Routes"}] << path
+          index[{base_path, "router.Routes"}] << path
         elsif match = basename.match(/^(.+)\.routes$/)
           name = match[1]
-          index[name] << path
-          index["#{name}.Routes"] << path
+          index[{base_path, name}] << path
+          index[{base_path, "#{name}.Routes"}] << path
         end
       end
 
       index
     end
 
-    private def collect_included_routes(routes_files : Array(String), routes_by_key : Hash(String, Array(String))) : Set(String)
+    private def collect_included_routes(routes_files : Array(String), routes_by_key : Hash(ScopedKey, Array(String))) : Set(String)
       included = Set(String).new
 
       routes_files.each do |path|
@@ -477,7 +478,7 @@ module Analyzer::Scala
     end
 
     private def resolve_included_routes_file(target : String,
-                                             routes_by_key : Hash(String, Array(String)),
+                                             routes_by_key : Hash(ScopedKey, Array(String)),
                                              including_path : String) : String?
       key = target.split(/\s|\(/).first.strip
       key = key.lchop("@")
@@ -490,8 +491,9 @@ module Analyzer::Scala
       end
 
       including_dir = File.dirname(including_path)
+      including_base = configured_base_for(including_path)
       candidates.each do |candidate|
-        paths = routes_by_key[candidate]?
+        paths = routes_by_key[{including_base, candidate}]?
         next unless paths
 
         if local_path = paths.find { |path| File.dirname(path) == including_dir }
@@ -500,7 +502,7 @@ module Analyzer::Scala
       end
 
       candidates.each do |candidate|
-        paths = routes_by_key[candidate]?
+        paths = routes_by_key[{including_base, candidate}]?
         return paths.first if paths && paths.size == 1
       end
 
