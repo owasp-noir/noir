@@ -7,12 +7,14 @@ module Analyzer::Haskell
     HTTP_METHOD_VERBS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
 
     alias TypeAlias = NamedTuple(body: String, source: String, line: Int32)
+    alias TypeAliasKey = Tuple(String, String)
+    alias TypeAliasIndex = Hash(TypeAliasKey, TypeAlias)
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
     alias HandlerBodies = Hash(String, Array(HandlerBody))
     alias ServerBindings = Hash(Tuple(String, String), String)
 
     def analyze
-      type_aliases = {} of String => TypeAlias
+      type_aliases = TypeAliasIndex.new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
       server_bindings = include_callee ? build_server_bindings : ServerBindings.new
@@ -22,8 +24,9 @@ module Analyzer::Haskell
         next unless haskell_source?(path)
 
         content = read_file_content(path)
+        base_path = configured_base_for(path)
         extract_type_aliases(content).each do |entry|
-          type_aliases[entry[:name]] = {
+          type_aliases[{base_path, entry[:name]}] = {
             body:   entry[:body],
             source: path,
             line:   entry[:line],
@@ -35,7 +38,7 @@ module Analyzer::Haskell
         # whose body is the fields joined with `:<|>`, so the existing
         # expansion/processing pipeline handles it like any other API.
         extract_record_routes(content).each do |entry|
-          type_aliases[entry[:name]] = {
+          type_aliases[{base_path, entry[:name]}] = {
             body:   entry[:body],
             source: path,
             line:   entry[:line],
@@ -43,17 +46,19 @@ module Analyzer::Haskell
         end
       end
 
-      reference_counts = Hash(String, Int32).new(0)
-      type_aliases.each do |_, entry|
-        referenced_aliases(entry[:body], type_aliases.keys).each do |name|
-          reference_counts[name] += 1
+      reference_counts = Hash(TypeAliasKey, Int32).new(0)
+      type_aliases.each do |key, entry|
+        base_path = key[0]
+        referenced_aliases(entry[:body], alias_names_for_base(type_aliases, base_path)).each do |name|
+          reference_counts[{base_path, name}] += 1
         end
       end
 
-      type_aliases.each do |name, entry|
-        next if reference_counts[name] > 0
+      type_aliases.each do |key, entry|
+        base_path, name = key
+        next if reference_counts[key] > 0
 
-        expanded = strip_named_routes(expand_references(entry[:body], type_aliases))
+        expanded = strip_named_routes(expand_references(entry[:body], type_aliases, base_path))
         next unless contains_servant_signature?(expanded)
 
         endpoints = process_api_body(entry[:source], entry[:line], expanded)
@@ -369,27 +374,32 @@ module Analyzer::Haskell
       found.to_a
     end
 
+    private def alias_names_for_base(type_aliases : TypeAliasIndex, base_path : String) : Array(String)
+      type_aliases.keys.compact_map { |key| key[1] if key[0] == base_path }
+    end
+
     # `visited` only blocks cycles along one path, not repeated sibling
     # expansions (`type A = B :<|> B` doubles each level -> O(2^N)). Cap the
     # total expanded size so a crafted alias chain can't hang/OOM the scan;
     # real Servant bodies expand to far under this, so output is unchanged.
     MAX_EXPANSION_BYTES = 1_000_000
 
-    private def expand_references(body : String, type_aliases : Hash(String, TypeAlias)) : String
-      do_expand(body, type_aliases, Set(String).new, [MAX_EXPANSION_BYTES])
+    private def expand_references(body : String, type_aliases : TypeAliasIndex, base_path : String) : String
+      do_expand(body, type_aliases, base_path, Set(String).new, [MAX_EXPANSION_BYTES])
     end
 
-    private def do_expand(body : String, type_aliases : Hash(String, TypeAlias), visited : Set(String), budget : Array(Int32)) : String
+    private def do_expand(body : String, type_aliases : TypeAliasIndex, base_path : String, visited : Set(String), budget : Array(Int32)) : String
       body.gsub(/\b([A-Z][A-Za-z0-9_']*)\b/) do |raw, m|
         name = m[1]
+        key = {base_path, name}
         if budget[0] <= 0
           raw # budget exhausted: leave the reference unexpanded
-        elsif type_aliases.has_key?(name) && !visited.includes?(name)
+        elsif type_aliases.has_key?(key) && !visited.includes?(name)
           new_visited = visited.dup
           new_visited << name
-          sub = type_aliases[name][:body]
+          sub = type_aliases[key][:body]
           budget[0] -= sub.bytesize
-          "(#{do_expand(sub, type_aliases, new_visited, budget)})"
+          "(#{do_expand(sub, type_aliases, base_path, new_visited, budget)})"
         else
           raw
         end
