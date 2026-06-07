@@ -57,7 +57,12 @@ module Analyzer::Python
       expanded_path = File.expand_path(path)
       expanded_base = File.expand_path(base_path)
       expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
-      return File.basename(path) unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+      matches_base = if expanded_base == File::SEPARATOR
+                       expanded_path.starts_with?(File::SEPARATOR)
+                     else
+                       expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+                     end
+      return File.basename(path) unless matches_base
 
       relative = expanded_path[expanded_base.size..].lchop(File::SEPARATOR)
       relative.empty? ? File.basename(path) : relative

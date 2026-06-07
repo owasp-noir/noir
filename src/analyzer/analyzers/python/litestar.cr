@@ -31,9 +31,8 @@ module Analyzer::Python
       end
 
       base_paths.each do |current_base_path|
-        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
         python_files.each do |path|
-          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+          next unless path_under_root?(path, current_base_path)
           next if path.includes?("/site-packages/")
           next if python_test_path?(path)
 
@@ -50,9 +49,8 @@ module Analyzer::Python
       end
 
       base_paths.each do |current_base_path|
-        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
         python_files.each do |path|
-          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+          next unless path_under_root?(path, current_base_path)
           next if path.includes?("/site-packages/")
           next if python_test_path?(path)
 

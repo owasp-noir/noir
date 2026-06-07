@@ -50,9 +50,15 @@ module Analyzer::Crystal
     # the framework apps themselves live under a `spec/` ancestor.
     private def crystal_spec_path?(path : String) : Bool
       return true if File.basename(path).ends_with?("_spec.cr")
+      expanded_path = File.expand_path(path)
+
       base_paths.any? do |root|
-        normalized = root.ends_with?("/") ? root : "#{root}/"
-        path.starts_with?("#{normalized}spec/")
+        next false unless path_under_root?(expanded_path, root)
+
+        expanded_root = File.expand_path(root)
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
+        relative = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
+        relative.starts_with?("spec/")
       end
     end
 

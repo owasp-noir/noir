@@ -143,10 +143,7 @@ module Analyzer::Ruby
 
       files.each do |file|
         next unless file.ends_with?(suffix)
-        next unless base_paths.any? do |base|
-                      prefix = base.ends_with?("/") ? base : "#{base}/"
-                      file.starts_with?(prefix) || file == "#{base}#{suffix}"
-                    end
+        next unless base_paths.any? { |base| path_under_root?(file, base) }
 
         root = file[0, file.size - suffix.size]
         roots << root unless roots.includes?(root)
@@ -159,14 +156,14 @@ module Analyzer::Ruby
       project_public_roots = Set(String).new
       files.each do |file|
         next unless File.basename(file) == "Gemfile"
-        next unless file.starts_with?(base_path)
+        next unless path_under_root?(file, base_path)
         project_public_roots << File.join(File.dirname(file), "public")
       end
 
       files.select do |file|
-        next false unless file.starts_with?(base_path)
+        next false unless path_under_root?(file, base_path)
         next false if FileHelper::PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-        project_public_roots.any? { |root| file.starts_with?(root + "/") }
+        project_public_roots.any? { |root| file != root && path_under_root?(file, root) }
       end
     end
 

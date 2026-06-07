@@ -72,7 +72,12 @@ class Analyzer
     @base_paths.each do |base|
       expanded_base = File.expand_path(base)
       expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
-      next unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+      matches_base = if expanded_base == File::SEPARATOR
+                       expanded_path.starts_with?(File::SEPARATOR)
+                     else
+                       expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+                     end
+      next unless matches_base
       next unless expanded_base.size > best_size
 
       best_base = base

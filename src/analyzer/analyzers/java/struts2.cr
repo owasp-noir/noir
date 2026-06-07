@@ -245,8 +245,7 @@ module Analyzer::Java
 
       normalized = include_name.lstrip('/')
       base = configured_base_for(current_path)
-      base_prefix = base.ends_with?("/") ? base : "#{base}/"
-      scoped_files = base.empty? ? file_list : file_list.select { |path| path == base || path.starts_with?(base_prefix) }
+      scoped_files = base.empty? ? file_list : file_list.select { |path| path_under_root?(path, base) }
       scoped_files.find { |path| path.ends_with?("/#{normalized}") || File.basename(path) == File.basename(include_name) }
     end
 

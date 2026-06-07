@@ -103,12 +103,14 @@ module FileHelper
     public_dir_files
   end
 
-  private def path_under_root?(path : String, root : String) : Bool
+  protected def path_under_root?(path : String, root : String) : Bool
     return true if root.empty?
 
     expanded_path = File.expand_path(path)
     expanded_root = File.expand_path(root)
     expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
+    return expanded_path.starts_with?(File::SEPARATOR) if expanded_root == File::SEPARATOR
+
     expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
   end
 end

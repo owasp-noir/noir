@@ -57,17 +57,17 @@ module Analyzer::Javascript
 
     protected def process_js_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint)) : Nil
       static_dirs.each do |dir|
-        root = File.expand_path(dir["file_path"]).rstrip("/")
+        root = File.expand_path(dir["file_path"])
+        root = root.rstrip('/') unless root == File::SEPARATOR
         static_path = dir["static_path"]
         static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
-        file_prefix = root.ends_with?("/") ? root : "#{root}/"
 
         all_files.each do |file_path|
           expanded_file_path = File.expand_path(file_path)
-          next unless expanded_file_path.starts_with?(file_prefix)
+          next unless path_under_root?(expanded_file_path, root)
           next unless File.file?(file_path)
 
-          relative_path = expanded_file_path[file_prefix.size..]? || ""
+          relative_path = expanded_file_path[root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
           next if relative_path.empty?
 
           url = if static_path == "/" || static_path.empty?
@@ -109,7 +109,7 @@ module Analyzer::Javascript
 
       expanded = File.expand_path(path)
       roots.any? do |root|
-        expanded == root || expanded.starts_with?("#{root}/")
+        path_under_root?(expanded, root)
       end
     end
 
@@ -154,6 +154,7 @@ module Analyzer::Javascript
 
     private def add_project_root(roots : Array(String), root : String) : Nil
       expanded = File.expand_path(root)
+      expanded = expanded.rstrip('/') unless expanded == File::SEPARATOR
       roots << expanded unless roots.includes?(expanded)
     end
   end

@@ -35,6 +35,14 @@ describe "Initialize Analyzer" do
 
     harness.configured_base("spec/functional_test/fixtures/python/robyn_multi_base/service_a/app.py").should eq("spec/functional_test/fixtures/python/robyn_multi_base/service_a")
   end
+
+  it "matches files under the filesystem root base path" do
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new(File::SEPARATOR.to_s)])
+    harness = AnalyzerBasePathHarness.new(options)
+
+    harness.configured_base(File.join(Dir.current, "src/noir.cr")).should eq(File::SEPARATOR.to_s)
+  end
 end
 
 describe "Initialize FileAnalyzer" do

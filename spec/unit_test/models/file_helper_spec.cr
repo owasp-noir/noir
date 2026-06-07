@@ -79,6 +79,15 @@ describe "FileHelper" do
 
       helper.get_files_by_prefix("/app").should eq(["/app/src/file1.cr"])
     end
+
+    it "matches absolute files under the filesystem root prefix" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/app/src/file1.cr")
+
+      helper.get_files_by_prefix(File::SEPARATOR.to_s).should eq(["/app/src/file1.cr"])
+    end
   end
 
   describe "get_files_by_prefix_and_extension" do

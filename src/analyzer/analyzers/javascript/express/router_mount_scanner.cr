@@ -404,7 +404,7 @@ module Analyzer::Javascript
       @all_files.each do |file|
         next if File.directory?(file)
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| file.ends_with?(ext) }
-        next unless @base_paths.any? { |base| file.starts_with?(base) }
+        next unless @base_paths.any? { |base| path_under_root?(file, base) }
         main_files << file
       end
 
@@ -1095,9 +1095,8 @@ module Analyzer::Javascript
       best_size = -1
 
       @base_paths.each do |base|
-        expanded_base = File.expand_path(base)
-        expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
-        next unless expanded_file == expanded_base || expanded_file.starts_with?(expanded_base + File::SEPARATOR)
+        expanded_base = normalized_root(base)
+        next unless path_under_root?(expanded_file, expanded_base)
         next unless expanded_base.size > best_size
 
         best_base = base
@@ -1105,6 +1104,19 @@ module Analyzer::Javascript
       end
 
       best_base || @base_path
+    end
+
+    private def path_under_root?(path : String, root : String) : Bool
+      expanded_path = File.expand_path(path)
+      expanded_root = normalized_root(root)
+      return expanded_path.starts_with?(File::SEPARATOR) if expanded_root == File::SEPARATOR
+
+      expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
+    end
+
+    private def normalized_root(root : String) : String
+      expanded_root = File.expand_path(root)
+      expanded_root == File::SEPARATOR ? expanded_root : expanded_root.rstrip('/')
     end
   end
 end

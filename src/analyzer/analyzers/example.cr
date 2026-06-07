@@ -10,9 +10,8 @@ class AnalyzerExample < Analyzer
       # to files below the analyzer's base_path — file_map spans the
       # union of every configured base_path, and an analyzer is
       # typically interested in one of them.
-      base_dir_prefix = base_path.ends_with?("/") ? base_path : "#{base_path}/"
       all_files.each do |path|
-        next unless path.starts_with?(base_dir_prefix) || path == base_path
+        next unless base_paths.any? { |base| path_under_root?(path, base) }
         next unless File.exists?(path)
         File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
           file.each_line do |_line|

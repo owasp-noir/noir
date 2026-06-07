@@ -12,9 +12,8 @@ module Analyzer::Python
         # --exclude-path apply to this pass too.
         python_files = get_files_by_extension(".py")
         base_paths.each do |current_base_path|
-          base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
           python_files.each do |path|
-            next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+            next unless path_under_root?(path, current_base_path)
             next if path.includes?("/site-packages/")
             next if python_test_path?(path)
             source = read_file_content(path)
@@ -472,7 +471,11 @@ module Analyzer::Python
       project_roots.find do |root|
         expanded_root = File.expand_path(root)
         expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
-        expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
+        if expanded_root == File::SEPARATOR
+          expanded_path.starts_with?(File::SEPARATOR)
+        else
+          expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
+        end
       end || python_base_path_for(path)
     end
 
