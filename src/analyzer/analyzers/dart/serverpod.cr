@@ -42,7 +42,7 @@ module Analyzer::Dart
         next unless path.ends_with?(".dart")
         # `test/integration/*_endpoint_test.dart` exercises endpoints but
         # is not itself a server surface.
-        next if Helper.test_path?(path, @base_path)
+        next if Helper.test_path?(path, base_paths)
 
         content = read_file_content(path)
         # Strip comments once and share the cleaned copy between the RPC

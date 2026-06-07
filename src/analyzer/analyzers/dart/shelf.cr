@@ -62,7 +62,7 @@ module Analyzer::Dart
           next unless path.ends_with?(".dart")
           # Skip `test/` routers — `dart test` fixtures spin up real
           # `Router()` instances that never serve production traffic.
-          next if Helper.test_path?(path, @base_path)
+          next if Helper.test_path?(path, base_paths)
 
           content = begin
             read_file_content(path)

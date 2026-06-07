@@ -11,7 +11,7 @@ module Analyzer::Dart
     # in particular mirrors the route tree under `test/routes/`, so a
     # naive `/routes/` match would surface every mock handler as a live
     # endpoint. Centralized so every Dart analyzer can opt in via
-    # `next if Helper.test_path?(path, @base_path)`.
+    # `next if Helper.test_path?(path, base_paths)`.
     #
     #   * `/test/`, `test/` — Dart's `dart test` discovery root and the
     #                         Dart Frog `test/routes/` mirror tree
@@ -21,6 +21,10 @@ module Analyzer::Dart
       return true if relative.includes?("/test/")
       return true if relative.starts_with?("test/")
       File.basename(path).ends_with?("_test.dart")
+    end
+
+    def test_path?(path : String, base_paths : Array(String)) : Bool
+      test_path?(path, base_path_for(path, base_paths))
     end
 
     # Replace `//` line and `/* */` block comments with spaces, leaving
@@ -120,6 +124,14 @@ module Analyzer::Dart
 
       relative = expanded_path[expanded_base.size..].lchop(File::SEPARATOR)
       relative.empty? ? File.basename(path) : relative
+    end
+
+    private def base_path_for(path : String, base_paths : Array(String)) : String?
+      expanded_path = File.expand_path(path)
+      base_paths.find do |base|
+        expanded_base = File.expand_path(base)
+        expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+      end
     end
   end
 end

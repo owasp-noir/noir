@@ -44,7 +44,7 @@ module Analyzer::Python
         python_files.each do |path|
           next unless path.starts_with?(base_dir_prefix) || path == current_base_path
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path, @base_path)
+          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -116,7 +116,7 @@ module Analyzer::Python
           line_index, path, route_path, extra_params, route_attr = router_info
           source = fetch_file_content(path)
           lines = source.lines
-          definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @base_path
+          definition_base_path = python_base_path_for(path)
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = path_api_instances[path]
           if api_instances.has_key?(router_name)
@@ -212,7 +212,7 @@ module Analyzer::Python
           line_index, path, route_path, extra_params, handler_name = route_info
           source = fetch_file_content(path)
           lines = source.lines
-          definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @base_path
+          definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
           registration_prefixes = blueprint_registration_prefixes[router_name]? || [""]
@@ -262,7 +262,7 @@ module Analyzer::Python
           line_index, path, route_path, extra_params, class_name = route_info
           source = fetch_file_content(path)
           lines = source.lines
-          definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @base_path
+          definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
           registration_prefixes = blueprint_registration_prefixes[router_name]? || [""]

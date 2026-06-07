@@ -387,11 +387,7 @@ module Analyzer::Go
     end
 
     private def base_path_for_path(path : String) : String
-      expanded_path = File.expand_path(path)
-      base_paths.find do |base|
-        expanded_base = File.expand_path(base)
-        expanded_path == expanded_base || expanded_path.starts_with?("#{expanded_base}/")
-      end || base_path
+      configured_base_for(path)
     end
   end
 end

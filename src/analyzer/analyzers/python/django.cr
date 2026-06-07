@@ -190,11 +190,7 @@ module Analyzer::Python
     end
 
     private def base_path_for(file : ::String) : ::String
-      expanded_file = File.expand_path(file)
-      base_paths.find do |base|
-        expanded_base = File.expand_path(base)
-        expanded_file == expanded_base || expanded_file.starts_with?("#{expanded_base}/")
-      end || @base_path
+      python_base_path_for(file)
     end
 
     private def django_settings_path?(path : ::String) : Bool

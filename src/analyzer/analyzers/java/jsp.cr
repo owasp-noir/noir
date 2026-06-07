@@ -26,7 +26,7 @@ module Analyzer::Java
                   break if path.nil?
                   next if File.directory?(path)
 
-                  relative_path = get_relative_path(base_path, path)
+                  relative_path = get_relative_path(configured_base_for(path), path)
 
                   if File.exists?(path) && File.extname(path) == ".jsp"
                     next if web_inf_jsp?(relative_path)

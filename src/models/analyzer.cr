@@ -64,6 +64,14 @@ class Analyzer
     any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
   end
 
+  protected def configured_base_for(path : String) : String
+    expanded_path = File.expand_path(path)
+    @base_paths.find do |base|
+      expanded_base = File.expand_path(base)
+      expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+    end || @base_path
+  end
+
   # Preferred overload: accepts a file list and creates both the
   # producer and worker fibers inside a single WaitGroup so every
   # fiber is tracked.  The bare-`spawn` producer in the channel-based

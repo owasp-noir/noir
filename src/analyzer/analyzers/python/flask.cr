@@ -57,7 +57,7 @@ module Analyzer::Python
         python_files.each do |path|
           next unless path.starts_with?(base_dir_prefix) || path == current_base_path
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path, @base_path)
+          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)
@@ -793,7 +793,7 @@ module Analyzer::Python
     # Pick the base path that owns this file so the engine's definition
     # resolver can locate imported modules relative to the right root.
     private def base_path_for(file_path : ::String) : ::String
-      base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
+      python_base_path_for(file_path)
     end
 
     private def flask_relevant_source?(source : ::String) : Bool

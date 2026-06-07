@@ -18,7 +18,7 @@ module Analyzer::Python
     # under any of these patterns ships with `python -m pytest` or
     # `python -m unittest` and never serves real traffic in
     # production. Centralized so every analyzer can opt in via
-    # `next if PythonEngine.python_test_path?(path, @base_path)`.
+    # `next if python_test_path?(path)`.
     #
     #   * `/tests/`, `/test/` — pytest discovery defaults and common
     #                           framework fixture packages (Django,
@@ -39,6 +39,14 @@ module Analyzer::Python
       return true if base == "tests.py"
       return true if base.starts_with?("test_") && base.ends_with?(".py")
       base.ends_with?("_test.py")
+    end
+
+    protected def python_base_path_for(path : String) : String
+      configured_base_for(path)
+    end
+
+    protected def python_test_path?(path : String) : Bool
+      PythonEngine.python_test_path?(path, python_base_path_for(path))
     end
 
     private def self.path_for_test_convention_match(path : String, base_path : String?) : String

@@ -235,7 +235,7 @@ module Analyzer::Java
       candidates = [] of String
       candidates << include_name if include_name.starts_with?("/")
       candidates << File.expand_path(include_name, File.dirname(current_path))
-      candidates << File.join(@base_path, include_name.lstrip('/'))
+      candidates << File.join(configured_base_for(current_path), include_name.lstrip('/'))
 
       if found = candidates.find { |candidate| File.exists?(candidate) }
         return found

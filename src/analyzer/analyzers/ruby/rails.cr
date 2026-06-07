@@ -100,7 +100,7 @@ module Analyzer::Ruby
       @engine_mount_prefixes = build_engine_mount_map(files)
 
       framework_roots = discover_framework_roots(files, "config/routes.rb")
-      framework_roots = [@base_path] if framework_roots.empty?
+      framework_roots = base_paths if framework_roots.empty?
 
       framework_roots.each do |framework_root|
         begin
