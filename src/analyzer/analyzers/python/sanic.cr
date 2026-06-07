@@ -4,6 +4,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Sanic < PythonEngine
+    alias ScopedNameKey = Tuple(::String, ::String)
+
     # Reference: https://sanic.readthedocs.io/en/stable/sanic/request.html
     REQUEST_PARAM_FIELDS = {
       "args"    => {["GET"], "query"},
@@ -32,7 +34,7 @@ module Analyzer::Python
       sanic_instances = Hash(::String, ::String).new
       sanic_instances["app"] ||= "" # Common sanic instance name
       blueprint_prefixes = Hash(::String, ::String).new
-      blueprint_registration_prefixes = Hash(::String, Array(::String)).new
+      blueprint_registration_prefixes = Hash(ScopedNameKey, Array(::String)).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
 
       # Iterate through all Python files in all base paths. Pulls from
@@ -63,7 +65,7 @@ module Analyzer::Python
               blueprint_prefixes[bp.name] ||= bp.prefix
               api_instances[bp.name] ||= bp.prefix
             end
-            collect_blueprint_registrations(file_content, blueprint_registration_prefixes)
+            collect_blueprint_registrations(file_content, blueprint_registration_prefixes, current_base_path)
             Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: {"websocket" => "GET"}).each do |decoration|
               methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
               extra_params = "methods=[#{methods_literal}]"
@@ -124,7 +126,7 @@ module Analyzer::Python
           else
             prefix = ""
           end
-          registration_prefixes = blueprint_registration_prefixes[router_name]? || [""]
+          registration_prefixes = blueprint_registration_prefixes[{definition_base_path, router_name}]? || [""]
 
           is_class_router = false
           indent = lines[class_def_index].index("def") || 0
@@ -215,7 +217,7 @@ module Analyzer::Python
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
-          registration_prefixes = blueprint_registration_prefixes[router_name]? || [""]
+          registration_prefixes = blueprint_registration_prefixes[{definition_base_path, router_name}]? || [""]
 
           function_def_index = find_function_def(lines, handler_name)
           handler_path = path
@@ -265,7 +267,7 @@ module Analyzer::Python
           definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
-          registration_prefixes = blueprint_registration_prefixes[router_name]? || [""]
+          registration_prefixes = blueprint_registration_prefixes[{definition_base_path, router_name}]? || [""]
 
           class_def_index = find_class_def(lines, class_name)
           next if class_def_index.nil?
@@ -305,9 +307,10 @@ module Analyzer::Python
       @static_routes.each do |router_name, static_info_list|
         static_info_list.each do |static_info|
           line_index, path, static_path = static_info
+          definition_base_path = python_base_path_for(path)
           api_instances = path_api_instances[path]
           prefix = api_instances[router_name]? || ""
-          registration_prefixes = blueprint_registration_prefixes[router_name]? || [""]
+          registration_prefixes = blueprint_registration_prefixes[{definition_base_path, router_name}]? || [""]
 
           registration_prefixes.each do |registration_prefix|
             full_prefix = join_paths(registration_prefix, prefix)
@@ -602,7 +605,9 @@ module Analyzer::Python
       methods
     end
 
-    private def collect_blueprint_registrations(source : ::String, registrations : Hash(::String, Array(::String)))
+    private def collect_blueprint_registrations(source : ::String,
+                                                registrations : Hash(ScopedNameKey, Array(::String)),
+                                                base_path : ::String)
       source.scan(/\.blueprint\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})(.*?)\)/m) do |match|
         next if match.size < 3
         blueprint_name = match[1]
@@ -612,8 +617,9 @@ module Analyzer::Python
           prefix = prefix_match[1]
         end
 
-        registrations[blueprint_name] ||= [] of ::String
-        registrations[blueprint_name] << prefix unless registrations[blueprint_name].includes?(prefix)
+        key = {base_path, blueprint_name}
+        registrations[key] ||= [] of ::String
+        registrations[key] << prefix unless registrations[key].includes?(prefix)
       end
     end
 
