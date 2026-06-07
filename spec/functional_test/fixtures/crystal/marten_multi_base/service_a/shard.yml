@@ -1,0 +1,7 @@
+name: service_a
+version: 0.1.0
+
+dependencies:
+  marten:
+    github: martenframework/marten
+    version: ~> 0.4.0
