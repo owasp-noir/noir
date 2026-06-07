@@ -13,10 +13,12 @@ module Analyzer::Perl
     ASSIGNMENT_HEAD_RE = /^\s*(?:my|our|local)?\s*\$([A-Za-z_]\w*)\s*=\s*(.+)$/
     CHAIN_RECEIVER_RE  = /\$([A-Za-z_]\w*)\s*->/
     PRELUDE_VAR_RE     = /\$([A-Za-z_]\w*)/
+    alias ControllerActionKey = Tuple(String, String)
+    alias ControllerCalleeIndex = Hash(ControllerActionKey, Array(Noir::PerlCalleeExtractor::Entry))
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      controller_callees = include_callee ? index_controller_callees : {} of String => Array(Noir::PerlCalleeExtractor::Entry)
+      controller_callees = include_callee ? index_controller_callees : ControllerCalleeIndex.new
 
       parallel_file_scan do |path|
         result.concat(analyze_file(path, include_callee, controller_callees))
@@ -25,12 +27,12 @@ module Analyzer::Perl
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      analyze_file(path, any_to_bool(@options["include_callee"]?), {} of String => Array(Noir::PerlCalleeExtractor::Entry))
+      analyze_file(path, any_to_bool(@options["include_callee"]?), ControllerCalleeIndex.new)
     end
 
     private def analyze_file(path : String,
                              include_callee : Bool,
-                             controller_callees : Hash(String, Array(Noir::PerlCalleeExtractor::Entry))) : Array(Endpoint)
+                             controller_callees : ControllerCalleeIndex) : Array(Endpoint)
       ext = File.extname(path)
       return [] of Endpoint unless ext == ".pl" || ext == ".pm" ||
                                    ext == ".psgi" || ext == ".t"
@@ -58,7 +60,7 @@ module Analyzer::Perl
     def analyze_content(content : String,
                         file_path : String,
                         include_callee : Bool = false,
-                        controller_callees : Hash(String, Array(Noir::PerlCalleeExtractor::Entry)) = {} of String => Array(Noir::PerlCalleeExtractor::Entry)) : Array(Endpoint)
+                        controller_callees : ControllerCalleeIndex = ControllerCalleeIndex.new) : Array(Endpoint)
       endpoints = [] of Endpoint
       raw_lines = content.lines
       sanitized_lines = sanitize_perl_lines(raw_lines)
@@ -76,7 +78,7 @@ module Analyzer::Perl
         line_endpoints.each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
           extract_path_params(endpoint).each { |p| push_unique_param(endpoint, p) }
-          attach_route_callees(endpoint, content, raw_lines[index], offsets[index], controller_callees) if include_callee
+          attach_route_callees(endpoint, content, raw_lines[index], offsets[index], controller_callees, configured_base_for(file_path)) if include_callee
           endpoints << endpoint
         end
 
@@ -134,8 +136,8 @@ module Analyzer::Perl
       end
     end
 
-    private def index_controller_callees : Hash(String, Array(Noir::PerlCalleeExtractor::Entry))
-      callees = {} of String => Array(Noir::PerlCalleeExtractor::Entry)
+    private def index_controller_callees : ControllerCalleeIndex
+      callees = ControllerCalleeIndex.new
 
       all_files.each do |path|
         next if File.directory?(path)
@@ -143,8 +145,9 @@ module Analyzer::Perl
         next unless ext == ".pl" || ext == ".pm" || ext == ".psgi" || ext == ".t"
 
         content = read_file_content(path)
+        base_path = configured_base_for(path)
         Noir::PerlCalleeExtractor.controller_action_callees(content, path).each do |key, entries|
-          callees[key] ||= entries
+          callees[{base_path, key}] ||= entries
         end
       end
 
@@ -374,7 +377,8 @@ module Analyzer::Perl
                                      content : String,
                                      line : String,
                                      line_offset : Int32,
-                                     controller_callees : Hash(String, Array(Noir::PerlCalleeExtractor::Entry)))
+                                     controller_callees : ControllerCalleeIndex,
+                                     base_path : String)
       line_end = line_offset + line.size
       if body = Noir::PerlCalleeExtractor.extract_sub_after(content, line_offset, line_end)
         body_text, start_line = body
@@ -383,7 +387,7 @@ module Analyzer::Perl
       end
 
       if target = controller_action_target(line)
-        if callees = controller_callees[target]?
+        if callees = controller_callees[{base_path, target}]?
           Noir::PerlCalleeExtractor.attach_to(endpoint, callees)
         end
       end
