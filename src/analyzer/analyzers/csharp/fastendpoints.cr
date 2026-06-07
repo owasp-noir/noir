@@ -5,6 +5,8 @@ module Analyzer::CSharp
   class FastEndpoints < Analyzer
     include Common
 
+    alias RequestTypeKey = Tuple(String, String)
+
     # `Endpoint<TRequest>`, `Endpoint<TRequest, TResponse>`,
     # `EndpointWithoutRequest`, `EndpointWithoutRequest<TResponse>`,
     # and the `Ep` short alias all subclass the FastEndpoints
@@ -35,12 +37,13 @@ module Analyzer::CSharp
       @result
     end
 
-    private def build_request_type_index(files : Array(String)) : Hash(String, Array(Param))
-      index = Hash(String, Array(Param)).new
+    private def build_request_type_index(files : Array(String)) : Hash(RequestTypeKey, Array(Param))
+      index = Hash(RequestTypeKey, Array(Param)).new
       type_decl_regex = /(?:class|record(?:\s+struct)?|struct)\s+([A-Za-z_][A-Za-z0-9_]*)\b/
       files.each do |file|
         next unless File.exists?(file)
         content = read_file_content(file)
+        base_path = configured_base_for(file)
         lines = content.lines
         i = 0
         while i < lines.size
@@ -50,12 +53,13 @@ module Analyzer::CSharp
             block, end_index = extract_request_type_block(lines, i)
             params = extract_props_from_block(block)
             if !params.empty?
-              existing = index[type_name]? || [] of Param
+              key = {base_path, type_name}
+              existing = index[key]? || [] of Param
               merged = existing.dup
               params.each do |p|
                 merged << p unless merged.any? { |e| e.name == p.name }
               end
-              index[type_name] = merged
+              index[key] = merged
             end
             i = end_index
           end
@@ -65,7 +69,8 @@ module Analyzer::CSharp
       index
     end
 
-    private def analyze_file(file : String, content : String, include_callee : Bool, request_types : Hash(String, Array(Param)))
+    private def analyze_file(file : String, content : String, include_callee : Bool, request_types : Hash(RequestTypeKey, Array(Param)))
+      base_path = configured_base_for(file)
       lines = content.lines
       i = 0
       while i < lines.size
@@ -82,7 +87,7 @@ module Analyzer::CSharp
             if configure_block
               routes, methods = parse_configure(configure_block)
               if !routes.empty? && !methods.empty?
-                request_params = request_type ? (request_types[request_type]? || [] of Param) : [] of Param
+                request_params = request_type ? (request_types[{base_path, request_type}]? || [] of Param) : [] of Param
                 routes.each do |route|
                   methods.each do |http_method|
                     endpoint = build_endpoint(route, http_method, file, i + 1, request_params)
