@@ -26,6 +26,7 @@ module Analyzer::Swift
     ROUTER_PARAM_PATTERN = /([A-Za-z_]\w*)\s*:\s*(?:some\s+|any\s+|inout\s+)*(?:Router|RouterGroup|RouterMethods)\b/
     # Type declarations whose body can host a RouteCollection handler.
     TYPE_DECL_PATTERN = /\b(?:struct|class|extension|actor|enum)\s+([A-Za-z_]\w*)/
+    alias ScopedPrefixKey = Tuple(String, String)
 
     # A route hit discovered by the chain scanner.
     record RouteHit,
@@ -35,11 +36,10 @@ module Analyzer::Swift
       handler : String?
 
     # Prefixes bound to RouteCollection-style handlers via their call
-    # sites. Keyed by enclosing type name and by free-function name so
-    # `Controller(...).addRoutes(to: router.group("api/todos"))` lifts the
-    # `/api/todos` prefix onto routes defined inside `addRoutes`.
-    @controller_prefix_by_type = {} of String => String
-    @controller_prefix_by_func = {} of String => String
+    # sites. Keyed by configured base path plus enclosing type/free-function
+    # name so same-named controllers in monorepos do not share prefixes.
+    @controller_prefix_by_type = {} of ScopedPrefixKey => String
+    @controller_prefix_by_func = {} of ScopedPrefixKey => String
 
     # Project-wide pre-pass: resolve RouteCollection prefixes before the
     # per-file scan so controller bodies in one file can pick up the
@@ -55,8 +55,9 @@ module Analyzer::Swift
       stripped_lines = strip_code_lines(lines)
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
+      base = configured_base_for(path)
 
-      hits = collect_route_hits(stripped_lines, lines)
+      hits = collect_route_hits(stripped_lines, lines, base)
 
       hits.each do |hit|
         begin
@@ -91,7 +92,7 @@ module Analyzer::Swift
     # variable, a router-typed function parameter, or a continuation of
     # an already-open router chain). This is what keeps `env.get(...)`,
     # `storage.get(key:)` and friends out of the endpoint list.
-    private def collect_route_hits(stripped_lines : Array(String), original_lines : Array(String)) : Array(RouteHit)
+    private def collect_route_hits(stripped_lines : Array(String), original_lines : Array(String), base : String) : Array(RouteHit)
       hits = [] of RouteHit
       prefix_by_receiver = {} of String => String
       group_prefix_stack = [] of Tuple(String, Int32)
@@ -116,7 +117,7 @@ module Analyzer::Swift
         register_router_assignment(line, type_prefix, prefix_by_receiver)
         register_group_assignment(line, original, prefix_by_receiver)
         register_group_closure(line, original, prefix_by_receiver, group_prefix_stack, brace_depth)
-        register_router_param(line, prefix_by_receiver, param_stack, type_stack, brace_depth)
+        register_router_param(line, prefix_by_receiver, param_stack, type_stack, brace_depth, base)
 
         # Manage a chain suspended across a trailing closure body. Once the
         # body has closed (brace depth is back to the suspend level), the
@@ -145,7 +146,7 @@ module Analyzer::Swift
           else
             active_prefix = result[:prefix]
             active_paren_depth = result[:paren_depth]
-            brace_depth = update_scopes(line, brace_depth, group_prefix_stack, param_stack, type_stack, prefix_by_receiver)
+            brace_depth = update_scopes(line, brace_depth, group_prefix_stack, param_stack, type_stack, prefix_by_receiver, base)
             next
           end
         else
@@ -188,7 +189,7 @@ module Analyzer::Swift
           end
         end
 
-        brace_depth = update_scopes(line, brace_depth, group_prefix_stack, param_stack, type_stack, prefix_by_receiver)
+        brace_depth = update_scopes(line, brace_depth, group_prefix_stack, param_stack, type_stack, prefix_by_receiver, base)
       end
 
       hits
@@ -467,7 +468,8 @@ module Analyzer::Swift
                                       prefix_by_receiver : Hash(String, String),
                                       param_stack : Array(Tuple(String, Int32)),
                                       type_stack : Array(Tuple(String, Int32, String)),
-                                      brace_depth : Int32)
+                                      brace_depth : Int32,
+                                      base : String)
       func_match = line.match(FUNCTION_SIGNATURE_PATTERN)
       return unless func_match
 
@@ -479,9 +481,9 @@ module Analyzer::Swift
       type_name = type_stack.last?.try(&.[0])
 
       prefix = ""
-      if type_name && (bound = @controller_prefix_by_type[type_name]?)
+      if type_name && (bound = @controller_prefix_by_type[{base, type_name}]?)
         prefix = bound
-      elsif bound = @controller_prefix_by_func[func_name]?
+      elsif bound = @controller_prefix_by_func[{base, func_name}]?
         prefix = bound
       end
 
@@ -496,10 +498,11 @@ module Analyzer::Swift
                               group_prefix_stack : Array(Tuple(String, Int32)),
                               param_stack : Array(Tuple(String, Int32)),
                               type_stack : Array(Tuple(String, Int32, String)),
-                              prefix_by_receiver : Hash(String, String)) : Int32
+                              prefix_by_receiver : Hash(String, String),
+                              base : String) : Int32
       if match = line.match(TYPE_DECL_PATTERN)
         if line.includes?('{')
-          bound = @controller_prefix_by_type[match[1]]? || ""
+          bound = @controller_prefix_by_type[{base, match[1]}]? || ""
           type_stack << {match[1], brace_depth + 1, bound}
         end
       end
@@ -531,29 +534,34 @@ module Analyzer::Swift
       files = swift_source_files
       return if files.empty?
 
-      route_methods = Set{"addRoutes"}     # `addRoutes` is the RouteCollection built-in
-      assignments = {} of String => String # variable -> constructed type
+      route_methods_by_base = Hash(String, Set(String)).new do |hash, key|
+        hash[key] = Set{"addRoutes"} # `addRoutes` is the RouteCollection built-in
+      end
+      assignments = {} of ScopedPrefixKey => String # {base, variable} -> constructed type
 
       files.each do |path|
+        base = configured_base_for(path)
         lines = strip_code_lines(File.read_lines(path, encoding: "utf-8", invalid: :skip))
         lines.each do |line|
           if (func = line.match(FUNCTION_SIGNATURE_PATTERN)) && line.match(ROUTER_PARAM_PATTERN)
-            route_methods << func[1]
+            route_methods_by_base[base] << func[1]
           end
           if assign = line.match(/\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*[(<]/)
-            assignments[assign[1]] = assign[2]
+            assignments[{base, assign[1]}] = assign[2]
           end
         end
       end
 
       files.each do |path|
-        register_controller_call_sites(path, route_methods, assignments)
+        base = configured_base_for(path)
+        register_controller_call_sites(path, route_methods_by_base[base], assignments, base)
       end
     end
 
     private def register_controller_call_sites(path : String,
                                                method_set : Set(String),
-                                               assignments : Hash(String, String))
+                                               assignments : Hash(ScopedPrefixKey, String),
+                                               base : String)
       original_lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
       stripped_lines = strip_code_lines(original_lines)
 
@@ -575,13 +583,13 @@ module Analyzer::Swift
 
             prefix = at_path_prefix(args_str) || labeled_group_prefix(args_str) || chain_group_prefix(before)
 
-            controller = positional_controller_type(args_str, assignments) ||
-                         resolve_type(receiver_before(before), assignments)
+            controller = positional_controller_type(args_str, assignments, base) ||
+                         resolve_type(receiver_before(before), assignments, base)
 
             if controller
-              @controller_prefix_by_type[controller] ||= prefix
+              @controller_prefix_by_type[{base, controller}] ||= prefix
             end
-            @controller_prefix_by_func[func_name] ||= prefix
+            @controller_prefix_by_func[{base, func_name}] ||= prefix
           end
         end
       end
@@ -641,7 +649,7 @@ module Analyzer::Swift
     # The first positional argument's controller type, e.g.
     # `TodoController(...).endpoints` -> "TodoController",
     # `controller.routes` -> resolved type of `controller`.
-    private def positional_controller_type(args : String, assignments : Hash(String, String)) : String?
+    private def positional_controller_type(args : String, assignments : Hash(ScopedPrefixKey, String), base : String) : String?
       first = first_positional_arg(args)
       return unless first
       return if first.includes?(':') && !first.includes?('(')
@@ -650,7 +658,7 @@ module Analyzer::Swift
         return match[1]
       end
       if match = first.match(/^([A-Za-z_]\w*)\s*\./)
-        return assignments[match[1]]?
+        return assignments[{base, match[1]}]?
       end
       nil
     end
@@ -684,14 +692,14 @@ module Analyzer::Swift
       ""
     end
 
-    private def resolve_type(receiver : String, assignments : Hash(String, String)) : String?
+    private def resolve_type(receiver : String, assignments : Hash(ScopedPrefixKey, String), base : String) : String?
       return if receiver.empty?
       # `TodoController(...).addRoutes(...)` keeps the type verbatim; a bare
       # lowercase variable resolves through its constructor assignment.
       if receiver[0].uppercase?
         receiver
       else
-        assignments[receiver]?
+        assignments[{base, receiver}]?
       end
     end
 
