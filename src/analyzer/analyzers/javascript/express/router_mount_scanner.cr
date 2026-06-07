@@ -1,5 +1,6 @@
 require "../../../../models/code_locator"
 require "../../../../utils/js_literal_scanner"
+require "../../../../utils/path_scope"
 require "../../../../utils/url_path"
 require "../express_constants"
 
@@ -404,7 +405,7 @@ module Analyzer::Javascript
       @all_files.each do |file|
         next if File.directory?(file)
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| file.ends_with?(ext) }
-        next unless @base_paths.any? { |base| path_under_root?(file, base) }
+        next unless @base_paths.any? { |base| Noir::PathScope.under_root?(file, base) }
         main_files << file
       end
 
@@ -1090,33 +1091,7 @@ module Analyzer::Javascript
     end
 
     private def base_path_for_file(file : String) : String
-      expanded_file = File.expand_path(file)
-      best_base = nil
-      best_size = -1
-
-      @base_paths.each do |base|
-        expanded_base = normalized_root(base)
-        next unless path_under_root?(expanded_file, expanded_base)
-        next unless expanded_base.size > best_size
-
-        best_base = base
-        best_size = expanded_base.size
-      end
-
-      best_base || @base_path
-    end
-
-    private def path_under_root?(path : String, root : String) : Bool
-      expanded_path = File.expand_path(path)
-      expanded_root = normalized_root(root)
-      return expanded_path.starts_with?(File::SEPARATOR) if expanded_root == File::SEPARATOR
-
-      expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
-    end
-
-    private def normalized_root(root : String) : String
-      expanded_root = File.expand_path(root)
-      expanded_root == File::SEPARATOR ? expanded_root : expanded_root.rstrip('/')
+      Noir::PathScope.longest_base(file, @base_paths) || @base_path
     end
   end
 end

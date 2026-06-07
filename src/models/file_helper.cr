@@ -1,5 +1,6 @@
 # This module provides helper methods to retrieve files from CodeLocator
 # instead of using Dir.glob, improving efficiency by reusing files already scanned
+require "../utils/path_scope"
 
 module FileHelper
   # Version-control / OS placeholder files that sit inside `public/`
@@ -105,12 +106,7 @@ module FileHelper
 
   protected def path_under_root?(path : String, root : String) : Bool
     return true if root.empty?
-
-    expanded_root = expanded_root_for(root)
-    expanded_path = File.expand_path(path)
-    return expanded_path.starts_with?(File::SEPARATOR) if expanded_root == File::SEPARATOR
-
-    expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
+    Noir::PathScope.under_normalized_root?(File.expand_path(path), expanded_root_for(root))
   end
 
   # `root` is almost always loop-invariant across a `select`/scan over
@@ -120,9 +116,6 @@ module FileHelper
   # one entry per configured base path.
   private def expanded_root_for(root : String) : String
     cache = (@expanded_root_cache ||= {} of String => String)
-    cache[root] ||= begin
-      expanded = File.expand_path(root)
-      expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
-    end
+    cache[root] ||= Noir::PathScope.normalize_root(root)
   end
 end

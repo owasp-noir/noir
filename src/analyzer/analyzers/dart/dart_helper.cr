@@ -1,3 +1,5 @@
+require "../../../utils/path_scope"
+
 module Analyzer::Dart
   # Shared helpers for the Dart framework analyzers (Dart Frog, Shelf,
   # Serverpod). Kept framework-agnostic so each analyzer can opt in
@@ -112,47 +114,11 @@ module Analyzer::Dart
     end
 
     private def relative_for_match(path : String, base_path : String?) : String
-      if base_path.nil? || base_path.empty?
-        return File.basename(path)
-      end
-
-      expanded_path = File.expand_path(path)
-      expanded_base = File.expand_path(base_path)
-      expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
-      matches_base = if expanded_base == File::SEPARATOR
-                       expanded_path.starts_with?(File::SEPARATOR)
-                     else
-                       expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
-                     end
-      unless matches_base
-        return File.basename(path)
-      end
-
-      relative = expanded_path[expanded_base.size..].lchop(File::SEPARATOR)
-      relative.empty? ? File.basename(path) : relative
+      Noir::PathScope.relative_under(path, base_path)
     end
 
     private def base_path_for(path : String, base_paths : Array(String)) : String?
-      expanded_path = File.expand_path(path)
-      best_base = nil
-      best_size = -1
-
-      base_paths.each do |base|
-        expanded_base = File.expand_path(base)
-        expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
-        matches_base = if expanded_base == File::SEPARATOR
-                         expanded_path.starts_with?(File::SEPARATOR)
-                       else
-                         expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
-                       end
-        next unless matches_base
-        next unless expanded_base.size > best_size
-
-        best_base = base
-        best_size = expanded_base.size
-      end
-
-      best_base
+      Noir::PathScope.longest_base(path, base_paths)
     end
   end
 end

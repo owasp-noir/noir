@@ -469,16 +469,9 @@ module Analyzer::Python
     end
 
     private def fastapi_base_path_for(path : ::String, project_roots : Array(::String)) : ::String
-      expanded_path = File.expand_path(path)
-      project_roots.find do |root|
-        expanded_root = File.expand_path(root)
-        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
-        if expanded_root == File::SEPARATOR
-          expanded_path.starts_with?(File::SEPARATOR)
-        else
-          expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
-        end
-      end || python_base_path_for(path)
+      # project_roots is sorted shallowest-first, so the first containing
+      # root is the package root the app's absolute imports resolve from.
+      project_roots.find { |root| Noir::PathScope.under_root?(path, root) } || python_base_path_for(path)
     end
 
     private def extract_include_router_calls(source : ::String, instance_name : ::String) : Array(::String)

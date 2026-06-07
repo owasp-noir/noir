@@ -3,6 +3,7 @@ require "./endpoint"
 require "./file_helper"
 require "wait_group"
 require "../utils/media_filter"
+require "../utils/path_scope"
 require "../utils/utils"
 
 class Analyzer
@@ -68,36 +69,13 @@ class Analyzer
   end
 
   protected def configured_base_for(path : String) : String
-    # Single configured base: the longest-match scan below can only ever
+    # Single configured base: the longest-match resolution can only ever
     # return that base (or the identical `@base_path` fallback), so skip the
     # per-path `File.expand_path` work entirely. This is the common case and
     # keeps single-base scans free of the multi-base resolution overhead.
     return @base_path if @base_paths.size <= 1
 
-    @configured_base_cache[path] ||= compute_configured_base_for(path)
-  end
-
-  private def compute_configured_base_for(path : String) : String
-    expanded_path = File.expand_path(path)
-    best_base = nil
-    best_size = -1
-
-    @base_paths.each do |base|
-      expanded_base = File.expand_path(base)
-      expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
-      matches_base = if expanded_base == File::SEPARATOR
-                       expanded_path.starts_with?(File::SEPARATOR)
-                     else
-                       expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
-                     end
-      next unless matches_base
-      next unless expanded_base.size > best_size
-
-      best_base = base
-      best_size = expanded_base.size
-    end
-
-    best_base || @base_path
+    @configured_base_cache[path] ||= (Noir::PathScope.longest_base(path, @base_paths) || @base_path)
   end
 
   # Preferred overload: accepts a file list and creates both the
