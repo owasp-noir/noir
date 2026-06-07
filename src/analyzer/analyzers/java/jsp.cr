@@ -255,8 +255,10 @@ module Analyzer::Java
       return methods if methods
 
       all_files.each do |path|
-        next unless configured_base_for(path) == base_path
+        # Cheap basename gate first; only resolve the configured base (which
+        # expands paths) for the rare files whose name actually matches.
         next unless File.basename(path, ".java") == simple_name
+        next unless configured_base_for(path) == base_path
 
         content = read_file_content(path)
         methods = extract_servlet_http_methods(content)

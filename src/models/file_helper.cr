@@ -106,11 +106,23 @@ module FileHelper
   protected def path_under_root?(path : String, root : String) : Bool
     return true if root.empty?
 
+    expanded_root = expanded_root_for(root)
     expanded_path = File.expand_path(path)
-    expanded_root = File.expand_path(root)
-    expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
     return expanded_path.starts_with?(File::SEPARATOR) if expanded_root == File::SEPARATOR
 
     expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
+  end
+
+  # `root` is almost always loop-invariant across a `select`/scan over
+  # thousands of files (it's a configured base path or a resolved static
+  # dir), so memoise its normalised form instead of re-running
+  # `File.expand_path` per file. The distinct-root set is tiny — typically
+  # one entry per configured base path.
+  private def expanded_root_for(root : String) : String
+    cache = (@expanded_root_cache ||= {} of String => String)
+    cache[root] ||= begin
+      expanded = File.expand_path(root)
+      expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
+    end
   end
 end

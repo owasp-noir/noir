@@ -23,6 +23,9 @@ class Analyzer
   @is_color : Bool
   @is_log : Bool
   @options : Hash(String, YAML::Any)
+  # path => longest-matching configured base. Populated lazily by
+  # `configured_base_for`; only used on multi-base (monorepo) scans.
+  @configured_base_cache = {} of String => String
 
   def initialize(options : Hash(String, YAML::Any))
     @base_paths = options["base"].as_a.map(&.to_s)
@@ -65,6 +68,16 @@ class Analyzer
   end
 
   protected def configured_base_for(path : String) : String
+    # Single configured base: the longest-match scan below can only ever
+    # return that base (or the identical `@base_path` fallback), so skip the
+    # per-path `File.expand_path` work entirely. This is the common case and
+    # keeps single-base scans free of the multi-base resolution overhead.
+    return @base_path if @base_paths.size <= 1
+
+    @configured_base_cache[path] ||= compute_configured_base_for(path)
+  end
+
+  private def compute_configured_base_for(path : String) : String
     expanded_path = File.expand_path(path)
     best_base = nil
     best_size = -1
