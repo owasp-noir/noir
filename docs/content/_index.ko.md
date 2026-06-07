@@ -30,11 +30,11 @@ template = "landing"
     <div class="hero-showcase">
       <div class="split-stage">
         <div class="split-pane split-a">
-          <img src="./images/landing/1.webp" alt="소스 코드를 사람이 읽기 좋은 엔드포인트 목록으로 변환" width="1904" height="1162" loading="eager" decoding="async" fetchpriority="high">
+          <img src="../images/landing/1.webp" alt="소스 코드를 사람이 읽기 좋은 엔드포인트 목록으로 변환" width="1904" height="1162" loading="eager" decoding="async" fetchpriority="high">
           <span class="split-tag">source &rarr; endpoints</span>
         </div>
         <div class="split-pane split-b">
-          <img src="./images/landing/2.webp" alt="엔드포인트별 AI 컨텍스트: callee, guard, 보안 시그널" width="1904" height="1162" loading="lazy" decoding="async">
+          <img src="../images/landing/2.webp" alt="엔드포인트별 AI 컨텍스트: callee, guard, 보안 시그널" width="1904" height="1162" loading="lazy" decoding="async">
           <span class="split-tag">ai context</span>
         </div>
         <span class="split-hint">hover to reveal</span>
