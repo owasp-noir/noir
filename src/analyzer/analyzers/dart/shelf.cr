@@ -36,6 +36,7 @@ module Analyzer::Dart
     }
 
     ALL_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    alias RouterKey = Tuple(String, String)
 
     alias Route = NamedTuple(
       verb: String,
@@ -53,7 +54,7 @@ module Analyzer::Dart
     def analyze
       include_callee = callees_needed?
       mutex = Mutex.new
-      routers = {} of String => RouterInfo
+      routers = {} of RouterKey => RouterInfo
 
       begin
         files = get_files_by_extension(".dart")
@@ -76,16 +77,18 @@ module Analyzer::Dart
           file_routers = scan_file(content, path, include_callee)
           next if file_routers.empty?
 
+          base_path = configured_base_for(path)
           mutex.synchronize do
             file_routers.each do |name, info|
-              existing = routers[name]?
+              key = router_key(base_path, name)
+              existing = routers[key]?
               if existing
-                routers[name] = {
+                routers[key] = {
                   routes: existing[:routes] + info[:routes],
                   mounts: existing[:mounts] + info[:mounts],
                 }
               else
-                routers[name] = info
+                routers[key] = info
               end
             end
           end
@@ -95,6 +98,10 @@ module Analyzer::Dart
       end
 
       assemble_endpoints(routers)
+    end
+
+    private def router_key(base_path : String, name : String) : RouterKey
+      {base_path, name}
     end
 
     private def shelf_file?(content : String) : Bool
@@ -488,37 +495,37 @@ module Analyzer::Dart
       base.gsub(/<([A-Za-z_]\w*)(?:\|[^>]*)?>/) { |_, m| "{#{m[1]}}" }
     end
 
-    private def assemble_endpoints(routers : Hash(String, RouterInfo)) : Array(Endpoint)
-      mounted_children = Set(String).new
-      routers.each_value do |info|
-        info[:mounts].each { |mnt| mounted_children << mnt[:child] }
+    private def assemble_endpoints(routers : Hash(RouterKey, RouterInfo)) : Array(Endpoint)
+      mounted_children = Set(RouterKey).new
+      routers.each do |key, info|
+        info[:mounts].each { |mnt| mounted_children << router_key(key[0], mnt[:child]) }
       end
 
       endpoints = [] of Endpoint
-      routers.each do |name, _|
-        next if mounted_children.includes?(name)
-        emit_router(name, "", routers, endpoints, Set(String).new)
+      routers.each_key do |key|
+        next if mounted_children.includes?(key)
+        emit_router(key, "", routers, endpoints, Set(RouterKey).new)
       end
 
       # Every router was mounted (cycle or stand-alone child files):
       # emit each one as a root to avoid dropping data.
       if endpoints.empty? && !routers.empty?
-        routers.each_key do |name|
-          emit_router(name, "", routers, endpoints, Set(String).new)
+        routers.each_key do |key|
+          emit_router(key, "", routers, endpoints, Set(RouterKey).new)
         end
       end
 
       endpoints
     end
 
-    private def emit_router(name : String,
+    private def emit_router(key : RouterKey,
                             prefix : String,
-                            routers : Hash(String, RouterInfo),
+                            routers : Hash(RouterKey, RouterInfo),
                             endpoints : Array(Endpoint),
-                            visited : Set(String))
-      return if visited.includes?(name)
-      visited.add(name)
-      info = routers[name]?
+                            visited : Set(RouterKey))
+      return if visited.includes?(key)
+      visited.add(key)
+      info = routers[key]?
       if info
         info[:routes].each do |route|
           full_path = join_path(prefix, route[:path])
@@ -526,10 +533,10 @@ module Analyzer::Dart
         end
         info[:mounts].each do |mnt|
           child_prefix = join_path(prefix, mnt[:prefix])
-          emit_router(mnt[:child], child_prefix, routers, endpoints, visited)
+          emit_router(router_key(key[0], mnt[:child]), child_prefix, routers, endpoints, visited)
         end
       end
-      visited.delete(name)
+      visited.delete(key)
     end
 
     private def join_path(prefix : String, sub : String) : String

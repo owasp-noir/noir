@@ -1,0 +1,9 @@
+name: shelf_service_b
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  shelf: ^1.4.0
+  shelf_router: ^1.1.0
