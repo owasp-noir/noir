@@ -85,13 +85,15 @@ module Analyzer::Ruby
       options : Hash(String, String),
       stack : Array(Frame)
 
+    alias EngineMountKey = Tuple(String, String)
+
     @controller_data_cache = Hash(String, ControllerData).new
     # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
     # path it is mounted at (`/polls`). A Rails engine's `routes.draw` block
     # holds engine-relative paths; the `mount` that anchors them usually
     # lives in a different file (a plugin.rb, the host app's routes), so we
     # resolve it cross-file once up front.
-    @engine_mount_prefixes = Hash(String, String).new
+    @engine_mount_prefixes = Hash(EngineMountKey, String).new
     @known_files = Set(String).new
 
     def analyze
@@ -258,7 +260,7 @@ module Analyzer::Ruby
         # it as a scope. Unknown mounts (engine shipped as a library, host
         # not in scan) fall back to a transparent frame — same as before.
         if opens_block && (em = line.match(/^(?:::)?([A-Z][A-Za-z0-9_:]*)\.routes\.draw\b/))
-          mount_prefix = @engine_mount_prefixes[em[1]]?
+          mount_prefix = @engine_mount_prefixes[{configured_base_for(routes_path), em[1]}]?
           if mount_prefix && !mount_prefix.empty?
             stack << Frame.new(:scope, path: mount_prefix)
           else
@@ -719,8 +721,8 @@ module Analyzer::Ruby
     # there) and build the engine-constant -> mount-path map. Forms handled:
     #   mount X::Engine, at: "/p"        mount X::Engine => "/p"
     #   Discourse::Application.routes.append { mount X::Engine, at: "/p" }
-    private def build_engine_mount_map(files : Array(String)) : Hash(String, String)
-      map = Hash(String, String).new
+    private def build_engine_mount_map(files : Array(String)) : Hash(EngineMountKey, String)
+      map = Hash(EngineMountKey, String).new
       files.each do |file|
         base = File.basename(file)
         next unless base == "plugin.rb" || base.ends_with?("routes.rb")
@@ -732,7 +734,8 @@ module Analyzer::Ruby
           next unless line.includes?("mount")
           if m = line.match(/\bmount\b\s*\(?\s*(?:::)?([A-Z][A-Za-z0-9_:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]+)['"]/)
             const = m[1]
-            map[const] = normalize_mount_prefix(m[2]) unless map.has_key?(const)
+            key = {configured_base_for(file), const}
+            map[key] = normalize_mount_prefix(m[2]) unless map.has_key?(key)
           end
         end
       end

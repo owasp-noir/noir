@@ -7,6 +7,7 @@ module Analyzer::Java
   class Micronaut < Analyzer
     JAVA_EXTENSION    = "java"
     MICRONAUT_MARKERS = ["io.micronaut", "micronaut.io"]
+    alias PackageScopeKey = Tuple(String, String)
 
     private struct MicronautPathConfig
       getter context_path : String
@@ -27,22 +28,23 @@ module Analyzer::Java
     end
 
     private struct MicronautInterfaceRouteIndex
-      getter by_package : Hash(String, Hash(String, Array(MicronautInterfaceRouteEntry)))
-      getter by_fqcn : Hash(String, Array(MicronautInterfaceRouteEntry))
+      getter by_package : Hash(PackageScopeKey, Hash(String, Array(MicronautInterfaceRouteEntry)))
+      getter by_fqcn : Hash(PackageScopeKey, Array(MicronautInterfaceRouteEntry))
 
       def initialize
-        @by_package = Hash(String, Hash(String, Array(MicronautInterfaceRouteEntry))).new
-        @by_fqcn = Hash(String, Array(MicronautInterfaceRouteEntry)).new
+        @by_package = Hash(PackageScopeKey, Hash(String, Array(MicronautInterfaceRouteEntry))).new
+        @by_fqcn = Hash(PackageScopeKey, Array(MicronautInterfaceRouteEntry)).new
       end
 
-      def add(package_name : String, interface_name : String, entry : MicronautInterfaceRouteEntry)
-        package_routes = @by_package[package_name] ||= Hash(String, Array(MicronautInterfaceRouteEntry)).new
+      def add(project_root : String, package_name : String, interface_name : String, entry : MicronautInterfaceRouteEntry)
+        package_routes = @by_package[{project_root, package_name}] ||= Hash(String, Array(MicronautInterfaceRouteEntry)).new
         package_routes[interface_name] ||= [] of MicronautInterfaceRouteEntry
         package_routes[interface_name] << entry
 
         unless package_name.empty?
-          @by_fqcn["#{package_name}.#{interface_name}"] ||= [] of MicronautInterfaceRouteEntry
-          @by_fqcn["#{package_name}.#{interface_name}"] << entry
+          key = {project_root, "#{package_name}.#{interface_name}"}
+          @by_fqcn[key] ||= [] of MicronautInterfaceRouteEntry
+          @by_fqcn[key] << entry
         end
       end
     end
@@ -89,7 +91,7 @@ module Analyzer::Java
 
         Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(content).each do |implementation|
           implementation.interface_names.each do |interface_name|
-            visible_interface_routes(interface_route_index, package_name, imports, interface_name).each do |entry|
+            visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
               entry_route = entry.route
               implementation.paths.each do |implementation_path|
                 inherited_path = join_paths(implementation_path, entry_route.path)
@@ -129,7 +131,7 @@ module Analyzer::Java
         dto_index = dto_builder.build_for(path, content)
         Noir::TreeSitterMicronautExtractor.extract_interface_routes(content, dto_index, include_callees: include_callee).each do |interface_name, routes|
           routes.each do |route|
-            index.add(package_name, interface_name, MicronautInterfaceRouteEntry.new(route, path, content, package_name))
+            index.add(project_root_for(path), package_name, interface_name, MicronautInterfaceRouteEntry.new(route, path, content, package_name))
           end
         end
       end
@@ -138,19 +140,21 @@ module Analyzer::Java
     end
 
     private def visible_interface_routes(index : MicronautInterfaceRouteIndex,
+                                         path : String,
                                          package_name : String,
                                          imports : Array(String),
                                          interface_name : String) : Array(MicronautInterfaceRouteEntry)
       routes = [] of MicronautInterfaceRouteEntry
       seen = Set(String).new
+      project_root = project_root_for(path)
 
-      add_interface_routes(routes, seen, index.by_package[package_name]?.try(&.[interface_name]?))
+      add_interface_routes(routes, seen, index.by_package[{project_root, package_name}]?.try(&.[interface_name]?))
 
       imports.each do |import_name|
         if import_name.ends_with?(".*")
-          add_interface_routes(routes, seen, index.by_package[import_name[...-2]]?.try(&.[interface_name]?))
+          add_interface_routes(routes, seen, index.by_package[{project_root, import_name[...-2]}]?.try(&.[interface_name]?))
         elsif import_name.ends_with?(".#{interface_name}")
-          add_interface_routes(routes, seen, index.by_fqcn[import_name]?)
+          add_interface_routes(routes, seen, index.by_fqcn[{project_root, import_name}]?)
         end
       end
 

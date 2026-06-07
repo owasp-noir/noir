@@ -5,6 +5,7 @@ module Analyzer::Scala
   class Play < Analyzer
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Noir::ScalaCalleeExtractor::Entry))
+    alias ScopedKey = Tuple(String, String)
     alias MethodRegion = NamedTuple(signature: String, body: String, body_start: Int32)
 
     def analyze
@@ -67,12 +68,13 @@ module Analyzer::Scala
     end
 
     # Parse Scala controller files to extract header, cookie, and body parameters
-    private def parse_controller_files(scala_files : Array(String)) : Hash(String, ControllerMethod)
-      controller_methods = Hash(String, ControllerMethod).new
+    private def parse_controller_files(scala_files : Array(String)) : Hash(ScopedKey, ControllerMethod)
+      controller_methods = Hash(ScopedKey, ControllerMethod).new
       want_callees = callees_needed?
 
       scala_files.each do |path|
         content = read_file_content(path)
+        base_path = configured_base_for(path)
         # Length-preserving copy with strings/comments blanked out. Braces,
         # colons and `def` keywords that live inside literals or comments are
         # turned into spaces, so the structural scan below never trips on
@@ -159,7 +161,7 @@ module Analyzer::Scala
                       else
                         [] of Noir::ScalaCalleeExtractor::Entry
                       end
-            controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
+            controller_methods[{base_path, full_method_name}] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
           end
         end
       end
@@ -382,7 +384,7 @@ module Analyzer::Scala
 
     # Process a Play routes file
     private def process_routes_file(path : String,
-                                    controller_methods : Hash(String, ControllerMethod),
+                                    controller_methods : Hash(ScopedKey, ControllerMethod),
                                     routes_by_key : Hash(String, Array(String)),
                                     prefix : String,
                                     seen : Set(String))
@@ -403,7 +405,7 @@ module Analyzer::Scala
           include_target = include_match[2]
           if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
             process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
-          elsif router = resolve_sird_router(include_target)
+          elsif router = resolve_sird_router(include_target, path)
             # The include target is a programmatic SIRD router class
             # (`-> /v1/posts v1.post.PostRouter`), not a routes file.
             process_sird_router(router, join_paths(prefix, include_prefix))
@@ -427,7 +429,7 @@ module Analyzer::Scala
           extract_params_from_action(endpoint, action)
 
           # Extract controller method name and add header/cookie/body params
-          extract_controller_params(endpoint, action, controller_methods)
+          extract_controller_params(endpoint, action, controller_methods, path)
 
           @result << endpoint
         end
@@ -688,13 +690,16 @@ module Analyzer::Scala
     end
 
     # Extract header, cookie, and body parameters from controller method
-    private def extract_controller_params(endpoint : Endpoint, action : String, controller_methods : Hash(String, ControllerMethod))
+    private def extract_controller_params(endpoint : Endpoint,
+                                          action : String,
+                                          controller_methods : Hash(ScopedKey, ControllerMethod),
+                                          routes_path : String)
       # Extract controller method name from action
       # Example: controllers.Users.show(id: Long) -> controllers.Users.show
       method_name = action.split("(").first.strip.lchop("@")
 
       # Look up the controller method
-      if method_info = controller_methods[method_name]?
+      if method_info = controller_methods[{configured_base_for(routes_path), method_name}]?
         # Add header parameters
         method_info[:headers].each do |header|
           unless endpoint.params.any? { |p| p.name == header && p.param_type == "header" }
@@ -726,7 +731,7 @@ module Analyzer::Scala
     # Play lets routes delegate to a `SimpleRouter`/`Router` whose routing is a
     # PartialFunction (`-> /v1/posts v1.post.PostRouter`); these never resolve
     # to a `.routes` file, so the routes-file pass alone misses every endpoint.
-    private def resolve_sird_router(target : String) : NamedTuple(path: String, content: String, class_name: String)?
+    private def resolve_sird_router(target : String, including_path : String) : NamedTuple(path: String, content: String, class_name: String)?
       return if @scala_paths.empty?
 
       key = target.split(/\s|\(/).first.strip.lchop("@")
@@ -734,7 +739,11 @@ module Analyzer::Scala
       return if class_name.empty?
 
       filename = "#{class_name}.scala"
-      @scala_paths.each do |path|
+      including_base = configured_base_for(including_path)
+      candidates = @scala_paths.select { |path| configured_base_for(path) == including_base }
+      candidates = @scala_paths if candidates.empty?
+
+      candidates.each do |path|
         next unless File.basename(path) == filename
         content = read_file_content(path)
         next unless content.match(/\b(?:class|object|trait)\s+#{Regex.escape(class_name)}\b/)

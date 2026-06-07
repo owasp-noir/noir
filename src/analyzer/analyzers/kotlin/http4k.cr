@@ -10,12 +10,15 @@ module Analyzer::Kotlin
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
-      string_constants = Hash(String, String).new
+      string_constants_by_base = Hash(String, Hash(String, String)).new do |hash, key|
+        hash[key] = Hash(String, String).new
+      end
       file_list.each do |path|
         next unless File.exists?(path)
         next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
         next if KotlinEngine.test_path?(path)
 
+        string_constants = string_constants_by_base[configured_base_for(path)]
         Noir::TreeSitterHttp4kExtractor.extract_string_constants(read_file_content(path)).each do |name, value|
           next unless fully_qualified_constant?(name)
 
@@ -31,6 +34,7 @@ module Analyzer::Kotlin
         content = read_file_content(path)
         next unless content.includes?(HTTP4K_MARKER)
 
+        string_constants = string_constants_by_base[configured_base_for(path)]? || Hash(String, String).new
         Noir::TreeSitterHttp4kExtractor.extract_routes(content, string_constants, include_callees: include_callee).each do |route|
           @result << build_endpoint(route, path)
         end

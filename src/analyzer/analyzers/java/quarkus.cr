@@ -16,6 +16,7 @@ module Analyzer::Java
   class Quarkus < Analyzer
     JAVA_EXTENSION  = "java"
     QUARKUS_MARKERS = ["io.quarkus", "quarkus.io"]
+    alias ApplicationBaseKey = Tuple(String, String)
 
     private struct QuarkusPathConfig
       getter http_root_path : String
@@ -60,7 +61,7 @@ module Analyzer::Java
         dto_index = dto_builder.build_for(path, content)
         bean_index = bean_index_for(path, content, package_name, bean_cache)
         subresource_sources = subresource_sources_for(path, content, package_name, source_cache)
-        application_base_path = application_base_path_for(package_name, application_base_paths)
+        application_base_path = application_base_path_for(path, package_name, application_base_paths)
         configured_base_path = configured_base_path_for(path, path_configs, application_base_path)
 
         extract_reactive_route_endpoints(content, path, path_configs).each do |endpoint|
@@ -97,8 +98,8 @@ module Analyzer::Java
       roots
     end
 
-    private def application_base_paths_for(file_list : Array(String), quarkus_roots : Set(String)) : Hash(String, String)
-      base_paths = Hash(String, String).new
+    private def application_base_paths_for(file_list : Array(String), quarkus_roots : Set(String)) : Hash(ApplicationBaseKey, String)
+      base_paths = Hash(ApplicationBaseKey, String).new
 
       file_list.each do |path|
         next if JavaEngine.test_path?(path)
@@ -112,10 +113,12 @@ module Analyzer::Java
 
         package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
         next if package_name.empty?
-        next if base_paths.has_key?(package_name)
+        project_root = project_root_for(path)
+        key = {project_root, package_name}
+        next if base_paths.has_key?(key)
 
         if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path(content)
-          base_paths[package_name] = base_path
+          base_paths[key] = base_path
         end
       end
 
@@ -132,10 +135,16 @@ module Analyzer::Java
       content.includes?("jakarta.ws.rs") || content.includes?("javax.ws.rs")
     end
 
-    private def application_base_path_for(package_name : String, base_paths : Hash(String, String)) : String
-      base_paths.keys.sort_by!(&.size).reverse_each do |base_package|
+    private def application_base_path_for(path : String,
+                                          package_name : String,
+                                          base_paths : Hash(ApplicationBaseKey, String)) : String
+      project_root = project_root_for(path)
+      keys = base_paths.keys.select { |key| key[0] == project_root }
+      keys.sort_by!(&.[1].size)
+      keys.reverse_each do |key|
+        base_package = key[1]
         next unless package_name == base_package || package_name.starts_with?("#{base_package}.")
-        return base_paths[base_package]
+        return base_paths[key]
       end
       ""
     end

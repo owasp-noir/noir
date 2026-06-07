@@ -242,7 +242,10 @@ module Analyzer::Java
       end
 
       normalized = include_name.lstrip('/')
-      file_list.find { |path| path.ends_with?("/#{normalized}") || File.basename(path) == File.basename(include_name) }
+      base = configured_base_for(current_path)
+      base_prefix = base.ends_with?("/") ? base : "#{base}/"
+      scoped_files = base.empty? ? file_list : file_list.select { |path| path == base || path.starts_with?(base_prefix) }
+      scoped_files.find { |path| path.ends_with?("/#{normalized}") || File.basename(path) == File.basename(include_name) }
     end
 
     private def collect_packages(root : XML::Node, content : String) : Hash(String, XmlPackage)

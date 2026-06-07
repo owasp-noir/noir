@@ -11,7 +11,9 @@ module Analyzer::Kotlin
 
     def analyze
       webflux_base_path_map = Hash(String, String).new
-      string_constants = Hash(String, String).new
+      string_constants_by_base = Hash(String, Hash(String, String)).new do |hash, key|
+        hash[key] = Hash(String, String).new
+      end
       local_string_constants = Hash(String, Hash(String, String)).new
       dto_builder = Noir::TreeSitterKotlinDtoIndex.new
 
@@ -25,6 +27,7 @@ module Analyzer::Kotlin
         content = read_file_content(path)
         constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content)
         local_string_constants[path] = constants
+        string_constants = string_constants_by_base[configured_base_for(path)]
         constants.each do |name, value|
           string_constants[name] ||= value
         end
@@ -33,7 +36,9 @@ module Analyzer::Kotlin
       # Resolve `$OTHER_CONST` interpolations now that every file's
       # constants are collected, so a shared `Paths.kt` chain like
       # `const val STATIC_URL = "$PUBLIC_URL/static"` yields `/public/static`.
-      string_constants = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(string_constants)
+      string_constants_by_base.each do |base, constants|
+        string_constants_by_base[base] = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants)
+      end
 
       file_list.each do |path|
         next unless File.exists?(path)
@@ -42,6 +47,7 @@ module Analyzer::Kotlin
           process_directory(path, webflux_base_path_map)
         elsif path.ends_with?(".#{KOTLIN_EXTENSION}")
           next if KotlinEngine.test_path?(path)
+          string_constants = string_constants_by_base[configured_base_for(path)]? || Hash(String, String).new
           process_kotlin_file(path, dto_builder, webflux_base_path_map, string_constants, local_string_constants[path]?)
         end
       end

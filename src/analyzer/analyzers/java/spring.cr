@@ -12,6 +12,7 @@ module Analyzer::Java
 
     alias SpringRouteMapping = Noir::TreeSitterJavaRouteExtractor::ClassMapping
     alias SpringRoute = Noir::TreeSitterJavaRouteExtractor::Route
+    alias PackageScopeKey = Tuple(String, String)
 
     private struct SpringPathConfig
       getter servlet_context_path : String
@@ -26,20 +27,20 @@ module Analyzer::Java
     end
 
     private struct SpringMetaAnnotationIndex
-      getter by_package : Hash(String, Hash(String, SpringRouteMapping))
-      getter by_fqcn : Hash(String, SpringRouteMapping)
+      getter by_package : Hash(PackageScopeKey, Hash(String, SpringRouteMapping))
+      getter by_fqcn : Hash(PackageScopeKey, SpringRouteMapping)
 
       def initialize
-        @by_package = Hash(String, Hash(String, SpringRouteMapping)).new
-        @by_fqcn = Hash(String, SpringRouteMapping).new
+        @by_package = Hash(PackageScopeKey, Hash(String, SpringRouteMapping)).new
+        @by_fqcn = Hash(PackageScopeKey, SpringRouteMapping).new
       end
 
-      def add(package_name : String, annotation_name : String, mapping : SpringRouteMapping)
-        package_mappings = @by_package[package_name] ||= Hash(String, SpringRouteMapping).new
+      def add(project_root : String, package_name : String, annotation_name : String, mapping : SpringRouteMapping)
+        package_mappings = @by_package[{project_root, package_name}] ||= Hash(String, SpringRouteMapping).new
         package_mappings[annotation_name] = mapping
 
         unless package_name.empty?
-          @by_fqcn["#{package_name}.#{annotation_name}"] = mapping
+          @by_fqcn[{project_root, "#{package_name}.#{annotation_name}"}] = mapping
         end
       end
     end
@@ -55,22 +56,23 @@ module Analyzer::Java
     end
 
     private struct SpringInterfaceRouteIndex
-      getter by_package : Hash(String, Hash(String, Array(SpringInterfaceRouteEntry)))
-      getter by_fqcn : Hash(String, Array(SpringInterfaceRouteEntry))
+      getter by_package : Hash(PackageScopeKey, Hash(String, Array(SpringInterfaceRouteEntry)))
+      getter by_fqcn : Hash(PackageScopeKey, Array(SpringInterfaceRouteEntry))
 
       def initialize
-        @by_package = Hash(String, Hash(String, Array(SpringInterfaceRouteEntry))).new
-        @by_fqcn = Hash(String, Array(SpringInterfaceRouteEntry)).new
+        @by_package = Hash(PackageScopeKey, Hash(String, Array(SpringInterfaceRouteEntry))).new
+        @by_fqcn = Hash(PackageScopeKey, Array(SpringInterfaceRouteEntry)).new
       end
 
-      def add(package_name : String, interface_name : String, entry : SpringInterfaceRouteEntry)
-        package_routes = @by_package[package_name] ||= Hash(String, Array(SpringInterfaceRouteEntry)).new
+      def add(project_root : String, package_name : String, interface_name : String, entry : SpringInterfaceRouteEntry)
+        package_routes = @by_package[{project_root, package_name}] ||= Hash(String, Array(SpringInterfaceRouteEntry)).new
         package_routes[interface_name] ||= [] of SpringInterfaceRouteEntry
         package_routes[interface_name] << entry
 
         unless package_name.empty?
-          @by_fqcn["#{package_name}.#{interface_name}"] ||= [] of SpringInterfaceRouteEntry
-          @by_fqcn["#{package_name}.#{interface_name}"] << entry
+          key = {project_root, "#{package_name}.#{interface_name}"}
+          @by_fqcn[key] ||= [] of SpringInterfaceRouteEntry
+          @by_fqcn[key] << entry
         end
       end
     end
@@ -172,7 +174,7 @@ module Analyzer::Java
               dto_index = dto_builder.build_for_with_root(path, content, root)
               feign_clients = Noir::TreeSitterJavaParameterExtractor.extract_feign_client_classes_from(root, content)
               http_exchange_clients = Noir::TreeSitterJavaParameterExtractor.extract_http_exchange_client_classes_from(root, content)
-              visible_meta_mappings = visible_meta_annotation_mappings(content, package_name, meta_annotation_index)
+              visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
               imports = java_imports(content)
 
               Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings).each do |route|
@@ -225,7 +227,7 @@ module Analyzer::Java
 
               Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, content, visible_meta_mappings).each do |implementation|
                 implementation.interface_names.each do |interface_name|
-                  visible_interface_routes(interface_route_index, package_name, imports, interface_name).each do |entry|
+                  visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
                     entry_route = entry.route
                     implementation.paths.each do |implementation_path|
                       inherited_path = join_paths(implementation_path, entry_route.path)
@@ -388,7 +390,7 @@ module Analyzer::Java
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
           constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
           Noir::TreeSitterJavaRouteExtractor.extract_meta_mappings_from(root, content, constants).each do |name, mapping|
-            index.add(package_name, name, mapping)
+            index.add(project_root_for(path), package_name, name, mapping)
           end
         end
       end
@@ -421,10 +423,10 @@ module Analyzer::Java
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
           next if package_name.empty?
 
-          visible_meta_mappings = visible_meta_annotation_mappings(content, package_name, meta_annotation_index)
+          visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
           Noir::TreeSitterJavaRouteExtractor.extract_interface_routes_from(root, content, visible_meta_mappings).each do |interface_name, routes|
             routes.each do |route|
-              index.add(package_name, interface_name, SpringInterfaceRouteEntry.new(route, path, content, package_name))
+              index.add(project_root_for(path), package_name, interface_name, SpringInterfaceRouteEntry.new(route, path, content, package_name))
             end
           end
         end
@@ -443,16 +445,18 @@ module Analyzer::Java
         content.includes?("@DeleteExchange")
     end
 
-    private def visible_meta_annotation_mappings(content : String,
+    private def visible_meta_annotation_mappings(path : String,
+                                                 content : String,
                                                  package_name : String,
                                                  index : SpringMetaAnnotationIndex) : Hash(String, SpringRouteMapping)
       mappings = Hash(String, SpringRouteMapping).new
-      merge_meta_package(mappings, index.by_package[package_name]?)
+      project_root = project_root_for(path)
+      merge_meta_package(mappings, index.by_package[{project_root, package_name}]?)
 
       java_imports(content).each do |import_name|
         if import_name.ends_with?(".*")
-          merge_meta_package(mappings, index.by_package[import_name[...-2]]?)
-        elsif mapping = index.by_fqcn[import_name]?
+          merge_meta_package(mappings, index.by_package[{project_root, import_name[...-2]}]?)
+        elsif mapping = index.by_fqcn[{project_root, import_name}]?
           mappings[import_name.split('.').last] = mapping
         end
       end
@@ -461,19 +465,21 @@ module Analyzer::Java
     end
 
     private def visible_interface_routes(index : SpringInterfaceRouteIndex,
+                                         path : String,
                                          package_name : String,
                                          imports : Array(String),
                                          interface_name : String) : Array(SpringInterfaceRouteEntry)
       routes = [] of SpringInterfaceRouteEntry
       seen = Set(String).new
+      project_root = project_root_for(path)
 
-      add_interface_routes(routes, seen, index.by_package[package_name]?.try(&.[interface_name]?))
+      add_interface_routes(routes, seen, index.by_package[{project_root, package_name}]?.try(&.[interface_name]?))
 
       imports.each do |import_name|
         if import_name.ends_with?(".*")
-          add_interface_routes(routes, seen, index.by_package[import_name[...-2]]?.try(&.[interface_name]?))
+          add_interface_routes(routes, seen, index.by_package[{project_root, import_name[...-2]}]?.try(&.[interface_name]?))
         elsif import_name.ends_with?(".#{interface_name}")
-          add_interface_routes(routes, seen, index.by_fqcn[import_name]?)
+          add_interface_routes(routes, seen, index.by_fqcn[{project_root, import_name}]?)
         end
       end
 
