@@ -10,7 +10,8 @@ module Analyzer::Haskell
     alias TypeAliasKey = Tuple(String, String)
     alias TypeAliasIndex = Hash(TypeAliasKey, TypeAlias)
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
-    alias HandlerBodies = Hash(String, Array(HandlerBody))
+    alias HandlerKey = Tuple(String, String)
+    alias HandlerBodies = Hash(HandlerKey, Array(HandlerBody))
     alias ServerBindings = Hash(Tuple(String, String), String)
 
     def analyze
@@ -77,12 +78,17 @@ module Analyzer::Haskell
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
-          handlers[body[:name]] ||= [] of HandlerBody
-          handlers[body[:name]] << body
+          key = handler_key(configured_base_for(path), body[:name])
+          handlers[key] ||= [] of HandlerBody
+          handlers[key] << body
         end
       end
 
       handlers
+    end
+
+    private def handler_key(base_path : String, name : String) : HandlerKey
+      {base_path, name}
     end
 
     private def build_server_bindings : ServerBindings
@@ -432,8 +438,9 @@ module Analyzer::Haskell
       leaf_names = server_leaf_names_for(api_name, api_source, endpoints.size, handler_bodies, server_bindings)
       return unless leaf_names
 
+      base_path = configured_base_for(api_source)
       endpoints.zip(leaf_names).each do |endpoint, handler_name|
-        handler_body = unique_handler_body(handler_name, handler_bodies)
+        handler_body = unique_handler_body(handler_name, base_path, handler_bodies)
         next unless handler_body
 
         callees = Noir::HaskellCalleeExtractor.callees_for_body(
@@ -466,7 +473,8 @@ module Analyzer::Haskell
         # Handlers that are imported, point-free, or collide across modules then
         # simply contribute no callees rather than sinking the whole server —
         # `attach_servant_callees` resolves each leaf independently.
-        next unless leaves.any? { |leaf| handler_bodies.has_key?(leaf) }
+        base_path = configured_base_for(api_source)
+        next unless leaves.any? { |leaf| handler_bodies.has_key?(handler_key(base_path, leaf)) }
 
         return leaves
       end
@@ -580,14 +588,14 @@ module Analyzer::Haskell
     end
 
     private def body_for_path(name : String, path : String, handler_bodies : HandlerBodies) : HandlerBody?
-      bodies = handler_bodies[name]?
+      bodies = handler_bodies[handler_key(configured_base_for(path), name)]?
       return unless bodies
 
       bodies.find { |body| body[:path] == path }
     end
 
-    private def unique_handler_body(name : String, handler_bodies : HandlerBodies) : HandlerBody?
-      bodies = handler_bodies[name]?
+    private def unique_handler_body(name : String, base_path : String, handler_bodies : HandlerBodies) : HandlerBody?
+      bodies = handler_bodies[handler_key(base_path, name)]?
       return unless bodies && bodies.size == 1
 
       bodies.first
