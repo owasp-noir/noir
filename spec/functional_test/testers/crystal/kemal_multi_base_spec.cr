@@ -10,6 +10,7 @@ expected_endpoints = [
   Endpoint.new("/b-only", "GET"),
   Endpoint.new("/a.txt", "GET"),
   Endpoint.new("/b.txt", "GET"),
+  Endpoint.new("/a_asset.txt", "GET"),
 ]
 
 FunctionalTester.new("fixtures/crystal/kemal_multi_base/", {

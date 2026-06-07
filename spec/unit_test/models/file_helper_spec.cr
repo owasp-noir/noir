@@ -182,7 +182,7 @@ describe "FileHelper" do
       files.should contain("/var/www/assets/style.css")
     end
 
-    it "matches folder name anywhere in path" do
+    it "matches folder name under the configured base path only" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
@@ -190,7 +190,7 @@ describe "FileHelper" do
       locator.push("file_map", "/lib/assets/file2.css")
 
       files = helper.get_public_dir_files("/app", "assets")
-      files.size.should eq(2)
+      files.should eq(["/app/modules/assets/file1.css"])
     end
   end
 end

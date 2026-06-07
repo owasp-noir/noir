@@ -1,7 +1,7 @@
-require "kemal"
+require "amber"
 
 public_folder "assets"
 
-get "/a-only" do
+get "/a" do
   "a"
 end

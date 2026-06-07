@@ -72,6 +72,7 @@ module FileHelper
 
     # Normalize folder path
     normalized_folder = folder.strip
+    normalized_base = base_path.ends_with?("/") ? base_path : "#{base_path}/"
 
     # Handle different folder specification formats
     public_dir_files = files.select do |file|
@@ -92,8 +93,11 @@ module FileHelper
         end
         # Case 2: Folder is just a name like "assets"
       else
-        # Match files that have the folder name as a directory component
-        file.includes?("/#{normalized_folder}/") && !File.directory?(file)
+        # Match files under this configured base that have the folder name
+        # as a directory component. `file_map` spans every configured
+        # base_path, so this must stay scoped to the base currently being
+        # processed.
+        file.starts_with?(normalized_base) && file.includes?("/#{normalized_folder}/") && !File.directory?(file)
       end
     end
 

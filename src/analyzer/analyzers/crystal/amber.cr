@@ -25,8 +25,8 @@ module Analyzer::Crystal
       {"DELETE", "/:id", :destroy},
     ]
 
-    @is_public : Bool = true
-    @public_folders : Array(String) = [] of String
+    @static_disabled_bases : Set(String) = Set(String).new
+    @public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String)
 
     def analyze
       super
@@ -37,6 +37,7 @@ module Analyzer::Crystal
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = [] of String
+      file_base = configured_base_for(path)
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         file.each_line do |line|
@@ -104,7 +105,7 @@ module Analyzer::Crystal
         end
 
         if line.includes?("serve_static false") || line.includes?("serve_static(false)")
-          @is_public = false
+          @static_disabled_bases << file_base
         end
 
         if line.includes?("public_folder")
@@ -122,7 +123,8 @@ module Analyzer::Crystal
                               end
 
               unless public_folder.empty?
-                @public_folders << public_folder
+                entry = {file_base, public_folder}
+                @public_folders << entry unless @public_folders.includes?(entry)
               end
             end
           rescue
@@ -243,47 +245,46 @@ module Analyzer::Crystal
     end
 
     private def collect_public_dir_endpoints
-      return unless @is_public
-      begin
-        # Process public folder files
-        each_public_file do |file|
+      # Process public folder files
+      base_paths.each do |base|
+        next if @static_disabled_bases.includes?(base)
+        get_public_files(base).each do |file|
           # Extract the path after "/public/" regardless of depth
           if file =~ /\/public\/(.*)/
             relative_path = $1
             @result << Endpoint.new("/#{relative_path}", "GET")
           end
         end
+      end
 
-        # Process other public folders
-        @public_folders.each do |folder|
-          each_public_dir_file(folder) do |file|
-            # Extract relative path from the custom folder
-            if folder.includes?("/")
-              # For absolute paths or paths with directories
-              folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
-              if file.starts_with?(folder_path)
-                relative_path = file.sub(folder_path, "")
-                @result << Endpoint.new("/#{relative_path}", "GET")
-              else
-                # Try to find the folder component in the path
-                folder_name = folder.split("/").last
-                if file =~ /\/#{folder_name}\/(.*)/
-                  relative_path = $1
-                  @result << Endpoint.new("/#{relative_path}", "GET")
-                end
-              end
+      # Process other public folders
+      @public_folders.each do |base, folder|
+        next if @static_disabled_bases.includes?(base)
+        get_public_dir_files(base, folder).each do |file|
+          # Extract relative path from the custom folder
+          if folder.includes?("/")
+            # For absolute paths or paths with directories
+            folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
+            if file.starts_with?(folder_path)
+              relative_path = file.sub(folder_path, "")
+              @result << Endpoint.new("/#{relative_path}", "GET")
             else
-              # For simple folder names (no slashes)
-              if file =~ /\/#{folder}\/(.*)/
+              # Try to find the folder component in the path
+              folder_name = folder.split("/").last
+              if file =~ /\/#{folder_name}\/(.*)/
                 relative_path = $1
                 @result << Endpoint.new("/#{relative_path}", "GET")
               end
             end
+          elsif file =~ /\/#{folder}\/(.*)/
+            # For simple folder names (no slashes)
+            relative_path = $1
+            @result << Endpoint.new("/#{relative_path}", "GET")
           end
         end
-      rescue e
-        logger.debug e
       end
+    rescue e
+      logger.debug e
     end
 
     def line_to_param(content : String) : Param

@@ -116,8 +116,9 @@ module Analyzer::Crystal
       Noir::CrystalCalleeExtractor.attach_to(endpoint, callees)
     end
 
-    # method name => list of `{full_namespace, callees}` definitions.
-    alias ActionIndex = Hash(String, Array(Tuple(String, Array(Noir::CrystalCalleeExtractor::Entry))))
+    # method name => configured base_path => list of `{full_namespace,
+    # callees}` definitions.
+    alias ActionIndex = Hash(String, Hash(String, Array(Tuple(String, Array(Noir::CrystalCalleeExtractor::Entry)))))
 
     # Cross-file controller/action index for the `verb "/path", Controller,
     # :action` routing style — invidious registers every Kemal route as
@@ -146,9 +147,11 @@ module Analyzer::Crystal
     # keys it fully (`Invidious::Routes::Misc`), so match by suffix.
     protected def resolve_action_callees(index : ActionIndex,
                                          controller : String,
-                                         action : String) : Array(Noir::CrystalCalleeExtractor::Entry)?
+                                         action : String,
+                                         base_path : String? = nil) : Array(Noir::CrystalCalleeExtractor::Entry)?
       if entries = index[action]?
-        if match = entries.find { |ns, _| ns == controller || ns.ends_with?("::#{controller}") }
+        scoped_entries = entries[base_path || @base_path]? || [] of Tuple(String, Array(Noir::CrystalCalleeExtractor::Entry))
+        if match = scoped_entries.find { |ns, _| ns == controller || ns.ends_with?("::#{controller}") }
           return match[1]
         end
       end
@@ -163,6 +166,7 @@ module Analyzer::Crystal
     # one signal those constructs can't corrupt: a namespace stays open
     # until a line dedents to or past the column where it was declared.
     protected def collect_actions_into(index : ActionIndex, lines : Array(String), path : String) : Nil
+      base_path = configured_base_for(path)
       namespace_stack = [] of NamedTuple(name: String, indent: Int32)
 
       lines.each_with_index do |raw, i|
@@ -188,7 +192,8 @@ module Analyzer::Crystal
             body, body_start_line = method_body
             callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
             full_ns = namespace_stack.map(&.[:name]).join("::")
-            (index[def_match[1]] ||= Array(Tuple(String, Array(Noir::CrystalCalleeExtractor::Entry))).new) << {full_ns, callees}
+            scoped_entries = (index[def_match[1]] ||= Hash(String, Array(Tuple(String, Array(Noir::CrystalCalleeExtractor::Entry)))).new)
+            (scoped_entries[base_path] ||= Array(Tuple(String, Array(Noir::CrystalCalleeExtractor::Entry))).new) << {full_ns, callees}
           end
         end
       end
