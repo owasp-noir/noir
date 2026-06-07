@@ -471,6 +471,7 @@ module Analyzer::Python
       expanded_path = File.expand_path(path)
       project_roots.find do |root|
         expanded_root = File.expand_path(root)
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
         expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
       end || python_base_path_for(path)
     end

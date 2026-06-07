@@ -69,6 +69,16 @@ describe "FileHelper" do
       app_files.should contain("/app/src/file1.cr")
       app_files.should contain("/app/test/file2.cr")
     end
+
+    it "does not match sibling paths with the same string prefix" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/app/src/file1.cr")
+      locator.push("file_map", "/app2/src/file2.cr")
+
+      helper.get_files_by_prefix("/app").should eq(["/app/src/file1.cr"])
+    end
   end
 
   describe "get_files_by_prefix_and_extension" do
@@ -83,6 +93,16 @@ describe "FileHelper" do
       files = helper.get_files_by_prefix_and_extension("/app", ".cr")
       files.size.should eq(1)
       files.should contain("/app/file1.cr")
+    end
+
+    it "keeps extension filtering scoped to a path boundary" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/app/file1.cr")
+      locator.push("file_map", "/app2/file2.cr")
+
+      helper.get_files_by_prefix_and_extension("/app", ".cr").should eq(["/app/file1.cr"])
     end
   end
 
@@ -131,6 +151,18 @@ describe "FileHelper" do
 
       public_files = helper.get_public_files("/app")
       public_files.should eq(["/app/public/legitimate.css"])
+    end
+
+    it "does not include public files from sibling paths with the same string prefix" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/app/shard.yml")
+      locator.push("file_map", "/app/public/app.css")
+      locator.push("file_map", "/app2/shard.yml")
+      locator.push("file_map", "/app2/public/app2.css")
+
+      helper.get_public_files("/app").should eq(["/app/public/app.css"])
     end
 
     it "returns empty array if no public files" do
@@ -191,6 +223,16 @@ describe "FileHelper" do
 
       files = helper.get_public_dir_files("/app", "assets")
       files.should eq(["/app/modules/assets/file1.css"])
+    end
+
+    it "does not include named directories from sibling paths with the same string prefix" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/app/assets/file1.css")
+      locator.push("file_map", "/app2/assets/file2.css")
+
+      helper.get_public_dir_files("/app", "assets").should eq(["/app/assets/file1.css"])
     end
   end
 end

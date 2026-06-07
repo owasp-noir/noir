@@ -66,10 +66,20 @@ class Analyzer
 
   protected def configured_base_for(path : String) : String
     expanded_path = File.expand_path(path)
-    @base_paths.find do |base|
+    best_base = nil
+    best_size = -1
+
+    @base_paths.each do |base|
       expanded_base = File.expand_path(base)
-      expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
-    end || @base_path
+      expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
+      next unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+      next unless expanded_base.size > best_size
+
+      best_base = base
+      best_size = expanded_base.size
+    end
+
+    best_base || @base_path
   end
 
   # Preferred overload: accepts a file list and creates both the

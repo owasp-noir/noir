@@ -118,6 +118,7 @@ module Analyzer::Dart
 
       expanded_path = File.expand_path(path)
       expanded_base = File.expand_path(base_path)
+      expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
       unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
         return File.basename(path)
       end
@@ -128,10 +129,20 @@ module Analyzer::Dart
 
     private def base_path_for(path : String, base_paths : Array(String)) : String?
       expanded_path = File.expand_path(path)
-      base_paths.find do |base|
+      best_base = nil
+      best_size = -1
+
+      base_paths.each do |base|
         expanded_base = File.expand_path(base)
-        expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+        expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
+        next unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
+        next unless expanded_base.size > best_size
+
+        best_base = base
+        best_size = expanded_base.size
       end
+
+      best_base
     end
   end
 end

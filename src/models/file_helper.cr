@@ -17,7 +17,7 @@ module FileHelper
 
   # Get files filtered by path prefix
   def get_files_by_prefix(prefix : String) : Array(String)
-    all_files.select { |file| file.starts_with?(prefix) && !File.directory?(file) }
+    all_files.select { |file| path_under_root?(file, prefix) && !File.directory?(file) }
   end
 
   # Get files filtered by extension (uses cached index for O(1) lookup)
@@ -27,7 +27,7 @@ module FileHelper
 
   # Get files filtered by both prefix and extension
   def get_files_by_prefix_and_extension(prefix : String, extension : String) : Array(String)
-    all_files.select { |file| file.starts_with?(prefix) && !File.directory?(file) && File.extname(file) == extension }
+    all_files.select { |file| path_under_root?(file, prefix) && !File.directory?(file) && File.extname(file) == extension }
   end
 
   # Get public files (files that should be served as static content)
@@ -53,15 +53,15 @@ module FileHelper
     project_public_roots = Set(String).new
     files.each do |f|
       next unless anchors.includes?(File.basename(f))
-      next unless f.starts_with?(base_path)
+      next unless path_under_root?(f, base_path)
       project_public_roots << File.join(File.dirname(f), "public")
     end
 
     files.select do |file|
-      next false unless file.starts_with?(base_path)
+      next false unless path_under_root?(file, base_path)
       next false if File.directory?(file)
       next false if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-      project_public_roots.any? { |root| file.starts_with?(root + "/") }
+      project_public_roots.any? { |root| file != root && path_under_root?(file, root) }
     end
   end
 
@@ -72,7 +72,6 @@ module FileHelper
 
     # Normalize folder path
     normalized_folder = folder.strip
-    normalized_base = base_path.ends_with?("/") ? base_path : "#{base_path}/"
 
     # Handle different folder specification formats
     public_dir_files = files.select do |file|
@@ -85,11 +84,11 @@ module FileHelper
       if normalized_folder.includes?("/")
         # If folder is an absolute path like "/var/www/assets"
         if normalized_folder.starts_with?("/")
-          file.starts_with?(normalized_folder) && !File.directory?(file)
+          path_under_root?(file, normalized_folder) && !File.directory?(file)
           # If folder is a relative path from base_path like "assets" or "public/assets"
         else
           combined_path = "#{base_path}/#{normalized_folder}"
-          file.starts_with?(combined_path) && !File.directory?(file)
+          path_under_root?(file, combined_path) && !File.directory?(file)
         end
         # Case 2: Folder is just a name like "assets"
       else
@@ -97,10 +96,19 @@ module FileHelper
         # as a directory component. `file_map` spans every configured
         # base_path, so this must stay scoped to the base currently being
         # processed.
-        file.starts_with?(normalized_base) && file.includes?("/#{normalized_folder}/") && !File.directory?(file)
+        path_under_root?(file, base_path) && file.includes?("/#{normalized_folder}/") && !File.directory?(file)
       end
     end
 
     public_dir_files
+  end
+
+  private def path_under_root?(path : String, root : String) : Bool
+    return true if root.empty?
+
+    expanded_path = File.expand_path(path)
+    expanded_root = File.expand_path(root)
+    expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
+    expanded_path == expanded_root || expanded_path.starts_with?(expanded_root + File::SEPARATOR)
   end
 end

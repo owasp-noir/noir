@@ -1091,10 +1091,20 @@ module Analyzer::Javascript
 
     private def base_path_for_file(file : String) : String
       expanded_file = File.expand_path(file)
-      @base_paths.find do |base|
+      best_base = nil
+      best_size = -1
+
+      @base_paths.each do |base|
         expanded_base = File.expand_path(base)
-        expanded_file == expanded_base || expanded_file.starts_with?("#{expanded_base}/")
-      end || @base_path
+        expanded_base = expanded_base.rstrip('/') unless expanded_base == File::SEPARATOR
+        next unless expanded_file == expanded_base || expanded_file.starts_with?(expanded_base + File::SEPARATOR)
+        next unless expanded_base.size > best_size
+
+        best_base = base
+        best_size = expanded_base.size
+      end
+
+      best_base || @base_path
     end
   end
 end

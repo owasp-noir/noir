@@ -135,7 +135,10 @@ module Analyzer::Javascript
 
     private def nearest_js_project_root(start_dir : String) : String?
       dir = File.expand_path(start_dir)
-      bases = @base_paths.map { |base| File.expand_path(base) }
+      bases = @base_paths.map do |base|
+        expanded_base = File.expand_path(base)
+        expanded_base == File::SEPARATOR ? expanded_base : expanded_base.rstrip('/')
+      end
 
       loop do
         return dir if JS_PROJECT_ROOT_MARKERS.any? { |marker| File.exists?(File.join(dir, marker)) }
