@@ -457,8 +457,10 @@ module Analyzer::Python
         root = fastapi_project_root_for(app_file)
         roots << root unless roots.includes?(root)
       end
+      # Prefer the shallow app root. Deep helper modules can also construct
+      # FastAPI instances, but imports such as `from app...` resolve from the
+      # project root, not the helper's package directory.
       roots.sort_by!(&.size)
-      roots.reverse!
       roots
     end
 

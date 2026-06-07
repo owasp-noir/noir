@@ -154,7 +154,7 @@ module Analyzer::Java
         end
       end
 
-      File.dirname(path)
+      configured_base_for(path)
     end
 
     private def web_xml_base_paths_for(file_list : Array(String),

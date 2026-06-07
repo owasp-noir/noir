@@ -1270,7 +1270,7 @@ module Analyzer::Java
         end
       end
 
-      File.dirname(path)
+      configured_base_for(path)
     end
 
     private def normalize_optional_path(path : String?) : String

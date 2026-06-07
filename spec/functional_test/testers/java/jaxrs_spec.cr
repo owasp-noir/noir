@@ -60,6 +60,7 @@ expected_endpoints = [
     Param.new("count", "", "json"),
   ]),
   Endpoint.new("/legacy/ping", "GET"),
+  Endpoint.new("/simple-api/simple", "GET"),
   chat_ws_endpoint,
 ]
 
