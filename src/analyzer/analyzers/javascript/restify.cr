@@ -32,7 +32,7 @@ module Analyzer::Javascript
             result << endpoint
           end
 
-          collect_static_paths(path, content, static_dirs)
+          collect_static_paths(path, content, static_dirs, :restify)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -70,7 +70,7 @@ module Analyzer::Javascript
         current_router_var = ""
         file_content = file.gets_to_end
 
-        collect_static_paths(path, file_content, static_dirs)
+        collect_static_paths(path, file_content, static_dirs, :restify)
 
         # First scan for server and router variable declarations
         file_content.each_line do |line|

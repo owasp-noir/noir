@@ -35,7 +35,7 @@ module Analyzer::Javascript
             extract_on_routes(path, content, result, callees_by_route)
           end
 
-          collect_static_paths(path, content, static_dirs)
+          collect_static_paths(path, content, static_dirs, :hono)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
           analyze_with_regex(path, result)

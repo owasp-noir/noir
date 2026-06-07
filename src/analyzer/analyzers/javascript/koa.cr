@@ -28,7 +28,7 @@ module Analyzer::Javascript
             result << endpoint
           end
 
-          collect_static_paths(path, content, static_dirs)
+          collect_static_paths(path, content, static_dirs, :koa)
 
           # Strapi-style declarative routes: `{ method: 'GET',
           # path: '/foo', handler: '...' }` object literals,
@@ -107,7 +107,7 @@ module Analyzer::Javascript
 
         router_prefixes = {} of String => String # To store router variable name and its prefix
 
-        collect_static_paths(path, file_content, static_dirs)
+        collect_static_paths(path, file_content, static_dirs, :koa)
 
         # Detect router prefixes
         # Example: const adminRouter = new Router({ prefix: '/admin' });

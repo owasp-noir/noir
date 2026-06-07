@@ -45,7 +45,7 @@ module Analyzer::Javascript
             extract_route_configs(path, content, result)
           end
 
-          collect_static_paths(path, content, static_dirs)
+          collect_static_paths(path, content, static_dirs, :fastify)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -170,7 +170,7 @@ module Analyzer::Javascript
         plugin_functions = {} of String => Bool
         file_content = file.gets_to_end
 
-        collect_static_paths(path, file_content, static_dirs)
+        collect_static_paths(path, file_content, static_dirs, :fastify)
 
         # First scan for fastify instances and plugin registrations
         file_content.each_line do |line|

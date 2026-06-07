@@ -1164,7 +1164,12 @@ module Noir
 
     # Extract static path declarations from JavaScript content
     # Returns array of hashes with static_path (URL prefix) and file_path (directory)
-    def self.extract_static_paths(content : String) : Array(Hash(String, String))
+    # `framework` scopes the scan to one framework's static-mount idiom so a
+    # framework analyzer running over a sibling project's file (every JS
+    # analyzer walks all `.js`/`.ts` files) doesn't pick up another
+    # framework's static declaration and re-emit it under the wrong tech.
+    # `nil` runs every pattern (back-compat for un-scoped callers).
+    def self.extract_static_paths(content : String, framework : Symbol? = nil) : Array(Hash(String, String))
       static_paths = [] of Hash(String, String)
 
       # Cheap pre-filter: static-mount shapes use Express/Koa
@@ -1182,117 +1187,133 @@ module Noir
       # regexes across a multi-megabyte single line (issue #1903).
       return static_paths if minified_content?(content)
 
-      # Express patterns:
-      # app.use('/static', express.static('public'))
-      # app.use(express.static('public'))
-      # router.use('/static', express.static('public'))
-      content.scan(/(?:app|router|\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size >= 2
-          static_paths << {
-            "static_path" => match[1],
-            "file_path"   => match[2],
-          }
-        end
-      end
+      want_express = framework.nil? || framework == :express
+      want_koa = framework.nil? || framework == :koa
+      want_fastify = framework.nil? || framework == :fastify
+      want_restify = framework.nil? || framework == :restify
+      want_nestjs = framework.nil? || framework == :nestjs
 
-      # app.use(express.static('public')) - no prefix, serves at root
-      content.scan(/(?:app|router|\w+)\.use\s*\(\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size >= 1
-          static_paths << {
-            "static_path" => "/",
-            "file_path"   => match[1],
-          }
-        end
-      end
-
-      # Koa patterns with koa-static:
-      # app.use(serve('public'))
-      # app.use(serve('./static'))
-      content.scan(/(?:app|router|\w+)\.use\s*\(\s*serve\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size >= 1
-          static_paths << {
-            "static_path" => "/",
-            "file_path"   => match[1],
-          }
-        end
-      end
-
-      # Koa patterns with koa-mount + koa-static:
-      # app.use(mount('/static', serve('public')))
-      content.scan(/(?:app|router|\w+)\.use\s*\(\s*mount\s*\(\s*['"]([^'"]+)['"]\s*,\s*serve\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size >= 2
-          static_paths << {
-            "static_path" => match[1],
-            "file_path"   => match[2],
-          }
-        end
-      end
-
-      # Fastify patterns:
-      # fastify.register(require('@fastify/static'), { root: path.join(__dirname, 'public'), prefix: '/public/' })
-      content.scan(/(?:fastify|app|server)\.register\s*\([^{]*\{[^}]*root\s*:\s*[^,}]*['"]([^'"]+)['"][^}]*prefix\s*:\s*['"]([^'"]+)['"]/) do |match|
-        if match.size >= 2
-          static_paths << {
-            "static_path" => match[2],
-            "file_path"   => match[1],
-          }
-        end
-      end
-
-      # Also try reverse order (prefix first, then root)
-      content.scan(/(?:fastify|app|server)\.register\s*\([^{]*\{[^}]*prefix\s*:\s*['"]([^'"]+)['"][^}]*root\s*:\s*[^,}]*['"]([^'"]+)['"]/) do |match|
-        if match.size >= 2
-          static_paths << {
-            "static_path" => match[1],
-            "file_path"   => match[2],
-          }
-        end
-      end
-
-      # Restify patterns:
-      # server.get(/\/public\/.*/, restify.plugins.serveStatic({directory: './public'}))
-      # Try to extract the path from the regex pattern first
-      content.scan(/(?:server|app)\.(?:get|use)\s*\(\s*\/\\?\/([^\/]+)\/[^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]([^'"]+)['"]/) do |match|
-        if match.size >= 2
-          static_paths << {
-            "static_path" => "/#{match[1]}",
-            "file_path"   => match[2],
-          }
-        end
-      end
-
-      # Fallback: If no path in regex, use directory name as path
-      content.scan(/(?:server|app)\.(?:get|use)\s*\([^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]\.?\/?([\w-]+)['"]\s*\}/) do |match|
-        if match.size >= 1
-          dir_name = match[1]
-          # Check if this is already captured (exact match on directory name)
-          unless static_paths.any? { |s| s["file_path"] == dir_name || s["file_path"].ends_with?("/#{dir_name}") }
+      if want_express
+        # Express patterns:
+        # app.use('/static', express.static('public'))
+        # app.use(express.static('public'))
+        # router.use('/static', express.static('public'))
+        content.scan(/(?:app|router|\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          if match.size >= 2
             static_paths << {
-              "static_path" => "/#{dir_name}",
+              "static_path" => match[1],
+              "file_path"   => match[2],
+            }
+          end
+        end
+
+        # app.use(express.static('public')) - no prefix, serves at root
+        content.scan(/(?:app|router|\w+)\.use\s*\(\s*(?:express\.)?static\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          if match.size >= 1
+            static_paths << {
+              "static_path" => "/",
               "file_path"   => match[1],
             }
           end
         end
       end
 
-      # NestJS patterns typically use ServeStaticModule in app.module.ts
-      # ServeStaticModule.forRoot({ rootPath: join(__dirname, '..', 'public'), serveRoot: '/static' })
-      content.scan(/ServeStaticModule\.forRoot\s*\(\s*\{[^}]*rootPath\s*:[^,}]*['"]([^'"]+)['"][^}]*serveRoot\s*:\s*['"]([^'"]+)['"]/) do |match|
-        if match.size >= 2
-          static_paths << {
-            "static_path" => match[2],
-            "file_path"   => match[1],
-          }
+      if want_koa
+        # Koa patterns with koa-static:
+        # app.use(serve('public'))
+        # app.use(serve('./static'))
+        content.scan(/(?:app|router|\w+)\.use\s*\(\s*serve\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          if match.size >= 1
+            static_paths << {
+              "static_path" => "/",
+              "file_path"   => match[1],
+            }
+          end
+        end
+
+        # Koa patterns with koa-mount + koa-static:
+        # app.use(mount('/static', serve('public')))
+        content.scan(/(?:app|router|\w+)\.use\s*\(\s*mount\s*\(\s*['"]([^'"]+)['"]\s*,\s*serve\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          if match.size >= 2
+            static_paths << {
+              "static_path" => match[1],
+              "file_path"   => match[2],
+            }
+          end
         end
       end
 
-      # Also try reverse order for NestJS
-      content.scan(/ServeStaticModule\.forRoot\s*\(\s*\{[^}]*serveRoot\s*:\s*['"]([^'"]+)['"][^}]*rootPath\s*:[^,}]*['"]([^'"]+)['"]/) do |match|
-        if match.size >= 2
-          static_paths << {
-            "static_path" => match[1],
-            "file_path"   => match[2],
-          }
+      if want_fastify
+        # Fastify patterns:
+        # fastify.register(require('@fastify/static'), { root: path.join(__dirname, 'public'), prefix: '/public/' })
+        content.scan(/(?:fastify|app|server)\.register\s*\([^{]*\{[^}]*root\s*:\s*[^,}]*['"]([^'"]+)['"][^}]*prefix\s*:\s*['"]([^'"]+)['"]/) do |match|
+          if match.size >= 2
+            static_paths << {
+              "static_path" => match[2],
+              "file_path"   => match[1],
+            }
+          end
+        end
+
+        # Also try reverse order (prefix first, then root)
+        content.scan(/(?:fastify|app|server)\.register\s*\([^{]*\{[^}]*prefix\s*:\s*['"]([^'"]+)['"][^}]*root\s*:\s*[^,}]*['"]([^'"]+)['"]/) do |match|
+          if match.size >= 2
+            static_paths << {
+              "static_path" => match[1],
+              "file_path"   => match[2],
+            }
+          end
+        end
+      end
+
+      if want_restify
+        # Restify patterns:
+        # server.get(/\/public\/.*/, restify.plugins.serveStatic({directory: './public'}))
+        # Try to extract the path from the regex pattern first
+        content.scan(/(?:server|app)\.(?:get|use)\s*\(\s*\/\\?\/([^\/]+)\/[^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]([^'"]+)['"]/) do |match|
+          if match.size >= 2
+            static_paths << {
+              "static_path" => "/#{match[1]}",
+              "file_path"   => match[2],
+            }
+          end
+        end
+
+        # Fallback: If no path in regex, use directory name as path
+        content.scan(/(?:server|app)\.(?:get|use)\s*\([^,]*,\s*restify\.plugins\.serveStatic\s*\(\s*\{[^}]*directory\s*:\s*['"]\.?\/?([\w-]+)['"]\s*\}/) do |match|
+          if match.size >= 1
+            dir_name = match[1]
+            # Check if this is already captured (exact match on directory name)
+            unless static_paths.any? { |s| s["file_path"] == dir_name || s["file_path"].ends_with?("/#{dir_name}") }
+              static_paths << {
+                "static_path" => "/#{dir_name}",
+                "file_path"   => match[1],
+              }
+            end
+          end
+        end
+      end
+
+      if want_nestjs
+        # NestJS patterns typically use ServeStaticModule in app.module.ts
+        # ServeStaticModule.forRoot({ rootPath: join(__dirname, '..', 'public'), serveRoot: '/static' })
+        content.scan(/ServeStaticModule\.forRoot\s*\(\s*\{[^}]*rootPath\s*:[^,}]*['"]([^'"]+)['"][^}]*serveRoot\s*:\s*['"]([^'"]+)['"]/) do |match|
+          if match.size >= 2
+            static_paths << {
+              "static_path" => match[2],
+              "file_path"   => match[1],
+            }
+          end
+        end
+
+        # Also try reverse order for NestJS
+        content.scan(/ServeStaticModule\.forRoot\s*\(\s*\{[^}]*serveRoot\s*:\s*['"]([^'"]+)['"][^}]*rootPath\s*:[^,}]*['"]([^'"]+)['"]/) do |match|
+          if match.size >= 2
+            static_paths << {
+              "static_path" => match[1],
+              "file_path"   => match[2],
+            }
+          end
         end
       end
 

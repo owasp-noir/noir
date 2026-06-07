@@ -112,7 +112,7 @@ module Analyzer::Javascript
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
 
-        collect_static_paths(path, content, static_dirs)
+        collect_static_paths(path, content, static_dirs, :nestjs)
 
         # Strip JS/TS comments so commented-out decorators
         # (e.g. `// @Get('/old')`) don't generate phantom routes.

@@ -47,8 +47,8 @@ module Analyzer::Javascript
       path.ends_with?(".ts") || path.ends_with?(".mts") || path.ends_with?(".tsx") ? :typescript : :javascript
     end
 
-    protected def collect_static_paths(source_path : String, content : String, static_dirs : Array(Hash(String, String))) : Nil
-      Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
+    protected def collect_static_paths(source_path : String, content : String, static_dirs : Array(Hash(String, String)), framework : Symbol? = nil) : Nil
+      Noir::JSRouteExtractor.extract_static_paths(content, framework).each do |static_path|
         normalized = static_path.dup
         normalized["file_path"] = resolve_static_file_path(source_path, normalized["file_path"])
         static_dirs << normalized unless static_dirs.any? { |s| s["static_path"] == normalized["static_path"] && s["file_path"] == normalized["file_path"] }

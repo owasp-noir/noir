@@ -45,7 +45,7 @@ module Analyzer::Javascript
             result << endpoint
           end
 
-          collect_static_paths(path, content, static_dirs)
+          collect_static_paths(path, content, static_dirs, :express)
 
           # Parse Server style `this.route('METHOD', '/path', ...)`
           # declarations. The framework's PromiseRouter base class
@@ -127,7 +127,7 @@ module Analyzer::Javascript
       # Handle app.route('/path').method1().method2() patterns
       handle_app_route_chaining(file_content, result, path)
 
-      collect_static_paths(path, file_content, static_dirs)
+      collect_static_paths(path, file_content, static_dirs, :express)
 
       # First analyze file for router imports and declarations
       file_content.each_line do |line|
