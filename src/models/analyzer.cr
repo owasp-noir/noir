@@ -68,6 +68,12 @@ class Analyzer
     any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
   end
 
+  # Resolves the longest configured base that owns `path`. Cross-file
+  # indexes key their roots off this, which scopes them per base. Note the
+  # designed limitation: nested/overlapping base paths (e.g. `-b /repo
+  # -b /repo/sub`) don't compose cross-base prefixes, because a definition
+  # and its use can resolve to different longest-matching bases — sibling
+  # layouts (the common monorepo shape) are the supported case.
   protected def configured_base_for(path : String) : String
     # Single configured base: the longest-match resolution can only ever
     # return that base (or the identical `@base_path` fallback), so skip the
