@@ -241,12 +241,13 @@ module Analyzer::Java
     end
 
     private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
+      ["/src/main/java/", "/src/"].each do |marker|
+        if index = path.index(marker)
+          return path[...index]
+        end
       end
+
+      configured_base_for(path)
     end
 
     private def normalize_optional_path(path : String?) : String

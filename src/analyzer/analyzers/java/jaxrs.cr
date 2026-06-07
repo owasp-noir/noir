@@ -90,8 +90,8 @@ module Analyzer::Java
         end
       end
 
-      web_xml_base_paths_for(file_list, application_packages).each do |package_name, base_path|
-        base_paths[package_name] = base_path
+      web_xml_base_paths_for(file_list, application_packages).each do |key, base_path|
+        base_paths[key] = base_path
       end
 
       base_paths
