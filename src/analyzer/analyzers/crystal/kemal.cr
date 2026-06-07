@@ -180,7 +180,7 @@ module Analyzer::Crystal
     private def collect_public_dir_endpoints
       return unless @is_public
       begin
-        get_public_files(@base_path).each do |file|
+        each_public_file do |file|
           if file =~ /\/public\/(.*)/
             relative_path = $1
             @result << Endpoint.new("/#{relative_path}", "GET")
@@ -188,7 +188,7 @@ module Analyzer::Crystal
         end
 
         @public_folders.each do |folder|
-          get_public_dir_files(@base_path, folder).each do |file|
+          each_public_dir_file(folder) do |file|
             if folder.includes?("/")
               folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
               if file.starts_with?(folder_path)

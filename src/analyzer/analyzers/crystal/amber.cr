@@ -246,7 +246,7 @@ module Analyzer::Crystal
       return unless @is_public
       begin
         # Process public folder files
-        get_public_files(@base_path).each do |file|
+        each_public_file do |file|
           # Extract the path after "/public/" regardless of depth
           if file =~ /\/public\/(.*)/
             relative_path = $1
@@ -256,7 +256,7 @@ module Analyzer::Crystal
 
         # Process other public folders
         @public_folders.each do |folder|
-          get_public_dir_files(@base_path, folder).each do |file|
+          each_public_dir_file(folder) do |file|
             # Extract relative path from the custom folder
             if folder.includes?("/")
               # For absolute paths or paths with directories

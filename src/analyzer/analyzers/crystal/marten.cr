@@ -44,7 +44,7 @@ module Analyzer::Crystal
     end
 
     private def collect_public_dir_endpoints
-      get_public_files(@base_path).each do |file|
+      each_public_file do |file|
         # Extract the path after "/public/" regardless of depth
         if file =~ /\/public\/(.*)/
           relative_path = $1

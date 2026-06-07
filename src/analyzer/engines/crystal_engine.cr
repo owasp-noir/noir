@@ -96,6 +96,22 @@ module Analyzer::Crystal
       first == '/' || first == '*' || first == '{'
     end
 
+    protected def each_public_file(&block : String -> Nil) : Nil
+      base_paths.each do |base|
+        get_public_files(base).each do |file|
+          block.call(file)
+        end
+      end
+    end
+
+    protected def each_public_dir_file(folder : String, &block : String -> Nil) : Nil
+      base_paths.each do |base|
+        get_public_dir_files(base, folder).each do |file|
+          block.call(file)
+        end
+      end
+    end
+
     protected def attach_crystal_callees(endpoint : Endpoint, callees : Array(Noir::CrystalCalleeExtractor::Entry))
       Noir::CrystalCalleeExtractor.attach_to(endpoint, callees)
     end

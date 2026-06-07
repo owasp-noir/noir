@@ -410,13 +410,15 @@ module Analyzer::Javascript
 
       # Fallback: if file_map is empty, scan common entrypoints only
       if main_files.empty?
-        ExpressConstants::ENTRY_FILENAMES.each do |filename|
-          potential_path = File.join(@base_path, filename)
-          main_files << potential_path if File.exists?(potential_path)
+        @base_paths.each do |base|
+          ExpressConstants::ENTRY_FILENAMES.each do |filename|
+            potential_path = File.join(base, filename)
+            main_files << potential_path if File.exists?(potential_path)
 
-          ExpressConstants::ENTRY_SUBDIRS.each do |subdir|
-            subdir_path = File.join(@base_path, subdir, filename)
-            main_files << subdir_path if File.exists?(subdir_path)
+            ExpressConstants::ENTRY_SUBDIRS.each do |subdir|
+              subdir_path = File.join(base, subdir, filename)
+              main_files << subdir_path if File.exists?(subdir_path)
+            end
           end
         end
       end
@@ -1051,7 +1053,7 @@ module Analyzer::Javascript
 
       resolved = if is_root_alias
                    alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")
-                   File.expand_path(alias_path, @base_path)
+                   File.expand_path(alias_path, base_path_for_file(from_file))
                  else
                    base_dir = File.dirname(from_file)
                    File.expand_path(require_path, base_dir)
@@ -1085,6 +1087,14 @@ module Analyzer::Javascript
       end
 
       nil
+    end
+
+    private def base_path_for_file(file : String) : String
+      expanded_file = File.expand_path(file)
+      @base_paths.find do |base|
+        expanded_base = File.expand_path(base)
+        expanded_file == expanded_base || expanded_file.starts_with?("#{expanded_base}/")
+      end || @base_path
     end
   end
 end
