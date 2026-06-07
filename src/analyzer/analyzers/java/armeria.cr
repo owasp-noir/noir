@@ -9,6 +9,7 @@ module Analyzer::Java
   class Armeria < Analyzer
     REGEX_SERVER_CODE_BLOCK = /Server\s*\.builder\(\s*\)\s*\.[^;]*build\(\)\s*\./
     alias RouteEntry = Tuple(String, String)
+    alias ScopedClassKey = Tuple(String, String)
 
     # HTTP method annotation names supported by Armeria's annotated
     # service style. Simple names — fully-qualified forms like
@@ -43,12 +44,13 @@ module Analyzer::Java
 
                   if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
                     content = read_file_content(path)
+                    base = configured_base_for(path)
 
                     # Annotation-based services (`@Get("/x")` etc.) —
                     # Kotlin files reach here too, but tree-sitter-java
                     # doesn't parse Kotlin cleanly, so skip non-Java.
                     if content.includes?("com.linecorp.armeria.server.annotation.") && path.ends_with?(".java")
-                      analyze_annotated_service(path, content, annotated_service_prefixes)
+                      analyze_annotated_service(path, content, base, annotated_service_prefixes)
                     end
 
                     # Server.builder()-style routes (regex-scoped — the
@@ -76,7 +78,7 @@ module Analyzer::Java
                       server_codeblock = server_codeblock_match[0]
 
                       resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
-                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index)
+                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base)
                       collect_builder_routes(server_codeblock, resolved_constants, details)
                     end
                   end
@@ -237,7 +239,8 @@ module Analyzer::Java
     private def collect_service_routes(server_codeblock : String,
                                        constants : Hash(String, String),
                                        details : Details,
-                                       service_with_routes_index : Hash(String, Array(RouteEntry)))
+                                       service_with_routes_index : Hash(ScopedClassKey, Array(RouteEntry)),
+                                       base : String)
       emitted = Set(Tuple(String, String)).new
       offset = 0
       while found = server_codeblock.index(".service", offset)
@@ -276,7 +279,7 @@ module Analyzer::Java
         end
 
         endpoint = first_builder_path_arg(endpoint_expr, constants) || ""
-        service_routes = indexed_service_routes(service_lookup_expr, service_with_routes_index)
+        service_routes = indexed_service_routes(service_lookup_expr, service_with_routes_index, base)
 
         if !service_routes.empty? && (method_name == "service" || method_name == "serviceUnder")
           base_path = method_name == "serviceUnder" ? endpoint : ""
@@ -298,11 +301,12 @@ module Analyzer::Java
     end
 
     private def indexed_service_routes(service_arg : String,
-                                       service_with_routes_index : Hash(String, Array(RouteEntry))) : Array(RouteEntry)
+                                       service_with_routes_index : Hash(ScopedClassKey, Array(RouteEntry)),
+                                       base : String) : Array(RouteEntry)
       service_class = service_class_name(service_arg)
       return [] of RouteEntry unless service_class
 
-      service_with_routes_index[service_class]? || [] of RouteEntry
+      service_with_routes_index[{base, service_class}]? || [] of RouteEntry
     end
 
     private def file_service_expression?(expr : String) : Bool
@@ -410,8 +414,8 @@ module Analyzer::Java
       raw[1...-1].gsub(/\\(["\\])/, "\\1")
     end
 
-    private def collect_annotated_service_prefixes : Hash(String, Array(String))
-      registrations = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
+    private def collect_annotated_service_prefixes : Hash(ScopedClassKey, Array(String))
+      registrations = Hash(ScopedClassKey, Array(String)).new { |hash, key| hash[key] = [] of String }
 
       get_files_by_extension(".java").each do |path|
         next if JavaEngine.test_path?(path)
@@ -420,11 +424,12 @@ module Analyzer::Java
         next unless content.includes?(".annotatedService")
 
         constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
+        base = configured_base_for(path)
         call_argument_expressions(content, ".annotatedService").each do |expr|
           prefix, service_class = annotated_service_registration(expr, constants)
           next if service_class.empty?
 
-          registrations[service_class] << prefix
+          registrations[{base, service_class}] << prefix
         end
       rescue File::NotFoundError
         logger.debug "File not found: #{path}"
@@ -434,8 +439,8 @@ module Analyzer::Java
       registrations
     end
 
-    private def collect_service_with_routes_index : Hash(String, Array(RouteEntry))
-      index = Hash(String, Array(RouteEntry)).new
+    private def collect_service_with_routes_index : Hash(ScopedClassKey, Array(RouteEntry))
+      index = Hash(ScopedClassKey, Array(RouteEntry)).new
 
       get_files_by_extension(".java").each do |path|
         next if JavaEngine.test_path?(path)
@@ -444,6 +449,7 @@ module Analyzer::Java
         next unless content.includes?("HttpServiceWithRoutes") || content.includes?("ServiceWithRoutes")
 
         constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content)
+        base = configured_base_for(path)
         Noir::TreeSitter.parse_java(content) do |root|
           walk_class_containers(root) do |cls|
             next unless service_with_routes_class?(cls, content)
@@ -452,7 +458,7 @@ module Analyzer::Java
             next if class_name.empty?
 
             routes = service_with_routes_entries(cls, content, constants)
-            index[class_name] = routes unless routes.empty?
+            index[{base, class_name}] = routes unless routes.empty?
           end
         end
       rescue File::NotFoundError
@@ -709,7 +715,8 @@ module Analyzer::Java
 
     private def analyze_annotated_service(path : String,
                                           content : String,
-                                          annotated_service_prefixes : Hash(String, Array(String)))
+                                          base : String,
+                                          annotated_service_prefixes : Hash(ScopedClassKey, Array(String)))
       Noir::TreeSitter.parse_java(content) do |root|
         constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
         dto_index = Noir::TreeSitterJavaDtoIndex.new.build_for_with_root(path, content, root)
@@ -717,6 +724,7 @@ module Analyzer::Java
           class_name = class_name_of(cls, content)
           prefixes = annotated_service_route_prefixes(
             class_name,
+            base,
             annotation_values_named(cls, PATH_PREFIX_ANNOTATION, content, constants, class_name),
             annotated_service_prefixes
           )
@@ -732,9 +740,10 @@ module Analyzer::Java
     end
 
     private def annotated_service_route_prefixes(class_name : String,
+                                                 base : String,
                                                  class_prefixes : Array(String),
-                                                 annotated_service_prefixes : Hash(String, Array(String))) : Array(String)
-      registration_prefixes = annotated_service_prefixes[class_name]? || [] of String
+                                                 annotated_service_prefixes : Hash(ScopedClassKey, Array(String))) : Array(String)
+      registration_prefixes = annotated_service_prefixes[{base, class_name}]? || [] of String
       registration_prefixes = [""] if registration_prefixes.empty?
       class_prefixes = [""] if class_prefixes.empty?
 
