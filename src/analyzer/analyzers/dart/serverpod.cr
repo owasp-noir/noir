@@ -30,11 +30,12 @@ module Analyzer::Dart
     }
     alias MethodParam = NamedTuple(name: String, type: String)
     alias RouteClass = NamedTuple(methods: Array(String), file: String, line: Int32, callees: Array(Noir::DartCalleeExtractor::Entry))
-    alias Registration = NamedTuple(class_name: String, path: String)
+    alias RouteClassKey = Tuple(String, String)
+    alias Registration = NamedTuple(base_path: String, class_name: String, path: String)
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      route_classes = {} of String => RouteClass
+      route_classes = {} of RouteClassKey => RouteClass
       registrations = [] of Registration
 
       all_files.each do |path|
@@ -66,8 +67,9 @@ module Analyzer::Dart
                                    content : String,
                                    cleaned : String,
                                    include_callee : Bool,
-                                   route_classes : Hash(String, RouteClass),
+                                   route_classes : Hash(RouteClassKey, RouteClass),
                                    registrations : Array(Registration))
+      base_path = configured_base_for(path)
       cleaned.scan(/class\s+([A-Z][A-Za-z0-9_]*)(?:\s*<[^>]*>)?\s+extends\s+(?:Widget|Component)?Route\b/) do |match|
         class_name = match[1]
         match_end = match.end(0)
@@ -81,7 +83,7 @@ module Analyzer::Dart
         line = line_for_offset(content, match_start)
         methods = web_route_methods(body)
         callees = include_callee ? web_handler_callees(path, body, body_start, content) : [] of Noir::DartCalleeExtractor::Entry
-        route_classes[class_name] = {methods: methods, file: path, line: line, callees: callees}
+        route_classes[{base_path, class_name}] = {methods: methods, file: path, line: line, callees: callees}
       end
 
       cleaned.scan(/\baddRoute\s*\(/) do |match|
@@ -95,7 +97,7 @@ module Analyzer::Dart
         next unless class_name
         route_path = Helper.extract_string_literal(args[1])
         next unless route_path
-        registrations << {class_name: class_name, path: normalize_web_path(route_path)}
+        registrations << {base_path: base_path, class_name: class_name, path: normalize_web_path(route_path)}
       end
     end
 
@@ -149,12 +151,12 @@ module Analyzer::Dart
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
-    private def emit_web_routes(route_classes : Hash(String, RouteClass),
+    private def emit_web_routes(route_classes : Hash(RouteClassKey, RouteClass),
                                 registrations : Array(Registration))
       # The same `(class, path)` can be registered more than once (e.g. a
       # route re-added across environments); emit each surface only once.
       registrations.uniq.each do |reg|
-        info = route_classes[reg[:class_name]]?
+        info = route_classes[{reg[:base_path], reg[:class_name]}]?
         next unless info
         info[:methods].each do |verb|
           details = Details.new(PathInfo.new(info[:file], info[:line]))
