@@ -14,6 +14,9 @@ expected_endpoints = [
   Endpoint.new("/categories", "GET"),
   Endpoint.new("/categories", "POST"),
   Endpoint.new("/categories/{slug}", "GET", [Param.new("slug", "", "path")]),
+  Endpoint.new("/albums/{album}/songs", "GET", [Param.new("album", "", "path")]),
+  Endpoint.new("/albums/{album}/songs/{song}", "GET", [Param.new("album", "", "path"), Param.new("song", "", "path")]),
+  Endpoint.new("/v1.0/albums/{record}/songs/{track}", "GET", [Param.new("record", "", "path"), Param.new("track", "", "path")]),
   Endpoint.new("/contact", "GET"),
   Endpoint.new("/contact", "POST"),
   Endpoint.new("/webhook", "GET"),
@@ -32,7 +35,7 @@ expected_endpoints = [
   Endpoint.new("/api/v1/profile", "GET"),
   Endpoint.new("/api/v1/profile", "POST"),
   Endpoint.new("/api/v1/tokens", "GET"),
-  Endpoint.new("/api/v1/tokens/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/api/v1/tokens/{token}", "DELETE", [Param.new("token", "", "path")]),
   Endpoint.new("/api/v1/reports/daily", "GET"),
   Endpoint.new("/tenant/{tenant}/dashboard", "GET", [Param.new("tenant", "", "path")]),
   # routes/internal.php (not web.php/api.php) with a `static function (): void`
@@ -43,5 +46,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 64, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 70, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests
