@@ -58,11 +58,11 @@ noir scan ./app --include path,techs,callee --ai-context
 positional path 와 반복 `-b PATH` 는 동일하게 동작합니다. 스크립트에서
 읽기 좋은 쪽을 쓰면 됩니다.
 
-> 여러 base 는 sibling root 로 스코프됩니다 — 지원되는 모노레포 형태
-> (예: `-b ./api -b ./worker`)입니다. 중첩되거나 겹치는 base
-> (예: `-b /repo -b /repo/sub`)에서는 정의와 사용처가 서로 다른
-> longest-matching base 로 해석될 수 있어 cross-base prefix 가 합성되지
-> 않습니다. sibling 레이아웃을 권장합니다.
+> 여러 코드베이스는 positional (`noir scan ./api ./worker`) 이든 반복
+> `-b` 든 sibling root 로 스코프되며, 이것이 지원되는 모노레포 형태입니다.
+> 중첩되거나 겹치는 root (예: `noir scan /repo /repo/sub`)에서는 정의와
+> 사용처가 서로 다른 longest-matching root 로 해석될 수 있어 cross-base
+> prefix 가 합성되지 않습니다. sibling 레이아웃을 권장합니다.
 
 ### v1 의 플래그 통합
 
