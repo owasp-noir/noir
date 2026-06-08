@@ -9,7 +9,8 @@ module Analyzer::Haskell
     # A handler name can occur in more than one file; keep all bodies and only
     # attach callees when the name resolves unambiguously (mirrors scotty.cr),
     # rather than last-write-wins overwriting across files.
-    alias HandlerBodies = Hash(String, Array(HandlerBody))
+    alias HandlerKey = Tuple(String, String)
+    alias HandlerBodies = Hash(HandlerKey, Array(HandlerBody))
 
     def analyze
       processed_route_files = Set(String).new
@@ -67,11 +68,16 @@ module Analyzer::Haskell
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
-          (handlers[body[:name]] ||= [] of HandlerBody) << body
+          key = handler_key(configured_base_for(path), body[:name])
+          (handlers[key] ||= [] of HandlerBody) << body
         end
       end
 
       handlers
+    end
+
+    private def handler_key(base_path : String, name : String) : HandlerKey
+      {base_path, name}
     end
 
     private def extract_inline_route_blocks(content : String) : Array(String)
@@ -134,7 +140,7 @@ module Analyzer::Haskell
         methods.each do |method|
           endpoint_params = params.map { |param| Param.new(param.name, param.value, param.param_type) }
           endpoint = Endpoint.new(url, method, endpoint_params, details)
-          attach_handler_callees(endpoint, method, route_name, methodless_route, handler_bodies) if include_callee
+          attach_handler_callees(endpoint, method, route_name, methodless_route, source_path, handler_bodies) if include_callee
           @result << endpoint
         end
       end
@@ -144,11 +150,13 @@ module Analyzer::Haskell
                                        method : String,
                                        route_name : String,
                                        methodless_route : Bool,
+                                       source_path : String,
                                        handler_bodies : HandlerBodies)
       handler_name = handler_name_for(method, route_name, methodless_route)
-      bodies = handler_bodies[handler_name]?
+      bodies = handler_bodies[handler_key(configured_base_for(source_path), handler_name)]?
       # Only attach when the name is unambiguous; a name defined in multiple
-      # files would otherwise pull callees from the wrong file's body.
+      # files under the same base would otherwise pull callees from the wrong
+      # file's body.
       return unless bodies && bodies.size == 1
       handler_body = bodies.first
 

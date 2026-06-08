@@ -54,7 +54,7 @@ module Analyzer::Go
 
                     # `app.Static("/url", "./dir")`.
                     Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
-                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                      public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
                     end
 
                     lines.each_with_index do |line, index|

@@ -2,11 +2,12 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Marten < CrystalEngine
-    @handler_callees = Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
+    alias HandlerActionKey = Tuple(String, String, String)
+    @handler_callees = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
     def analyze
       collect_public_dir_endpoints
-      @handler_callees = include_callee? ? collect_handler_callees : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
+      @handler_callees = include_callee? ? collect_handler_callees : Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
       parallel_file_scan do |path|
         result.concat(analyze_file(path))
@@ -26,7 +27,7 @@ module Analyzer::Crystal
         unless endpoint.method.empty?
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
-          attach_route_callees(endpoint, line) if include_callee?
+          attach_route_callees(endpoint, line, path) if include_callee?
           endpoints << endpoint
           last_endpoint = endpoint
         end
@@ -44,7 +45,7 @@ module Analyzer::Crystal
     end
 
     private def collect_public_dir_endpoints
-      get_public_files(@base_path).each do |file|
+      each_public_file do |file|
         # Extract the path after "/public/" regardless of depth
         if file =~ /\/public\/(.*)/
           relative_path = $1
@@ -63,8 +64,8 @@ module Analyzer::Crystal
       read_file_content(path).lines
     end
 
-    private def collect_handler_callees : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry))
-      actions = Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
+    private def collect_handler_callees : Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry))
+      actions = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
       get_files_by_extension(".cr").each do |path|
         next if File.directory?(path)
@@ -81,8 +82,9 @@ module Analyzer::Crystal
 
     private def collect_handler_callees_from_lines(lines : Array(String),
                                                    path : String,
-                                                   actions : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)))
+                                                   actions : Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)))
       scope_stack = [] of Tuple(String, String)
+      base = configured_base_for(path)
 
       lines.each_with_index do |line, index|
         stripped = Noir::CrystalCalleeExtractor.strip_comment(line).strip
@@ -108,7 +110,7 @@ module Analyzer::Crystal
           if method_body
             body, body_start_line = method_body
             callees = Noir::CrystalCalleeExtractor.callees_for_body(body, path, body_start_line)
-            actions[handler_action_key(current_class, def_match[1])] = callees
+            actions[handler_action_key(base, current_class, def_match[1])] = callees
           end
           scope_stack << {"block", ""} unless stripped.match(/\bend\b/)
           next
@@ -120,11 +122,11 @@ module Analyzer::Crystal
       end
     end
 
-    private def attach_route_callees(endpoint : Endpoint, line : String)
+    private def attach_route_callees(endpoint : Endpoint, line : String, path : String)
       handler = extract_route_target(line)
       return unless handler
 
-      if callees = @handler_callees[handler_action_key(handler, "get")]?
+      if callees = @handler_callees[handler_action_key(configured_base_for(path), handler, "get")]?
         attach_crystal_callees(endpoint, callees)
       end
     end
@@ -162,8 +164,8 @@ module Analyzer::Crystal
       name.starts_with?("::") ? name[2, name.size - 2] : name
     end
 
-    private def handler_action_key(handler : String, action : String) : String
-      "#{handler}##{action}"
+    private def handler_action_key(base : String, handler : String, action : String) : HandlerActionKey
+      {base, handler, action}
     end
 
     def line_to_param(content : String) : Param

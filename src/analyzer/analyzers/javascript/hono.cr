@@ -35,9 +35,7 @@ module Analyzer::Javascript
             extract_on_routes(path, content, result, callees_by_route)
           end
 
-          Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
-            static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-          end
+          collect_static_paths(path, content, static_dirs, :hono)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
           analyze_with_regex(path, result)
@@ -50,23 +48,7 @@ module Analyzer::Javascript
     end
 
     private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      static_dirs.each do |dir|
-        full_path = (base_path + "/" + dir["file_path"]).gsub_repeatedly("//", "/")
-        static_path = dir["static_path"]
-        static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
-
-        get_files_by_prefix(full_path).each do |file_path|
-          if File.file?(file_path)
-            relative_path = file_path.starts_with?(full_path) ? file_path.lchop(full_path) : file_path
-            url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
-            url = "/#{url}" unless url.starts_with?("/")
-
-            details = Details.new(PathInfo.new(file_path))
-            endpoint = Endpoint.new(url, "GET", details)
-            result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
-          end
-        end
-      end
+      process_js_static_dirs(static_dirs, result)
     end
 
     private def extract_on_routes(path : String,

@@ -11,6 +11,9 @@ module Analyzer::Rust
   # shares the parsed tree instead of re-scanning the file with
   # regexes and a body-text wrapper.
   class Axum < RustEngine
+    alias UtoipaScopedKey = Tuple(String, String, String)
+    alias UtoipaNestEdge = Tuple(UtoipaScopedKey, String)
+
     # Verbs accepted as the inner handler call (`get(...)`, `post(...)`,
     # …). Anything outside this set is treated as `GET` to match the
     # legacy fallback the regex analyzer used. `any` covers
@@ -29,11 +32,11 @@ module Analyzer::Rust
     # `OpenApiRouter::new().routes(routes!(mod::handler))`. The router is
     # mounted with `.nest("/api/v1/x", mod_routes::create_routes())`, so the
     # real URL is the nest prefix + the attribute path. `analyze` builds a
-    # `{module, handler_leaf} => [prefix]` index up front (resolving the
+    # `{base_path, module, handler_leaf} => [prefix]` index up front (resolving the
     # cross-file `.nest(prefix, fn())` chain through the `routes!()`
     # collectors); `analyze_file` then emits each `#[utoipa::path]` handler
     # at its composed URL.
-    @utoipa_prefix : Hash(Tuple(String, String), Array(String))? = nil
+    @utoipa_prefix : Hash(UtoipaScopedKey, Array(String))? = nil
 
     def analyze
       @utoipa_prefix = build_utoipa_prefix_index
@@ -772,6 +775,7 @@ module Analyzer::Rust
                                          function_index : Hash(String, LibTreeSitter::TSNode),
                                          endpoints : Array(Endpoint))
       file_mod = primary_module(path)
+      base = configured_base_for(path)
       each_attribute_pair(root) do |attr_item, function|
         next if RustEngine.inside_test_region?(attr_item, test_regions)
         route = extract_utoipa_attr(attr_item, source)
@@ -783,7 +787,7 @@ module Analyzer::Rust
         # a manual `.route(...)` instead — common when a body-limit layer is
         # needed — is emitted by the builder pass already; emitting it here
         # too would duplicate it at the bare, prefix-less attribute path.
-        prefixes = leaf ? @utoipa_prefix.try(&.[{file_mod, leaf}]?) : nil
+        prefixes = leaf ? @utoipa_prefix.try { |prefixes| prefixes[{base, file_mod, leaf}]? } : nil
         next if prefixes.nil? || prefixes.empty?
         root_path = attr_path.empty? || attr_path == "/"
         urls = prefixes.map do |p|
@@ -857,41 +861,42 @@ module Analyzer::Rust
       result
     end
 
-    # Build `{module, handler_leaf} => [nest prefix]` from the OpenApiRouter
+    # Build `{base_path, module, handler_leaf} => [nest prefix]` from the OpenApiRouter
     # composition: `.nest("/p", mod_routes::create_routes())` mounts a
     # collector fn, whose `.routes(routes!(mod::handler))` calls list the
     # handlers. The nest chain is threaded across files (and through nested
     # `.nest()` inside collectors).
-    private def build_utoipa_prefix_index : Hash(Tuple(String, String), Array(String))
-      nest_edges = Hash(String, Array(Tuple(String, String))).new
-      nested_set = Set(String).new
-      fn_routes = Hash(String, Array(Tuple(String, String?))).new
+    private def build_utoipa_prefix_index : Hash(UtoipaScopedKey, Array(String))
+      nest_edges = Hash(UtoipaScopedKey, Array(UtoipaNestEdge)).new
+      nested_set = Set(UtoipaScopedKey).new
+      fn_routes = Hash(UtoipaScopedKey, Array(Tuple(String, String?))).new
 
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(fpath)
+        base = configured_base_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?("OpenApiRouter") || src.includes?(".routes(")
         file_mod = primary_module(fpath)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
-            collect_utoipa_fns(root, src, file_mod, test_regions, nest_edges, nested_set, fn_routes)
+            collect_utoipa_fns(root, src, base, file_mod, test_regions, nest_edges, nested_set, fn_routes)
           end
         rescue e
           logger.debug "axum utoipa index scan error #{fpath}: #{e}"
         end
       end
 
-      ext = Hash(String, Array(String)).new
-      nested_set.each { |f| resolve_nest_external(f, nest_edges, nested_set, ext, Set(String).new) }
+      ext = Hash(UtoipaScopedKey, Array(String)).new
+      nested_set.each { |f| resolve_nest_external(f, nest_edges, nested_set, ext, Set(UtoipaScopedKey).new) }
 
-      index = Hash(Tuple(String, String), Array(String)).new
+      index = Hash(UtoipaScopedKey, Array(String)).new
       fn_routes.each do |fnkey, leaves|
         prefixes = ext[fnkey]? || [""]
         leaves.each do |leaf, ref_mod|
-          key = {ref_mod || fnkey.split("::").first, leaf}
+          key = {fnkey[0], ref_mod || fnkey[1], leaf}
           bucket = (index[key] ||= [] of String)
           prefixes.each { |p| bucket << p unless bucket.includes?(p) }
         end
@@ -899,18 +904,18 @@ module Analyzer::Rust
       index
     end
 
-    private def collect_utoipa_fns(root : LibTreeSitter::TSNode, source : String, file_mod : String,
+    private def collect_utoipa_fns(root : LibTreeSitter::TSNode, source : String, base : String, file_mod : String,
                                    test_regions : Array(Tuple(Int32, Int32)),
-                                   nest_edges : Hash(String, Array(Tuple(String, String))),
-                                   nested_set : Set(String),
-                                   fn_routes : Hash(String, Array(Tuple(String, String?))))
+                                   nest_edges : Hash(UtoipaScopedKey, Array(UtoipaNestEdge)),
+                                   nested_set : Set(UtoipaScopedKey),
+                                   fn_routes : Hash(UtoipaScopedKey, Array(Tuple(String, String?))))
       walk(root) do |n|
         next unless Noir::TreeSitter.node_type(n) == "function_item"
         next if RustEngine.inside_test_region?(n, test_regions)
         name_node = Noir::TreeSitter.field(n, "name")
         body = Noir::TreeSitter.field(n, "body")
         next unless name_node && body
-        fn_key = "#{file_mod}::#{Noir::TreeSitter.node_text(name_node, source)}"
+        fn_key = {base, file_mod, Noir::TreeSitter.node_text(name_node, source)}
         walk(body) do |c|
           case Noir::TreeSitter.node_type(c)
           when "macro_invocation"
@@ -927,30 +932,30 @@ module Analyzer::Rust
             next if named.size < 2
             prefix = string_literal_text(named[0], source)
             next unless prefix
-            child_key = nest_child_key(named[1], source)
+            child_key = nest_child_key(named[1], source, base, file_mod)
             next unless child_key
-            (nest_edges[fn_key] ||= [] of Tuple(String, String)) << {child_key, prefix}
+            (nest_edges[fn_key] ||= [] of UtoipaNestEdge) << {child_key, prefix}
             nested_set.add(child_key)
           end
         end
       end
     end
 
-    private def nest_child_key(node : LibTreeSitter::TSNode, source : String) : String?
+    private def nest_child_key(node : LibTreeSitter::TSNode, source : String, base : String, file_mod : String) : UtoipaScopedKey?
       return unless Noir::TreeSitter.node_type(node) == "call_expression"
       fn = Noir::TreeSitter.field(node, "function")
       return unless fn
       case Noir::TreeSitter.node_type(fn)
       when "scoped_identifier"
         segs = Noir::TreeSitter.node_text(fn, source).split("::")
-        segs.size >= 2 ? "#{segs[-2]}::#{segs[-1]}" : segs[-1]
+        segs.size >= 2 ? {base, segs[-2], segs[-1]} : {base, file_mod, segs[-1]}
       when "identifier"
-        Noir::TreeSitter.node_text(fn, source)
+        {base, file_mod, Noir::TreeSitter.node_text(fn, source)}
       end
     end
 
     private def collect_utoipa_routes_leaves(macro_node : LibTreeSitter::TSNode, source : String,
-                                             fn_key : String, fn_routes : Hash(String, Array(Tuple(String, String?))))
+                                             fn_key : UtoipaScopedKey, fn_routes : Hash(UtoipaScopedKey, Array(Tuple(String, String?))))
       mname = Noir::TreeSitter.field(macro_node, "macro")
       return unless mname && Noir::TreeSitter.node_text(mname, source).split("::").last == "routes"
       tt = nil.as(LibTreeSitter::TSNode?)
@@ -970,11 +975,11 @@ module Analyzer::Rust
       end
     end
 
-    private def resolve_nest_external(name : String,
-                                      edges : Hash(String, Array(Tuple(String, String))),
-                                      nested_set : Set(String),
-                                      ext : Hash(String, Array(String)),
-                                      stack : Set(String)) : Array(String)
+    private def resolve_nest_external(name : UtoipaScopedKey,
+                                      edges : Hash(UtoipaScopedKey, Array(UtoipaNestEdge)),
+                                      nested_set : Set(UtoipaScopedKey),
+                                      ext : Hash(UtoipaScopedKey, Array(String)),
+                                      stack : Set(UtoipaScopedKey)) : Array(String)
       if cached = ext[name]?
         return cached
       end

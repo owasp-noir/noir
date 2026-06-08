@@ -1,0 +1,6 @@
+name: amber_multi_base_service_a
+version: 0.1.0
+
+dependencies:
+  amber:
+    github: amberframework/amber

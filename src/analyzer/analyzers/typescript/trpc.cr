@@ -5,38 +5,41 @@ require "../../../miniparsers/js_route_extractor"
 module Analyzer::Typescript
   class TRPC < Analyzer::Javascript::JavascriptEngine
     DEFAULT_PREFIX = "/api/trpc"
+    alias RouterKey = Tuple(String, String)
 
     private struct Router
+      getter base_path : String
       getter name : String
       getter body : String
       getter file : String
       getter line : Int32
 
-      def initialize(@name : String, @body : String, @file : String, @line : Int32)
+      def initialize(@base_path : String, @name : String, @body : String, @file : String, @line : Int32)
       end
     end
 
     def analyze
       result = [] of Endpoint
-      routers = Hash(String, Router).new
+      routers = Hash(RouterKey, Router).new
       routers_mu = Mutex.new
       prefix_mu = Mutex.new
-      url_prefix = DEFAULT_PREFIX
+      url_prefixes = Hash(String, String).new
 
       parallel_file_scan([".js", ".ts", ".jsx", ".tsx", ".cts", ".mts", ".cjs", ".mjs"]) do |path|
         begin
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
             raw = file.gets_to_end
             content = Noir::JSRouteExtractor.strip_js_comments(raw)
-            collected = collect_routers(content, path)
+            base_path = configured_base_for(path)
+            collected = collect_routers(content, path, base_path)
             unless collected.empty?
               routers_mu.synchronize do
-                collected.each { |r| routers[r.name] = r }
+                collected.each { |r| routers[router_key(r)] = r }
               end
             end
             if found = extract_prefix(content)
               prefix_mu.synchronize do
-                url_prefix = found
+                url_prefixes[base_path] = found
               end
             end
           end
@@ -48,25 +51,36 @@ module Analyzer::Typescript
 
       return result if routers.empty?
 
-      used_as_child = Set(String).new
+      used_as_child = Set(RouterKey).new
       routers.each_value do |router|
         each_top_level_kv(router.body) do |_key, value, _value_line|
           ident = extract_identifier(value)
-          used_as_child.add(ident) if ident && routers.has_key?(ident)
+          next unless ident
+          child_key = router_key(router.base_path, ident)
+          used_as_child.add(child_key) if routers.has_key?(child_key)
         end
       end
 
-      roots = routers.values.reject { |r| used_as_child.includes?(r.name) }
+      roots = routers.values.reject { |r| used_as_child.includes?(router_key(r)) }
       roots = routers.values if roots.empty?
 
       roots.each do |root|
-        flatten_router(root, "", routers, url_prefix, result, Set(String).new)
+        url_prefix = url_prefixes[root.base_path]? || DEFAULT_PREFIX
+        flatten_router(root, "", routers, url_prefix, result, Set(RouterKey).new)
       end
 
       result
     end
 
-    private def collect_routers(content : String, path : String) : Array(Router)
+    private def router_key(router : Router) : RouterKey
+      router_key(router.base_path, router.name)
+    end
+
+    private def router_key(base_path : String, name : String) : RouterKey
+      {base_path, name}
+    end
+
+    private def collect_routers(content : String, path : String, base_path : String) : Array(Router)
       collected = [] of Router
       # Capture `(export )? (const|let|var) NAME = <prefix>?(router|createTRPCRouter)({...})`.
       # Prefix tolerates `t.router(`, `initTRPC.create().router(`, `_.router(` etc.
@@ -85,7 +99,7 @@ module Analyzer::Typescript
 
         body = content[(brace_open + 1)...brace_close]
         line = content[0, match_start].count('\n') + 1
-        collected << Router.new(match[1], body, path, line)
+        collected << Router.new(base_path, match[1], body, path, line)
       end
 
       identifier_arg_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*(?:[\w$]+\s*(?:\(\s*\))?\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/
@@ -97,7 +111,7 @@ module Analyzer::Typescript
 
         body, object_line = body_info
         line = object_line > 0 ? object_line : content[0, match_start].count('\n') + 1
-        collected << Router.new(match[1], body, path, line)
+        collected << Router.new(base_path, match[1], body, path, line)
       end
 
       collected
@@ -278,15 +292,16 @@ module Analyzer::Typescript
       nil
     end
 
-    private def flatten_router(router : Router, prefix_dotted : String, routers : Hash(String, Router), url_prefix : String, result : Array(Endpoint), visited : Set(String))
-      return if visited.includes?(router.name)
-      visited.add(router.name)
+    private def flatten_router(router : Router, prefix_dotted : String, routers : Hash(RouterKey, Router), url_prefix : String, result : Array(Endpoint), visited : Set(RouterKey))
+      current_key = router_key(router)
+      return if visited.includes?(current_key)
+      visited.add(current_key)
 
       each_top_level_kv(router.body) do |key, value, value_line|
         next if key.empty?
 
         if ident = extract_identifier(value)
-          if child = routers[ident]?
+          if child = routers[router_key(router.base_path, ident)]?
             child_prefix = prefix_dotted.empty? ? key : "#{prefix_dotted}.#{key}"
             flatten_router(child, child_prefix, routers, url_prefix, result, visited)
             next
@@ -309,7 +324,7 @@ module Analyzer::Typescript
         result << endpoint
       end
 
-      visited.delete(router.name)
+      visited.delete(current_key)
     end
 
     private def procedure_method(value : String) : String?

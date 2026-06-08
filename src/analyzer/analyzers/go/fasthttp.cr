@@ -34,9 +34,8 @@ module Analyzer::Go
         package_method_bodies = Noir::GoCalleeExtractor.package_method_bodies_if(callees_needed?, file_contents)
 
         base_paths.each do |current_base_path|
-          base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
           go_files.each do |path|
-            next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+            next unless path_under_root?(path, current_base_path)
             next if GoEngine.go_test_file?(path)
             if File.exists?(path)
               content = read_file_content(path)

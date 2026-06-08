@@ -39,6 +39,8 @@ expected_endpoints = [
   ]),
   # Method-level URI versioning.
   Endpoint.new("/v2/admin/versioned", "GET"),
+  # NestJS can serve Express static middleware from the bootstrap file.
+  Endpoint.new("/static/logo.txt", "GET"),
 ]
 
 FunctionalTester.new("fixtures/javascript/nestjs/", {

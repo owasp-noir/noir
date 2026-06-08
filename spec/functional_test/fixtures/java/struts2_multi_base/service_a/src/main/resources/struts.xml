@@ -1,0 +1,7 @@
+<struts>
+  <include file="src/main/resources/extra-struts.xml"/>
+
+  <package name="service-a" namespace="/a" extends="struts-default">
+    <action name="root" class="com.example.handlers.RootHandler"/>
+  </package>
+</struts>

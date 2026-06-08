@@ -37,18 +37,22 @@ module Analyzer::Java
     RESOURCE_MAPPER_CLASSES = Set{"ResourceMapper"}
     REST_LAMBDA_METHODS     = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 
-    alias FileInfo = NamedTuple(path: String, content: String, constants: Hash(String, String))
+    alias FileInfo = NamedTuple(path: String, content: String, constants: Hash(String, String), base: String)
     alias RestRoute = NamedTuple(path: String, method: String, file_path: String, line: Int32, callees: Array(Callee), params: Array(Param))
     alias RestMount = NamedTuple(path: String, file_path: String, line: Int32)
+    alias ScopedClassKey = Tuple(String, String)
+    alias PageMountIndex = Hash(ScopedClassKey, Array(String))
+    alias RestRouteIndex = Hash(ScopedClassKey, Array(RestRoute))
+    alias RestMountIndex = Hash(ScopedClassKey, RestMount)
 
     @include_callee : Bool = false
 
     def analyze
       @include_callee = callees_needed?
       files = java_files_with_content
-      page_mounts = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
-      rest_routes = Hash(String, Array(RestRoute)).new { |hash, key| hash[key] = [] of RestRoute }
-      rest_mounts = Hash(String, RestMount).new
+      page_mounts = PageMountIndex.new { |hash, key| hash[key] = [] of String }
+      rest_routes = RestRouteIndex.new { |hash, key| hash[key] = [] of RestRoute }
+      rest_mounts = RestMountIndex.new
       seen = Set(String).new
 
       files.each do |file|
@@ -88,14 +92,23 @@ module Analyzer::Java
           path:      path,
           content:   content,
           constants: string_constants_for(content),
+          base:      configured_base_for(path),
         }
       end
 
       files
     end
 
+    private def scoped_class_key(file : FileInfo, class_name : String) : ScopedClassKey
+      {file[:base], class_name}
+    end
+
+    private def scoped_class_key(base : String, class_name : String) : ScopedClassKey
+      {base, class_name}
+    end
+
     private def collect_mount_path_annotations(file : FileInfo,
-                                               page_mounts : Hash(String, Array(String)),
+                                               page_mounts : PageMountIndex,
                                                seen : Set(String))
       content = file[:content]
       content.scan(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*MountPath\b/) do |match|
@@ -117,15 +130,16 @@ module Analyzer::Java
 
         mount_path_values(args, class_name, file[:constants]).each do |mount_path|
           normalized = normalize_mount_path(mount_path)
-          page_mounts[class_name] << normalized unless page_mounts[class_name].includes?(normalized)
+          key = scoped_class_key(file, class_name)
+          page_mounts[key] << normalized unless page_mounts[key].includes?(normalized)
           add_endpoint(normalized, file[:path], line_for_offset(content, marker), seen)
         end
       end
     end
 
     private def collect_mount_calls(file : FileInfo,
-                                    page_mounts : Hash(String, Array(String)),
-                                    rest_routes : Hash(String, Array(RestRoute)),
+                                    page_mounts : PageMountIndex,
+                                    rest_routes : RestRouteIndex,
                                     seen : Set(String))
       {"mountPage", "mountPackage", "mountResource"}.each do |method_name|
         scan_method_calls(file[:content], method_name) do |args, offset|
@@ -138,8 +152,8 @@ module Analyzer::Java
           normalized = normalize_mount_path(mount_path)
 
           if method_name == "mountResource"
-            if resource_class = rest_resource_class_name(args, rest_routes)
-              if routes = rest_routes[resource_class]?
+            if resource_key = rest_resource_class_key(args, file[:base], rest_routes)
+              if routes = rest_routes[resource_key]?
                 routes.each do |route|
                   add_endpoint(join_mount_paths(normalized, route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees], route[:params])
                 end
@@ -153,7 +167,8 @@ module Analyzer::Java
 
           if method_name == "mountPage"
             if page_class = class_literal_name(arguments[1]?)
-              page_mounts[page_class] << normalized unless page_mounts[page_class].includes?(normalized)
+              key = scoped_class_key(file, page_class)
+              page_mounts[key] << normalized unless page_mounts[key].includes?(normalized)
             end
           end
         end
@@ -161,7 +176,7 @@ module Analyzer::Java
     end
 
     private def collect_mapper_mounts(file : FileInfo,
-                                      page_mounts : Hash(String, Array(String)),
+                                      page_mounts : PageMountIndex,
                                       seen : Set(String))
       file[:content].scan(/\bnew\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)*([A-Za-z_][A-Za-z0-9_]*)\s*\(/) do |match|
         mapper_class = match[1]
@@ -184,13 +199,14 @@ module Analyzer::Java
 
         next if RESOURCE_MAPPER_CLASSES.includes?(mapper_class) || PACKAGE_MAPPER_CLASSES.includes?(mapper_class)
         if page_class = class_literal_name(arguments[1]?)
-          page_mounts[page_class] << normalized unless page_mounts[page_class].includes?(normalized)
+          key = scoped_class_key(file, page_class)
+          page_mounts[key] << normalized unless page_mounts[key].includes?(normalized)
         end
       end
     end
 
     private def collect_local_page_mount_helpers(file : FileInfo,
-                                                 page_mounts : Hash(String, Array(String)),
+                                                 page_mounts : PageMountIndex,
                                                  seen : Set(String))
       helper_methods = local_page_mount_helpers(file[:content])
       return if helper_methods.empty?
@@ -207,15 +223,16 @@ module Analyzer::Java
           add_endpoint(normalized, file[:path], line_for_offset(file[:content], offset), seen)
 
           if page_class = class_literal_name(arguments[indexes[1]]?)
-            page_mounts[page_class] << normalized unless page_mounts[page_class].includes?(normalized)
+            key = scoped_class_key(file, page_class)
+            page_mounts[key] << normalized unless page_mounts[key].includes?(normalized)
           end
         end
       end
     end
 
     private def collect_rest_resource_annotations(file : FileInfo,
-                                                  rest_routes : Hash(String, Array(RestRoute)),
-                                                  rest_mounts : Hash(String, RestMount))
+                                                  rest_routes : RestRouteIndex,
+                                                  rest_mounts : RestMountIndex)
       collect_resource_path_annotations(file, rest_mounts)
 
       class_name = first_class_name(file[:content])
@@ -253,8 +270,9 @@ module Analyzer::Java
       return if pending.empty?
 
       callee_map = method_callees_for(file, class_name, pending.map(&.[:method_name]))
+      key = scoped_class_key(file, class_name)
       pending.each do |entry|
-        rest_routes[class_name] << {
+        rest_routes[key] << {
           path:      entry[:path],
           method:    entry[:method],
           file_path: file[:path],
@@ -365,7 +383,7 @@ module Analyzer::Java
     end
 
     private def collect_resource_path_annotations(file : FileInfo,
-                                                  rest_mounts : Hash(String, RestMount))
+                                                  rest_mounts : RestMountIndex)
       file[:content].scan(/@(?:[A-Za-z_][A-Za-z0-9_]*\.)*ResourcePath\b/) do |match|
         marker = match.begin(0) || 0
         after = match.end(0) || marker
@@ -383,7 +401,7 @@ module Analyzer::Java
         next if class_name.empty?
 
         if mount_path = first_annotation_path_value(args, file[:constants])
-          rest_mounts[class_name] = {
+          rest_mounts[scoped_class_key(file, class_name)] = {
             path:      normalize_mount_path(mount_path),
             file_path: file[:path],
             line:      line_for_offset(file[:content], marker),
@@ -392,11 +410,11 @@ module Analyzer::Java
       end
     end
 
-    private def emit_resource_path_routes(rest_routes : Hash(String, Array(RestRoute)),
-                                          rest_mounts : Hash(String, RestMount),
+    private def emit_resource_path_routes(rest_routes : RestRouteIndex,
+                                          rest_mounts : RestMountIndex,
                                           seen : Set(String))
-      rest_mounts.each do |class_name, mount|
-        routes = rest_routes[class_name]?
+      rest_mounts.each do |class_key, mount|
+        routes = rest_routes[class_key]?
         if routes && !routes.empty?
           routes.each do |route|
             add_endpoint(join_mount_paths(mount[:path], route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees], route[:params])
@@ -437,7 +455,7 @@ module Analyzer::Java
     end
 
     private def collect_navigation_mounts(file : FileInfo,
-                                          page_mounts : Hash(String, Array(String)),
+                                          page_mounts : PageMountIndex,
                                           seen : Set(String))
       file[:content].scan(/\b(?:new\s+)?BookmarkablePageLink(?:\s*<[^;()]*>)?\s*\(/) do |match|
         open_idx = (match.end(0) || 1) - 1
@@ -454,7 +472,7 @@ module Analyzer::Java
     end
 
     private def emit_known_page_class_links(file : FileInfo,
-                                            page_mounts : Hash(String, Array(String)),
+                                            page_mounts : PageMountIndex,
                                             seen : Set(String),
                                             open_idx : Int32,
                                             offset : Int32)
@@ -466,12 +484,12 @@ module Analyzer::Java
     end
 
     private def emit_page_class_endpoints(file : FileInfo,
-                                          page_mounts : Hash(String, Array(String)),
+                                          page_mounts : PageMountIndex,
                                           seen : Set(String),
                                           page_classes : Array(String),
                                           offset : Int32)
       page_classes.uniq.each do |page_class|
-        page_mounts[page_class]?.try &.each do |mount_path|
+        page_mounts[scoped_class_key(file, page_class)]?.try &.each do |mount_path|
           add_endpoint(mount_path, file[:path], line_for_offset(file[:content], offset), seen)
         end
       end
@@ -752,16 +770,20 @@ module Analyzer::Java
       ""
     end
 
-    private def rest_resource_class_name(source : String, rest_routes : Hash(String, Array(RestRoute))) : String?
+    private def rest_resource_class_key(source : String, base : String, rest_routes : RestRouteIndex) : ScopedClassKey?
       source.scan(/\bnew\s+([A-Za-z_][A-Za-z0-9_.]*)\s*(?:<[^;()]*>)?\s*\(/) do |match|
         class_name = match[1].split('.').last
-        return class_name if rest_routes.has_key?(class_name)
+        key = scoped_class_key(base, class_name)
+        return key if rest_routes.has_key?(key)
       end
 
       source.scan(/\b([A-Za-z_][A-Za-z0-9_.]*)\s*\.class\b/) do |match|
         class_name = match[1].split('.').last
-        return class_name if rest_routes.has_key?(class_name)
+        key = scoped_class_key(base, class_name)
+        return key if rest_routes.has_key?(key)
       end
+
+      nil
     end
 
     private def http_method_name(expression : String) : String?

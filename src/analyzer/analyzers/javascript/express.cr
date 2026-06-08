@@ -45,10 +45,7 @@ module Analyzer::Javascript
             result << endpoint
           end
 
-          # Extract static path declarations
-          Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
-            static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-          end
+          collect_express_static_paths(path, content, static_dirs)
 
           # Parse Server style `this.route('METHOD', '/path', ...)`
           # declarations. The framework's PromiseRouter base class
@@ -113,24 +110,7 @@ module Analyzer::Javascript
 
     # Process static directories and add endpoints for each file
     private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      static_dirs.each do |dir|
-        full_path = (base_path + "/" + dir["file_path"]).gsub_repeatedly("//", "/")
-        static_path = dir["static_path"]
-        static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
-
-        get_files_by_prefix(full_path).each do |file_path|
-          if File.file?(file_path)
-            # Use lchop to only remove from the beginning of the string
-            relative_path = file_path.starts_with?(full_path) ? file_path.lchop(full_path) : file_path
-            url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
-            url = "/#{url}" unless url.starts_with?("/")
-
-            details = Details.new(PathInfo.new(file_path))
-            endpoint = Endpoint.new(url, "GET", details)
-            result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
-          end
-        end
-      end
+      process_js_static_dirs(static_dirs, result)
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
@@ -147,10 +127,7 @@ module Analyzer::Javascript
       # Handle app.route('/path').method1().method2() patterns
       handle_app_route_chaining(file_content, result, path)
 
-      # Extract static paths
-      Noir::JSRouteExtractor.extract_static_paths(file_content).each do |static_path|
-        static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-      end
+      collect_express_static_paths(path, file_content, static_dirs)
 
       # First analyze file for router imports and declarations
       file_content.each_line do |line|
@@ -878,6 +855,21 @@ module Analyzer::Javascript
       Noir::JSRouteExtractor.extract_body_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_header_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_cookie_params(handler_body, endpoint)
+    end
+
+    private def collect_express_static_paths(path : String, content : String, static_dirs : Array(Hash(String, String))) : Nil
+      return unless express_source?(content)
+
+      collect_static_paths(path, content, static_dirs, :express)
+    end
+
+    private def express_source?(content : String) : Bool
+      content.includes?("require('express')") ||
+        content.includes?("require(\"express\")") ||
+        content.includes?("from 'express'") ||
+        content.includes?("from \"express\"") ||
+        content.includes?("express()") ||
+        content.includes?("express.Router(")
     end
 
     # Scan for router mount patterns and store them in CodeLocator

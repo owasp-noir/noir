@@ -47,7 +47,7 @@ module Analyzer::Dart
 
           # Dart Frog mirrors the route tree under `test/routes/`; those
           # are mock handlers exercised by `dart test`, never live routes.
-          next if Helper.test_path?(path, @base_path)
+          next if Helper.test_path?(path, base_paths)
 
           idx = path.index("/routes/")
           next if idx.nil?

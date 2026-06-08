@@ -59,6 +59,10 @@ module Analyzer::Php
       base.ends_with?("Tests.php")
     end
 
+    protected def php_base_path_for(path : String) : String
+      configured_base_for(path)
+    end
+
     # Route composition helper. Will migrate to a PHP route extractor when that
     # layer is introduced; kept here for now so Laravel/CakePHP/Symfony stop
     # duplicating it.

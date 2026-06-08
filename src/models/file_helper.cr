@@ -1,5 +1,6 @@
 # This module provides helper methods to retrieve files from CodeLocator
 # instead of using Dir.glob, improving efficiency by reusing files already scanned
+require "../utils/path_scope"
 
 module FileHelper
   # Version-control / OS placeholder files that sit inside `public/`
@@ -15,9 +16,26 @@ module FileHelper
     locator.all("file_map")
   end
 
+  # `{original, expanded}` pairs for every file, expanded once and cached
+  # in CodeLocator. The boundary helpers below re-scan the file list once
+  # per base path per analyzer; reusing the pre-expanded paths keeps the
+  # monorepo cost off the O(bases) multiplier.
+  private def all_files_expanded : Array(Tuple(String, String))
+    CodeLocator.instance.expanded_file_map
+  end
+
   # Get files filtered by path prefix
   def get_files_by_prefix(prefix : String) : Array(String)
-    all_files.select { |file| file.starts_with?(prefix) && !File.directory?(file) }
+    return all_files.select { |file| !File.directory?(file) } if prefix.empty?
+
+    root = expanded_root_for(prefix)
+    result = [] of String
+    all_files_expanded.each do |file, expanded|
+      next unless Noir::PathScope.under_normalized_root?(expanded, root)
+      next if File.directory?(file)
+      result << file
+    end
+    result
   end
 
   # Get files filtered by extension (uses cached index for O(1) lookup)
@@ -27,7 +45,17 @@ module FileHelper
 
   # Get files filtered by both prefix and extension
   def get_files_by_prefix_and_extension(prefix : String, extension : String) : Array(String)
-    all_files.select { |file| file.starts_with?(prefix) && !File.directory?(file) && File.extname(file) == extension }
+    return all_files.select { |file| !File.directory?(file) && File.extname(file) == extension } if prefix.empty?
+
+    root = expanded_root_for(prefix)
+    result = [] of String
+    all_files_expanded.each do |file, expanded|
+      next unless Noir::PathScope.under_normalized_root?(expanded, root)
+      next if File.directory?(file)
+      next unless File.extname(file) == extension
+      result << file
+    end
+    result
   end
 
   # Get public files (files that should be served as static content)
@@ -44,59 +72,83 @@ module FileHelper
   # `App/public/secret.html` — `App/public/*` no longer surfaced
   # because there was no sibling `shard.yml`.
   def get_public_files(base_path : String, anchors : Array(String) = ["shard.yml", "Gemfile"]) : Array(String)
-    files = all_files
+    pairs = all_files_expanded
+    base_root = base_path.empty? ? nil : expanded_root_for(base_path)
 
     # Collect directories that are valid `public/` roots: each is
     # the dirname of an anchor file under base_path, with `public/`
     # appended. Cache once so the per-file filter below is O(1)
     # instead of O(N) on the anchor tree.
     project_public_roots = Set(String).new
-    files.each do |f|
+    pairs.each do |f, expanded|
       next unless anchors.includes?(File.basename(f))
-      next unless f.starts_with?(base_path)
-      project_public_roots << File.join(File.dirname(f), "public")
+      next unless base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)
+      project_public_roots << Noir::PathScope.normalize_root(File.join(File.dirname(f), "public"))
     end
 
-    files.select do |file|
-      next false unless file.starts_with?(base_path)
-      next false if File.directory?(file)
-      next false if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-      project_public_roots.any? { |root| file.starts_with?(root + "/") }
+    result = [] of String
+    pairs.each do |file, expanded|
+      next unless base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)
+      next if File.directory?(file)
+      next if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
+      result << file if project_public_roots.any? { |root| expanded != root && Noir::PathScope.under_normalized_root?(expanded, root) }
     end
+    result
   end
 
   # Helper to get public directories content from anywhere in the project
   def get_public_dir_files(base_path : String, folder : String) : Array(String)
-    # Get all files in the project
-    files = all_files
+    base_root = base_path.empty? ? nil : expanded_root_for(base_path)
 
     # Normalize folder path
     normalized_folder = folder.strip
 
     # Handle different folder specification formats
-    public_dir_files = files.select do |file|
+    public_dir_files = [] of String
+    all_files_expanded.each do |file, expanded|
       # Ignore directories
-      next false if File.directory?(file)
+      next if File.directory?(file)
       # Ignore VC/OS placeholder files (never served).
-      next false if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
+      next if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
 
       # Case 1: Folder is a full path
-      if normalized_folder.includes?("/")
-        # If folder is an absolute path like "/var/www/assets"
-        if normalized_folder.starts_with?("/")
-          file.starts_with?(normalized_folder) && !File.directory?(file)
-          # If folder is a relative path from base_path like "assets" or "public/assets"
+      match =
+        if normalized_folder.includes?("/")
+          # If folder is an absolute path like "/var/www/assets"
+          if normalized_folder.starts_with?("/")
+            Noir::PathScope.under_normalized_root?(expanded, expanded_root_for(normalized_folder))
+            # If folder is a relative path from base_path like "assets" or "public/assets"
+          else
+            combined_root = expanded_root_for("#{base_path}/#{normalized_folder}")
+            Noir::PathScope.under_normalized_root?(expanded, combined_root)
+          end
+          # Case 2: Folder is just a name like "assets"
         else
-          combined_path = "#{base_path}/#{normalized_folder}"
-          file.starts_with?(combined_path) && !File.directory?(file)
+          # Match files under this configured base that have the folder name
+          # as a directory component. `file_map` spans every configured
+          # base_path, so this must stay scoped to the base currently being
+          # processed.
+          (base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)) && file.includes?("/#{normalized_folder}/")
         end
-        # Case 2: Folder is just a name like "assets"
-      else
-        # Match files that have the folder name as a directory component
-        file.includes?("/#{normalized_folder}/") && !File.directory?(file)
-      end
+
+      public_dir_files << file if match
     end
 
     public_dir_files
+  end
+
+  protected def path_under_root?(path : String, root : String) : Bool
+    return true if root.empty?
+    Noir::PathScope.under_normalized_root?(CodeLocator.instance.expanded_path_for(path), expanded_root_for(root))
+  end
+
+  # `root` is almost always loop-invariant across a `select`/scan over
+  # thousands of files (it's a configured base path or a resolved static
+  # dir), so memoise its normalised form instead of re-running
+  # `File.expand_path` per file. The distinct-root set is tiny — typically
+  # one entry per configured base path.
+  private def expanded_root_for(root : String) : String
+    cache = (@expanded_root_cache ||= {} of String => String)
+    cache[root] ||= Noir::PathScope.normalize_root(root)
   end
 end

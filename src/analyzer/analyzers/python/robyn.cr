@@ -24,19 +24,17 @@ module Analyzer::Python
     WEBSOCKET_ATTRIBUTES   = {"websocket" => "GET"}
 
     def analyze
-      router_prefixes = Hash(::String, ::String).new
-      # `app` is the canonical Robyn instance name — accept it implicitly
-      # so a fresh fixture without an explicit prefix registration still
-      # surfaces routes.
-      router_prefixes["app"] = ""
-
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
-        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
+        router_prefixes = Hash(::String, ::String).new
+        # `app` is the canonical Robyn instance name — accept it implicitly
+        # so a fresh fixture without an explicit prefix registration still
+        # surfaces routes.
+        router_prefixes["app"] = ""
         python_files.each do |path|
-          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+          next unless path_under_root?(path, current_base_path)
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path, @base_path)
+          next if python_test_path?(path)
 
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
             file_content = file.gets_to_end

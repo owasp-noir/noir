@@ -1,0 +1,9 @@
+[package]
+name = "axum_utoipa_multi_base_service_b"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+utoipa = "5"
+utoipa-axum = "0.2"

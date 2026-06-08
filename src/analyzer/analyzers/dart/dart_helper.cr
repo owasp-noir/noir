@@ -1,3 +1,5 @@
+require "../../../utils/path_scope"
+
 module Analyzer::Dart
   # Shared helpers for the Dart framework analyzers (Dart Frog, Shelf,
   # Serverpod). Kept framework-agnostic so each analyzer can opt in
@@ -11,7 +13,7 @@ module Analyzer::Dart
     # in particular mirrors the route tree under `test/routes/`, so a
     # naive `/routes/` match would surface every mock handler as a live
     # endpoint. Centralized so every Dart analyzer can opt in via
-    # `next if Helper.test_path?(path, @base_path)`.
+    # `next if Helper.test_path?(path, base_paths)`.
     #
     #   * `/test/`, `test/` — Dart's `dart test` discovery root and the
     #                         Dart Frog `test/routes/` mirror tree
@@ -21,6 +23,10 @@ module Analyzer::Dart
       return true if relative.includes?("/test/")
       return true if relative.starts_with?("test/")
       File.basename(path).ends_with?("_test.dart")
+    end
+
+    def test_path?(path : String, base_paths : Array(String)) : Bool
+      test_path?(path, base_path_for(path, base_paths))
     end
 
     # Replace `//` line and `/* */` block comments with spaces, leaving
@@ -108,18 +114,11 @@ module Analyzer::Dart
     end
 
     private def relative_for_match(path : String, base_path : String?) : String
-      if base_path.nil? || base_path.empty?
-        return File.basename(path)
-      end
+      Noir::PathScope.relative_under(path, base_path)
+    end
 
-      expanded_path = File.expand_path(path)
-      expanded_base = File.expand_path(base_path)
-      unless expanded_path == expanded_base || expanded_path.starts_with?(expanded_base + File::SEPARATOR)
-        return File.basename(path)
-      end
-
-      relative = expanded_path[expanded_base.size..].lchop(File::SEPARATOR)
-      relative.empty? ? File.basename(path) : relative
+    private def base_path_for(path : String, base_paths : Array(String)) : String?
+      Noir::PathScope.longest_base(path, base_paths)
     end
   end
 end

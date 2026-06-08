@@ -64,11 +64,15 @@ module Analyzer::Lua
     private def lapis_test_path?(path : String) : Bool
       base = File.basename(path)
       return true if base.ends_with?("_spec.lua") || base.ends_with?("_spec.moon")
+      expanded_path = File.expand_path(path)
+
       base_paths.any? do |root|
-        normalized = root.ends_with?("/") ? root : "#{root}/"
-        tail = path.lchop?(normalized)
-        next false unless tail
-        tail.split('/').any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
+        next false unless path_under_root?(expanded_path, root)
+
+        expanded_root = File.expand_path(root)
+        expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
+        tail = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
+        tail.split(File::SEPARATOR).any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
       end
     end
 

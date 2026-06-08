@@ -25,7 +25,7 @@ module Analyzer::Rust
     # qualified (`mod::handler`) refs are globalised — bare `.service(handler)`
     # refs stay file-local so identically named handlers across the standalone
     # sub-apps of an example monorepo don't cross-contaminate.
-    @cross_file_scope_regs : Array(NamedTuple(ref: String, prefix: String))? = nil
+    @cross_file_scope_regs : Array(NamedTuple(base: String, ref: String, prefix: String))? = nil
 
     # Cross-file `.configure()` prefixes. A scope delegates its body to a
     # function in another file: `web::scope("/auth").configure(|cfg|
@@ -35,7 +35,7 @@ module Analyzer::Rust
     # that function's file, with no visible scope, so they lose the `/auth` /
     # `/api` prefix. `analyze` records each configured fn's scope prefix(es)
     # up front; the builder pass prepends them to routes emitted inside the fn.
-    @configure_fn_prefix : Array(NamedTuple(ref: String, prefix: String, source_path: String))? = nil
+    @configure_fn_prefix : Array(NamedTuple(base: String, ref: String, prefix: String, source_path: String))? = nil
     @global_function_index : Array(NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, body_text: String?, body_start_line: Int32))? = nil
     @project_import_aliases : Hash(String, String)? = nil
 
@@ -256,19 +256,20 @@ module Analyzer::Rust
     # `.service(mod::handler)` registration's fully composed scope prefix.
     # Gated to files that actually carry both a `scope(` and a `.service(`
     # (router-setup files) so handler-only files cost nothing here.
-    private def build_cross_file_scope_registrations : Array(NamedTuple(ref: String, prefix: String))
-      regs = [] of NamedTuple(ref: String, prefix: String)
+    private def build_cross_file_scope_registrations : Array(NamedTuple(base: String, ref: String, prefix: String))
+      regs = [] of NamedTuple(base: String, ref: String, prefix: String)
       all_files.each do |path|
         next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".rs"
         next if RustEngine.test_path?(path)
+        base = configured_base_for(path)
         src = read_file_content(path)
         next unless src.includes?("scope(") && src.includes?(".service(")
         begin
           glob_contexts = import_glob_contexts(src)
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
-            collect_qualified_registrations(root, src, test_regions, "", glob_contexts, regs)
+            collect_qualified_registrations(root, src, test_regions, "", base, glob_contexts, regs)
           end
         rescue e
           logger.debug "actix cross-file scope scan error #{path}: #{e}"
@@ -284,8 +285,9 @@ module Analyzer::Rust
                                                 source : String,
                                                 test_regions : Array(Tuple(Int32, Int32)),
                                                 active_prefix : String,
+                                                base : String,
                                                 glob_contexts : Array(String),
-                                                regs : Array(NamedTuple(ref: String, prefix: String)))
+                                                regs : Array(NamedTuple(base: String, ref: String, prefix: String)))
       if Noir::TreeSitter.node_type(node) == "call_expression"
         return if RustEngine.inside_test_region?(node, test_regions)
 
@@ -304,25 +306,25 @@ module Analyzer::Rust
           arg = named[0]
           case Noir::TreeSitter.node_type(arg)
           when "scoped_identifier"
-            regs << {ref: Noir::TreeSitter.node_text(arg, source), prefix: service_prefix}
+            regs << {base: base, ref: Noir::TreeSitter.node_text(arg, source), prefix: service_prefix}
           when "identifier"
             unless service_prefix.empty? || glob_contexts.empty?
               name = Noir::TreeSitter.node_text(arg, source)
               glob_contexts.each do |context|
-                regs << {ref: "#{context}::#{name}", prefix: service_prefix}
+                regs << {base: base, ref: "#{context}::#{name}", prefix: service_prefix}
               end
             end
           else
-            collect_qualified_registrations(arg, source, test_regions, service_prefix, glob_contexts, regs)
+            collect_qualified_registrations(arg, source, test_regions, service_prefix, base, glob_contexts, regs)
           end
 
-          collect_qualified_registrations(receiver, source, test_regions, active_prefix, glob_contexts, regs) if receiver
+          collect_qualified_registrations(receiver, source, test_regions, active_prefix, base, glob_contexts, regs) if receiver
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_qualified_registrations(child, source, test_regions, active_prefix, glob_contexts, regs)
+        collect_qualified_registrations(child, source, test_regions, active_prefix, base, glob_contexts, regs)
       end
     end
 
@@ -336,8 +338,10 @@ module Analyzer::Rust
     private def lookup_cross_file_prefixes(name : String, file_path : String) : Array(String)?
       regs = @cross_file_scope_regs
       return unless regs
+      base = configured_base_for(file_path)
       matched = [] of String
       regs.each do |r|
+        next unless r[:base] == base
         next unless ref_leaf(r[:ref]) == name
         matched << r[:prefix] if ref_matches_file?(r[:ref], file_path)
       end
@@ -377,12 +381,13 @@ module Analyzer::Rust
     # Scan the project for `web::scope("/p").configure(fn)` /
     # `.configure(|cfg| mod::fn(cfg, ...))` and record each configured fn's
     # composed scope prefix(es).
-    private def build_configure_fn_prefix : Array(NamedTuple(ref: String, prefix: String, source_path: String))
-      result = [] of NamedTuple(ref: String, prefix: String, source_path: String)
+    private def build_configure_fn_prefix : Array(NamedTuple(base: String, ref: String, prefix: String, source_path: String))
+      result = [] of NamedTuple(base: String, ref: String, prefix: String, source_path: String)
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(fpath)
+        base = configured_base_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?(".configure(") && src.includes?("scope(")
         begin
@@ -409,7 +414,7 @@ module Analyzer::Rust
               next unless first
               ref = configure_target_ref(first, src, aliases)
               next unless ref
-              entry = {ref: ref, prefix: prefix, source_path: fpath}
+              entry = {base: base, ref: ref, prefix: prefix, source_path: fpath}
               result << entry unless result.includes?(entry)
             end
           end
@@ -541,8 +546,10 @@ module Analyzer::Rust
     private def lookup_configure_prefixes(name : String, file_path : String) : Array(String)?
       regs = @configure_fn_prefix
       return unless regs
+      base = configured_base_for(file_path)
       matched = [] of String
       regs.each do |r|
+        next unless r[:base] == base
         next unless ref_leaf(r[:ref]) == name
         next unless ref_matches_file?(r[:ref], file_path, r[:source_path])
         matched << r[:prefix] unless matched.includes?(r[:prefix])

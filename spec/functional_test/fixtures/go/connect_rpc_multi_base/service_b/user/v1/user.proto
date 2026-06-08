@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package serviceb.v1;
+
+service UserService {
+  rpc Get(GetUserRequest) returns (GetUserResponse);
+}
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {}

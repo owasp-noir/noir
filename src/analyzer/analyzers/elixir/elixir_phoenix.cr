@@ -4,9 +4,12 @@ require "../../../utils/url_path"
 module Analyzer::Elixir
   class Phoenix < ElixirEngine
     alias ScopeEntry = NamedTuple(prefix: String, module_prefix: String, indent: Int32)
+    # Route-map keys carry the configured base so multi-base (monorepo)
+    # scans keep each service's controller/action mapping isolated.
+    alias RouteMapKey = Tuple(String, String)
 
     # Store mapping of route -> controller/action for parameter extraction
-    @route_map : Hash(String, ControllerAction) = Hash(String, ControllerAction).new
+    @route_map : Hash(RouteMapKey, ControllerAction) = Hash(RouteMapKey, ControllerAction).new
     @route_macros : Hash(String, RouteMacro) = Hash(String, RouteMacro).new
 
     struct ControllerAction
@@ -58,6 +61,7 @@ module Analyzer::Elixir
     def analyze_file(path : String) : Array(Endpoint)
       return [] of Endpoint unless File.extname(path) == ".ex"
 
+      base = configured_base_for(path)
       endpoints = [] of Endpoint
       scope_stack = [] of ScopeEntry
       string_bindings = Hash(String, String).new
@@ -144,7 +148,7 @@ module Analyzer::Elixir
         # statement, so assemble it before extracting routes.
         if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
           statement, consumed = assemble_statement(lines, index)
-          res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, string_bindings)
+          res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, base, string_bindings)
           res_endpoints.each do |endpoint|
             next if endpoint.method.empty?
             endpoint.details = Details.new(PathInfo.new(path, index + 1))
@@ -158,7 +162,7 @@ module Analyzer::Elixir
           next
         end
 
-        line_to_endpoint(line, path, scope_prefix, scope_module, string_bindings).each do |endpoint|
+        line_to_endpoint(line, path, scope_prefix, scope_module, base, string_bindings).each do |endpoint|
           next if endpoint.method.empty?
           endpoint.details = Details.new(PathInfo.new(path, index + 1))
           endpoints << endpoint
@@ -254,10 +258,9 @@ module Analyzer::Elixir
       # Find all controller files and extract parameters. Pulls from the
       # detector-built file_map so subtree pruning and --exclude-path
       # apply to this pass too.
-      base_dir_prefixes = base_paths.map { |bp| bp.ends_with?("/") ? bp : "#{bp}/" }
       controller_files = get_files_by_extension(".ex").select do |path|
         next false unless path.ends_with?("_controller.ex")
-        base_paths.includes?(path) || base_dir_prefixes.any? { |p| path.starts_with?(p) }
+        base_paths.any? { |base| path_under_root?(path, base) }
       end
 
       controller_files.each do |controller_path|
@@ -279,7 +282,7 @@ module Analyzer::Elixir
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
       lines = content.lines
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      endpoints_by_action = endpoints_for_controller(controller_name)
+      endpoints_by_action = endpoints_for_controller(controller_name, controller_path)
 
       index = 0
       while index < lines.size
@@ -549,6 +552,7 @@ module Analyzer::Elixir
                                            outer_scope_prefix : String,
                                            outer_scope_module : String) : Array(Endpoint)
       route_macro = invocation.route_macro
+      base = configured_base_for(path)
       bindings = route_macro.default_bindings.dup
       route_macro.param_names.each_with_index do |param_name, index|
         if value = invocation.positional_args[index]?
@@ -603,7 +607,7 @@ module Analyzer::Elixir
 
         if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
           statement, consumed = assemble_statement(route_macro.body_lines, index)
-          res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, bindings)
+          res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, base, bindings)
           res_endpoints.each do |endpoint|
             endpoint.details = Details.new(PathInfo.new(path, call_line))
             endpoints << endpoint
@@ -616,7 +620,7 @@ module Analyzer::Elixir
           next
         end
 
-        line_to_endpoint(line, path, scope_prefix, scope_module, bindings).each do |endpoint|
+        line_to_endpoint(line, path, scope_prefix, scope_module, base, bindings).each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(path, call_line))
           endpoints << endpoint
         end
@@ -627,11 +631,15 @@ module Analyzer::Elixir
       endpoints
     end
 
-    private def endpoints_for_controller(controller_name : String) : Hash(String, Array(Endpoint))
+    private def endpoints_for_controller(controller_name : String, controller_path : String) : Hash(String, Array(Endpoint))
       endpoints_by_action = Hash(String, Array(Endpoint)).new { |hash, key| hash[key] = [] of Endpoint }
+      base = configured_base_for(controller_path)
 
       @result.each do |endpoint|
-        route_key = "#{endpoint.method}::#{endpoint.url}"
+        route_key = endpoint_route_map_key(endpoint)
+        # Keep param extraction scoped to the controller's own base so a
+        # monorepo's sibling services don't borrow each other's params.
+        next unless route_key[0] == base
         next unless mapping = @route_map[route_key]?
         next unless controller_refs_match?(controller_name, mapping.controller)
 
@@ -641,11 +649,24 @@ module Analyzer::Elixir
       endpoints_by_action
     end
 
+    # Route-map key for a recorded route: the configured base plus the
+    # `METHOD::path` discriminator.
+    private def route_map_key(base : String, method : String, path : String) : RouteMapKey
+      {base, "#{method}::#{path}"}
+    end
+
+    # Route-map key for an already-emitted endpoint, deriving its base from
+    # the route file the endpoint was discovered in.
+    private def endpoint_route_map_key(endpoint : Endpoint) : RouteMapKey
+      route_path = endpoint.details.code_paths.first?
+      base = route_path ? configured_base_for(route_path.path) : @base_path
+      {base, "#{endpoint.method}::#{endpoint.url}"}
+    end
+
     def should_extract_params_for_endpoint?(endpoint : Endpoint, controller_name : String, action_name : String) : Bool
       # Check if the endpoint's route_map entry matches this controller/action
-      route_key = "#{endpoint.method}::#{endpoint.url}"
-      if @route_map.has_key?(route_key)
-        mapping = @route_map[route_key]
+      route_key = endpoint_route_map_key(endpoint)
+      if mapping = @route_map[route_key]?
         return controller_refs_match?(controller_name, mapping.controller) && mapping.action == action_name
       end
 
@@ -845,17 +866,18 @@ module Analyzer::Elixir
                          file_path : String,
                          scope_prefix : String = "",
                          scope_module : String = "",
+                         base : String = @base_path,
                          string_bindings : Hash(String, String) = Hash(String, String).new) : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
       # Standard HTTP methods - extract controller and action info
-      add_standard_route(endpoints, line, "get", "GET", scope_prefix, scope_module, string_bindings)
-      add_standard_route(endpoints, line, "post", "POST", scope_prefix, scope_module, string_bindings)
-      add_standard_route(endpoints, line, "patch", "PATCH", scope_prefix, scope_module, string_bindings)
-      add_standard_route(endpoints, line, "put", "PUT", scope_prefix, scope_module, string_bindings)
-      add_standard_route(endpoints, line, "delete", "DELETE", scope_prefix, scope_module, string_bindings)
-      add_standard_route(endpoints, line, "options", "OPTIONS", scope_prefix, scope_module, string_bindings)
-      add_standard_route(endpoints, line, "head", "HEAD", scope_prefix, scope_module, string_bindings)
+      add_standard_route(endpoints, line, "get", "GET", scope_prefix, scope_module, base, string_bindings)
+      add_standard_route(endpoints, line, "post", "POST", scope_prefix, scope_module, base, string_bindings)
+      add_standard_route(endpoints, line, "patch", "PATCH", scope_prefix, scope_module, base, string_bindings)
+      add_standard_route(endpoints, line, "put", "PUT", scope_prefix, scope_module, base, string_bindings)
+      add_standard_route(endpoints, line, "delete", "DELETE", scope_prefix, scope_module, base, string_bindings)
+      add_standard_route(endpoints, line, "options", "OPTIONS", scope_prefix, scope_module, base, string_bindings)
+      add_standard_route(endpoints, line, "head", "HEAD", scope_prefix, scope_module, base, string_bindings)
 
       # Socket routes
       line.scan(/(?:^|[^.\w])socket\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
@@ -884,7 +906,7 @@ module Analyzer::Elixir
         controller_action = via_match[3]
         via_match[4].scan(/:(\w+)/) do |method_match|
           http_method = method_match[1].upcase
-          @route_map["#{http_method}::#{path}"] = ControllerAction.new(controller, controller_action)
+          @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(controller, controller_action)
           endpoints << Endpoint.new(path, http_method)
         end
       end
@@ -895,7 +917,7 @@ module Analyzer::Elixir
         controller_action = match[4]
         controller = resolve_unquoted_ref(match[3], string_bindings)
         http_methods.each do |http_method|
-          @route_map["#{http_method}::#{path}"] = ControllerAction.new(scoped_controller(scope_module, controller), controller_action) if controller
+          @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(scoped_controller(scope_module, controller), controller_action) if controller
           endpoints << Endpoint.new(path, http_method)
         end
       end
@@ -910,6 +932,7 @@ module Analyzer::Elixir
     private def resources_from_statement(statement : String,
                                          scope_prefix : String,
                                          scope_module : String,
+                                         base : String,
                                          string_bindings : Hash(String, String)) : Tuple(Array(Endpoint), String?)
       endpoints = Array(Endpoint).new
 
@@ -948,27 +971,27 @@ module Analyzer::Elixir
       actions.each do |action|
         case action
         when "index"
-          @route_map["GET::#{base_path}"] = ControllerAction.new(scoped_controller(scope_module, controller), "index") if controller
+          @route_map[route_map_key(base, "GET", base_path)] = ControllerAction.new(scoped_controller(scope_module, controller), "index") if controller
           endpoints << Endpoint.new(base_path, "GET")
         when "show"
-          @route_map["GET::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "show") if controller
+          @route_map[route_map_key(base, "GET", member)] = ControllerAction.new(scoped_controller(scope_module, controller), "show") if controller
           endpoints << Endpoint.new(member, "GET")
         when "create"
-          @route_map["POST::#{base_path}"] = ControllerAction.new(scoped_controller(scope_module, controller), "create") if controller
+          @route_map[route_map_key(base, "POST", base_path)] = ControllerAction.new(scoped_controller(scope_module, controller), "create") if controller
           endpoints << Endpoint.new(base_path, "POST")
         when "update"
-          @route_map["PUT::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "update") if controller
+          @route_map[route_map_key(base, "PUT", member)] = ControllerAction.new(scoped_controller(scope_module, controller), "update") if controller
           endpoints << Endpoint.new(member, "PUT")
-          @route_map["PATCH::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "update") if controller
+          @route_map[route_map_key(base, "PATCH", member)] = ControllerAction.new(scoped_controller(scope_module, controller), "update") if controller
           endpoints << Endpoint.new(member, "PATCH")
         when "delete"
-          @route_map["DELETE::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "delete") if controller
+          @route_map[route_map_key(base, "DELETE", member)] = ControllerAction.new(scoped_controller(scope_module, controller), "delete") if controller
           endpoints << Endpoint.new(member, "DELETE")
         when "new"
-          @route_map["GET::#{base_path}/new"] = ControllerAction.new(scoped_controller(scope_module, controller), "new") if controller
+          @route_map[route_map_key(base, "GET", "#{base_path}/new")] = ControllerAction.new(scoped_controller(scope_module, controller), "new") if controller
           endpoints << Endpoint.new("#{base_path}/new", "GET")
         when "edit"
-          @route_map["GET::#{member}/edit"] = ControllerAction.new(scoped_controller(scope_module, controller), "edit") if controller
+          @route_map[route_map_key(base, "GET", "#{member}/edit")] = ControllerAction.new(scoped_controller(scope_module, controller), "edit") if controller
           endpoints << Endpoint.new("#{member}/edit", "GET")
         end
       end
@@ -1005,13 +1028,14 @@ module Analyzer::Elixir
                                    http_method : String,
                                    scope_prefix : String,
                                    scope_module : String,
+                                   base : String,
                                    string_bindings : Hash(String, String))
       pattern = Regex.new("(?:^|[^.\\w])#{route_macro}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))\\s*,\\s*:(\\w+[!?]?)")
       line.scan(pattern) do |match|
         full_path = scoped_route_path(scope_prefix, match[1])
         endpoint = Endpoint.new(full_path, http_method)
         if controller = resolve_unquoted_ref(match[2], string_bindings)
-          @route_map["#{http_method}::#{full_path}"] = ControllerAction.new(scoped_controller(scope_module, controller), match[3])
+          @route_map[route_map_key(base, http_method, full_path)] = ControllerAction.new(scoped_controller(scope_module, controller), match[3])
         end
         endpoints << endpoint
       end

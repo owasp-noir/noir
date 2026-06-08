@@ -12,13 +12,17 @@ module Analyzer::Rust
   # `CookieJar` / `headers().get(...)` body uses.
   class Rocket < RustEngine
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+    alias ScopedRouteKey = Tuple(String, String, String)
+    alias AliasKey = Tuple(String, String)
+    alias RouteLeaf = Tuple(String, String?)
+    alias MountEntry = Tuple(String, Symbol, Array(RouteLeaf), String?, String, String)
 
     # Cross-file `.mount()` prefix composition. A Rocket handler's real URL
     # is its `#[get("/x")]` attribute path prefixed by the base it is mounted
     # under — but the `.mount("/api", routes![...])` call lives in `main.rs`
     # while the handler lives in another module, so the per-file pass emits
     # `/x` instead of `/api/x`. `analyze` walks the project once up front to
-    # build a `{module, handler_leaf} => [prefix]` index, resolving:
+    # build a `{base_path, module, handler_leaf} => [prefix]` index, resolving:
     #   * direct `.mount("/p", routes![a, mod::b])`,
     #   * `.mount(prefix, route_fn())` where `route_fn` returns `routes![...]`
     #     (and recursively `routes.append(&mut submod::routes())`),
@@ -28,7 +32,7 @@ module Analyzer::Rust
     # (or the ref's own module when qualified) so a handler only inherits a
     # prefix when it lives in the registering module — names shared across
     # modules never cross-contaminate.
-    @mount_index : Hash(Tuple(String, String), Array(String))? = nil
+    @mount_index : Hash(ScopedRouteKey, Array(String))? = nil
 
     def analyze
       @mount_index = build_mount_index
@@ -88,46 +92,47 @@ module Analyzer::Rust
     # Walk the whole project once, gathering `use ... as alias;` re-exports,
     # every `fn routes()`-style route collector's leaves + sub-collector
     # calls, and every `.mount(prefix, ...)`. Resolve them into a
-    # `{module, handler_leaf} => [prefix]` index.
-    private def build_mount_index : Hash(Tuple(String, String), Array(String))
-      alias_map = {} of String => String
-      fn_leaves = {} of String => Array(Tuple(String, String?))
-      fn_appends = {} of String => Array(String)
-      mounts = [] of Tuple(String, Symbol, Array(Tuple(String, String?)), String?, String)
+    # `{base_path, module, handler_leaf} => [prefix]` index.
+    private def build_mount_index : Hash(ScopedRouteKey, Array(String))
+      alias_map = {} of AliasKey => String
+      fn_leaves = {} of ScopedRouteKey => Array(RouteLeaf)
+      fn_appends = {} of ScopedRouteKey => Array(String)
+      mounts = [] of MountEntry
 
       all_files.each do |path|
         next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".rs"
         next if RustEngine.test_path?(path)
+        base = configured_base_for(path)
         src = read_file_content(path)
         next unless src.includes?("routes!") || src.includes?(".mount(") || src.includes?("routes as")
         file_mod = primary_module(path)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
-            collect_use_aliases(root, src, alias_map)
-            collect_route_fns(root, src, file_mod, test_regions, fn_leaves, fn_appends)
-            collect_mounts(root, src, file_mod, test_regions, mounts)
+            collect_use_aliases(root, src, base, alias_map)
+            collect_route_fns(root, src, base, file_mod, test_regions, fn_leaves, fn_appends)
+            collect_mounts(root, src, base, file_mod, test_regions, mounts)
           end
         rescue e
           logger.debug "rocket mount-index scan error #{path}: #{e}"
         end
       end
 
-      index = {} of Tuple(String, String) => Array(String)
-      mounts.each do |prefix, kind, list_leaves, call_ref, file_mod|
+      index = {} of ScopedRouteKey => Array(String)
+      mounts.each do |prefix, kind, list_leaves, call_ref, base, file_mod|
         leaves =
           if kind == :list
             list_leaves
           else
-            resolved = [] of Tuple(String, String?)
+            resolved = [] of RouteLeaf
             if cr = call_ref
-              resolve_route_fn(cr, alias_map, fn_leaves, fn_appends, Set(String).new, resolved)
+              resolve_route_fn(cr, base, alias_map, fn_leaves, fn_appends, Set(ScopedRouteKey).new, resolved)
             end
             resolved
           end
         leaves.each do |leaf, mod_opt|
-          key = {mod_opt || file_mod, leaf}
+          key = {base, mod_opt || file_mod, leaf}
           bucket = (index[key] ||= [] of String)
           bucket << prefix unless bucket.includes?(prefix)
         end
@@ -137,7 +142,7 @@ module Analyzer::Rust
 
     # `core::routes as core_routes` -> alias_map["core_routes"] = "core::routes"
     # (last two segments of the re-export path).
-    private def collect_use_aliases(node : LibTreeSitter::TSNode, source : String, alias_map : Hash(String, String))
+    private def collect_use_aliases(node : LibTreeSitter::TSNode, source : String, base : String, alias_map : Hash(AliasKey, String))
       walk(node) do |n|
         next unless Noir::TreeSitter.node_type(n) == "use_as_clause"
         path = Noir::TreeSitter.field(n, "path")
@@ -145,7 +150,7 @@ module Analyzer::Rust
         next unless path && ali
         segs = Noir::TreeSitter.node_text(path, source).split("::")
         target = segs.size >= 2 ? "#{segs[-2]}::#{segs[-1]}" : segs[-1]
-        alias_map[Noir::TreeSitter.node_text(ali, source)] = target
+        alias_map[{base, Noir::TreeSitter.node_text(ali, source)}] = target
       end
     end
 
@@ -153,9 +158,10 @@ module Analyzer::Rust
     # leaves (keyed `module::fnname`) and any `submod::routes()` sub-collector
     # calls (for the `routes.append(&mut submod::routes())` aggregation form).
     private def collect_route_fns(node : LibTreeSitter::TSNode, source : String,
+                                  base : String,
                                   file_mod : String, test_regions : Array(Tuple(Int32, Int32)),
-                                  fn_leaves : Hash(String, Array(Tuple(String, String?))),
-                                  fn_appends : Hash(String, Array(String)))
+                                  fn_leaves : Hash(ScopedRouteKey, Array(RouteLeaf)),
+                                  fn_appends : Hash(ScopedRouteKey, Array(String)))
       walk(node) do |n|
         next unless Noir::TreeSitter.node_type(n) == "function_item"
         next if RustEngine.inside_test_region?(n, test_regions)
@@ -163,7 +169,7 @@ module Analyzer::Rust
         body = Noir::TreeSitter.field(n, "body")
         next unless name_node && body
 
-        leaves = [] of Tuple(String, String?)
+        leaves = [] of RouteLeaf
         appends = [] of String
         walk(body) do |b|
           case Noir::TreeSitter.node_type(b)
@@ -179,7 +185,7 @@ module Analyzer::Rust
           end
         end
         next if leaves.empty? && appends.empty?
-        key = "#{file_mod}::#{Noir::TreeSitter.node_text(name_node, source)}"
+        key = {base, file_mod, Noir::TreeSitter.node_text(name_node, source)}
         fn_leaves[key] = leaves
         fn_appends[key] = appends
       end
@@ -188,8 +194,8 @@ module Analyzer::Rust
     # Find every `.mount(prefix, arg)` call and record it as either a direct
     # `routes![...]` leaf list or a deferred route-collector call to resolve.
     private def collect_mounts(node : LibTreeSitter::TSNode, source : String,
-                               file_mod : String, test_regions : Array(Tuple(Int32, Int32)),
-                               mounts : Array(Tuple(String, Symbol, Array(Tuple(String, String?)), String?, String)))
+                               base : String, file_mod : String, test_regions : Array(Tuple(Int32, Int32)),
+                               mounts : Array(MountEntry))
       walk(node) do |n|
         next unless Noir::TreeSitter.node_type(n) == "call_expression"
         next if RustEngine.inside_test_region?(n, test_regions)
@@ -208,16 +214,16 @@ module Analyzer::Rust
         arg = named[1]
         case Noir::TreeSitter.node_type(arg)
         when "macro_invocation"
-          leaves = [] of Tuple(String, String?)
+          leaves = [] of RouteLeaf
           collect_routes_macro_leaves(arg, source, leaves)
-          mounts << {prefix, :list, leaves, nil, file_mod} unless leaves.empty?
+          mounts << {prefix, :list, leaves, nil, base, file_mod} unless leaves.empty?
         when "call_expression"
           cfn = Noir::TreeSitter.field(arg, "function")
           if cfn && {"scoped_identifier", "identifier"}.includes?(Noir::TreeSitter.node_type(cfn))
-            mounts << {prefix, :call, [] of Tuple(String, String?), Noir::TreeSitter.node_text(cfn, source), file_mod}
+            mounts << {prefix, :call, [] of RouteLeaf, Noir::TreeSitter.node_text(cfn, source), base, file_mod}
           end
         when "identifier"
-          mounts << {prefix, :call, [] of Tuple(String, String?), Noir::TreeSitter.node_text(arg, source), file_mod}
+          mounts << {prefix, :call, [] of RouteLeaf, Noir::TreeSitter.node_text(arg, source), base, file_mod}
         end
       end
     end
@@ -228,7 +234,7 @@ module Analyzer::Rust
     # path, and tag the leaf with the segment before it (its module) when
     # the ref is qualified.
     private def collect_routes_macro_leaves(macro_node : LibTreeSitter::TSNode, source : String,
-                                            leaves : Array(Tuple(String, String?)))
+                                            leaves : Array(RouteLeaf))
       mname = Noir::TreeSitter.field(macro_node, "macro")
       return unless mname && Noir::TreeSitter.node_text(mname, source).split("::").last == "routes"
       token_tree = nil.as(LibTreeSitter::TSNode?)
@@ -239,7 +245,7 @@ module Analyzer::Rust
       parse_routes_list(Noir::TreeSitter.node_text(tt, source), leaves)
     end
 
-    private def parse_routes_list(text : String, leaves : Array(Tuple(String, String?)))
+    private def parse_routes_list(text : String, leaves : Array(RouteLeaf))
       inner = text.strip
       inner = inner[1..] if inner.starts_with?('[') || inner.starts_with?('(')
       inner = inner[0...-1] if inner.ends_with?(']') || inner.ends_with?(')')
@@ -258,40 +264,46 @@ module Analyzer::Rust
     # and recursing through `routes.append(&mut submod::routes())`. Each leaf
     # is tagged with the collector fn's module (or the ref's own module when
     # the `routes![...]` entry was qualified).
-    private def resolve_route_fn(ref : String, alias_map : Hash(String, String),
-                                 fn_leaves : Hash(String, Array(Tuple(String, String?))),
-                                 fn_appends : Hash(String, Array(String)),
-                                 visited : Set(String), acc : Array(Tuple(String, String?)))
-      key = resolve_fn_key(ref, alias_map, fn_leaves)
+    private def resolve_route_fn(ref : String, base : String, alias_map : Hash(AliasKey, String),
+                                 fn_leaves : Hash(ScopedRouteKey, Array(RouteLeaf)),
+                                 fn_appends : Hash(ScopedRouteKey, Array(String)),
+                                 visited : Set(ScopedRouteKey), acc : Array(RouteLeaf))
+      key = resolve_fn_key(ref, base, alias_map, fn_leaves)
       return unless key
       return if visited.includes?(key)
       visited.add(key)
-      fn_mod = key.split("::").first
+      fn_mod = key[1]
       if leaves = fn_leaves[key]?
         leaves.each { |leaf, mod_opt| acc << {leaf, mod_opt || fn_mod} }
       end
       if appends = fn_appends[key]?
-        appends.each { |aref| resolve_route_fn(aref, alias_map, fn_leaves, fn_appends, visited, acc) }
+        appends.each { |aref| resolve_route_fn(aref, base, alias_map, fn_leaves, fn_appends, visited, acc) }
       end
     end
 
-    private def resolve_fn_key(ref : String, alias_map : Hash(String, String),
-                               fn_leaves : Hash(String, Array(Tuple(String, String?)))) : String?
+    private def resolve_fn_key(ref : String, base : String, alias_map : Hash(AliasKey, String),
+                               fn_leaves : Hash(ScopedRouteKey, Array(RouteLeaf))) : ScopedRouteKey?
       leaf = ref.split("::").last
-      if target = alias_map[leaf]?
-        return target if fn_leaves.has_key?(target)
+      if target = alias_map[{base, leaf}]?
+        tsegs = target.split("::")
+        if tsegs.size >= 2
+          target_key = {base, tsegs[-2], tsegs[-1]}
+          return target_key if fn_leaves.has_key?(target_key)
+        end
         # A re-export written inside a nested `use a::{ b as c }` group records
         # the alias target relative to that group (`events_routes`, not
         # `core::events_routes`), so it won't be a registry key directly —
         # match it as a unique module-qualified suffix instead.
         tleaf = target.split("::").last
-        tmatches = fn_leaves.keys.select(&.ends_with?("::#{tleaf}"))
+        tmatches = fn_leaves.keys.select { |key| key[0] == base && key[2] == tleaf }
         return tmatches.first if tmatches.size == 1
       end
       segs = ref.split("::")
-      cand = segs.size >= 2 ? "#{segs[-2]}::#{segs[-1]}" : segs[-1]
-      return cand if fn_leaves.has_key?(cand)
-      matches = fn_leaves.keys.select(&.ends_with?("::#{leaf}"))
+      if segs.size >= 2
+        cand = {base, segs[-2], segs[-1]}
+        return cand if fn_leaves.has_key?(cand)
+      end
+      matches = fn_leaves.keys.select { |key| key[0] == base && key[2] == leaf }
       matches.size == 1 ? matches.first : nil
     end
 
@@ -355,7 +367,7 @@ module Analyzer::Rust
     private def lookup_mount_prefixes(leaf : String, file_path : String) : Array(String)?
       index = @mount_index
       return unless index
-      if prefixes = index[{primary_module(file_path), leaf}]?
+      if prefixes = index[{configured_base_for(file_path), primary_module(file_path), leaf}]?
         return prefixes
       end
       nil

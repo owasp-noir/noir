@@ -20,6 +20,10 @@ describe Analyzer::Dart::Helper do
     it "does not treat a base path containing 'test' as a test tree" do
       Analyzer::Dart::Helper.test_path?("/tmp/test_app/routes/index.dart", "/tmp/test_app").should be_false
     end
+
+    it "uses the most specific base path when base paths overlap" do
+      Analyzer::Dart::Helper.test_path?("/repo/mono/test/routes/index.dart", ["/repo/mono", "/repo/mono/test"]).should be_false
+    end
   end
 
   describe ".strip_comments" do

@@ -6,7 +6,7 @@ module Analyzer::Php
       return [] of Endpoint unless File.extname(path) == ".php"
 
       endpoints = [] of Endpoint
-      relative_path = get_relative_path(base_path, path)
+      relative_path = get_relative_path(php_base_path_for(path), path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|

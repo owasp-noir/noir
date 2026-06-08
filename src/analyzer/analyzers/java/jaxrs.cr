@@ -7,6 +7,7 @@ require "xml"
 module Analyzer::Java
   class JaxRs < Analyzer
     JAVA_EXTENSION = "java"
+    alias ApplicationBaseKey = Tuple(String, String)
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -41,7 +42,7 @@ module Analyzer::Java
         dto_index = dto_builder.build_for(path, content)
         bean_index = bean_index_for(path, content, package_name, bean_cache)
         subresource_sources = subresource_sources_for(path, content, package_name, source_cache)
-        application_base_path = application_base_path_for(package_name, application_base_paths)
+        application_base_path = application_base_path_for(path, package_name, application_base_paths)
 
         Noir::TreeSitterJaxRsExtractor.extract_routes(content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
           line = route.line + 1
@@ -60,9 +61,9 @@ module Analyzer::Java
       @result
     end
 
-    private def application_base_paths_for(file_list : Array(String)) : Hash(String, String)
-      base_paths = Hash(String, String).new
-      application_packages = Hash(String, String).new
+    private def application_base_paths_for(file_list : Array(String)) : Hash(ApplicationBaseKey, String)
+      base_paths = Hash(ApplicationBaseKey, String).new
+      application_packages = Hash(String, Array(ApplicationBaseKey)).new { |hash, key| hash[key] = [] of ApplicationBaseKey }
 
       file_list.each do |path|
         next if JavaEngine.test_path?(path)
@@ -76,19 +77,21 @@ module Analyzer::Java
 
         package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
         next if package_name.empty?
-        next if base_paths.has_key?(package_name)
+        project_root = project_root_for(path)
+        key = {project_root, package_name}
+        next if base_paths.has_key?(key)
 
         if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path(content)
-          base_paths[package_name] = base_path
+          base_paths[key] = base_path
           java_class_names(content).each do |class_name|
-            application_packages[class_name] = package_name
-            application_packages["#{package_name}.#{class_name}"] = package_name
+            add_application_package(application_packages, class_name, key)
+            add_application_package(application_packages, "#{package_name}.#{class_name}", key)
           end
         end
       end
 
-      web_xml_base_paths_for(file_list, application_packages).each do |package_name, base_path|
-        base_paths[package_name] = base_path
+      web_xml_base_paths_for(file_list, application_packages).each do |key, base_path|
+        base_paths[key] = base_path
       end
 
       base_paths
@@ -117,10 +120,23 @@ module Analyzer::Java
         content.includes?("@ServerEndpoint")
     end
 
-    private def application_base_path_for(package_name : String, base_paths : Hash(String, String)) : String
-      base_paths.keys.sort_by!(&.size).reverse_each do |base_package|
+    private def add_application_package(application_packages : Hash(String, Array(ApplicationBaseKey)),
+                                        class_name : String,
+                                        key : ApplicationBaseKey) : Nil
+      entries = application_packages[class_name]
+      entries << key unless entries.includes?(key)
+    end
+
+    private def application_base_path_for(path : String,
+                                          package_name : String,
+                                          base_paths : Hash(ApplicationBaseKey, String)) : String
+      project_root = project_root_for(path)
+      keys = base_paths.keys.select { |key| key[0] == project_root }
+      keys.sort_by!(&.[1].size)
+      keys.reverse_each do |key|
+        base_package = key[1]
         next unless package_name == base_package || package_name.starts_with?("#{base_package}.")
-        return base_paths[base_package]
+        return base_paths[key]
       end
       ""
     end
@@ -132,18 +148,19 @@ module Analyzer::Java
     end
 
     private def project_root_for(path : String) : String
-      marker = "/src/main/java/"
-      if index = path.index(marker)
-        path[...index]
-      else
-        File.dirname(path)
+      ["/src/main/java/", "/src/main/resources/", "/src/main/webapp/"].each do |marker|
+        if index = path.index(marker)
+          return path[...index]
+        end
       end
+
+      configured_base_for(path)
     end
 
     private def web_xml_base_paths_for(file_list : Array(String),
-                                       application_packages : Hash(String, String)) : Hash(String, String)
-      base_paths = Hash(String, String).new
-      global_candidates = [] of String
+                                       application_packages : Hash(String, Array(ApplicationBaseKey))) : Hash(ApplicationBaseKey, String)
+      base_paths = Hash(ApplicationBaseKey, String).new
+      global_candidates = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
 
       file_list.each do |path|
         next if JavaEngine.test_path?(path)
@@ -151,15 +168,16 @@ module Analyzer::Java
         next unless File.exists?(path)
 
         begin
+          project_root = project_root_for(path)
           content = read_file_content(path)
           mappings = parse_web_xml_jaxrs_mappings(content)
           mappings.each do |mapping|
             base_path = normalize_servlet_pattern(mapping[:pattern])
-            app_packages = application_packages_for_mapping(mapping[:application_classes], application_packages)
+            app_packages = application_packages_for_mapping(mapping[:application_classes], application_packages, project_root)
             if app_packages.empty?
-              global_candidates << base_path if mapping[:jaxrs_servlet]
+              global_candidates[project_root] << base_path if mapping[:jaxrs_servlet]
             else
-              app_packages.each { |package_name| base_paths[package_name] = base_path }
+              app_packages.each { |key| base_paths[key] = base_path }
             end
           end
         rescue e : Exception
@@ -167,12 +185,15 @@ module Analyzer::Java
         end
       end
 
-      global_candidates.uniq!
-      if base_paths.empty? && global_candidates.size == 1
-        package_names = application_packages.values
-        package_names.uniq!
-        package_names.each do |package_name|
-          base_paths[package_name] = global_candidates.first
+      global_candidates.each do |project_root, candidates|
+        candidates.uniq!
+        next unless candidates.size == 1
+        next if base_paths.keys.any? { |key| key[0] == project_root }
+
+        keys = application_packages.values.flatten.select { |key| key[0] == project_root }
+        keys.uniq!
+        keys.each do |key|
+          base_paths[key] = candidates.first
         end
       end
 
@@ -180,9 +201,21 @@ module Analyzer::Java
     end
 
     private def application_packages_for_mapping(application_classes : Array(String),
-                                                 known_packages : Hash(String, String)) : Array(String)
-      packages = application_classes.compact_map do |class_name|
-        known_packages[class_name]? || package_from_application_class_name(class_name)
+                                                 known_packages : Hash(String, Array(ApplicationBaseKey)),
+                                                 project_root : String) : Array(ApplicationBaseKey)
+      packages = [] of ApplicationBaseKey
+
+      application_classes.each do |class_name|
+        if known = known_packages[class_name]?
+          known.each do |key|
+            packages << key if key[0] == project_root
+          end
+          next
+        end
+
+        if package_name = package_from_application_class_name(class_name)
+          packages << {project_root, package_name}
+        end
       end
       packages.uniq!
       packages

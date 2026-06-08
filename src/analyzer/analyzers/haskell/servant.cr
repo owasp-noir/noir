@@ -7,12 +7,15 @@ module Analyzer::Haskell
     HTTP_METHOD_VERBS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
 
     alias TypeAlias = NamedTuple(body: String, source: String, line: Int32)
+    alias TypeAliasKey = Tuple(String, String)
+    alias TypeAliasIndex = Hash(TypeAliasKey, TypeAlias)
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
-    alias HandlerBodies = Hash(String, Array(HandlerBody))
+    alias HandlerKey = Tuple(String, String)
+    alias HandlerBodies = Hash(HandlerKey, Array(HandlerBody))
     alias ServerBindings = Hash(Tuple(String, String), String)
 
     def analyze
-      type_aliases = {} of String => TypeAlias
+      type_aliases = TypeAliasIndex.new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
       server_bindings = include_callee ? build_server_bindings : ServerBindings.new
@@ -22,8 +25,9 @@ module Analyzer::Haskell
         next unless haskell_source?(path)
 
         content = read_file_content(path)
+        base_path = configured_base_for(path)
         extract_type_aliases(content).each do |entry|
-          type_aliases[entry[:name]] = {
+          type_aliases[{base_path, entry[:name]}] = {
             body:   entry[:body],
             source: path,
             line:   entry[:line],
@@ -35,7 +39,7 @@ module Analyzer::Haskell
         # whose body is the fields joined with `:<|>`, so the existing
         # expansion/processing pipeline handles it like any other API.
         extract_record_routes(content).each do |entry|
-          type_aliases[entry[:name]] = {
+          type_aliases[{base_path, entry[:name]}] = {
             body:   entry[:body],
             source: path,
             line:   entry[:line],
@@ -43,17 +47,19 @@ module Analyzer::Haskell
         end
       end
 
-      reference_counts = Hash(String, Int32).new(0)
-      type_aliases.each do |_, entry|
-        referenced_aliases(entry[:body], type_aliases.keys).each do |name|
-          reference_counts[name] += 1
+      reference_counts = Hash(TypeAliasKey, Int32).new(0)
+      type_aliases.each do |key, entry|
+        base_path = key[0]
+        referenced_aliases(entry[:body], alias_names_for_base(type_aliases, base_path)).each do |name|
+          reference_counts[{base_path, name}] += 1
         end
       end
 
-      type_aliases.each do |name, entry|
-        next if reference_counts[name] > 0
+      type_aliases.each do |key, entry|
+        base_path, name = key
+        next if reference_counts[key] > 0
 
-        expanded = strip_named_routes(expand_references(entry[:body], type_aliases))
+        expanded = strip_named_routes(expand_references(entry[:body], type_aliases, base_path))
         next unless contains_servant_signature?(expanded)
 
         endpoints = process_api_body(entry[:source], entry[:line], expanded)
@@ -72,12 +78,17 @@ module Analyzer::Haskell
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
-          handlers[body[:name]] ||= [] of HandlerBody
-          handlers[body[:name]] << body
+          key = handler_key(configured_base_for(path), body[:name])
+          handlers[key] ||= [] of HandlerBody
+          handlers[key] << body
         end
       end
 
       handlers
+    end
+
+    private def handler_key(base_path : String, name : String) : HandlerKey
+      {base_path, name}
     end
 
     private def build_server_bindings : ServerBindings
@@ -369,27 +380,32 @@ module Analyzer::Haskell
       found.to_a
     end
 
+    private def alias_names_for_base(type_aliases : TypeAliasIndex, base_path : String) : Array(String)
+      type_aliases.keys.compact_map { |key| key[1] if key[0] == base_path }
+    end
+
     # `visited` only blocks cycles along one path, not repeated sibling
     # expansions (`type A = B :<|> B` doubles each level -> O(2^N)). Cap the
     # total expanded size so a crafted alias chain can't hang/OOM the scan;
     # real Servant bodies expand to far under this, so output is unchanged.
     MAX_EXPANSION_BYTES = 1_000_000
 
-    private def expand_references(body : String, type_aliases : Hash(String, TypeAlias)) : String
-      do_expand(body, type_aliases, Set(String).new, [MAX_EXPANSION_BYTES])
+    private def expand_references(body : String, type_aliases : TypeAliasIndex, base_path : String) : String
+      do_expand(body, type_aliases, base_path, Set(String).new, [MAX_EXPANSION_BYTES])
     end
 
-    private def do_expand(body : String, type_aliases : Hash(String, TypeAlias), visited : Set(String), budget : Array(Int32)) : String
+    private def do_expand(body : String, type_aliases : TypeAliasIndex, base_path : String, visited : Set(String), budget : Array(Int32)) : String
       body.gsub(/\b([A-Z][A-Za-z0-9_']*)\b/) do |raw, m|
         name = m[1]
+        key = {base_path, name}
         if budget[0] <= 0
           raw # budget exhausted: leave the reference unexpanded
-        elsif type_aliases.has_key?(name) && !visited.includes?(name)
+        elsif type_aliases.has_key?(key) && !visited.includes?(name)
           new_visited = visited.dup
           new_visited << name
-          sub = type_aliases[name][:body]
+          sub = type_aliases[key][:body]
           budget[0] -= sub.bytesize
-          "(#{do_expand(sub, type_aliases, new_visited, budget)})"
+          "(#{do_expand(sub, type_aliases, base_path, new_visited, budget)})"
         else
           raw
         end
@@ -422,8 +438,9 @@ module Analyzer::Haskell
       leaf_names = server_leaf_names_for(api_name, api_source, endpoints.size, handler_bodies, server_bindings)
       return unless leaf_names
 
+      base_path = configured_base_for(api_source)
       endpoints.zip(leaf_names).each do |endpoint, handler_name|
-        handler_body = unique_handler_body(handler_name, handler_bodies)
+        handler_body = unique_handler_body(handler_name, base_path, handler_bodies)
         next unless handler_body
 
         callees = Noir::HaskellCalleeExtractor.callees_for_body(
@@ -456,7 +473,8 @@ module Analyzer::Haskell
         # Handlers that are imported, point-free, or collide across modules then
         # simply contribute no callees rather than sinking the whole server —
         # `attach_servant_callees` resolves each leaf independently.
-        next unless leaves.any? { |leaf| handler_bodies.has_key?(leaf) }
+        base_path = configured_base_for(api_source)
+        next unless leaves.any? { |leaf| handler_bodies.has_key?(handler_key(base_path, leaf)) }
 
         return leaves
       end
@@ -570,14 +588,14 @@ module Analyzer::Haskell
     end
 
     private def body_for_path(name : String, path : String, handler_bodies : HandlerBodies) : HandlerBody?
-      bodies = handler_bodies[name]?
+      bodies = handler_bodies[handler_key(configured_base_for(path), name)]?
       return unless bodies
 
       bodies.find { |body| body[:path] == path }
     end
 
-    private def unique_handler_body(name : String, handler_bodies : HandlerBodies) : HandlerBody?
-      bodies = handler_bodies[name]?
+    private def unique_handler_body(name : String, base_path : String, handler_bodies : HandlerBodies) : HandlerBody?
+      bodies = handler_bodies[handler_key(base_path, name)]?
       return unless bodies && bodies.size == 1
 
       bodies.first

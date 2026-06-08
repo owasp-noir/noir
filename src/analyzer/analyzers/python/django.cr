@@ -63,10 +63,12 @@ module Analyzer::Python
 
       # Find static files
       begin
-        static_prefix = "#{@base_path}/static/"
-        get_files_by_prefix(static_prefix).each do |file|
-          relative_path = file.sub("#{@base_path}/static/", "")
-          endpoints << Endpoint.new("/#{relative_path}", "GET")
+        base_paths.each do |base|
+          static_prefix = base.ends_with?("/") ? "#{base}static/" : "#{base}/static/"
+          get_files_by_prefix(static_prefix).each do |file|
+            relative_path = file.sub(static_prefix, "")
+            endpoints << Endpoint.new("/#{relative_path}", "GET")
+          end
         end
       rescue e
         logger.debug e
@@ -88,7 +90,7 @@ module Analyzer::Python
       candidates = all_files.select do |file|
         next false unless file.ends_with?(".py")
         next false if file.includes?("/site-packages/")
-        next false if PythonEngine.python_test_path?(file, @base_path)
+        next false if PythonEngine.python_test_path?(file, base_path_for(file))
         File.basename(file) == "urls.py" || file.includes?("/urls/")
       end
 
@@ -99,8 +101,6 @@ module Analyzer::Python
 
       # Dotted include() targets (`include("app.sub.urls")`) and
       # `from app.sub import urls` resolve against the scan root.
-      @django_base_path = @base_path
-
       # Dedup by canonical (expanded) path. `all_files` entries and the
       # paths `extract_endpoints` records when it follows an `include()`
       # can spell the same file differently (`./` prefix, trailing or
@@ -112,6 +112,8 @@ module Analyzer::Python
       @visited_url_paths.each_key { |key| visited << File.expand_path(key) }
 
       candidates.each do |file|
+        candidate_base_path = base_path_for(file)
+        @django_base_path = candidate_base_path
         expanded = File.expand_path(file)
         next if visited.includes?(expanded)
         begin
@@ -121,7 +123,7 @@ module Analyzer::Python
         end
         next unless content.includes?("urlpatterns")
 
-        django_urls = DjangoUrls.new("", file, @base_path)
+        django_urls = DjangoUrls.new("", file, candidate_base_path)
         extract_endpoints(django_urls).each do |endpoint|
           endpoints << endpoint
         end
@@ -135,7 +137,6 @@ module Analyzer::Python
     def find_root_django_urls : Array(DjangoUrls)
       root_django_urls_list = [] of DjangoUrls
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      search_dir = @base_path
 
       WaitGroup.wait do |wg|
         # Producer — tracked by the WaitGroup
@@ -159,7 +160,8 @@ module Analyzer::Python
                 # such phantom endpoints. Standard test conventions
                 # (`tests/` dir, `tests.py`, `test_*.py`, `*_test.py`)
                 # are unambiguous in Python codebases.
-                next if PythonEngine.python_test_path?(file, @base_path)
+                current_base_path = base_path_for(file)
+                next if PythonEngine.python_test_path?(file, current_base_path)
                 next unless django_settings_path?(file)
                 if file.ends_with? ".py"
                   content = read_file_content(file)
@@ -169,7 +171,7 @@ module Analyzer::Python
                     line.scan(REGEX_ROOT_URLCONF) do |match|
                       next if match.size != 2
                       dotted_as_urlconf = match[1].split(".")
-                      resolve_root_urlconf_paths(file, dotted_as_urlconf, search_dir).each do |filepath|
+                      resolve_root_urlconf_paths(file, dotted_as_urlconf, current_base_path).each do |filepath|
                         basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
                         root_django_urls_list << DjangoUrls.new("", filepath, basepath)
                       end
@@ -185,6 +187,10 @@ module Analyzer::Python
       end
 
       root_django_urls_list.uniq
+    end
+
+    private def base_path_for(file : ::String) : ::String
+      python_base_path_for(file)
     end
 
     private def django_settings_path?(path : ::String) : Bool

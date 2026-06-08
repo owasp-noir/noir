@@ -3,6 +3,7 @@ require "./endpoint"
 require "./file_helper"
 require "wait_group"
 require "../utils/media_filter"
+require "../utils/path_scope"
 require "../utils/utils"
 
 class Analyzer
@@ -16,6 +17,7 @@ class Analyzer
   @endpoint_references : Array(EndpointReference)
   @base_path : String
   @base_paths : Array(String)
+  @normalized_base_paths : Array(Tuple(String, String))
   @url : String
   @logger : NoirLogger
   @is_debug : Bool
@@ -23,10 +25,15 @@ class Analyzer
   @is_color : Bool
   @is_log : Bool
   @options : Hash(String, YAML::Any)
+  # path => longest-matching configured base. Populated lazily by
+  # `configured_base_for`; only used on multi-base (monorepo) scans.
+  @configured_base_cache = {} of String => String
+  @configured_base_cache_mutex = Mutex.new
 
   def initialize(options : Hash(String, YAML::Any))
     @base_paths = options["base"].as_a.map(&.to_s)
     @base_path = @base_paths.first? || ""
+    @normalized_base_paths = @base_paths.map { |base| {base, Noir::PathScope.normalize_root(base)} }
     @url = options["url"].to_s
     @result = [] of Endpoint
     @endpoint_references = [] of EndpointReference
@@ -62,6 +69,44 @@ class Analyzer
   # scans where neither flag is set.
   def callees_needed? : Bool
     any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+  end
+
+  # Resolves the longest configured base that owns `path`. Cross-file
+  # indexes key their roots off this, which scopes them per base. Note the
+  # designed limitation: nested/overlapping base paths (e.g. `-b /repo
+  # -b /repo/sub`) don't compose cross-base prefixes, because a definition
+  # and its use can resolve to different longest-matching bases — sibling
+  # layouts (the common monorepo shape) are the supported case.
+  protected def configured_base_for(path : String) : String
+    # Single configured base: the longest-match resolution can only ever
+    # return that base (or the identical `@base_path` fallback), so skip the
+    # per-path `File.expand_path` work entirely. This is the common case and
+    # keeps single-base scans free of the multi-base resolution overhead.
+    return @base_path if @base_paths.size <= 1
+
+    @configured_base_cache_mutex.synchronize do
+      if cached = @configured_base_cache[path]?
+        cached
+      else
+        @configured_base_cache[path] = longest_configured_base(path) || @base_path
+      end
+    end
+  end
+
+  private def longest_configured_base(path : String) : String?
+    expanded_path = CodeLocator.instance.expanded_path_for(path)
+    best_base = nil.as(String?)
+    best_size = -1
+
+    @normalized_base_paths.each do |base, normalized|
+      next unless Noir::PathScope.under_normalized_root?(expanded_path, normalized)
+      next unless normalized.size > best_size
+
+      best_base = base
+      best_size = normalized.size
+    end
+
+    best_base
   end
 
   # Preferred overload: accepts a file list and creates both the
