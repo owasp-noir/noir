@@ -20,6 +20,18 @@ create_endpoint = Endpoint.new("/posts", "POST").tap do |ep|
   ep.push_callee(Callee.new("serialize_post", line: 16))
 end
 
+destroy_memory_endpoint = Endpoint.new("/posts/1/memory", "DELETE", [
+  Param.new("id", "", "path"),
+]).tap do |ep|
+  ep.push_callee(Callee.new("MemoryStore.destroy", line: 37))
+  ep.push_callee(Callee.new("AuditLog.write", line: 38))
+end
+
+external_ready_endpoint = Endpoint.new("/posts/1/external_ready", "GET").tap do |ep|
+  ep.push_callee(Callee.new("render", line: 10))
+  ep.push_callee(Callee.new("Ready.check", line: 10))
+end
+
 preview_endpoint = Endpoint.new("/posts/preview", "GET").tap do |ep|
   ep.push_callee(Callee.new("PreviewBuilder.build", line: 20))
   ep.push_callee(Callee.new("render", line: 21))
@@ -60,6 +72,8 @@ expected_endpoints = [
   index_endpoint,
   show_endpoint,
   create_endpoint,
+  destroy_memory_endpoint,
+  external_ready_endpoint,
   preview_endpoint,
   implicit_preview_endpoint,
   legacy_implicit_preview_endpoint,
