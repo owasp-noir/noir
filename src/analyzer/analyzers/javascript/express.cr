@@ -45,7 +45,7 @@ module Analyzer::Javascript
             result << endpoint
           end
 
-          collect_static_paths(path, content, static_dirs, :express)
+          collect_express_static_paths(path, content, static_dirs)
 
           # Parse Server style `this.route('METHOD', '/path', ...)`
           # declarations. The framework's PromiseRouter base class
@@ -127,7 +127,7 @@ module Analyzer::Javascript
       # Handle app.route('/path').method1().method2() patterns
       handle_app_route_chaining(file_content, result, path)
 
-      collect_static_paths(path, file_content, static_dirs, :express)
+      collect_express_static_paths(path, file_content, static_dirs)
 
       # First analyze file for router imports and declarations
       file_content.each_line do |line|
@@ -855,6 +855,21 @@ module Analyzer::Javascript
       Noir::JSRouteExtractor.extract_body_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_header_params(handler_body, endpoint)
       Noir::JSRouteExtractor.extract_cookie_params(handler_body, endpoint)
+    end
+
+    private def collect_express_static_paths(path : String, content : String, static_dirs : Array(Hash(String, String))) : Nil
+      return unless express_source?(content)
+
+      collect_static_paths(path, content, static_dirs, :express)
+    end
+
+    private def express_source?(content : String) : Bool
+      content.includes?("require('express')") ||
+        content.includes?("require(\"express\")") ||
+        content.includes?("from 'express'") ||
+        content.includes?("from \"express\"") ||
+        content.includes?("express()") ||
+        content.includes?("express.Router(")
     end
 
     # Scan for router mount patterns and store them in CodeLocator

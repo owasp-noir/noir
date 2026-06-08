@@ -82,12 +82,12 @@ class Analyzer
     # keeps single-base scans free of the multi-base resolution overhead.
     return @base_path if @base_paths.size <= 1
 
-    if cached = @configured_base_cache[path]?
-      return cached
-    end
-
     @configured_base_cache_mutex.synchronize do
-      @configured_base_cache[path] ||= (Noir::PathScope.longest_base(path, @base_paths) || @base_path)
+      if cached = @configured_base_cache[path]?
+        cached
+      else
+        @configured_base_cache[path] = Noir::PathScope.longest_base(path, @base_paths) || @base_path
+      end
     end
   end
 

@@ -18,7 +18,12 @@ module FileHelper
 
   # Get files filtered by path prefix
   def get_files_by_prefix(prefix : String) : Array(String)
-    all_files.select { |file| path_under_root?(file, prefix) && !File.directory?(file) }
+    return all_files.select { |file| !File.directory?(file) } if prefix.empty?
+
+    root = expanded_root_for(prefix)
+    all_files.select do |file|
+      Noir::PathScope.under_normalized_root?(File.expand_path(file), root) && !File.directory?(file)
+    end
   end
 
   # Get files filtered by extension (uses cached index for O(1) lookup)
@@ -28,7 +33,12 @@ module FileHelper
 
   # Get files filtered by both prefix and extension
   def get_files_by_prefix_and_extension(prefix : String, extension : String) : Array(String)
-    all_files.select { |file| path_under_root?(file, prefix) && !File.directory?(file) && File.extname(file) == extension }
+    return all_files.select { |file| !File.directory?(file) && File.extname(file) == extension } if prefix.empty?
+
+    root = expanded_root_for(prefix)
+    all_files.select do |file|
+      Noir::PathScope.under_normalized_root?(File.expand_path(file), root) && !File.directory?(file) && File.extname(file) == extension
+    end
   end
 
   # Get public files (files that should be served as static content)
@@ -46,6 +56,7 @@ module FileHelper
   # because there was no sibling `shard.yml`.
   def get_public_files(base_path : String, anchors : Array(String) = ["shard.yml", "Gemfile"]) : Array(String)
     files = all_files
+    base_root = base_path.empty? ? nil : expanded_root_for(base_path)
 
     # Collect directories that are valid `public/` roots: each is
     # the dirname of an anchor file under base_path, with `public/`
@@ -54,15 +65,17 @@ module FileHelper
     project_public_roots = Set(String).new
     files.each do |f|
       next unless anchors.includes?(File.basename(f))
-      next unless path_under_root?(f, base_path)
-      project_public_roots << File.join(File.dirname(f), "public")
+      expanded = File.expand_path(f)
+      next unless base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)
+      project_public_roots << Noir::PathScope.normalize_root(File.join(File.dirname(f), "public"))
     end
 
     files.select do |file|
-      next false unless path_under_root?(file, base_path)
+      expanded = File.expand_path(file)
+      next false unless base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)
       next false if File.directory?(file)
       next false if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-      project_public_roots.any? { |root| file != root && path_under_root?(file, root) }
+      project_public_roots.any? { |root| expanded != root && Noir::PathScope.under_normalized_root?(expanded, root) }
     end
   end
 
@@ -70,6 +83,7 @@ module FileHelper
   def get_public_dir_files(base_path : String, folder : String) : Array(String)
     # Get all files in the project
     files = all_files
+    base_root = base_path.empty? ? nil : expanded_root_for(base_path)
 
     # Normalize folder path
     normalized_folder = folder.strip
@@ -80,16 +94,17 @@ module FileHelper
       next false if File.directory?(file)
       # Ignore VC/OS placeholder files (never served).
       next false if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
+      expanded = File.expand_path(file)
 
       # Case 1: Folder is a full path
       if normalized_folder.includes?("/")
         # If folder is an absolute path like "/var/www/assets"
         if normalized_folder.starts_with?("/")
-          path_under_root?(file, normalized_folder) && !File.directory?(file)
+          Noir::PathScope.under_normalized_root?(expanded, expanded_root_for(normalized_folder))
           # If folder is a relative path from base_path like "assets" or "public/assets"
         else
-          combined_path = "#{base_path}/#{normalized_folder}"
-          path_under_root?(file, combined_path) && !File.directory?(file)
+          combined_root = expanded_root_for("#{base_path}/#{normalized_folder}")
+          Noir::PathScope.under_normalized_root?(expanded, combined_root)
         end
         # Case 2: Folder is just a name like "assets"
       else
@@ -97,7 +112,7 @@ module FileHelper
         # as a directory component. `file_map` spans every configured
         # base_path, so this must stay scoped to the base currently being
         # processed.
-        path_under_root?(file, base_path) && file.includes?("/#{normalized_folder}/") && !File.directory?(file)
+        (base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)) && file.includes?("/#{normalized_folder}/")
       end
     end
 

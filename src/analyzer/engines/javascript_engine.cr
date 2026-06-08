@@ -56,16 +56,20 @@ module Analyzer::Javascript
     end
 
     protected def process_js_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint)) : Nil
+      expanded_files = nil.as(Array(Tuple(String, String))?)
+
       static_dirs.each do |dir|
-        root = File.expand_path(dir["file_path"])
-        root = root.rstrip('/') unless root == File::SEPARATOR
+        root = Noir::PathScope.normalize_root(dir["file_path"])
         static_path = dir["static_path"]
         static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
 
-        all_files.each do |file_path|
-          expanded_file_path = File.expand_path(file_path)
-          next unless path_under_root?(expanded_file_path, root)
-          next unless File.file?(file_path)
+        files = expanded_files ||= all_files.compact_map do |file_path|
+          next if File.directory?(file_path)
+          {file_path, File.expand_path(file_path)}
+        end
+
+        files.each do |file_path, expanded_file_path|
+          next unless Noir::PathScope.under_normalized_root?(expanded_file_path, root)
 
           relative_path = expanded_file_path[root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
           next if relative_path.empty?
@@ -109,7 +113,7 @@ module Analyzer::Javascript
 
       expanded = File.expand_path(path)
       roots.any? do |root|
-        path_under_root?(expanded, root)
+        Noir::PathScope.under_normalized_root?(expanded, root)
       end
     end
 
