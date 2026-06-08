@@ -69,7 +69,7 @@ module Analyzer::Rust
       # benchmarks here. Exclude it like `tests/`.
       return true if path.includes?("/benches/")
       base = File.basename(path)
-      base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
+      base == "tests.rs" || base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
     end
 
     # Scan the source for `#[cfg(test)]` annotations, then capture
