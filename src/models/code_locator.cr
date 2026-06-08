@@ -22,6 +22,7 @@ class CodeLocator
   @content_cache_budget : Int64
   @content_cache_used : Int64
   @content_cache_skipped : Int32
+  @expanded_file_map : Array(Tuple(String, String))?
 
   @lock : Mutex
 
@@ -43,6 +44,7 @@ class CodeLocator
     @content_cache_budget = resolve_content_cache_budget
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
+    @expanded_file_map = nil
     @lock = Mutex.new
   end
 
@@ -76,6 +78,7 @@ class CodeLocator
     # Track file usage if this is the file_map
     if key == "file_map"
       increment_file_usage(value)
+      @expanded_file_map = nil
     end
   end
 
@@ -115,6 +118,27 @@ class CodeLocator
     Array(String).new
   end
 
+  # `{original, File.expand_path(original)}` for every file in `file_map`,
+  # built once and cached. `File.expand_path` is pure string normalization
+  # but non-trivial, and the monorepo helpers in `FileHelper` re-scan
+  # `all_files` once per base path per analyzer — without this the same
+  # path is expanded thousands of times (O(analyzers × bases × files)).
+  # Invalidated whenever `file_map` changes (push / clear).
+  def expanded_file_map : Array(Tuple(String, String))
+    cached = @expanded_file_map
+    return cached if cached
+
+    @lock.synchronize do
+      cached = @expanded_file_map
+      return cached if cached
+
+      files = @a_map["file_map"]?
+      built = files ? files.map { |file| {file, File.expand_path(file)} } : [] of Tuple(String, String)
+      @expanded_file_map = built
+      built
+    end
+  end
+
   # Build extension index from file_map for fast lookups
   def build_extension_index
     return if @extension_index_built
@@ -147,6 +171,7 @@ class CodeLocator
       @file_contents.clear
       @content_cache_used = 0_i64
       @content_cache_skipped = 0
+      @expanded_file_map = nil
     end
   end
 
@@ -159,6 +184,7 @@ class CodeLocator
     @file_contents.clear
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
+    @expanded_file_map = nil
   end
 
   def show_table
