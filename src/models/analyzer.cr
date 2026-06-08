@@ -17,6 +17,7 @@ class Analyzer
   @endpoint_references : Array(EndpointReference)
   @base_path : String
   @base_paths : Array(String)
+  @normalized_base_paths : Array(Tuple(String, String))
   @url : String
   @logger : NoirLogger
   @is_debug : Bool
@@ -32,6 +33,7 @@ class Analyzer
   def initialize(options : Hash(String, YAML::Any))
     @base_paths = options["base"].as_a.map(&.to_s)
     @base_path = @base_paths.first? || ""
+    @normalized_base_paths = @base_paths.map { |base| {base, Noir::PathScope.normalize_root(base)} }
     @url = options["url"].to_s
     @result = [] of Endpoint
     @endpoint_references = [] of EndpointReference
@@ -86,9 +88,25 @@ class Analyzer
       if cached = @configured_base_cache[path]?
         cached
       else
-        @configured_base_cache[path] = Noir::PathScope.longest_base(path, @base_paths) || @base_path
+        @configured_base_cache[path] = longest_configured_base(path) || @base_path
       end
     end
+  end
+
+  private def longest_configured_base(path : String) : String?
+    expanded_path = File.expand_path(path)
+    best_base = nil.as(String?)
+    best_size = -1
+
+    @normalized_base_paths.each do |base, normalized|
+      next unless Noir::PathScope.under_normalized_root?(expanded_path, normalized)
+      next unless normalized.size > best_size
+
+      best_base = base
+      best_size = normalized.size
+    end
+
+    best_base
   end
 
   # Preferred overload: accepts a file list and creates both the
