@@ -113,6 +113,7 @@ module Analyzer::Javascript
         content = file.gets_to_end
 
         collect_static_paths(path, content, static_dirs, :nestjs)
+        collect_static_paths(path, content, static_dirs, :express) if nestjs_bootstrap_source?(content)
 
         # Strip JS/TS comments so commented-out decorators
         # (e.g. `// @Get('/old')`) don't generate phantom routes.
@@ -131,6 +132,14 @@ module Analyzer::Javascript
       end
     rescue e : Exception
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
+    end
+
+    private def nestjs_bootstrap_source?(content : String) : Bool
+      content.includes?("NestFactory.create") ||
+        content.includes?("from '@nestjs/core'") ||
+        content.includes?("from \"@nestjs/core\"") ||
+        content.includes?("require('@nestjs/core')") ||
+        content.includes?("require(\"@nestjs/core\")")
     end
 
     # Detect `app.setGlobalPrefix('api', { exclude: [...] })`.

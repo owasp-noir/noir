@@ -27,6 +27,7 @@ class Analyzer
   # path => longest-matching configured base. Populated lazily by
   # `configured_base_for`; only used on multi-base (monorepo) scans.
   @configured_base_cache = {} of String => String
+  @configured_base_cache_mutex = Mutex.new
 
   def initialize(options : Hash(String, YAML::Any))
     @base_paths = options["base"].as_a.map(&.to_s)
@@ -81,7 +82,13 @@ class Analyzer
     # keeps single-base scans free of the multi-base resolution overhead.
     return @base_path if @base_paths.size <= 1
 
-    @configured_base_cache[path] ||= (Noir::PathScope.longest_base(path, @base_paths) || @base_path)
+    if cached = @configured_base_cache[path]?
+      return cached
+    end
+
+    @configured_base_cache_mutex.synchronize do
+      @configured_base_cache[path] ||= (Noir::PathScope.longest_base(path, @base_paths) || @base_path)
+    end
   end
 
   # Preferred overload: accepts a file list and creates both the
