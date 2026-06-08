@@ -12,6 +12,12 @@ class RustEngineSpecHarness < Analyzer::Rust::RustEngine
 end
 
 describe Analyzer::Rust::RustEngine do
+  describe ".test_path?" do
+    it "skips Cargo test modules named tests.rs" do
+      Analyzer::Rust::RustEngine.test_path?("src/apps/todo/tests.rs").should be_true
+    end
+  end
+
   it "does not attach declaration-only function signatures to the next body" do
     lines = [
       "trait Api {",
