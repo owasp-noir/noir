@@ -23,6 +23,7 @@ class CodeLocator
   @content_cache_used : Int64
   @content_cache_skipped : Int32
   @expanded_file_map : Array(Tuple(String, String))?
+  @expanded_path_index : Hash(String, String)?
 
   @lock : Mutex
 
@@ -45,6 +46,7 @@ class CodeLocator
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
     @expanded_file_map = nil
+    @expanded_path_index = nil
     @lock = Mutex.new
   end
 
@@ -79,6 +81,7 @@ class CodeLocator
     if key == "file_map"
       increment_file_usage(value)
       @expanded_file_map = nil
+      @expanded_path_index = nil
     end
   end
 
@@ -139,6 +142,34 @@ class CodeLocator
     end
   end
 
+  # O(1) `path => File.expand_path(path)` lookup for files registered in
+  # `file_map`. Analyzers call `path_under_root?(file, base)` inside
+  # `base_paths.each { files.each { ... } }` loops, so the same file would
+  # otherwise be re-expanded once per base (and `File.expand_path` of a
+  # relative path issues a `getcwd`). Unregistered paths fall back to a live
+  # expansion. Shares the lazy lifecycle / invalidation of `expanded_file_map`.
+  def expanded_path_for(path : String) : String
+    expanded_path_index[path]? || File.expand_path(path)
+  end
+
+  private def expanded_path_index : Hash(String, String)
+    cached = @expanded_path_index
+    return cached if cached
+
+    # Resolve `expanded_file_map` *before* taking `@lock` — it grabs the same
+    # non-reentrant mutex, so calling it inside the block below would deadlock.
+    pairs = expanded_file_map
+    @lock.synchronize do
+      cached = @expanded_path_index
+      return cached if cached
+
+      built = {} of String => String
+      pairs.each { |original, expanded| built[original] = expanded }
+      @expanded_path_index = built
+      built
+    end
+  end
+
   # Build extension index from file_map for fast lookups
   def build_extension_index
     return if @extension_index_built
@@ -172,6 +203,7 @@ class CodeLocator
       @content_cache_used = 0_i64
       @content_cache_skipped = 0
       @expanded_file_map = nil
+      @expanded_path_index = nil
     end
   end
 
@@ -185,6 +217,7 @@ class CodeLocator
     @content_cache_used = 0_i64
     @content_cache_skipped = 0
     @expanded_file_map = nil
+    @expanded_path_index = nil
   end
 
   def show_table

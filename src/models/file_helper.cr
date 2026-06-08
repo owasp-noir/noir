@@ -139,7 +139,7 @@ module FileHelper
 
   protected def path_under_root?(path : String, root : String) : Bool
     return true if root.empty?
-    Noir::PathScope.under_normalized_root?(File.expand_path(path), expanded_root_for(root))
+    Noir::PathScope.under_normalized_root?(CodeLocator.instance.expanded_path_for(path), expanded_root_for(root))
   end
 
   # `root` is almost always loop-invariant across a `select`/scan over

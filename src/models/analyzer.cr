@@ -94,7 +94,7 @@ class Analyzer
   end
 
   private def longest_configured_base(path : String) : String?
-    expanded_path = File.expand_path(path)
+    expanded_path = CodeLocator.instance.expanded_path_for(path)
     best_base = nil.as(String?)
     best_size = -1
 
