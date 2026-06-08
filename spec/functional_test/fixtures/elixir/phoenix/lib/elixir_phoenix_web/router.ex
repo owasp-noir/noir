@@ -14,6 +14,28 @@ defmodule ElixirPhoenixWeb.Router do
     plug :accepts, ["json"]
   end
 
+  defmacro admin_routes(options \\ []) do
+    scoped = Keyword.get(options, :scope, "/macro-admin")
+    controller = Keyword.get(options, :controller, AdminController)
+
+    quote do
+      scope unquote(scoped), ElixirPhoenixWeb do
+        get "/dashboard", unquote(controller), :dashboard
+        options "/dashboard", unquote(controller), :preflight
+      end
+    end
+  end
+
+  defmacro unused_routes(options \\ []) do
+    scoped = Keyword.get(options, :scope, "/unused-admin")
+
+    quote do
+      scope unquote(scoped), ElixirPhoenixWeb do
+        get "/ghost", AdminController, :dashboard
+      end
+    end
+  end
+
   scope "/", ElixirPhoenixWeb do
     pipe_through :browser
 
@@ -67,6 +89,8 @@ defmodule ElixirPhoenixWeb.Router do
     resources("/session", SessionController, singleton: true, only: [:create, :delete])
     resources "/keys", KeyController, param: "key_id", only: [:show, :delete]
   end
+
+  admin_routes(scope: "/macro-admin-v2")
 
   # Enable LiveDashboard and Swoosh mailbox preview in development
   if Application.compile_env(:elixir_phoenix, :dev_routes) do

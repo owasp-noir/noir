@@ -7,6 +7,7 @@ module Analyzer::Elixir
 
     # Store mapping of route -> controller/action for parameter extraction
     @route_map : Hash(String, ControllerAction) = Hash(String, ControllerAction).new
+    @route_macros : Hash(String, RouteMacro) = Hash(String, RouteMacro).new
 
     struct ControllerAction
       property controller : String
@@ -16,7 +17,35 @@ module Analyzer::Elixir
       end
     end
 
+    struct RouteMacro
+      property name : String
+      property module_name : String?
+      property param_names : Array(String)
+      property default_bindings : Hash(String, String)
+      property body_lines : Array(String)
+
+      def initialize(@name : String,
+                     @module_name : String?,
+                     @param_names : Array(String),
+                     @default_bindings : Hash(String, String),
+                     @body_lines : Array(String))
+      end
+    end
+
+    struct RouteMacroInvocation
+      property route_macro : RouteMacro
+      property positional_args : Array(String)
+      property keyword_args : Hash(String, String)
+
+      def initialize(@route_macro : RouteMacro,
+                     @positional_args : Array(String),
+                     @keyword_args : Hash(String, String))
+      end
+    end
+
     def analyze
+      collect_route_macros
+
       # First pass: collect routes via the engine's parallel file scan.
       super
 
@@ -31,11 +60,13 @@ module Analyzer::Elixir
 
       endpoints = [] of Endpoint
       scope_stack = [] of ScopeEntry
+      string_bindings = Hash(String, String).new
       in_triple_double = false
       in_triple_single = false
 
       content = File.open(path, "r", encoding: "utf-8", invalid: :skip, &.gets_to_end)
       lines = content.lines
+      current_module = extract_module_name(content)
 
       index = 0
       while index < lines.size
@@ -62,6 +93,14 @@ module Analyzer::Elixir
           next
         end
 
+        if stripped.starts_with?("defmacro ")
+          macro_end = find_function_end(lines, index)
+          index = macro_end == -1 ? index + 1 : macro_end + 1
+          next
+        end
+
+        update_elixir_string_bindings(string_bindings, line)
+
         if !scope_stack.empty?
           if end_match = line.match(/^(\s*)end\b/)
             end_indent = end_match[1].size
@@ -79,8 +118,24 @@ module Analyzer::Elixir
           next
         end
 
+        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+          scope_stack << {prefix: string_bindings[match[2]]? || "", module_prefix: match[3]? || "", indent: match[1].size}
+          index += 1
+          next
+        end
+
         scope_prefix = current_scope_prefix(scope_stack)
         scope_module = current_scope_module(scope_stack)
+
+        if invocation = route_macro_invocation(line, current_module)
+          expanded = endpoints_from_route_macro(invocation, path, index + 1, scope_prefix, scope_module)
+          expanded.each do |endpoint|
+            next if endpoint.method.empty?
+            endpoints << endpoint
+          end
+          index += 1
+          next
+        end
 
         # The `resources` macro can span several lines (options such as
         # `only:`/`except:` are often wrapped onto continuation lines)
@@ -89,7 +144,7 @@ module Analyzer::Elixir
         # statement, so assemble it before extracting routes.
         if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
           statement, consumed = assemble_statement(lines, index)
-          res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module)
+          res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, string_bindings)
           res_endpoints.each do |endpoint|
             next if endpoint.method.empty?
             endpoint.details = Details.new(PathInfo.new(path, index + 1))
@@ -103,7 +158,7 @@ module Analyzer::Elixir
           next
         end
 
-        line_to_endpoint(line, path, scope_prefix, scope_module).each do |endpoint|
+        line_to_endpoint(line, path, scope_prefix, scope_module, string_bindings).each do |endpoint|
           next if endpoint.method.empty?
           endpoint.details = Details.new(PathInfo.new(path, index + 1))
           endpoints << endpoint
@@ -129,6 +184,30 @@ module Analyzer::Elixir
         break if consumed > 12 # safety bound: route options never wrap this far
       end
       {buffer, consumed}
+    end
+
+    private def update_elixir_string_bindings(bindings : Hash(String, String), line : String) : Nil
+      update_elixir_string_bindings(bindings, line, Hash(String, String).new)
+    end
+
+    private def update_elixir_string_bindings(bindings : Hash(String, String),
+                                              line : String,
+                                              keyword_overrides : Hash(String, String)) : Nil
+      code = strip_trailing_comment(line).strip
+
+      if match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*["']([^"']+)["']\s*\)/)
+        key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
+        bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+      elsif match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*([A-Z]\w*(?:\.[A-Z]\w*)*)\s*\)/)
+        key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
+        bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+      elsif match = code.match(/^(\w+)\s*=\s*["']([^"']+)["']/)
+        bindings[match[1]] = match[2]
+      end
+
+      code.scan(/(\w+)\s*\\\\\s*([A-Z]\w*(?:\.[A-Z]\w*)*)/) do |default_match|
+        bindings[default_match[1]] = default_match[2]
+      end
     end
 
     private def statement_open?(buffer : String) : Bool
@@ -200,6 +279,7 @@ module Analyzer::Elixir
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
       lines = content.lines
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      endpoints_by_action = endpoints_for_controller(controller_name)
 
       index = 0
       while index < lines.size
@@ -225,9 +305,7 @@ module Analyzer::Elixir
           next
         end
 
-        matching_endpoints = @result.select do |endpoint|
-          should_extract_params_for_endpoint?(endpoint, controller_name, action_name)
-        end
+        matching_endpoints = endpoints_by_action[action_name]? || [] of Endpoint
         if matching_endpoints.empty?
           index += 1
           next
@@ -288,24 +366,302 @@ module Analyzer::Elixir
       {buffer, start}
     end
 
+    private def collect_route_macros : Nil
+      @route_macros.clear
+
+      get_files_by_extension(".ex").each do |path|
+        next unless File.exists?(path)
+
+        begin
+          content = read_file_content(path)
+          module_name = extract_module_name(content)
+          lines = content.lines
+          index = 0
+
+          while index < lines.size
+            line = lines[index]
+            stripped = line.strip
+
+            unless stripped.starts_with?("defmacro ")
+              index += 1
+              next
+            end
+
+            signature, body_start = assemble_def_signature(lines, index)
+            name = signature.match(/\bdefmacro\s+(\w+[!?]?)/).try(&.[1])
+            macro_end = find_function_end(lines, body_start)
+            if name.nil? || macro_end == -1
+              index += 1
+              next
+            end
+
+            body_lines = lines[(body_start + 1)...macro_end] || [] of String
+            default_bindings = Hash(String, String).new
+            update_elixir_string_bindings(default_bindings, signature)
+            body_lines.each { |body_line| update_elixir_string_bindings(default_bindings, body_line) }
+            route_macro = RouteMacro.new(
+              name,
+              module_name,
+              parse_macro_param_names(signature),
+              default_bindings,
+              body_lines
+            )
+
+            @route_macros[name] = route_macro
+            @route_macros["#{module_name}.#{name}"] = route_macro if module_name
+
+            index = macro_end + 1
+          end
+        rescue e
+          logger.debug "Error collecting Phoenix route macros from #{path}: #{e}"
+        end
+      end
+    end
+
+    private def parse_macro_param_names(signature : String) : Array(String)
+      params = [] of String
+      args = signature.match(/\bdefmacro\s+\w+[!?]?\s*\((.*)\)\s+do\b/).try(&.[1])
+      return params unless args
+
+      split_top_level_commas(args).each do |part|
+        if match = part.strip.match(/^(\w+)/)
+          params << match[1]
+        end
+      end
+      params
+    end
+
+    private def route_macro_invocation(line : String, current_module : String?) : RouteMacroInvocation?
+      code = strip_trailing_comment(line).strip
+      return if code.empty?
+
+      if use_match = code.match(/^use\s+([A-Z]\w*(?:\.[A-Z]\w*)*)(?:\s*,\s*(.*))?$/)
+        route_macro = @route_macros["#{use_match[1]}.__using__"]?
+        return unless route_macro
+
+        keyword_args = parse_keyword_args(use_match[2]? || "")
+        return RouteMacroInvocation.new(route_macro, [] of String, keyword_args)
+      end
+
+      call_match = code.match(/^(?:(?<module>[A-Z]\w*(?:\.[A-Z]\w*)*)\.)?(?<name>[a-z_]\w*[!?]?)\s*(?:\((?<args>.*)\)|(?<bare>.*))?$/)
+      return unless call_match
+
+      name = call_match["name"]
+      module_name = call_match["module"]?
+      route_macro = if module_name
+                      @route_macros["#{module_name}.#{name}"]?
+                    elsif current_module && @route_macros.has_key?("#{current_module}.#{name}")
+                      @route_macros["#{current_module}.#{name}"]
+                    else
+                      @route_macros[name]?
+                    end
+      return unless route_macro
+
+      args_text = call_match["args"]? || call_match["bare"]? || ""
+      positional_args, keyword_args = parse_macro_call_args(args_text)
+      RouteMacroInvocation.new(route_macro, positional_args, keyword_args)
+    end
+
+    private def parse_macro_call_args(args_text : String) : Tuple(Array(String), Hash(String, String))
+      positional_args = [] of String
+      keyword_args = Hash(String, String).new
+
+      split_top_level_commas(args_text).each do |part|
+        stripped = part.strip
+        next if stripped.empty?
+
+        if match = stripped.match(/^(\w+):\s*(.+)$/)
+          value = literal_macro_value(match[2])
+          keyword_args[match[1]] = value if value
+        elsif value = literal_macro_value(stripped)
+          positional_args << value
+        end
+      end
+
+      {positional_args, keyword_args}
+    end
+
+    private def parse_keyword_args(args_text : String) : Hash(String, String)
+      _, keyword_args = parse_macro_call_args(args_text)
+      keyword_args
+    end
+
+    private def literal_macro_value(value : String) : String?
+      stripped = value.strip
+      if match = stripped.match(/^["']([^"']+)["']$/)
+        match[1]
+      elsif stripped.matches?(/^[A-Z]\w*(?:\.[A-Z]\w*)*$/)
+        stripped
+      end
+    end
+
+    private def split_top_level_commas(text : String) : Array(String)
+      parts = [] of String
+      buffer = String::Builder.new
+      depth = 0
+      in_string = false
+      escaped = false
+      quote = '\0'
+
+      text.each_char do |char|
+        if in_string
+          buffer << char
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            in_string = false
+          end
+          next
+        end
+
+        case char
+        when '"', '\''
+          in_string = true
+          quote = char
+          buffer << char
+        when '(', '[', '{'
+          depth += 1
+          buffer << char
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+          buffer << char
+        when ','
+          if depth == 0
+            parts << buffer.to_s
+            buffer = String::Builder.new
+          else
+            buffer << char
+          end
+        else
+          buffer << char
+        end
+      end
+
+      parts << buffer.to_s
+      parts
+    end
+
+    private def endpoints_from_route_macro(invocation : RouteMacroInvocation,
+                                           path : String,
+                                           call_line : Int32,
+                                           outer_scope_prefix : String,
+                                           outer_scope_module : String) : Array(Endpoint)
+      route_macro = invocation.route_macro
+      bindings = route_macro.default_bindings.dup
+      route_macro.param_names.each_with_index do |param_name, index|
+        if value = invocation.positional_args[index]?
+          bindings[param_name] = value
+        end
+      end
+
+      scope_stack = [] of ScopeEntry
+      endpoints = [] of Endpoint
+      index = 0
+
+      while index < route_macro.body_lines.size
+        line = route_macro.body_lines[index]
+        stripped = line.strip
+
+        if stripped.starts_with?("#")
+          index += 1
+          next
+        end
+
+        update_elixir_string_bindings(bindings, line, invocation.keyword_args)
+
+        if !scope_stack.empty?
+          if end_match = line.match(/^(\s*)end\b/)
+            end_indent = end_match[1].size
+            if end_indent == scope_stack.last[:indent]
+              scope_stack.pop
+              index += 1
+              next
+            end
+          end
+        end
+
+        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+          scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
+          index += 1
+          next
+        end
+
+        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+          unless prefix = bindings[match[2]]?
+            index += 1
+            next
+          end
+          scope_stack << {prefix: prefix, module_prefix: match[3]? || "", indent: match[1].size}
+          index += 1
+          next
+        end
+
+        scope_prefix = Noir::URLPath.join(outer_scope_prefix, current_scope_prefix(scope_stack))
+        scope_module = combine_scope_modules(outer_scope_module, current_scope_module(scope_stack))
+
+        if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
+          statement, consumed = assemble_statement(route_macro.body_lines, index)
+          res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, bindings)
+          res_endpoints.each do |endpoint|
+            endpoint.details = Details.new(PathInfo.new(path, call_line))
+            endpoints << endpoint
+          end
+          if nested_prefix
+            indent = line.size - line.lstrip.size
+            scope_stack << {prefix: nested_prefix, module_prefix: "", indent: indent}
+          end
+          index += consumed
+          next
+        end
+
+        line_to_endpoint(line, path, scope_prefix, scope_module, bindings).each do |endpoint|
+          endpoint.details = Details.new(PathInfo.new(path, call_line))
+          endpoints << endpoint
+        end
+
+        index += 1
+      end
+
+      endpoints
+    end
+
+    private def endpoints_for_controller(controller_name : String) : Hash(String, Array(Endpoint))
+      endpoints_by_action = Hash(String, Array(Endpoint)).new { |hash, key| hash[key] = [] of Endpoint }
+
+      @result.each do |endpoint|
+        route_key = "#{endpoint.method}::#{endpoint.url}"
+        next unless mapping = @route_map[route_key]?
+        next unless controller_refs_match?(controller_name, mapping.controller)
+
+        endpoints_by_action[mapping.action] << endpoint
+      end
+
+      endpoints_by_action
+    end
+
     def should_extract_params_for_endpoint?(endpoint : Endpoint, controller_name : String, action_name : String) : Bool
       # Check if the endpoint's route_map entry matches this controller/action
       route_key = "#{endpoint.method}::#{endpoint.url}"
       if @route_map.has_key?(route_key)
         mapping = @route_map[route_key]
-        normalized_controller = normalize_controller_ref(controller_name)
-        normalized_mapping = normalize_controller_ref(mapping.controller)
-        controller_matches = if mapping.controller.includes?(".")
-                               normalized_controller == normalized_mapping
-                             else
-                               normalized_controller.split('.').last == normalized_mapping
-                             end
-        return controller_matches && mapping.action == action_name
+        return controller_refs_match?(controller_name, mapping.controller) && mapping.action == action_name
       end
 
       # Fallback: try to match by conventional naming
       # For example, resources routes: GET /posts -> PostController.index
       false
+    end
+
+    private def controller_refs_match?(controller_name : String, mapped_controller : String) : Bool
+      normalized_controller = normalize_controller_ref(controller_name)
+      normalized_mapping = normalize_controller_ref(mapped_controller)
+      if mapped_controller.includes?(".")
+        normalized_controller == normalized_mapping
+      else
+        normalized_controller.split('.').last == normalized_mapping
+      end
     end
 
     def find_function_end(lines : Array(String), start_index : Int32) : Int32
@@ -402,6 +758,10 @@ module Analyzer::Elixir
     end
 
     private def extract_controller_module(content : String) : String?
+      extract_module_name(content)
+    end
+
+    private def extract_module_name(content : String) : String?
       content.each_line do |line|
         if match = line.match(/^\s*defmodule\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+do\b/)
           return match[1]
@@ -437,6 +797,13 @@ module Analyzer::Elixir
       scope_module
     end
 
+    private def combine_scope_modules(left : String, right : String) : String
+      return right if left.empty?
+      return left if right.empty?
+      return right if right.starts_with?("#{left}.")
+      "#{left}.#{right}"
+    end
+
     private def scoped_route_path(scope_prefix : String, route_path : String) : String
       Noir::URLPath.join(
         normalize_elixir_interpolation(scope_prefix),
@@ -466,15 +833,29 @@ module Analyzer::Elixir
       "#{scope_module}.#{controller}"
     end
 
-    def line_to_endpoint(line : String, file_path : String, scope_prefix : String = "", scope_module : String = "") : Array(Endpoint)
+    private def resolve_unquoted_ref(ref : String, bindings : Hash(String, String)) : String?
+      if match = ref.match(/^unquote\(\s*(\w+)\s*\)$/)
+        bindings[match[1]]?
+      else
+        ref
+      end
+    end
+
+    def line_to_endpoint(line : String,
+                         file_path : String,
+                         scope_prefix : String = "",
+                         scope_module : String = "",
+                         string_bindings : Hash(String, String) = Hash(String, String).new) : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
       # Standard HTTP methods - extract controller and action info
-      add_standard_route(endpoints, line, "get", "GET", scope_prefix, scope_module)
-      add_standard_route(endpoints, line, "post", "POST", scope_prefix, scope_module)
-      add_standard_route(endpoints, line, "patch", "PATCH", scope_prefix, scope_module)
-      add_standard_route(endpoints, line, "put", "PUT", scope_prefix, scope_module)
-      add_standard_route(endpoints, line, "delete", "DELETE", scope_prefix, scope_module)
+      add_standard_route(endpoints, line, "get", "GET", scope_prefix, scope_module, string_bindings)
+      add_standard_route(endpoints, line, "post", "POST", scope_prefix, scope_module, string_bindings)
+      add_standard_route(endpoints, line, "patch", "PATCH", scope_prefix, scope_module, string_bindings)
+      add_standard_route(endpoints, line, "put", "PUT", scope_prefix, scope_module, string_bindings)
+      add_standard_route(endpoints, line, "delete", "DELETE", scope_prefix, scope_module, string_bindings)
+      add_standard_route(endpoints, line, "options", "OPTIONS", scope_prefix, scope_module, string_bindings)
+      add_standard_route(endpoints, line, "head", "HEAD", scope_prefix, scope_module, string_bindings)
 
       # Socket routes
       line.scan(/(?:^|[^.\w])socket\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
@@ -508,13 +889,13 @@ module Analyzer::Elixir
         end
       end
 
-      if match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?:(\w+|\*)\s*,\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*:(\w+[!?]?)/)
+      if match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?:(\w+|\*)\s*,\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|unquote\(\s*\w+\s*\))\s*,\s*:(\w+[!?]?)/)
         http_methods = match_route_methods(match[1])
         path = scoped_route_path(scope_prefix, match[2])
-        controller = scoped_controller(scope_module, match[3])
         controller_action = match[4]
+        controller = resolve_unquoted_ref(match[3], string_bindings)
         http_methods.each do |http_method|
-          @route_map["#{http_method}::#{path}"] = ControllerAction.new(controller, controller_action)
+          @route_map["#{http_method}::#{path}"] = ControllerAction.new(scoped_controller(scope_module, controller), controller_action) if controller
           endpoints << Endpoint.new(path, http_method)
         end
       end
@@ -528,15 +909,16 @@ module Analyzer::Elixir
     # that child routes nest under — `nil` for a leaf resource.
     private def resources_from_statement(statement : String,
                                          scope_prefix : String,
-                                         scope_module : String) : Tuple(Array(Endpoint), String?)
+                                         scope_module : String,
+                                         string_bindings : Hash(String, String)) : Tuple(Array(Endpoint), String?)
       endpoints = Array(Endpoint).new
 
-      match = statement.match(/(?:^|[^.\w])resources\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+      match = statement.match(/(?:^|[^.\w])resources\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|unquote\(\s*\w+\s*\))/)
       return {endpoints, nil} unless match
 
       resource_path = match[1]
       base_path = scoped_route_path(scope_prefix, resource_path)
-      controller = scoped_controller(scope_module, match[2])
+      controller = resolve_unquoted_ref(match[2], string_bindings)
       # `only:`/`except:` may sit behind other options (`as:`, `param:`,
       # `name:`), so scan the whole statement rather than anchoring them
       # to the controller argument.
@@ -566,27 +948,27 @@ module Analyzer::Elixir
       actions.each do |action|
         case action
         when "index"
-          @route_map["GET::#{base_path}"] = ControllerAction.new(controller, "index")
+          @route_map["GET::#{base_path}"] = ControllerAction.new(scoped_controller(scope_module, controller), "index") if controller
           endpoints << Endpoint.new(base_path, "GET")
         when "show"
-          @route_map["GET::#{member}"] = ControllerAction.new(controller, "show")
+          @route_map["GET::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "show") if controller
           endpoints << Endpoint.new(member, "GET")
         when "create"
-          @route_map["POST::#{base_path}"] = ControllerAction.new(controller, "create")
+          @route_map["POST::#{base_path}"] = ControllerAction.new(scoped_controller(scope_module, controller), "create") if controller
           endpoints << Endpoint.new(base_path, "POST")
         when "update"
-          @route_map["PUT::#{member}"] = ControllerAction.new(controller, "update")
+          @route_map["PUT::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "update") if controller
           endpoints << Endpoint.new(member, "PUT")
-          @route_map["PATCH::#{member}"] = ControllerAction.new(controller, "update")
+          @route_map["PATCH::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "update") if controller
           endpoints << Endpoint.new(member, "PATCH")
         when "delete"
-          @route_map["DELETE::#{member}"] = ControllerAction.new(controller, "delete")
+          @route_map["DELETE::#{member}"] = ControllerAction.new(scoped_controller(scope_module, controller), "delete") if controller
           endpoints << Endpoint.new(member, "DELETE")
         when "new"
-          @route_map["GET::#{base_path}/new"] = ControllerAction.new(controller, "new")
+          @route_map["GET::#{base_path}/new"] = ControllerAction.new(scoped_controller(scope_module, controller), "new") if controller
           endpoints << Endpoint.new("#{base_path}/new", "GET")
         when "edit"
-          @route_map["GET::#{member}/edit"] = ControllerAction.new(controller, "edit")
+          @route_map["GET::#{member}/edit"] = ControllerAction.new(scoped_controller(scope_module, controller), "edit") if controller
           endpoints << Endpoint.new("#{member}/edit", "GET")
         end
       end
@@ -622,12 +1004,15 @@ module Analyzer::Elixir
                                    route_macro : String,
                                    http_method : String,
                                    scope_prefix : String,
-                                   scope_module : String)
-      pattern = Regex.new("(?:^|[^.\\w])#{route_macro}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*)\\s*,\\s*:(\\w+[!?]?)")
+                                   scope_module : String,
+                                   string_bindings : Hash(String, String))
+      pattern = Regex.new("(?:^|[^.\\w])#{route_macro}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))\\s*,\\s*:(\\w+[!?]?)")
       line.scan(pattern) do |match|
         full_path = scoped_route_path(scope_prefix, match[1])
         endpoint = Endpoint.new(full_path, http_method)
-        @route_map["#{http_method}::#{full_path}"] = ControllerAction.new(scoped_controller(scope_module, match[2]), match[3])
+        if controller = resolve_unquoted_ref(match[2], string_bindings)
+          @route_map["#{http_method}::#{full_path}"] = ControllerAction.new(scoped_controller(scope_module, controller), match[3])
+        end
         endpoints << endpoint
       end
     end
