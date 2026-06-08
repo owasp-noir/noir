@@ -2,7 +2,11 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class FastAPI < PythonEngine
+    PATH_PARAM_REGEX       = /\{(#{PYTHON_VAR_NAME_REGEX})(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
+    TYPED_PATH_PARAM_REGEX = /\{(#{PYTHON_VAR_NAME_REGEX}):[a-zA-Z_][a-zA-Z0-9_]*\}/
+
     @fastapi_base_path : ::String = ""
+    @fastapi_import_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
     def analyze
       include_router_map = Hash(::String, Hash(::String, Router)).new
@@ -140,11 +144,7 @@ module Analyzer::Python
 
                 # Get path params from route path
                 query_params = [] of ::String
-                http_route_path.scan(/\{(#{PYTHON_VAR_NAME_REGEX})\}/) do |route_match|
-                  if route_match.size > 0
-                    query_params << route_match[1]
-                  end
-                end
+                query_params.concat(fastapi_path_param_names(http_route_path))
 
                 # Resolve the actual `def` line, skipping stacked
                 # decorators / comments / blank lines between the
@@ -234,7 +234,7 @@ module Analyzer::Python
                 emit_methods = declared_methods.empty? ? [http_method_name] : declared_methods
 
                 details = Details.new(PathInfo.new(path, index + 1))
-                full_path = router_class.join(http_route_path)
+                full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
                 base_endpoint.protocol = "ws" if websocket_route
 
@@ -280,10 +280,15 @@ module Analyzer::Python
                 if prog_methods.empty?
                   prog_methods = prog_websocket_route ? ["GET"] : ["GET"]
                 end
-                prog_full = router_class.join(prog_path)
+                prog_full = normalize_fastapi_path_params(router_class.join(prog_path))
                 prog_details = Details.new(PathInfo.new(path, index + 1))
                 prog_params = [] of Param
                 prog_callees = [] of Callee
+                if callees_needed?
+                  if handler_callee = extract_programmatic_handler_callee(prog_tail)
+                    prog_callees << Callee.new(handler_callee, path, index + 1)
+                  end
+                end
                 if handler = resolve_programmatic_handler(prog_tail, path, source, import_modules)
                   handler_path, handler_name = handler
                   handler_source = handler_path == path ? source : read_file_content(handler_path)
@@ -292,13 +297,13 @@ module Analyzer::Python
                   if handler_def_line = find_function_def_line(handler_lines, handler_name)
                     prog_params = extract_fastapi_handler_params(handler_lines, handler_def_line, prog_full, handler_source, handler_imports)
                     if handler_codeblock = parse_code_block(handler_lines[handler_def_line..])
-                      prog_callees = build_callees_from(
+                      prog_callees.concat(build_callees_from(
                         handler_codeblock,
                         handler_def_line,
                         handler_path,
                         definition_base_path: definition_base_path,
                         source: handler_source
-                      )
+                      ))
                     end
                   end
                 end
@@ -344,15 +349,24 @@ module Analyzer::Python
     private def find_fastapi_imported_modules(app_base_path : ::String,
                                               file_path : ::String,
                                               source : ::String? = nil) : Hash(::String, Tuple(::String, Int32))
+      cache_key = "#{app_base_path}\u{0}#{file_path}"
+      if cached = @fastapi_import_cache[cache_key]?
+        return cached
+      end
+
       import_modules = find_imported_modules(app_base_path, file_path, source)
       local_base_path = File.dirname(file_path)
-      return import_modules if local_base_path == app_base_path
+      if local_base_path == app_base_path
+        @fastapi_import_cache[cache_key] = import_modules
+        return import_modules
+      end
 
       local_import_modules = find_imported_modules(local_base_path, file_path, source)
       local_import_modules.each do |name, import_info|
         import_modules[name] = import_info unless import_modules.has_key?(name)
       end
 
+      @fastapi_import_cache[cache_key] = import_modules
       import_modules
     end
 
@@ -806,6 +820,32 @@ module Analyzer::Python
       nil
     end
 
+    private def extract_programmatic_handler_callee(args : ::String) : ::String?
+      if endpoint_expr = extract_python_keyword_expression(args, "endpoint")
+        return clean_programmatic_handler_callee(endpoint_expr)
+      end
+
+      positional_args = [] of ::String
+      split_python_arguments(args).each do |arg|
+        stripped = arg.strip
+        break if top_level_keyword_argument?(stripped)
+        positional_args << stripped
+      end
+
+      return if positional_args.size < 2
+      clean_programmatic_handler_callee(positional_args[1])
+    end
+
+    private def clean_programmatic_handler_callee(expression : ::String) : ::String?
+      reference = expression.strip.split("#", 2)[0].strip
+      if match = reference.match(/^(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*\(/)
+        return match[1]
+      end
+      return reference if reference.matches?(/^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/)
+
+      nil
+    end
+
     private def extract_programmatic_handler_reference(args : ::String) : ::String?
       if endpoint_expr = extract_python_keyword_expression(args, "endpoint")
         return clean_programmatic_handler_reference(endpoint_expr)
@@ -846,10 +886,7 @@ module Analyzer::Python
       function_definition = parse_function_def(codelines, def_line)
       return params unless function_definition
 
-      path_param_names = [] of ::String
-      route_path.scan(/\{(#{PYTHON_VAR_NAME_REGEX})\}/) do |route_match|
-        path_param_names << route_match[1] if route_match.size > 0
-      end
+      path_param_names = fastapi_path_param_names(route_path)
 
       function_definition.params.each do |param|
         next if param.name == "*" || path_param_names.includes?(param.name)
@@ -893,6 +930,18 @@ module Analyzer::Python
       end
 
       params
+    end
+
+    private def fastapi_path_param_names(route_path : ::String) : Array(::String)
+      names = [] of ::String
+      route_path.scan(PATH_PARAM_REGEX) do |match|
+        names << match[1] if match.size > 0 && !names.includes?(match[1])
+      end
+      names
+    end
+
+    private def normalize_fastapi_path_params(route_path : ::String) : ::String
+      route_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
     end
 
     private def fastapi_dependency_param?(param : FunctionParameter) : Bool
