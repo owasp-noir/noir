@@ -38,13 +38,19 @@ module Analyzer::Php
         # collapse them by (method, url) while merging params. Creating the
         # duplicates up-front was extremely expensive on large files.
         #
-        # We emit at most one endpoint per distinct HTTP method that appeared,
-        # plus the always-present GET endpoint for query params. We also
-        # deduplicate params by (name, param_type) in first-seen order so that
-        # the Endpoint objects we hand to later stages carry the same logical
-        # set that the optimizer would have produced. This is semantically
-        # identical to the previous behaviour for all observable outputs and
-        # test expectations, but avoids the O(N) explosion in intermediate objects.
+        # We emit at most the POST pseudo-endpoint (when any POST/REQUEST/FILES
+        # reference was seen) plus the always-present GET pseudo-endpoint (for
+        # query/cookie/header params discovered in the file). We also deduplicate
+        # params by (name, param_type) in first-seen order so that the Endpoint
+        # objects we hand to later stages carry the same logical set that the
+        # optimizer would have produced. This is semantically identical to the
+        # previous behaviour for all observable outputs and test expectations,
+        # but avoids the O(N) explosion in intermediate objects.
+        #
+        # Note: unlike real framework analyzers, this one only ever contributes
+        # "POST" (or nothing) to the methods list; the GET is emitted separately.
+        # The wording is intentionally specific to avoid implying full multi-verb
+        # route support here.
         distinct_methods = methods.uniq
         query_params = unique_params_preserve_order(params_query)
         body_params = unique_params_preserve_order(params_body)
