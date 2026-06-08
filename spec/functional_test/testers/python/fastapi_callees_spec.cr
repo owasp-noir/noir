@@ -47,7 +47,18 @@ expected_endpoints = [
     ep.push_callee(Callee.new("db.fetch_report", db_path, 9))
   end,
 
-  # 6. GET /reports — multi-line typed signature (`) -> dict:` at
+  # 6. GET /exports/{file_path:path} — programmatic route registration
+  #    with a FastAPI typed path converter. The converter should not
+  #    make `file_path` appear as both query and path, and the handler
+  #    reference should seed callee/AI-context output even before its
+  #    body callees are resolved.
+  Endpoint.new("/exports/{file_path}", "GET").tap do |ep|
+    ep.push_param(Param.new("file_path", "", "path"))
+    ep.push_callee(Callee.new("export_file", main_path, 27))
+    ep.push_callee(Callee.new("audit_log", db_path, 5))
+  end,
+
+  # 7. GET /reports — multi-line typed signature (`) -> dict:` at
   #    column 0). The handler body (and its callees) used to be
   #    dropped because parse_code_block treated the signature closer
   #    as the end of the block.
@@ -63,3 +74,19 @@ FunctionalTester.new("fixtures/python/fastapi_callees/", {
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
+
+describe "FastAPI programmatic route callees" do
+  it "does not emit handler references unless callee context is requested" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/python/fastapi_callees/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    endpoint = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/exports/{file_path}" }
+    endpoint.callees.should be_empty
+    endpoint.params.select { |param| param.name == "file_path" }.map(&.param_type).should eq(["path"])
+  end
+end

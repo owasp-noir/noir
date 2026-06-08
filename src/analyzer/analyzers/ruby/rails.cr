@@ -291,7 +291,7 @@ module Analyzer::Ruby
           next unless m = call[1].match(/^\s*(?::(\w+)|['"]([^'"]+)['"])/)
           name = m[1]? || m[2]? || ""
           options = parse_options(call[1])
-          namespace_path = options.has_key?("path") ? options["path"] : name
+          namespace_path = normalize_route_prefix(options.has_key?("path") ? options["path"] : name)
           stack << Frame.new(:namespace, path: namespace_path, controller_subdir: name) if opens_block
           next
         end
@@ -304,9 +304,9 @@ module Analyzer::Ruby
           if m = args.match(/^\s*:(\w+)/)
             scope_path = m[1]
           elsif m = args.match(/^\s*['"]([^'"]+)['"]/)
-            scope_path = m[1].lchop('/')
+            scope_path = normalize_route_prefix(m[1])
           elsif path_option = options["path"]?
-            scope_path = path_option.lchop('/')
+            scope_path = normalize_route_prefix(path_option)
           end
           controller_subdir = options["module"]? || ""
           controller_scope = options["controller"]?
@@ -462,13 +462,23 @@ module Analyzer::Ruby
           # `get :action` form inside member/collection/new blocks, inline
           # `on:` declarations, or directly nested in a resources block.
           if (am = rest.match(/^\s*:(\w+)\b/)) && (in_member || in_collection || in_new || parent_resources_frame(stack))
-            action = am[1]
-            url = custom_resource_action_url(stack, action, route_scope)
+            segment = am[1]
+            url = custom_resource_action_url(stack, segment, route_scope)
             if url
               parent = parent_resources_frame(stack)
-              action_params = parent ? params_for_action(parent.controller_path, action, verb) : ([] of Param)
+              ctrl_path = parent.try(&.controller_path)
+              action_name = controller_action_for_symbol_route(rest, segment)
+
+              if ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+                ctrl_name, parsed_action = ctrl_action
+                ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+                action_name = parsed_action
+              end
+
+              action_params = params_for_action(ctrl_path, action_name, verb)
+              action_params = promote_identifier_to_path(action_params) unless in_collection || in_new
               endpoint = Endpoint.new(url, verb, action_params, details)
-              attach_callees_for_action(endpoint, parent.try(&.controller_path), action)
+              attach_callees_for_action(endpoint, ctrl_path, action_name)
               @result << endpoint
             end
             next
@@ -1098,6 +1108,12 @@ module Analyzer::Ruby
       result
     end
 
+    private def normalize_route_prefix(path : String) : String
+      normalized = strip_optional_route_segments(path).lchop('/')
+      normalized = normalized.rchop('/') if normalized.size > 1 && normalized.ends_with?('/')
+      normalized
+    end
+
     private def parse_options(line : String) : Hash(String, String)
       result = {} of String => String
       value_pattern = "nil|['\"][^'\"]+['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
@@ -1575,6 +1591,10 @@ module Analyzer::Ruby
         end
       end
       nil
+    end
+
+    private def controller_action_for_symbol_route(rest : String, fallback : String) : String
+      parse_options(rest)["action"]? || fallback
     end
 
     # Rails allows compact declarations such as `post "stories/preview"`

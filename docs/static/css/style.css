@@ -1991,11 +1991,14 @@ p:has(> .member-card) {
     max-width: 900px;
     margin: 0 auto;
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
     align-items: center;
+    gap: 1rem;
 }
 .footer-branding {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.75rem;
     color: var(--text-muted);
@@ -2029,6 +2032,13 @@ p:has(> .member-card) {
 }
 .footer-sep {
     opacity: 0.4;
+}
+/* On docs pages the sidebar (and TOC) are position: fixed and overlay the
+   full-width footer. Reserve their space so the footer content never slides
+   behind them at narrow window widths. The landing page has no .docs-layout,
+   so it keeps the full-width footer. */
+.docs-layout ~ .site-footer {
+    padding-left: calc(2rem + var(--sidebar-w));
 }
 
 /* ==========================================================================
@@ -2083,6 +2093,13 @@ p:has(> .member-card) {
     }
     .docs-main {
         margin-right: 0;
+    }
+}
+
+/* The TOC is fixed on the right above 1100px; keep the footer clear of it. */
+@media (min-width: 1101px) {
+    .docs-layout ~ .site-footer {
+        padding-right: calc(2rem + var(--toc-w));
     }
 }
 
@@ -2231,6 +2248,9 @@ p:has(> .member-card) {
     }
 
     /* Footer */
+    .docs-layout ~ .site-footer {
+        padding-left: 2rem;
+    }
     .footer-inner {
         flex-direction: column;
         gap: 1rem;

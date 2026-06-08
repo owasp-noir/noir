@@ -148,6 +148,9 @@ expected_endpoints = [
   Endpoint.new("/report/rss", "GET", [
     Param.new("X-Ping", "", "header"),
   ]),
+  Endpoint.new("/localized_ping", "GET", [
+    Param.new("X-Ping", "", "header"),
+  ]),
 
   # `%w[browse annotate].each do |action|` unrolls to one route per literal
   # element with `#{action}` substituted — never leaking raw Ruby or a
@@ -205,7 +208,7 @@ total_endpoints = 1 +  # root
                   6 +  # posts
                   4 +  # posts/1/comments + nested likes from concern
                   3 +  # /up + /ping + legacy string-via match
-                  2 +  # optional-segment routes /feed + /report/rss
+                  3 +  # optional-segment routes /feed + /report/rss + optional scope
                   2 +  # %w[browse annotate].each unrolled to /repo/:id/browse + /annotate
                   20 + # devise_for :users
                   1 +  # mount sidekiq

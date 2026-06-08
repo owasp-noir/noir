@@ -17,8 +17,14 @@ def build_status():
     return {"ok": True}
 
 
+def export_file(file_path: str):
+    audit_log(file_path)
+    return {"path": file_path}
+
+
 app = FastAPI()
 app.include_router(api, prefix="/internal")
+app.add_api_route("/exports/{file_path:path}", export_file, methods=["GET"])
 
 
 @app.post("/users")

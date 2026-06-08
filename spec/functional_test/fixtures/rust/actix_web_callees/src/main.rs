@@ -1,6 +1,8 @@
 use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
 use serde::Deserialize;
 
+mod external;
+
 #[derive(Deserialize)]
 struct UserInfo {
     id: u32,
@@ -44,4 +46,8 @@ async fn protected(req: HttpRequest) -> impl Responder {
 async fn multi_route() -> impl Responder {
     MultiService::serve();
     HttpResponse::Ok().finish()
+}
+
+fn configure(cfg: &mut web::ServiceConfig) {
+    cfg.route("/external", web::post().to(external::external_create));
 }

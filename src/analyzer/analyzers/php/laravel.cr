@@ -17,6 +17,17 @@ module Analyzer::Php
       end
     end
 
+    private struct ResourceEndpointTemplate
+      getter action, path, method
+
+      def initialize(@action : String, @path : String, @method : String)
+      end
+    end
+
+    alias ControllerActionBody = Tuple(String, String, Int32)
+    alias ControllerActionMap = Hash(String, ControllerActionBody)
+    EMPTY_RESOURCE_PARAMS = {} of String => String
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -128,6 +139,7 @@ module Analyzer::Php
       # the same lexer instead of re-scanning the raw text per route.
       lexer = Noir::PhpLexer.new(content)
       route_groups = extract_route_groups(content, lexer)
+      resource_controller_cache = {} of String => ControllerActionMap?
       # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
       # string literals (`'...'`, `"..."`) or heredoc/nowdoc bodies. The
       # per-loop verb scans below check each match against this set so a
@@ -276,11 +288,10 @@ module Analyzer::Php
                 inside_php_skip_range?(call.start_pos, skip_ranges)
 
         resource_name = call.resource
-        full_resource_path = build_full_path(prefix, resource_name)
         route_line = base_line + newline_count_before(content, call.start_pos)
         actions = resource_actions_for_statement(call.statement, api: false)
-        param_name = resource_param_name_for_statement(resource_name, call.statement)
-        endpoints.concat(create_resource_endpoints(full_resource_path.lstrip('/'), file_path, route_line, actions, param_name))
+        parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
+        endpoints.concat(create_resource_endpoints(prefix, resource_name, file_path, route_line, actions, parameter_overrides, call.statement, include_callee, imports, resource_controller_cache))
       end
 
       api_resource_calls = extract_resource_route_calls(content, "apiResource", skip_ranges, lexer)
@@ -289,11 +300,10 @@ module Analyzer::Php
                 inside_php_skip_range?(call.start_pos, skip_ranges)
 
         resource_name = call.resource
-        full_resource_path = build_full_path(prefix, resource_name)
         route_line = base_line + newline_count_before(content, call.start_pos)
         actions = resource_actions_for_statement(call.statement, api: true)
-        param_name = resource_param_name_for_statement(resource_name, call.statement)
-        endpoints.concat(create_api_resource_endpoints(full_resource_path.lstrip('/'), file_path, route_line, actions, param_name))
+        parameter_overrides = resource_parameter_overrides_for_statement(call.statement)
+        endpoints.concat(create_api_resource_endpoints(prefix, resource_name, file_path, route_line, actions, parameter_overrides, call.statement, include_callee, imports, resource_controller_cache))
       end
 
       # 3. Group routes (recursive). Extract group bodies before scanning nested
@@ -409,7 +419,11 @@ module Analyzer::Php
       root = laravel_project_root(routes_file_path)
       return unless root
 
-      File.join(root, "app", "#{segments[1..].join("/")}.php")
+      candidates = [] of String
+      candidates << File.join(root, "app", "#{segments[1..].join("/")}.php") if segments.size >= 2
+      candidates << File.join(root, "app", "Http", "Controllers", "#{segments.join("/")}.php")
+      candidates << File.join(root, "app", "Http", "Controllers", "#{segments.last}.php") if segments.size == 1
+      candidates.find { |candidate| File.exists?(candidate) } || candidates.first?
     end
 
     private def laravel_project_root(routes_file_path : String) : String?
@@ -563,45 +577,63 @@ module Analyzer::Php
       groups.any? { |group| pos >= group.body_start && pos < group.body_end }
     end
 
-    private def create_resource_endpoints(resource : String,
+    private def create_resource_endpoints(prefix : String,
+                                          resource : String,
                                           file_path : String,
                                           line : Int32? = nil,
                                           actions : Array(String) = RESOURCE_ACTIONS,
-                                          param_name : String = resource_param_name) : Array(Endpoint)
+                                          parameter_overrides : Hash(String, String) = EMPTY_RESOURCE_PARAMS,
+                                          statement : String? = nil,
+                                          include_callee : Bool = false,
+                                          imports : Hash(String, String) = EMPTY_IMPORTS,
+                                          controller_cache : Hash(String, ControllerActionMap?) = {} of String => ControllerActionMap?) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path, line))
 
       # Standard Laravel resource routes
-      resource_routes = resource_route_templates(resource, param_name, api: false)
+      resource_routes = resource_route_templates(prefix, resource, parameter_overrides, api: false)
 
       resource_routes.each do |route_info|
-        action, path, method = route_info
+        action = route_info.action
+        path = route_info.path
+        method = route_info.method
         next unless actions.includes?(action)
 
         params = extract_brace_path_params(path)
-        endpoints << Endpoint.new(path, method, params, details)
+        endpoint = Endpoint.new(path, method, params, details)
+        attach_resource_action_callees(endpoint, statement, action, file_path, imports, controller_cache) if include_callee && statement
+        endpoints << endpoint
       end
 
       endpoints
     end
 
-    private def create_api_resource_endpoints(resource : String,
+    private def create_api_resource_endpoints(prefix : String,
+                                              resource : String,
                                               file_path : String,
                                               line : Int32? = nil,
                                               actions : Array(String) = API_RESOURCE_ACTIONS,
-                                              param_name : String = resource_param_name) : Array(Endpoint)
+                                              parameter_overrides : Hash(String, String) = EMPTY_RESOURCE_PARAMS,
+                                              statement : String? = nil,
+                                              include_callee : Bool = false,
+                                              imports : Hash(String, String) = EMPTY_IMPORTS,
+                                              controller_cache : Hash(String, ControllerActionMap?) = {} of String => ControllerActionMap?) : Array(Endpoint)
       endpoints = [] of Endpoint
       details = Details.new(PathInfo.new(file_path, line))
 
       # API resource routes (excludes create and edit forms)
-      api_resource_routes = resource_route_templates(resource, param_name, api: true)
+      api_resource_routes = resource_route_templates(prefix, resource, parameter_overrides, api: true)
 
       api_resource_routes.each do |route_info|
-        action, path, method = route_info
+        action = route_info.action
+        path = route_info.path
+        method = route_info.method
         next unless actions.includes?(action)
 
         params = extract_brace_path_params(path)
-        endpoints << Endpoint.new(path, method, params, details)
+        endpoint = Endpoint.new(path, method, params, details)
+        attach_resource_action_callees(endpoint, statement, action, file_path, imports, controller_cache) if include_callee && statement
+        endpoints << endpoint
       end
 
       endpoints
@@ -610,22 +642,100 @@ module Analyzer::Php
     RESOURCE_ACTIONS     = ["index", "create", "store", "show", "edit", "update", "destroy"]
     API_RESOURCE_ACTIONS = ["index", "store", "show", "update", "destroy"]
 
-    private def resource_route_templates(resource : String, param_name : String, api : Bool) : Array(Tuple(String, String, String))
+    private def resource_route_templates(prefix : String, resource : String, parameter_overrides : Hash(String, String), api : Bool) : Array(ResourceEndpointTemplate)
+      collection_path = resource_collection_path(prefix, resource, parameter_overrides)
+      param_name = resource_param_name_for_segment(resource_segments(resource).last, parameter_overrides)
+      member_path = "#{collection_path}/{#{param_name}}"
       templates = [
-        {"index", "/#{resource}", "GET"},
-        {"store", "/#{resource}", "POST"},
-        {"show", "/#{resource}/{#{param_name}}", "GET"},
-        {"update", "/#{resource}/{#{param_name}}", "PUT"},
-        {"update", "/#{resource}/{#{param_name}}", "PATCH"},
-        {"destroy", "/#{resource}/{#{param_name}}", "DELETE"},
+        ResourceEndpointTemplate.new("index", collection_path, "GET"),
+        ResourceEndpointTemplate.new("store", collection_path, "POST"),
+        ResourceEndpointTemplate.new("show", member_path, "GET"),
+        ResourceEndpointTemplate.new("update", member_path, "PUT"),
+        ResourceEndpointTemplate.new("update", member_path, "PATCH"),
+        ResourceEndpointTemplate.new("destroy", member_path, "DELETE"),
       ]
 
       unless api
-        templates.insert(1, {"create", "/#{resource}/create", "GET"})
-        templates.insert(4, {"edit", "/#{resource}/{#{param_name}}/edit", "GET"})
+        templates.insert(1, ResourceEndpointTemplate.new("create", "#{collection_path}/create", "GET"))
+        templates.insert(4, ResourceEndpointTemplate.new("edit", "#{member_path}/edit", "GET"))
       end
 
       templates
+    end
+
+    private def resource_collection_path(prefix : String, resource : String, parameter_overrides : Hash(String, String)) : String
+      expanded = [] of String
+
+      resource.split('/').reject(&.empty?).each do |part|
+        nested = part.split('.').reject(&.empty?)
+        next if nested.empty?
+
+        nested.each_with_index do |segment, index|
+          expanded << segment
+          expanded << "{#{resource_param_name_for_segment(segment, parameter_overrides)}}" if index < nested.size - 1
+        end
+      end
+
+      build_full_path(prefix, expanded.join("/"))
+    end
+
+    private def attach_resource_action_callees(endpoint : Endpoint,
+                                               statement : String?,
+                                               action : String,
+                                               routes_file_path : String,
+                                               imports : Hash(String, String),
+                                               controller_cache : Hash(String, ControllerActionMap?))
+      return unless statement
+      class_ref = extract_resource_controller(statement)
+      return unless class_ref
+
+      action_map = if controller_cache.has_key?(class_ref)
+                     controller_cache[class_ref]
+                   else
+                     resolved_actions = resolve_controller_action_bodies(class_ref, routes_file_path, imports)
+                     controller_cache[class_ref] = resolved_actions
+                     resolved_actions
+                   end
+      return unless action_map
+
+      resolved = action_map[action]?
+      return unless resolved
+
+      action_body, controller_path, controller_line = resolved
+      callees = Noir::PhpCalleeExtractor.callees_for_body(action_body, controller_path, controller_line)
+      attach_php_callees(endpoint, callees)
+    end
+
+    private def extract_resource_controller(statement : String) : String?
+      if match = statement.match(/,\s*([A-Za-z_\\][\w\\]*)::class\b/)
+        return match[1]
+      end
+
+      nil
+    end
+
+    private def resolve_controller_action_bodies(class_ref : String,
+                                                 routes_file_path : String,
+                                                 imports : Hash(String, String)) : ControllerActionMap?
+      controller_path = resolve_controller_path(class_ref, routes_file_path, imports)
+      return unless controller_path && File.exists?(controller_path)
+
+      content = read_file_content(controller_path)
+      actions = ControllerActionMap.new
+      content.scan(/(?:public|protected|private)\s+(?:static\s+)?function\s+([A-Za-z_]\w*)\s*\(/) do |method_match|
+        method_name = method_match[1]
+        next unless RESOURCE_ACTIONS.includes?(method_name)
+        body_info = extract_php_method_body_after(content, method_match.begin(0))
+        next unless body_info
+
+        body, start_line = body_info
+        actions[method_name] = {body, controller_path, start_line}
+      end
+
+      actions
+    rescue e
+      logger.debug "Error resolving Laravel resource handler #{class_ref}: #{e}"
+      nil
     end
 
     private def extract_resource_route_calls(content : String,
@@ -675,21 +785,34 @@ module Analyzer::Php
       actions.empty? ? nil : actions
     end
 
-    private def resource_param_name_for_statement(resource : String, statement : String) : String
+    private def resource_parameter_overrides_for_statement(statement : String) : Hash(String, String)
+      overrides = {} of String => String
       if match = statement.match(/->\s*parameters\s*\(\s*\[([^\]]+)\]\s*\)/mi)
-        last_segment = resource.split('/').last
         match[1].scan(/['"]([^'"]+)['"]\s*=>\s*['"]([^'"]+)['"]/).each do |param_match|
-          key = param_match[1]
-          value = param_match[2]
-          return value if key == resource || key == last_segment
+          overrides[param_match[1]] = param_match[2]
         end
       end
 
-      resource_param_name
+      overrides
     end
 
-    private def resource_param_name : String
-      "id"
+    private def resource_segments(resource : String) : Array(String)
+      resource.split(/[\/.]/).reject(&.empty?)
+    end
+
+    private def resource_param_name_for_segment(segment : String, parameter_overrides : Hash(String, String) = EMPTY_RESOURCE_PARAMS) : String
+      if override = parameter_overrides[segment]?
+        return override
+      end
+
+      singularize_resource_segment(segment).gsub('-', '_')
+    end
+
+    private def singularize_resource_segment(segment : String) : String
+      return segment[0...-3] + "y" if segment.ends_with?("ies") && segment.size > 3
+      return segment[0...-2] if segment.ends_with?("ses") && segment.size > 3
+      return segment[0...-1] if segment.ends_with?("s") && segment.size > 1
+      segment
     end
 
     private def extract_methods_from_array(methods_str : String) : Array(String)

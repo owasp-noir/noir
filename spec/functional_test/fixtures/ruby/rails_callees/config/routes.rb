@@ -1,5 +1,10 @@
 Rails.application.routes.draw do
   resources :posts, only: [:index, :show, :create] do
+    member do
+      delete :memory, action: :destroy_memory
+      get :external_ready, to: "monitor#ready"
+    end
+
     collection do
       get :preview
     end

@@ -97,6 +97,12 @@ Rails.application.routes.draw do
   get "feed(.:format)", to: "monitor#ping"
   get "report(/:section)/rss", to: "monitor#ping"
 
+  # Optional segments in scope prefixes should be normalized the same way as
+  # route literals; the emitted URL is `/localized_ping`, not `/(/:locale)/...`.
+  scope "(/:locale)" do
+    get "localized_ping", to: "monitor#ping"
+  end
+
   # A `%w[...].each do |action|` loop over a literal list (like Redmine's
   # repository routes) unrolls to one route per element with `#{action}`
   # substituted — never leaking raw Ruby or a fabricated `{action}` path
