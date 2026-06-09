@@ -25,6 +25,12 @@ module Analyzer::Lua
   # `app.path = "/prefix"` that every route inherits, so the prefix is
   # detected per file and prepended to the routes bound on that app.
   class Lapis < Analyzer
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile); the route matchers interpolate the
+    # discovered app-variable alternation, so memoize them per alternation.
+    @method_call_regexes = Hash(String, Regex).new
+    @match_call_regexes = Hash(String, Regex).new
+
     HTTP_METHODS     = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
     APP_VAR_RE       = /(?:^|[^A-Za-z0-9_])(?:local\s+)?([A-Za-z_]\w*)\s*=\s*lapis\.Application(?:\b|:extend|\s*\()/
@@ -162,7 +168,7 @@ module Analyzer::Lua
                                   app_vars : Array(String),
                                   app_paths : Hash(String, String))
       alt = app_var_alternation(app_vars)
-      pattern = /\b(#{alt})\s*[:.]\s*(get|post|put|delete|patch|head|options)\s*\(?\s*(['"])([^'"]*)\3(?:\s*,\s*(['"])([^'"]*)\5)?/
+      pattern = @method_call_regexes[alt] ||= /\b(#{alt})\s*[:.]\s*(get|post|put|delete|patch|head|options)\s*\(?\s*(['"])([^'"]*)\3(?:\s*,\s*(['"])([^'"]*)\5)?/
       cleaned.scan(pattern) do |match|
         var = match[1]
         verb = match[2].upcase
@@ -205,7 +211,7 @@ module Analyzer::Lua
                                  app_vars : Array(String),
                                  app_paths : Hash(String, String))
       alt = app_var_alternation(app_vars)
-      pattern = /\b(#{alt})\s*[:.]\s*match\s*\(?\s*(['"])([^'"]*)\2(?:\s*,\s*(['"])([^'"]*)\4)?/
+      pattern = @match_call_regexes[alt] ||= /\b(#{alt})\s*[:.]\s*match\s*\(?\s*(['"])([^'"]*)\2(?:\s*,\s*(['"])([^'"]*)\4)?/
       cleaned.scan(pattern) do |match|
         var = match[1]
         first = match[3]

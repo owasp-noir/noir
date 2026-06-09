@@ -20,6 +20,13 @@ module Analyzer::Go
       "cookie" => "cookie",
     }
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile) — precompile the fixed tag matchers once
+    # at load time instead of per struct field.
+    PARAM_TAG_PATTERNS = PARAM_TAG_KINDS.map do |go_tag, param_type|
+      {param_type, /#{go_tag}:"([^"]+)"/}
+    end
+
     # Huma v2's typed convenience helpers — `huma.Get(api, "/path",
     # handler)` and friends — register an operation without the verbose
     # `huma.Register(api, huma.Operation{...}, handler)` literal. The verb
@@ -383,8 +390,8 @@ module Analyzer::Go
         return
       end
 
-      PARAM_TAG_KINDS.each do |go_tag, param_type|
-        if match = tag.match(/#{go_tag}:"([^"]+)"/)
+      PARAM_TAG_PATTERNS.each do |param_type, tag_regex|
+        if match = tag.match(tag_regex)
           param = Param.new(match[1], "", param_type)
           endpoint.params << param unless endpoint.params.includes?(param)
           return

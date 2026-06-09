@@ -237,8 +237,17 @@ module Analyzer::Haskell
       params
     end
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The probed token set is fixed, so
+    # precompile the matchers once at load time.
+    TOKEN_PATTERNS = {
+      "jsonData" => /(?<![A-Za-z0-9_'])jsonData(?![A-Za-z0-9_'])/,
+      "files"    => /(?<![A-Za-z0-9_'])files(?![A-Za-z0-9_'])/,
+    }
+
     private def mentions_token?(body : String, token : String) : Bool
-      !!body.match(/(?<![A-Za-z0-9_'])#{Regex.escape(token)}(?![A-Za-z0-9_'])/)
+      token_regex = TOKEN_PATTERNS[token]? || /(?<![A-Za-z0-9_'])#{Regex.escape(token)}(?![A-Za-z0-9_'])/
+      !!body.match(token_regex)
     end
 
     private def attach_callees(endpoint : Endpoint,

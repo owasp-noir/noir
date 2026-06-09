@@ -464,8 +464,17 @@ module Analyzer::Java
       end
     end
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). Only `@Param`/`@Header` are probed, so
+    # precompile their matchers once at load time.
+    ANNOTATION_VALUE_PATTERNS = {
+      "Param"  => /@Param\s*\(\s*(?:(?:value|name)\s*=\s*)?(["'][^"']+["'])\s*\)/m,
+      "Header" => /@Header\s*\(\s*(?:(?:value|name)\s*=\s*)?(["'][^"']+["'])\s*\)/m,
+    }
+
     private def annotation_string_value(arg : String, annotation_name : String) : String?
-      if match = arg.match(/@#{annotation_name}\s*\(\s*(?:(?:value|name)\s*=\s*)?(["'][^"']+["'])\s*\)/m)
+      annotation_regex = ANNOTATION_VALUE_PATTERNS[annotation_name]? || /@#{annotation_name}\s*\(\s*(?:(?:value|name)\s*=\s*)?(["'][^"']+["'])\s*\)/m
+      if match = arg.match(annotation_regex)
         string_literal_value(match[1])
       end
     end

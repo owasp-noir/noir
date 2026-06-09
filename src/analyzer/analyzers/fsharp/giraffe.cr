@@ -20,6 +20,16 @@ module Analyzer::Fsharp
 
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). Both the stop-line matcher and the
+    # per-verb window probes interpolate only fixed patterns, so
+    # precompile them once at load time.
+    ROUTE_COMBINATOR      = /(?:route(?:Bind|Ci[fx]?|xp?|f)?|subRoute(?:Ci|f)?)\b/
+    ROUTE_HANDLER_STOP_RE = /\A(?:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b.*\b#{ROUTE_COMBINATOR}|#{ROUTE_COMBINATOR})/
+    METHOD_WORD_PATTERNS  = HTTP_METHODS.map do |m|
+      {m, /\b#{m}\b/}
+    end
+
     # Mapping of routef format specifiers to noir path-param types.
     ROUTEF_PARAM_TYPES = {
       'i' => "int",
@@ -403,8 +413,7 @@ module Analyzer::Fsharp
       return true if stripped.starts_with?("]") || stripped.starts_with?(")")
       return true if stripped.match(/\A(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b\s*$/)
 
-      route_combinator = /(?:route(?:Bind|Ci[fx]?|xp?|f)?|subRoute(?:Ci|f)?)\b/
-      !!stripped.match(/\A(?:(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\b.*\b#{route_combinator}|#{route_combinator})/)
+      !!stripped.match(ROUTE_HANDLER_STOP_RE)
     end
 
     private def line_start_for_offset(text : String, offset : Int32) : Int32
@@ -537,7 +546,7 @@ module Analyzer::Fsharp
       end
 
       window = collected.to_s
-      methods = HTTP_METHODS.select { |m| window.match(/\b#{m}\b/) }
+      methods = METHOD_WORD_PATTERNS.select { |_, pattern| window.match(pattern) }.map { |m, _| m }
       methods.first?
     end
 

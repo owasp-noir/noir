@@ -107,6 +107,13 @@ module Analyzer::Java
       "trace"   => "TRACE",
     }
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile) — precompile the fixed per-verb call
+    # matchers once at load time instead of per route expression.
+    ROUTE_VERB_CALL_PATTERNS = ROUTE_VERB_METHODS.map do |method_name, http_method|
+      {method_name, http_method, /\.\s*#{method_name}\s*\(([^)]*)\)/m}
+    end
+
     private def collect_builder_routes(server_codeblock : String,
                                        constants : Hash(String, String),
                                        details : Details)
@@ -134,8 +141,9 @@ module Analyzer::Java
                                               constants : Hash(String, String)) : Array(RouteEntry)
       routes = [] of RouteEntry
       direct_routes = [] of RouteEntry
-      ROUTE_VERB_METHODS.each do |method_name, http_method|
-        expr.scan(/\.\s*#{method_name}\s*\(([^)]*)\)/m) do |match|
+      ROUTE_VERB_CALL_PATTERNS.each do |method_name, http_method, verb_call_regex|
+        next unless expr.includes?(method_name)
+        expr.scan(verb_call_regex) do |match|
           if path = first_builder_path_arg(match[1], constants)
             direct_routes << {http_method, path}
           end

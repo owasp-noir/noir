@@ -539,13 +539,19 @@ module Analyzer::Java
       end
     end
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). Every caller probes the `value` key, so
+    # precompile its matcher once at load time.
+    VALUE_KEY_PATTERN = /(?:^|[,({]\s*)value\s*=\s*"((?:\\.|[^"\\])*)"/m
+
     private def string_annotation_value(args : String, key : String) : String?
       stripped = args.strip
       if stripped.starts_with?("\"")
         return unescape_java_string(stripped)
       end
 
-      if match = stripped.match(/(?:^|[,({]\s*)#{Regex.escape(key)}\s*=\s*"((?:\\.|[^"\\])*)"/m)
+      key_regex = key == "value" ? VALUE_KEY_PATTERN : /(?:^|[,({]\s*)#{Regex.escape(key)}\s*=\s*"((?:\\.|[^"\\])*)"/m
+      if match = stripped.match(key_regex)
         return unescape_java_string("\"#{match[1]}\"")
       end
 

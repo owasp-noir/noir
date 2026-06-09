@@ -5,6 +5,13 @@ module Analyzer::Ruby
   abstract class RubyEngine < Analyzer
     HTTP_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The verb set is fixed, so precompile the
+    # `<verb> "<path>"` matchers once at load time.
+    VERB_ROUTE_PATTERNS = HTTP_VERBS.map do |verb|
+      {verb, /^#{verb}\s*\(?\s*['"](.+?)['"]/}
+    end
+
     # Minitest's `*_test.rb` and RSpec's `*_spec.rb` conventions are
     # rigid in Ruby — `rake test` / `mri test` only run files matching
     # the first, and `rspec` discovers the second. Production Ruby
@@ -43,11 +50,11 @@ module Analyzer::Ruby
       # start (possibly after a block opener), so this is a tight
       # constraint without false-negatives in the bundled fixtures.
       leading = content.lstrip
-      HTTP_VERBS.each do |verb|
+      VERB_ROUTE_PATTERNS.each do |verb, verb_pattern|
         next if !leading.starts_with?(verb)
         next if leading.size > verb.size && (leading[verb.size].alphanumeric? || leading[verb.size] == '_')
 
-        if m = leading.match(/^#{verb}\s*\(?\s*['"](.+?)['"]/)
+        if m = leading.match(verb_pattern)
           path = normalize_ruby_interpolation(m[1])
           if details
             return Endpoint.new(path, verb.upcase, details)

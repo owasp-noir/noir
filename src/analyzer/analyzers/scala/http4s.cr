@@ -4,6 +4,11 @@ module Analyzer::Scala
   class Http4s < ScalaEngine
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile); the body-type matcher interpolates a
+    # discovered binding name, so memoize it per name instead.
+    @body_as_regexes = Hash(String, Regex).new
+
     def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
       extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
@@ -36,7 +41,8 @@ module Analyzer::Scala
             body_text = extract_case_body(lines, code_lines, end_index)
             body_type : String? = nil
             if binding_name
-              if body_match = body_text.match(/#{Regex.escape(binding_name)}\s*\.\s*as\s*\[\s*([^\]\s]+)\s*\]/)
+              body_as_regex = @body_as_regexes[binding_name] ||= /#{Regex.escape(binding_name)}\s*\.\s*as\s*\[\s*([^\]\s]+)\s*\]/
+              if body_match = body_text.match(body_as_regex)
                 body_type = body_match[1]
               end
             end

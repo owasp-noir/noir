@@ -5,6 +5,13 @@ module Analyzer::CSharp
   class AspNetMvc < Analyzer
     include Common
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The attribute set is fixed, so precompile
+    # the route-extraction matchers once at load time.
+    ATTRIBUTE_ROUTE_PATTERNS = ["HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch", "Route"].to_h do |attribute|
+      {attribute, /\[#{attribute}[^(]*\(\s*"([^"]+)"/}
+    end
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       # Static Analysis
@@ -233,7 +240,8 @@ module Analyzer::CSharp
 
     private def extract_attribute_route(line : String, attribute : String) : String
       # Extract route from [HttpGet("route")] or [Route("route")]
-      match = line.match(/\[#{attribute}[^(]*\(\s*"([^"]+)"/)
+      attribute_regex = ATTRIBUTE_ROUTE_PATTERNS[attribute]? || /\[#{attribute}[^(]*\(\s*"([^"]+)"/
+      match = line.match(attribute_regex)
       return "" unless match
       match[1]
     end

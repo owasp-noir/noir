@@ -159,11 +159,21 @@ module Analyzer::Python
     def find_json_params(codeblock_lines : Array(::String), json_var_names : Array(::String)) : Array(Param)
       params = [] of Param
 
+      # Hoisted out of the per-line loop: an interpolated regex literal
+      # recompiles (PCRE2 JIT) on every evaluation, i.e. twice per line
+      # per JSON variable.
+      var_patterns = json_var_names.map do |json_var_name|
+        {json_var_name,
+         /[^a-zA-Z_]#{json_var_name}\[[rf]?['"]([^'"]*)['"]\]/,
+         /[^a-zA-Z_]#{json_var_name}\.get\([rf]?['"]([^'"]*)['"]/}
+      end
+
       codeblock_lines.each do |codeblock_line|
-        json_var_names.each do |json_var_name|
-          matches = codeblock_line.scan(/[^a-zA-Z_]#{json_var_name}\[[rf]?['"]([^'"]*)['"]\]/)
+        var_patterns.each do |json_var_name, subscript_regex, get_regex|
+          next unless codeblock_line.includes?(json_var_name)
+          matches = codeblock_line.scan(subscript_regex)
           if matches.size == 0
-            matches = codeblock_line.scan(/[^a-zA-Z_]#{json_var_name}\.get\([rf]?['"]([^'"]*)['"]/)
+            matches = codeblock_line.scan(get_regex)
           end
 
           if !matches.nil?

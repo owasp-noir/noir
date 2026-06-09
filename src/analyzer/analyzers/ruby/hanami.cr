@@ -4,6 +4,13 @@ module Analyzer::Ruby
   class Hanami < RubyEngine
     HANAMI_HTTP_VERBS = HTTP_VERBS + ["trace"]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The verb set is fixed, so precompile the
+    # per-verb route matchers once at load time.
+    HANAMI_VERB_PATTERNS = HANAMI_HTTP_VERBS.map do |verb|
+      {verb, /^#{verb}\s*\(?\s*['"]([^'"]*)['"](.*)$/}
+    end
+
     struct RouteFrame
       property path, slice, action_prefix
 
@@ -164,11 +171,11 @@ module Analyzer::Ruby
     end
 
     private def verb_endpoint(line : String, stack : Array(RouteFrame), details : Details) : RouteEndpoint?
-      HANAMI_HTTP_VERBS.each do |verb|
+      HANAMI_VERB_PATTERNS.each do |verb, verb_pattern|
         next unless line.starts_with?(verb)
         next if line.size > verb.size && (line[verb.size].alphanumeric? || line[verb.size] == '_')
 
-        if m = line.match(/^#{verb}\s*\(?\s*['"]([^'"]*)['"](.*)$/)
+        if m = line.match(verb_pattern)
           endpoint = Endpoint.new(join_paths(current_path_prefix(stack), normalize_route_path(m[1])), verb.upcase, details)
           return RouteEndpoint.new(endpoint, extract_action_target(m[2]))
         end
@@ -539,11 +546,14 @@ module Analyzer::Ruby
 
     private def extract_action_body(lines : Array(String), names : Array(String)) : Tuple(String, Int32)?
       index = 0
+      # Hoisted out of the loop: an interpolated regex literal recompiles
+      # (PCRE2 JIT) on every evaluation, i.e. once per line.
+      name_pattern = names.join("|")
+      def_regex = /^(?:private\s+|protected\s+|public\s+)?def\s+(?:self\.)?(?:#{name_pattern})\b/
 
       while index < lines.size
         stripped = Noir::RubyCalleeExtractor.strip_comment(lines[index]).strip
-        name_pattern = names.join("|")
-        if match = stripped.match(/^(?:private\s+|protected\s+|public\s+)?def\s+(?:self\.)?(?:#{name_pattern})\b/)
+        if match = stripped.match(def_regex)
           inline_body, closed_on_def_line = inline_def_body(stripped, match[0])
           body_lines = [] of String
           body_start_line = inline_body ? index + 1 : index + 2

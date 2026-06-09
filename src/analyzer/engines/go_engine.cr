@@ -158,6 +158,12 @@ module Analyzer::Go
 
     GO_HTTP_ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|ANY|Any|All)\s*\(/
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile); the per-framework extra route methods are
+    # a small fixed set per analyzer, so memoize their matchers per name
+    # instead of rebuilding them for every candidate file.
+    @extra_method_regexes = Hash(String, Regex).new
+
     # Per-package directories that import a target framework. Some real
     # projects hide the concrete framework type behind a local interface, so
     # the file that calls `router.GET(...)` may not import Gin/Echo itself.
@@ -175,7 +181,8 @@ module Analyzer::Go
     def go_route_source_candidate?(content : String, extra_methods : Array(String)) : Bool
       return true if content.matches?(GO_HTTP_ROUTE_CALL_RE)
       extra_methods.any? do |method|
-        content.matches?(/\.#{Regex.escape(method)}\s*\(/)
+        method_regex = @extra_method_regexes[method] ||= /\.#{Regex.escape(method)}\s*\(/
+        content.matches?(method_regex)
       end
     end
 

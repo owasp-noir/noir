@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class CakePHP < PhpEngine
+    @method_def_regexes = Hash(String, Regex).new
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -286,7 +288,10 @@ module Analyzer::Php
       return unless controller_path && File.exists?(controller_path)
 
       content = read_file_content(controller_path)
-      method_match = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{action_name}\s*\(/)
+      # Memoized: an interpolated regex literal recompiles (PCRE2 JIT) on
+      # every evaluation, and action names repeat across controllers.
+      method_regex = @method_def_regexes[action_name] ||= /(?:public|protected|private)\s+(?:static\s+)?function\s+#{action_name}\s*\(/
+      method_match = content.match(method_regex)
       return unless method_match
 
       method_body = extract_php_method_body_after(content, method_match.begin(0))

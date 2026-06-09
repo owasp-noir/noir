@@ -8,6 +8,14 @@ module Analyzer::Java
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Callee))
     alias ScopedKey = Tuple(String, String)
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile), so the name/receiver-specific matchers
+    # below are memoized per interpolated value instead of being rebuilt
+    # for every controller method.
+    @action_name_regexes = Hash(String, Regex).new
+    @request_param_regexes = Hash(Tuple(String, Symbol), Regex).new
+    @body_type_regexes = Hash(String, Tuple(Regex, Regex, Regex, Regex)).new
+
     def analyze
       file_list = all_files()
       routes_files = [] of String
@@ -144,7 +152,8 @@ module Analyzer::Java
       return_type = play_action_return_type(method, content)
       return false unless play_action_return_type?(return_type)
 
-      !!method_source.match(/\b#{Regex.escape(method_name)}\s*\(/)
+      name_regex = @action_name_regexes[method_name] ||= /\b#{Regex.escape(method_name)}\s*\(/
+      !!method_source.match(name_regex)
     end
 
     private def play_action_return_type(method : LibTreeSitter::TSNode, content : String) : String
@@ -200,7 +209,8 @@ module Analyzer::Java
                        end
 
       request_receivers.each do |receiver|
-        method_body.scan(/#{receiver}\s*\.\s*#{method_pattern}\s*\(\s*([^),]+)\s*\)/) do |match|
+        receiver_regex = @request_param_regexes[{receiver, kind}] ||= /#{receiver}\s*\.\s*#{method_pattern}\s*\(\s*([^),]+)\s*\)/
+        method_body.scan(receiver_regex) do |match|
           next unless match.size > 1
           value = resolve_string_arg(match[1], constants)
           params << value if value && !params.includes?(value)
@@ -212,11 +222,17 @@ module Analyzer::Java
 
     private def extract_body_type(method_body : String, request_receivers : Array(String)) : String?
       request_receivers.each do |receiver|
-        body = /#{receiver}\s*\.\s*body\(\)\s*\.\s*/
-        return "json" if method_body.match(/#{body}(?:asJson|as\(\s*JsonNode)/)
-        return "form" if method_body.match(/#{body}(?:asFormUrlEncoded|asMultipartFormData)/)
-        return "xml" if method_body.match(/#{body}asXml/)
-        return "body" if method_body.match(/#{body}as(?:Text|Raw|Bytes)/)
+        json_re, form_re, xml_re, raw_re = @body_type_regexes[receiver] ||= begin
+          body = /#{receiver}\s*\.\s*body\(\)\s*\.\s*/
+          {/#{body}(?:asJson|as\(\s*JsonNode)/,
+           /#{body}(?:asFormUrlEncoded|asMultipartFormData)/,
+           /#{body}asXml/,
+           /#{body}as(?:Text|Raw|Bytes)/}
+        end
+        return "json" if method_body.match(json_re)
+        return "form" if method_body.match(form_re)
+        return "xml" if method_body.match(xml_re)
+        return "body" if method_body.match(raw_re)
       end
 
       nil

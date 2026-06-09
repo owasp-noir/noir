@@ -7,6 +7,24 @@ module Analyzer::CSharp
 
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The `[FromX]` attribute set is fixed, so
+    # precompile its markers and strippers once at load time; the
+    # param-name regex interpolates a discovered name and is memoized.
+    FROM_ATTRIBUTE_PATTERNS = {
+      "FromQuery"         => "query",
+      "FromRoute"         => "path",
+      "FromBody"          => "json",
+      "FromHeader"        => "header",
+      "FromForm"          => "form",
+      "FromCookie"        => "cookie",
+      "FromServices"      => "service",
+      "FromKeyedServices" => "service",
+    }.map do |attr, type|
+      {"[#{attr}", /\[#{attr}[^\]]*\]/, type}
+    end
+    @param_name_strip_regexes = Hash(String, Regex).new
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       route_patterns_by_base = load_route_patterns_by_base
@@ -370,7 +388,8 @@ module Analyzer::CSharp
           # DbContext, a MediatR sender, …) is not request input — model
           # binding never produces one. Dropping it removes a recurring FP.
           if param_type.nil?
-            type_token = cleaned_def.sub(/\b#{Regex.escape(param_name)}\b\s*(?:=\s*[^,]+)?\s*$/, "").strip.split(/\s+/).last?
+            strip_regex = @param_name_strip_regexes[param_name] ||= /\b#{Regex.escape(param_name)}\b\s*(?:=\s*[^,]+)?\s*$/
+            type_token = cleaned_def.sub(strip_regex, "").strip.split(/\s+/).last?
             next if type_token && Common.csharp_service_type?(type_token)
           end
 
@@ -394,19 +413,10 @@ module Analyzer::CSharp
       param_type = nil
       cleaned = param_def.strip
 
-      {
-        "FromQuery"         => "query",
-        "FromRoute"         => "path",
-        "FromBody"          => "json",
-        "FromHeader"        => "header",
-        "FromForm"          => "form",
-        "FromCookie"        => "cookie",
-        "FromServices"      => "service",
-        "FromKeyedServices" => "service",
-      }.each do |attr, type|
-        if cleaned.includes?("[#{attr}")
+      FROM_ATTRIBUTE_PATTERNS.each do |marker, attr_regex, type|
+        if cleaned.includes?(marker)
           param_type = type
-          cleaned = cleaned.gsub(/\[#{attr}[^\]]*\]/, "")
+          cleaned = cleaned.gsub(attr_regex, "")
         end
       end
 

@@ -34,6 +34,13 @@ module Analyzer::Dart
 
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile) — precompile the fixed verb probes once
+    # at load time instead of per handler file.
+    HTTP_METHOD_PATTERNS = HTTP_METHOD_MAP.map do |dart_name, verb|
+      {verb, /HttpMethod\.#{dart_name}\b/}
+    end
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       result = [] of Endpoint
@@ -170,10 +177,10 @@ module Analyzer::Dart
       cleaned = Helper.strip_comments(content)
 
       verbs = [] of String
-      HTTP_METHOD_MAP.each do |dart_name, verb|
+      HTTP_METHOD_PATTERNS.each do |verb, method_pattern|
         # Dart Frog exposes verbs as `HttpMethod.<lowercase>` constants.
         # Both `==` comparison and `case`/`switch` patterns reach here.
-        verbs << verb if cleaned.matches?(/HttpMethod\.#{dart_name}\b/)
+        verbs << verb if cleaned.matches?(method_pattern)
       end
       return FALLBACK_METHODS if verbs.empty?
 

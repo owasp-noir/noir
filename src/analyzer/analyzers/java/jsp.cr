@@ -6,6 +6,26 @@ module Analyzer::Java
   class Jsp < Analyzer
     alias ServletClassKey = Tuple(String, String)
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The `doGet`/`doPost`/... probe set is
+    # fixed, so precompile it once at load time.
+    SERVLET_DO_METHOD_PATTERNS = {
+      "Get"     => "GET",
+      "Post"    => "POST",
+      "Put"     => "PUT",
+      "Delete"  => "DELETE",
+      "Patch"   => "PATCH",
+      "Head"    => "HEAD",
+      "Options" => "OPTIONS",
+    }.map do |suffix, method|
+      {method, /\bvoid\s+do#{suffix}\s*\(([^)]*)\)\s*(?:throws[^{]+)?\{/m}
+    end
+
+    # The request-access matchers interpolate a discovered receiver name, so
+    # they can't be hoisted — memoize them per receiver instead of rebuilding
+    # four regexes for every handler body.
+    @servlet_param_regexes = Hash(String, Tuple(Regex, Regex, Regex, Regex)).new
+
     def analyze
       servlet_methods = collect_servlet_methods
 
@@ -271,16 +291,8 @@ module Analyzer::Java
     private def extract_servlet_http_methods(content : String) : Hash(String, Array(Param))
       methods = Hash(String, Array(Param)).new
 
-      {
-        "Get"     => "GET",
-        "Post"    => "POST",
-        "Put"     => "PUT",
-        "Delete"  => "DELETE",
-        "Patch"   => "PATCH",
-        "Head"    => "HEAD",
-        "Options" => "OPTIONS",
-      }.each do |suffix, method|
-        if match = content.match(/\bvoid\s+do#{suffix}\s*\(([^)]*)\)\s*(?:throws[^{]+)?\{/m)
+      SERVLET_DO_METHOD_PATTERNS.each do |method, pattern|
+        if match = content.match(pattern)
           request_receivers = servlet_request_receivers(match[1])
           body = extract_balanced_block(content, (match.end(0) || 1) - 1)
           methods[method] = extract_servlet_params(body, method, request_receivers)
@@ -303,22 +315,28 @@ module Analyzer::Java
       request_param_type = method == "GET" ? "query" : "form"
 
       request_receivers.each do |receiver|
-        receiver_pattern = Regex.escape(receiver)
+        parameter_re, attribute_re, header_re, cookie_re = @servlet_param_regexes[receiver] ||= begin
+          receiver_pattern = Regex.escape(receiver)
+          {/#{receiver_pattern}\s*\.\s*get(?:Parameter|ParameterValues)\s*\(\s*["']([^"']+)["']\s*\)/,
+           /#{receiver_pattern}\s*\.\s*getAttribute\s*\(\s*["']([^"']+)["']\s*\)/,
+           /#{receiver_pattern}\s*\.\s*getHeaders?\s*\(\s*["']([^"']+)["']\s*\)/,
+           /#{receiver_pattern}\s*\.\s*getCookies\s*\(/}
+        end
 
-        content.scan(/#{receiver_pattern}\s*\.\s*get(?:Parameter|ParameterValues)\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+        content.scan(parameter_re) do |match|
           add_param(params, match[1], request_param_type)
         end
 
-        content.scan(/#{receiver_pattern}\s*\.\s*getAttribute\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+        content.scan(attribute_re) do |match|
           next if internal_servlet_attribute?(match[1])
           add_param(params, match[1], request_param_type)
         end
 
-        content.scan(/#{receiver_pattern}\s*\.\s*getHeaders?\s*\(\s*["']([^"']+)["']\s*\)/) do |match|
+        content.scan(header_re) do |match|
           add_param(params, match[1], "header")
         end
 
-        add_param(params, "", "cookie") if content.match(/#{receiver_pattern}\s*\.\s*getCookies\s*\(/)
+        add_param(params, "", "cookie") if content.match(cookie_re)
       end
 
       params
