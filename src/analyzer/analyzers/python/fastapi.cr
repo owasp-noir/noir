@@ -5,6 +5,48 @@ module Analyzer::Python
     PATH_PARAM_REGEX       = /\{(#{PYTHON_VAR_NAME_REGEX})(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
     TYPED_PATH_PARAM_REGEX = /\{(#{PYTHON_VAR_NAME_REGEX}):[a-zA-Z_][a-zA-Z0-9_]*\}/
 
+    # Constant-only matchers hoisted out of the per-line analyze loops so
+    # they aren't recompiled (Crystal rebuilds an interpolated regex
+    # literal on every evaluation). The `.to_s` expansion of the
+    # interpolated constants is byte-identical to the previous inline form.
+    FASTAPI_INSTANCE_RE   = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?FastAPI\(/
+    APIROUTER_INSTANCE_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?APIRouter\(/
+    VAR_NAME_FULL_RE      = /^#{PYTHON_VAR_NAME_REGEX}$/
+    HANDLER_CALL_RE       = /^(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*\(/
+    HANDLER_REF_RE        = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/
+
+    # Route-registration matchers that interpolate a discovered instance
+    # name (`app`, `router`, ...) — they can't be class constants, but a
+    # project only uses a handful of distinct names, so the compiled set
+    # is memoized per name instead of rebuilt on every line.
+    private record InstanceRegexes,
+      include_router_guard : Regex,
+      include_router_call : Regex,
+      route_decorator : Regex,
+      programmatic_route : Regex,
+      programmatic_guard : Regex,
+      static_mount : Regex,
+      mount_guard : Regex,
+      decorator_guard : Regex
+
+    @instance_regex_cache = Hash(::String, InstanceRegexes).new
+
+    private def instance_regexes(instance_name : ::String) : InstanceRegexes
+      @instance_regex_cache[instance_name] ||= begin
+        e = Regex.escape(instance_name)
+        InstanceRegexes.new(
+          include_router_guard: /\b#{e}\s*\.\s*include_router\s*\(/,
+          include_router_call: /\b#{e}\s*\.\s*include_router\s*\((.*)\)\s*(?:#.*)?$/m,
+          route_decorator: /^\s*@\s*#{e}\s*\.\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*)\)\s*(?:#.*)?$/m,
+          programmatic_route: /\b#{e}\s*\.\s*(add_api_route|add_api_websocket_route)\s*\((.*)\)\s*(?:#.*)?$/m,
+          programmatic_guard: /\b#{e}\s*\.\s*(add_api_route|add_api_websocket_route)\s*\(/,
+          static_mount: /\b#{e}\s*\.\s*mount\s*\((.*)\)\s*(?:#.*)?$/m,
+          mount_guard: /\b#{e}\s*\.\s*mount\s*\(/,
+          decorator_guard: /^\s*@\s*#{e}\s*\.\s*[a-zA-Z_]+\s*\(/,
+        )
+      end
+    end
+
     @fastapi_import_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
     def analyze
@@ -30,7 +72,7 @@ module Analyzer::Python
 
               effective_line = coalesce_constructor_call(codelines, index, original_line, "APIRouter")
               line = effective_line.gsub(" ", "")
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?FastAPI\(/
+              match = line.includes?("FastAPI(") ? line.match(FASTAPI_INSTANCE_RE) : nil
               if !match.nil?
                 fastapi_instance_name = match[1]
                 if include_router_map.has_key?(path)
@@ -57,7 +99,7 @@ module Analyzer::Python
               end
 
               # https://fastapi.tiangolo.com/tutorial/bigger-applications/
-              match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:fastapi\.)?APIRouter\(/
+              match = line.includes?("APIRouter(") ? line.match(APIROUTER_INSTANCE_RE) : nil
               if !match.nil?
                 prefix = ""
                 router_instance_name = match[1]
@@ -180,7 +222,7 @@ module Analyzer::Python
                         end
 
                         if param_type.nil?
-                          if /^#{PYTHON_VAR_NAME_REGEX}$/.match(param.type)
+                          if VAR_NAME_FULL_RE.match(param.type)
                             if param.type.in?(%w[Request dict])
                               function_codeblock = parse_code_block(codelines[def_line..])
                               next if function_codeblock.nil?
@@ -491,14 +533,15 @@ module Analyzer::Python
 
     private def extract_include_router_calls(source : ::String, instance_name : ::String) : Array(::String)
       calls = [] of ::String
+      res = instance_regexes(instance_name)
       lines = source.split("\n")
       lines.each_with_index do |line, index|
         stripped = line.lstrip
         next if stripped.starts_with?("#")
-        next unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*include_router\s*\(/)
+        next unless line.includes?("include_router") && line.matches?(res.include_router_guard)
 
         logical_line = coalesce_include_router_call(lines, index, line, instance_name)
-        match = logical_line.match(/\b#{Regex.escape(instance_name)}\s*\.\s*include_router\s*\((.*)\)\s*(?:#.*)?$/m)
+        match = logical_line.match(res.include_router_call)
         calls << match[1] if match
       end
       calls
@@ -508,7 +551,7 @@ module Analyzer::Python
                                              index : Int32,
                                              line : ::String,
                                              instance_name : ::String) : ::String
-      return line unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*include_router\s*\(/)
+      return line unless line.matches?(instance_regexes(instance_name).include_router_guard)
       return line if python_call_balanced?(line)
 
       pieces = [line]
@@ -548,6 +591,7 @@ module Analyzer::Python
       importing_source.each_line do |raw|
         stripped = raw.lstrip
         next unless stripped.starts_with?("from ") || stripped.starts_with?("import ")
+        next unless stripped.includes?(" as ") && stripped.includes?(local_name)
         if match = stripped.match(/\b(#{PYTHON_VAR_NAME_REGEX})\s+as\s+#{Regex.escape(local_name)}\b/)
           original = match[1]
           return original if target_map.has_key?(original)
@@ -707,6 +751,7 @@ module Analyzer::Python
     end
 
     private def extract_python_keyword_expression(call_tail : ::String, keyword : ::String) : ::String?
+      return unless call_tail.includes?(keyword)
       match = call_tail.match(/\b#{Regex.escape(keyword)}\s*=/)
       return unless match
 
@@ -756,7 +801,7 @@ module Analyzer::Python
                                               instance_name : ::String,
                                               source : ::String,
                                               import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String, ::String)?
-      match = line.match(/^\s*@\s*#{Regex.escape(instance_name)}\s*\.\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\((.*)\)\s*(?:#.*)?$/m)
+      match = line.match(instance_regexes(instance_name).route_decorator)
       return unless match
 
       attr = match[1]
@@ -774,7 +819,7 @@ module Analyzer::Python
                                                  instance_name : ::String,
                                                  source : ::String,
                                                  import_modules : Hash(::String, Tuple(::String, Int32))) : Tuple(::String, ::String, ::String)?
-      match = line.match(/\b#{Regex.escape(instance_name)}\s*\.\s*(add_api_route|add_api_websocket_route)\s*\((.*)\)\s*(?:#.*)?$/m)
+      match = line.match(instance_regexes(instance_name).programmatic_route)
       return unless match
 
       attr = match[1]
@@ -792,7 +837,7 @@ module Analyzer::Python
                                            instance_name : ::String,
                                            source : ::String,
                                            import_modules : Hash(::String, Tuple(::String, Int32))) : ::String?
-      match = line.match(/\b#{Regex.escape(instance_name)}\s*\.\s*mount\s*\((.*)\)\s*(?:#.*)?$/m)
+      match = line.match(instance_regexes(instance_name).static_mount)
       return unless match
 
       args = match[1]
@@ -852,10 +897,10 @@ module Analyzer::Python
 
     private def clean_programmatic_handler_callee(expression : ::String) : ::String?
       reference = expression.strip.split("#", 2)[0].strip
-      if match = reference.match(/^(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*\(/)
+      if match = reference.match(HANDLER_CALL_RE)
         return match[1]
       end
-      return reference if reference.matches?(/^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/)
+      return reference if reference.matches?(HANDLER_REF_RE)
 
       nil
     end
@@ -878,14 +923,19 @@ module Analyzer::Python
 
     private def clean_programmatic_handler_reference(expression : ::String) : ::String?
       reference = expression.strip.split("#", 2)[0].strip
-      return reference if reference.matches?(/^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/)
+      return reference if reference.matches?(HANDLER_REF_RE)
 
       nil
     end
 
     private def find_function_def_line(lines : Array(::String), function_name : ::String) : Int32?
+      # Compile the name-specific matcher once per call instead of on
+      # every line, and gate it behind a substring check any real
+      # `def <name>` satisfies.
+      def_re = /^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/
       lines.each_with_index do |line, index|
-        return index if line.matches?(/^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/)
+        next unless line.includes?("def") && line.includes?(function_name)
+        return index if line.matches?(def_re)
       end
 
       nil
@@ -1104,6 +1154,7 @@ module Analyzer::Python
       if param.type == "Request"
         # Parse JSON variable names
         codelines.each do |codeline|
+          next unless codeline.includes?(param.name) && codeline.includes?("json")
           match = codeline.match /(#{PYTHON_VAR_NAME_REGEX})\s*(?::\s*#{PYTHON_VAR_NAME_REGEX})?\s*=\s*(await\s*){0,1}#{param.name}.json\(\)/
           json_variable_names << match[1] if !match.nil? && !json_variable_names.includes?(match[1])
         end
@@ -1125,7 +1176,7 @@ module Analyzer::Python
                                            index : Int32,
                                            line : ::String,
                                            instance_name : ::String) : ::String
-      return line unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*(add_api_route|add_api_websocket_route)\s*\(/)
+      return line unless line.matches?(instance_regexes(instance_name).programmatic_guard)
       return line if python_call_balanced?(line)
 
       pieces = [line]
@@ -1145,7 +1196,7 @@ module Analyzer::Python
                                     index : Int32,
                                     line : ::String,
                                     instance_name : ::String) : ::String
-      return line unless line.matches?(/\b#{Regex.escape(instance_name)}\s*\.\s*mount\s*\(/)
+      return line unless line.matches?(instance_regexes(instance_name).mount_guard)
       return line if python_call_balanced?(line)
 
       pieces = [line]
@@ -1165,7 +1216,7 @@ module Analyzer::Python
                                           index : Int32,
                                           line : ::String,
                                           constructor_name : ::String) : ::String
-      return line unless line.matches?(/\b#{Regex.escape(constructor_name)}\s*\(/)
+      return line unless line.includes?(constructor_name) && line.matches?(/\b#{Regex.escape(constructor_name)}\s*\(/)
       return line if python_call_balanced?(line)
 
       pieces = [line]
@@ -1208,7 +1259,7 @@ module Analyzer::Python
                                         index : Int32,
                                         line : ::String,
                                         instance_name : ::String) : ::String
-      return line unless line.matches?(/^\s*@\s*#{Regex.escape(instance_name)}\s*\.\s*[a-zA-Z_]+\s*\(/)
+      return line unless line.matches?(instance_regexes(instance_name).decorator_guard)
       return line if python_call_balanced?(line)
 
       pieces = [line]
