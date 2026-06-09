@@ -37,12 +37,12 @@ module Noir
   module TreeSitterKotlinParameterExtractor
     extend self
 
-    # Scalar types Spring binds from a single request value. Array
-    # (`IntArray`), and single-type-argument collection forms
-    # (`List<Long>`, `Optional<String>`) reduce to their element type
-    # via `simple_param_base` before lookup. Mirrors the Java
-    # extractor's `SIMPLE_PARAM_TYPES` so `@RequestParam ids:
-    # List<Long>` surfaces instead of being silently dropped.
+    # Scalar types Spring binds from a single request value. Type names
+    # are first resolved to their leaf identifier by `leaf_type_name`
+    # (so `List<Long>` reduces to `List`); annotated request params emit
+    # by name regardless of type. Mirrors the Java extractor's
+    # `SIMPLE_PARAM_TYPES` so `@RequestParam ids: List<Long>` surfaces
+    # instead of being silently dropped.
     PRIMITIVE_TYPES = Set{
       "long", "int", "integer", "short", "byte",
       "char", "character", "boolean", "string",

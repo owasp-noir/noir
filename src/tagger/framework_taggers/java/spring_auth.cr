@@ -14,6 +14,13 @@ class SpringAuthTagger < FrameworkTagger
   MATCHERS_RULE    = /\.(antMatchers|requestMatchers|mvcMatchers)\s*\(([^)]+)\)\s*\.\s*(permitAll|authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
   ANY_REQUEST_AUTH = /\.anyRequest\s*\(\)\s*\.\s*(authenticated|hasRole|hasAnyRole|hasAuthority|hasAnyAuthority|access)\s*(?:\(|\{)/
 
+  # A chain is "scoped" only when restricted by a singular `securityMatcher(` /
+  # `antMatcher(` call. The plural `antMatchers(...)` / `requestMatchers(...)`
+  # forms are authorization *rules*, not scope restrictions, so a substring test
+  # like `includes?("antMatcher")` wrongly flips a rule-based chain to scoped and
+  # drops its `anyRequest()` fallback. The `\s*\(` boundary rejects the plural.
+  SCOPE_MATCHER_CALL = /\b(?:securityMatcher|antMatcher)\s*\(/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @name = "spring_auth"
@@ -61,7 +68,7 @@ class SpringAuthTagger < FrameworkTagger
 
   private def scan_security_chain(block : String)
     lines = block.split("\n")
-    unscoped_chain = !block.includes?("securityMatcher") && !block.includes?("antMatcher")
+    unscoped_chain = !block.matches?(SCOPE_MATCHER_CALL)
 
     lines.each do |line|
       if match = line.match(MATCHERS_RULE)

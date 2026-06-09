@@ -1591,16 +1591,6 @@ module Analyzer::Kotlin
       end
     end
 
-    def find_base_path(current_path : String, base_paths : Hash(String, String))
-      base_paths.keys.sort_by!(&.size).reverse!.each do |path|
-        if current_path.starts_with?(path)
-          return base_paths[path]
-        end
-      end
-
-      ""
-    end
-
     private def project_root_for(path : String) : String
       ["/src/main/kotlin/", "/src/"].each do |marker|
         if index = path.index(marker)

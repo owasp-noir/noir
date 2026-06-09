@@ -210,7 +210,7 @@ module Analyzer::Specification
     private def parse_input_fields(body : String) : Array(InputField)
       fields = [] of InputField
       body.each_line do |line|
-        line.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([!\[\]A-Za-z_][!\[\]A-Za-z0-9_\s]*)/) do |match|
+        line.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([\[A-Za-z_][!\[\]A-Za-z0-9_]*)/) do |match|
           type_str = match[2].strip
           type_str = type_str.split(/\s+@|\s+=/).first.strip
           fields << InputField.new(match[1], type_str) unless type_str.empty?

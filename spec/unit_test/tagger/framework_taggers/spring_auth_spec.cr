@@ -199,6 +199,51 @@ describe "SpringAuthTagger" do
     end
   end
 
+  it "treats a chain using plural antMatchers rules as unscoped (Spring 5 form)" do
+    # Regression: plural `antMatchers(...)` are authorization *rules*, not a
+    # chain scope restriction. A substring test like `includes?("antMatcher")`
+    # wrongly flagged this chain as scoped and dropped its `anyRequest()`
+    # fallback, so endpoints not matching an explicit rule lost their auth tag.
+    temp_dir = File.join(Dir.tempdir, "noir-spring-auth-antmatchers-#{Process.pid}-#{Time.utc.to_unix_ms}")
+    config_path = File.join(temp_dir, "src/main/java/com/example/SecurityConfiguration.java")
+
+    begin
+      Dir.mkdir_p(File.dirname(config_path))
+      File.write(config_path, <<-JAVA)
+        package com.example;
+
+        import org.springframework.context.annotation.Bean;
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+        import org.springframework.security.web.SecurityFilterChain;
+
+        class SecurityConfiguration {
+            @Bean
+            SecurityFilterChain chain(HttpSecurity http) throws Exception {
+                return http.authorizeRequests()
+                    .antMatchers("/public/**").permitAll()
+                    .anyRequest().authenticated()
+                    .build();
+            }
+        }
+        JAVA
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(temp_dir)
+      CodeLocator.instance.push("file_map", config_path)
+
+      public_endpoint = Endpoint.new("/public/health", "GET")
+      protected_endpoint = Endpoint.new("/secure/data", "GET")
+
+      tagger = SpringAuthTagger.new(noir_options)
+      tagger.perform([public_endpoint, protected_endpoint])
+
+      public_endpoint.tags.empty?.should be_true
+      protected_endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
+    ensure
+      FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+    end
+  end
+
   it "preserves HttpMethod-specific permitAll matchers before applying anyRequest fallback" do
     temp_dir = File.join(Dir.tempdir, "noir-spring-auth-method-rule-#{Process.pid}-#{Time.utc.to_unix_ms}")
     config_path = File.join(temp_dir, "src/main/java/com/example/SecurityConfiguration.java")

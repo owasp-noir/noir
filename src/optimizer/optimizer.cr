@@ -5,6 +5,11 @@ require "../utils/*"
 # Endpoint optimization module that handles endpoint deduplication,
 # URL combination, and path parameter extraction
 class EndpointOptimizer
+  # Generic request headers a browser/HTTP client always sends; they carry no
+  # endpoint-specific signal, so collection imports that surface them as params
+  # are treated as noise during dedup.
+  COLLECTION_NOISE_HEADERS = Set{"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with"}
+
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @pvalue_rules : Hash(String, Array(PValueRule))
@@ -348,7 +353,7 @@ class EndpointOptimizer
   private def collection_noise_header_param?(param : Param) : Bool
     return false unless param.param_type == "header"
 
-    {"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with"}.includes?(param.name.downcase)
+    COLLECTION_NOISE_HEADERS.includes?(param.name.downcase)
   end
 
   private def template_matches_concrete_example?(template_url : String, concrete_url : String) : Bool
@@ -471,10 +476,7 @@ class EndpointOptimizer
     return false unless operation_paths.includes?(graphql_transport_path(endpoint.url))
     return false if endpoint.url.includes?("#")
 
-    endpoint.params.all? do |param|
-      param.param_type == "header" &&
-        {"user-agent", "accept", "content-type", "host", "origin", "referer", "x-requested-with"}.includes?(param.name.downcase)
-    end
+    endpoint.params.all? { |param| collection_noise_header_param?(param) }
   end
 
   private def graphql_operation_endpoint?(endpoint : Endpoint) : Bool

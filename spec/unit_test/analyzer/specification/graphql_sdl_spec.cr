@@ -97,6 +97,26 @@ describe "GraphQL SDL Analyzer" do
     create_kaomoji.params.find! { |param| param.name == "tags.label" }.tags.map(&.name).should contain("graphql-input-field")
   end
 
+  it "expands input fields declared on a single line" do
+    # Regression: the field-type character class previously included `\s`,
+    # so the type group swallowed the following field on a compact one-line
+    # input body — dropping every field after the first and garbling its type.
+    endpoints = analyze_sdl <<-SDL
+      type Mutation {
+        createArticle(input: CreateArticleInput!): Article
+      }
+
+      input CreateArticleInput { title: String!  content: String  userId: ID! }
+      SDL
+
+    create_article = endpoints.find! { |endpoint| endpoint.url == "/graphql#Mutation.createArticle" }
+    create_article.params.reject(&.name.starts_with?("graphql_")).map(&.name).should eq([
+      "title",
+      "content",
+      "userId",
+    ])
+  end
+
   it "preserves trailing non-null marker on list types" do
     endpoints = analyze_sdl <<-SDL
       type Query {
