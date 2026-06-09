@@ -671,16 +671,19 @@ module Analyzer::Kotlin
     end
 
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      if value = yaml_string_value(path, "server", "servlet", "context-path")
+      document = YAML.parse(File.read(path))
+      if value = yaml_string_value(document, "server", "servlet", "context-path")
         values["server.servlet.context-path"] = value
       end
-      if value = yaml_string_value(path, "spring", "webflux", "base-path")
+      if value = yaml_string_value(document, "spring", "webflux", "base-path")
         values["spring.webflux.base-path"] = value
       end
+    rescue
+      # Ignore unreadable or malformed YAML.
     end
 
-    private def yaml_string_value(path : String, *keys : String) : String?
-      value = YAML.parse(File.read(path))
+    private def yaml_string_value(document : YAML::Any, *keys : String) : String?
+      value = document
       keys.each do |key|
         value = value[key]
       end
@@ -1037,24 +1040,38 @@ module Analyzer::Kotlin
           @result << endpoint
         end
 
+        # Group inherited interface routes by their interface source so each
+        # interface file is parsed (and its DTO index built) once, even when the
+        # interface backs several routes or is implemented by multiple
+        # controllers, instead of re-parsing it per inherited route.
+        interface_work = Hash(String, Array(Tuple(Noir::TreeSitterKotlinRouteExtractor::ControllerInterfaceImplementation, SpringInterfaceRouteEntry))).new
         implementations.each do |implementation|
           implementation.interface_names.each do |interface_name|
             visible_interface_routes(interface_route_index, package_name, imports, interface_name).each do |entry|
+              (interface_work[entry.path] ||= [] of Tuple(Noir::TreeSitterKotlinRouteExtractor::ControllerInterfaceImplementation, SpringInterfaceRouteEntry)) << {implementation, entry}
+            end
+          end
+        end
+
+        interface_work.each_value do |pairs|
+          interface_source = pairs.first[1].source
+          interface_path = pairs.first[1].path
+
+          Noir::TreeSitter.parse_kotlin(interface_source) do |interface_root|
+            interface_dto_index = dto_builder.build_for_with_root(interface_path, interface_source, interface_root)
+
+            pairs.each do |implementation, entry|
               entry_route = entry.route
               inherited_path = join_paths(implementation.path, entry_route.path)
-              parameters = [] of Param
 
-              Noir::TreeSitter.parse_kotlin(entry.source) do |interface_root|
-                interface_dto_index = dto_builder.build_for_with_root(entry.path, entry.source, interface_root)
-                parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
-                  interface_root, entry.source, entry_route.class_name, entry_route.method_name
-                )
-                parameters = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
-                  interface_root, entry.source, entry_route.class_name, entry_route.method_name,
-                  entry_route.verb, parameter_format, interface_dto_index,
-                  string_constants, local_string_constants || Hash(String, String).new
-                )
-              end
+              parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
+                interface_root, interface_source, entry_route.class_name, entry_route.method_name
+              )
+              parameters = Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters_from(
+                interface_root, interface_source, entry_route.class_name, entry_route.method_name,
+                entry_route.verb, parameter_format, interface_dto_index,
+                string_constants, local_string_constants || Hash(String, String).new
+              )
 
               base_path = webflux_base_path
               if base_path.ends_with?("/") && inherited_path.starts_with?("/")

@@ -422,6 +422,10 @@ module NoirAIContext
       lines = @reader.lines_for(path)
       return if lines.empty?
 
+      # Compile the declaration pattern once for this field instead of per
+      # `@Value` line; `field` is a fixed credential word but escape it anyway.
+      field_declaration_pattern = Regex.new("\\b(?:[A-Za-z_][A-Za-z0-9_<>?]*\\s+)*(?:var|val)\\s+#{Regex.escape(field)}\\b")
+
       lines.each_with_index do |line, idx|
         next unless line.includes?("@Value")
 
@@ -430,7 +434,7 @@ module NoirAIContext
           window_lines << lines[line_idx].strip
         end
         window = window_lines.join(" ")
-        next unless kotlin_field_declaration_for?(window, field)
+        next unless window.matches?(field_declaration_pattern)
 
         value_expr = spring_value_expression(window)
         next unless spring_secret_source?(field, value_expr)
@@ -449,10 +453,6 @@ module NoirAIContext
         context.push_source(entry)
         return
       end
-    end
-
-    private def kotlin_field_declaration_for?(window : String, field : String) : Bool
-      window.matches?(Regex.new("\\b(?:[A-Za-z_][A-Za-z0-9_<>?]*\\s+)*(?:var|val)\\s+#{field}\\b"))
     end
 
     private def spring_value_expression(window : String) : String?
