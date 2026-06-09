@@ -400,6 +400,28 @@ describe "NoirAIContext" do
     end
   end
 
+  it "does not flag a same-named local id read as a foreign identifier write" do
+    source = <<-CODE
+      fun createCourse(input: CourseInput): Course {
+        val instructorId = input.instructorId
+        return Course(owner = instructorId).also { courseRepository.save(it) }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/courses", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("instructorId", "", "json"))
+      endpoint.push_callee(Callee.new("courseRepository.save", "CourseService.kt", 37))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.kind).should_not contain("foreign_identifier_write")
+    end
+  end
+
   it "does not add foreign identifier write when lookup evidence exists" do
     source = <<-CODE
       fun createCourse(input: CourseInput): Course {
@@ -1016,6 +1038,20 @@ describe "NoirAIContext" do
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should contain("state_change")
     context.signals.map(&.kind).should contain("guard_absence")
+  end
+
+  it "treats a POST with a getOrCreate-style callee as state-changing" do
+    # Regression: `getOrCreate` matches the read-only callee pattern via its
+    # leading `get`, which previously suppressed the state-change signal even
+    # though the call mutates.
+    endpoint = Endpoint.new("/role", "POST")
+    details = endpoint.details
+    details.technology = "kotlin_spring"
+    endpoint.details = details
+    endpoint.push_callee(Callee.new("roleService.getOrCreate", "RoleController.kt", 25))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("state_change")
   end
 
   it "does not treat GraphQL field resolvers as state-changing" do

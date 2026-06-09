@@ -1348,6 +1348,10 @@ module NoirAIContext
       detection_source = expanded_source_window(path_info, 18) || snippet
       return unless detection_source.matches?(KOTLIN_WRITE_IN_SNIPPET_PATTERN)
       return unless match = detection_source.match(FOREIGN_IDENTIFIER_ASSIGNMENT_PATTERN)
+      # A same-named assignment (`userId = request.userId`, `val id = dto.id`)
+      # is a local read/copy, not a foreign id flowing into a different field.
+      # The real signal is a *different* destination field (`authorId = userId`).
+      return if match[1] == match[2]
 
       context.push_signal(AIContextEntry.new(
         "foreign_identifier_write",
@@ -1476,10 +1480,18 @@ module NoirAIContext
 
     READ_ONLY_POST_CALLEE_PATTERN = /(?:^|[.:])(?:find|findAll|findOne|findBy\w+|get|list|listAll|count|search|query|retrieve)\w*\b/i
 
+    # A mutating verb anywhere in the callee name (start, after a separator, or
+    # as a CamelCase segment) disqualifies the endpoint from "read-only POST".
+    # Without this, a callee like `getOrCreate`/`findAndDelete` matches the
+    # read-only pattern via its leading read verb, silently suppressing the
+    # state-change review signal on an endpoint that does mutate.
+    MUTATING_POST_CALLEE_PATTERN = /(?:\A|[.:_])(?:create|save|update|delete|insert|remove|destroy|modify|persist|revoke|store)|(?:Create|Save|Update|Delete|Insert|Remove|Destroy|Modify|Persist|Revoke|Store)/
+
     private def read_only_post_endpoint?(endpoint : Endpoint) : Bool
       return false unless endpoint.method == "POST"
       return false if endpoint.params.any? { |param| BODY_LIKE_PARAM_TYPES.includes?(param.param_type) }
       return false if endpoint.callees.empty?
+      return false if endpoint.callees.any? { |callee| callee.name.matches?(MUTATING_POST_CALLEE_PATTERN) }
 
       endpoint.callees.all? { |callee| callee.name.matches?(READ_ONLY_POST_CALLEE_PATTERN) }
     end

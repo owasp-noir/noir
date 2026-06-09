@@ -116,6 +116,46 @@ describe "EndpointOptimizer" do
       end
     end
 
+    it "keeps multi-module endpoints distinct even when a collection shares the path" do
+      # Regression: a collection sharing the path adds a second technology, which
+      # previously neutralized the build-module scope for every endpoint at that
+      # path and collapsed the two distinct module endpoints into one.
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-3way-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      module_a = File.join(temp_dir, "data-r2dbc")
+      module_b = File.join(temp_dir, "webclient")
+      controller_a = File.join(module_a, "src/main/kotlin/com/example/PostController.kt")
+      controller_b = File.join(module_b, "src/main/kotlin/com/example/PostController.kt")
+      collection_path = File.join(temp_dir, "insomnia.yml")
+
+      begin
+        Dir.mkdir_p(File.dirname(controller_a))
+        Dir.mkdir_p(File.dirname(controller_b))
+        File.write(File.join(module_a, "pom.xml"), "<project></project>")
+        File.write(File.join(module_b, "pom.xml"), "<project></project>")
+        File.write(controller_a, "class PostController")
+        File.write(controller_b, "class PostController")
+        File.write(collection_path, "_type: export")
+
+        endpoint_a = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_a, 12)))
+        endpoint_b = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_b, 18)))
+        endpoint_a.details.technology = "kotlin_spring"
+        endpoint_b.details.technology = "kotlin_spring"
+
+        collection_details = Details.new(PathInfo.new(collection_path, 1))
+        collection_details.technology = "insomnia"
+        collection_endpoint = Endpoint.new("/posts", "GET", [] of Param, collection_details)
+
+        result = optimizer.optimize_endpoints([collection_endpoint, endpoint_a, endpoint_b])
+
+        kotlin_results = result.select { |endpoint| endpoint.details.technology == "kotlin_spring" }
+        kotlin_results.size.should eq(2)
+        kotlin_results.flat_map(&.details.code_paths.map(&.path)).sort!.should eq([controller_a, controller_b].sort!)
+      ensure
+        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+      end
+    end
+
     it "merges duplicated Kotlin Spring static assets from separate build modules" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-static-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")

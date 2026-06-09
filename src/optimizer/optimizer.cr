@@ -489,6 +489,7 @@ class EndpointOptimizer
 
   private def cross_technology_duplicate_keys(endpoints : Array(Endpoint), allowed_methods : Array(String)) : Set(Tuple(String, String))
     technologies_by_key = Hash(Tuple(String, String), Set(String)).new
+    framework_scopes_by_key = Hash(Tuple(String, String), Set(String)).new
 
     endpoints.each do |endpoint|
       url = normalized_dedup_url(endpoint)
@@ -496,13 +497,21 @@ class EndpointOptimizer
 
       method = normalized_dedup_method(endpoint.method, allowed_methods)
       key = {method, url}
-      technologies_by_key[key] ||= Set(String).new
-      technologies_by_key[key] << (endpoint.details.technology || "")
+      (technologies_by_key[key] ||= Set(String).new) << (endpoint.details.technology || "")
+
+      scope = framework_source_scope(endpoint)
+      (framework_scopes_by_key[key] ||= Set(String).new) << scope unless scope.empty?
     end
 
     keys = Set(Tuple(String, String)).new
     technologies_by_key.each do |key, technologies|
-      keys << key if technologies.size > 1
+      next unless technologies.size > 1
+      # Neutralizing the scope merges a collection endpoint with the framework
+      # one at the same path. But when 2+ distinct build-module scopes share the
+      # path, neutralizing would also collapse those distinct multi-module
+      # endpoints into one, so keep their scopes intact in that case.
+      next if (framework_scopes_by_key[key]?.try(&.size) || 0) > 1
+      keys << key
     end
     keys
   end
@@ -525,6 +534,13 @@ class EndpointOptimizer
 
   private def endpoint_source_scope(endpoint : Endpoint, cross_tech_keys : Set(Tuple(String, String))) : String
     return "" if cross_tech_keys.includes?({endpoint.method, endpoint.url})
+    framework_source_scope(endpoint)
+  end
+
+  # The build-module scope an endpoint carries on its own merits (ignoring any
+  # cross-technology neutralization). Only scoped framework endpoints get one;
+  # collection / graphql / static endpoints stay unscoped.
+  private def framework_source_scope(endpoint : Endpoint) : String
     return "" unless endpoint.details.technology == "kotlin_spring"
     return "" if graphql_endpoint?(endpoint)
     return "" if kotlin_spring_static_asset?(endpoint)

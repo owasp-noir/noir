@@ -216,13 +216,13 @@ module NoirAIContext
         /^checkIf\w*(Unique|Exists?|Duplicate)\w*OrThrow$/i,
         /^ensure\w*(Unique|Exists?|Duplicate)\w*$/i,
         /^assert\w*(Unique|Exists?|Duplicate)\w*$/i,
-        /\b\w+(?:Repository|Repo|Dao)\.findBy(?!Id\b)\w+\b/,
+        /\b\w+(?:Repository|Repo|Dao)\.findBy(?!Id\b)(?!Id[A-Z])\w+\b/,
       ],
       source_patterns: [
         /\bcheckIf\w*(Unique|Exists?|Duplicate)\w*OrThrow\s*\(/i,
         /\bensure\w*(Unique|Exists?|Duplicate)\w*\s*\(/i,
         /\bassert\w*(Unique|Exists?|Duplicate)\w*\s*\(/i,
-        /\b\w+(?:Repository|Repo|Dao)\.findBy(?!Id\b)\w+\s*\([^\n]*\)[\s\S]{0,480}\b(?:isEmpty|isNotEmpty|isPresent|AlreadyExist|Duplicate|Unique)\b/i,
+        /\b\w+(?:Repository|Repo|Dao)\.findBy(?!Id\b)(?!Id[A-Z])\w+\s*\([^\n]*\)[\s\S]{0,480}\b(?:isEmpty|isNotEmpty|isPresent|AlreadyExist|Duplicate|Unique)\b/i,
       ]
     ),
     PatternDefinition.new(
