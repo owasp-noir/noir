@@ -28,6 +28,18 @@ module Analyzer::Python
       "headers" => {nil, "header"},
     }
 
+    # Precompiled per-field access patterns. `extract_request_params`
+    # runs once per route; rebuilding these interpolated regexes on
+    # every call recompiled PCRE2 patterns (8 fields × 2) per endpoint.
+    # Compile once here and reuse. {noir_param_type, bracket_re, get_re}
+    REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field_name, tuple|
+      {
+        tuple[1],
+        Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
+        Regex.new("request\\.#{field_name}\\.get\\([rf]?['\"]([^'\"]*)['\"]"),
+      }
+    end
+
     REQUEST_PARAM_TYPES = {
       "query"  => nil,
       "form"   => ["POST", "PUT", "PATCH", "DELETE"],
@@ -735,11 +747,11 @@ module Analyzer::Python
       end
 
       codeblock_lines.each do |codeblock_line|
-        REQUEST_PARAM_FIELDS.each do |field_name, tuple|
-          _, noir_param_type = tuple
-          matches = codeblock_line.scan(/request\.#{field_name}\[[rf]?['"]([^'"]*)['"]\]/)
+        REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
+          noir_param_type, bracket_re, get_re = field_pattern
+          matches = codeblock_line.scan(bracket_re)
           if matches.size == 0
-            matches = codeblock_line.scan(/request\.#{field_name}\.get\([rf]?['"]([^'"]*)['"]/)
+            matches = codeblock_line.scan(get_re)
           end
           if matches.size == 0
             noir_param_type = "json"

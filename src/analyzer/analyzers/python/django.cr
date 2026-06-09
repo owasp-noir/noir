@@ -22,6 +22,20 @@ module Analyzer::Python
       "query_params" => {nil, "query"},
     }
 
+    # Precompiled per-field access patterns so `extract_params_from_line`
+    # never rebuilds a PCRE2 regex per request field. Compiled once from
+    # REQUEST_PARAM_FIELD_MAP. {field_name, field_methods, param_type,
+    # bracket_re, get_re}
+    REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELD_MAP.map do |field_name, tuple|
+      {
+        field_name,
+        tuple[0],
+        tuple[1],
+        Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
+        Regex.new("request\\.#{field_name}\\.get\\([rf]?['\"]([^'\"]*)['\"]"),
+      }
+    end
+
     # Map request parameter types to HTTP methods
     REQUEST_PARAM_TYPE_MAP = {
       "query"  => nil,
@@ -1463,11 +1477,11 @@ module Analyzer::Python
       suspicious_params = Array(Param).new
 
       if line.includes? "request."
-        REQUEST_PARAM_FIELD_MAP.each do |field_name, tuple|
-          field_methods, param_type = tuple
-          matches = line.scan(/request\.#{field_name}\[[rf]?['"]([^'"]*)['"]\]/)
+        REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
+          field_name, field_methods, param_type, bracket_re, get_re = field_pattern
+          matches = line.scan(bracket_re)
           if matches.size == 0
-            matches = line.scan(/request\.#{field_name}\.get\([rf]?['"]([^'"]*)['"]/)
+            matches = line.scan(get_re)
           end
 
           if matches.size != 0
