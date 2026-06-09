@@ -1297,12 +1297,13 @@ module Analyzer::Kotlin
       !!name.match(/^[a-z_][A-Za-z0-9_]*$/)
     end
 
+    # Same-class private helpers whose names denote a pure local transform or
+    # thin wrapper (`filterBy…`, `sortBy…`, `withDetails`). They carry no review
+    # signal of their own — the analyzer already expands into their body and
+    # surfaces the deeper callees — so suppress the bare helper name itself.
     private def same_class_low_signal_helper_callee?(name : String) : Bool
-      {
-        "withDetails",
-        "filterByTitlesWonAndValuation",
-        "sortByValueThenName",
-      }.includes?(name)
+      return false if name.includes?(".")
+      !!name.match(/^(?:filter|sort|with)[A-Z]/)
     end
 
     private def add_code_path_once(endpoint : Endpoint, path : String, line : Int32)
@@ -1391,7 +1392,7 @@ module Analyzer::Kotlin
       return 78 if normalized_leaf.matches?(/^(validate|verify|exists|existsbyid|isbefore|isafter)$/)
       return 78 if normalized_leaf.starts_with?("validate") || normalized_leaf.starts_with?("verify")
       return 72 if normalized_leaf.starts_with?("findby") || normalized_leaf.starts_with?("exists")
-      return 45 if normalized_leaf.starts_with?("findall") || normalized_leaf.starts_with?("getall") || normalized_leaf == "getresponse"
+      return 45 if normalized_leaf.starts_with?("findall") || normalized_leaf.starts_with?("getall")
 
       60
     end
@@ -1569,16 +1570,11 @@ module Analyzer::Kotlin
       return false if business_callee_receiver?(receiver)
       return false if preserve_domain_mutation && domain_collection_mutation_callee?(receiver, leaf)
 
+      # Plural/collection-shaped receivers (`results`, `items`, `tags`, …) are
+      # all covered by the trailing-`s`/`list` checks; only the singular
+      # `result` needs to be named explicitly.
       normalized = receiver.downcase
       normalized == "result" ||
-        normalized == "results" ||
-        normalized == "teams" ||
-        normalized == "items" ||
-        normalized == "entities" ||
-        normalized == "dtos" ||
-        normalized == "roles" ||
-        normalized == "tags" ||
-        normalized == "cookies" ||
         normalized.ends_with?("s") ||
         normalized.ends_with?("list")
     end
