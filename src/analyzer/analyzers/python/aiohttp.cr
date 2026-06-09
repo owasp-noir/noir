@@ -29,6 +29,61 @@ module Analyzer::Python
 
     HTTP_METHOD_NAMES = %w[get post put delete patch head options]
 
+    # The route-discovery patterns below interpolate only the
+    # PYTHON_VAR_NAME_REGEX/DOT_NATION constants and this fixed method
+    # alternation, so the inline literals were recompiling identical
+    # PCRE2 patterns on every source line of every file (and rebuilding
+    # `methods_re` with a `join` each line). Compile once here; the
+    # `.to_s` expansion of the interpolated constants is byte-identical
+    # to the previous inline form, so matching behaviour is unchanged.
+    METHODS_ALT = HTTP_METHOD_NAMES.join("|")
+
+    ROUTE_DECO_RE       = /@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]/
+    ADD_METHOD_RE       = /(#{DOT_NATION})\.add_(#{METHODS_ALT})\([rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    ADD_STATIC_RE       = /(#{DOT_NATION})\.add_static\([rf]?['"]([^'"]*)['"]/
+    ADD_ROUTE_RE        = /(#{DOT_NATION})\.add_route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    ADD_VIEW_RE         = /(#{DOT_NATION})\.add_view\([rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    WEB_METHOD_GUARD_RE = /\bweb\.(?:#{METHODS_ALT})\s*\(/
+    WEB_METHOD_RE       = /\bweb\.(#{METHODS_ALT})\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    WEB_VIEW_RE         = /\bweb\.view\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    DEF_METHOD_RE       = /^\s*(?:async\s+)?def\s+(#{METHODS_ALT})\s*\(/
+
+    # Spaces are stripped before the `add_<method>` match, so the route
+    # path is re-extracted from the original (spaced) line. Precompile one
+    # matcher per method name so the re-extraction isn't a per-route PCRE2
+    # compile. Keyed by the same names captured by ADD_METHOD_RE.
+    ADD_METHOD_ORIG_RE = HTTP_METHOD_NAMES.to_h do |m|
+      {m, /\.add_#{m}\s*\(\s*[rf]?['"]([^'"]*)['"]/}
+    end
+
+    # Prefix-collection matchers. `collect_app_prefixes` /
+    # `collect_route_list_ranges` scan every line of every file, so these
+    # were per-line PCRE2 recompiles before hoisting.
+    APP_PREFIX_RE      = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:web\.)?Application\(/
+    ADD_SUBAPP_RE      = /(#{DOT_NATION})\.add_subapp\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{DOT_NATION})/
+    ADD_ROUTES_VAR_RE  = /(#{DOT_NATION})\.add_routes\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/
+    ADD_ROUTES_CALL_RE = /(#{DOT_NATION})\.add_routes\s*\(/
+    LIST_ASSIGN_RE     = /^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*\[/
+
+    # `extract_request_params` runs once per endpoint and builds ~12
+    # regexes from the handler's request-var name (`request` /
+    # `self.request`). The var name is dynamic so the patterns can't be
+    # class constants, but there are only a handful of distinct names per
+    # app — memoize the compiled set per request_expr so 30k endpoints
+    # don't each pay a PCRE2 JIT compile.
+    private record RequestParamRegexes,
+      match_info_bracket : Regex,
+      match_info_get : Regex,
+      query_bracket : Regex,
+      query_get : Regex,
+      json_assign : Regex,
+      json_await : Regex,
+      post_assign : Regex,
+      post_await : Regex,
+      dict : Array(Tuple(::String, ::String, Regex, Regex))
+
+    @request_param_regex_cache = Hash(::String, RequestParamRegexes).new
+
     def analyze
       handler_routes = Hash(::String, Array(Tuple(::String, ::String, Int32, ::String))).new
       # path => [{route_path, http_method, line_index, handler_name}]
@@ -96,7 +151,7 @@ module Analyzer::Python
               # Style B (continued): the method-first `@<router>.route("GET", "/path")`
               # shape kept as regex because tree-sitter's generic route
               # decoder assumes path-first.
-              aiohttp_route_deco = stripped.match(/@(#{PYTHON_VAR_NAME_REGEX})\.route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+              aiohttp_route_deco = stripped.includes?(".route(") ? stripped.match(ROUTE_DECO_RE) : nil
               if aiohttp_route_deco
                 method = aiohttp_route_deco[2].upcase
                 route_path = aiohttp_route_deco[3]
@@ -115,13 +170,13 @@ module Analyzer::Python
               end
 
               # Style A: app.router.add_<method>("/path", handler)
-              methods_re = HTTP_METHOD_NAMES.join("|")
-              if add_match = stripped.match(/(#{DOT_NATION})\.add_(#{methods_re})\([rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/)
+              add_match = stripped.includes?(".add_") ? stripped.match(ADD_METHOD_RE) : nil
+              if add_match
                 receiver = add_match[1]
                 method_name = add_match[2]
                 route_path = add_match[3]
                 handler_name = add_match[4]
-                if orig_match = line.match(/\.add_#{method_name}\s*\(\s*[rf]?['"]([^'"]*)['"]/)
+                if (orig_re = ADD_METHOD_ORIG_RE[method_name]?) && (orig_match = line.match(orig_re))
                   route_path = orig_match[1]
                 end
                 prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
@@ -134,7 +189,8 @@ module Analyzer::Python
               # aiohttp serves all files below the mounted prefix, so expose
               # it as a GET wildcard endpoint. Respect sub-app prefixes via
               # the same receiver prefix table as imperative routes.
-              if static_match = stripped.match(/(#{DOT_NATION})\.add_static\([rf]?['"]([^'"]*)['"]/)
+              static_match = stripped.includes?(".add_static(") ? stripped.match(ADD_STATIC_RE) : nil
+              if static_match
                 receiver = static_match[1]
                 static_path = static_match[2]
                 if orig_match = line.match(/\.add_static\s*\(\s*[rf]?['"]([^'"]*)['"]/)
@@ -147,7 +203,7 @@ module Analyzer::Python
               end
 
               # Style A: app.router.add_route("METHOD", "/path", handler)
-              add_route_match = stripped.match(/(#{DOT_NATION})\.add_route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/)
+              add_route_match = stripped.includes?(".add_route(") ? stripped.match(ADD_ROUTE_RE) : nil
               if add_route_match
                 receiver = add_route_match[1]
                 method = add_route_match[2].upcase
@@ -163,7 +219,8 @@ module Analyzer::Python
 
               # Style D: class-based views via
               # `app.router.add_view("/path", ViewClass)`.
-              if add_view_match = stripped.match(/(#{DOT_NATION})\.add_view\([rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/)
+              add_view_match = stripped.includes?(".add_view(") ? stripped.match(ADD_VIEW_RE) : nil
+              if add_view_match
                 receiver = add_view_match[1]
                 route_path = add_view_match[2]
                 class_name = add_view_match[3].split(".").last
@@ -183,9 +240,9 @@ module Analyzer::Python
               # route declaration in real aiohttp code. Multi-line entries
               # are coalesced by `join_until_python_call_closes` so the
               # path/handler regex sees the full call.
-              if stripped.match(/\bweb\.(?:#{methods_re})\s*\(/)
+              if stripped.includes?("web.") && stripped.matches?(WEB_METHOD_GUARD_RE)
                 effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
-                effective_line.scan(/\bweb\.(#{methods_re})\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/) do |web_match|
+                effective_line.scan(WEB_METHOD_RE) do |web_match|
                   next if web_match.size < 4
                   method_name = web_match[1]
                   route_path = web_match[2]
@@ -199,9 +256,9 @@ module Analyzer::Python
               # Style D: class-based views via `web.view("/path", ViewClass)`.
               # aiohttp dispatches to async `get` / `post` / ... methods on
               # the class, so emit one endpoint per method definition.
-              if stripped.match(/\bweb\.view\s*\(/)
+              if stripped.includes?("web.view(")
                 effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
-                effective_line.scan(/\bweb\.view\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/) do |view_match|
+                effective_line.scan(WEB_VIEW_RE) do |view_match|
                   next if view_match.size < 3
                   route_path = view_match[1]
                   class_name = view_match[2].split(".").last
@@ -473,10 +530,12 @@ module Analyzer::Python
     end
 
     private def find_class_def(lines : Array(::String), class_name : ::String) : Int32?
+      # Compile the name-specific matcher once instead of rebuilding it
+      # on every line (and guard with a cheap substring necessary check).
+      class_def_re = /^\s*class\s+#{Regex.escape(class_name)}\s*[\(:]/
       lines.each_with_index do |line, idx|
-        if line.match(/^\s*class\s+#{Regex.escape(class_name)}\s*[\(:]/)
-          return idx
-        end
+        next unless line.includes?("class") && line.includes?(class_name)
+        return idx if line.matches?(class_def_re)
       end
       nil
     end
@@ -485,7 +544,6 @@ module Analyzer::Python
       class_line = lines[class_index]
       class_indent = class_line.size - class_line.lstrip.size
       methods = [] of Tuple(::String, Int32)
-      methods_re = HTTP_METHOD_NAMES.join("|")
 
       i = class_index + 1
       while i < lines.size
@@ -494,7 +552,7 @@ module Analyzer::Python
           indent = line.size - line.lstrip.size
           break if indent <= class_indent
 
-          if method_match = line.match(/^\s*(?:async\s+)?def\s+(#{methods_re})\s*\(/)
+          if line.includes?("def ") && (method_match = line.match(DEF_METHOD_RE))
             methods << {method_match[1].upcase, i}
           end
         end
@@ -506,10 +564,14 @@ module Analyzer::Python
 
     private def find_handler_def(lines : Array(::String), handler_name : ::String) : Int32?
       handler_name = handler_name.split(".").last
+      # `find_handler_def` runs once per route and used to recompile this
+      # matcher on every line of the file (the dominant aiohttp scan cost
+      # on handler-heavy apps). Compile once per call and gate the match
+      # behind a cheap substring check that any real `def <name>` satisfies.
+      handler_def_re = /^\s*(async\s+)?def\s+#{handler_name}\s*\(/
       lines.each_with_index do |line, idx|
-        if line.match(/^\s*(async\s+)?def\s+#{handler_name}\s*\(/)
-          return idx
-        end
+        next unless line.includes?("def") && line.includes?(handler_name)
+        return idx if line.matches?(handler_def_re)
       end
       nil
     end
@@ -552,14 +614,14 @@ module Analyzer::Python
 
       lines.each_with_index do |line, index|
         stripped = line.gsub(" ", "")
-        if app_match = stripped.match(/^(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:web\.)?Application\(/)
+        if stripped.includes?("Application(") && (app_match = stripped.match(APP_PREFIX_RE))
           prefixes[app_match[1]] ||= [""]
         end
 
         next unless line.includes?(".add_subapp(")
 
         effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        effective_line.scan(/(#{DOT_NATION})\.add_subapp\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{DOT_NATION})/) do |mount_match|
+        effective_line.scan(ADD_SUBAPP_RE) do |mount_match|
           next if mount_match.size < 4
           parent = normalize_receiver(mount_match[1])
           prefix = mount_match[2]
@@ -602,7 +664,7 @@ module Analyzer::Python
         next unless line.includes?(".add_routes(")
 
         effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        effective_line.scan(/(#{DOT_NATION})\.add_routes\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/) do |routes_match|
+        effective_line.scan(ADD_ROUTES_VAR_RE) do |routes_match|
           next if routes_match.size < 3
           receiver = routes_match[1]
           route_table = routes_match[2]
@@ -627,7 +689,7 @@ module Analyzer::Python
         next unless line.includes?(".add_routes(")
 
         effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        effective_line.scan(/(#{DOT_NATION})\.add_routes\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/) do |routes_match|
+        effective_line.scan(ADD_ROUTES_VAR_RE) do |routes_match|
           next if routes_match.size < 3
           receiver = routes_match[1]
           route_list = routes_match[2]
@@ -653,7 +715,8 @@ module Analyzer::Python
       end
 
       lines.each_with_index do |line, index|
-        assignment_match = line.match(/^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*\[/)
+        next unless line.includes?("=") && line.includes?("[")
+        assignment_match = line.match(LIST_ASSIGN_RE)
         next unless assignment_match
 
         start_index = index
@@ -710,7 +773,7 @@ module Analyzer::Python
                                              app_prefixes : Hash(::String, Array(::String)),
                                              route_list_prefixes : Hash(Int32, Array(::String)),
                                              line_index : Int32) : Array(::String)
-      if add_routes_match = line.match(/(#{DOT_NATION})\.add_routes\s*\(/)
+      if line.includes?(".add_routes(") && (add_routes_match = line.match(ADD_ROUTES_CALL_RE))
         prefixes_for_receiver(add_routes_match[1], app_prefixes)
       elsif prefixes = route_list_prefixes[line_index]?
         prefixes
@@ -756,10 +819,36 @@ module Analyzer::Python
 
     DICT_METHOD_NAMES = Set{"get", "getall", "getone", "items", "keys", "values", "pop"}
 
+    # Build (and memoize) the request-access regex set for a given
+    # request-var name. The patterns interpolate the var name, so they
+    # can't be class constants — but there are only a couple of distinct
+    # names per app (`request`, `self.request`), so compiling them once
+    # per name keeps `extract_request_params` off the PCRE2 JIT path.
+    private def request_param_regexes(request_expr : ::String) : RequestParamRegexes
+      @request_param_regex_cache[request_expr] ||= begin
+        rp = Regex.escape(request_expr)
+        RequestParamRegexes.new(
+          match_info_bracket: /#{rp}\.match_info\s*\[\s*['"]([^'"]+)['"]\s*\]/,
+          match_info_get: /#{rp}\.match_info\.get\s*\(\s*['"]([^'"]+)['"]/,
+          query_bracket: /#{rp}\.(?:rel_url\.)?query\s*\[\s*['"]([^'"]+)['"]\s*\]/,
+          query_get: /#{rp}\.(?:rel_url\.)?query\.get\s*\(\s*['"]([^'"]+)['"]/,
+          json_assign: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{rp}\.json\s*\(/,
+          json_await: /await\s+#{rp}\.json\s*\(/,
+          post_assign: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{rp}\.post\s*\(/,
+          post_await: /await\s+#{rp}\.post\s*\(/,
+          dict: DICT_ACCESSORS.map do |accessor, param_type|
+            {accessor, param_type,
+             /#{rp}\.#{accessor}\.get\s*\(\s*['"]([^'"]+)['"]/,
+             /#{rp}\.#{accessor}\s*\[\s*['"]([^'"]+)['"]\s*\]/}
+          end,
+        )
+      end
+    end
+
     private def extract_request_params(body : ::String, method : ::String, request_expr : ::String = "request") : Array(Param)
       params = [] of Param
       seen = Set(::String).new
-      request_pattern = Regex.escape(request_expr)
+      res = request_param_regexes(request_expr)
 
       record = ->(name : ::String, type : ::String) do
         key = "#{type}:#{name}"
@@ -769,67 +858,80 @@ module Analyzer::Python
         end
       end
 
+      # Guard each group with a cheap substring check on the distinctive
+      # accessor — a necessary condition for the match — so a handler body
+      # that never touches an accessor pays nothing for it.
+
       # request.match_info["name"] / .get("name") — path parameter access
-      body.scan(/#{request_pattern}\.match_info\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        record.call(m[1], "path")
-      end
-      body.scan(/#{request_pattern}\.match_info\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        record.call(m[1], "path")
+      if body.includes?(".match_info")
+        body.scan(res.match_info_bracket) do |m|
+          record.call(m[1], "path")
+        end
+        body.scan(res.match_info_get) do |m|
+          record.call(m[1], "path")
+        end
       end
 
       # request.query["x"] / request.query.get("x") / request.rel_url.query[...]
-      body.scan(/#{request_pattern}\.(?:rel_url\.)?query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        record.call(m[1], "query")
-      end
-      body.scan(/#{request_pattern}\.(?:rel_url\.)?query\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        record.call(m[1], "query")
+      if body.includes?(".query")
+        body.scan(res.query_bracket) do |m|
+          record.call(m[1], "query")
+        end
+        body.scan(res.query_get) do |m|
+          record.call(m[1], "query")
+        end
       end
 
-      DICT_ACCESSORS.each do |accessor, param_type|
-        body.scan(/#{request_pattern}\.#{accessor}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+      res.dict.each do |accessor, param_type, get_re, bracket_re|
+        next unless body.includes?(".#{accessor}")
+        body.scan(get_re) do |m|
           record.call(m[1], param_type)
         end
-        body.scan(/#{request_pattern}\.#{accessor}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+        body.scan(bracket_re) do |m|
           record.call(m[1], param_type)
         end
       end
 
       # JSON body: await request.json() and subsequent dict access on the returned var.
-      json_vars = [] of ::String
-      body.scan(/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{request_pattern}\.json\s*\(/) do |m|
-        json_vars << m[1]
-      end
-
-      # If request.json() is awaited at all, flag the body with a generic entry.
-      if body.match(/await\s+#{request_pattern}\.json\s*\(/)
-        record.call("body", "json") if json_vars.empty?
-      end
-
-      json_vars.each do |var|
-        body.scan(/[^a-zA-Z_]#{var}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-          record.call(m[1], "json")
+      if body.includes?(".json")
+        json_vars = [] of ::String
+        body.scan(res.json_assign) do |m|
+          json_vars << m[1]
         end
-        body.scan(/[^a-zA-Z_]#{var}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
-          record.call(m[1], "json")
+
+        # If request.json() is awaited at all, flag the body with a generic entry.
+        if body.match(res.json_await)
+          record.call("body", "json") if json_vars.empty?
+        end
+
+        json_vars.each do |var|
+          body.scan(/[^a-zA-Z_]#{var}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+            record.call(m[1], "json")
+          end
+          body.scan(/[^a-zA-Z_]#{var}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+            record.call(m[1], "json")
+          end
         end
       end
 
       # Form body: await request.post()
-      form_vars = [] of ::String
-      body.scan(/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{request_pattern}\.post\s*\(/) do |m|
-        form_vars << m[1]
-      end
-
-      if body.match(/await\s+#{request_pattern}\.post\s*\(/)
-        record.call("body", "form") if form_vars.empty?
-      end
-
-      form_vars.each do |var|
-        body.scan(/[^a-zA-Z_]#{var}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-          record.call(m[1], "form")
+      if body.includes?(".post")
+        form_vars = [] of ::String
+        body.scan(res.post_assign) do |m|
+          form_vars << m[1]
         end
-        body.scan(/[^a-zA-Z_]#{var}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
-          record.call(m[1], "form")
+
+        if body.match(res.post_await)
+          record.call("body", "form") if form_vars.empty?
+        end
+
+        form_vars.each do |var|
+          body.scan(/[^a-zA-Z_]#{var}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+            record.call(m[1], "form")
+          end
+          body.scan(/[^a-zA-Z_]#{var}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+            record.call(m[1], "form")
+          end
         end
       end
 

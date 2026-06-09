@@ -23,6 +23,13 @@ module Analyzer::Python
 
     CLASS_DEF_REGEX = /^class\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*[\(:]/
 
+    # Per-line matchers that interpolate only constants — hoisted so the
+    # analyze loop doesn't recompile identical PCRE2 patterns on every
+    # source line. The `.to_s` expansion is byte-identical to the inline
+    # literals, so matching behaviour is unchanged.
+    APP_INSTANCE_RE = /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:tornado\.web\.)?Application\(/
+    HANDLER_LIST_RE = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=\[/
+
     @file_content_cache = Hash(::String, ::String).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @import_modules_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
@@ -53,7 +60,7 @@ module Analyzer::Python
               line = line.gsub(" ", "") # remove spaces for easier regex matching
 
               # Identify Tornado Application instance assignments
-              app_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:tornado\.web\.)?Application\(/
+              app_match = line.includes?("Application(") ? line.match(APP_INSTANCE_RE) : nil
               if app_match
                 app_instance_name = app_match[1]
                 api_instances[app_instance_name] ||= ""
@@ -84,7 +91,7 @@ module Analyzer::Python
               # assignment by its conventional name and extract its
               # tuples directly; the handler-class gate in
               # `extract_routes_from_lines` keeps non-route lists out.
-              list_match = line.match /^(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=\[/
+              list_match = line.includes?("=[") ? line.match(HANDLER_LIST_RE) : nil
               if list_match && tornado_handler_list_name?(list_match[1])
                 extract_routes_from_lines(lines, line_index, path)
               end
@@ -203,6 +210,10 @@ module Analyzer::Python
     private def extract_routes_from_variable(lines : Array(::String), var_name : ::String, file_path : ::String)
       lines.each_with_index do |line, line_index|
         stripped = line.strip
+        # `var_name` is the discovered handler-list name (can't be hoisted);
+        # it must appear at the start of the line, so skip the regex builds
+        # on lines that don't begin with it.
+        next unless stripped.starts_with?(var_name)
         # Match: var_name = [ (same line) or var_name = (opening bracket on next line)
         if stripped.match(/^#{var_name}(?::.*?)?\s*=\s*\[/)
           extract_routes_from_lines(lines, line_index, file_path)
