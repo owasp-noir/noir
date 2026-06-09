@@ -105,34 +105,15 @@ module Analyzer::Javascript
 
     # Process static directories and add endpoints for each file
     private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      static_dirs.each do |dir|
-        full_path = (base_path + "/" + dir["file_path"]).gsub_repeatedly("//", "/")
-        static_path = dir["static_path"]
-        static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
-
-        get_files_by_prefix(full_path).each do |file_path|
-          if File.file?(file_path)
-            # Use lchop to only remove from the beginning of the string
-            relative_path = file_path.starts_with?(full_path) ? file_path.lchop(full_path) : file_path
-            url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
-            url = "/#{url}" unless url.starts_with?("/")
-
-            details = Details.new(PathInfo.new(file_path))
-            endpoint = Endpoint.new(url, "GET", details)
-            result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
-          end
-        end
-      end
+      process_js_static_dirs(static_dirs, result)
     end
 
     private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(GlobalPrefixConfig), global_prefix_mutex : Mutex)
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
         content = file.gets_to_end
 
-        # Extract static paths
-        Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
-          static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-        end
+        collect_static_paths(path, content, static_dirs, :nestjs)
+        collect_static_paths(path, content, static_dirs, :express) if nestjs_bootstrap_source?(content)
 
         # Strip JS/TS comments so commented-out decorators
         # (e.g. `// @Get('/old')`) don't generate phantom routes.
@@ -151,6 +132,14 @@ module Analyzer::Javascript
       end
     rescue e : Exception
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
+    end
+
+    private def nestjs_bootstrap_source?(content : String) : Bool
+      content.includes?("NestFactory.create") ||
+        content.includes?("from '@nestjs/core'") ||
+        content.includes?("from \"@nestjs/core\"") ||
+        content.includes?("require('@nestjs/core')") ||
+        content.includes?("require(\"@nestjs/core\")")
     end
 
     # Detect `app.setGlobalPrefix('api', { exclude: [...] })`.

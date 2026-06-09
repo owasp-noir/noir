@@ -314,17 +314,18 @@ module Analyzer::Go
       end
     end
 
+    def static_dir_entry(source_path : String, static_path : String, file_path : String) : Hash(String, String)
+      {
+        "static_path" => static_path,
+        "file_path"   => file_path,
+        "source_path" => source_path,
+      }
+    end
+
     def resolve_public_dirs_with_glob(public_dirs : Array(Hash(String, String)))
       public_dirs.each do |p_dir|
         next if p_dir["file_path"].size == 0
-        raw_full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
-        normalized_full_path = Path[raw_full_path].normalize.to_s
-
-        if base_path.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")
-          full_path = "./#{normalized_full_path}"
-        else
-          full_path = normalized_full_path
-        end
+        full_path = resolve_public_dir_path(p_dir)
 
         next unless File.directory?(full_path)
         Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
@@ -344,19 +345,7 @@ module Analyzer::Go
 
     def resolve_public_dirs(public_dirs : Array(Hash(String, String)))
       public_dirs.each do |p_dir|
-        # Join path manually first to handle concatenation
-        raw_full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
-
-        # Normalize the path to resolve . and ..
-        normalized_full_path = Path[raw_full_path].normalize.to_s
-
-        # Re-add ./ prefix if it was present in base_path and lost during normalization
-        # This ensures compatibility with CodeLocator which stores relative paths if base_path was relative
-        if base_path.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")
-          full_path = "./#{normalized_full_path}"
-        else
-          full_path = normalized_full_path
-        end
+        full_path = resolve_public_dir_path(p_dir)
 
         get_files_by_prefix(full_path).each do |path|
           # Ensure strict prefix match (directory boundary or exact match)
@@ -374,6 +363,31 @@ module Analyzer::Go
           end
         end
       end
+    end
+
+    private def resolve_public_dir_path(p_dir : Hash(String, String)) : String
+      file_path = p_dir["file_path"]
+      return Path[file_path].normalize.to_s if file_path.starts_with?("/") && Dir.exists?(file_path)
+
+      root = if source_path = p_dir["source_path"]?
+               base_path_for_path(source_path)
+             else
+               base_path
+             end
+
+      normalized_file_path = file_path.lstrip("/")
+      raw_full_path = (root + "/" + normalized_file_path).gsub_repeatedly("//", "/")
+      normalized_full_path = Path[raw_full_path].normalize.to_s
+
+      if root.starts_with?("./") && !normalized_full_path.starts_with?("./") && !normalized_full_path.starts_with?("/")
+        "./#{normalized_full_path}"
+      else
+        normalized_full_path
+      end
+    end
+
+    private def base_path_for_path(path : String) : String
+      configured_base_for(path)
     end
   end
 end

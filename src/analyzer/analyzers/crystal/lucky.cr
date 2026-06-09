@@ -168,7 +168,7 @@ module Analyzer::Crystal
       # next to a `shard.yml`, so files in unrelated `*/public/`
       # subtrees (e.g. a built docs site at `docs/public/`) no
       # longer leak in as fake Lucky endpoints.
-      get_public_files(@base_path).each do |file|
+      each_public_file do |file|
         # Extract the path after "/public/" regardless of depth
         if file =~ /\/public\/(.*)/
           relative_path = $1

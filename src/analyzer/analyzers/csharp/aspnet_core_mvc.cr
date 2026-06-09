@@ -9,8 +9,8 @@ module Analyzer::CSharp
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      route_patterns = load_route_patterns
-      analyze_controllers(route_patterns, include_callee)
+      route_patterns_by_base = load_route_patterns_by_base
+      analyze_controllers(route_patterns_by_base, include_callee)
       @result
     end
 
@@ -67,8 +67,10 @@ module Analyzer::CSharp
       params.uniq(&.name)
     end
 
-    private def load_route_patterns : Array(String)
-      patterns = [] of String
+    private def load_route_patterns_by_base : Hash(String, Array(String))
+      patterns_by_base = Hash(String, Array(String)).new do |hash, key|
+        hash[key] = [] of String
+      end
       files = get_files_by_extension(".cs").select do |file|
         base = File.basename(file)
         base == "Program.cs" || base == "Startup.cs"
@@ -77,14 +79,22 @@ module Analyzer::CSharp
       files.each do |file|
         begin
           content = read_file_content(file)
-          patterns.concat(extract_route_patterns(content))
+          patterns_by_base[configured_base_for(file)].concat(extract_route_patterns(content))
         rescue e
           logger.debug "Failed to read #{file}: #{e.message}"
         end
       end
 
-      patterns << DEFAULT_ROUTE if patterns.empty?
-      patterns.uniq
+      @base_paths.each do |base_path|
+        patterns_by_base[base_path] << DEFAULT_ROUTE if patterns_by_base[base_path].empty?
+      end
+
+      patterns_by_base.each do |base_path, patterns|
+        patterns << DEFAULT_ROUTE if patterns.empty?
+        patterns_by_base[base_path] = patterns.uniq
+      end
+
+      patterns_by_base
     end
 
     private def extract_route_patterns(content : String) : Array(String)
@@ -120,7 +130,7 @@ module Analyzer::CSharp
       patterns
     end
 
-    private def analyze_controllers(route_patterns : Array(String), include_callee : Bool)
+    private def analyze_controllers(route_patterns_by_base : Hash(String, Array(String)), include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
         base = File.basename(file)
         next false if Common.csharp_test_path?(file)
@@ -128,6 +138,7 @@ module Analyzer::CSharp
       end
 
       controller_files.each do |file|
+        route_patterns = route_patterns_by_base[configured_base_for(file)]? || [DEFAULT_ROUTE]
         analyze_controller_file(file, route_patterns, include_callee)
       end
     end

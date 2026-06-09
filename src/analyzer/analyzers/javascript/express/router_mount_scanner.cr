@@ -1,5 +1,6 @@
 require "../../../../models/code_locator"
 require "../../../../utils/js_literal_scanner"
+require "../../../../utils/path_scope"
 require "../../../../utils/url_path"
 require "../express_constants"
 
@@ -404,19 +405,21 @@ module Analyzer::Javascript
       @all_files.each do |file|
         next if File.directory?(file)
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| file.ends_with?(ext) }
-        next unless @base_paths.any? { |base| file.starts_with?(base) }
+        next unless @base_paths.any? { |base| Noir::PathScope.under_root?(file, base) }
         main_files << file
       end
 
       # Fallback: if file_map is empty, scan common entrypoints only
       if main_files.empty?
-        ExpressConstants::ENTRY_FILENAMES.each do |filename|
-          potential_path = File.join(@base_path, filename)
-          main_files << potential_path if File.exists?(potential_path)
+        @base_paths.each do |base|
+          ExpressConstants::ENTRY_FILENAMES.each do |filename|
+            potential_path = File.join(base, filename)
+            main_files << potential_path if File.exists?(potential_path)
 
-          ExpressConstants::ENTRY_SUBDIRS.each do |subdir|
-            subdir_path = File.join(@base_path, subdir, filename)
-            main_files << subdir_path if File.exists?(subdir_path)
+            ExpressConstants::ENTRY_SUBDIRS.each do |subdir|
+              subdir_path = File.join(base, subdir, filename)
+              main_files << subdir_path if File.exists?(subdir_path)
+            end
           end
         end
       end
@@ -1051,7 +1054,7 @@ module Analyzer::Javascript
 
       resolved = if is_root_alias
                    alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")
-                   File.expand_path(alias_path, @base_path)
+                   File.expand_path(alias_path, base_path_for_file(from_file))
                  else
                    base_dir = File.dirname(from_file)
                    File.expand_path(require_path, base_dir)
@@ -1085,6 +1088,10 @@ module Analyzer::Javascript
       end
 
       nil
+    end
+
+    private def base_path_for_file(file : String) : String
+      Noir::PathScope.longest_base(file, @base_paths) || @base_path
     end
   end
 end

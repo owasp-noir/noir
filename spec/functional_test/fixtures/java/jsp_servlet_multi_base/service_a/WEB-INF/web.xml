@@ -1,0 +1,10 @@
+<web-app>
+  <servlet>
+    <servlet-name>shared</servlet-name>
+    <servlet-class>com.example.SharedServlet</servlet-class>
+  </servlet>
+  <servlet-mapping>
+    <servlet-name>shared</servlet-name>
+    <url-pattern>/a-servlet</url-pattern>
+  </servlet-mapping>
+</web-app>

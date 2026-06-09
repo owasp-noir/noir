@@ -23,7 +23,8 @@ module Analyzer::Haskell
     HEADER_REGEX      = /(?<![A-Za-z0-9_'])header\s+"((?:[^"\\]|\\.)*)"/
 
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
-    alias HandlerBodies = Hash(String, Array(HandlerBody))
+    alias HandlerKey = Tuple(String, String)
+    alias HandlerBodies = Hash(HandlerKey, Array(HandlerBody))
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -52,12 +53,17 @@ module Analyzer::Haskell
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
-          handlers[body[:name]] ||= [] of HandlerBody
-          handlers[body[:name]] << body
+          key = handler_key(configured_base_for(path), body[:name])
+          handlers[key] ||= [] of HandlerBody
+          handlers[key] << body
         end
       end
 
       handlers
+    end
+
+    private def handler_key(base_path : String, name : String) : HandlerKey
+      {base_path, name}
     end
 
     private def process_content(source : String,
@@ -244,7 +250,7 @@ module Analyzer::Haskell
       callees = Noir::HaskellCalleeExtractor.callees_for_body(body_text, source, body_start_line)
 
       if named = inline_handler_name(first_rest)
-        bodies = handler_bodies[named]?
+        bodies = handler_bodies[handler_key(configured_base_for(source), named)]?
         if bodies && bodies.size == 1
           handler = bodies.first
           callees.concat(Noir::HaskellCalleeExtractor.callees_for_body(handler[:body], handler[:path], handler[:start_line]))

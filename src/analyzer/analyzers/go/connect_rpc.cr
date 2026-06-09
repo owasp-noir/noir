@@ -22,6 +22,7 @@ module Analyzer::Go
     CONNECT_CONTENT_TYPES = "application/proto, application/json, application/connect+proto, application/connect+json"
 
     alias MessageFields = Array(Param)
+    alias ServiceMountKey = Tuple(String, String)
     alias ServiceMount = NamedTuple(file: String, line: Int32)
 
     # Maps the generated handler-constructor to a streaming descriptor.
@@ -115,12 +116,13 @@ module Analyzer::Go
     # the proto service base name (`UserService`) to the first
     # `(file, line)` registration found. Used downstream to attach a
     # code path to the Go mount point in addition to the proto file.
-    private def discover_service_mounts : Hash(String, ServiceMount)
-      mounts = {} of String => ServiceMount
+    private def discover_service_mounts : Hash(ServiceMountKey, ServiceMount)
+      mounts = {} of ServiceMountKey => ServiceMount
       begin
         get_files_by_extension(".go").each do |path|
           next if File.directory?(path)
           next if GoEngine.go_test_file?(path)
+          base_path = configured_base_for(path)
           content = read_file_content(path)
           next unless content.includes?(IMPORT_MARKER) || content.includes?("ServiceHandler(")
           content.each_line.with_index do |line, index|
@@ -128,7 +130,7 @@ module Analyzer::Go
               handler_name = match[1]
               # Strip the trailing "Handler" -> service base name
               service_name = handler_name.sub(/Handler$/, "")
-              mounts[service_name] ||= {file: path, line: index + 1}
+              mounts[{base_path, service_name}] ||= {file: path, line: index + 1}
             end
           end
         end
@@ -138,7 +140,7 @@ module Analyzer::Go
       mounts
     end
 
-    private def parse_proto(content : String, file_path : String, mounts : Hash(String, ServiceMount))
+    private def parse_proto(content : String, file_path : String, mounts : Hash(ServiceMountKey, ServiceMount))
       package = parse_package(content)
       messages = parse_messages(content)
       parse_services(content, file_path, package, messages, mounts)
@@ -182,7 +184,7 @@ module Analyzer::Go
       messages
     end
 
-    private def parse_services(content : String, file_path : String, package : String, messages : Hash(String, MessageFields), mounts : Hash(String, ServiceMount))
+    private def parse_services(content : String, file_path : String, package : String, messages : Hash(String, MessageFields), mounts : Hash(ServiceMountKey, ServiceMount))
       content.scan(/service\s+(\w+)\s*\{/m) do |service_match|
         service_name = service_match[1]
         start_pos = service_match.begin(0) || 0
@@ -237,8 +239,8 @@ module Analyzer::Go
       nil
     end
 
-    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, messages : Hash(String, MessageFields), full_content : String, mounts : Hash(String, ServiceMount))
-      mount = mounts[service_name]?
+    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, messages : Hash(String, MessageFields), full_content : String, mounts : Hash(ServiceMountKey, ServiceMount))
+      mount = mounts[{configured_base_for(file_path), service_name}]?
 
       service_body.scan(/rpc\s+(\w+)\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)\s*returns\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)/m) do |rpc_match|
         method_name = rpc_match[1]

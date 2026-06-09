@@ -5,6 +5,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Flask < PythonEngine
+    alias ScopedNameKey = Tuple(::String, ::String)
+
     # Reference: https://stackoverflow.com/a/16664376
     # Reference: https://tedboy.github.io/flask/generated/generated/flask.Request.html
     REQUEST_PARAM_FIELDS = {
@@ -32,9 +34,8 @@ module Analyzer::Python
     @class_views = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)))).new
 
     def analyze
-      flask_instances = Hash(::String, ::String).new
-      flask_instances["app"] ||= "" # Common flask instance name
-      blueprint_prefixes = Hash(::String, ::String).new
+      flask_instances = Hash(ScopedNameKey, ::String).new
+      blueprint_prefixes = Hash(ScopedNameKey, ::String).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
       blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String))).new
@@ -45,7 +46,7 @@ module Analyzer::Python
       # is per-file, so the route file never saw the host-computed prefix
       # and every `@ns.route` surfaced without `/api/v1`. This GLOBAL map
       # (namespace var name -> fully-resolved prefix) bridges the two files.
-      namespace_prefixes = Hash(::String, ::String).new
+      namespace_prefixes = Hash(ScopedNameKey, ::String).new
 
       # Iterate through all Python files in all base paths. Pulls from
       # the detector-built file_map so subtree pruning and --exclude-path
@@ -53,11 +54,11 @@ module Analyzer::Python
       # resolution, so keep the outer loop and filter by prefix.
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
-        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
+        flask_instances[{current_base_path, "app"}] ||= "" # Common flask instance name
         python_files.each do |path|
-          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+          next unless path_under_root?(path, current_base_path)
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path, @base_path)
+          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)
@@ -87,7 +88,7 @@ module Analyzer::Python
               decorations_by_line[d.decorator_line] << d
             end
             Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["flask"]).each do |bp|
-              blueprint_prefixes[bp.name] ||= bp.prefix
+              blueprint_prefixes[{current_base_path, bp.name}] ||= bp.prefix
               api_instances[bp.name] ||= bp.prefix
             end
 
@@ -101,7 +102,7 @@ module Analyzer::Python
               if flask_match
                 flask_instance_name = flask_match[1]
                 api_instances[flask_instance_name] ||= ""
-                flask_instances[flask_instance_name] ||= ""
+                flask_instances[{current_base_path, flask_instance_name}] ||= ""
 
                 effective_constructor = if python_paren_delta(original_line) > 0
                                           join_until_python_call_closes(lines, line_index, original_line)
@@ -138,7 +139,9 @@ module Analyzer::Python
                          end
 
               # Api from flask instance
-              flask_instances.each do |_flask_instance_name, _prefix|
+              flask_instances.each do |key, _prefix|
+                next unless key[0] == current_base_path
+                _flask_instance_name = key[1]
                 api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}[,)]/
                 if api_match
                   api_instance_name = api_match[1]
@@ -147,7 +150,9 @@ module Analyzer::Python
               end
 
               # Api from blueprint instance
-              blueprint_prefixes.each do |_blueprint_instance_name, _prefix|
+              blueprint_prefixes.each do |key, _prefix|
+                next unless key[0] == current_base_path
+                _blueprint_instance_name = key[1]
                 api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}[,)]/
                 if api_match
                   api_instance_name = api_match[1]
@@ -181,14 +186,16 @@ module Analyzer::Python
                       api_instances[gv.name] = resolved
                       # Bridge to the namespace's route-definition file,
                       # which has no view onto this host file's prefixes.
-                      namespace_prefixes[gv.name] = resolved
+                      namespace_prefixes[{current_base_path, gv.name}] = resolved
                     end
                   end
                 end
               end
 
               # Temporary Addition: register_view
-              blueprint_prefixes.each do |blueprint_name, blueprint_prefix|
+              blueprint_prefixes.each do |key, blueprint_prefix|
+                next unless key[0] == current_base_path
+                blueprint_name = key[1]
                 view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
                 if view_registration_match
                   # Re-extract route paths from original line to preserve spaces in paths
@@ -486,12 +493,14 @@ module Analyzer::Python
           lines = fetch_file_content(path).lines
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = path_api_instances[path]
+          route_base_path = base_path_for(path)
+          namespace_prefix = namespace_prefixes[{route_base_path, router_name}]?
           if api_instances.has_key?(router_name)
             prefix = api_instances[router_name]
-          elsif namespace_prefixes.has_key?(router_name)
+          elsif namespace_prefix
             # flask-restx namespace whose `add_namespace(...)` (with the
             # blueprint url_prefix) was resolved in a different file.
-            prefix = namespace_prefixes[router_name]
+            prefix = namespace_prefix
           else
             parser = get_parser(path)
             prefix = extract_namespace_prefix(parser, router_name, "")
@@ -793,7 +802,7 @@ module Analyzer::Python
     # Pick the base path that owns this file so the engine's definition
     # resolver can locate imported modules relative to the right root.
     private def base_path_for(file_path : ::String) : ::String
-      base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
+      python_base_path_for(file_path)
     end
 
     private def flask_relevant_source?(source : ::String) : Bool

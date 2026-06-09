@@ -1,0 +1,4 @@
+name: service_b
+
+dependencies:
+  dart_frog: any

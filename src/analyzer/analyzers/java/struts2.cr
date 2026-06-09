@@ -76,14 +76,16 @@ module Analyzer::Java
       end
     end
 
+    alias ScopedNameKey = Tuple(String, String)
+
     @include_callee : Bool = false
-    @handler_index : Hash(String, String) = {} of String => String
+    @handler_index : Hash(ScopedNameKey, String) = {} of ScopedNameKey => String
 
     def analyze
       @include_callee = callees_needed?
       file_list = all_files()
       config_files = struts_config_files(file_list)
-      convention_config = ConventionConfig.new
+      convention_configs = Hash(String, ConventionConfig).new { |hash, key| hash[key] = ConventionConfig.new }
       seen = Set(String).new
 
       java_files = file_list.select do |path|
@@ -96,13 +98,13 @@ module Analyzer::Java
       build_handler_index(java_files) if @include_callee
 
       config_files.each do |path|
-        parse_struts_config(path, file_list, convention_config, seen)
+        parse_struts_config(path, file_list, convention_configs[configured_base_for(path)], seen)
       end
 
       package_annotations = package_annotations_for(java_files)
 
       java_files.each do |path|
-        analyze_java_file(path, convention_config, package_annotations)
+        analyze_java_file(path, convention_configs[configured_base_for(path)], package_annotations)
       end
 
       Fiber.yield
@@ -120,7 +122,7 @@ module Analyzer::Java
         content.scan(/(?:^|\n)\s*(?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+)*class\s+([A-Za-z_][A-Za-z0-9_]*)/m) do |match|
           class_name = match[1]
           fqcn = package_name.empty? ? class_name : "#{package_name}.#{class_name}"
-          @handler_index[fqcn] ||= path
+          @handler_index[{configured_base_for(path), fqcn}] ||= path
         end
       rescue e : Exception
         @logger.debug "Failed to index Struts handler #{path}: #{e.message}"
@@ -130,12 +132,12 @@ module Analyzer::Java
     # 1-hop callees for an XML-configured action by resolving its
     # `class`/`method` (default `execute`) to the handler source. Returns
     # empty unless enrichment is on and the handler file is indexed.
-    private def xml_action_callees(action : XmlAction) : Array(Callee)
+    private def xml_action_callees(action : XmlAction, config_path : String) : Array(Callee)
       callees = [] of Callee
       return callees unless @include_callee
       return callees if action.class_name.empty?
 
-      handler_path = @handler_index[action.class_name]?
+      handler_path = @handler_index[{configured_base_for(config_path), action.class_name}]?
       return callees unless handler_path && File.exists?(handler_path)
 
       simple_name = action.class_name.split('.').last
@@ -192,7 +194,7 @@ module Analyzer::Java
         namespace = package_namespace(package_config, packages, Set(String).new)
         package_config.actions.each do |action|
           add_route(join_paths(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
-            callees: xml_action_callees(action))
+            callees: xml_action_callees(action, path))
         end
       end
     rescue e : Exception
@@ -235,14 +237,16 @@ module Analyzer::Java
       candidates = [] of String
       candidates << include_name if include_name.starts_with?("/")
       candidates << File.expand_path(include_name, File.dirname(current_path))
-      candidates << File.join(@base_path, include_name.lstrip('/'))
+      candidates << File.join(configured_base_for(current_path), include_name.lstrip('/'))
 
       if found = candidates.find { |candidate| File.exists?(candidate) }
         return found
       end
 
       normalized = include_name.lstrip('/')
-      file_list.find { |path| path.ends_with?("/#{normalized}") || File.basename(path) == File.basename(include_name) }
+      base = configured_base_for(current_path)
+      scoped_files = base.empty? ? file_list : file_list.select { |path| path_under_root?(path, base) }
+      scoped_files.find { |path| path.ends_with?("/#{normalized}") || File.basename(path) == File.basename(include_name) }
     end
 
     private def collect_packages(root : XML::Node, content : String) : Hash(String, XmlPackage)
@@ -290,8 +294,8 @@ module Analyzer::Java
       ""
     end
 
-    private def package_annotations_for(java_files : Array(String)) : Hash(String, String)
-      package_annotations = Hash(String, String).new
+    private def package_annotations_for(java_files : Array(String)) : Hash(ScopedNameKey, String)
+      package_annotations = Hash(ScopedNameKey, String).new
       java_files.each do |path|
         next unless File.basename(path) == "package-info.java"
 
@@ -301,7 +305,7 @@ module Analyzer::Java
 
         if package_index = content.index(/\bpackage\s+#{Regex.escape(package_name)}\s*;/)
           annotations = annotations_before(content, package_index)
-          package_annotations[package_name] = annotations unless annotations.empty?
+          package_annotations[{configured_base_for(path), package_name}] = annotations unless annotations.empty?
         end
       rescue e : Exception
         @logger.debug "Failed to parse Struts package annotations #{path}: #{e.message}"
@@ -311,7 +315,7 @@ module Analyzer::Java
 
     private def analyze_java_file(path : String,
                                   config : ConventionConfig,
-                                  package_annotations : Hash(String, String))
+                                  package_annotations : Hash(ScopedNameKey, String))
       content = read_file_content(path)
       return unless struts_java_source?(content, config)
 
@@ -331,15 +335,16 @@ module Analyzer::Java
 
     private def analyze_java_classes(path : String,
                                      config : ConventionConfig,
-                                     package_annotations : Hash(String, String),
+                                     package_annotations : Hash(ScopedNameKey, String),
                                      content : String,
                                      root : LibTreeSitter::TSNode?)
       package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
       classes_in(content, package_name).each do |klass|
         next if klass.abstract?
 
+        package_annotations_for_class = package_annotations[{configured_base_for(path), klass.package_name}]? || ""
         namespaces = namespace_values(klass.annotations)
-        namespaces = namespace_values(package_annotations[klass.package_name]? || "") if namespaces.empty?
+        namespaces = namespace_values(package_annotations_for_class) if namespaces.empty?
         namespaces = [convention_namespace(klass.package_name, config)] if namespaces.empty?
 
         class_actions = action_paths_from_annotations(klass.annotations)
@@ -365,7 +370,7 @@ module Analyzer::Java
           end
 
           next if class_has_action_annotation || methods.any? { |method| !action_paths_from_annotations(method.annotations).empty? }
-          next unless convention_action_class?(klass, config, package_annotations[klass.package_name]? || "")
+          next unless convention_action_class?(klass, config, package_annotations_for_class)
 
           base_path = join_paths(class_namespace, class_action_base)
           if rest_controller?(klass, config)

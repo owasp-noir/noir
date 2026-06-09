@@ -1,0 +1,6 @@
+name: kemal_controller_callees_service_b
+version: 0.1.0
+
+dependencies:
+  kemal:
+    github: kemalcr/kemal

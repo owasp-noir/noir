@@ -33,6 +33,11 @@ class PostsController < ApplicationController
     render json: serialize_preview(draft)
   end
 
+  def destroy_memory
+    MemoryStore.destroy(params[:id])
+    AuditLog.write("destroy_memory")
+  end
+
   private
 
   def post_params

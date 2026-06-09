@@ -2,7 +2,10 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class FastAPI < PythonEngine
-    @fastapi_base_path : ::String = ""
+    PATH_PARAM_REGEX       = /\{(#{PYTHON_VAR_NAME_REGEX})(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
+    TYPED_PATH_PARAM_REGEX = /\{(#{PYTHON_VAR_NAME_REGEX}):[a-zA-Z_][a-zA-Z0-9_]*\}/
+
+    @fastapi_import_cache = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
 
     def analyze
       include_router_map = Hash(::String, Hash(::String, Router)).new
@@ -14,11 +17,10 @@ module Analyzer::Python
         # --exclude-path apply to this pass too.
         python_files = get_files_by_extension(".py")
         base_paths.each do |current_base_path|
-          base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
           python_files.each do |path|
-            next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+            next unless path_under_root?(path, current_base_path)
             next if path.includes?("/site-packages/")
-            next if PythonEngine.python_test_path?(path, @base_path)
+            next if python_test_path?(path)
             source = read_file_content(path)
 
             import_modules = find_fastapi_imported_modules(current_base_path, path, source)
@@ -78,17 +80,7 @@ module Analyzer::Python
         logger.debug e.message
       end
 
-      # Anchor the package root on the SHALLOWEST app file. The
-      # `parent-of-dirname` heuristic only yields the correct base for
-      # an entrypoint sitting directly under the top package
-      # (`<root>/<pkg>/main.py`); a nested helper app
-      # (`<root>/<pkg>/auth/permissions.py`) points the base one level
-      # too deep and breaks every absolute import (`from pkg.api import
-      # …`). The real entrypoint is virtually always the shallowest.
-      unless fastapi_app_instances.empty?
-        primary_app_file = fastapi_app_instances.map(&.first).min_by { |p| {p.count('/'), p.size} }
-        @fastapi_base_path = Path.new(File.dirname(primary_app_file)).parent.to_s
-      end
+      fastapi_base_paths = fastapi_project_roots(fastapi_app_instances)
 
       begin
         # Seed prefix configuration from every FastAPI app instance,
@@ -96,13 +88,15 @@ module Analyzer::Python
         # one app is configured exactly once.
         prefix_visited = Set(::String).new
         fastapi_app_instances.each do |app_file, app_instance|
-          configure_router_prefix(app_file, include_router_map, "", app_instance, prefix_visited)
+          app_base_path = fastapi_base_path_for(app_file, fastapi_base_paths)
+          configure_router_prefix(app_file, include_router_map, app_base_path, "", app_instance, prefix_visited)
         end
 
         include_router_map.each do |path, router_map|
           source = read_file_content(path)
-          definition_base_path = base_paths.find { |base_path| path.starts_with?(base_path) } || @fastapi_base_path
-          import_modules = find_fastapi_imported_modules(@fastapi_base_path, path, source)
+          import_base_path = fastapi_base_path_for(path, fastapi_base_paths)
+          definition_base_path = python_base_path_for(path)
+          import_modules = find_fastapi_imported_modules(import_base_path, path, source)
           codelines = source.split("\n")
           router_map.each do |instance_name, router_class|
             codelines.each_with_index do |line, index|
@@ -140,11 +134,7 @@ module Analyzer::Python
 
                 # Get path params from route path
                 query_params = [] of ::String
-                http_route_path.scan(/\{(#{PYTHON_VAR_NAME_REGEX})\}/) do |route_match|
-                  if route_match.size > 0
-                    query_params << route_match[1]
-                  end
-                end
+                query_params.concat(fastapi_path_param_names(http_route_path))
 
                 # Resolve the actual `def` line, skipping stacked
                 # decorators / comments / blank lines between the
@@ -234,7 +224,7 @@ module Analyzer::Python
                 emit_methods = declared_methods.empty? ? [http_method_name] : declared_methods
 
                 details = Details.new(PathInfo.new(path, index + 1))
-                full_path = router_class.join(http_route_path)
+                full_path = normalize_fastapi_path_params(router_class.join(http_route_path))
                 base_endpoint = Endpoint.new(full_path, emit_methods.first, params, details)
                 base_endpoint.protocol = "ws" if websocket_route
 
@@ -280,25 +270,30 @@ module Analyzer::Python
                 if prog_methods.empty?
                   prog_methods = prog_websocket_route ? ["GET"] : ["GET"]
                 end
-                prog_full = router_class.join(prog_path)
+                prog_full = normalize_fastapi_path_params(router_class.join(prog_path))
                 prog_details = Details.new(PathInfo.new(path, index + 1))
                 prog_params = [] of Param
                 prog_callees = [] of Callee
+                if callees_needed?
+                  if handler_callee = extract_programmatic_handler_callee(prog_tail)
+                    prog_callees << Callee.new(handler_callee, path, index + 1)
+                  end
+                end
                 if handler = resolve_programmatic_handler(prog_tail, path, source, import_modules)
                   handler_path, handler_name = handler
                   handler_source = handler_path == path ? source : read_file_content(handler_path)
                   handler_lines = handler_source.split("\n")
-                  handler_imports = handler_path == path ? import_modules : find_fastapi_imported_modules(definition_base_path, handler_path, handler_source)
+                  handler_imports = handler_path == path ? import_modules : find_fastapi_imported_modules(import_base_path, handler_path, handler_source)
                   if handler_def_line = find_function_def_line(handler_lines, handler_name)
                     prog_params = extract_fastapi_handler_params(handler_lines, handler_def_line, prog_full, handler_source, handler_imports)
                     if handler_codeblock = parse_code_block(handler_lines[handler_def_line..])
-                      prog_callees = build_callees_from(
+                      prog_callees.concat(build_callees_from(
                         handler_codeblock,
                         handler_def_line,
                         handler_path,
                         definition_base_path: definition_base_path,
                         source: handler_source
-                      )
+                      ))
                     end
                   end
                 end
@@ -344,21 +339,31 @@ module Analyzer::Python
     private def find_fastapi_imported_modules(app_base_path : ::String,
                                               file_path : ::String,
                                               source : ::String? = nil) : Hash(::String, Tuple(::String, Int32))
+      cache_key = "#{app_base_path}\u{0}#{file_path}"
+      if cached = @fastapi_import_cache[cache_key]?
+        return cached
+      end
+
       import_modules = find_imported_modules(app_base_path, file_path, source)
       local_base_path = File.dirname(file_path)
-      return import_modules if local_base_path == app_base_path
+      if local_base_path == app_base_path
+        @fastapi_import_cache[cache_key] = import_modules
+        return import_modules
+      end
 
       local_import_modules = find_imported_modules(local_base_path, file_path, source)
       local_import_modules.each do |name, import_info|
         import_modules[name] = import_info unless import_modules.has_key?(name)
       end
 
+      @fastapi_import_cache[cache_key] = import_modules
       import_modules
     end
 
     # Configures the prefix for each router
     def configure_router_prefix(file : ::String,
                                 include_router_map : Hash(::String, Hash(::String, Router)),
+                                app_base_path : ::String,
                                 router_prefix : ::String = "",
                                 target_instance_name : ::String? = nil,
                                 visited : Set(::String) = Set(::String).new)
@@ -366,7 +371,7 @@ module Analyzer::Python
 
       # Parse the source file for router configuration
       source = read_file_content(file)
-      import_modules = find_fastapi_imported_modules(@fastapi_base_path, file, source)
+      import_modules = find_fastapi_imported_modules(app_base_path, file, source)
       include_router_map[file].each do |instance_name, router_class|
         next if target_instance_name && instance_name != target_instance_name
 
@@ -430,7 +435,7 @@ module Analyzer::Python
               # previously we only set its prefix and stopped, which
               # dropped every grand-child route's prefix
               # (`/{organization}/cases/...` collapsed to `/...`).
-              configure_router_prefix(file, include_router_map, prefix, router_instance_name, visited)
+              configure_router_prefix(file, include_router_map, app_base_path, prefix, router_instance_name, visited)
               next
             end
 
@@ -448,17 +453,40 @@ module Analyzer::Python
             # FastAPI accuracy bug on real apps (fastapi-realworld,
             # Netflix/dispatch) that lean on `import router as X`.
             target_name = resolve_original_import_name(source, router_instance_name, include_router_map[import_module_path])
-            configure_router_prefix(import_module_path, include_router_map, prefix, target_name, visited)
+            configure_router_prefix(import_module_path, include_router_map, app_base_path, prefix, target_name, visited)
           elsif router_instance_name.count(".") == 1
             module_name, imported_router_instance_name = router_instance_name.split(".")
             next unless import_modules.has_key?(module_name)
             import_module_path = import_modules[module_name].first
 
             next unless include_router_map.has_key?(import_module_path)
-            configure_router_prefix(import_module_path, include_router_map, prefix, imported_router_instance_name, visited)
+            configure_router_prefix(import_module_path, include_router_map, app_base_path, prefix, imported_router_instance_name, visited)
           end
         end
       end
+    end
+
+    private def fastapi_project_roots(app_instances : Array(Tuple(::String, ::String))) : Array(::String)
+      roots = [] of ::String
+      app_instances.each do |app_file, _|
+        root = fastapi_project_root_for(app_file)
+        roots << root unless roots.includes?(root)
+      end
+      # Prefer the shallow app root. Deep helper modules can also construct
+      # FastAPI instances, but imports such as `from app...` resolve from the
+      # project root, not the helper's package directory.
+      roots.sort_by!(&.size)
+      roots
+    end
+
+    private def fastapi_project_root_for(app_file : ::String) : ::String
+      Path.new(File.dirname(app_file)).parent.to_s
+    end
+
+    private def fastapi_base_path_for(path : ::String, project_roots : Array(::String)) : ::String
+      # project_roots is sorted shallowest-first, so the first containing
+      # root is the package root the app's absolute imports resolve from.
+      project_roots.find { |root| Noir::PathScope.under_root?(path, root) } || python_base_path_for(path)
     end
 
     private def extract_include_router_calls(source : ::String, instance_name : ::String) : Array(::String)
@@ -806,6 +834,32 @@ module Analyzer::Python
       nil
     end
 
+    private def extract_programmatic_handler_callee(args : ::String) : ::String?
+      if endpoint_expr = extract_python_keyword_expression(args, "endpoint")
+        return clean_programmatic_handler_callee(endpoint_expr)
+      end
+
+      positional_args = [] of ::String
+      split_python_arguments(args).each do |arg|
+        stripped = arg.strip
+        break if top_level_keyword_argument?(stripped)
+        positional_args << stripped
+      end
+
+      return if positional_args.size < 2
+      clean_programmatic_handler_callee(positional_args[1])
+    end
+
+    private def clean_programmatic_handler_callee(expression : ::String) : ::String?
+      reference = expression.strip.split("#", 2)[0].strip
+      if match = reference.match(/^(#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?)\s*\(/)
+        return match[1]
+      end
+      return reference if reference.matches?(/^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})?$/)
+
+      nil
+    end
+
     private def extract_programmatic_handler_reference(args : ::String) : ::String?
       if endpoint_expr = extract_python_keyword_expression(args, "endpoint")
         return clean_programmatic_handler_reference(endpoint_expr)
@@ -846,10 +900,7 @@ module Analyzer::Python
       function_definition = parse_function_def(codelines, def_line)
       return params unless function_definition
 
-      path_param_names = [] of ::String
-      route_path.scan(/\{(#{PYTHON_VAR_NAME_REGEX})\}/) do |route_match|
-        path_param_names << route_match[1] if route_match.size > 0
-      end
+      path_param_names = fastapi_path_param_names(route_path)
 
       function_definition.params.each do |param|
         next if param.name == "*" || path_param_names.includes?(param.name)
@@ -893,6 +944,18 @@ module Analyzer::Python
       end
 
       params
+    end
+
+    private def fastapi_path_param_names(route_path : ::String) : Array(::String)
+      names = [] of ::String
+      route_path.scan(PATH_PARAM_REGEX) do |match|
+        names << match[1] if match.size > 0 && !names.includes?(match[1])
+      end
+      names
+    end
+
+    private def normalize_fastapi_path_params(route_path : ::String) : ::String
+      route_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
     end
 
     private def fastapi_dependency_param?(param : FunctionParameter) : Bool

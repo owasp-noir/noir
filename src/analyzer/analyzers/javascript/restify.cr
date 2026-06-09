@@ -32,10 +32,7 @@ module Analyzer::Javascript
             result << endpoint
           end
 
-          # Extract static path declarations
-          Noir::JSRouteExtractor.extract_static_paths(content).each do |static_path|
-            static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-          end
+          collect_static_paths(path, content, static_dirs, :restify)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -59,24 +56,7 @@ module Analyzer::Javascript
 
     # Process static directories and add endpoints for each file
     private def process_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint))
-      static_dirs.each do |dir|
-        full_path = (base_path + "/" + dir["file_path"]).gsub_repeatedly("//", "/")
-        static_path = dir["static_path"]
-        static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
-
-        get_files_by_prefix(full_path).each do |file_path|
-          if File.file?(file_path)
-            # Use lchop to only remove from the beginning of the string
-            relative_path = file_path.starts_with?(full_path) ? file_path.lchop(full_path) : file_path
-            url = static_path == "/" ? relative_path : "#{static_path}#{relative_path}"
-            url = "/#{url}" unless url.starts_with?("/")
-
-            details = Details.new(PathInfo.new(file_path))
-            endpoint = Endpoint.new(url, "GET", details)
-            result << endpoint unless result.any? { |e| e.url == url && e.method == "GET" }
-          end
-        end
-      end
+      process_js_static_dirs(static_dirs, result)
     end
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
@@ -90,10 +70,7 @@ module Analyzer::Javascript
         current_router_var = ""
         file_content = file.gets_to_end
 
-        # Extract static paths
-        Noir::JSRouteExtractor.extract_static_paths(file_content).each do |static_path|
-          static_dirs << static_path unless static_dirs.any? { |s| s["static_path"] == static_path["static_path"] && s["file_path"] == static_path["file_path"] }
-        end
+        collect_static_paths(path, file_content, static_dirs, :restify)
 
         # First scan for server and router variable declarations
         file_content.each_line do |line|

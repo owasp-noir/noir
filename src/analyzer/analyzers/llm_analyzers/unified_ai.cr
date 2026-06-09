@@ -76,7 +76,10 @@ module Analyzer::AI
         @max_tokens = LLM.get_max_tokens(@provider, @model)
       end
 
-      @expanded_base_paths = @base_paths.map { |path| File.expand_path(path) }
+      @expanded_base_paths = @base_paths.map { |path| normalized_agent_root(path) }
+      @expanded_base_paths.uniq!
+      @expanded_base_paths.sort_by!(&.size)
+      @expanded_base_paths.reverse!
       @use_agentic = options["ai_agent"]?.try { |val| any_to_bool(val) } || false
       @agent_max_steps = options["ai_agent_max_steps"]?.try(&.as_i) || 20
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
@@ -716,7 +719,7 @@ module Analyzer::AI
     private def path_within_base?(path : String) : Bool
       expanded = File.expand_path(path)
       @expanded_base_paths.any? do |base|
-        expanded == base || expanded.starts_with?(base.ends_with?("/") ? base : "#{base}/")
+        expanded == base || expanded.starts_with?(base == File::SEPARATOR ? base : "#{base}/")
       end
     end
 
@@ -725,10 +728,15 @@ module Analyzer::AI
       @expanded_base_paths.each do |base|
         return "." if expanded == base
 
-        prefix = base.ends_with?("/") ? base : "#{base}/"
+        prefix = base == File::SEPARATOR ? base : "#{base}/"
         return expanded.sub(prefix, "") if expanded.starts_with?(prefix)
       end
       expanded
+    end
+
+    private def normalized_agent_root(path : String) : String
+      expanded = File.expand_path(path)
+      expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
     end
 
     private def summarize_lines(lines : Array(String), limit : Int32 = AGENT_TOOL_MAX_LINES) : String

@@ -132,6 +132,10 @@ expected_endpoints = [
   Endpoint.new("/crud", "POST"),
   Endpoint.new("/crud/list", "GET"),
   Endpoint.new("/crud/{id}", "GET", [Param.new("id", "", "path")]),
+  # plain/ non-standard source layout — interface and composed annotation
+  # declarations in sibling package directories still share the same base.
+  Endpoint.new("/plain/items", "GET"),
+  Endpoint.new("/plain/plain-audit", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {

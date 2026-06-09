@@ -58,6 +58,12 @@ noir scan ./app --include path,techs,callee --ai-context
 Positional paths and repeated `-b PATH` work the same way. Use whichever
 reads better in your scripts.
 
+> Multiple codebases — whether positional (`noir scan ./api ./worker`) or
+> repeated `-b` — are scoped as sibling roots, the supported monorepo
+> shape. Nested or overlapping roots (e.g. `noir scan /repo /repo/sub`)
+> don't compose cross-base prefixes, since a definition and its use can
+> resolve to different longest-matching roots; prefer sibling layouts.
+
 ### Flag consolidation in v1
 
 A few v0 flag families collapsed into shorter forms in v1.0. The old

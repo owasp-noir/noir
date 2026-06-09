@@ -41,6 +41,8 @@ reports = Endpoint.new("/reports", "GET").tap do |ep|
   ep.push_callee(Callee.new("response", line: 10))
 end
 photos_index = Endpoint.new("/photos", "GET")
+photos_index.push_callee(Callee.new("PhotoRepository::latest", line: 9))
+photos_index.push_callee(Callee.new("response", line: 10))
 
 expected_endpoints = [
   health,
@@ -74,10 +76,14 @@ describe "Laravel callee extraction" do
     end
   end
 
-  it "leaves resource routes callee-empty (no per-action resolution)" do
+  it "resolves callees for resource controller actions" do
     photos_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/photos" }
 
     photos_endpoint.should_not be_nil
-    photos_endpoint.callees.should be_empty if photos_endpoint
+    if photos_endpoint
+      names = photos_endpoint.callees.map(&.name)
+      names.should contain("PhotoRepository::latest")
+      names.should contain("response")
+    end
   end
 end

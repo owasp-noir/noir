@@ -12,8 +12,8 @@ module Analyzer::Crystal
     # those routes resolve their controller and carry callees.
     MACRO_VAR_PATTERN = /\{\{\s*(\w+)\s*=\s*([A-Za-z_][\w:]*)\s*\}\}/
 
-    @is_public : Bool = true
-    @public_folders : Array(String) = [] of String
+    @static_disabled_bases : Set(String) = Set(String).new
+    @public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String)
     @action_index : ActionIndex = ActionIndex.new
 
     def analyze
@@ -31,6 +31,7 @@ module Analyzer::Crystal
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = File.read_lines(path)
+      file_base = configured_base_for(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       # Pre-scan: build mount_map (variable_name => mount_path) and resolve
@@ -60,7 +61,7 @@ module Analyzer::Crystal
       lines.each_with_index do |line, index|
         # Collect public folder / serve_static info (used by post-pass)
         if line.includes?("serve_static false") || line.includes?("serve_static(false)")
-          @is_public = false
+          @static_disabled_bases << file_base
         end
 
         if line.includes?("public_folder")
@@ -76,7 +77,8 @@ module Analyzer::Crystal
                               end
 
               unless public_folder.empty?
-                @public_folders << public_folder
+                entry = {file_base, public_folder}
+                @public_folders << entry unless @public_folders.includes?(entry)
               end
             end
           rescue
@@ -160,7 +162,7 @@ module Analyzer::Crystal
       # in another file — resolve it through the cross-file action index.
       if target = extract_route_target(substitute_macro_vars(lines[index], macro_vars))
         controller, action = target
-        if callees = resolve_action_callees(@action_index, controller, action)
+        if callees = resolve_action_callees(@action_index, controller, action, configured_base_for(path))
           attach_crystal_callees(endpoint, callees)
         end
       end
@@ -178,40 +180,39 @@ module Analyzer::Crystal
     end
 
     private def collect_public_dir_endpoints
-      return unless @is_public
-      begin
-        get_public_files(@base_path).each do |file|
+      base_paths.each do |base|
+        next if @static_disabled_bases.includes?(base)
+        get_public_files(base).each do |file|
           if file =~ /\/public\/(.*)/
             relative_path = $1
             @result << Endpoint.new("/#{relative_path}", "GET")
           end
         end
+      end
 
-        @public_folders.each do |folder|
-          get_public_dir_files(@base_path, folder).each do |file|
-            if folder.includes?("/")
-              folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
-              if file.starts_with?(folder_path)
-                relative_path = file.sub(folder_path, "")
-                @result << Endpoint.new("/#{relative_path}", "GET")
-              else
-                folder_name = folder.split("/").last
-                if file =~ /\/#{folder_name}\/(.*)/
-                  relative_path = $1
-                  @result << Endpoint.new("/#{relative_path}", "GET")
-                end
-              end
+      @public_folders.each do |base, folder|
+        next if @static_disabled_bases.includes?(base)
+        get_public_dir_files(base, folder).each do |file|
+          if folder.includes?("/")
+            folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
+            if file.starts_with?(folder_path)
+              relative_path = file.sub(folder_path, "")
+              @result << Endpoint.new("/#{relative_path}", "GET")
             else
-              if file =~ /\/#{folder}\/(.*)/
+              folder_name = folder.split("/").last
+              if file =~ /\/#{folder_name}\/(.*)/
                 relative_path = $1
                 @result << Endpoint.new("/#{relative_path}", "GET")
               end
             end
+          elsif file =~ /\/#{folder}\/(.*)/
+            relative_path = $1
+            @result << Endpoint.new("/#{relative_path}", "GET")
           end
         end
-      rescue e
-        logger.debug e
       end
+    rescue e
+      logger.debug e
     end
 
     def line_to_param(content : String) : Param

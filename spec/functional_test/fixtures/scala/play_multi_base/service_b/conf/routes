@@ -1,0 +1,3 @@
+GET /direct-b controllers.HomeController.index()
+-> /b routers.ItemRouter
+-> /nested-b shared.Routes

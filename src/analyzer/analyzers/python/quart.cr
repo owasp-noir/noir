@@ -59,11 +59,10 @@ module Analyzer::Python
 
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
-        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
         python_files.each do |path|
-          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+          next unless path_under_root?(path, current_base_path)
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path, @base_path)
+          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)
@@ -631,7 +630,7 @@ module Analyzer::Python
     end
 
     private def base_path_for(file_path : ::String) : ::String
-      base_paths.find { |bp| file_path.starts_with?(bp) } || base_paths[0]? || ""
+      python_base_path_for(file_path)
     end
 
     private def clone_path_api_instances(path_api_instances : Hash(::String, Hash(::String, ::String))) : Hash(::String, Hash(::String, ::String))

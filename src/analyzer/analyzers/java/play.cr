@@ -6,6 +6,7 @@ module Analyzer::Java
   class Play < Analyzer
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Callee))
+    alias ScopedKey = Tuple(String, String)
 
     def analyze
       file_list = all_files()
@@ -61,12 +62,13 @@ module Analyzer::Java
     end
 
     # Parse Java controller files to extract header, cookie, and body parameters
-    private def parse_controller_files(java_files : Array(String)) : Hash(String, ControllerMethod)
-      controller_methods = Hash(String, ControllerMethod).new
+    private def parse_controller_files(java_files : Array(String)) : Hash(ScopedKey, ControllerMethod)
+      controller_methods = Hash(ScopedKey, ControllerMethod).new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       java_files.each do |path|
         content = read_file_content(path)
+        base_path = configured_base_for(path)
 
         # Extract package name
         package_name = ""
@@ -108,7 +110,7 @@ module Analyzer::Java
                           [] of Callee
                         end
 
-              controller_methods[full_method_name] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
+              controller_methods[{base_path, full_method_name}] = {headers: headers, cookies: cookies, body_type: body_type, callees: callees}
             end
           end
         end
@@ -237,27 +239,28 @@ module Analyzer::Java
       matches.size == 1 ? matches.first : nil
     end
 
-    private def index_routes_files(routes_files : Array(String)) : Hash(String, String)
-      index = Hash(String, String).new
+    private def index_routes_files(routes_files : Array(String)) : Hash(ScopedKey, String)
+      index = Hash(ScopedKey, String).new
 
       routes_files.each do |path|
+        base_path = configured_base_for(path)
         basename = File.basename(path)
-        index[basename] = path
+        index[{base_path, basename}] = path
 
         if basename == "routes" || basename == "routes.conf"
-          index["Routes"] = path
-          index["router.Routes"] = path
+          index[{base_path, "Routes"}] = path
+          index[{base_path, "router.Routes"}] = path
         elsif match = basename.match(/^(.+)\.routes$/)
           name = match[1]
-          index[name] = path
-          index["#{name}.Routes"] = path
+          index[{base_path, name}] = path
+          index[{base_path, "#{name}.Routes"}] = path
         end
       end
 
       index
     end
 
-    private def collect_included_routes(routes_files : Array(String), routes_by_key : Hash(String, String)) : Set(String)
+    private def collect_included_routes(routes_files : Array(String), routes_by_key : Hash(ScopedKey, String)) : Set(String)
       included = Set(String).new
 
       routes_files.each do |path|
@@ -266,7 +269,7 @@ module Analyzer::Java
           next if stripped.empty? || stripped.starts_with?("#")
           next unless include_match = stripped.match(/^->\s+[^\s]+\s+(.+)$/)
 
-          if included_path = resolve_included_routes_file(include_match[1], routes_by_key)
+          if included_path = resolve_included_routes_file(include_match[1], routes_by_key, path)
             included << included_path
           end
         end
@@ -275,10 +278,11 @@ module Analyzer::Java
       included
     end
 
-    private def resolve_included_routes_file(target : String, routes_by_key : Hash(String, String)) : String?
+    private def resolve_included_routes_file(target : String, routes_by_key : Hash(ScopedKey, String), including_path : String) : String?
       key = target.split(/\s|\(/).first.strip
       key = key.lchop("@")
       candidates = [key]
+      base_path = configured_base_for(including_path)
 
       if key.ends_with?(".Routes")
         candidates << key[0...(key.size - ".Routes".size)]
@@ -287,7 +291,8 @@ module Analyzer::Java
       end
 
       candidates.each do |candidate|
-        return routes_by_key[candidate] if routes_by_key.has_key?(candidate)
+        scoped_key = {base_path, candidate}
+        return routes_by_key[scoped_key] if routes_by_key.has_key?(scoped_key)
       end
 
       nil
@@ -295,8 +300,8 @@ module Analyzer::Java
 
     # Process a Play routes file
     private def process_routes_file(path : String,
-                                    controller_methods : Hash(String, ControllerMethod),
-                                    routes_by_key : Hash(String, String),
+                                    controller_methods : Hash(ScopedKey, ControllerMethod),
+                                    routes_by_key : Hash(ScopedKey, String),
                                     prefix : String,
                                     seen : Set(String))
       return if seen.includes?(path)
@@ -314,7 +319,7 @@ module Analyzer::Java
         if include_match = stripped_line.match(/^->\s+([^\s]+)\s+(.+)$/)
           include_prefix = include_match[1]
           include_target = include_match[2]
-          if included_path = resolve_included_routes_file(include_target, routes_by_key)
+          if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
             process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
           end
           next
@@ -336,7 +341,7 @@ module Analyzer::Java
           extract_params_from_action(endpoint, action)
 
           # Extract controller method name and add header/cookie/body params
-          extract_controller_params(endpoint, action, controller_methods)
+          extract_controller_params(endpoint, action, controller_methods, path)
 
           @result << endpoint
         end
@@ -527,13 +532,16 @@ module Analyzer::Java
     end
 
     # Extract header, cookie, and body parameters from controller method
-    private def extract_controller_params(endpoint : Endpoint, action : String, controller_methods : Hash(String, ControllerMethod))
+    private def extract_controller_params(endpoint : Endpoint,
+                                          action : String,
+                                          controller_methods : Hash(ScopedKey, ControllerMethod),
+                                          routes_path : String)
       # Extract controller method name from action
       # Example: controllers.Users.show(id: Long) -> controllers.Users.show
       method_name = action.split("(").first.strip.lchop("@")
 
       # Look up the controller method
-      if method_info = controller_methods[method_name]?
+      if method_info = controller_methods[{configured_base_for(routes_path), method_name}]?
         # Add header parameters
         method_info[:headers].each do |header|
           unless endpoint.params.any? { |p| p.name == header && p.param_type == "header" }

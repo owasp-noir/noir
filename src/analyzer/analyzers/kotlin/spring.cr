@@ -144,7 +144,9 @@ module Analyzer::Kotlin
     end
 
     def analyze
-      string_constants = Hash(String, String).new
+      string_constants_by_base = Hash(String, Hash(String, String)).new do |hash, key|
+        hash[key] = Hash(String, String).new
+      end
       local_string_constants = Hash(String, Hash(String, String)).new
       dto_builder = Noir::TreeSitterKotlinDtoIndex.new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -159,15 +161,25 @@ module Analyzer::Kotlin
         functional_router_seen ||= kotlin_functional_router_file?(content)
         constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(content)
         local_string_constants[path] = constants
+        base_constants = string_constants_by_base[configured_base_for(path)]
         constants.each do |name, value|
-          string_constants[name] ||= value
+          base_constants[name] ||= value
         end
       end
 
       # Resolve `$OTHER_CONST` interpolations now that every file's
       # constants are collected, so a shared `Paths.kt` chain like
       # `const val STATIC_URL = "$PUBLIC_URL/static"` yields `/public/static`.
-      string_constants = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(string_constants)
+      # Constants stay scoped per configured base so a monorepo's modules do
+      # not leak path constants into one another (#1940).
+      string_constants_by_base.each do |base, constants|
+        string_constants_by_base[base] = Noir::TreeSitterKotlinRouteExtractor.expand_constant_interpolations(constants)
+      end
+
+      # Cross-module indexes (interface inheritance, STOMP destinations)
+      # legitimately span build modules, so they resolve against the merged
+      # view of every base; in a single-base scan this is just the one map.
+      string_constants = merge_string_constants(string_constants_by_base)
       interface_route_index = collect_interface_route_index(file_list, string_constants, local_string_constants)
       method_index = (include_callee || functional_router_seen) ? collect_method_index(file_list) : SpringMethodIndex.new
       stomp_prefixes = stomp_application_prefixes_for(file_list, string_constants, local_string_constants)
@@ -179,14 +191,28 @@ module Analyzer::Kotlin
 
       file_list.each do |path|
         project_root = project_root_for(path)
+        base_constants = string_constants_by_base[configured_base_for(path)]? || Hash(String, String).new
         process_kotlin_file(
-          path, dto_builder, path_configs, string_constants, local_string_constants[path]?,
+          path, dto_builder, path_configs, base_constants, local_string_constants[path]?,
           interface_route_index, method_index, stomp_prefixes[project_root]? || [""], graphql_paths[project_root]? || "/graphql"
         )
       end
 
       Fiber.yield
       @result
+    end
+
+    # Merge the per-base constant maps into a single lookup for cross-module
+    # resolution. First value wins, matching the per-base accumulation order;
+    # in the common single-base scan this is a cheap copy of the one map.
+    private def merge_string_constants(by_base : Hash(String, Hash(String, String))) : Hash(String, String)
+      merged = Hash(String, String).new
+      by_base.each_value do |constants|
+        constants.each do |name, value|
+          merged[name] ||= value
+        end
+      end
+      merged
     end
 
     private def spring_kotlin_files(files : Array(String)) : Array(String)

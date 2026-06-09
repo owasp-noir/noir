@@ -42,8 +42,13 @@ module Analyzer::Javascript
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      project_roots = discover_js_project_roots(
+        ["@sveltejs/kit", "\"svelte-kit\""],
+        ["svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs"]
+      )
 
       parallel_file_scan(EXTENSIONS) do |path|
+        next unless path_under_project_roots?(path, project_roots)
         idx = path.index("/src/routes/")
         next if idx.nil?
 

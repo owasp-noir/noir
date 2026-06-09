@@ -4,6 +4,8 @@ require "xml"
 
 module Analyzer::Java
   class Jsp < Analyzer
+    alias ServletClassKey = Tuple(String, String)
+
     def analyze
       servlet_methods = collect_servlet_methods
 
@@ -26,7 +28,7 @@ module Analyzer::Java
                   break if path.nil?
                   next if File.directory?(path)
 
-                  relative_path = get_relative_path(base_path, path)
+                  relative_path = get_relative_path(configured_base_for(path), path)
 
                   if File.exists?(path) && File.extname(path) == ".jsp"
                     next if web_inf_jsp?(relative_path)
@@ -49,7 +51,7 @@ module Analyzer::Java
                   elsif File.exists?(path) && File.basename(path) == "web.xml"
                     content = read_file_content(path)
                     details = Details.new(PathInfo.new(path))
-                    extract_web_xml_endpoints(content, servlet_methods, details).each do |endpoint|
+                    extract_web_xml_endpoints(content, servlet_methods, details, configured_base_for(path)).each do |endpoint|
                       result << endpoint
                     end
                   end
@@ -72,8 +74,8 @@ module Analyzer::Java
       ["request.getParameter", "request.getAttribute", "request.getHeader", "request.getCookies", "${param.", "${param[", "${paramValues.", "${cookie.", "@WebServlet", "<servlet-mapping>"]
     end
 
-    private def collect_servlet_methods : Hash(String, Hash(String, Array(Param)))
-      servlet_methods = Hash(String, Hash(String, Array(Param))).new
+    private def collect_servlet_methods : Hash(ServletClassKey, Hash(String, Array(Param)))
+      servlet_methods = Hash(ServletClassKey, Hash(String, Array(Param))).new
 
       all_files.each do |path|
         next unless File.extname(path) == ".java"
@@ -85,9 +87,10 @@ module Analyzer::Java
         next if methods.empty?
 
         if class_name = java_class_name(content)
-          servlet_methods[class_name] = methods
+          base_path = configured_base_for(path)
+          servlet_methods[{base_path, class_name}] = methods
           if package_name = java_package_name(content)
-            servlet_methods["#{package_name}.#{class_name}"] = methods
+            servlet_methods[{base_path, "#{package_name}.#{class_name}"}] = methods
           end
         end
       rescue File::NotFoundError
@@ -189,7 +192,10 @@ module Analyzer::Java
       endpoints
     end
 
-    private def extract_web_xml_endpoints(content : String, servlet_methods : Hash(String, Hash(String, Array(Param))), details : Details) : Array(Endpoint)
+    private def extract_web_xml_endpoints(content : String,
+                                          servlet_methods : Hash(ServletClassKey, Hash(String, Array(Param))),
+                                          details : Details,
+                                          base_path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       doc = XML.parse(content)
       servlet_classes = Hash(String, String).new
@@ -226,7 +232,7 @@ module Analyzer::Java
         servlet_class = servlet_classes[name]?
         next unless servlet_class
 
-        methods = methods_for_servlet_class(servlet_class, servlet_methods)
+        methods = methods_for_servlet_class(servlet_class, servlet_methods, base_path)
         next unless methods
 
         patterns.each do |pattern|
@@ -241,13 +247,18 @@ module Analyzer::Java
       [] of Endpoint
     end
 
-    private def methods_for_servlet_class(servlet_class : String, servlet_methods : Hash(String, Hash(String, Array(Param)))) : Hash(String, Array(Param))?
+    private def methods_for_servlet_class(servlet_class : String,
+                                          servlet_methods : Hash(ServletClassKey, Hash(String, Array(Param))),
+                                          base_path : String) : Hash(String, Array(Param))?
       simple_name = servlet_class.split(".").last
-      methods = servlet_methods[servlet_class]? || servlet_methods[simple_name]?
+      methods = servlet_methods[{base_path, servlet_class}]? || servlet_methods[{base_path, simple_name}]?
       return methods if methods
 
       all_files.each do |path|
+        # Cheap basename gate first; only resolve the configured base (which
+        # expands paths) for the rare files whose name actually matches.
         next unless File.basename(path, ".java") == simple_name
+        next unless configured_base_for(path) == base_path
 
         content = read_file_content(path)
         methods = extract_servlet_http_methods(content)

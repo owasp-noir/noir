@@ -24,9 +24,10 @@ module Analyzer::Perl
     end
 
     private struct RouteAction
-      property name, package_name, namespace, path_prefix, attrs, body, file_path, line
+      property base_path, name, package_name, namespace, path_prefix, attrs, body, file_path, line
 
-      def initialize(@name : String,
+      def initialize(@base_path : String,
+                     @name : String,
                      @package_name : String,
                      @namespace : String,
                      @path_prefix : String,
@@ -110,6 +111,7 @@ module Analyzer::Perl
       package_configs = collect_controller_configs(lines)
       actions = [] of RouteAction
       package_name = ""
+      base_path = configured_base_for(file_path)
       index = 0
 
       while index < lines.size
@@ -153,6 +155,7 @@ module Analyzer::Perl
         config = package_configs[package_name]? || ControllerConfig.new
         namespace = controller_namespace(package_name, config)
         actions << RouteAction.new(
+          base_path,
           name,
           package_name,
           namespace,
@@ -314,7 +317,7 @@ module Analyzer::Perl
         method = rest_handler_method(match[2])
         next unless method
 
-        base_key = "#{action.package_name}##{match[1]}"
+        base_key = action_key(action.base_path, action.package_name, match[1])
         base_action = actions_by_name[base_key]?
         next unless base_action
         next unless rest_action?(base_action)
@@ -350,10 +353,10 @@ module Analyzer::Perl
                                        actions_by_name : Hash(String, RouteAction),
                                        actions_by_private : Hash(String, RouteAction)) : RouteAction?
       if chained_to.starts_with?("/")
-        return actions_by_private[chained_to]?
+        return actions_by_private[private_action_key(action.base_path, chained_to)]?
       end
 
-      actions_by_name["#{action.package_name}##{chained_to}"]?
+      actions_by_name[action_key(action.base_path, action.package_name, chained_to)]?
     end
 
     private def append_args(path : String, values : Array(String), name : String) : String
@@ -447,12 +450,24 @@ module Analyzer::Perl
 
     private def actions_by_private(actions : Array(RouteAction)) : Hash(String, RouteAction)
       map = {} of String => RouteAction
-      actions.each { |action| map[private_path(action)] = action }
+      actions.each { |action| map[private_action_key(action)] = action }
       map
     end
 
     private def action_key(action : RouteAction) : String
-      "#{action.package_name}##{action.name}"
+      action_key(action.base_path, action.package_name, action.name)
+    end
+
+    private def action_key(base_path : String, package_name : String, action_name : String) : String
+      "#{base_path}\0#{package_name}##{action_name}"
+    end
+
+    private def private_action_key(action : RouteAction) : String
+      private_action_key(action.base_path, private_path(action))
+    end
+
+    private def private_action_key(base_path : String, path : String) : String
+      "#{base_path}\0#{path}"
     end
 
     private def private_path(action : RouteAction) : String

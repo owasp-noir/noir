@@ -6,7 +6,7 @@ module Analyzer::Php
       return [] of Endpoint unless File.extname(path) == ".php"
 
       endpoints = [] of Endpoint
-      relative_path = get_relative_path(base_path, path)
+      relative_path = get_relative_path(php_base_path_for(path), path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
@@ -31,11 +31,35 @@ module Analyzer::Php
           next
         end
 
+        # For the pure-PHP analyzer we are parameter-driven (not route-driven).
+        # A file with thousands of superglobal references (e.g. a large controller
+        # with many action methods) used to produce thousands of near-identical
+        # Endpoint objects for the same pseudo-path. The optimizer would later
+        # collapse them by (method, url) while merging params. Creating the
+        # duplicates up-front was extremely expensive on large files.
+        #
+        # We emit at most the POST pseudo-endpoint (when any POST/REQUEST/FILES
+        # reference was seen) plus the always-present GET pseudo-endpoint (for
+        # query/cookie/header params discovered in the file). We also deduplicate
+        # params by (name, param_type) in first-seen order so that the Endpoint
+        # objects we hand to later stages carry the same logical set that the
+        # optimizer would have produced. This is semantically identical to the
+        # previous behaviour for all observable outputs and test expectations,
+        # but avoids the O(N) explosion in intermediate objects.
+        #
+        # Note: unlike real framework analyzers, this one only ever contributes
+        # "POST" (or nothing) to the methods list; the GET is emitted separately.
+        # The wording is intentionally specific to avoid implying full multi-verb
+        # route support here.
+        distinct_methods = methods.uniq
+        query_params = unique_params_preserve_order(params_query)
+        body_params = unique_params_preserve_order(params_body)
+
         details = Details.new(PathInfo.new(path))
-        methods.each do |method|
-          endpoints << Endpoint.new("/#{relative_path}", method, params_body, details)
+        distinct_methods.each do |method|
+          endpoints << Endpoint.new("/#{relative_path}", method, body_params, details)
         end
-        endpoints << Endpoint.new("/#{relative_path}", "GET", params_query, details)
+        endpoints << Endpoint.new("/#{relative_path}", "GET", query_params, details)
         attach_file_callees(endpoints, content, path) if include_callee
       end
 
@@ -69,6 +93,27 @@ module Analyzer::Php
         params_body << Param.new(param_name, "", "file")
         methods << "POST"
       end
+    end
+
+    # Order-preserving dedup of params by (name, param_type).
+    # The pure-PHP analyzer accumulates every superglobal reference it sees.
+    # For files with repeated references the lists can contain many
+    # duplicates. The final endpoint(s) for a pseudo-path must expose the
+    # unique set (as params_to_hash and the optimizer's merge logic do).
+    # We dedup here in first-seen order so that we construct far fewer
+    # Endpoint objects while still producing identical observable param
+    # sets for every (method, url) pair.
+    private def unique_params_preserve_order(params : Array(Param)) : Array(Param)
+      seen = Set(Tuple(String, String)).new
+      result = [] of Param
+      params.each do |p|
+        key = {p.name, p.param_type}
+        unless seen.includes?(key)
+          seen.add(key)
+          result << p
+        end
+      end
+      result
     end
 
     private def attach_file_callees(endpoints : Array(Endpoint), content : String, path : String)

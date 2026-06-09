@@ -1,0 +1,5 @@
+<struts>
+  <package name="service-a-extra" namespace="/a-extra" extends="struts-default">
+    <action name="included"/>
+  </package>
+</struts>

@@ -65,7 +65,7 @@ module Analyzer::Go
 
                     # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
                     Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|
-                      public_dirs << {"static_path" => sp.url_prefix, "file_path" => sp.disk_path}
+                      public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
                     end
 
                     lines.each_with_index do |line, index|
@@ -132,26 +132,7 @@ module Analyzer::Go
         logger.debug e
       end
 
-      # Process static files
-      public_dirs.each do |p_dir|
-        full_path = (base_path + "/" + p_dir["file_path"]).gsub_repeatedly("//", "/")
-        get_files_by_prefix(full_path).each do |path|
-          if File.exists?(path)
-            static_path = p_dir["static_path"]
-            if static_path.ends_with?("/")
-              static_path = static_path[0..-2]
-            end
-
-            file_relative_path = path.gsub(full_path, "")
-            if !file_relative_path.starts_with?("/")
-              file_relative_path = "/" + file_relative_path
-            end
-
-            details = Details.new(PathInfo.new(path))
-            result << Endpoint.new("#{static_path}#{file_relative_path}", "GET", details)
-          end
-        end
-      end
+      resolve_public_dirs(public_dirs)
 
       result
     end

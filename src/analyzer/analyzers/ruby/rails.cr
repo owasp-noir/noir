@@ -85,13 +85,15 @@ module Analyzer::Ruby
       options : Hash(String, String),
       stack : Array(Frame)
 
+    alias EngineMountKey = Tuple(String, String)
+
     @controller_data_cache = Hash(String, ControllerData).new
     # Maps a mountable-engine constant (e.g. `DiscoursePoll::Engine`) to the
     # path it is mounted at (`/polls`). A Rails engine's `routes.draw` block
     # holds engine-relative paths; the `mount` that anchors them usually
     # lives in a different file (a plugin.rb, the host app's routes), so we
     # resolve it cross-file once up front.
-    @engine_mount_prefixes = Hash(String, String).new
+    @engine_mount_prefixes = Hash(EngineMountKey, String).new
     @known_files = Set(String).new
 
     def analyze
@@ -100,7 +102,7 @@ module Analyzer::Ruby
       @engine_mount_prefixes = build_engine_mount_map(files)
 
       framework_roots = discover_framework_roots(files, "config/routes.rb")
-      framework_roots = [@base_path] if framework_roots.empty?
+      framework_roots = base_paths if framework_roots.empty?
 
       framework_roots.each do |framework_root|
         begin
@@ -141,10 +143,7 @@ module Analyzer::Ruby
 
       files.each do |file|
         next unless file.ends_with?(suffix)
-        next unless base_paths.any? do |base|
-                      prefix = base.ends_with?("/") ? base : "#{base}/"
-                      file.starts_with?(prefix) || file == "#{base}#{suffix}"
-                    end
+        next unless base_paths.any? { |base| path_under_root?(file, base) }
 
         root = file[0, file.size - suffix.size]
         roots << root unless roots.includes?(root)
@@ -157,14 +156,14 @@ module Analyzer::Ruby
       project_public_roots = Set(String).new
       files.each do |file|
         next unless File.basename(file) == "Gemfile"
-        next unless file.starts_with?(base_path)
+        next unless path_under_root?(file, base_path)
         project_public_roots << File.join(File.dirname(file), "public")
       end
 
       files.select do |file|
-        next false unless file.starts_with?(base_path)
+        next false unless path_under_root?(file, base_path)
         next false if FileHelper::PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-        project_public_roots.any? { |root| file.starts_with?(root + "/") }
+        project_public_roots.any? { |root| file != root && path_under_root?(file, root) }
       end
     end
 
@@ -258,7 +257,7 @@ module Analyzer::Ruby
         # it as a scope. Unknown mounts (engine shipped as a library, host
         # not in scan) fall back to a transparent frame — same as before.
         if opens_block && (em = line.match(/^(?:::)?([A-Z][A-Za-z0-9_:]*)\.routes\.draw\b/))
-          mount_prefix = @engine_mount_prefixes[em[1]]?
+          mount_prefix = @engine_mount_prefixes[{configured_base_for(routes_path), em[1]}]?
           if mount_prefix && !mount_prefix.empty?
             stack << Frame.new(:scope, path: mount_prefix)
           else
@@ -292,7 +291,7 @@ module Analyzer::Ruby
           next unless m = call[1].match(/^\s*(?::(\w+)|['"]([^'"]+)['"])/)
           name = m[1]? || m[2]? || ""
           options = parse_options(call[1])
-          namespace_path = options.has_key?("path") ? options["path"] : name
+          namespace_path = normalize_route_prefix(options.has_key?("path") ? options["path"] : name)
           stack << Frame.new(:namespace, path: namespace_path, controller_subdir: name) if opens_block
           next
         end
@@ -305,9 +304,9 @@ module Analyzer::Ruby
           if m = args.match(/^\s*:(\w+)/)
             scope_path = m[1]
           elsif m = args.match(/^\s*['"]([^'"]+)['"]/)
-            scope_path = m[1].lchop('/')
+            scope_path = normalize_route_prefix(m[1])
           elsif path_option = options["path"]?
-            scope_path = path_option.lchop('/')
+            scope_path = normalize_route_prefix(path_option)
           end
           controller_subdir = options["module"]? || ""
           controller_scope = options["controller"]?
@@ -463,13 +462,23 @@ module Analyzer::Ruby
           # `get :action` form inside member/collection/new blocks, inline
           # `on:` declarations, or directly nested in a resources block.
           if (am = rest.match(/^\s*:(\w+)\b/)) && (in_member || in_collection || in_new || parent_resources_frame(stack))
-            action = am[1]
-            url = custom_resource_action_url(stack, action, route_scope)
+            segment = am[1]
+            url = custom_resource_action_url(stack, segment, route_scope)
             if url
               parent = parent_resources_frame(stack)
-              action_params = parent ? params_for_action(parent.controller_path, action, verb) : ([] of Param)
+              ctrl_path = parent.try(&.controller_path)
+              action_name = controller_action_for_symbol_route(rest, segment)
+
+              if ctrl_action = parse_controller_action(rest, current_controller_scope(stack))
+                ctrl_name, parsed_action = ctrl_action
+                ctrl_path = find_controller_file(framework_root, ctrl_name, stack)
+                action_name = parsed_action
+              end
+
+              action_params = params_for_action(ctrl_path, action_name, verb)
+              action_params = promote_identifier_to_path(action_params) unless in_collection || in_new
               endpoint = Endpoint.new(url, verb, action_params, details)
-              attach_callees_for_action(endpoint, parent.try(&.controller_path), action)
+              attach_callees_for_action(endpoint, ctrl_path, action_name)
               @result << endpoint
             end
             next
@@ -719,8 +728,8 @@ module Analyzer::Ruby
     # there) and build the engine-constant -> mount-path map. Forms handled:
     #   mount X::Engine, at: "/p"        mount X::Engine => "/p"
     #   Discourse::Application.routes.append { mount X::Engine, at: "/p" }
-    private def build_engine_mount_map(files : Array(String)) : Hash(String, String)
-      map = Hash(String, String).new
+    private def build_engine_mount_map(files : Array(String)) : Hash(EngineMountKey, String)
+      map = Hash(EngineMountKey, String).new
       files.each do |file|
         base = File.basename(file)
         next unless base == "plugin.rb" || base.ends_with?("routes.rb")
@@ -732,7 +741,8 @@ module Analyzer::Ruby
           next unless line.includes?("mount")
           if m = line.match(/\bmount\b\s*\(?\s*(?:::)?([A-Z][A-Za-z0-9_:]*)\s*(?:,\s*at:\s*|=>\s*)['"]([^'"]+)['"]/)
             const = m[1]
-            map[const] = normalize_mount_prefix(m[2]) unless map.has_key?(const)
+            key = {configured_base_for(file), const}
+            map[key] = normalize_mount_prefix(m[2]) unless map.has_key?(key)
           end
         end
       end
@@ -1096,6 +1106,12 @@ module Analyzer::Ruby
       result = result.gsub(%r{/{2,}}, "/")
       result = result.rchop('/') if result.size > 1 && result.ends_with?('/')
       result
+    end
+
+    private def normalize_route_prefix(path : String) : String
+      normalized = strip_optional_route_segments(path).lchop('/')
+      normalized = normalized.rchop('/') if normalized.size > 1 && normalized.ends_with?('/')
+      normalized
     end
 
     private def parse_options(line : String) : Hash(String, String)
@@ -1575,6 +1591,10 @@ module Analyzer::Ruby
         end
       end
       nil
+    end
+
+    private def controller_action_for_symbol_route(rest : String, fallback : String) : String
+      parse_options(rest)["action"]? || fallback
     end
 
     # Rails allows compact declarations such as `post "stories/preview"`

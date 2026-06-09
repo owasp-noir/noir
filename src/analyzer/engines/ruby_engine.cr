@@ -81,10 +81,7 @@ module Analyzer::Ruby
 
       all_files.each do |file|
         next unless file.ends_with?(suffix)
-        next unless base_paths.any? do |base|
-                      prefix = base.ends_with?("/") ? base : "#{base}/"
-                      file.starts_with?(prefix) || file == "#{base}#{suffix}"
-                    end
+        next unless base_paths.any? { |base| path_under_root?(file, base) }
 
         root = file[0, file.size - suffix.size]
         roots << root unless roots.includes?(root)

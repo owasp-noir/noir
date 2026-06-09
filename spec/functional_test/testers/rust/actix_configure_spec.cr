@@ -10,6 +10,15 @@ expected_endpoints = [
   Endpoint.new("/auth/logout", "GET"),
   Endpoint.new("/api/graphql", "POST"),
   Endpoint.new("/api/v2/graphql", "GET"),
+  Endpoint.new("/other", "GET"),
+  Endpoint.new("/v1/todos", "GET"),
+  Endpoint.new("/v1/todos", "POST", [
+    Param.new("body", "", "json"),
+  ]),
+  Endpoint.new("/v1/user/login", "POST", [
+    Param.new("body", "", "json"),
+  ]),
+  Endpoint.new("/v1/user/info", "GET"),
 ]
 
 FunctionalTester.new("fixtures/rust/actix_configure/", {

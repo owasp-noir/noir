@@ -26,6 +26,13 @@ Route::get('/health', function () {
 
 Route::apiResource('users', ApiUserController::class);
 Route::apiResource('posts', PostController::class);
+Route::apiResource('albums.songs', PostController::class)->only(['index', 'show']);
+
+Route::prefix('v1.0')->group(function () {
+    Route::apiResource('albums.songs', PostController::class)
+        ->only(['show'])
+        ->parameters(['albums' => 'record', 'songs' => 'track']);
+});
 
 Route::group(['prefix' => 'v1'], function () {
     Route::get('/info', function () {

@@ -35,32 +35,32 @@ module Analyzer::Python
       "header" => ["headers"],
       "cookie" => ["cookies"],
     }
+    alias RouteNameKey = Tuple(String, String)
+    alias RouteMap = Hash(RouteNameKey, Tuple(String, String))
 
     def analyze
-      route_map = Hash(String, Tuple(String, String)).new # name => {path, decl_file}
+      route_map = RouteMap.new # {base_path, name} => {path, decl_file}
 
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
-        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
         python_files.each do |path|
-          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+          next unless path_under_root?(path, current_base_path)
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path, @base_path)
+          next if python_test_path?(path)
 
           content = read_file_content(path)
           next unless content.includes?("pyramid") || content.includes?(".add_route") || content.includes?(".add_static_view")
 
-          extract_route_declarations(content, path, route_map)
+          extract_route_declarations(content, path, route_map, current_base_path)
           extract_static_views(content, path)
         end
       end
 
       base_paths.each do |current_base_path|
-        base_dir_prefix = current_base_path.ends_with?("/") ? current_base_path : "#{current_base_path}/"
         python_files.each do |path|
-          next unless path.starts_with?(base_dir_prefix) || path == current_base_path
+          next unless path_under_root?(path, current_base_path)
           next if path.includes?("/site-packages/")
-          next if PythonEngine.python_test_path?(path, @base_path)
+          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           content = read_file_content(path)
@@ -73,8 +73,9 @@ module Analyzer::Python
               route_name, methods = vc
               route_name ||= class_view_defaults_route_name(lines, line_index)
               next if route_name.nil?
-              next unless route_map.has_key?(route_name)
-              route_path, _ = route_map[route_name]
+              route_key = {current_base_path, route_name}
+              next unless route_map.has_key?(route_key)
+              route_path, _ = route_map[route_key]
 
               def_index = find_def_line(lines, line_index)
               next if def_index.nil?
@@ -99,8 +100,9 @@ module Analyzer::Python
               rn_match = args.match(/route_name\s*=\s*[rf]?['"]([^'"]+)['"]/)
               next if rn_match.nil?
               route_name = rn_match[1]
-              next unless route_map.has_key?(route_name)
-              route_path, _ = route_map[route_name]
+              route_key = {current_base_path, route_name}
+              next unless route_map.has_key?(route_key)
+              route_path, _ = route_map[route_key]
 
               methods = extract_methods_from_args(args)
               methods = ["GET"] if methods.empty?
@@ -146,7 +148,7 @@ module Analyzer::Python
 
     # config.add_route("name", "/path") plus keyword variants like
     # name="x", pattern="/y" in either order.
-    private def extract_route_declarations(content : String, path : String, route_map : Hash(String, Tuple(String, String)))
+    private def extract_route_declarations(content : String, path : String, route_map : RouteMap, base_path : String)
       content.scan(/\.add_route\s*\((.*?)\)/m) do |m|
         args = m[1]
         name = nil
@@ -168,7 +170,7 @@ module Analyzer::Python
           pattern ||= literals[1]?
         end
 
-        route_map[name] = {pattern, path} if name && pattern
+        route_map[{base_path, name}] = {pattern, path} if name && pattern
       end
     end
 
