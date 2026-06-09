@@ -501,4 +501,17 @@ describe Noir::TreeSitterKotlinRouteExtractor do
       ])
     end
   end
+
+  it "keeps every entry of an arrayOf() STOMP destination prefix" do
+    source = <<-KT
+      class WsConfig {
+          override fun configureMessageBroker(registry: MessageBrokerRegistry) {
+              registry.setApplicationDestinationPrefixes(arrayOf("/app", "/topic"))
+          }
+      }
+      KT
+
+    prefixes = Noir::TreeSitterKotlinRouteExtractor.extract_stomp_application_prefixes(source)
+    prefixes.should eq(["/app", "/topic"])
+  end
 end

@@ -212,7 +212,7 @@ module Noir
       file_constants = local_string_constants || extract_string_constants(source)
       each_method_call_arguments(source, "setApplicationDestinationPrefixes") do |args, _line|
         top_level_arguments(args).each do |arg|
-          if prefix = resolve_route_expression(arg, string_constants, file_constants)
+          resolve_route_expressions(arg, string_constants, file_constants).each do |prefix|
             prefixes << prefix
           end
         end
@@ -703,7 +703,7 @@ module Noir
                                                local_string_constants : Hash(String, String))
       each_method_call_arguments(source, "addEndpoint") do |args, line|
         top_level_arguments(args).each do |arg|
-          if endpoint_path = resolve_route_expression(arg, string_constants, local_string_constants)
+          resolve_route_expressions(arg, string_constants, local_string_constants).each do |endpoint_path|
             routes << Route.new("GET", endpoint_path, "", "", line - 1)
           end
         end
@@ -1786,6 +1786,29 @@ module Noir
       end
 
       nil
+    end
+
+    # Resolve an argument to every string value it denotes. `arrayOf(a, b)`
+    # yields all elements; any other expression yields its single resolved
+    # value. Used for vararg/array sinks (STOMP `addEndpoint(...)` /
+    # `setApplicationDestinationPrefixes(...)`) where keeping only the first
+    # entry would drop real endpoints/prefixes.
+    private def resolve_route_expressions(expression : String,
+                                          string_constants : Hash(String, String),
+                                          local_string_constants : Hash(String, String)) : Array(String)
+      value = expression.strip
+      if value.starts_with?("arrayOf(") && value.ends_with?(")")
+        inner = value["arrayOf(".size...-1]
+        return top_level_arguments(inner).compact_map do |entry|
+          resolve_route_expression(entry, string_constants, local_string_constants)
+        end
+      end
+
+      if resolved = resolve_route_expression(value, string_constants, local_string_constants)
+        [resolved]
+      else
+        [] of String
+      end
     end
 
     private def top_level_plus_parts(value : String) : Array(String)
