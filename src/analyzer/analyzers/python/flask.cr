@@ -20,6 +20,21 @@ module Analyzer::Python
       "headers" => {nil, "header"},
     }
 
+    # `extract_request_params` runs once per route and used to rebuild
+    # two PCRE2 patterns per request field on every call (8 fields × 2 =
+    # 16 regex compilations per endpoint). PCRE2 JIT-compilation of an
+    # interpolated regex literal is ~3µs and dominated Flask scan time
+    # (profiling: ~50% of the analyzer). The field names are a fixed set,
+    # so precompile the access patterns once here and reuse them.
+    # Tuple shape: {noir_param_type, bracket_access_regex, get_access_regex}
+    REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field_name, tuple|
+      {
+        tuple[1],
+        Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
+        Regex.new("request\\.#{field_name}\\.get\\([rf]?['\"]([^'\"]*)['\"]"),
+      }
+    end
+
     REQUEST_PARAM_TYPES = {
       "query"  => nil,
       "form"   => ["POST", "PUT", "PATCH", "DELETE"],
@@ -27,6 +42,18 @@ module Analyzer::Python
       "cookie" => nil,
       "header" => nil,
     }
+
+    # Per-line route-discovery patterns. These interpolate only the
+    # PYTHON_VAR_NAME_REGEX/DOT_NATION constants, so the inline literals
+    # were recompiling identical PCRE2 patterns on every source line of
+    # every file (`analyze` runs them per line). Compile once here; the
+    # `.to_s` expansion of the interpolated constants is byte-identical
+    # to the previous inline form, so matching behaviour is unchanged.
+    FLASK_INSTANCE_RE     = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask\.)?Flask\(/
+    INIT_APP_RE           = /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
+    REGISTER_BLUEPRINT_RE = /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+    VIEW_ASSIGN_RE        = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
+    ADD_URL_RULE_RE       = /(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/m
 
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
@@ -98,7 +125,7 @@ module Analyzer::Python
               line = original_line.gsub(" ", "") # remove spaces for easier regex matching
 
               # Identify Flask instance assignments
-              flask_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask\.)?Flask\(/
+              flask_match = line.includes?("Flask(") ? line.match(FLASK_INSTANCE_RE) : nil
               if flask_match
                 flask_instance_name = flask_match[1]
                 api_instances[flask_instance_name] ||= ""
@@ -116,7 +143,7 @@ module Analyzer::Python
               # (Blueprint discovery moved to the tree-sitter pre-pass above.)
 
               # Identify Api instance assignments
-              init_app_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
+              init_app_match = line.includes?(".init_app(") ? line.match(INIT_APP_RE) : nil
               if init_app_match
                 api_instance_name = init_app_match[1]
                 parser = get_parser(path)
@@ -138,25 +165,32 @@ module Analyzer::Python
                            line
                          end
 
-              # Api from flask instance
-              flask_instances.each do |key, _prefix|
-                next unless key[0] == current_base_path
-                _flask_instance_name = key[1]
-                api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}[,)]/
-                if api_match
-                  api_instance_name = api_match[1]
-                  api_instances[api_instance_name] ||= _prefix
+              # `Api(...)` registration matchers interpolate the discovered
+              # instance name, so they can't be hoisted to a constant.
+              # Most lines never mention `Api(`; skip the per-instance
+              # regex builds entirely unless the call is present (the
+              # match itself requires the literal `Api(`).
+              if api_line.includes?("Api(")
+                # Api from flask instance
+                flask_instances.each do |key, _prefix|
+                  next unless key[0] == current_base_path
+                  _flask_instance_name = key[1]
+                  api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}[,)]/
+                  if api_match
+                    api_instance_name = api_match[1]
+                    api_instances[api_instance_name] ||= _prefix
+                  end
                 end
-              end
 
-              # Api from blueprint instance
-              blueprint_prefixes.each do |key, _prefix|
-                next unless key[0] == current_base_path
-                _blueprint_instance_name = key[1]
-                api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}[,)]/
-                if api_match
-                  api_instance_name = api_match[1]
-                  api_instances[api_instance_name] ||= _prefix
+                # Api from blueprint instance
+                blueprint_prefixes.each do |key, _prefix|
+                  next unless key[0] == current_base_path
+                  _blueprint_instance_name = key[1]
+                  api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}[,)]/
+                  if api_match
+                    api_instance_name = api_match[1]
+                    api_instances[api_instance_name] ||= _prefix
+                  end
                 end
               end
 
@@ -166,56 +200,66 @@ module Analyzer::Python
                         else
                           line
                         end
-              api_instances.each do |_api_instance_name, _prefix|
-                add_namespace_match = ns_line.match /(#{_api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
-                if add_namespace_match
-                  parser = get_parser(path)
-                  if parser.@global_variables.has_key?(add_namespace_match[2])
-                    gv = parser.@global_variables[add_namespace_match[2]]
-                    if gv.type == "Namespace"
-                      # Prefer the explicit mount path on
-                      # `add_namespace(ns, "/x")` (authoritative); fall
-                      # back to the Namespace(...) definition's own
-                      # path=/name when no positional path is given.
-                      resolved = if mount_path = extract_add_namespace_path(ns_line, _api_instance_name, add_namespace_match[2])
-                                   joined = File.join(_prefix, mount_path)
-                                   joined.starts_with?("/") ? joined : "/#{joined}"
-                                 else
-                                   extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
-                                 end
-                      api_instances[gv.name] = resolved
-                      # Bridge to the namespace's route-definition file,
-                      # which has no view onto this host file's prefixes.
-                      namespace_prefixes[{current_base_path, gv.name}] = resolved
+              # `add_namespace` matchers interpolate the instance name and
+              # can't be hoisted; skip the per-instance regex builds unless
+              # the call is present on this line (the match requires it).
+              if ns_line.includes?(".add_namespace(")
+                api_instances.each do |_api_instance_name, _prefix|
+                  add_namespace_match = ns_line.match /(#{_api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
+                  if add_namespace_match
+                    parser = get_parser(path)
+                    if parser.@global_variables.has_key?(add_namespace_match[2])
+                      gv = parser.@global_variables[add_namespace_match[2]]
+                      if gv.type == "Namespace"
+                        # Prefer the explicit mount path on
+                        # `add_namespace(ns, "/x")` (authoritative); fall
+                        # back to the Namespace(...) definition's own
+                        # path=/name when no positional path is given.
+                        resolved = if mount_path = extract_add_namespace_path(ns_line, _api_instance_name, add_namespace_match[2])
+                                     joined = File.join(_prefix, mount_path)
+                                     joined.starts_with?("/") ? joined : "/#{joined}"
+                                   else
+                                     extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
+                                   end
+                        api_instances[gv.name] = resolved
+                        # Bridge to the namespace's route-definition file,
+                        # which has no view onto this host file's prefixes.
+                        namespace_prefixes[{current_base_path, gv.name}] = resolved
+                      end
                     end
                   end
                 end
               end
 
               # Temporary Addition: register_view
-              blueprint_prefixes.each do |key, blueprint_prefix|
-                next unless key[0] == current_base_path
-                blueprint_name = key[1]
-                view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
-                if view_registration_match
-                  # Re-extract route paths from original line to preserve spaces in paths
-                  original_registration_match = original_line.match /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
-                  route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
-                  route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
-                    if !path_str_match.nil? && path_str_match.size == 2
-                      route_path = path_str_match[1]
-                      # Parse methods from reference views (TODO)
-                      route_url = "#{blueprint_prefix}#{route_path}"
-                      route_url = "/#{route_url}" unless route_url.starts_with?("/")
-                      details = Details.new(PathInfo.new(path, line_index + 1))
-                      result << Endpoint.new(route_url, "GET", details)
+              # The `blueprint,routes=[...]` matcher interpolates the
+              # blueprint name; skip the per-blueprint regex builds unless
+              # this line actually carries a `routes=` registration.
+              if line.includes?("routes=")
+                blueprint_prefixes.each do |key, blueprint_prefix|
+                  next unless key[0] == current_base_path
+                  blueprint_name = key[1]
+                  view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
+                  if view_registration_match
+                    # Re-extract route paths from original line to preserve spaces in paths
+                    original_registration_match = original_line.match /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
+                    route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
+                    route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
+                      if !path_str_match.nil? && path_str_match.size == 2
+                        route_path = path_str_match[1]
+                        # Parse methods from reference views (TODO)
+                        route_url = "#{blueprint_prefix}#{route_path}"
+                        route_url = "/#{route_url}" unless route_url.starts_with?("/")
+                        details = Details.new(PathInfo.new(path, line_index + 1))
+                        result << Endpoint.new(route_url, "GET", details)
+                      end
                     end
                   end
                 end
               end
 
               # Identify Blueprint registration
-              register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+              register_blueprint_match = line.includes?(".register_blueprint(") ? line.match(REGISTER_BLUEPRINT_RE) : nil
               if register_blueprint_match
                 parent_name = register_blueprint_match[1]
                 blueprint_name = register_blueprint_match[2]
@@ -268,7 +312,7 @@ module Analyzer::Python
 
               # Identify view assignments: view_var = ClassName.as_view('name')
               # Note: spaces are already removed from line at this point
-              view_assign_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
+              view_assign_match = line.includes?(".as_view(") ? line.match(VIEW_ASSIGN_RE) : nil
               if view_assign_match
                 view_var = view_assign_match[1]
                 class_name = view_assign_match[2]
@@ -277,13 +321,17 @@ module Analyzer::Python
 
               # Identify add_url_rule() registrations for class-based views
               # Match the call generically, then extract rule/view_func from any argument position
-              effective_add_url_rule = if line.includes?(".add_url_rule(") && python_paren_delta(original_line) > 0
+              has_add_url_rule = line.includes?(".add_url_rule(")
+              effective_add_url_rule = if has_add_url_rule && python_paren_delta(original_line) > 0
                                          join_until_python_call_closes(lines, line_index, original_line)
                                        else
                                          original_line
                                        end
-              effective_add_url_rule_stripped = effective_add_url_rule.gsub(" ", "")
-              effective_add_url_rule_stripped.scan(/(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/m) do |_match|
+              # `line` is already original_line space-stripped, so only
+              # re-strip when we coalesced continuation lines; otherwise
+              # reuse it instead of allocating a new gsub copy per line.
+              effective_add_url_rule_stripped = has_add_url_rule ? effective_add_url_rule.gsub(" ", "") : line
+              effective_add_url_rule_stripped.scan(ADD_URL_RULE_RE) do |_match|
                 next if _match.size == 0
                 router_name = _match[1]
                 args_str = _match[2]
@@ -1217,13 +1265,15 @@ module Analyzer::Python
         end
       end
 
-      # Parse declared parameters from request field access patterns
+      # Parse declared parameters from request field access patterns.
+      # Patterns are precompiled in REQUEST_PARAM_FIELD_PATTERNS so this
+      # per-route loop never recompiles a PCRE2 regex.
       codeblock_lines.each do |codeblock_line|
-        REQUEST_PARAM_FIELDS.each do |field_name, tuple|
-          _, noir_param_type = tuple
-          matches = codeblock_line.scan(/request\.#{field_name}\[[rf]?['"]([^'"]*)['"]\]/)
+        REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
+          noir_param_type, bracket_re, get_re = field_pattern
+          matches = codeblock_line.scan(bracket_re)
           if matches.size == 0
-            matches = codeblock_line.scan(/request\.#{field_name}\.get\([rf]?['"]([^'"]*)['"]/)
+            matches = codeblock_line.scan(get_re)
           end
           if matches.size == 0
             noir_param_type = "json"
