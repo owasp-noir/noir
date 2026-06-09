@@ -17,9 +17,11 @@ build:
     shards build
 
 # Build noir binary with --release (slower compile, 2–3x faster runtime; use for benchmarks).
+# Uses the same flags as production release builds (Homebrew, GitHub releases, Docker, Snap)
+# so that local benchmark comparisons against the global binary are fair.
 [group('build')]
 build-release:
-    shards build --release
+    shards build --release --no-debug --production
 
 # Update shards.nix.
 [group('build')]
