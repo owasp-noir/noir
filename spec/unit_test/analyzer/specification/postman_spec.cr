@@ -173,4 +173,39 @@ describe "Postman Analyzer" do
     graphql_params.should contain({"query", "query User($id: ID!) { user(id: $id) { id } }", "json"})
     graphql_params.should contain({"id", "123", "json"})
   end
+
+  it "does not share details between requests in one collection" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {
+          "name": "Details Collection",
+          "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [
+          {
+            "name": "Users",
+            "request": {
+              "method": "GET",
+              "url": "/users"
+            }
+          },
+          {
+            "name": "GraphQL",
+            "request": {
+              "method": "POST",
+              "url": "/graphql"
+            }
+          }
+        ]
+      }
+      JSON
+
+    users = endpoints.find!(&.url.==("/users"))
+    graphql = endpoints.find!(&.url.==("/graphql"))
+
+    users.details.add_path(PathInfo.new("UsersController.kt"))
+
+    users.details.code_paths.map(&.path).should contain("UsersController.kt")
+    graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
+  end
 end

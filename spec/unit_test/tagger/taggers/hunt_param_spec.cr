@@ -105,6 +105,30 @@ describe "HuntParamTagger" do
       endpoint.params[0].tags.map(&.name).should_not contain("idor")
     end
 
+    it "does not tag bare body keys as Hunt IDOR by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/items", "POST", [
+        Param.new("key", "catalog-key", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("idor")
+    end
+
+    it "keeps path keys as Hunt IDOR candidates" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/cache/{key}", "DELETE", [
+        Param.new("key", "entry", "path"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should contain("idor")
+    end
+
     it "does not tag emails as Hunt IDOR by default" do
       tagger = HuntParamTagger.new(default_tagger_options)
 
@@ -129,6 +153,18 @@ describe "HuntParamTagger" do
       tag_names = endpoint.params[0].tags.map(&.name)
       tag_names.should_not contain("ssti")
       tag_names.should_not contain("sqli")
+    end
+
+    it "does not treat plain content fields as SSTI by default" do
+      tagger = HuntParamTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/posts", "POST", [
+        Param.new("content", "hello", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.params[0].tags.map(&.name).should_not contain("ssti")
     end
 
     it "does not treat role flags as SQLi by default" do

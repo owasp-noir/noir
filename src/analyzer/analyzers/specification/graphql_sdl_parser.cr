@@ -20,6 +20,14 @@ module Analyzer::Specification
       "Subscription" => "subscription",
     }
 
+    private struct InputField
+      getter name : String
+      getter type : String
+
+      def initialize(@name, @type)
+      end
+    end
+
     # Parse an SDL document and return one endpoint per Query/Mutation/Subscription
     # field. `line_offset` shifts every reported line number — used by host
     # analyzers (e.g. Apollo Server) whose SDL is embedded in a larger file.
@@ -30,8 +38,9 @@ module Analyzer::Specification
       endpoints = [] of Endpoint
       sanitized = strip_comments(content)
       root_names = parse_schema_block(sanitized)
+      input_types = parse_input_object_types(sanitized)
       visit_type_blocks(sanitized, file_path, root_names, default_path, tag_source,
-        line_offset, endpoints)
+        line_offset, input_types, endpoints)
       endpoints
     end
 
@@ -62,7 +71,9 @@ module Analyzer::Specification
     private def visit_type_blocks(sanitized : String, file_path : String,
                                   root_names : Hash(String, String),
                                   default_path : String, tag_source : String,
-                                  line_offset : Int32, endpoints : Array(Endpoint))
+                                  line_offset : Int32,
+                                  input_types : Hash(String, Array(InputField)),
+                                  endpoints : Array(Endpoint))
       root_alternation = root_names.values.uniq!.map { |n| Regex.escape(n) }.join("|")
       pattern = Regex.new("\\b(?:extend\\s+)?type\\s+(#{root_alternation})\\b(?:\\s+implements\\s+[^{]+)?\\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\\([^)]*\\))?\\s*)*\\{")
 
@@ -80,14 +91,16 @@ module Analyzer::Specification
 
         body_start_in_sanitized = brace_pos + 1
         parse_fields(body, body_start_in_sanitized, sanitized, file_path, root_kind,
-          type_name, default_path, tag_source, line_offset, endpoints)
+          type_name, default_path, tag_source, line_offset, input_types, endpoints)
       end
     end
 
     private def parse_fields(body : String, body_offset : Int32, sanitized : String,
                              file_path : String, root_kind : String, type_name : String,
                              default_path : String, tag_source : String,
-                             line_offset : Int32, endpoints : Array(Endpoint))
+                             line_offset : Int32,
+                             input_types : Hash(String, Array(InputField)),
+                             endpoints : Array(Endpoint))
       operation_keyword = ROOT_OPERATIONS[root_kind]
 
       pos = 0
@@ -131,7 +144,7 @@ module Analyzer::Specification
         pos = advance_to_next_field(body, cursor)
 
         emit_endpoint(file_path, field_line, field_name, args, return_type, directives,
-          operation_keyword, type_name, root_kind, default_path, tag_source, endpoints)
+          operation_keyword, type_name, root_kind, default_path, tag_source, input_types, endpoints)
       end
     end
 
@@ -142,17 +155,24 @@ module Analyzer::Specification
                               operation_keyword : String,
                               type_name : String, root_kind : String,
                               default_path : String, tag_source : String,
+                              input_types : Hash(String, Array(InputField)),
                               endpoints : Array(Endpoint))
       details = Details.new(PathInfo.new(file_path, line))
       params = [] of Param
 
       args.each do |arg|
-        params << Param.new(arg[:name], "", "json")
+        if fields = input_types[graphql_base_type_name(arg[:type])]?
+          fields.each do |field|
+            add_input_field_params(params, arg[:name], field, input_types, tag_source)
+          end
+        else
+          push_param_once(params, Param.new(arg[:name], "", "json"))
+        end
       end
 
       doc_param_name = "graphql_#{operation_keyword}_#{field_name}"
       doc_value = build_operation_document(operation_keyword, field_name, args, return_type)
-      params << Param.new(doc_param_name, doc_value, "json")
+      push_param_once(params, Param.new(doc_param_name, doc_value, "json"))
 
       url = "#{default_path}##{root_kind}.#{field_name}"
       endpoint = Endpoint.new(url, "POST", params, details)
@@ -167,6 +187,69 @@ module Analyzer::Specification
       end
 
       endpoints << endpoint
+    end
+
+    private def parse_input_object_types(sanitized : String) : Hash(String, Array(InputField))
+      input_types = Hash(String, Array(InputField)).new
+      pattern = /\binput\s+([A-Za-z_][A-Za-z0-9_]*)\b\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s*)*\{/
+
+      sanitized.scan(pattern) do |match|
+        type_name = match[1]
+        start_pos = match.begin(0) || 0
+        brace_pos = sanitized.index('{', start_pos)
+        next if brace_pos.nil?
+        body = extract_brace_block(sanitized, brace_pos)
+        next if body.nil?
+
+        input_types[type_name] = parse_input_fields(body)
+      end
+
+      input_types
+    end
+
+    private def parse_input_fields(body : String) : Array(InputField)
+      fields = [] of InputField
+      body.each_line do |line|
+        line.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([!\[\]A-Za-z_][!\[\]A-Za-z0-9_\s]*)/) do |match|
+          type_str = match[2].strip
+          type_str = type_str.split(/\s+@|\s+=/).first.strip
+          fields << InputField.new(match[1], type_str) unless type_str.empty?
+        end
+      end
+      fields
+    end
+
+    private def add_input_field_params(params : Array(Param),
+                                       argument_name : String,
+                                       field : InputField,
+                                       input_types : Hash(String, Array(InputField)),
+                                       tag_source : String,
+                                       prefix : String = "",
+                                       depth : Int32 = 0)
+      field_name = prefix.empty? ? graphql_input_param_name(argument_name, field.name) : "#{prefix}.#{field.name}"
+      if depth < 2 && (nested_fields = input_types[graphql_base_type_name(field.type)]?)
+        nested_fields.each do |nested_field|
+          add_input_field_params(params, argument_name, nested_field, input_types, tag_source, field_name, depth + 1)
+        end
+        return
+      end
+
+      param = Param.new(field_name, "", "json")
+      param.add_tag(Tag.new("graphql-input-field", argument_name, tag_source))
+      push_param_once(params, param)
+    end
+
+    private def graphql_input_param_name(argument_name : String, field_name : String) : String
+      argument_name == "input" ? field_name : "#{argument_name}.#{field_name}"
+    end
+
+    private def graphql_base_type_name(raw_type : String) : String
+      raw_type.gsub(/[^A-Za-z0-9_]/, "")
+    end
+
+    private def push_param_once(params : Array(Param), param : Param)
+      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+      params << param
     end
 
     private def build_operation_document(operation_keyword : String, field_name : String,

@@ -65,6 +65,38 @@ describe "GraphQL SDL Analyzer" do
     doc_param.value.should contain "echo(message: $message, times: $times)"
   end
 
+  it "expands input object arguments into request body fields" do
+    endpoints = analyze_sdl <<-SDL
+      type Mutation {
+        createArticle(input: CreateArticleInput!): Article
+        createKaomoji(tags: [TagInput!]!): Kaomoji
+      }
+
+      input CreateArticleInput {
+        title: String!
+        content: String!
+        userId: ID!
+      }
+
+      input TagInput {
+        label: String!
+      }
+      SDL
+
+    create_article = endpoints.find! { |endpoint| endpoint.url == "/graphql#Mutation.createArticle" }
+    create_article.params.reject(&.name.starts_with?("graphql_")).map(&.name).should eq([
+      "title",
+      "content",
+      "userId",
+    ])
+
+    create_kaomoji = endpoints.find! { |endpoint| endpoint.url == "/graphql#Mutation.createKaomoji" }
+    create_kaomoji.params.reject(&.name.starts_with?("graphql_")).map(&.name).should eq([
+      "tags.label",
+    ])
+    create_kaomoji.params.find! { |param| param.name == "tags.label" }.tags.map(&.name).should contain("graphql-input-field")
+  end
+
   it "preserves trailing non-null marker on list types" do
     endpoints = analyze_sdl <<-SDL
       type Query {

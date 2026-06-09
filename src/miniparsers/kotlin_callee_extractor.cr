@@ -50,11 +50,12 @@ module Noir::KotlinCalleeExtractor
                         source : String,
                         file_path : String,
                         class_name : String,
-                        method_name : String) : Array(Tuple(String, String, Int32))
+                        method_name : String,
+                        route_line : Int32? = nil) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     return sink if class_name.empty? || method_name.empty?
 
-    fn = find_function(root, source, class_name, method_name)
+    fn = find_function(root, source, class_name, method_name, route_line)
     return sink unless fn
     body = function_body_node(fn)
     return sink unless body
@@ -97,6 +98,11 @@ module Noir::KotlinCalleeExtractor
       end
 
       name = callee_text(node, source)
+      unless name.empty?
+        sink << {name, file_path, Noir::TreeSitter.node_start_row(node) + 1}
+      end
+    elsif Noir::TreeSitter.node_type(node) == "navigation_expression"
+      name = enum_entries_property_text(node, source)
       unless name.empty?
         sink << {name, file_path, Noir::TreeSitter.node_start_row(node) + 1}
       end
@@ -158,6 +164,21 @@ module Noir::KotlinCalleeExtractor
     parts.join(".")
   end
 
+  private def enum_entries_property_text(node : LibTreeSitter::TSNode, source : String) : String
+    name = navigation_text(node, source)
+    return "" if name.empty?
+
+    parts = name.split('.')
+    return "" unless parts.size == 2
+
+    receiver = parts.first
+    leaf = parts.last
+    return "" unless leaf == "entries"
+    return "" unless receiver.matches?(/^[A-Z][A-Za-z0-9_]*$/)
+
+    name
+  end
+
   private def navigation_suffix_text(suffix : LibTreeSitter::TSNode, source : String) : String
     Noir::TreeSitter.each_named_child(suffix) do |child|
       if Noir::TreeSitter.node_type(child) == "simple_identifier"
@@ -197,7 +218,8 @@ module Noir::KotlinCalleeExtractor
   private def find_function(root : LibTreeSitter::TSNode,
                             source : String,
                             class_name : String,
-                            method_name : String) : LibTreeSitter::TSNode?
+                            method_name : String,
+                            route_line : Int32? = nil) : LibTreeSitter::TSNode?
     result : LibTreeSitter::TSNode? = nil
     walk_class_containers(root) do |decl|
       next if result
@@ -207,7 +229,11 @@ module Noir::KotlinCalleeExtractor
       Noir::TreeSitter.each_named_child(body) do |member|
         next if result
         next unless Noir::TreeSitter.node_type(member) == "function_declaration"
-        result = member if function_name(member, source) == method_name
+        next unless function_name(member, source) == method_name
+        if route_line
+          next if Noir::TreeSitter.node_start_row(member) + 1 < route_line
+        end
+        result = member
       end
     end
     result

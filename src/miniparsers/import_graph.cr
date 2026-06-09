@@ -21,6 +21,9 @@ module Noir
   #     Recursive resolution is the caller's job (and usually
   #     unnecessary; one level covers the controller-→-DTO case).
   module ImportGraph
+    @@sibling_source_roots_cache = Hash(String, Array(String)).new
+    @@sibling_source_roots_mutex = Mutex.new
+
     # An import declaration extracted from a source file.
     #
     #   - `path`     dotted path written in the source
@@ -71,16 +74,26 @@ module Noir
       return if package_name.empty?
       source_root = source_root_for(path, package_name)
       return unless source_root
+      sibling_roots = sibling_source_roots(source_root)
 
       imports.each do |imp|
         relative = imp.path.gsub(".", "/")
         if imp.wildcard?
-          dir = File.join(source_root, relative)
-          next unless Dir.exists?(dir)
-          safe_glob("#{dir}/*.#{extension}") { |match| visit.call(match) }
+          ([source_root] + sibling_roots).each do |root|
+            dir = File.join(root, relative)
+            next unless Dir.exists?(dir)
+            safe_glob("#{dir}/*.#{extension}") { |match| visit.call(match) }
+          end
         else
           file = File.join(source_root, "#{relative}.#{extension}")
-          visit.call(file) if File.exists?(file)
+          if File.exists?(file)
+            visit.call(file)
+          else
+            sibling_roots.each do |root|
+              sibling_file = File.join(root, "#{relative}.#{extension}")
+              visit.call(sibling_file) if File.exists?(sibling_file)
+            end
+          end
         end
       end
     end
@@ -100,6 +113,39 @@ module Noir
       return unless tail == package_segments
       root = dir_segments[0, dir_segments.size - package_segments.size].join('/')
       root.empty? ? "." : root
+    end
+
+    # Gradle/Maven multi-module JVM repos often keep controllers in one
+    # module and DTOs in another sibling module. If an explicit import
+    # misses under the current `src/main/{java,kotlin}` root, search
+    # sibling module roots with the same source-set language.
+    private def self.sibling_source_roots(source_root : String) : Array(String)
+      expanded = File.expand_path(source_root)
+      @@sibling_source_roots_mutex.synchronize do
+        if cached = @@sibling_source_roots_cache[expanded]?
+          return cached
+        end
+      end
+
+      roots = [] of String
+      segments = expanded.split(File::SEPARATOR)
+      if segments.size >= 4
+        lang = segments[-1]
+        if (lang == "java" || lang == "kotlin") && segments[-2] == "main" && segments[-3] == "src"
+          module_root = segments[0, segments.size - 3].join(File::SEPARATOR)
+          workspace_root = File.dirname(module_root)
+          safe_glob(File.join(workspace_root, "*", "src", "main", lang)) do |candidate|
+            next unless Dir.exists?(candidate)
+            candidate_expanded = File.expand_path(candidate)
+            roots << candidate if candidate_expanded != expanded
+          end
+        end
+      end
+
+      @@sibling_source_roots_mutex.synchronize do
+        @@sibling_source_roots_cache[expanded] = roots
+      end
+      roots
     end
 
     # `Dir.glob` raises on unreadable entries in some edge cases;

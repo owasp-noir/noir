@@ -30,8 +30,8 @@ require "../../../models/endpoint"
 #     control. Surfacing where it IS applied also makes the gaps — handlers
 #     taking a body without it — visible by their absence.
 #
-# CSRF / security-headers / config CORS are detected from the security &
-# MVC config (pre-scanned once, like spring_auth's URL rules). The
+# CSRF / security-headers / config CORS are detected from the security,
+# MVC, and WebSocket config (pre-scanned once, like spring_auth's URL rules). The
 # `@CrossOrigin` and input-validation signals are per-endpoint, line-based
 # walks of the handler the endpoint maps to. Cross-file concerns (a custom
 # Filter bean, a bespoke CorsConfigurationSource) are out of scope.
@@ -78,7 +78,7 @@ class SpringSecurityTagger < FrameworkTagger
     @csrf_disable_scopes = [] of String
     @csrf_ignored_scopes = [] of String
     @header_weak_scopes = [] of NamedTuple(pattern: String, kind: Symbol)
-    @cors_config_scopes = [] of NamedTuple(pattern: String, credentials: Bool)
+    @cors_config_scopes = [] of NamedTuple(pattern: String, credentials: Bool, source: Symbol)
   end
 
   def self.target_techs : Array(String)
@@ -108,6 +108,7 @@ class SpringSecurityTagger < FrameworkTagger
           scan_security_config(content)
         end
         scan_cors_mappings(content) if content.includes?(".addMapping")
+        scan_websocket_cors_endpoints(content) if content.includes?(".addEndpoint")
       end
     end
 
@@ -191,23 +192,80 @@ class SpringSecurityTagger < FrameworkTagger
     result
   end
 
-  # `addMapping("/x").allowedOrigins("*")...` in a WebMvcConfigurer. Each
-  # mapping is one `;`-terminated fluent statement, so splitting on `;`
-  # keeps a (possibly multi-line) chain intact. Only a wildcard origin is
-  # permissive enough to flag — a mapping listing specific origins is the
-  # intended, safe use of CORS.
+  # `addMapping("/x").allowedOrigins("*")...` in a WebMvcConfigurer. Only a
+  # wildcard origin is permissive enough to flag: a mapping listing specific
+  # origins is the intended, safe use of CORS.
   private def scan_cors_mappings(content : String)
-    content.split(';').each do |stmt|
-      next unless stmt.includes?(".addMapping")
-      m = stmt.match(/\.addMapping\s*\(\s*"([^"]+)"/)
+    fluent_call_statements(content, ".addMapping").each do |stmt|
+      m = stmt.match(/\.addMapping\s*\(([^)]*)\)/)
       next unless m
 
-      origins_wild = (stmt.includes?("allowedOrigins") || stmt.includes?("allowedOriginPatterns")) && stmt.includes?("\"*\"")
-      next unless origins_wild
+      next unless wildcard_origin_call?(stmt, ["allowedOrigins", "allowedOriginPatterns"])
 
       credentials = stmt.includes?("allowCredentials") && stmt.includes?("true")
-      @cors_config_scopes << {pattern: m[1], credentials: credentials}
+      quoted_literals(m[1]).each do |pattern|
+        @cors_config_scopes << {pattern: pattern, credentials: credentials, source: :mvc}
+      end
     end
+  end
+
+  # `addEndpoint("/ws").setAllowedOrigins("*")...` in a STOMP/WebSocket
+  # config controls the HTTP handshake endpoint. Treat wildcard origins here
+  # as the same cross-origin exposure reviewers expect to see on REST routes.
+  private def scan_websocket_cors_endpoints(content : String)
+    fluent_call_statements(content, ".addEndpoint").each do |stmt|
+      m = stmt.match(/\.addEndpoint\s*\(([^)]*)\)/)
+      next unless m
+
+      next unless wildcard_origin_call?(stmt, ["setAllowedOrigins", "setAllowedOriginPatterns"])
+
+      quoted_literals(m[1]).each do |pattern|
+        @cors_config_scopes << {pattern: pattern, credentials: false, source: :websocket}
+      end
+    end
+  end
+
+  private def fluent_call_statements(content : String, call_name : String) : Array(String)
+    lines = content.lines
+    statements = [] of String
+
+    lines.each_with_index do |line, idx|
+      next unless line.includes?(call_name)
+
+      stmt_lines = [line]
+      next_idx = idx + 1
+      while next_idx < lines.size && stmt_lines.size < 8
+        stripped = lines[next_idx].strip
+        break if stripped.empty?
+        break if stripped.starts_with?("}") || stripped.matches?(/^(override|fun|class|public|private|protected|internal|return)\b/)
+        break unless stripped.starts_with?(".") || stripped.includes?("allowedOrigin") || stripped.includes?("allowCredentials")
+
+        stmt_lines << lines[next_idx]
+        break if stripped.includes?(";")
+        next_idx += 1
+      end
+
+      statements << stmt_lines.join
+    end
+
+    statements
+  end
+
+  private def wildcard_origin_call?(stmt : String, call_names : Array(String)) : Bool
+    call_names.any? do |call_name|
+      wildcard = false
+      stmt.scan(/#{call_name}\s*\(([^)]*)\)/) do |m|
+        args = m[1]
+        wildcard = true if args.includes?("\"*\"") || args.includes?("'*'")
+      end
+      wildcard
+    end
+  end
+
+  private def quoted_literals(args : String) : Array(String)
+    result = [] of String
+    args.scan(/"([^"]+)"/) { |m| result << m[1] }
+    result
   end
 
   # ---- per-endpoint resolution ----------------------------------------
@@ -243,10 +301,13 @@ class SpringSecurityTagger < FrameworkTagger
     rule = @cors_config_scopes.find { |r| matches_ant_pattern?(endpoint.url, r[:pattern]) }
     return unless rule
 
+    call_name = rule[:source] == :websocket ? "addEndpoint" : "addMapping"
+    source = rule[:source] == :websocket ? "WebSocket/STOMP endpoint config" : "global WebMvc config"
+
     if rule[:credentials]
-      "Permissive CORS (global WebMvc config) — addMapping(\"#{rule[:pattern]}\") allows all origins (*) with credentials, exposing authenticated responses cross-origin."
+      "Permissive CORS (#{source}) — #{call_name}(\"#{rule[:pattern]}\") allows all origins (*) with credentials, exposing authenticated responses cross-origin."
     else
-      "Permissive CORS (global WebMvc config) — addMapping(\"#{rule[:pattern]}\") allows all origins (*)."
+      "Permissive CORS (#{source}) — #{call_name}(\"#{rule[:pattern]}\") allows all origins (*)."
     end
   end
 
@@ -272,7 +333,7 @@ class SpringSecurityTagger < FrameworkTagger
         endpoint.add_tag(Tag.new("cors", desc, "spring_security"))
       end
 
-      if desc = check_input_validation(lines, idx)
+      if desc = check_input_validation(lines, idx, endpoint)
         endpoint.add_tag(Tag.new("input-validation", desc, "spring_security"))
       end
     end
@@ -334,7 +395,7 @@ class SpringSecurityTagger < FrameworkTagger
 
   # `@Valid` / `@Validated` applied to the handler's parameters (scan the
   # signature up to the body brace) or `@Validated` on the controller class.
-  private def check_input_validation(lines : Array(String), method_idx : Int32) : String?
+  private def check_input_validation(lines : Array(String), method_idx : Int32, endpoint : Endpoint) : String?
     idx = method_idx
     end_idx = [method_idx + 10, lines.size - 1].min
     while idx <= end_idx
@@ -345,14 +406,22 @@ class SpringSecurityTagger < FrameworkTagger
       # The first body brace closes the signature — stop before scanning the
       # method body so a `@Valid` used deeper inside cannot leak in.
       break if current.includes?("{")
+      # Kotlin expression-bodied handlers (`fun list() = service.list()`)
+      # have no body brace. Stop if we reach the next route annotation so a
+      # following handler's `@Valid` does not bleed into this endpoint.
+      break if idx > method_idx && spring_mapping_annotation?(current)
       idx += 1
     end
 
-    if class_level_annotation(lines, "@Validated")
+    if endpoint.params.present? && class_level_annotation(lines, "@Validated")
       return "Controller annotated @Validated — Bean Validation is applied to this handler's parameters."
     end
 
     nil
+  end
+
+  private def spring_mapping_annotation?(line : String) : Bool
+    line.matches?(/@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\b/)
   end
 
   # Find an annotation (`@CrossOrigin`/`@Validated`) that decorates the class

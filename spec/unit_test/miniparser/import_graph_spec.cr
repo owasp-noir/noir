@@ -116,6 +116,28 @@ describe Noir::ImportGraph do
         visited.count(b).should eq(1)
       end
     end
+
+    it "resolves JVM imports from sibling Gradle module source roots" do
+      with_tmpdir do |root|
+        web_root = File.join(root, "cities-web", "src", "main", "kotlin")
+        domain_root = File.join(root, "cities-domain", "src", "main", "kotlin")
+        Dir.mkdir_p(File.join(web_root, "io", "pivotal", "cities", "web"))
+        Dir.mkdir_p(File.join(domain_root, "io", "pivotal", "cities", "domain", "city", "api", "dto"))
+
+        controller = File.join(web_root, "io", "pivotal", "cities", "web", "CityController.kt")
+        dto = File.join(domain_root, "io", "pivotal", "cities", "domain", "city", "api", "dto", "CreateCityDto.kt")
+        File.write(controller, "")
+        File.write(dto, "")
+
+        imports = [
+          Noir::ImportGraph::ImportRef.new("io.pivotal.cities.domain.city.api.dto.CreateCityDto", false),
+        ]
+
+        visited = collect(controller, "io.pivotal.cities.web", imports, "kt")
+        visited.should contain(controller)
+        visited.should contain(dto)
+      end
+    end
   end
 
   describe "#resolve_relative_import" do

@@ -30,11 +30,12 @@ module NoirAIContext
   # OAS — which serialize the struct directly — show the same
   # subset the user asked for via `--ai-context=guards,sinks`.
   # `features` follows the canonical bucket names: "guards",
-  # "callee", "sinks", "validators", "signals". An empty set or
+  # "callee", "sources", "sinks", "validators", "signals". An empty set or
   # one containing every name is a no-op.
   def apply_feature_filter(endpoints : Array(Endpoint), features : Set(String))
     return endpoints if features.includes?("guards") &&
                         features.includes?("callee") &&
+                        features.includes?("sources") &&
                         features.includes?("sinks") &&
                         features.includes?("validators") &&
                         features.includes?("signals")
@@ -49,6 +50,7 @@ module NoirAIContext
       next if (context = endpoint.ai_context).nil?
       context.guards.clear unless features.includes?("guards")
       context.callees.clear unless features.includes?("callee")
+      context.sources.clear unless features.includes?("sources")
       context.sinks.clear unless features.includes?("sinks")
       context.validators.clear unless features.includes?("validators")
       context.signals.clear unless features.includes?("signals")
@@ -62,7 +64,7 @@ module NoirAIContext
   # of bucket names that should survive the filter. Empty value or
   # `"all"` means every bucket (the no-op set).
   def parse_feature_set(raw : String) : Set(String)
-    all = Set{"guards", "callee", "sinks", "validators", "signals"}
+    all = Set{"guards", "callee", "sources", "sinks", "validators", "signals"}
     return all if raw.empty?
 
     filtered = Set(String).new

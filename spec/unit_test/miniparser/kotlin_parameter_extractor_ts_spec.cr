@@ -1,4 +1,5 @@
-require "spec"
+require "../../spec_helper"
+require "../../../src/models/logger"
 require "../../../src/miniparsers/kotlin_parameter_extractor_ts"
 
 private def extract(source : String,
@@ -6,10 +7,28 @@ private def extract(source : String,
                     method_name : String,
                     verb : String,
                     parameter_format : String? = nil,
-                    fields : Hash(String, Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)) = {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo))
+                    fields : Hash(String, Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)) = {} of String => Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo),
+                    string_constants : Hash(String, String) = Hash(String, String).new,
+                    local_string_constants : Hash(String, String) = Hash(String, String).new)
   Noir::TreeSitterKotlinParameterExtractor.extract_method_parameters(
-    source, class_name, method_name, verb, parameter_format, fields
+    source, class_name, method_name, verb, parameter_format, fields, string_constants, local_string_constants
   )
+end
+
+private def extract_server_request(source : String,
+                                   class_name : String,
+                                   method_name : String,
+                                   verb : String,
+                                   fields : Hash(String, Array(Noir::TreeSitterKotlinParameterExtractor::FieldInfo)),
+                                   parameter_format : String? = nil)
+  params = [] of Param
+  Noir::TreeSitter.parse_kotlin(source) do |root|
+    method = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, source)["#{class_name}##{method_name}"]
+    params = Noir::TreeSitterKotlinParameterExtractor.extract_server_request_parameters_from_method(
+      method, source, verb, parameter_format, fields
+    )
+  end
+  params
 end
 
 describe Noir::TreeSitterKotlinParameterExtractor do
@@ -26,6 +45,99 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       params = extract(source, "C", "get", "GET")
       params.map { |p| {p.name, p.value, p.param_type} }.should eq([
         {"q", "hello", "query"},
+      ])
+    end
+
+    it "resolves Kotlin constants in explicit request parameter names" do
+      source = <<-KT
+        @RestController
+        class C {
+            @GetMapping("/x")
+            fun get(
+                @RequestParam(name = REQUEST_PAGINATION_CURSOR_QUERY) cursor: Long?,
+                @RequestParam(REQUEST_PAGINATION_LIMIT_QUERY) limit: Int?
+            ): String = ""
+        }
+        KT
+      constants = {
+        "REQUEST_PAGINATION_CURSOR_QUERY" => "cursor",
+        "REQUEST_PAGINATION_LIMIT_QUERY"  => "limit",
+      }
+
+      params = extract(source, "C", "get", "GET", string_constants: constants)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"cursor", "query"},
+        {"limit", "query"},
+      ])
+    end
+
+    it "extracts WebFlux functional ServerRequest query, header, and body DTO params" do
+      source = <<-KT
+        class Handler {
+            suspend fun create(req: ServerRequest): ServerResponse {
+                val page = req.queryParam("page")
+                val agent = req.headers().firstHeader("User-Agent")
+                val body = req.awaitBody<Post>()
+                return ok().buildAndAwait()
+            }
+
+            suspend fun patch(req: ServerRequest): ServerResponse {
+                val body = req.awaitBodyOrNull(PostPatch::class)
+                return ok().buildAndAwait()
+            }
+        }
+        KT
+      fields = {
+        "Post" => [
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("title", "public", true, ""),
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("content", "public", true, ""),
+        ],
+        "PostPatch" => [
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("status", "public", true, ""),
+        ],
+      }
+
+      create_params = extract_server_request(source, "Handler", "create", "POST", fields)
+      create_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"page", "query"},
+        {"User-Agent", "header"},
+        {"title", "json"},
+        {"content", "json"},
+      ])
+
+      patch_params = extract_server_request(source, "Handler", "patch", "PATCH", fields)
+      patch_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"status", "json"},
+      ])
+    end
+
+    it "ignores response headers and downstream client bodies in WebFlux functional handlers" do
+      source = <<-KT
+        class Handler(private val webClient: WebClient) {
+            suspend fun create(req: ServerRequest): ServerResponse {
+                val body = req.awaitBody<Post>()
+                val upstream = webClient.get()
+                    .retrieve()
+                    .bodyToMono<User>()
+                return ServerResponse.ok()
+                    .header("Cache-Control", "no-store")
+                    .buildAndAwait()
+            }
+        }
+        KT
+      fields = {
+        "Post" => [
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("title", "public", true, ""),
+        ],
+        "User" => [
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("email", "public", true, ""),
+        ],
+      }
+
+      params = extract_server_request(source, "Handler", "create", "POST", fields)
+
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"title", "json"},
       ])
     end
 
@@ -65,6 +177,32 @@ describe Noir::TreeSitterKotlinParameterExtractor do
 
       params = extract(source, "C", "show", "GET")
       params.map(&.name).should eq(["q"])
+    end
+
+    it "extracts Spring Messaging payload and header params" do
+      source = <<-KT
+        class C {
+            @MessageMapping("/chat/{roomId}")
+            fun send(
+                @DestinationVariable roomId: String,
+                @Payload message: ChatMessage,
+                @Header("simpSessionId") sessionId: String
+            ): String = ""
+        }
+        KT
+      fields = {
+        "ChatMessage" => [
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("text", "public", true, ""),
+          Noir::TreeSitterKotlinParameterExtractor::FieldInfo.new("author", "public", true, ""),
+        ],
+      }
+
+      params = extract(source, "C", "send", "POST", parameter_format: "json", fields: fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"text", "json"},
+        {"author", "json"},
+        {"simpSessionId", "header"},
+      ])
     end
 
     it "extracts @RequestHeader with name/value keyword arguments" do
@@ -128,6 +266,288 @@ describe Noir::TreeSitterKotlinParameterExtractor do
         {"title", "json"},
         {"body", "json"},
         {"slug", "json"},
+      ])
+    end
+
+    it "skips DTO fields that must be null for the active validation group" do
+      dto = <<-KT
+        package com.example
+
+        data class Article(
+            @field:Null(groups = [Validation.Create::class])
+            val id: Long? = null,
+            @field:NotBlank(groups = [Validation.Create::class, Validation.Update::class])
+            val title: String? = null,
+            @field:Null(groups = [Validation.Create::class, Validation.Update::class])
+            val createdAt: Instant? = null
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/x")
+            fun create(@Validated(Validation.Create::class) @RequestBody article: Article): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      params = extract(handler, "C", "create", "POST", fields: fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"title", "json"},
+      ])
+    end
+
+    it "skips Spring Data server-managed DTO fields" do
+      dto = <<-KT
+        package com.example
+
+        data class Article(
+            @Id
+            @GeneratedValue
+            val id: Long? = null,
+            val title: String? = null,
+            val content: String? = null,
+            @CreatedDate
+            val createdAt: Instant? = null,
+            @LastModifiedDate
+            val updatedAt: Instant? = null
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/x")
+            fun create(@RequestBody article: Article): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      fields["Article"].select(&.server_managed?).map(&.name).should eq(["id", "createdAt", "updatedAt"])
+
+      params = extract(handler, "C", "create", "POST", fields: fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"title", "json"},
+        {"content", "json"},
+      ])
+    end
+
+    it "treats Spring Data @Id-only fields as server-managed" do
+      dto = <<-KT
+        package com.example
+
+        data class Post(
+            @Id
+            val id: Long? = null,
+            val title: String? = null,
+            val content: String? = null
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/posts")
+            fun create(@RequestBody post: Post): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      fields["Post"].select(&.server_managed?).map(&.name).should eq(["id"])
+
+      params = extract(handler, "C", "create", "POST", fields: fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"title", "json"},
+        {"content", "json"},
+      ])
+    end
+
+    it "treats nullable id fields with null defaults as server-managed" do
+      dto = <<-KT
+        package com.example
+
+        data class Post(
+            val id: String? = null,
+            val title: String? = null,
+            val content: String? = null
+        )
+
+        data class ExplicitClientId(
+            val id: Int?,
+            val name: String
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/posts")
+            fun createPost(@RequestBody post: Post): String = ""
+
+            @PostMapping("/explicit")
+            fun createExplicit(@RequestBody input: ExplicitClientId): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      fields["Post"].select(&.server_managed?).map(&.name).should eq(["id"])
+      fields["ExplicitClientId"].select(&.server_managed?).map(&.name).should eq([] of String)
+
+      post_params = extract(handler, "C", "createPost", "POST", fields: fields)
+      post_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"title", "json"},
+        {"content", "json"},
+      ])
+
+      explicit_params = extract(handler, "C", "createExplicit", "POST", fields: fields)
+      explicit_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"id", "json"},
+        {"name", "json"},
+      ])
+    end
+
+    it "treats nullable ids on validated DTOs as response-only fields" do
+      dto = <<-KT
+        package com.example
+
+        data class CourseDto(
+            val id: Int?,
+            @get:NotBlank
+            val name: String,
+            @get:NotNull
+            val instructorId: Int?
+        )
+
+        data class ExplicitClientIdDto(
+            @get:NotNull
+            val id: Int?,
+            val name: String
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/courses")
+            fun createCourse(@RequestBody course: CourseDto): String = ""
+
+            @PostMapping("/explicit")
+            fun createExplicit(@RequestBody input: ExplicitClientIdDto): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      fields["CourseDto"].select(&.server_managed?).map(&.name).should eq(["id"])
+      fields["ExplicitClientIdDto"].select(&.server_managed?).map(&.name).should eq([] of String)
+
+      course_params = extract(handler, "C", "createCourse", "POST", fields: fields)
+      course_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"name", "json"},
+        {"instructorId", "json"},
+      ])
+
+      explicit_params = extract(handler, "C", "createExplicit", "POST", fields: fields)
+      explicit_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"id", "json"},
+        {"name", "json"},
+      ])
+    end
+
+    it "carries Bean Validation annotations from DTO fields to request params" do
+      dto = <<-KT
+        package com.example
+
+        data class RegisterRequest(
+            @field:NotBlank
+            val email: String,
+            @field:Email
+            @field:Size(min = 8)
+            val password: String
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/register")
+            fun register(@RequestBody request: RegisterRequest): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      params = extract(handler, "C", "register", "POST", fields: fields)
+
+      email = params.find! { |param| param.name == "email" }
+      email.tags.map { |tag| {tag.name, tag.description, tag.tagger} }.should contain({
+        "input-validation",
+        "Bean Validation constraints: @NotBlank",
+        "kotlin_spring_validation_analyzer",
+      })
+
+      password = params.find! { |param| param.name == "password" }
+      password.tags.map { |tag| {tag.name, tag.description, tag.tagger} }.should contain({
+        "input-validation",
+        "Bean Validation constraints: @Email, @Size",
+        "kotlin_spring_validation_analyzer",
+      })
+    end
+
+    it "keeps RequestBody JSON after scalar request params" do
+      dto = <<-KT
+        package com.example
+
+        data class ResetPasswordRequest(
+            @field:NotBlank
+            val newPassword: String
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/reset-password")
+            fun reset(
+                @RequestParam token: String,
+                @RequestBody request: ResetPasswordRequest
+            ): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      params = extract(handler, "C", "reset", "POST", fields: fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"token", "query"},
+        {"newPassword", "json"},
+      ])
+    end
+
+    it "treats nullable audit timestamp fields as server-managed" do
+      dto = <<-KT
+        package com.example
+
+        data class Post(
+            val title: String? = null,
+            val createdAt: LocalDate? = null,
+            val updatedAt: LocalDate? = null,
+            val deletedAt: LocalDate? = null
+        )
+        KT
+      handler = <<-KT
+        package com.example
+
+        class C {
+            @PostMapping("/posts")
+            fun create(@RequestBody post: Post): String = ""
+        }
+        KT
+
+      fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(dto)
+      fields["Post"].select(&.server_managed?).map(&.name).should eq(["createdAt", "updatedAt", "deletedAt"])
+
+      params = extract(handler, "C", "create", "POST", fields: fields)
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"title", "json"},
       ])
     end
 

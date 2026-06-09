@@ -117,9 +117,10 @@ describe "Endpoint equality" do
 
     it "dedups by (name, path)" do
       endpoint = Endpoint.new("/dup", "GET")
-      endpoint.push_callee(Callee.new("save", path: "app.py"))
-      endpoint.push_callee(Callee.new("save", path: "app.py"))
-      endpoint.push_callee(Callee.new("save", path: "other.py"))
+      endpoint.push_callee(Callee.new("save", path: "app.py", line: 10))
+      endpoint.push_callee(Callee.new("save", path: "app.py", line: 10))
+      endpoint.push_callee(Callee.new("save", path: "app.py", line: 11))
+      endpoint.push_callee(Callee.new("save", path: "other.py", line: 10))
       endpoint.callees.size.should eq 2
     end
   end

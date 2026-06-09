@@ -224,6 +224,7 @@ class OutputBuilder
     JSON::Any.new({
       "guards"     => JSON::Any.new(context.guards.map { |entry| noir_ai_context_entry_json(entry) }),
       "callees"    => JSON::Any.new(context.callees.map { |entry| noir_ai_context_entry_json(entry) }),
+      "sources"    => JSON::Any.new(context.sources.map { |entry| noir_ai_context_entry_json(entry) }),
       "sinks"      => JSON::Any.new(context.sinks.map { |entry| noir_ai_context_entry_json(entry) }),
       "validators" => JSON::Any.new(context.validators.map { |entry| noir_ai_context_entry_json(entry) }),
       "signals"    => JSON::Any.new(context.signals.map { |entry| noir_ai_context_entry_json(entry) }),
@@ -255,6 +256,7 @@ class OutputBuilder
     lines = ["Noir AI context:"]
     append_ai_context_description(lines, "guards", context.guards)
     append_ai_context_description(lines, "callees", context.callees)
+    append_ai_context_description(lines, "sources", context.sources)
     append_ai_context_description(lines, "sinks", context.sinks)
     append_ai_context_description(lines, "validators", context.validators)
     append_ai_context_description(lines, "signals", context.signals)

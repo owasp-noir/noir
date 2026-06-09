@@ -23,9 +23,10 @@ module NoirAIContext
 
     def snippet_for(path : String?, line : Int32?, radius : Int32) : String?
       return unless path && line
+      return if line < 1
 
       lines = read_lines(path)
-      return if line < 1 || line > lines.size
+      return if line > lines.size
 
       start_idx = Math.max(line - radius - 1, 0)
       end_idx = Math.min(line + radius - 1, lines.size - 1)
@@ -42,9 +43,10 @@ module NoirAIContext
 
     def route_scope_snippet_for(path : String?, line : Int32?) : String?
       return unless path && line
+      return if line < 1
 
       lines = read_lines(path)
-      return if line < 1 || line > lines.size
+      return if line > lines.size
 
       # Look back from path_line-1 for consecutive decorator /
       # annotation lines and blank lines between them. Stops at the
@@ -152,6 +154,12 @@ module NoirAIContext
       snippet = selected.join(" | ").gsub(/\s+/, " ").strip
       return if snippet.empty?
       snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
+    end
+
+    def lines_for(path : String?) : Array(String)
+      return [] of String unless path
+
+      read_lines(path).dup
     end
 
     private def read_lines(path : String) : Array(String)

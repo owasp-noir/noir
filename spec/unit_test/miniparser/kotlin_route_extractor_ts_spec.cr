@@ -174,6 +174,26 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     routes.map(&.path).should eq(["/api/article"])
   end
 
+  it "keeps same-line WebFlux functional router lambda callees" do
+    source = <<-KT
+      class RouterConfiguration {
+          fun routes(auditService: AuditService) = coRouter {
+              GET("/audit") { auditService.record(); ServerResponse.ok().build() }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/audit"},
+    ])
+    routes.first.inline_callees.map { |callee| {callee[:name], callee[:line]} }.should contain({
+      "auditService.record",
+      3,
+    })
+  end
+
   it "extracts Spring Cloud Gateway PredicateSpec helper routes" do
     source = <<-KT
       package com.example
@@ -222,6 +242,70 @@ describe Noir::TreeSitterKotlinRouteExtractor do
       {"POST", "/mcp"},
       {"GET", "/mcp"},
       {"DELETE", "/mcp"},
+    ])
+  end
+
+  it "extracts Spring WebFlux functional router routes and handler references" do
+    source = <<-KT
+      package com.example
+
+      @Configuration
+      class RouterConfiguration(private val constructorHandler: ConstructorHandler) {
+          @Bean
+          fun routes(postHandler: PostHandler) = coRouter {
+              "/posts".nest {
+                  GET("", postHandler::all)
+                  GET("/{id}", postHandler::get)
+                  POST("", postHandler::create)
+                  PUT("/{id}", postHandler::update)
+                  DELETE("/{id}", postHandler::delete)
+              }
+              GET("/constructor", constructorHandler::show)
+          }
+      }
+
+      @Component
+      class PostHandler {
+          suspend fun all(req: ServerRequest): ServerResponse = ok().buildAndAwait()
+      }
+
+      @Component
+      class ConstructorHandler {
+          suspend fun show(req: ServerRequest): ServerResponse = ok().buildAndAwait()
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.class_name, r.method_name, r.handler_reference} }.should eq([
+      {"GET", "/posts", "PostHandler", "all", "postHandler::all"},
+      {"GET", "/posts/{id}", "PostHandler", "get", "postHandler::get"},
+      {"POST", "/posts", "PostHandler", "create", "postHandler::create"},
+      {"PUT", "/posts/{id}", "PostHandler", "update", "postHandler::update"},
+      {"DELETE", "/posts/{id}", "PostHandler", "delete", "postHandler::delete"},
+      {"GET", "/constructor", "ConstructorHandler", "show", "constructorHandler::show"},
+    ])
+  end
+
+  it "ignores commented Spring WebFlux functional router calls" do
+    source = <<-KT
+      package com.example
+
+      class RouterConfiguration {
+          fun routes(postHandler: PostHandler) = coRouter {
+              // "/commented".nest {
+              //   GET("/ghost", postHandler::ghost)
+              // }
+              val documentation = "GET(\\"/string-only\\", postHandler::ghost)"
+              "/posts".nest {
+                  GET("", postHandler::all)
+              }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.handler_reference} }.should eq([
+      {"GET", "/posts", "postHandler::all"},
     ])
   end
 
@@ -300,6 +384,35 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     ])
   end
 
+  it "extracts interface routes and concrete controller implementations" do
+    source = <<-KT
+      package com.example
+
+      @RequestMapping("/api/users")
+      interface UserApi {
+          @GetMapping("/{id}")
+          fun show(@PathVariable id: String): String
+      }
+
+      @RestController
+      class UserController : UserApi {
+          override fun show(id: String): String = service.show(id)
+      }
+      KT
+
+    Noir::TreeSitter.parse_kotlin(source) do |root|
+      interface_routes = Noir::TreeSitterKotlinRouteExtractor.extract_interface_routes_from(root, source)
+      interface_routes["UserApi"].map { |r| {r.verb, r.path, r.class_name, r.method_name} }.should eq([
+        {"GET", "/api/users/{id}", "UserApi", "show"},
+      ])
+
+      implementations = Noir::TreeSitterKotlinRouteExtractor.extract_controller_interface_implementations_from(root, source)
+      implementations.map { |impl| {impl.class_name, impl.interface_names, impl.path} }.should eq([
+        {"UserController", ["UserApi"], ""},
+      ])
+    end
+  end
+
   it "recovers routes from non-abstract controllers with split constructor annotations" do
     source = <<-KT
       package com.example
@@ -332,5 +445,60 @@ describe Noir::TreeSitterKotlinRouteExtractor do
       KT
 
     Noir::TreeSitterKotlinRouteExtractor.extract_routes(source).should be_empty
+  end
+
+  it "extracts Spring GraphQL query and mutation mappings" do
+    source = <<-KT
+      package com.example
+
+      const val ARTICLE_ID_ARG = "articleId"
+
+      @Controller
+      class GraphqlController(private val service: ArticleService) {
+          @QueryMapping
+          fun article(@Argument id: String): Article = service.findArticle(id)
+
+          @MutationMapping("createArticle")
+          fun create(@Argument("input") request: CreateArticleInput): Article =
+              service.createArticle(request)
+
+          @MutationMapping
+          fun addComment(@Argument(name = ARTICLE_ID_ARG) id: String, @Argument input: CommentInput): Comment =
+              service.addComment(id, input)
+
+          @SchemaMapping
+          fun author(article: Article): User =
+              service.findAuthor(article.authorId)
+
+          @SchemaMapping("comments")
+          fun articleComments(article: Article): List<Comment> =
+              service.findComments(article.id)
+
+          @SchemaMapping(typeName = "Comment", field = "author")
+          fun commentAuthor(comment: Comment): User =
+              service.findAuthor(comment.authorId)
+      }
+      KT
+
+    Noir::TreeSitter.parse_kotlin(source) do |root|
+      routes = Noir::TreeSitterKotlinRouteExtractor.extract_graphql_routes_from(root, source)
+      routes.map do |route|
+        {
+          route.operation_keyword,
+          route.root_kind,
+          route.field_name,
+          route.class_name,
+          route.method_name,
+          route.arguments.map { |arg| {arg[:name], arg[:type]} },
+        }
+      end.should eq([
+        {"query", "Query", "article", "GraphqlController", "article", [{"id", "String"}]},
+        {"mutation", "Mutation", "createArticle", "GraphqlController", "create", [{"input", "CreateArticleInput"}]},
+        {"mutation", "Mutation", "addComment", "GraphqlController", "addComment", [{"articleId", "String"}, {"input", "CommentInput"}]},
+        {"field", "Article", "author", "GraphqlController", "author", [] of Tuple(String, String)},
+        {"field", "Article", "comments", "GraphqlController", "articleComments", [] of Tuple(String, String)},
+        {"field", "Comment", "author", "GraphqlController", "commentAuthor", [] of Tuple(String, String)},
+      ])
+    end
   end
 end

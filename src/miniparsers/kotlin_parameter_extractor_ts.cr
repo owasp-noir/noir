@@ -14,9 +14,9 @@ module Noir
   # Covered:
   #
   #   * `@PathVariable` (skipped — URL carries it)
-  #   * `@RequestBody` — defaults to "json" (or "form" via consumes=)
+  #   * `@RequestBody` / messaging `@Payload` — defaults to "json" (or "form" via consumes=)
   #   * `@RequestParam(value/name = "x", defaultValue = "y")` — query
-  #   * `@RequestHeader(value/name = "x")` — header, including
+  #   * `@RequestHeader(value/name = "x")` / messaging `@Header` — header, including
   #     `HttpHeaders.X_FOO` constant normalisation
   #   * `@CookieValue(name = "lorem", defaultValue = "ipsum")` — cookie
   #   * Primitive types (Long/Int/String/Boolean/MultipartFile) emit
@@ -87,8 +87,18 @@ module Noir
       getter access_modifier : String
       getter? has_setter : Bool
       getter init_value : String
+      getter null_validation_groups : Array(String)
+      getter? server_managed : Bool
+      getter validation_annotations : Array(String)
 
-      def initialize(@name, @access_modifier, @has_setter, @init_value)
+      def initialize(@name, @access_modifier, @has_setter, @init_value,
+                     @null_validation_groups = [] of String, @server_managed = false,
+                     @validation_annotations = [] of String)
+      end
+
+      def null_for_any_group?(groups : Array(String)) : Bool
+        return false if groups.empty? || @null_validation_groups.empty?
+        groups.any? { |group| @null_validation_groups.includes?(group) }
       end
     end
 
@@ -193,10 +203,15 @@ module Noir
                                   method_name : String,
                                   verb : String,
                                   parameter_format : String?,
-                                  class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+                                  class_fields : Hash(String, Array(FieldInfo)),
+                                  string_constants = Hash(String, String).new,
+                                  local_string_constants = Hash(String, String).new) : Array(Param)
       params = [] of Param
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        params = extract_method_parameters_from(root, source, class_name, method_name, verb, parameter_format, class_fields)
+        params = extract_method_parameters_from(
+          root, source, class_name, method_name, verb, parameter_format, class_fields,
+          string_constants, local_string_constants
+        )
       end
       params
     end
@@ -207,19 +222,60 @@ module Noir
                                        method_name : String,
                                        verb : String,
                                        parameter_format : String?,
-                                       class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+                                       class_fields : Hash(String, Array(FieldInfo)),
+                                       string_constants = Hash(String, String).new,
+                                       local_string_constants = Hash(String, String).new) : Array(Param)
       method = find_function(root, source, class_name, method_name)
       return [] of Param unless method
-      extract_method_parameters_from_method(method, source, verb, parameter_format, class_fields)
+      extract_method_parameters_from_method(
+        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants
+      )
     end
 
     def extract_method_parameters_from_method(method : LibTreeSitter::TSNode,
                                               source : String,
                                               verb : String,
                                               parameter_format : String?,
-                                              class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
-      params = collect_method_params(method, source, verb, parameter_format, class_fields)
-      append_constraint_params(method, source, verb, params)
+                                              class_fields : Hash(String, Array(FieldInfo)),
+                                              string_constants = Hash(String, String).new,
+                                              local_string_constants = Hash(String, String).new) : Array(Param)
+      params = collect_method_params(
+        method, source, verb, parameter_format, class_fields, string_constants, local_string_constants
+      )
+      append_constraint_params(method, source, verb, params, string_constants, local_string_constants)
+      params
+    end
+
+    def extract_server_request_parameters_from_method(method : LibTreeSitter::TSNode,
+                                                      source : String,
+                                                      verb : String,
+                                                      parameter_format : String?,
+                                                      class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+      params = [] of Param
+      body = Noir::TreeSitter.node_text(method, source)
+      request_names = server_request_parameter_names(body)
+      return params if request_names.empty?
+
+      request_names.each do |request_name|
+        receiver = Regex.escape(request_name)
+
+        body.scan(/\b#{receiver}\s*\.\s*queryParam\s*\(\s*"([^"]+)"/) do |match|
+          push_unique_param(params, Param.new(match[1], "", "query"))
+        end
+
+        body.scan(/\b#{receiver}\s*\.\s*headers\s*\(\s*\)\s*\.\s*firstHeader\s*\(\s*"([^"]+)"/) do |match|
+          push_unique_param(params, Param.new(match[1], "", "header"))
+        end
+
+        body.scan(/\b#{receiver}\s*\.\s*header\s*\(\s*"([^"]+)"/) do |match|
+          push_unique_param(params, Param.new(match[1], "", "header"))
+        end
+      end
+
+      body_type_names(body, request_names).each do |type_name|
+        append_body_type_params(params, type_name, verb, parameter_format, class_fields)
+      end
+
       params
     end
 
@@ -564,18 +620,34 @@ module Noir
     # in `arrayOf("a","b")`.
     private def string_values_in(node : LibTreeSitter::TSNode, source : String) : Array(String)
       sink = [] of String
-      collect_string_values(node, source, sink)
+      collect_string_values(node, source, sink, Hash(String, String).new, Hash(String, String).new)
       sink
     end
 
-    private def collect_string_values(node : LibTreeSitter::TSNode, source : String, sink : Array(String))
+    private def string_values_in(node : LibTreeSitter::TSNode,
+                                 source : String,
+                                 string_constants : Hash(String, String),
+                                 local_string_constants : Hash(String, String)) : Array(String)
+      sink = [] of String
+      collect_string_values(node, source, sink, string_constants, local_string_constants)
+      sink
+    end
+
+    private def collect_string_values(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      sink : Array(String),
+                                      string_constants : Hash(String, String),
+                                      local_string_constants : Hash(String, String))
       case Noir::TreeSitter.node_type(node)
       when "string_literal"
         text = decode_string_literal(node, source)
         sink << text unless text.empty?
+      when "simple_identifier", "navigation_expression"
+        text = resolve_string_or_const(node, source, string_constants, local_string_constants)
+        sink << text unless text.empty?
       when "collection_literal"
         Noir::TreeSitter.each_named_child(node) do |elem|
-          collect_string_values(elem, source, sink)
+          collect_string_values(elem, source, sink, string_constants, local_string_constants)
         end
       when "call_expression"
         Noir::TreeSitter.each_named_child(node) do |child|
@@ -585,7 +657,7 @@ module Noir
               Noir::TreeSitter.each_named_child(suf) do |va|
                 next unless Noir::TreeSitter.node_type(va) == "value_argument"
                 Noir::TreeSitter.each_named_child(va) do |v|
-                  collect_string_values(v, source, sink)
+                  collect_string_values(v, source, sink, string_constants, local_string_constants)
                 end
               end
             end
@@ -609,6 +681,8 @@ module Noir
 
     private def collect_class_fields(decl : LibTreeSitter::TSNode, source : String) : Array(FieldInfo)
       fields = [] of FieldInfo
+      class_name = type_identifier_text(decl, source)
+      class_text = Noir::TreeSitter.node_text(decl, source)
 
       # 1. Primary constructor `class_parameter`s.
       if pc = primary_constructor_of(decl)
@@ -635,7 +709,10 @@ module Noir
             end
           end
           next if name.empty?
-          fields << FieldInfo.new(name, "public", true, init)
+          fields << FieldInfo.new(
+            name, "public", true, init, null_validation_groups(param, source),
+            server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source)
+          )
         end
       end
 
@@ -677,7 +754,10 @@ module Noir
               end
             end
             next if name.empty?
-            fields << FieldInfo.new(name, "public", true, init)
+            fields << FieldInfo.new(
+              name, "public", true, init, null_validation_groups(member, source),
+              server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source)
+            )
             last_prop_name = name
           else
             last_prop_name = nil
@@ -699,13 +779,97 @@ module Noir
       false
     end
 
+    private def null_validation_groups(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      text = Noir::TreeSitter.node_text(node, source)
+      groups = [] of String
+
+      text.scan(/@field:Null\s*\([^)]*groups\s*=\s*\[([^\]]+)\]/m) do |match|
+        collect_validation_group_names(match[1], groups)
+      end
+      text.scan(/@field:Null\s*\([^)]*groups\s*=\s*([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class/m) do |match|
+        add_validation_group_name(groups, match[1])
+      end
+
+      groups.uniq
+    end
+
+    private def validation_annotations(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      validation_annotations(Noir::TreeSitter.node_text(node, source))
+    end
+
+    private def validation_annotations(text : String) : Array(String)
+      annotations = [] of String
+
+      text.scan(/@(?:field:|get:|set:)?(?:[A-Za-z_][A-Za-z0-9_]*\.)*(NotBlank|NotEmpty|NotNull|Email|Size|Pattern|Min|Max|Positive|PositiveOrZero|Negative|NegativeOrZero|Past|PastOrPresent|Future|FutureOrPresent)\b/) do |match|
+        annotations << "@#{match[1]}"
+      end
+
+      annotations.uniq
+    end
+
+    private def server_managed_field?(node : LibTreeSitter::TSNode,
+                                      source : String,
+                                      name : String,
+                                      init : String,
+                                      class_name : String,
+                                      class_text : String) : Bool
+      text = Noir::TreeSitter.node_text(node, source)
+      return true if text.match(/@(?:field:|get:|set:)?(?:[A-Za-z_][A-Za-z0-9_]*\.)*(?:Id|GeneratedValue|CreatedDate|LastModifiedDate|ReadOnlyProperty|JsonIgnore)\b/)
+      return true if nullable_default_id_field?(name, text, init)
+      return true if nullable_validated_dto_id_field?(name, text, class_name, class_text)
+
+      audit_field?(name) && (init == "null" || !!text.match(/=\s*null\b/))
+    end
+
+    private def nullable_default_id_field?(name : String, text : String, init : String) : Bool
+      name == "id" && (init == "null" || !!text.match(/=\s*null\b/)) &&
+        !!text.match(/\b(?:val|var)\s+id\s*:\s*[^=]+?\?\s*=\s*null\b/)
+    end
+
+    private def nullable_validated_dto_id_field?(name : String, text : String, class_name : String, class_text : String) : Bool
+      return false unless name == "id"
+      return false unless class_name.ends_with?("Dto") || class_name.ends_with?("DTO")
+      return false unless text.match(/\b(?:val|var)\s+id\s*:\s*[^=]+?\?/)
+      return false unless validation_annotations(text).empty?
+
+      !validation_annotations(class_text).empty?
+    end
+
+    private def audit_field?(name : String) : Bool
+      {"createdAt", "updatedAt", "deletedAt"}.includes?(name)
+    end
+
+    private def active_validation_groups(modifiers : LibTreeSitter::TSNode?, source : String) : Array(String)
+      return [] of String unless modifiers
+
+      groups = [] of String
+      Noir::TreeSitter.node_text(modifiers, source).scan(/@(?:field:)?Validated\s*\(\s*([^)]+)\)/m) do |match|
+        collect_validation_group_names(match[1], groups)
+      end
+      groups.uniq
+    end
+
+    private def collect_validation_group_names(text : String, groups : Array(String))
+      text.scan(/([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class/) do |match|
+        add_validation_group_name(groups, match[1])
+      end
+    end
+
+    private def add_validation_group_name(groups : Array(String), raw_name : String)
+      name = raw_name.split('.').last
+      return if name.empty? || groups.includes?(name)
+      groups << name
+    end
+
     # ---- formal parameter walk ---------------------------------------
 
     private def collect_method_params(method : LibTreeSitter::TSNode,
                                       source : String,
                                       verb : String,
                                       parameter_format : String?,
-                                      class_fields : Hash(String, Array(FieldInfo))) : Array(Param)
+                                      class_fields : Hash(String, Array(FieldInfo)),
+                                      string_constants : Hash(String, String),
+                                      local_string_constants : Hash(String, String)) : Array(Param)
       params = [] of Param
       fparams = function_value_parameters(method)
       return params unless fparams
@@ -718,7 +882,10 @@ module Noir
         when "parameter_modifiers"
           pending_modifiers = child
         when "parameter"
-          current_format = emit_param_for(child, pending_modifiers, source, verb, current_format, class_fields, params)
+          current_format = emit_param_for(
+            child, pending_modifiers, source, verb, current_format, class_fields, params,
+            string_constants, local_string_constants
+          )
           pending_modifiers = nil
         end
       end
@@ -740,7 +907,9 @@ module Noir
                                verb : String,
                                parameter_format : String?,
                                class_fields : Hash(String, Array(FieldInfo)),
-                               sink : Array(Param)) : String?
+                               sink : Array(Param),
+                               string_constants : Hash(String, String),
+                               local_string_constants : Hash(String, String)) : String?
       arg_name = ""
       type_name = ""
       Noir::TreeSitter.each_named_child(param) do |child|
@@ -759,17 +928,18 @@ module Noir
       ann_kind = nil
       ann_node : LibTreeSitter::TSNode? = nil
       injected_param = false
+      validation_groups = active_validation_groups(modifiers, source)
       if modifiers
         Noir::TreeSitter.each_named_child(modifiers) do |ann|
           next unless Noir::TreeSitter.node_type(ann) == "annotation"
           name = annotation_simple_name(ann, source)
           injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(name)
           case name
-          when "PathVariable"
+          when "PathVariable", "DestinationVariable"
             ann_kind = :path
             ann_node = ann
             break
-          when "RequestBody"
+          when "RequestBody", "Payload"
             ann_kind = :body
             ann_node = ann
             break
@@ -777,7 +947,7 @@ module Noir
             ann_kind = :query
             ann_node = ann
             break
-          when "RequestHeader"
+          when "RequestHeader", "Header", "Headers"
             ann_kind = :header
             ann_node = ann
             break
@@ -807,7 +977,7 @@ module Noir
         # applied per-parameter below, NOT pre-seeded into parameter_format,
         # so a @RequestBody on a POST still resolves to json rather than
         # being dragged along as form.
-        effective_format = effective_format.nil? ? "json" : effective_format
+        effective_format = request_body_format(effective_format)
       when :query
         effective_format = "query"
       when :header
@@ -838,13 +1008,11 @@ module Noir
           kind, key, value = classify_value_argument(arg, source)
           next unless value
           if kind == :positional
-            if Noir::TreeSitter.node_type(value) == "string_literal"
-              parameter_name = decode_string_literal(value, source)
-            end
+            parameter_name = resolve_string_or_const(value, source, string_constants, local_string_constants)
           else
             case key
             when "value", "name"
-              parameter_name = resolve_string_or_const(value, source)
+              parameter_name = resolve_string_or_const(value, source, string_constants, local_string_constants)
             when "defaultValue"
               if Noir::TreeSitter.node_type(value) == "string_literal"
                 default_value = decode_string_literal(value, source)
@@ -870,9 +1038,11 @@ module Noir
         elsif fields = class_fields[type_name]?
           json_body = effective_format == "json"
           fields.each do |field|
+            next if field.server_managed?
+            next if field.null_for_any_group?(validation_groups)
             next unless json_body || field.access_modifier == "public" || field.has_setter?
             expanded_default = default_value || field.init_value
-            sink << Param.new(field.name, expanded_default, effective_format)
+            sink << param_from_field(field, expanded_default, effective_format)
           end
         end
       end
@@ -886,6 +1056,13 @@ module Noir
       ann_kind == :body ? parameter_format : effective_format
     end
 
+    private def request_body_format(parameter_format : String?) : String
+      return "json" if parameter_format.nil?
+      return "json" if {"query", "header", "cookie"}.includes?(parameter_format)
+
+      parameter_format
+    end
+
     # True when `type_name` is a scalar Spring binds from a single
     # request value. `type_name` is the leaf type identifier resolved by
     # `leaf_type_name`, so a `List<Long>` parameter already reduces to
@@ -893,6 +1070,78 @@ module Noir
     # site (annotated request params emit by name regardless of type).
     private def simple_bindable_param?(type_name : String) : Bool
       PRIMITIVE_TYPES.includes?(type_name.downcase)
+    end
+
+    private def server_request_parameter_names(body : String) : Array(String)
+      names = [] of String
+      if match = body.match(/\bfun\s+[A-Za-z_][A-Za-z0-9_]*\s*\((.*?)\)/m)
+        match[1].scan(/\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(?:[A-Za-z_][A-Za-z0-9_.]*\.)?ServerRequest\b/) do |param_match|
+          names << param_match[1]
+        end
+      end
+
+      names.uniq
+    end
+
+    private def body_type_names(body : String, request_names : Array(String)? = nil) : Array(String)
+      names = [] of String
+      receiver = request_names && !request_names.empty? ? "(?:#{request_names.map { |name| Regex.escape(name) }.join("|")})" : nil
+      prefix = receiver ? "\\b#{receiver}\\s*" : ""
+
+      body.scan(/#{prefix}\.\s*(?:awaitBody|bodyToMono)\s*<\s*([A-Za-z_][A-Za-z0-9_.]*)\s*>/) do |match|
+        add_type_name(names, match[1])
+      end
+
+      body.scan(/#{prefix}\.\s*awaitBodyOrNull\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class/) do |match|
+        add_type_name(names, match[1])
+      end
+
+      body.scan(/#{prefix}\.\s*bodyToMono\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class(?:\.java)?/) do |match|
+        add_type_name(names, match[1])
+      end
+
+      names
+    end
+
+    private def add_type_name(names : Array(String), raw_name : String)
+      name = raw_name.split('.').last
+      return if name.empty? || names.includes?(name)
+      names << name
+    end
+
+    private def append_body_type_params(params : Array(Param),
+                                        type_name : String,
+                                        verb : String,
+                                        parameter_format : String?,
+                                        class_fields : Hash(String, Array(FieldInfo)))
+      return unless {"POST", "PUT", "PATCH"}.includes?(verb.upcase)
+
+      format = parameter_format || "json"
+      if fields = class_fields[type_name]?
+        fields.each do |field|
+          next if field.server_managed?
+          push_unique_param(params, param_from_field(field, field.init_value, format))
+        end
+      elsif simple_bindable_param?(type_name)
+        push_unique_param(params, Param.new("body", "", format))
+      end
+    end
+
+    private def param_from_field(field : FieldInfo, value : String, param_type : String) : Param
+      param = Param.new(field.name, value, param_type)
+      unless field.validation_annotations.empty?
+        param.add_tag(Tag.new(
+          "input-validation",
+          "Bean Validation constraints: #{field.validation_annotations.join(", ")}",
+          "kotlin_spring_validation_analyzer"
+        ))
+      end
+      param
+    end
+
+    private def push_unique_param(params : Array(Param), param : Param)
+      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+      params << param
     end
 
     private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String
@@ -928,13 +1177,21 @@ module Noir
       ""
     end
 
-    # `value = "x"` literal or `value = HttpHeaders.X_FOO` constant.
-    private def resolve_string_or_const(value : LibTreeSitter::TSNode, source : String) : String
+    # `value = "x"` literal, local/shared Kotlin constants, or
+    # `value = HttpHeaders.X_FOO` constants.
+    private def resolve_string_or_const(value : LibTreeSitter::TSNode,
+                                        source : String,
+                                        string_constants : Hash(String, String),
+                                        local_string_constants : Hash(String, String)) : String
       case Noir::TreeSitter.node_type(value)
       when "string_literal"
         decode_string_literal(value, source)
+      when "simple_identifier"
+        name = Noir::TreeSitter.node_text(value, source)
+        local_string_constants[name]? || string_constants[name]? || name
       when "navigation_expression"
-        normalise_http_header_constant(Noir::TreeSitter.node_text(value, source))
+        text = Noir::TreeSitter.node_text(value, source)
+        local_string_constants[text]? || string_constants[text]? || normalise_http_header_constant(text)
       else
         Noir::TreeSitter.node_text(value, source)
       end
@@ -956,7 +1213,9 @@ module Noir
     private def append_constraint_params(method : LibTreeSitter::TSNode,
                                          source : String,
                                          verb : String,
-                                         sink : Array(Param))
+                                         sink : Array(Param),
+                                         string_constants : Hash(String, String),
+                                         local_string_constants : Hash(String, String))
       ann = mapping_annotation_on(method, source)
       return unless ann
       args = annotation_args(ann)
@@ -975,13 +1234,13 @@ module Noir
           # supply `verb` of the first method so all expansions share
           # one format (mirrors the legacy `||=` quirk).
           format = QUERY_VERB_PARAMS.includes?(verb.upcase) ? "query" : "form"
-          string_values_in(value, source).each do |raw|
+          string_values_in(value, source, string_constants, local_string_constants).each do |raw|
             name, default = split_constraint(raw)
             next if name.empty?
             sink << Param.new(name, default, format)
           end
         when "headers"
-          string_values_in(value, source).each do |raw|
+          string_values_in(value, source, string_constants, local_string_constants).each do |raw|
             name, default = split_constraint(raw)
             next if name.empty?
             sink << Param.new(name, default, "header")

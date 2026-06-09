@@ -144,6 +144,107 @@ describe "SpringSecurityTagger" do
 
       tag_named(endpoint, "input-validation").should be_nil
     end
+
+    it "does not apply class-level @Validated to handlers without parameters" do
+      source = <<-JAVA
+        package com.example;
+        import org.springframework.validation.annotation.Validated;
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @Validated
+        @RestController
+        public class ValidatedController {
+          @GetMapping("/health")
+          public String health() {
+            return "ok";
+          }
+        }
+        JAVA
+
+      path = File.join(Dir.tempdir, "ValidatedController-#{Process.pid}-#{Time.utc.to_unix_ms}.java")
+      begin
+        File.write(path, source)
+        CodeLocator.instance.push("file_map", path)
+        endpoint = build_endpoint(path, 9, "/health", "GET")
+
+        SpringSecurityTagger.new(global_options).perform([endpoint])
+
+        tag_named(endpoint, "input-validation").should be_nil
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "keeps class-level @Validated when the endpoint has parameters" do
+      source = <<-JAVA
+        package com.example;
+        import org.springframework.validation.annotation.Validated;
+        import org.springframework.web.bind.annotation.GetMapping;
+        import org.springframework.web.bind.annotation.RequestParam;
+        import org.springframework.web.bind.annotation.RestController;
+
+        @Validated
+        @RestController
+        public class ValidatedController {
+          @GetMapping("/search")
+          public String search(@RequestParam String q) {
+            return q;
+          }
+        }
+        JAVA
+
+      path = File.join(Dir.tempdir, "ValidatedController-#{Process.pid}-#{Time.utc.to_unix_ms}.java")
+      begin
+        File.write(path, source)
+        CodeLocator.instance.push("file_map", path)
+        endpoint = build_endpoint(path, 10, "/search", "GET")
+        endpoint.push_param(Param.new("q", "", "query"))
+
+        SpringSecurityTagger.new(global_options).perform([endpoint])
+
+        tag_named(endpoint, "input-validation").should_not be_nil
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "does not let the next Kotlin expression-bodied handler's @Valid leak into a parameterless handler" do
+      source = <<-KOTLIN
+        package com.example
+        import jakarta.validation.Valid
+        import org.springframework.web.bind.annotation.GetMapping
+        import org.springframework.web.bind.annotation.PostMapping
+        import org.springframework.web.bind.annotation.RequestBody
+        import org.springframework.web.bind.annotation.RestController
+
+        @RestController
+        class ArticleController {
+          @GetMapping("/articles")
+          fun getAllArticles(): List<String> =
+            listOf("one")
+
+          @PostMapping("/articles")
+          fun createArticle(@Valid @RequestBody article: Article): Article =
+            article
+        }
+        KOTLIN
+
+      path = File.join(Dir.tempdir, "ArticleController-#{Process.pid}-#{Time.utc.to_unix_ms}.kt")
+      begin
+        File.write(path, source)
+        CodeLocator.instance.push("file_map", path)
+        list_endpoint = build_endpoint(path, 10, "/articles", "GET")
+        create_endpoint = build_endpoint(path, 14, "/articles", "POST")
+
+        SpringSecurityTagger.new(global_options).perform([list_endpoint, create_endpoint])
+
+        tag_named(list_endpoint, "input-validation").should be_nil
+        tag_named(create_endpoint, "input-validation").should_not be_nil
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
   end
 
   it "applies multiple independent tags to one handler" do
@@ -232,6 +333,48 @@ describe "SpringSecurityTagger" do
       SpringSecurityTagger.new(extras_options).perform([endpoint])
 
       tag_named(endpoint, "cors").should be_nil
+    end
+  end
+
+  describe "cors via WebSocket/STOMP config" do
+    it "flags a permissive addEndpoint wildcard by handshake URL" do
+      source = <<-KOTLIN
+        package com.example
+        import org.springframework.context.annotation.Configuration
+        import org.springframework.web.socket.config.annotation.StompEndpointRegistry
+        import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer
+
+        @Configuration
+        class WebSocketConfig : WebSocketMessageBrokerConfigurer {
+          override fun registerStompEndpoints(registry: StompEndpointRegistry) {
+            registry.addEndpoint("/ws", "/portfolio")
+              .setAllowedOrigins("*")
+              .withSockJS()
+          }
+        }
+        KOTLIN
+
+      dir = File.join(Dir.tempdir, "spring-websocket-cors-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      path = File.join(dir, "WebSocketConfig.kt")
+      begin
+        Dir.mkdir_p(dir)
+        File.write(path, source)
+        CodeLocator.instance.push("file_map", path)
+
+        options = create_test_options
+        options["base"] = YAML::Any.new(dir)
+        endpoint = build_endpoint(path, nil, "/portfolio", "GET")
+
+        SpringSecurityTagger.new(options).perform([endpoint])
+
+        tag = tag_named(endpoint, "cors")
+        tag.should_not be_nil
+        tag.not_nil!.description.should contain("WebSocket/STOMP endpoint config")
+        tag.not_nil!.description.should contain("addEndpoint(\"/portfolio\")")
+      ensure
+        File.delete(path) if File.exists?(path)
+        Dir.delete(dir) if Dir.exists?(dir)
+      end
     end
   end
 end

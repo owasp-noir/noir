@@ -10,14 +10,13 @@ module Analyzer::Specification
       if postman_files.is_a?(Array(String))
         postman_files.each do |postman_file|
           if File.exists?(postman_file)
-            details = Details.new(PathInfo.new(postman_file))
             content = File.read(postman_file, encoding: "utf-8", invalid: :skip)
             json_obj = JSON.parse(content)
 
             begin
               # Process items (requests) in the collection
               if json_obj["item"]?
-                process_items(json_obj["item"], details, collect_variables(json_obj["variable"]?))
+                process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?))
               end
             rescue e
               @logger.debug "Exception processing #{postman_file}"
@@ -30,7 +29,7 @@ module Analyzer::Specification
       @result
     end
 
-    private def process_items(items, details, variables : Hash(String, String), folder_path = "")
+    private def process_items(items, source_path : String, variables : Hash(String, String), folder_path = "")
       item_array = items.as_a?
       return unless item_array
 
@@ -43,10 +42,10 @@ module Analyzer::Specification
             # It's a folder, recurse into it
             folder_name = item["name"]?.try(&.to_s) || ""
             new_path = folder_path.empty? ? folder_name : "#{folder_path}/#{folder_name}"
-            process_items(item["item"], details, item_variables, new_path)
+            process_items(item["item"], source_path, item_variables, new_path)
           elsif item["request"]?
             # It's a request, process it
-            process_request(item, details, item_variables)
+            process_request(item, source_path, item_variables)
           end
         rescue e
           @logger.debug "Exception processing item"
@@ -55,7 +54,7 @@ module Analyzer::Specification
       end
     end
 
-    private def process_request(item, details, variables : Hash(String, String))
+    private def process_request(item, source_path : String, variables : Hash(String, String))
       request = item["request"]
 
       if request_url = request.as_s?
@@ -64,7 +63,7 @@ module Analyzer::Specification
         url_path = extract_path_from_url(resolved_url)
         extract_query_params(resolved_url).each { |param| add_param(params, param) }
         extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
-        @result << Endpoint.new(url_path, "GET", params, details) unless url_path.empty?
+        @result << Endpoint.new(url_path, "GET", params, Details.new(PathInfo.new(source_path))) unless url_path.empty?
         return
       end
 
@@ -166,7 +165,7 @@ module Analyzer::Specification
 
       # Create endpoint
       if !url_path.empty?
-        @result << Endpoint.new(url_path, method, params, details)
+        @result << Endpoint.new(url_path, method, params, Details.new(PathInfo.new(source_path)))
       end
     rescue e
       @logger.debug "Exception processing request"

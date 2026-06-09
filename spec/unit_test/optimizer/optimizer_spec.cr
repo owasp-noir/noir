@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../spec_helper"
 require "../../../src/optimizer/optimizer"
 require "../../../src/models/endpoint"
@@ -63,6 +64,452 @@ describe "EndpointOptimizer" do
       result = optimizer.optimize_endpoints(endpoints)
       result.size.should eq(1)
       result[0].method.should eq("GET")
+    end
+
+    it "merges callees and code paths from duplicated endpoints" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      interface_endpoint = Endpoint.new(
+        "/api/users", "GET", Details.new(PathInfo.new("UserApi.kt", 10))
+      )
+      implementation_endpoint = Endpoint.new(
+        "/api/users", "GET", Details.new(PathInfo.new("UserController.kt", 20))
+      )
+      implementation_endpoint.push_callee(Callee.new("service.list", path: "UserController.kt", line: 21))
+
+      result = optimizer.optimize_endpoints([interface_endpoint, implementation_endpoint])
+
+      result.size.should eq(1)
+      result[0].callees.map(&.name).should eq(["service.list"])
+      result[0].details.code_paths.map(&.path).should eq(["UserApi.kt", "UserController.kt"])
+    end
+
+    it "keeps identical endpoints from separate build modules distinct" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      module_a = File.join(temp_dir, "data-r2dbc")
+      module_b = File.join(temp_dir, "webclient")
+      controller_a = File.join(module_a, "src/main/kotlin/com/example/demo/PostController.kt")
+      controller_b = File.join(module_b, "src/main/kotlin/com/example/demo/PostController.kt")
+
+      begin
+        Dir.mkdir_p(File.dirname(controller_a))
+        Dir.mkdir_p(File.dirname(controller_b))
+        File.write(File.join(module_a, "pom.xml"), "<project></project>")
+        File.write(File.join(module_b, "pom.xml"), "<project></project>")
+        File.write(controller_a, "class PostController")
+        File.write(controller_b, "class PostController")
+
+        endpoint_a = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_a, 12)))
+        endpoint_b = Endpoint.new("/posts", "GET", Details.new(PathInfo.new(controller_b, 18)))
+        endpoint_a.details.technology = "kotlin_spring"
+        endpoint_b.details.technology = "kotlin_spring"
+        endpoint_a.push_callee(Callee.new("postRepository.findAll", path: controller_a, line: 13))
+        endpoint_b.push_callee(Callee.new("client.get", path: controller_b, line: 19))
+
+        result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
+
+        result.size.should eq(2)
+        result.map(&.details.code_paths.size).should eq([1, 1])
+        result.flat_map(&.callees.map(&.name)).sort!.should eq(["client.get", "postRepository.findAll"])
+      ensure
+        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+      end
+    end
+
+    it "merges duplicated Kotlin Spring static assets from separate build modules" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-static-modules-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      module_a = File.join(temp_dir, "webflux")
+      module_b = File.join(temp_dir, "r2dbc")
+      static_a = File.join(module_a, "src/main/resources/static/css/style.css")
+      static_b = File.join(module_b, "src/main/resources/static/css/style.css")
+
+      begin
+        Dir.mkdir_p(File.dirname(static_a))
+        Dir.mkdir_p(File.dirname(static_b))
+        File.write(File.join(module_a, "build.gradle.kts"), "plugins {}")
+        File.write(File.join(module_b, "build.gradle.kts"), "plugins {}")
+        File.write(static_a, "body{}")
+        File.write(static_b, "body{}")
+
+        endpoint_a = Endpoint.new("/css/style.css", "GET", Details.new(PathInfo.new(static_a)))
+        endpoint_b = Endpoint.new("/css/style.css", "GET", Details.new(PathInfo.new(static_b)))
+        endpoint_a.details.technology = "kotlin_spring"
+        endpoint_b.details.technology = "kotlin_spring"
+
+        result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
+
+        result.size.should eq(1)
+        result[0].details.code_paths.map(&.path).should eq([static_a, static_b])
+      ensure
+        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+      end
+    end
+
+    it "still merges a scoped Kotlin Spring endpoint with the same endpoint from a collection" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-cross-tech-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      module_dir = File.join(temp_dir, "api")
+      controller_path = File.join(module_dir, "src/main/kotlin/com/example/TagController.kt")
+      collection_path = File.join(temp_dir, "insomnia.yml")
+
+      begin
+        Dir.mkdir_p(File.dirname(controller_path))
+        File.write(File.join(module_dir, "pom.xml"), "<project></project>")
+        File.write(controller_path, "class TagController")
+        File.write(collection_path, "_type: export")
+
+        kotlin_endpoint = Endpoint.new(
+          "/v1/tags", "GET", [Param.new("limit", "", "query")],
+          Details.new(PathInfo.new(controller_path, 10))
+        )
+        kotlin_endpoint.details.technology = "kotlin_spring"
+        kotlin_endpoint.push_callee(Callee.new("tagService.list", path: controller_path, line: 11))
+
+        collection_details = Details.new(PathInfo.new(collection_path, 1))
+        collection_details.technology = "insomnia"
+        collection_endpoint = Endpoint.new(
+          "/v1/tags", "GET", [Param.new("User-Agent", "", "header")],
+          collection_details
+        )
+
+        result = optimizer.optimize_endpoints([collection_endpoint, kotlin_endpoint])
+
+        result.size.should eq(1)
+        result[0].params.map { |param| "#{param.name}:#{param.param_type}" }.sort!.should eq(["limit:query"])
+        result[0].callees.map(&.name).should eq(["tagService.list"])
+        result[0].details.code_paths.map(&.path).should eq([controller_path, collection_path])
+      ensure
+        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+      end
+    end
+
+    it "merges Postman colon path templates with Kotlin Spring brace templates" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-postman-colon-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      module_dir = File.join(temp_dir, "api")
+      controller_path = File.join(module_dir, "src/main/kotlin/com/example/ArticleController.kt")
+      collection_path = File.join(temp_dir, "postman.json")
+
+      begin
+        Dir.mkdir_p(File.dirname(controller_path))
+        File.write(File.join(module_dir, "build.gradle.kts"), "plugins {}")
+        File.write(controller_path, "class ArticleController")
+        File.write(collection_path, "{}")
+
+        kotlin_endpoint = Endpoint.new(
+          "/articles/{slug}", "GET", [Param.new("slug", "", "path")],
+          Details.new(PathInfo.new(controller_path, 23))
+        )
+        kotlin_endpoint.details.technology = "kotlin_spring"
+        kotlin_endpoint.push_callee(Callee.new("articleService.findBySlug", path: controller_path, line: 24))
+
+        collection_details = Details.new(PathInfo.new(collection_path, 1))
+        collection_details.technology = "postman"
+        collection_endpoint = Endpoint.new("/articles/:slug", "GET", collection_details)
+
+        result = optimizer.optimize_endpoints([kotlin_endpoint, collection_endpoint])
+
+        result.size.should eq(1)
+        result[0].url.should eq("/articles/{slug}")
+        result[0].params.map { |param| "#{param.name}:#{param.param_type}" }.should eq(["slug:path"])
+        result[0].callees.map(&.name).should eq(["articleService.findBySlug"])
+        result[0].details.code_paths.map(&.path).should eq([controller_path, collection_path])
+      ensure
+        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+      end
+    end
+
+    it "promotes source context when a collection duplicate is seen before Kotlin Spring" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      controller_path = "TagController.kt"
+      collection_path = "insomnia.json"
+
+      collection_details = Details.new(PathInfo.new(collection_path, 1))
+      collection_details.technology = "insomnia"
+      collection_endpoint = Endpoint.new(
+        "/v1/tags", "GET", [Param.new("User-Agent", "", "header")],
+        collection_details
+      )
+
+      kotlin_details = Details.new(PathInfo.new(controller_path, 27))
+      kotlin_details.technology = "kotlin_spring"
+      kotlin_endpoint = Endpoint.new(
+        "/v1/tags", "GET", [Param.new("limit", "", "query")],
+        kotlin_details
+      )
+      kotlin_endpoint.push_callee(Callee.new("tagService.findWithPagination", path: controller_path, line: 28))
+
+      result = optimizer.optimize_endpoints([collection_endpoint, kotlin_endpoint])
+
+      result.size.should eq(1)
+      result[0].details.technology.should eq("kotlin_spring")
+      result[0].details.code_paths.map(&.path).should eq([controller_path, collection_path])
+      result[0].callees.map(&.name).should eq(["tagService.findWithPagination"])
+      result[0].params.map { |param| "#{param.name}:#{param.param_type}" }.sort!.should eq(["limit:query"])
+    end
+
+    it "keeps meaningful collection headers when merging with source endpoints" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      controller_path = "TagController.kt"
+      collection_path = "postman.json"
+
+      kotlin_details = Details.new(PathInfo.new(controller_path, 27))
+      kotlin_details.technology = "kotlin_spring"
+      kotlin_endpoint = Endpoint.new(
+        "/v1/tags", "GET", [Param.new("limit", "", "query")],
+        kotlin_details
+      )
+
+      collection_details = Details.new(PathInfo.new(collection_path, 1))
+      collection_details.technology = "postman"
+      collection_endpoint = Endpoint.new(
+        "/v1/tags", "GET", [
+        Param.new("User-Agent", "PostmanRuntime", "header"),
+        Param.new("Authorization", "Bearer token", "header"),
+        Param.new("X-Tenant", "demo", "header"),
+      ],
+        collection_details
+      )
+
+      result = optimizer.optimize_endpoints([kotlin_endpoint, collection_endpoint])
+
+      result.size.should eq(1)
+      result[0].params.map { |param| "#{param.name}:#{param.param_type}" }.sort!.should eq([
+        "Authorization:header",
+        "X-Tenant:header",
+        "limit:query",
+      ])
+    end
+
+    it "drops body-less collection GraphQL transport placeholders when operation endpoints exist" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      collection_details = Details.new(PathInfo.new("insomnia.json", 1))
+      collection_details.technology = "insomnia"
+      transport = Endpoint.new(
+        "/graphql", "POST", [Param.new("User-Agent", "insomnia/8.5.1", "header")],
+        collection_details
+      )
+
+      operation_details = Details.new(PathInfo.new("schema.graphqls", 2))
+      operation_details.technology = "graphql_sdl"
+      operation = Endpoint.new(
+        "/graphql#Query.books", "POST",
+        [Param.new("graphql_query_books", "query { books }", "json")],
+        operation_details
+      )
+      operation.add_tag(Tag.new("graphql", "Query.books", "graphql_sdl_analyzer"))
+
+      result = optimizer.optimize_endpoints([transport, operation])
+
+      result.map(&.url).should eq(["/graphql#Query.books"])
+    end
+
+    it "keeps collection GraphQL transport endpoints with meaningful body or auth context" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      body_details = Details.new(PathInfo.new("insomnia.json", 1))
+      body_details.technology = "insomnia"
+      body_transport = Endpoint.new(
+        "/graphql", "POST", [Param.new("query", "query { books }", "json")],
+        body_details
+      )
+
+      auth_details = Details.new(PathInfo.new("postman.json", 1))
+      auth_details.technology = "postman"
+      auth_transport = Endpoint.new(
+        "/api/graphql", "POST", [Param.new("Authorization", "Bearer token", "header")],
+        auth_details
+      )
+
+      operation_details = Details.new(PathInfo.new("schema.graphqls", 2))
+      operation_details.technology = "graphql_sdl"
+      operation = Endpoint.new(
+        "/graphql#Query.books", "POST",
+        [Param.new("graphql_query_books", "query { books }", "json")],
+        operation_details
+      )
+
+      api_operation_details = Details.new(PathInfo.new("ArticleController.kt", 12))
+      api_operation_details.technology = "kotlin_spring"
+      api_operation = Endpoint.new(
+        "/api/graphql#Query.article", "POST",
+        [Param.new("graphql_query_article", "query { article }", "json")],
+        api_operation_details
+      )
+
+      result = optimizer.optimize_endpoints([body_transport, auth_transport, operation, api_operation])
+
+      result.map(&.url).sort!.should eq([
+        "/api/graphql",
+        "/api/graphql#Query.article",
+        "/graphql",
+        "/graphql#Query.books",
+      ])
+    end
+
+    it "merges collection concrete examples into Kotlin Spring templates without swallowing static routes" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      controller_path = "TagController.kt"
+      collection_path = "insomnia.json"
+
+      template_endpoint = Endpoint.new(
+        "/v1/tags/{id}", "GET", [Param.new("id", "", "path")],
+        Details.new(PathInfo.new(controller_path, 30))
+      )
+      template_endpoint.details.technology = "kotlin_spring"
+      template_endpoint.push_callee(Callee.new("tagService.findById", path: controller_path, line: 31))
+
+      count_endpoint = Endpoint.new(
+        "/v1/tags/count", "GET", [] of Param,
+        Details.new(PathInfo.new(controller_path, 20))
+      )
+      count_endpoint.details.technology = "kotlin_spring"
+
+      example_details = Details.new(PathInfo.new(collection_path, 1))
+      example_details.technology = "insomnia"
+      example_endpoint = Endpoint.new(
+        "/v1/tags/1", "GET", [Param.new("User-Agent", "", "header")],
+        example_details
+      )
+
+      count_collection_details = Details.new(PathInfo.new(collection_path, 2))
+      count_collection_details.technology = "insomnia"
+      count_collection_endpoint = Endpoint.new(
+        "/v1/tags/count", "GET", [Param.new("User-Agent", "", "header")],
+        count_collection_details
+      )
+
+      result = optimizer.optimize_endpoints([
+        example_endpoint,
+        count_collection_endpoint,
+        template_endpoint,
+        count_endpoint,
+      ])
+
+      result.map(&.url).sort!.should eq(["/v1/tags/count", "/v1/tags/{id}"])
+      template = result.find! { |endpoint| endpoint.url == "/v1/tags/{id}" }
+      template.params.map { |param| "#{param.name}:#{param.param_type}" }.sort!.should eq(["id:path"])
+      template.callees.map(&.name).should eq(["tagService.findById"])
+      template.details.code_paths.map(&.path).should eq([controller_path, collection_path])
+
+      count = result.find! { |endpoint| endpoint.url == "/v1/tags/count" }
+      count.details.technology.should eq("kotlin_spring")
+      count.details.code_paths.map(&.path).should eq([controller_path, collection_path])
+    end
+
+    it "merges collection examples that contain Postman path variables into source templates" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      controller_path = "ProfileController.kt"
+      collection_path = "postman.json"
+
+      template_endpoint = Endpoint.new(
+        "/profiles/{username}", "GET", [Param.new("username", "", "path")],
+        Details.new(PathInfo.new(controller_path, 12))
+      )
+      template_endpoint.details.technology = "kotlin_spring"
+      template_endpoint.push_callee(Callee.new("profileService.find", path: controller_path, line: 13))
+
+      collection_details = Details.new(PathInfo.new(collection_path, 1))
+      collection_details.technology = "postman"
+      example_endpoint = Endpoint.new("/profiles/celeb_:USERNAME", "GET", collection_details)
+
+      result = optimizer.optimize_endpoints([example_endpoint, template_endpoint])
+
+      result.size.should eq(1)
+      result[0].url.should eq("/profiles/{username}")
+      result[0].params.map { |param| "#{param.name}:#{param.param_type}" }.should eq(["username:path"])
+      result[0].callees.map(&.name).should eq(["profileService.find"])
+      result[0].details.code_paths.map(&.path).should eq([controller_path, collection_path])
+    end
+
+    it "prefers GraphQL SDL argument names while keeping Kotlin Spring context" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      content_param = Param.new("content", "", "json")
+      content_param.add_tag(Tag.new("graphql-input-field", "input", "kotlin_spring_graphql_analyzer"))
+      user_id_param = Param.new("userId", "", "json")
+      user_id_param.add_tag(Tag.new("graphql-input-field", "input", "kotlin_spring_graphql_analyzer"))
+      kotlin_params = [
+        Param.new("id", "", "json"),
+        content_param,
+        user_id_param,
+        Param.new("graphql_mutation_addComment", "mutation($id: String, $input: AddCommentInput) { addComment(id: $id, input: $input) }", "json"),
+      ]
+      kotlin_endpoint = Endpoint.new(
+        "/graphql#Mutation.addComment", "POST", kotlin_params,
+        Details.new(PathInfo.new("ArticleController.kt", 39))
+      )
+      kotlin_endpoint.add_tag(Tag.new("graphql", "Mutation.addComment", "kotlin_spring_graphql_analyzer"))
+      kotlin_endpoint.push_callee(Callee.new("articleService.addComment", path: "ArticleController.kt", line: 44))
+
+      sdl_params = [
+        Param.new("articleId", "", "json"),
+        Param.new("input", "", "json"),
+        Param.new("graphql_mutation_addComment", "mutation($articleId: ID!, $input: AddCommentInput!) { addComment(articleId: $articleId, input: $input) }", "json"),
+      ]
+      sdl_details = Details.new(PathInfo.new("schema.graphqls", 8))
+      sdl_details.technology = "graphql_sdl"
+      sdl_endpoint = Endpoint.new(
+        "/graphql#Mutation.addComment", "POST", sdl_params,
+        sdl_details
+      )
+      sdl_endpoint.add_tag(Tag.new("graphql", "Mutation.addComment", "graphql_sdl_analyzer"))
+
+      result = optimizer.optimize_endpoints([kotlin_endpoint, sdl_endpoint])
+
+      result.size.should eq(1)
+      result[0].params.map(&.name).should eq(["content", "userId", "graphql_mutation_addComment", "articleId"])
+      result[0].params.find { |param| param.name == "id" }.should be_nil
+      result[0].params.find { |param| param.name == "input" }.should be_nil
+      doc_param = result[0].params.find { |param| param.name == "graphql_mutation_addComment" }
+      doc_param.should_not be_nil
+      doc_param.not_nil!.value.should contain("articleId")
+      result[0].tags.map { |tag| "#{tag.name}:#{tag.description}:#{tag.tagger}" }.should eq([
+        "graphql:Mutation.addComment:graphql_sdl_analyzer",
+      ])
+      result[0].callees.map(&.name).should eq(["articleService.addComment"])
+      result[0].details.code_paths.map(&.path).should eq(["ArticleController.kt", "schema.graphqls"])
+    end
+
+    it "still merges Kotlin Spring GraphQL endpoints with SDL when the controller is under a build module" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      temp_dir = File.join(Dir.tempdir, "noir-optimizer-graphql-#{Process.pid}-#{Time.utc.to_unix_ms}")
+      module_dir = File.join(temp_dir, "graphql-app")
+      controller_path = File.join(module_dir, "src/main/kotlin/com/example/ArticleController.kt")
+      schema_path = File.join(temp_dir, "schema.graphqls")
+
+      begin
+        Dir.mkdir_p(File.dirname(controller_path))
+        File.write(File.join(module_dir, "pom.xml"), "<project></project>")
+        File.write(controller_path, "class ArticleController")
+        File.write(schema_path, "type Query { article(id: ID!): Article }")
+
+        kotlin_endpoint = Endpoint.new(
+          "/graphql#Query.article", "POST",
+          [Param.new("graphql_query_article", "query($id: ID!) { article(id: $id) }", "json")],
+          Details.new(PathInfo.new(controller_path, 12))
+        )
+        kotlin_endpoint.details.technology = "kotlin_spring"
+        kotlin_endpoint.add_tag(Tag.new("graphql", "Query.article", "kotlin_spring_graphql_analyzer"))
+        kotlin_endpoint.push_callee(Callee.new("articleService.findArticle", path: controller_path, line: 13))
+
+        sdl_details = Details.new(PathInfo.new(schema_path, 1))
+        sdl_details.technology = "graphql_sdl"
+        sdl_endpoint = Endpoint.new(
+          "/graphql#Query.article", "POST",
+          [Param.new("id", "", "json"), Param.new("graphql_query_article", "query($id: ID!) { article(id: $id) }", "json")],
+          sdl_details
+        )
+        sdl_endpoint.add_tag(Tag.new("graphql", "Query.article", "graphql_sdl_analyzer"))
+
+        result = optimizer.optimize_endpoints([kotlin_endpoint, sdl_endpoint])
+
+        result.size.should eq(1)
+        result[0].params.map(&.name).should eq(["graphql_query_article", "id"])
+        result[0].callees.map(&.name).should eq(["articleService.findArticle"])
+        result[0].details.code_paths.map(&.path).should eq([controller_path, schema_path])
+      ensure
+        FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+      end
     end
 
     it "normalizes URLs with slashes" do

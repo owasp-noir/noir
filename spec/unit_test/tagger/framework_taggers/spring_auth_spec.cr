@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
@@ -135,6 +136,184 @@ describe "SpringAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+
+  it "uses unscoped anyRequest authenticated as a fallback auth rule" do
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(fixture_base)
+
+    locator = CodeLocator.instance
+    Dir.glob("#{fixture_base}/**/*").each do |file|
+      next if File.directory?(file)
+      locator.push("file_map", file)
+    end
+
+    endpoint = Endpoint.new("/api/other", "GET")
+
+    tagger = SpringAuthTagger.new(noir_options)
+    tagger.perform([endpoint])
+
+    endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
+  end
+
+  it "keeps anyRequest fallback for an unscoped chain when another chain is scoped" do
+    temp_dir = File.join(Dir.tempdir, "noir-spring-auth-mixed-chain-#{Process.pid}-#{Time.utc.to_unix_ms}")
+    config_path = File.join(temp_dir, "src/main/java/com/example/SecurityConfiguration.java")
+
+    begin
+      Dir.mkdir_p(File.dirname(config_path))
+      File.write(config_path, <<-JAVA)
+        package com.example;
+
+        import org.springframework.context.annotation.Bean;
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+        import org.springframework.security.web.SecurityFilterChain;
+
+        class SecurityConfiguration {
+            @Bean
+            SecurityFilterChain apiChain(HttpSecurity http) throws Exception {
+                return http.securityMatcher("/api/**")
+                    .authorizeHttpRequests(auth -> auth.anyRequest().authenticated())
+                    .build();
+            }
+
+            @Bean
+            SecurityFilterChain defaultChain(HttpSecurity http) throws Exception {
+                return http.authorizeHttpRequests(auth -> auth.anyRequest().authenticated()).build();
+            }
+        }
+        JAVA
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(temp_dir)
+      CodeLocator.instance.push("file_map", config_path)
+
+      endpoint = Endpoint.new("/web/dashboard", "GET")
+
+      tagger = SpringAuthTagger.new(noir_options)
+      tagger.perform([endpoint])
+
+      endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
+    ensure
+      FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+    end
+  end
+
+  it "preserves HttpMethod-specific permitAll matchers before applying anyRequest fallback" do
+    temp_dir = File.join(Dir.tempdir, "noir-spring-auth-method-rule-#{Process.pid}-#{Time.utc.to_unix_ms}")
+    config_path = File.join(temp_dir, "src/main/java/com/example/SecurityConfiguration.java")
+
+    begin
+      Dir.mkdir_p(File.dirname(config_path))
+      File.write(config_path, <<-JAVA)
+        package com.example;
+
+        import org.springframework.context.annotation.Bean;
+        import org.springframework.http.HttpMethod;
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+        import org.springframework.security.web.SecurityFilterChain;
+
+        class SecurityConfiguration {
+            @Bean
+            SecurityFilterChain chain(HttpSecurity http) throws Exception {
+                return http.authorizeHttpRequests(auth -> auth
+                    .requestMatchers(HttpMethod.GET, "/public/**").permitAll()
+                    .anyRequest().authenticated()
+                ).build();
+            }
+        }
+        JAVA
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(temp_dir)
+      CodeLocator.instance.push("file_map", config_path)
+
+      public_get = Endpoint.new("/public/status", "GET")
+      protected_post = Endpoint.new("/public/status", "POST")
+
+      tagger = SpringAuthTagger.new(noir_options)
+      tagger.perform([public_get, protected_post])
+
+      public_get.tags.empty?.should be_true
+      protected_post.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("anyRequest") }.should be_true
+    ensure
+      FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+    end
+  end
+
+  it "lets a more-specific permitAll matcher suppress a broader protected matcher" do
+    temp_dir = File.join(Dir.tempdir, "noir-spring-auth-permit-#{Process.pid}-#{Time.utc.to_unix_ms}")
+    config_path = File.join(temp_dir, "src/main/kotlin/com/example/SecurityConfiguration.kt")
+
+    begin
+      Dir.mkdir_p(File.dirname(config_path))
+      File.write(config_path, <<-KT)
+        package com.example
+
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity
+        import org.springframework.security.web.SecurityFilterChain
+
+        class SecurityConfiguration {
+            fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
+                return http.authorizeHttpRequests { request ->
+                    request.requestMatchers("/user/register").permitAll()
+                        .requestMatchers("/user/**").hasRole("SUPERADM")
+                }.build()
+            }
+        }
+        KT
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(temp_dir)
+      CodeLocator.instance.push("file_map", config_path)
+
+      public_endpoint = Endpoint.new("/user/register", "POST")
+      protected_endpoint = Endpoint.new("/user/profile", "GET")
+
+      tagger = SpringAuthTagger.new(noir_options)
+      tagger.perform([public_endpoint, protected_endpoint])
+
+      public_endpoint.tags.empty?.should be_true
+      protected_endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("hasRole") }.should be_true
+    ensure
+      FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+    end
+  end
+
+  it "matches Kotlin requestMatchers without a leading slash and access blocks" do
+    temp_dir = File.join(Dir.tempdir, "noir-spring-auth-access-#{Process.pid}-#{Time.utc.to_unix_ms}")
+    config_path = File.join(temp_dir, "src/main/kotlin/com/example/SecurityConfiguration.kt")
+
+    begin
+      Dir.mkdir_p(File.dirname(config_path))
+      File.write(config_path, <<-KT)
+        package com.example
+
+        import org.springframework.security.config.annotation.web.builders.HttpSecurity
+        import org.springframework.security.web.SecurityFilterChain
+
+        class SecurityConfiguration {
+            fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
+                return http.authorizeHttpRequests { request ->
+                    request.requestMatchers("api/v1/teams/*").access { authentication, _ -> true }
+                }.build()
+            }
+        }
+        KT
+
+      noir_options = create_test_options
+      noir_options["base"] = YAML::Any.new(temp_dir)
+      CodeLocator.instance.push("file_map", config_path)
+
+      endpoint = Endpoint.new("/api/v1/teams/{nation}", "GET")
+
+      tagger = SpringAuthTagger.new(noir_options)
+      tagger.perform([endpoint])
+
+      endpoint.tags.any? { |tag| tag.name == "auth" && tag.description.includes?("access") }.should be_true
+    ensure
+      FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
+    end
   end
 
   it "handles empty code_paths gracefully" do
