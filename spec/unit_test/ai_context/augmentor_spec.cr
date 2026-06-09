@@ -12,6 +12,15 @@ def with_temp_ai_context_source(content : String, & : String ->)
 end
 
 describe "NoirAIContext" do
+  it "does not build snippets for source paths with invalid line numbers" do
+    with_temp_ai_context_source("app.get('/health', handler)") do |path|
+      reader = NoirAIContext::SourceReader.new
+
+      reader.snippet_for(path, 0, 2).should be_nil
+      reader.route_scope_snippet_for(path, 0).should be_nil
+    end
+  end
+
   it "builds aggregated AI context from callees and tags" do
     source = <<-CODE
       app.post("/users/:id/avatar", requireAuth, async (req, res) => {
@@ -51,6 +60,9 @@ describe "NoirAIContext" do
 
       context.callees.map(&.name).should contain("User.find_by_sql")
       context.callees.first.snippet.should_not be_nil
+      context.sources.map(&.name).should contain("path.id")
+      context.sources.map(&.name).should contain("json.next")
+      context.sources.map(&.name).should contain("form.file")
       context.sinks.map(&.kind).should contain("sql")
       context.sinks.map(&.kind).should contain("redirect")
       context.validators.map(&.kind).should contain("validation")
@@ -91,6 +103,58 @@ describe "NoirAIContext" do
     end
   end
 
+  it "uses camelCase validator callees instead of handler signature fallbacks" do
+    source = <<-CODE
+      @PostMapping("/verify")
+      fun verifyAccount(
+        @RequestParam code: String,
+      ): ResponseEntity<String> {
+        authService.verifyAccount(code)
+        return ResponseEntity.ok("verified")
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/verify", "POST")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("authService.verifyAccount", path, 5))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      validator = context.validators.find { |entry| entry.kind == "validation" }
+      validator.should_not be_nil
+      validator.not_nil!.name.should eq("authService.verifyAccount")
+      validator.not_nil!.source.should eq("callee")
+    end
+  end
+
+  it "compacts multiline Kotlin validator signatures when source scan is the fallback" do
+    source = <<-CODE
+      @PostMapping("/verify")
+      fun verifyAccount(
+        @RequestParam code: String,
+      ): ResponseEntity<String> {
+        return ResponseEntity.ok("verified")
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/verify", "POST")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      validator = context.validators.find { |entry| entry.kind == "validation" }
+      validator.should_not be_nil
+      validator.not_nil!.name.should eq("verifyAccount(code: String)")
+      validator.not_nil!.source.should eq("route_source")
+    end
+  end
+
   it "prefers idor review over generic guard absence on unguarded identifier routes" do
     source = <<-CODE
       post "/projects/:id/rotate" do
@@ -112,6 +176,509 @@ describe "NoirAIContext" do
       context.signals.map(&.kind).should contain("idor_review")
       context.signals.map(&.kind).should_not contain("guard_absence")
     end
+  end
+
+  it "adds object lookup context when path identifiers feed find-by-id callees" do
+    source = <<-CODE
+      fun show(id: Long) {
+        userRepository.findById(id)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "", "path"))
+      endpoint.push_callee(Callee.new("userRepository.findById", path, 2))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("object_lookup")
+      context.signals.map(&.name).should contain("userRepository.findById")
+    end
+  end
+
+  it "adds object lookup context for GraphQL id arguments that feed find-by-id callees" do
+    endpoint = Endpoint.new("/graphql#Query.findUserById", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Query.findUserById", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Query", "kotlin_spring_graphql_analyzer"))
+    endpoint.push_param(Param.new("id", "", "json"))
+    endpoint.push_param(Param.new("graphql_query_findUserById", "", "json"))
+    endpoint.push_callee(Callee.new("userRepository.findById", "UserGraph.kt", 12))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("userRepository.findById")
+  end
+
+  it "keeps query identifier object lookup context when a lookup callee is present" do
+    endpoint = Endpoint.new("/users", "GET")
+    details = endpoint.details
+    details.technology = "kotlin_spring"
+    endpoint.details = details
+    id_param = Param.new("id", "", "query")
+    id_param.add_tag(Tag.new("idor", "This parameter may be vulnerable to Insecure Direct Object Reference (IDOR) attacks.", "Hunt"))
+    endpoint.push_param(id_param)
+    endpoint.push_callee(Callee.new("userRepository.findById", "UserController.kt", 12))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("idor")
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("userRepository.findById")
+  end
+
+  it "adds object lookup context for repository finders scoped by a parent id" do
+    endpoint = Endpoint.new("/posts/{id}/comments", "GET")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_callee(Callee.new("commentRepository.findByPostId", "DemoApplication.kt", 83))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("commentRepository.findByPostId")
+  end
+
+  it "adds object lookup context for repository count queries scoped by a parent id" do
+    endpoint = Endpoint.new("/posts/{id}/comments/count", "GET")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_callee(Callee.new("commentRepository.countByPostId", "DemoApplication.kt", 87))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("commentRepository.countByPostId")
+  end
+
+  it "adds object lookup context for body identifiers that feed lookup callees" do
+    endpoint = Endpoint.new("/courses", "POST")
+    endpoint.push_param(Param.new("instructorId", "", "json"))
+    endpoint.push_callee(Callee.new("instructorService.findByInstructorId", "CourseService.kt", 26))
+    endpoint.push_callee(Callee.new("instructorRepository.findById", "InstructorService.kt", 30))
+    endpoint.push_callee(Callee.new("courseRepository.save", "CourseService.kt", 37))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("instructorRepository.findById")
+  end
+
+  it "adds object lookup context for GraphQL field resolvers that lookup parent-owned objects" do
+    endpoint = Endpoint.new("/graphql#Article.author", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Article.author", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Article", "kotlin_spring_graphql_analyzer"))
+    endpoint.push_param(Param.new("graphql_field_author", "field Article.author", "json"))
+    endpoint.push_callee(Callee.new("articleService.findUserById", "ArticleController.kt", 25))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("articleService.findUserById")
+    context.sources.map(&.name).should contain("graphql.field.Article.author")
+  end
+
+  it "adds object lookup context for GraphQL field resolvers with scoped id finder names" do
+    endpoint = Endpoint.new("/graphql#Article.comments", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Article.comments", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Article", "kotlin_spring_graphql_analyzer"))
+    endpoint.push_param(Param.new("graphql_field_comments", "field Article.comments", "json"))
+    endpoint.push_callee(Callee.new("articleService.findCommentsByArticleId", "ArticleController.kt", 33))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("articleService.findCommentsByArticleId")
+    context.sources.map(&.name).should contain("graphql.field.Article.comments")
+  end
+
+  it "does not treat GraphQL root queries without identifier arguments as field object lookups" do
+    endpoint = Endpoint.new("/graphql#Query.currentUser", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Query.currentUser", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Query", "kotlin_spring_graphql_analyzer"))
+    endpoint.push_param(Param.new("graphql_query_currentUser", "", "json"))
+    endpoint.push_callee(Callee.new("userService.findUserById", "UserController.kt", 12))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should_not contain("object_lookup")
+  end
+
+  it "suppresses Kotlin Spring GET query identifier signals when no object lookup callee is present" do
+    endpoint = Endpoint.new("/products", "GET")
+    details = endpoint.details
+    details.technology = "kotlin_spring"
+    endpoint.details = details
+    id_param = Param.new("id", "", "query")
+    id_param.add_tag(Tag.new("idor", "This parameter may be vulnerable to Insecure Direct Object Reference (IDOR) attacks.", "Hunt"))
+    endpoint.push_param(id_param)
+    endpoint.push_callee(Callee.new("service.getAllProducts", "ProductsController.kt", 17))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should_not contain("identifier_input")
+    context.signals.map(&.kind).should_not contain("idor")
+    context.signals.map(&.kind).should_not contain("object_lookup")
+  end
+
+  it "does not add object lookup context for bare body identifiers without lookup callees" do
+    endpoint = Endpoint.new("/items", "POST")
+    endpoint.push_param(Param.new("id", "", "json"))
+    endpoint.push_callee(Callee.new("itemRepository.save", "ItemController.kt", 12))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should_not contain("object_lookup")
+  end
+
+  it "surfaces camelCase body identifier inputs" do
+    endpoint = Endpoint.new("/graphql#Mutation.createArticle", "POST")
+    endpoint.push_param(Param.new("userId", "", "json"))
+    endpoint.push_param(Param.new("articleId", "", "json"))
+    endpoint.push_param(Param.new("graphql_query_findUserById", "", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.name).should contain("json.userId")
+    context.signals.map(&.name).should contain("json.articleId")
+    context.signals.count { |signal| signal.kind == "identifier_input" }.should eq(2)
+    context.signals.map(&.name).should_not contain("json.graphql_query_findUserById")
+  end
+
+  it "suppresses Kotlin Spring body identifiers overwritten from path identifiers" do
+    source = <<-CODE
+      suspend fun saveComment(@PathVariable id: Long, @RequestBody comment: Comment) =
+        commentRepository.save(comment.copy(postId = id, content = comment.content))
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}/comments", "POST")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "", "path"))
+      endpoint.push_param(Param.new("postId", "", "json"))
+      endpoint.push_param(Param.new("content", "", "json"))
+      endpoint.push_callee(Callee.new("commentRepository.save", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      names = context.signals.select { |signal| signal.kind == "identifier_input" }.map(&.name)
+
+      names.should contain("path.id")
+      names.should_not contain("json.postId")
+      context.signals.map(&.kind).should contain("object_write")
+    end
+  end
+
+  it "surfaces foreign identifier writes without detected lookup or existence checks" do
+    source = <<-CODE
+      suspend fun createArticle(input: CreateArticleInput): Article {
+        return Article(
+          id = UUID.randomUUID().toString(),
+          authorId = input.userId,
+        ).also { articles.add(it) }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/graphql#Mutation.createArticle", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("userId", "", "json"))
+      endpoint.push_callee(Callee.new("articleService.createArticle", "ArticleController.kt", 37))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("foreign_identifier_write")
+      context.signals.map(&.name).should contain("authorId=userId")
+    end
+  end
+
+  it "does not flag a same-named local id read as a foreign identifier write" do
+    source = <<-CODE
+      fun createCourse(input: CourseInput): Course {
+        val instructorId = input.instructorId
+        return Course(owner = instructorId).also { courseRepository.save(it) }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/courses", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("instructorId", "", "json"))
+      endpoint.push_callee(Callee.new("courseRepository.save", "CourseService.kt", 37))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.kind).should_not contain("foreign_identifier_write")
+    end
+  end
+
+  it "does not add foreign identifier write when lookup evidence exists" do
+    source = <<-CODE
+      fun createCourse(input: CourseInput): Course {
+        return Course(instructorId = input.instructorId).also { courseRepository.save(it) }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/courses", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("instructorId", "", "json"))
+      endpoint.push_callee(Callee.new("instructorRepository.findById", "CourseService.kt", 30))
+      endpoint.push_callee(Callee.new("courseRepository.save", "CourseService.kt", 37))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("object_lookup")
+      context.signals.map(&.kind).should_not contain("foreign_identifier_write")
+    end
+  end
+
+  it "adds object lookup context from Kotlin collection id lookups in source paths" do
+    source = <<-CODE
+      suspend fun addComment(id: String, input: AddCommentInput): Comment {
+        users.firstOrNull { it.id == input.userId }
+          ?: throw GenericNotFound("User not found")
+
+        return articles.firstOrNull { it.id == id }
+          ?.let { Comment(articleId = id, userId = input.userId) }
+          ?: throw GenericNotFound("Article not found")
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/graphql#Mutation.addComment", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("articleId", "", "json"))
+      endpoint.push_param(Param.new("userId", "", "json"))
+      endpoint.push_callee(Callee.new("articleService.addComment", "ArticleController.kt", 44))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("object_lookup")
+      context.signals.map(&.name).should contain("users.firstOrNull(id)")
+      context.validators.map(&.kind).should contain("existence_validation")
+      context.validators.map(&.name).should contain("users.firstOrNull(id)")
+    end
+  end
+
+  it "does not treat nullable Kotlin collection id lookups as existence validation without a throw path" do
+    source = <<-CODE
+      fun findUser(id: String): User? {
+        return users.firstOrNull { it.id == id }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "", "path"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("object_lookup")
+      context.validators.map(&.kind).should_not contain("existence_validation")
+    end
+  end
+
+  it "keeps callee-based object lookup evidence ahead of Kotlin collection source evidence" do
+    source = <<-CODE
+      fun show(id: String): User? {
+        return users.firstOrNull { it.id == id }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "", "path"))
+      endpoint.push_callee(Callee.new("userRepository.findById", "UserService.kt", 12))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.name).should contain("userRepository.findById")
+      context.signals.map(&.name).should_not contain("users.firstOrNull(id)")
+    end
+  end
+
+  it "does not add object lookup context for non-id repository finders" do
+    endpoint = Endpoint.new("/tags/{id}", "GET")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_callee(Callee.new("tagRepository.findByLabelIgnoreCase", "TagService.kt", 55))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should_not contain("object_lookup")
+  end
+
+  it "adds object write context when a path id feeds a mutating callee without a lookup" do
+    endpoint = Endpoint.new("/posts/{id}/comments", "POST")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_param(Param.new("content", "", "json"))
+    endpoint.push_callee(Callee.new("commentRepository.save", "DemoApplication.kt", 91))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_write")
+    context.signals.map(&.name).should contain("commentRepository.save")
+  end
+
+  it "does not add object write context when object lookup evidence is already present" do
+    endpoint = Endpoint.new("/posts/{id}", "PUT")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_param(Param.new("content", "", "json"))
+    endpoint.push_callee(Callee.new("postRepository.findById", "PostService.kt", 12))
+    endpoint.push_callee(Callee.new("postRepository.save", "PostService.kt", 13))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.kind).should_not contain("object_write")
+  end
+
+  it "adds object lookup context for identifier deletes guarded by exists-by-id callees" do
+    endpoint = Endpoint.new("/graphql#Mutation.deleteBook", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Mutation.deleteBook", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Mutation", "kotlin_spring_graphql_analyzer"))
+    endpoint.push_param(Param.new("id", "", "json"))
+    endpoint.push_param(Param.new("graphql_mutation_deleteBook", "", "json"))
+    endpoint.push_callee(Callee.new("bookRepository.existsById", "BookGraph.kt", 14))
+    endpoint.push_callee(Callee.new("bookRepository.deleteById", "BookGraph.kt", 15))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("bookRepository.existsById")
+    context.validators.map(&.kind).should contain("existence_validation")
+    context.validators.map(&.name).should contain("bookRepository.existsById")
+  end
+
+  it "adds existence validation context for repository exists-by preconditions" do
+    endpoint = Endpoint.new("/auth/register", "POST")
+    endpoint.push_param(Param.new("email", "", "json"))
+    endpoint.push_callee(Callee.new("userRepository.existsByEmail", "AuthService.kt", 42))
+    endpoint.push_callee(Callee.new("userRepository.save", "AuthService.kt", 45))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.validators.map(&.kind).should contain("existence_validation")
+    context.validators.map(&.name).should contain("userRepository.existsByEmail")
+  end
+
+  it "prefers concrete find-by-id evidence over wrapper delete-by-id callees" do
+    endpoint = Endpoint.new("/users/{id}", "DELETE")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_callee(Callee.new("userService.deleteById", "UserController.kt", 21))
+    endpoint.push_callee(Callee.new("userRepository.findById", "UserService.kt", 12))
+    endpoint.push_callee(Callee.new("userRepository.deleteById", "UserService.kt", 13))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("object_lookup")
+    context.signals.map(&.name).should contain("userRepository.findById")
+    context.signals.map(&.name).should_not contain("userService.deleteById")
+  end
+
+  it "ignores GraphQL document params when deciding object lookup context" do
+    endpoint = Endpoint.new("/graphql#Mutation.deleteBook", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Mutation.deleteBook", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Mutation", "kotlin_spring_graphql_analyzer"))
+    endpoint.push_param(Param.new("graphql_mutation_deleteBook", "", "json"))
+    endpoint.push_callee(Callee.new("bookRepository.deleteById", "BookGraph.kt", 15))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should_not contain("object_lookup")
+  end
+
+  it "adds GraphQL resolver evidence when an SDL operation is merged with Kotlin resolver code" do
+    schema_path = "/tmp/noir-ai-context-schema-#{Random.rand(1_000_000)}.graphqls"
+    resolver_path = "/tmp/noir-ai-context-resolver-#{Random.rand(1_000_000)}.kt"
+    File.write(schema_path, "type Mutation {\n  deleteBook(id: ID!): Boolean\n}\n")
+    File.write(resolver_path, <<-CODE)
+      @Controller
+      class BookController {
+        @MutationMapping
+        fun deleteBook(@Argument id: Long): Boolean {
+          return bookRepository.deleteById(id)
+        }
+      }
+      CODE
+
+    begin
+      endpoint = Endpoint.new("/graphql#Mutation.deleteBook", "POST")
+      endpoint.add_tag(Tag.new("graphql", "Mutation.deleteBook", "graphql_sdl_analyzer"))
+      endpoint.add_tag(Tag.new("graphql-root", "Mutation", "graphql_sdl_analyzer"))
+      endpoint.add_tag(Tag.new("graphql-root", "Mutation", "kotlin_spring_graphql_analyzer"))
+      details = endpoint.details
+      details.technology = "graphql_sdl"
+      details.add_path(PathInfo.new(schema_path, 2))
+      details.add_path(PathInfo.new(resolver_path, 3))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.select { |entry| entry.kind == "technology" }.map(&.name).should contain("graphql_sdl")
+      context.signals.select { |entry| entry.kind == "technology" }.map(&.name).should contain("kotlin_spring")
+      resolver = context.signals.find { |entry| entry.kind == "graphql_resolver" }
+      resolver = resolver.should_not be_nil
+      resolver.name.should eq("Mutation.deleteBook")
+      resolver.path.should eq(resolver_path)
+      snippet = resolver.snippet.should_not be_nil
+      snippet.should contain("fun deleteBook")
+    ensure
+      File.delete(schema_path) if File.exists?(schema_path)
+      File.delete(resolver_path) if File.exists?(resolver_path)
+    end
+  end
+
+  it "deduplicates GraphQL tag signals while keeping the operation name" do
+    endpoint = Endpoint.new("/graphql#Query.getPosts", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Query.getPosts", "graphql_sdl_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-return", "[Post]!", "graphql_sdl_analyzer"))
+    endpoint.add_tag(Tag.new("graphql", "Query.getPosts", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Query", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql", "GraphQL endpoint for flexible API queries, potentially exposing schema introspection and nested data access.", "GraphQL"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    graphql_signals = context.signals.select { |entry| entry.kind == "graphql" }
+
+    graphql_signals.size.should eq(1)
+    graphql_signals[0].name.should eq("Query.getPosts")
+    graphql_signals[0].description.should eq("Query.getPosts")
+    context.signals.map(&.kind).should contain("graphql-root")
+    context.signals.map(&.kind).should contain("graphql-return")
+  end
+
+  it "deduplicates GraphQL field resolver tags while keeping the object field name" do
+    endpoint = Endpoint.new("/graphql#Article.author", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Article.author", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Article", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql", "GraphQL endpoint for flexible API queries, potentially exposing schema introspection and nested data access.", "GraphQL"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    graphql_signals = context.signals.select { |entry| entry.kind == "graphql" }
+
+    graphql_signals.size.should eq(1)
+    graphql_signals[0].name.should eq("Article.author")
+    graphql_signals[0].description.should eq("Article.author")
+    context.signals.map(&.kind).should contain("graphql-root")
   end
 
   it "keeps guard absence for unguarded state-changing endpoints without identifier paths" do
@@ -210,6 +777,215 @@ describe "NoirAIContext" do
     end
   end
 
+  it "surfaces token expiry comparisons from source as validation context" do
+    source = <<-CODE
+      fun verify(code: String) {
+        if (verificationToken.expiryDate.isBefore(LocalDateTime.now())) {
+          throw TokenExpiredException()
+        }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/verify", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.callees.map(&.name).should_not contain("verificationToken.expiryDate.isBefore")
+      context.validators.map(&.kind).should contain("expiry_validation")
+      context.validators.any?(&.name.starts_with?("expiryDate.isBefore")).should be_true
+    end
+  end
+
+  it "surfaces uniqueness guard helpers as validation context" do
+    source = <<-CODE
+      fun update(dto: UserDto) {
+        checkIfUniqueOrThrow(dto)
+        repository.save(dto)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}", "PUT")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("checkIfUniqueOrThrow", path, 2))
+      endpoint.push_callee(Callee.new("repository.save", path, 3))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.validators.map(&.kind).should contain("uniqueness_validation")
+      context.validators.map(&.name).should contain("checkIfUniqueOrThrow")
+      context.callees.map(&.name).should contain("repository.save")
+    end
+  end
+
+  it "surfaces repository finder duplicate preconditions as uniqueness validation" do
+    source = <<-CODE
+      fun create(tagDto: TagDto): TagDto {
+        val tag = tagRepository.findByLabelIgnoreCase(tagDto.label)
+        return if (tag.isEmpty) {
+          tagRepository.save(TagDto.fromDomain(tagDto))
+        } else {
+          throw DataAlreadyExistException("label", tagDto.label)
+        }
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/tags", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("tagRepository.findByLabelIgnoreCase", path, 2))
+      endpoint.push_callee(Callee.new("tagRepository.save", path, 4))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.validators.map(&.kind).should contain("uniqueness_validation")
+    end
+  end
+
+  it "does not treat plain repository finders as uniqueness validation" do
+    source = <<-CODE
+      @GetMapping("/tags/{label}")
+      fun show(label: String): Tag? {
+        return tagRepository.findByLabelIgnoreCase(label)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/tags/{label}", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("tagRepository.findByLabelIgnoreCase", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.validators.map(&.kind).should_not contain("uniqueness_validation")
+    end
+  end
+
+  it "classifies Spring password encoder calls as credential hashing, not sanitization" do
+    source = <<-CODE
+      fun changePassword(rawPassword: String) {
+        val passwordHash = passwordEncoder.encode(rawPassword)
+        userRepository.save(passwordHash)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/change-password", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("passwordEncoder.encode", path, 2))
+      endpoint.push_callee(Callee.new("userRepository.save", path, 3))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.validators.map(&.kind).should contain("credential_hashing")
+      context.validators.map(&.name).should contain("passwordEncoder.encode")
+      context.validators.map(&.kind).should_not contain("sanitization")
+    end
+  end
+
+  it "classifies Spring password encoder matches as credential verification" do
+    source = <<-CODE
+      fun login(rawPassword: String, user: User) {
+        passwordEncoder.matches(rawPassword, user.passwordHash)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/login", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("passwordEncoder.matches", path, 2))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.validators.map(&.kind).should contain("credential_verification")
+      context.validators.map(&.name).should contain("passwordEncoder.matches")
+    end
+  end
+
+  it "surfaces secure refresh-token cookie flags from helper code paths" do
+    source = <<-CODE
+      fun refreshToken(response: HttpServletResponse) {
+        addRefreshTokenCookie(response, token)
+      }
+
+      private fun addRefreshTokenCookie(response: HttpServletResponse, token: String) {
+        val cookie = Cookie("refresh", token)
+        cookie.isHttpOnly = true
+        cookie.secure = true
+        response.addCookie(cookie)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/refresh-token", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.add_path(PathInfo.new(path, 5))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("addRefreshTokenCookie", path, 2))
+
+      endpoints = NoirAIContext.apply([endpoint])
+      context = endpoints[0].ai_context
+      context = context.should_not be_nil
+
+      context.validators.map(&.kind).should contain("cookie_httponly")
+      context.validators.map(&.kind).should contain("cookie_secure")
+    end
+  end
+
+  it "surfaces request cookie reads as AI context sources" do
+    source = <<-CODE
+      fun refreshToken(request: HttpServletRequest) {
+        extractRefreshTokenFromCookies(request)
+      }
+
+      private fun extractRefreshTokenFromCookies(request: HttpServletRequest): String? {
+        val cookies = request.cookies ?: return null
+        return cookies.find { it.name == jwtService.getRefreshTokenCookieName() }?.value
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/refresh-token", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.add_path(PathInfo.new(path, 5))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("extractRefreshTokenFromCookies", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sources.map(&.kind).should contain("request_input")
+      context.sources.map(&.name).should contain("cookie.refreshToken")
+    end
+  end
+
   it "suppresses low-value identifier signals for bare POST body ids" do
     source = <<-CODE
       @PostMapping("/items")
@@ -230,6 +1006,72 @@ describe "NoirAIContext" do
       context.signals.map(&.kind).should contain("state_change")
       context.signals.map(&.kind).should_not contain("identifier_input")
     end
+  end
+
+  it "does not treat GraphQL queries as state-changing just because they use POST" do
+    endpoint = Endpoint.new("/graphql#Query.getBooks", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Query.getBooks", "graphql_sdl_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Query", "graphql_sdl_analyzer"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("state_change")
+    context.signals.map(&.kind).should_not contain("guard_absence")
+  end
+
+  it "does not treat read-only POST list endpoints as state-changing" do
+    endpoint = Endpoint.new("/role", "POST")
+    details = endpoint.details
+    details.technology = "kotlin_spring"
+    endpoint.details = details
+    endpoint.push_callee(Callee.new("roleService.listAllRoles", "RoleController.kt", 25))
+    endpoint.push_callee(Callee.new("roleRepository.findAll", "RoleService.kt", 27))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("state_change")
+    context.signals.map(&.kind).should_not contain("guard_absence")
+  end
+
+  it "keeps state-changing review signals for POST endpoints with mutating callees" do
+    endpoint = Endpoint.new("/items", "POST")
+    endpoint.push_callee(Callee.new("itemRepository.save", "ItemController.kt", 12))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("state_change")
+    context.signals.map(&.kind).should contain("guard_absence")
+  end
+
+  it "treats a POST with a getOrCreate-style callee as state-changing" do
+    # Regression: `getOrCreate` matches the read-only callee pattern via its
+    # leading `get`, which previously suppressed the state-change signal even
+    # though the call mutates.
+    endpoint = Endpoint.new("/role", "POST")
+    details = endpoint.details
+    details.technology = "kotlin_spring"
+    endpoint.details = details
+    endpoint.push_callee(Callee.new("roleService.getOrCreate", "RoleController.kt", 25))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("state_change")
+  end
+
+  it "does not treat GraphQL field resolvers as state-changing" do
+    endpoint = Endpoint.new("/graphql#Article.author", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Article.author", "kotlin_spring_graphql_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Article", "kotlin_spring_graphql_analyzer"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("state_change")
+    context.signals.map(&.kind).should_not contain("guard_absence")
+  end
+
+  it "keeps state-changing review signals for GraphQL mutations" do
+    endpoint = Endpoint.new("/graphql#Mutation.createBook", "POST")
+    endpoint.add_tag(Tag.new("graphql", "Mutation.createBook", "graphql_sdl_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-root", "Mutation", "graphql_sdl_analyzer"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("state_change")
+    context.signals.map(&.kind).should contain("guard_absence")
   end
 
   it "prefers Hunt idor over generic identifier signals for path-based updates" do
@@ -379,6 +1221,114 @@ describe "NoirAIContext" do
       context = context.should_not be_nil
 
       context.sinks.map(&.kind).should_not contain("sql")
+    end
+  end
+
+  it "classifies Kotlin Spring document-store query callees separately from sql sinks" do
+    source = <<-CODE
+      suspend fun findOne(id: String): Post? =
+          mongo.query<Post>()
+              .matching(query(where("id").isEqualTo(id))).awaitOne()
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}", "GET")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("mongo.query", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should contain("data_store_query")
+      context.sinks.map(&.kind).should_not contain("sql")
+    end
+  end
+
+  it "keeps raw SQL query callees classified as sql sinks" do
+    endpoint = Endpoint.new("/users", "GET")
+    endpoint.push_callee(Callee.new("User.find_by_sql", "UserController.kt", 12))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.sinks.map(&.kind).should contain("sql")
+    context.sinks.map(&.kind).should_not contain("data_store_query")
+  end
+
+  it "surfaces database query parameter binding as validator evidence" do
+    source = <<-CODE
+      suspend fun findOne(id: String): Post? =
+          client.query("MATCH (p:Post) WHERE p.id = $id RETURN p")
+              .bind(id).to("id")
+              .fetchAs(Post::class.java)
+              .one()
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}", "GET")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("client.query", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should contain("data_store_query")
+      context.validators.map(&.kind).should contain("query_parameter_binding")
+      context.validators.map(&.name).should contain(%(.bind(id).to("id")))
+    end
+  end
+
+  it "surfaces indexed R2DBC bind calls as query parameter binding evidence" do
+    source = <<-CODE
+      suspend fun findOne(id: Long): Post? =
+          client.sql("SELECT * FROM posts WHERE id = $1")
+              .bind(0, id)
+              .map { row -> row.get("id") }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}", "GET")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.validators.map(&.kind).should contain("query_parameter_binding")
+      context.validators.map(&.name).should contain(".bind(0, id)")
+    end
+  end
+
+  it "does not bump priority_review for bound database query sinks alone" do
+    source = <<-CODE
+      suspend fun save(post: Post): Post =
+          client.query("CREATE (p:Post) SET p = $post RETURN p")
+              .bind(post).with {
+                  it.with("id", post.id)
+              }
+              .fetchAs(Post::class.java)
+              .one()
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts", "POST")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_param(Param.new("post", "", "json"))
+      endpoint.push_callee(Callee.new("client.query", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should contain("data_store_query")
+      context.validators.map(&.kind).should contain("query_parameter_binding")
+      context.signals.map(&.kind).should contain("guard_absence")
+      context.signals.map(&.kind).should_not contain("priority_review")
     end
   end
 
@@ -553,6 +1503,42 @@ describe "NoirAIContext" do
     end
   end
 
+  it "flags Kotlin Random.nextInt in a verification-code context as crypto_weak" do
+    source = <<-CODE
+      private fun generateVerificationCode(): String {
+          val random = Random()
+          val code = VERIFICATION_CODE_MIN + random.nextInt(VERIFICATION_CODE_RANGE)
+          return code.toString()
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/register", "POST")
+      endpoint.push_callee(Callee.new("random.nextInt", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("crypto_weak")
+    end
+  end
+
+  it "skips Kotlin Random.nextInt when the snippet is not security-related" do
+    source = <<-CODE
+      fun chooseFeaturedItem(items: List<Item>): Item {
+          val random = Random()
+          val index = random.nextInt(items.size)
+          return items[index]
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/items/featured", "GET")
+      endpoint.push_callee(Callee.new("random.nextInt", path, 3))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should_not contain("crypto_weak")
+    end
+  end
+
   it "emits both sql and xss when a single handler shows both" do
     # Regression for the source-scan one-sink-per-route cap. Pre-fix,
     # `sql` would land first and `xss` would be silently dropped.
@@ -577,6 +1563,31 @@ describe "NoirAIContext" do
       kinds = context.sinks.map(&.kind)
       kinds.should contain("sql")
       kinds.should contain("xss")
+    end
+  end
+
+  it "keeps SQL source evidence scoped to the matched source line" do
+    source = <<-KOTLIN
+      @Query("SELECT * FROM comments WHERE post_id = $1")
+      fun findByPostId(id: Long): Flux<Comment>
+
+      @Query("select count(*) FROM comments WHERE post_id = $1")
+      fun countByPostId(id: Long): Mono<Long>
+      KOTLIN
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}/comments", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      sink = context.sinks.find { |entry| entry.kind == "sql" }
+      sink.should_not be_nil
+
+      sink.not_nil!.name.should contain("SELECT * FROM comments")
+      sink.not_nil!.name.should_not contain("findByPostId")
+      sink.not_nil!.name.should_not contain("select count")
     end
   end
 
@@ -702,6 +1713,76 @@ describe "NoirAIContext" do
     end
   end
 
+  it "detects type_coercion from typed Kotlin Spring path variables" do
+    source = <<-CODE
+      @GetMapping("/posts/{id}")
+      fun get(@PathVariable id: Long): Post {
+        return postRepository.findById(id)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "", "path"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.validators.map(&.kind).should contain("type_coercion")
+    end
+  end
+
+  it "compacts long Kotlin Spring annotation evidence instead of truncating it" do
+    source = <<-CODE
+      @GetMapping
+      fun findWithPagination(
+        @RequestParam(required = false, name = REQUEST_PAGINATION_CURSOR_QUERY) cursor: Long?,
+      ): List<Item> {
+        return service.find(cursor)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/items", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_param(Param.new("cursor", "", "query"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.validators.map(&.kind).should contain("type_coercion")
+      context.validators.map(&.name).should contain("@RequestParam cursor: Long?")
+    end
+  end
+
+  it "detects type_coercion from typed Spring GraphQL arguments" do
+    source = <<-CODE
+      @QueryMapping
+      fun recentPosts(@Argument limit: Int, @Argument offset: Int): List<Post> {
+        return postService.recent(limit, offset)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/graphql#Query.recentPosts", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_param(Param.new("limit", "", "json"))
+      endpoint.push_param(Param.new("offset", "", "json"))
+      endpoint.push_param(Param.new("graphql_query_recentPosts", "", "json"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.validators.map(&.kind).should contain("type_coercion")
+      context.validators.map(&.name).should contain("@Argument limit: Int")
+    end
+  end
+
   it "detects allowlist_check via membership against a constant set" do
     source = <<-CODE
       @app.route('/files')
@@ -733,9 +1814,17 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should contain("pii_input")
   end
 
-  it "tags content params as html_content_input" do
+  it "does not tag plain content params as html_content_input" do
     endpoint = Endpoint.new("/posts", "POST")
     endpoint.push_param(Param.new("content", "hello <b>world</b>", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("html_content_input")
+  end
+
+  it "tags explicit HTML content params as html_content_input" do
+    endpoint = Endpoint.new("/posts", "POST")
+    endpoint.push_param(Param.new("htmlContent", "hello <b>world</b>", "json"))
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should contain("html_content_input")
@@ -747,6 +1836,38 @@ describe "NoirAIContext" do
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should contain("code_input")
+  end
+
+  it "does not tag verification code params as code_input" do
+    endpoint = Endpoint.new("/auth/verify", "POST")
+    endpoint.push_param(Param.new("code", "123456", "query"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("code_input")
+  end
+
+  it "keeps explicit source code params as code_input" do
+    endpoint = Endpoint.new("/eval", "POST")
+    endpoint.push_param(Param.new("sourceCode", "println(1)", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("code_input")
+  end
+
+  it "keeps analyzer-backed parameter tag descriptions literal" do
+    endpoint = Endpoint.new("/auth/reset-password", "POST")
+    password_param = Param.new("newPassword", "", "json")
+    password_param.add_tag(Tag.new(
+      "input-validation",
+      "Bean Validation constraints: @NotBlank",
+      "kotlin_spring_validation_analyzer"
+    ))
+    endpoint.push_param(password_param)
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    signal = context.signals.find { |entry| entry.kind == "input-validation" }
+    signal = signal.should_not be_nil
+    signal.description.should eq("Bean Validation constraints: @NotBlank")
   end
 
   # ===== Phase 5: New heuristic signals =====
@@ -794,6 +1915,44 @@ describe "NoirAIContext" do
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
       context.signals.map(&.kind).should contain("rate_limit_absence")
     end
+  end
+
+  it "does not emit guard_absence for public auth lifecycle endpoints" do
+    source = <<-CODE
+      @PostMapping("/auth/register")
+      fun register(@RequestBody request: RegisterRequest) {
+        authService.register(request)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/auth/register", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_param(Param.new("password", "x", "json"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("rate_limit_absence")
+      context.signals.map(&.kind).should_not contain("guard_absence")
+    end
+  end
+
+  it "keeps idor_review for auth-like endpoints with path identifiers" do
+    endpoint = Endpoint.new("/user/{userId}/role-register", "POST")
+    endpoint.push_param(Param.new("userId", "42", "path"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("idor_review")
+    context.signals.map(&.kind).should_not contain("guard_absence")
+  end
+
+  it "keeps guard_absence for non-account register endpoints" do
+    endpoint = Endpoint.new("/role/register", "POST")
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("guard_absence")
   end
 
   it "does not bleed Python route scope into the next decorator (regression)" do
@@ -1009,6 +2168,50 @@ describe "NoirAIContext" do
     end
   end
 
+  it "emits sensitive_response when a Kotlin handler directly returns a credential value" do
+    source = <<-CODE
+      @GetMapping
+      fun info(): String = password
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/envs", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      signal = context.signals.find { |entry| entry.kind == "sensitive_response" }
+      signal = signal.should_not be_nil
+      signal.name.should eq("password")
+    end
+  end
+
+  it "adds Spring @Value secret source evidence when a Kotlin handler returns injected config" do
+    source = <<-'CODE'
+      @Value("${PASS:#{null}}")
+      lateinit var password: String
+
+      @GetMapping
+      fun info(): String = password
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/envs", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 4))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      secret_source = context.signals.find { |entry| entry.kind == "server_secret_source" }
+      secret_source = secret_source.should_not be_nil
+      secret_source.name.should eq("Spring @Value PASS -> password")
+      context.signals.map(&.kind).should contain("priority_review")
+    end
+  end
+
   it "does NOT emit sensitive_response on responses that just talk *about* tokens" do
     source = <<-CODE
       app.get('/help', (req, res) => {
@@ -1101,6 +2304,29 @@ describe "NoirAIContext" do
     end
   end
 
+  it "emits log_injection when Kotlin Spring logs an interpolated request parameter" do
+    source = <<-CODE
+      @GetMapping
+      fun retrieve(@RequestParam("id") id: String): List<String> {
+        logger.info("Id is: $id")
+        return service.getAllProducts(id)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/v1/products", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      details.technology = "kotlin_spring"
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "", "query"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.signals.map(&.kind).should contain("log_injection")
+    end
+  end
+
   it "does NOT emit log_injection on logs that mention neither input nor credentials" do
     source = <<-CODE
       app.get('/health', (req, res) => {
@@ -1173,6 +2399,18 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should_not contain("priority_review")
   end
 
+  it "does not inflate priority from duplicate sinks of the same kind" do
+    endpoint = Endpoint.new("/posts/{id}", "GET")
+    endpoint.push_param(Param.new("id", "", "path"))
+    endpoint.push_callee(Callee.new("mongo.query", "PostRepository.kt", 12))
+    endpoint.push_callee(Callee.new("mongo.query", "PostRepository.kt", 12))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.sinks.count { |sink| sink.kind == "data_store_query" }.should be >= 1
+    context.signals.map(&.kind).should_not contain("priority_review")
+  end
+
   it "lets a sharp signal (csrf_exempt) tip the bucket toward high" do
     source = <<-CODE
       @csrf_exempt
@@ -1214,6 +2452,137 @@ describe "NoirAIContext" do
 
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
       context.signals.map(&.kind).should contain("ssrf")
+    end
+  end
+
+  it "includes WebClient target URIs in outbound HTTP sink evidence" do
+    source = <<-CODE
+      fun withDetails(id: Long) {
+          client.get().uri("/posts/$id/comments/count").awaitExchange()
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}", "GET")
+      endpoint.push_callee(Callee.new("client.get", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.name).should contain("client.get /posts/$id/comments/count")
+    end
+  end
+
+  it "includes RestTemplate target URIs in outbound HTTP sink evidence" do
+    source = <<-CODE
+      fun getResponse(nation: String): String {
+          return restTemplate.getForObject("https://example.com/$nation", String::class.java) ?: ""
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/teams/{nation}", "GET")
+      endpoint.push_callee(Callee.new("restTemplate.getForObject", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.name).should contain("restTemplate.getForObject https://example.com/$nation")
+    end
+  end
+
+  it "does not treat Spring data template callees as template rendering sinks" do
+    source = <<-CODE
+      fun findAll(): Flow<Post> =
+          template.findAll(Post::class.java).asFlow()
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts", "GET")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("template.findAll", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should_not contain("template_render")
+    end
+  end
+
+  it "flags Kotlin Spring MVC controller view-name returns as template rendering sinks" do
+    source = <<-KOTLIN
+      package com.example
+      import org.springframework.stereotype.Controller
+      import org.springframework.ui.Model
+      import org.springframework.web.bind.annotation.GetMapping
+
+      @Controller
+      class HtmlController {
+        @GetMapping("/")
+        fun index(model: Model): String {
+          model.addAttribute("message", "hello")
+          return "index"
+        }
+      }
+      KOTLIN
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/", "GET")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 8))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      sink = context.sinks.find { |entry| entry.kind == "template_render" }
+      sink.should_not be_nil
+      sink.not_nil!.name.should eq("Spring MVC view index")
+      sink.not_nil!.description.to_s.should contain("server-side view name")
+    end
+  end
+
+  it "does not flag RestController string responses as Spring MVC template renders" do
+    source = <<-KOTLIN
+      package com.example
+      import org.springframework.web.bind.annotation.GetMapping
+      import org.springframework.web.bind.annotation.RestController
+
+      @RestController
+      class HealthController {
+        @GetMapping("/health")
+        fun health(): String = "ok"
+      }
+      KOTLIN
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/health", "GET")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 7))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should_not contain("template_render")
+    end
+  end
+
+  it "does not treat database client insert callees as outbound HTTP sinks" do
+    source = <<-CODE
+      suspend fun save(comment: Comment) =
+          client.insert().into<Comment>().table("comments").using(comment).await()
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/posts/{id}/comments", "POST")
+      details = endpoint.details
+      details.technology = "kotlin_spring"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("client.insert", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should_not contain("outbound_http")
     end
   end
 
@@ -1594,12 +2963,12 @@ end
 describe "NoirAIContext.parse_feature_set" do
   it "treats an empty string as the all-features set" do
     set = NoirAIContext.parse_feature_set("")
-    %w[guards callee sinks validators signals].each { |f| set.includes?(f).should be_true }
+    %w[guards callee sources sinks validators signals].each { |f| set.includes?(f).should be_true }
   end
 
   it "treats 'all' as the all-features set even when mixed with other tokens" do
     set = NoirAIContext.parse_feature_set("guards,all,sinks")
-    %w[guards callee sinks validators signals].each { |f| set.includes?(f).should be_true }
+    %w[guards callee sources sinks validators signals].each { |f| set.includes?(f).should be_true }
   end
 
   it "parses a comma-separated list of features" do
@@ -1619,6 +2988,7 @@ describe "NoirAIContext.apply_feature_filter" do
     ctx = AIContext.new
     buckets["guards"]?.try { |n| n.times { |i| ctx.push_guard(AIContextEntry.new("g", "g#{i}")) } }
     buckets["callee"]?.try { |n| n.times { |i| ctx.push_callee(AIContextEntry.new("c", "c#{i}")) } }
+    buckets["sources"]?.try { |n| n.times { |i| ctx.push_source(AIContextEntry.new("src", "src#{i}")) } }
     buckets["sinks"]?.try { |n| n.times { |i| ctx.push_sink(AIContextEntry.new("s", "s#{i}")) } }
     buckets["validators"]?.try { |n| n.times { |i| ctx.push_validator(AIContextEntry.new("v", "v#{i}")) } }
     buckets["signals"]?.try { |n| n.times { |i| ctx.push_signal(AIContextEntry.new("sig", "sig#{i}")) } }
@@ -1631,23 +3001,25 @@ describe "NoirAIContext.apply_feature_filter" do
   # into the array via `arr[idx] = endpoint`. Assertions read from
   # the array, not the caller's local `ep`.
   it "is a no-op when every feature is in the set" do
-    arr = [private_endpoint.call({"guards" => 1, "callee" => 1, "sinks" => 1, "validators" => 1, "signals" => 1})]
-    NoirAIContext.apply_feature_filter(arr, Set{"guards", "callee", "sinks", "validators", "signals"})
+    arr = [private_endpoint.call({"guards" => 1, "callee" => 1, "sources" => 1, "sinks" => 1, "validators" => 1, "signals" => 1})]
+    NoirAIContext.apply_feature_filter(arr, Set{"guards", "callee", "sources", "sinks", "validators", "signals"})
     context = arr[0].ai_context.should_not be_nil
     context.guards.size.should eq(1)
     context.callees.size.should eq(1)
+    context.sources.size.should eq(1)
     context.sinks.size.should eq(1)
     context.validators.size.should eq(1)
     context.signals.size.should eq(1)
   end
 
   it "clears buckets that aren't in the selected set" do
-    arr = [private_endpoint.call({"guards" => 2, "callee" => 2, "sinks" => 2, "validators" => 2, "signals" => 2})]
+    arr = [private_endpoint.call({"guards" => 2, "callee" => 2, "sources" => 2, "sinks" => 2, "validators" => 2, "signals" => 2})]
     NoirAIContext.apply_feature_filter(arr, Set{"guards", "sinks"})
     context = arr[0].ai_context.should_not be_nil
     context.guards.size.should eq(2)
     context.sinks.size.should eq(2)
     context.callees.empty?.should be_true
+    context.sources.empty?.should be_true
     context.validators.empty?.should be_true
     context.signals.empty?.should be_true
   end

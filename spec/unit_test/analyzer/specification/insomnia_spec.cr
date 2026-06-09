@@ -1,0 +1,96 @@
+require "../../../spec_helper"
+require "../../../../src/models/code_locator"
+require "../../../../src/analyzer/analyzers/specification/insomnia"
+
+private def analyze_insomnia_json(content : String)
+  path = File.tempname("insomnia", ".json")
+  File.write(path, content)
+  locator = CodeLocator.instance
+  locator.clear "insomnia-json"
+  locator.clear "insomnia-yaml"
+  locator.push "insomnia-json", path
+
+  options = create_test_options
+  analyzer = Analyzer::Specification::Insomnia.new options
+  analyzer.analyze
+ensure
+  locator = CodeLocator.instance
+  locator.clear "insomnia-json"
+  locator.clear "insomnia-yaml"
+  File.delete(path) if path && File.exists?(path)
+end
+
+private def analyze_insomnia_yaml(content : String)
+  path = File.tempname("insomnia", ".yaml")
+  File.write(path, content)
+  locator = CodeLocator.instance
+  locator.clear "insomnia-json"
+  locator.clear "insomnia-yaml"
+  locator.push "insomnia-yaml", path
+
+  options = create_test_options
+  analyzer = Analyzer::Specification::Insomnia.new options
+  analyzer.analyze
+ensure
+  locator = CodeLocator.instance
+  locator.clear "insomnia-json"
+  locator.clear "insomnia-yaml"
+  File.delete(path) if path && File.exists?(path)
+end
+
+describe "Insomnia Analyzer" do
+  it "does not share details between v4 requests in one export" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {
+        "_type": "export",
+        "__export_format": 4,
+        "resources": [
+          {
+            "_id": "req_1",
+            "_type": "request",
+            "name": "Users",
+            "method": "GET",
+            "url": "/users"
+          },
+          {
+            "_id": "req_2",
+            "_type": "request",
+            "name": "GraphQL",
+            "method": "POST",
+            "url": "/graphql"
+          }
+        ]
+      }
+      JSON
+
+    users = endpoints.find!(&.url.==("/users"))
+    graphql = endpoints.find!(&.url.==("/graphql"))
+
+    users.details.add_path(PathInfo.new("UsersController.kt"))
+
+    users.details.code_paths.map(&.path).should contain("UsersController.kt")
+    graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
+  end
+
+  it "does not share details between v5 requests in one collection" do
+    endpoints = analyze_insomnia_yaml <<-YAML
+      type: collection.insomnia.rest/5.0
+      name: Details Collection
+      collection:
+        - name: Users
+          method: GET
+          url: /users
+        - name: GraphQL
+          method: POST
+          url: /graphql
+      YAML
+
+    users = endpoints.find!(&.url.==("/users"))
+    graphql = endpoints.find!(&.url.==("/graphql"))
+
+    users.details.add_path(PathInfo.new("UsersController.kt"))
+
+    users.details.code_paths.map(&.path).should contain("UsersController.kt")
+    graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
+  end
+end

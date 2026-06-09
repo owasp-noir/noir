@@ -236,6 +236,7 @@ struct AIContext
 
   property guards : Array(AIContextEntry) = [] of AIContextEntry
   property callees : Array(AIContextEntry) = [] of AIContextEntry
+  property sources : Array(AIContextEntry) = [] of AIContextEntry
   property sinks : Array(AIContextEntry) = [] of AIContextEntry
   property validators : Array(AIContextEntry) = [] of AIContextEntry
   property signals : Array(AIContextEntry) = [] of AIContextEntry
@@ -243,6 +244,7 @@ struct AIContext
   def initialize
     @guards = [] of AIContextEntry
     @callees = [] of AIContextEntry
+    @sources = [] of AIContextEntry
     @sinks = [] of AIContextEntry
     @validators = [] of AIContextEntry
     @signals = [] of AIContextEntry
@@ -251,6 +253,7 @@ struct AIContext
   def empty? : Bool
     @guards.empty? &&
       @callees.empty? &&
+      @sources.empty? &&
       @sinks.empty? &&
       @validators.empty? &&
       @signals.empty?
@@ -262,6 +265,10 @@ struct AIContext
 
   def push_callee(entry : AIContextEntry)
     push_entry(@callees, entry)
+  end
+
+  def push_source(entry : AIContextEntry)
+    push_entry(@sources, entry)
   end
 
   def push_sink(entry : AIContextEntry)

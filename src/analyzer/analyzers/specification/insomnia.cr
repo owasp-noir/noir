@@ -12,10 +12,9 @@ module Analyzer::Specification
       if json_files.is_a?(Array(String))
         json_files.each do |path|
           next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
           content = File.read(path, encoding: "utf-8", invalid: :skip)
           begin
-            process_v4(JSON.parse(content), details)
+            process_v4(JSON.parse(content), path)
           rescue e
             @logger.debug "Exception processing #{path}"
             @logger.debug_sub e
@@ -27,10 +26,9 @@ module Analyzer::Specification
       if yaml_files.is_a?(Array(String))
         yaml_files.each do |path|
           next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
           content = File.read(path, encoding: "utf-8", invalid: :skip)
           begin
-            process_v5(YAML.parse(content), details)
+            process_v5(YAML.parse(content), path)
           rescue e
             @logger.debug "Exception processing #{path}"
             @logger.debug_sub e
@@ -43,7 +41,7 @@ module Analyzer::Specification
 
     # ------ v4 (JSON) ------
 
-    private def process_v4(json_obj : JSON::Any, details : Details)
+    private def process_v4(json_obj : JSON::Any, source_path : String)
       resources = json_obj["resources"]?
       return unless resources && resources.as_a?
       env = collect_v4_environment(resources.as_a)
@@ -51,7 +49,7 @@ module Analyzer::Specification
       resources.as_a.each do |resource|
         begin
           next unless resource["_type"]?.try(&.as_s?) == "request"
-          process_v4_request(resource, env, details)
+          process_v4_request(resource, env, source_path)
         rescue e
           @logger.debug "Exception processing insomnia v4 resource"
           @logger.debug_sub e
@@ -70,7 +68,7 @@ module Analyzer::Specification
       env
     end
 
-    private def process_v4_request(request : JSON::Any, env : Hash(String, String), details : Details)
+    private def process_v4_request(request : JSON::Any, env : Hash(String, String), source_path : String)
       method = (request["method"]?.try(&.as_s?) || "GET").upcase
       return unless HTTP_METHODS.includes?(method)
       url_raw = resolve_vars(request["url"]?.try(&.as_s?) || "", env)
@@ -125,7 +123,7 @@ module Analyzer::Specification
       end
 
       return if url_path.empty?
-      @result << Endpoint.new(url_path, method, params, details)
+      @result << Endpoint.new(url_path, method, params, Details.new(PathInfo.new(source_path)))
     end
 
     private def process_v4_body(body : JSON::Any, params : Array(Param))
@@ -149,11 +147,11 @@ module Analyzer::Specification
 
     # ------ v5 (YAML) ------
 
-    private def process_v5(yaml_obj : YAML::Any, details : Details)
+    private def process_v5(yaml_obj : YAML::Any, source_path : String)
       env = collect_v5_environment(yaml_obj)
       collection = yaml_obj["collection"]?
       return unless collection && collection.as_a?
-      walk_v5_items(collection.as_a, env, details)
+      walk_v5_items(collection.as_a, env, source_path)
     end
 
     private def collect_v5_environment(yaml_obj : YAML::Any) : Hash(String, String)
@@ -185,12 +183,12 @@ module Analyzer::Specification
       env
     end
 
-    private def walk_v5_items(items : Array(YAML::Any), env : Hash(String, String), details : Details)
+    private def walk_v5_items(items : Array(YAML::Any), env : Hash(String, String), source_path : String)
       items.each do |item|
         begin
           if children_node = item["children"]?
             if children = children_node.as_a?
-              walk_v5_items(children, env, details)
+              walk_v5_items(children, env, source_path)
               next
             end
           end
@@ -201,7 +199,7 @@ module Analyzer::Specification
           next unless item["url"]?
           next unless method = item["method"]?.try(&.as_s?)
           next unless HTTP_METHODS.includes?(method.upcase)
-          process_v5_request(item, env, details)
+          process_v5_request(item, env, source_path)
         rescue e
           @logger.debug "Exception processing insomnia v5 item"
           @logger.debug_sub e
@@ -209,7 +207,7 @@ module Analyzer::Specification
       end
     end
 
-    private def process_v5_request(item : YAML::Any, env : Hash(String, String), details : Details)
+    private def process_v5_request(item : YAML::Any, env : Hash(String, String), source_path : String)
       method = (item["method"]?.try(&.as_s?) || "").upcase
       return unless HTTP_METHODS.includes?(method)
       url_raw = resolve_vars(item["url"]?.try(&.as_s?) || "", env)
@@ -266,7 +264,7 @@ module Analyzer::Specification
       end
 
       return if url_path.empty?
-      @result << Endpoint.new(url_path, method, params, details)
+      @result << Endpoint.new(url_path, method, params, Details.new(PathInfo.new(source_path)))
     end
 
     private def process_v5_body(body : YAML::Any, params : Array(Param))

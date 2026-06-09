@@ -10,6 +10,13 @@ module NoirAIContext
 
   SINK_PATTERNS = [
     PatternDefinition.new(
+      "data_store_query",
+      "Potential database or graph/document-store query sink inferred from code or callee name",
+      76,
+      name_patterns: [/\b(?:mongo|client|neo4jClient)\.query\b/i],
+      source_patterns: [/\b(?:mongo|client|neo4jClient)\.query\s*(?:<|\()/i]
+    ),
+    PatternDefinition.new(
       "sql",
       "Potential SQL/data-store sink inferred from code or callee name",
       78,
@@ -48,8 +55,8 @@ module NoirAIContext
       "outbound_http",
       "Potential outbound HTTP/client sink inferred from code or callee name",
       64,
-      name_patterns: [/\bhttp\b/i, /\bfetch\b/i, /\bclient\b/i, /\baxios\b/i],
-      source_patterns: [/requests\.(get|post|put|delete)/i, /\bfetch\s*\(/i, /\baxios\./i, /\bhttp\.(Get|Post|NewRequest)/, /\bclient\.(get|post|request)/i]
+      name_patterns: [/\bhttp\b/i, /\bfetch\b/i, /\bclient\b/i, /\baxios\b/i, /\bgetForObject\b/i, /\bexchange\b/i],
+      source_patterns: [/requests\.(get|post|put|delete)/i, /\bfetch\s*\(/i, /\baxios\./i, /\bhttp\.(Get|Post|NewRequest)/, /\bclient\.(get|post|request)/i, /\b\w+\.(getForObject|postForObject|exchange)\s*\(/i]
     ),
     # ----- New in v1.1 (--ai-context coverage expansion) -----
     #
@@ -171,7 +178,7 @@ module NoirAIContext
       "crypto_weak",
       "Potential weak cryptographic primitive in a security-relevant context (MD5/SHA1 for auth, DES, ECB, non-CSPRNG random)",
       56,
-      name_patterns: [/\bDigest::MD5\b/, /\bDigest::SHA1\b/, /\bhashlib\.md5\b/, /\bhashlib\.sha1\b/, /\bMessageDigest\.getInstance\b/],
+      name_patterns: [/\bDigest::MD5\b/, /\bDigest::SHA1\b/, /\bhashlib\.md5\b/, /\bhashlib\.sha1\b/, /\bMessageDigest\.getInstance\b/, /\b(?:Random|random)\.next(Int|Long|Bytes)?\b/],
       source_patterns: [
         /\bDigest::(MD5|SHA1)\b/,
         /\bhashlib\.(md5|sha1)\s*\(/,
@@ -180,7 +187,8 @@ module NoirAIContext
         /\bAES\/ECB\b/,
         /\bMode::ECB\b/,
         /\bRC4\b/,
-        /\bMath\.random\s*\(\s*\)/, # JS non-CSPRNG
+        /\bMath\.random\s*\(\s*\)/,                             # JS non-CSPRNG
+        /\bRandom\s*\(\s*\)\s*\.\s*next(Int|Long|Bytes)?\s*\(/, # JVM/Kotlin non-CSPRNG
       ]
     ),
   ] of PatternDefinition
@@ -190,8 +198,74 @@ module NoirAIContext
       "validation",
       "Potential validation step inferred from code or callee name",
       64,
-      name_patterns: [/\bvalidate\b/i, /\bvalidator\b/i, /\bverify\b/i, /\bpermit\b/i],
+      name_patterns: [/\bvalidate\w*\b/i, /\bvalidator\w*\b/i, /\bverify\w*\b/i, /\bpermit\w*\b/i],
       source_patterns: [/\bvalidate\w*\s*\(/i, /\bvalidator\b/i, /\bpermit\s*\(/i, /\bverify\w*\s*\(/i]
+    ),
+    PatternDefinition.new(
+      "expiry_validation",
+      "Expiry/validity-window check inferred from token or session lifetime comparison",
+      72,
+      name_patterns: [/\b(expiry|expires?|expired|validUntil|notAfter)\w*\.(isBefore|isAfter)\b/i],
+      source_patterns: [/\b(expiry|expires?|expired|validUntil|notAfter)\w*\s*\.\s*(isBefore|isAfter)\s*\(/i]
+    ),
+    PatternDefinition.new(
+      "uniqueness_validation",
+      "Uniqueness or duplicate-prevention validation inferred from guard helper naming",
+      70,
+      name_patterns: [
+        /^checkIf\w*(Unique|Exists?|Duplicate)\w*OrThrow$/i,
+        /^ensure\w*(Unique|Exists?|Duplicate)\w*$/i,
+        /^assert\w*(Unique|Exists?|Duplicate)\w*$/i,
+        /\b\w+(?:Repository|Repo|Dao)\.findBy(?!Id\b)(?!Id[A-Z])\w+\b/,
+      ],
+      source_patterns: [
+        /\bcheckIf\w*(Unique|Exists?|Duplicate)\w*OrThrow\s*\(/i,
+        /\bensure\w*(Unique|Exists?|Duplicate)\w*\s*\(/i,
+        /\bassert\w*(Unique|Exists?|Duplicate)\w*\s*\(/i,
+        /\b\w+(?:Repository|Repo|Dao)\.findBy(?!Id\b)(?!Id[A-Z])\w+\s*\([^\n]*\)[\s\S]{0,480}\b(?:isEmpty|isNotEmpty|isPresent|AlreadyExist|Duplicate|Unique)\b/i,
+      ]
+    ),
+    PatternDefinition.new(
+      "existence_validation",
+      "Existence or duplicate-precondition check inferred from repository existence lookup",
+      70,
+      name_patterns: [/\b\w+Repository\.existsBy\w+\b/, /\b\w+Repo\.existsBy\w+\b/, /\b\w+Dao\.existsBy\w+\b/],
+      source_patterns: [/\b\w+(?:Repository|Repo|Dao)\.existsBy\w+\s*\(/]
+    ),
+    PatternDefinition.new(
+      "credential_hashing",
+      "Credential hashing step inferred from Spring Security password encoder usage",
+      74,
+      name_patterns: [/\b(?:passwordEncoder|PasswordEncoder|BCryptPasswordEncoder|Argon2PasswordEncoder|Pbkdf2PasswordEncoder|SCryptPasswordEncoder)\.encode\b/]
+    ),
+    PatternDefinition.new(
+      "credential_verification",
+      "Credential verification step inferred from Spring Security password encoder usage",
+      74,
+      name_patterns: [/\b(?:passwordEncoder|PasswordEncoder|BCryptPasswordEncoder|Argon2PasswordEncoder|Pbkdf2PasswordEncoder|SCryptPasswordEncoder)\.matches\b/],
+      source_patterns: [/\b\w*(?:PasswordEncoder|passwordEncoder)\w*\.matches\s*\(/]
+    ),
+    PatternDefinition.new(
+      "cookie_httponly",
+      "Cookie is configured HttpOnly, reducing client-side script access to session or refresh tokens",
+      72,
+      source_patterns: [/\b\w+\.isHttpOnly\s*=\s*true\b/, /\b\w+\.setHttpOnly\s*\(\s*true\s*\)/]
+    ),
+    PatternDefinition.new(
+      "cookie_secure",
+      "Cookie is configured Secure, restricting transport to HTTPS",
+      72,
+      source_patterns: [/\b\w+\.secure\s*=\s*true\b/, /\b\w+\.setSecure\s*\(\s*true\s*\)/]
+    ),
+    PatternDefinition.new(
+      "query_parameter_binding",
+      "Database query parameters are bound through the client API instead of string-concatenated into the query",
+      74,
+      source_patterns: [
+        /\.bind\s*\([^)]*\)\s*\.to\s*\([^)]*\)/,
+        /\.bind\s*\([^)]*\)\s*\.with\s*\{/,
+        /\.bind\s*\(\s*\d+\s*,\s*[^)]*\)/,
+      ]
     ),
     PatternDefinition.new(
       "sanitization",
@@ -250,6 +324,8 @@ module NoirAIContext
         /\b\.to_f!\b/,
         /\bNumber\s*\(/,
         /\bint\s*\(\s*request\./,
+        /@(?:PathVariable|DestinationVariable|RequestParam|RequestHeader|CookieValue|Argument)(?:\s*\([^)]*\))?\s+(?:\w+\s*:\s*)?(?:U?Long|U?Int|Short|Byte|Double|Float|BigInteger|BigDecimal|UUID)\??(?=\b|[^A-Za-z0-9_])/,
+        /@(?:PathVariable|DestinationVariable|RequestParam|RequestHeader|CookieValue|Argument)(?:\s*\([^)]*\))?\s+(?:final\s+)?(?:long|int|short|byte|double|float|Long|Integer|Short|Byte|Double|Float|BigInteger|BigDecimal|UUID)\s+\w+\b/,
       ]
     ),
     # Allowlist check — explicit `in ALLOWED` / `whitelist.include?`
@@ -507,7 +583,10 @@ module NoirAIContext
       "html_content_input",
       "Rich-content input may flow into HTML output; review escaping or schema validation",
       72,
-      name_patterns: [/\b(content|body|description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i]
+      name_patterns: [
+        /\b(body|description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i,
+        /\b(html[_-]?content|content[_-]?html|markdown[_-]?content|content[_-]?markdown|rich[_-]?content|content[_-]?rich)\b/i,
+      ]
     ),
     # Code / formula / template fields. High-risk XSS+SSTI+eval
     # source class. If an endpoint accepts these names, the
@@ -516,7 +595,10 @@ module NoirAIContext
       "code_input",
       "Code/script-like input often flows into eval, template, or interpreter sinks",
       80,
-      name_patterns: [/\b(script|code|formula|expression|command|cmd|template|query[_-]?string)\b/i]
+      name_patterns: [
+        /\b(script|formula|expression|command|cmd|template|query[_-]?string)\b/i,
+        /\b(source[_-]?code|script[_-]?code|template[_-]?code|code[_-]?(snippet|block|body|source))\b/i,
+      ]
     ),
   ] of PatternDefinition
 end

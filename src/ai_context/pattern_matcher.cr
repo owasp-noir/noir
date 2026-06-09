@@ -36,7 +36,7 @@ module NoirAIContext
                               source : String) : AIContextEntry?
       return if suppress_pattern_detection?(pattern.kind, name, snippet)
 
-      name_match = name_match_text(name, pattern.name_patterns)
+      name_match = name_match_text(name, pattern.name_patterns, pattern.kind)
       snippet_match = snippet_match_text(snippet, pattern.source_patterns)
       return unless name_match || snippet_match
       return if source == "callee" && name_match.nil?
@@ -63,13 +63,19 @@ module NoirAIContext
       when "sql"
         return true if name.matches?(/\b(URL\.Query|QueryParam|request\.query|req\.query|query_params|searchParams)\b/i)
         return true if snippet && snippet.matches?(/\b(URL\.Query\(\)\.Get|QueryParam\(|request\.query\.|req\.query\.|searchParams\.get)\b/i)
+        # `<client>.query` is already surfaced as a `data_store_query` sink;
+        # suppress the broader `sql` `\bquery\b` match so the same callee does
+        # not emit two near-identical sinks.
+        return true if name.matches?(/\b(?:mongo|client|neo4jClient)\.query\b/i)
       when "template_render"
+        return true if name.matches?(/(?:^|\.)template\.(?:find|findAll|findById|count|save|insert|update|delete|remove)\b/i)
         return false unless snippet
         return true if snippet.matches?(/\brender\s+(json|plain|xml|body|status):/i)
         return true if snippet.matches?(/\brespond(Text|Bytes|File|Json|Redirect)\b/)
       when "outbound_http"
         return true if name.starts_with?("request.")
         return true if name == "request"
+        return true if name.matches?(/(?:^|\.)(?:client|databaseClient)\.(?:query|insert|select|execute|sql|bind)\b/i)
       when "crypto_weak"
         # Weak hash primitives are common for non-security uses (cache
         # keys, ETags, file fingerprints). Only flag when the snippet
@@ -77,7 +83,8 @@ module NoirAIContext
         # signal noise down for codebases that hash file paths or
         # serialize cache state.
         return true unless snippet
-        return false if snippet.matches?(/\b(password|passwd|secret|token|session|sign(ature)?|nonce|otp|cred(ential)?|jwt|hmac|salt|api[_-]?key)\b/i)
+        return false if snippet.matches?(/\b(password|passwd|secret|token|session|sign(ature)?|nonce|otp|mfa|2fa|cred(ential)?|jwt|hmac|salt|api[_-]?key)\b/i)
+        return false if snippet.matches?(/\b(verification|activation|reset)(?:[_-]?(code|token))?/i)
         # AES/ECB and RC4 are weak regardless of context — keep the
         # snippet match alone good enough for those.
         return !snippet.matches?(/\bAES\/ECB\b|\bMode::ECB\b|\bRC4\b|\b['"]DES['"]?\b/)
@@ -94,16 +101,23 @@ module NoirAIContext
         # the suspect call, the developer already gated it. Skip the
         # warning in that case.
         return snippet.matches?(/\.permit\s*\(/) || snippet.matches?(/\.(parse|validate)\s*\(/i)
+      when "uniqueness_validation"
+        if name.matches?(/\b\w+(?:Repository|Repo|Dao)\.findBy(?!Id\b)(?!Id[A-Z])\w+\b/)
+          return true unless snippet
+          return !snippet.matches?(/\b(?:isEmpty|isNotEmpty|isPresent|AlreadyExist|Duplicate|Unique)\b/i)
+        end
       end
 
       false
     end
 
-    private def name_match_text(name : String, patterns : Array(Regex)) : String?
+    private def name_match_text(name : String, patterns : Array(Regex), kind : String) : String?
       return if name.empty?
 
       patterns.each do |pattern|
         if match = name.match(pattern)
+          return normalize_label(name) if kind == "validation" && name.includes?(".")
+
           return normalize_label(match[0])
         end
       end
@@ -158,7 +172,37 @@ module NoirAIContext
     end
 
     private def normalize_label(text : String) : String
-      text.gsub(/\s+/, " ").strip[0, Math.min(text.gsub(/\s+/, " ").strip.size, 64)]
+      label = compact_function_signature_label(text) || text.split(/\s+\|\s+\d+:/, 2)[0]
+      label = label.gsub(/\s+/, " ").strip
+      label = compact_annotation_label(label) if label.size > 64
+      label[0, Math.min(label.size, 64)]
+    end
+
+    private def compact_function_signature_label(label : String) : String?
+      return unless label.matches?(/\s+\|\s+\d+:/)
+
+      compacted = label.gsub(/\s+\|\s+\d+:\s*/, " ").gsub(/\s+/, " ").strip
+      match = compacted.match(/^([A-Za-z_][A-Za-z0-9_.]*)\s*\((.*?)\)/)
+      return unless match
+
+      params = match[2]
+        .gsub(/@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s*/, "")
+        .gsub(/\s*,\s*/, ", ")
+        .gsub(/,\s*$/, "")
+        .strip
+      "#{match[1]}(#{params})"
+    end
+
+    private def compact_annotation_label(label : String) : String
+      if match = label.match(/^(@[A-Za-z_][A-Za-z0-9_]*)(?:\([^)]*\))?\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_<>,.?]*)/)
+        return "#{match[1]} #{match[2]}: #{match[3]}"
+      end
+
+      if match = label.match(/^(@[A-Za-z_][A-Za-z0-9_]*)(?:\([^)]*\))?\s+([A-Za-z_][A-Za-z0-9_<>,.?]*)\s+([A-Za-z_][A-Za-z0-9_]*)/)
+        return "#{match[1]} #{match[3]}: #{match[2]}"
+      end
+
+      label
     end
   end
 end

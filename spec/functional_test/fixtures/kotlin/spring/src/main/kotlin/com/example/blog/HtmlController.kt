@@ -2,6 +2,7 @@ package com.example.blog
 
 import org.springframework.http.HttpStatus.*
 import org.springframework.http.ResponseEntity
+import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.stereotype.Controller
 import org.springframework.ui.Model
 import org.springframework.ui.set
@@ -111,6 +112,13 @@ class HtmlController(private val repository: ArticleRepository,
         return "response"
     }
 
+    @GetMapping("/constant-param")
+    @PreAuthorize("hasRole('ADMIN')")
+    fun constantParam(
+        @RequestParam(name = REQUEST_PAGINATION_CURSOR_QUERY) cursor: Long?,
+        @RequestParam(REQUEST_PAGINATION_LIMIT_QUERY) limit: Int?
+    ): String = "$cursor:$limit"
+
     fun Article.render() = RenderedArticle(
         slug,
         title,
@@ -157,3 +165,6 @@ class HtmlController(private val repository: ArticleRepository,
         val content: String?
     )
 }
+
+const val REQUEST_PAGINATION_CURSOR_QUERY = "cursor"
+const val REQUEST_PAGINATION_LIMIT_QUERY = "limit"

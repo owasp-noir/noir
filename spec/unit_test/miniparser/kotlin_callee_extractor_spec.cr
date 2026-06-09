@@ -54,6 +54,59 @@ describe Noir::KotlinCalleeExtractor do
       end
     end
 
+    it "uses route line to disambiguate overloaded methods" do
+      source = <<-KT
+        package app
+
+        class GraphqlController {
+            @SchemaMapping
+            fun author(article: Article): User =
+                service.findArticleAuthor(article.authorId)
+
+            @SchemaMapping
+            fun author(comment: Comment): User =
+                service.findCommentAuthor(comment.userId)
+        }
+        KT
+
+      with_kotlin_root(source) do |root|
+        default_names = Noir::KotlinCalleeExtractor.callees_in_method(
+          root, source, "GraphqlController.kt", "GraphqlController", "author"
+        ).map(&.[0])
+        comment_names = Noir::KotlinCalleeExtractor.callees_in_method(
+          root, source, "GraphqlController.kt", "GraphqlController", "author", 8
+        ).map(&.[0])
+
+        default_names.should contain("service.findArticleAuthor")
+        comment_names.should contain("service.findCommentAuthor")
+        comment_names.should_not contain("service.findArticleAuthor")
+      end
+    end
+
+    it "captures enum entries property access without treating arbitrary fields as callees" do
+      source = <<-KT
+        package app
+
+        enum class RoleType { ADMIN, USER }
+        class RoleController {
+            fun getTypes(): List<RoleType> {
+                val types = RoleType.entries
+                val id = currentUser.id
+                return types
+            }
+        }
+        KT
+
+      with_kotlin_root(source) do |root|
+        names = Noir::KotlinCalleeExtractor.callees_in_method(
+          root, source, "RoleController.kt", "RoleController", "getTypes"
+        ).map(&.[0])
+
+        names.should contain("RoleType.entries")
+        names.should_not contain("currentUser.id")
+      end
+    end
+
     it "guards against empty class_name or method_name" do
       source = "class A { fun m() {} }"
       with_kotlin_root(source) do |root|

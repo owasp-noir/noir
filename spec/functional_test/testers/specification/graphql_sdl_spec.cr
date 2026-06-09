@@ -12,7 +12,8 @@ FunctionalTester.new("fixtures/specification/graphql_sdl/common/", {
     Param.new("graphql_query_user", "", "json"),
   ]),
   Endpoint.new("/graphql#Mutation.createUser", "POST", [
-    Param.new("input", "", "json"),
+    Param.new("name", "", "json"),
+    Param.new("email", "", "json"),
     Param.new("graphql_mutation_createUser", "", "json"),
   ]),
   Endpoint.new("/graphql#Subscription.userAdded", "POST", [

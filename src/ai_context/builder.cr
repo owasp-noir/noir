@@ -44,6 +44,7 @@ module NoirAIContext
       add_internal_signal(context, endpoint, anchor, route_snippet)
       add_param_signals(context, endpoint, anchor, route_snippet)
       add_tag_entries(context, endpoint, anchor, route_snippet)
+      add_graphql_resolver_signal(context, endpoint)
       add_callee_entries(context, endpoint)
       add_source_scan_entries(context, endpoint)
       add_credential_from_source_signal(context, endpoint, anchor)
@@ -61,6 +62,8 @@ module NoirAIContext
       add_ssrf_signal(context, anchor, route_snippet)
       add_path_traversal_signal(context, anchor, route_snippet)
       add_sensitive_response_signal(context, endpoint, anchor, route_snippet)
+      add_object_lookup_signal(context, endpoint, anchor, route_snippet)
+      add_object_write_signal(context, endpoint, anchor, route_snippet)
       add_unsafe_method_signal(context, endpoint, anchor, route_snippet)
       add_log_injection_signal(context, endpoint, anchor, route_snippet)
       add_priority_review_signal(context, endpoint, anchor, route_snippet)
@@ -132,6 +135,7 @@ module NoirAIContext
       "ssrf",
       "path_traversal",
       "sensitive_response",
+      "server_secret_source",
       "unsafe_method",
       "log_injection",
     }
@@ -140,8 +144,9 @@ module NoirAIContext
     # used alongside concrete signals to compute the overall
     # priority bucket.
     PRIORITY_SCORING_SINK_BLACKLIST = Set{
-      "sql", "command_exec", "code_eval", "deserialization",
-      "template_injection", "xss", "mass_assignment", "crypto_weak",
+      "sql", "data_store_query", "command_exec", "code_eval",
+      "deserialization", "template_injection", "xss",
+      "mass_assignment", "crypto_weak",
     }
 
     # Roll-up "this endpoint deserves attention" hint. Counts the
@@ -157,7 +162,12 @@ module NoirAIContext
       return if context.signals.any? { |s| s.kind == "priority_review" }
 
       review_signals = context.signals.count { |s| REVIEW_PRIORITY_SIGNAL_KINDS.includes?(s.kind) }
-      heavy_sinks = context.sinks.count { |s| PRIORITY_SCORING_SINK_BLACKLIST.includes?(s.kind) }
+      heavy_sink_kinds = Set(String).new
+      context.sinks.each do |sink|
+        next if priority_scoring_sink_mitigated?(context, sink.kind)
+        heavy_sink_kinds << sink.kind if PRIORITY_SCORING_SINK_BLACKLIST.includes?(sink.kind)
+      end
+      heavy_sinks = heavy_sink_kinds.size
 
       score = review_signals + heavy_sinks
       # `csrf_exempt` / `jwt_unsafe` / `cors_open` / `open_redirect`
@@ -197,7 +207,7 @@ module NoirAIContext
                   description: "High-priority review candidate — multiple risk signals stack on this endpoint (combination of missing guards, dangerous sinks, or explicit protection bypasses)."}
                else
                  {name: "medium", confidence: 70,
-                  description: "Medium-priority review candidate — at least one missing guard and one risky sink (or equivalent) co-occur on this endpoint."}
+                  description: "Medium-priority review candidate — multiple review signals co-occur on this endpoint."}
                end
 
       context.push_signal(AIContextEntry.new(
@@ -210,6 +220,12 @@ module NoirAIContext
         confidence: bucket[:confidence].as(Int32),
         snippet: route_snippet
       ))
+    end
+
+    private def priority_scoring_sink_mitigated?(context : AIContext, sink_kind : String) : Bool
+      return false unless sink_kind.in?("sql", "data_store_query")
+
+      context.validators.any? { |validator| validator.kind == "query_parameter_binding" }
     end
 
     # HTTP method intent vs implementation mismatch. A GET/HEAD
@@ -287,7 +303,7 @@ module NoirAIContext
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless scope
         next unless scope.matches?(LOG_EMITTER_PATTERN)
-        next unless scope.matches?(LOG_INPUT_OR_CRED_PATTERN)
+        next unless scope.matches?(LOG_INPUT_OR_CRED_PATTERN) || logs_endpoint_param?(endpoint, scope)
 
         context.push_signal(AIContextEntry.new(
           "log_injection",
@@ -300,6 +316,15 @@ module NoirAIContext
           snippet: scope
         ))
         return
+      end
+    end
+
+    private def logs_endpoint_param?(endpoint : Endpoint, scope : String) : Bool
+      endpoint.params.any? do |param|
+        next false if param.name.starts_with?("graphql_")
+
+        escaped = Regex.escape(param.name)
+        scope.matches?(Regex.new("\\$(?:\\{#{escaped}\\}|#{escaped}\\b)"))
       end
     end
 
@@ -340,8 +365,9 @@ module NoirAIContext
     # Both have to match in the same scope. The earlier single-regex
     # version was too loose and caught english prose mentioning
     # credentials in response strings.
-    RESPONSE_EMITTER_PATTERN   = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
-    CREDENTIAL_KEY_IN_RESPONSE = /[^"'\w](password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key)\s*:/i
+    RESPONSE_EMITTER_PATTERN         = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
+    CREDENTIAL_KEY_IN_RESPONSE       = /[^"'\w](password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key)\s*:/i
+    KOTLIN_CREDENTIAL_RETURN_PATTERN = /\bfun\s+\w+[^{|;]*=\s*(?:this\.)?(password|passwd|token|secret|api[_-]?key|session_?id|access_?token|refresh_?token|private_?key)\b/i
 
     private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "sensitive_response" }
@@ -350,6 +376,23 @@ module NoirAIContext
       endpoint.details.code_paths.each do |path_info|
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless scope
+
+        if match = scope.match(KOTLIN_CREDENTIAL_RETURN_PATTERN)
+          field = match[1]? || "credential"
+          context.push_signal(AIContextEntry.new(
+            "sensitive_response",
+            field.downcase,
+            source: "route_source",
+            description: "Handler directly returns a credential-bearing value; review whether the response exposes server-side secrets or tokens.",
+            path: path_info.path,
+            line: path_info.line,
+            confidence: 70,
+            snippet: scope
+          ))
+          add_spring_value_secret_source_signal(context, path_info.path, field)
+          return
+        end
+
         next unless scope.matches?(RESPONSE_EMITTER_PATTERN)
         if match = scope.match(CREDENTIAL_KEY_IN_RESPONSE)
           field = match[1]? || "credential"
@@ -366,6 +409,137 @@ module NoirAIContext
           return
         end
       end
+    end
+
+    SPRING_VALUE_ANNOTATION_PATTERN = /@Value\s*\(([^)]*)\)/
+    SPRING_CONFIG_KEY_PATTERN       = /\$\{([^}:]+)/
+    SPRING_SECRET_NAME_PATTERN      = /\b(pass(word)?|secret|token|api[_.-]?key|credential|jwt|private[_.-]?key)\b/i
+
+    private def add_spring_value_secret_source_signal(context : AIContext, path : String?, field : String)
+      return if context.signals.any? { |s| s.kind == "server_secret_source" } &&
+                context.sources.any? { |s| s.kind == "server_secret_source" }
+
+      lines = @reader.lines_for(path)
+      return if lines.empty?
+
+      # Compile the declaration pattern once for this field instead of per
+      # `@Value` line; `field` is a fixed credential word but escape it anyway.
+      field_declaration_pattern = Regex.new("\\b(?:[A-Za-z_][A-Za-z0-9_<>?]*\\s+)*(?:var|val)\\s+#{Regex.escape(field)}\\b")
+
+      lines.each_with_index do |line, idx|
+        next unless line.includes?("@Value")
+
+        window_lines = [] of String
+        idx.upto(Math.min(idx + 3, lines.size - 1)) do |line_idx|
+          window_lines << lines[line_idx].strip
+        end
+        window = window_lines.join(" ")
+        next unless window.matches?(field_declaration_pattern)
+
+        value_expr = spring_value_expression(window)
+        next unless spring_secret_source?(field, value_expr)
+
+        entry = AIContextEntry.new(
+          "server_secret_source",
+          spring_secret_source_name(field, value_expr),
+          source: "route_source",
+          description: "Handler returns a credential-like value injected from Spring @Value; review whether server-side configuration or environment secrets are exposed.",
+          path: path,
+          line: idx + 1,
+          confidence: 74,
+          snippet: @reader.snippet_for(path, idx + 1, 1)
+        )
+        context.push_signal(entry)
+        context.push_source(entry)
+        return
+      end
+    end
+
+    private def spring_value_expression(window : String) : String?
+      if match = window.match(SPRING_VALUE_ANNOTATION_PATTERN)
+        return match[1]?
+      end
+
+      nil
+    end
+
+    private def spring_secret_source?(field : String, value_expr : String?) : Bool
+      return true if field.matches?(SPRING_SECRET_NAME_PATTERN)
+
+      value_expr.try(&.matches?(SPRING_SECRET_NAME_PATTERN)) || false
+    end
+
+    private def spring_secret_source_name(field : String, value_expr : String?) : String
+      if value_expr && (match = value_expr.match(SPRING_CONFIG_KEY_PATTERN))
+        "Spring @Value #{match[1]} -> #{field}"
+      else
+        "Spring @Value -> #{field}"
+      end
+    end
+
+    OBJECT_LOOKUP_PRIMARY_CALLEE_PATTERN  = /(?:^|\.)(?:findById|findOne|getOne|existsById|find\w*ById|find\w*By\w*Id|(?:find|count|exists)By\w*Id)\b/i
+    OBJECT_LOOKUP_FALLBACK_CALLEE_PATTERN = /(?:^|\.)(?:deleteById|removeById|get\w*ById|retrieve\w*)\b/i
+
+    private def add_object_lookup_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "object_lookup" }
+      return unless object_lookup_identifier_param?(endpoint)
+
+      lookup = object_lookup_callee(endpoint)
+      return unless lookup
+
+      context.push_signal(AIContextEntry.new(
+        "object_lookup",
+        lookup.name,
+        source: "heuristic",
+        description: "Identifier input flows into an object lookup or object access callee; review object-level authorization and not-found behavior around this access.",
+        path: lookup.path || anchor.try(&.path),
+        line: lookup.line || anchor.try(&.line),
+        confidence: 66,
+        snippet: route_snippet
+      ))
+    end
+
+    private def object_lookup_callee(endpoint : Endpoint) : Callee?
+      primary = endpoint.callees.select { |callee| callee.name.matches?(OBJECT_LOOKUP_PRIMARY_CALLEE_PATTERN) }
+      primary.find { |callee| callee.name.matches?(/\b\w+(?:Repository|Repo|Dao)\./) } ||
+        primary.first? ||
+        endpoint.callees.find { |callee| callee.name.matches?(OBJECT_LOOKUP_FALLBACK_CALLEE_PATTERN) }
+    end
+
+    private def object_lookup_identifier_param?(endpoint : Endpoint) : Bool
+      return true if endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
+      return true if endpoint.params.any? { |p| p.param_type == "query" && identifier_like?(p.name) }
+      return true if STATE_CHANGING_METHODS.includes?(endpoint.method) &&
+                     endpoint.params.any? { |p| BODY_LIKE_PARAM_TYPES.includes?(p.param_type) && identifier_like?(p.name) }
+      return true if graphql_field_endpoint?(endpoint)
+      return false unless graphql_endpoint?(endpoint)
+
+      endpoint.params.any? do |param|
+        param.param_type == "json" &&
+          identifier_like?(param.name) &&
+          !param.name.starts_with?("graphql_")
+      end
+    end
+
+    private def add_object_write_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if context.signals.any? { |s| s.kind == "object_write" }
+      return if context.signals.any? { |s| s.kind == "object_lookup" }
+      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
+
+      mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
+      return unless mutating
+
+      context.push_signal(AIContextEntry.new(
+        "object_write",
+        mutating.name,
+        source: "heuristic",
+        description: "Path identifier participates in an object-scoped write without a detected lookup callee; review ownership and parent-child authorization around this mutation.",
+        path: mutating.path || anchor.try(&.path),
+        line: mutating.line || anchor.try(&.line),
+        confidence: 52,
+        snippet: route_snippet
+      ))
     end
 
     # Some analyzers (express's loose destructuring, Java route extractors
@@ -456,10 +630,32 @@ module NoirAIContext
         confidence: 96,
         snippet: route_snippet
       ))
+      add_spring_graphql_resolver_technology_signal(context, endpoint, anchor)
+    end
+
+    private def add_spring_graphql_resolver_technology_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?)
+      return if endpoint.details.technology == "kotlin_spring"
+      return unless endpoint.tags.any? { |tag| tag.tagger == "kotlin_spring_graphql_analyzer" }
+      return if context.signals.any? { |signal| signal.kind == "technology" && signal.name == "kotlin_spring" }
+
+      resolver_anchor = endpoint.details.code_paths.find(&.path.ends_with?(".kt")) || anchor
+      snippet = @reader.snippet_for(resolver_anchor.try(&.path), resolver_anchor.try(&.line), ROUTE_SNIPPET_RADIUS)
+      context.push_signal(AIContextEntry.new(
+        "technology",
+        "kotlin_spring",
+        source: "resolver",
+        description: "Spring GraphQL resolver implementation was matched to this endpoint.",
+        path: resolver_anchor.try(&.path),
+        line: resolver_anchor.try(&.line),
+        confidence: 90,
+        snippet: snippet
+      ))
     end
 
     private def add_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return if graphql_read_endpoint?(endpoint)
+      return if read_only_post_endpoint?(endpoint)
 
       description = case endpoint.method
                     when "DELETE"
@@ -497,10 +693,11 @@ module NoirAIContext
 
     private def add_param_signals(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       endpoint.params.each do |param|
+        add_param_source(context, param, anchor, route_snippet)
         add_path_param_signal(context, param, anchor, route_snippet)
 
         PARAM_PATTERNS.each do |pattern|
-          next unless PatternMatcher.matches_any?(param.name, pattern.name_patterns)
+          next unless param_matches_pattern?(param, pattern)
           next if skip_param_signal?(endpoint, param, pattern)
           next if redundant_param_signal?(param, pattern)
 
@@ -523,11 +720,13 @@ module NoirAIContext
         end
 
         param.tags.each do |tag|
+          next if skip_param_tag_signal?(endpoint, param, tag)
+
           context.push_signal(AIContextEntry.new(
             tag.name,
             "#{param.param_type}.#{param.name}",
             source: "param_tagger:#{tag.tagger}",
-            description: "#{tag.description} Matched by parameter-name heuristic.",
+            description: param_tag_description(tag),
             path: anchor.try(&.path),
             line: anchor.try(&.line),
             confidence: 58,
@@ -537,12 +736,134 @@ module NoirAIContext
       end
     end
 
+    private def add_param_source(context : AIContext, param : Param, anchor : PathInfo?, route_snippet : String?)
+      if graphql_source = graphql_field_source_name(param)
+        context.push_source(AIContextEntry.new(
+          "request_input",
+          graphql_source,
+          source: "param",
+          description: "GraphQL field selected by the caller; resolver executes while resolving the parent object.",
+          path: anchor.try(&.path),
+          line: anchor.try(&.line),
+          confidence: 78,
+          snippet: route_snippet
+        ))
+        return
+      end
+
+      return if param.name.starts_with?("graphql_")
+
+      context.push_source(AIContextEntry.new(
+        "request_input",
+        "#{param.param_type}.#{param.name}",
+        source: "param",
+        description: param_source_description(param),
+        path: anchor.try(&.path),
+        line: anchor.try(&.line),
+        confidence: param_source_confidence(param),
+        snippet: route_snippet
+      ))
+    end
+
+    private def graphql_field_source_name(param : Param) : String?
+      return unless param.name.starts_with?("graphql_field_")
+
+      field_name = param.value.strip.gsub(/^field\s+/, "")
+      field_name = param.name.gsub(/^graphql_field_/, "") if field_name.empty?
+      field_name.empty? ? nil : "graphql.field.#{field_name}"
+    end
+
+    private def param_source_description(param : Param) : String
+      case param.param_type
+      when "path"
+        "Route path parameter supplied by the caller."
+      when "query"
+        "Query-string parameter supplied by the caller."
+      when "header"
+        "HTTP header supplied by the caller."
+      when "json", "form"
+        "Request body field supplied by the caller."
+      else
+        "Request parameter supplied by the caller."
+      end
+    end
+
+    private def param_source_confidence(param : Param) : Int32
+      case param.param_type
+      when "path"
+        88
+      when "query", "header"
+        84
+      when "json", "form"
+        82
+      else
+        76
+      end
+    end
+
+    private def param_matches_pattern?(param : Param, pattern : PatternDefinition) : Bool
+      return true if PatternMatcher.matches_any?(param.name, pattern.name_patterns)
+      return false if pattern.kind == "identifier_input" && param.name.starts_with?("graphql_")
+      return true if pattern.kind == "identifier_input" && identifier_like?(param.name)
+
+      false
+    end
+
+    private def param_tag_description(tag : Tag) : String
+      return tag.description if tag.tagger == "kotlin_spring_validation_analyzer"
+
+      "#{tag.description} Matched by parameter-name heuristic."
+    end
+
     private def skip_param_signal?(endpoint : Endpoint, param : Param, pattern : PatternDefinition) : Bool
       return true if pattern.kind == "file_input" && param.param_type == "header"
       return false unless pattern.kind == "identifier_input"
       return !header_identifier_like?(param.name) if param.param_type == "header"
+      return true if safe_kotlin_query_identifier_without_lookup?(endpoint, param)
       return false unless BODY_LIKE_PARAM_TYPES.includes?(param.param_type)
-      param.name == "id"
+      return true if param.name == "id"
+
+      body_identifier_overwritten_from_path?(endpoint, param)
+    end
+
+    private def safe_kotlin_query_identifier_without_lookup?(endpoint : Endpoint, param : Param) : Bool
+      return false unless endpoint.details.technology == "kotlin_spring"
+      return false unless SAFE_METHODS.includes?(endpoint.method)
+      return false unless param.param_type == "query" && identifier_like?(param.name)
+
+      !object_lookup_callee(endpoint)
+    end
+
+    private def body_identifier_overwritten_from_path?(endpoint : Endpoint, param : Param) : Bool
+      return false unless endpoint.details.technology == "kotlin_spring"
+      return false unless BODY_LIKE_PARAM_TYPES.includes?(param.param_type)
+      return false unless identifier_like?(param.name)
+
+      path_identifiers = endpoint.params.select do |candidate|
+        candidate.param_type == "path" && identifier_like?(candidate.name)
+      end.map(&.name)
+      return false if path_identifiers.empty?
+
+      endpoint.details.code_paths.any? do |path_info|
+        source = expanded_source_window(path_info, 12) || @reader.route_scope_snippet_for(path_info.path, path_info.line)
+        source && body_identifier_assignment_from_path?(source, param.name, path_identifiers)
+      end
+    end
+
+    private def body_identifier_assignment_from_path?(source : String, body_identifier : String, path_identifiers : Array(String)) : Bool
+      path_pattern = path_identifiers.map { |name| Regex.escape(name) }.join("|")
+      return false if path_pattern.empty?
+
+      source.matches?(Regex.new("\\b#{Regex.escape(body_identifier)}\\s*=\\s*(?:this\\.)?(?:#{path_pattern})\\b"))
+    end
+
+    private def skip_param_tag_signal?(endpoint : Endpoint, param : Param, tag : Tag) : Bool
+      return false unless tag.name == "idor" && tag.tagger == "Hunt"
+      return false unless endpoint.details.technology == "kotlin_spring"
+      return false unless endpoint.method == "GET"
+      return false unless param.param_type == "query" && identifier_like?(param.name)
+
+      !object_lookup_callee(endpoint)
     end
 
     private def redundant_param_signal?(param : Param, pattern : PatternDefinition) : Bool
@@ -573,9 +894,13 @@ module NoirAIContext
 
     private def add_tag_entries(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       endpoint.tags.each do |tag|
+        next if skip_tag_signal?(context, endpoint, tag)
+
+        signal_kind = guard_tag?(tag) ? "auth_guard" : tag.name
+        signal_name = guard_tag?(tag) ? guard_name_from_tag(tag) : tag_signal_name(tag)
         entry = AIContextEntry.new(
-          guard_tag?(tag) ? "auth_guard" : tag.name,
-          guard_tag?(tag) ? guard_name_from_tag(tag) : tag.name,
+          signal_kind,
+          signal_name,
           source: tag.tagger,
           description: tag.description,
           path: anchor.try(&.path),
@@ -588,6 +913,18 @@ module NoirAIContext
           context.push_guard(entry)
         else
           context.push_signal(entry)
+          if websocket_cors_config_tag?(tag)
+            context.push_source(AIContextEntry.new(
+              "cors_policy",
+              tag.description,
+              source: tag.tagger,
+              description: "WebSocket/STOMP endpoint CORS policy source derived from Spring endpoint registration.",
+              path: anchor.try(&.path),
+              line: anchor.try(&.line),
+              confidence: 78,
+              snippet: route_snippet
+            ))
+          end
           if tag.name == "file_upload"
             context.push_sink(AIContextEntry.new(
               "file_io",
@@ -602,6 +939,65 @@ module NoirAIContext
           end
         end
       end
+    end
+
+    private def websocket_cors_config_tag?(tag : Tag) : Bool
+      tag.name == "cors" &&
+        tag.description.includes?("WebSocket/STOMP endpoint config")
+    end
+
+    private def skip_tag_signal?(context : AIContext, endpoint : Endpoint, tag : Tag) : Bool
+      return false unless tag.name == "graphql"
+
+      if graphql_operation_tag?(tag)
+        context.signals.any? do |signal|
+          signal.kind == "graphql" && signal.description == tag.description
+        end
+      else
+        endpoint.tags.any? { |candidate| graphql_operation_tag?(candidate) }
+      end
+    end
+
+    private def tag_signal_name(tag : Tag) : String
+      return tag.description if graphql_operation_tag?(tag)
+
+      tag.name
+    end
+
+    private def graphql_operation_tag?(tag : Tag) : Bool
+      tag.name == "graphql" && tag.description.matches?(/^[A-Z][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*$/)
+    end
+
+    GRAPHQL_RESOLVER_ANNOTATION_PATTERN = /@(QueryMapping|MutationMapping|SchemaMapping|SubscriptionMapping|BatchMapping|DgsQuery|DgsMutation|DgsData|DgsSubscription)\b/
+
+    private def add_graphql_resolver_signal(context : AIContext, endpoint : Endpoint)
+      return unless graphql_endpoint?(endpoint)
+      return if context.signals.any? { |s| s.kind == "graphql_resolver" }
+
+      resolver_path = endpoint.details.code_paths.find do |path_info|
+        next false unless path_info.path.ends_with?(".kt") || path_info.path.ends_with?(".java")
+
+        snippet = @reader.route_scope_snippet_for(path_info.path, path_info.line)
+        snippet.try(&.matches?(GRAPHQL_RESOLVER_ANNOTATION_PATTERN)) || false
+      end
+      return unless resolver_path
+
+      resolver_snippet = @reader.route_scope_snippet_for(resolver_path.path, resolver_path.line)
+      context.push_signal(AIContextEntry.new(
+        "graphql_resolver",
+        graphql_operation_name(endpoint),
+        source: "resolver",
+        description: "Spring GraphQL resolver implementation for this GraphQL operation.",
+        path: resolver_path.path,
+        line: resolver_path.line,
+        confidence: 90,
+        snippet: resolver_snippet
+      ))
+    end
+
+    private def graphql_operation_name(endpoint : Endpoint) : String
+      graphql_tag = endpoint.tags.find { |tag| tag.name == "graphql" && tag.description.includes?(".") }
+      graphql_tag.try(&.description) || endpoint.url
     end
 
     private def add_callee_entries(context : AIContext, endpoint : Endpoint)
@@ -620,13 +1016,47 @@ module NoirAIContext
         ))
 
         if sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, SINK_PATTERNS, callee.path, callee.line, "callee")
-          context.push_sink(sink)
+          context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
         end
 
         if validator = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, VALIDATOR_PATTERNS, callee.path, callee.line, "callee")
           context.push_validator(validator)
         end
       end
+    end
+
+    private def enrich_callee_sink(sink : AIContextEntry, callee : Callee, snippet : String?) : AIContextEntry
+      return sink unless sink.kind == "outbound_http"
+      return sink unless uri = outbound_uri_from_snippet(snippet, callee.line)
+
+      AIContextEntry.new(
+        sink.kind,
+        "#{callee.name} #{uri}",
+        source: sink.source,
+        description: "#{sink.description} Target URI: #{uri}.",
+        path: sink.path,
+        line: sink.line,
+        confidence: sink.confidence,
+        snippet: sink.snippet
+      )
+    end
+
+    private def outbound_uri_from_snippet(snippet : String?, line : Int32?) : String?
+      return unless snippet
+
+      if line && (line_match = snippet.match(/(?:^|\|\s*)#{line}:\s*([^|]+)/))
+        if uri_match = line_match[1].match(/\.\s*uri\s*\(\s*["']([^"']+)["']/)
+          return uri_match[1]
+        end
+        if uri_match = line_match[1].match(/\.\s*(?:getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/)
+          return uri_match[1]
+        end
+      end
+
+      match = snippet.match(/\.\s*(?:uri|getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/)
+      return unless match
+
+      match[1]
     end
 
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint)
@@ -702,6 +1132,7 @@ module NoirAIContext
             context.push_sink(sink)
           end
         end
+        add_spring_mvc_template_render_sink(context, endpoint, path_info, snippet)
 
         VALIDATOR_PATTERNS.each do |pattern|
           next if context.validators.any? { |v| v.kind == pattern.kind }
@@ -709,11 +1140,249 @@ module NoirAIContext
             context.push_validator(validator)
           end
         end
+
+        add_query_parameter_binding_validator(context, path_info)
+        add_kotlin_collection_id_lookup_entries(context, endpoint, path_info, snippet)
+        add_request_cookie_source(context, path_info, snippet)
+        add_foreign_identifier_write_signal(context, endpoint, path_info, snippet)
       end
+    end
+
+    private def add_query_parameter_binding_validator(context : AIContext, path_info : PathInfo)
+      return if context.validators.any? { |validator| validator.kind == "query_parameter_binding" }
+
+      pattern = VALIDATOR_PATTERNS.find { |candidate| candidate.kind == "query_parameter_binding" }
+      return unless pattern
+
+      source = expanded_source_window(path_info, 8)
+      return unless source
+
+      if validator = PatternMatcher.detect_single_pattern(pattern, "", source, path_info.path, path_info.line, "route_source")
+        context.push_validator(validator)
+      end
+    end
+
+    REQUEST_COOKIE_READ_PATTERN = /\b[A-Za-z_][A-Za-z0-9_]*\s*\.\s*(?:cookies\b|getCookies\s*\()/i
+
+    private def add_request_cookie_source(context : AIContext, path_info : PathInfo, snippet : String)
+      return if context.sources.any? { |source| source.kind == "request_input" && source.name.starts_with?("cookie.") }
+      return unless snippet.matches?(REQUEST_COOKIE_READ_PATTERN)
+
+      context.push_source(AIContextEntry.new(
+        "request_input",
+        "cookie.#{request_cookie_source_name(snippet)}",
+        source: "route_source",
+        description: "HTTP cookie value read from the request.",
+        path: path_info.path,
+        line: path_info.line,
+        confidence: 82,
+        snippet: snippet
+      ))
+    end
+
+    private def request_cookie_source_name(snippet : String) : String
+      if match = snippet.match(/\bname\s*==\s*["']([^"']+)["']/)
+        return match[1]
+      end
+      if snippet.matches?(/\bget[A-Za-z0-9_]*RefreshToken[A-Za-z0-9_]*CookieName\s*\(/)
+        return "refreshToken"
+      end
+      if snippet.matches?(/refresh[_-]?token/i)
+        return "refreshToken"
+      end
+
+      "*"
+    end
+
+    SPRING_MVC_MAPPING_ANNOTATION = /@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\b/
+    SPRING_MVC_VIEW_RETURN        = /\breturn\s+["']([^"']+)["']/
+    SPRING_MVC_VIEW_EXPR          = /\bfun\b[^{\n]*:\s*String\b[^{\n]*=\s*["']([^"']+)["']/
+
+    private def add_spring_mvc_template_render_sink(context : AIContext, endpoint : Endpoint, path_info : PathInfo, snippet : String)
+      return unless endpoint.details.technology == "kotlin_spring"
+
+      lines = @reader.lines_for(path_info.path)
+      return if lines.empty?
+      line = path_info.line
+      return if line.nil? || line < 1 || line > lines.size
+
+      route_idx = line - 1
+      return unless spring_mvc_controller_class?(lines, route_idx)
+      return if spring_mvc_response_body_scope?(lines, route_idx)
+      return unless view_name = spring_mvc_returned_view_name(lines, route_idx)
+
+      entry = AIContextEntry.new(
+        "template_render",
+        "Spring MVC view #{view_name}",
+        source: "route_source",
+        description: "Spring MVC controller returns a server-side view name; review template rendering and model data exposure for this endpoint.",
+        path: path_info.path,
+        line: line,
+        confidence: 66,
+        snippet: snippet
+      )
+
+      if index = context.sinks.index { |sink| sink.kind == "template_render" }
+        context.sinks[index] = entry
+      else
+        context.push_sink(entry)
+      end
+    end
+
+    private def spring_mvc_controller_class?(lines : Array(String), route_idx : Int32) : Bool
+      class_idx = route_idx.downto(0).find { |idx| lines[idx].matches?(/\bclass\s+\w+/) }
+      return false unless class_idx
+
+      annotations = annotation_block_above(lines, class_idx)
+      annotations.any?(&.matches?(/^@Controller(?:\b|\()/)) &&
+        !annotations.any?(&.matches?(/^@RestController(?:\b|\()/))
+    end
+
+    private def spring_mvc_response_body_scope?(lines : Array(String), route_idx : Int32) : Bool
+      if class_idx = route_idx.downto(0).find { |idx| lines[idx].matches?(/\bclass\s+\w+/) }
+        return true if annotation_block_above(lines, class_idx).any?(&.matches?(/^@ResponseBody(?:\b|\()/))
+      end
+
+      scan_start = Math.max(route_idx - 6, 0)
+      scan_end = Math.min(route_idx + 8, lines.size - 1)
+      (scan_start..scan_end).any? { |idx| lines[idx].strip.matches?(/^@ResponseBody(?:\b|\()/) }
+    end
+
+    private def spring_mvc_returned_view_name(lines : Array(String), route_idx : Int32) : String?
+      return unless lines[route_idx].matches?(SPRING_MVC_MAPPING_ANNOTATION)
+
+      fun_idx = route_idx.upto(Math.min(route_idx + 8, lines.size - 1)).find { |idx| lines[idx].includes?("fun ") }
+      return unless fun_idx
+
+      scan_end = Math.min(fun_idx + 18, lines.size - 1)
+      (fun_idx..scan_end).each do |idx|
+        stripped = lines[idx].strip
+        if match = stripped.match(SPRING_MVC_VIEW_EXPR)
+          return normalized_spring_mvc_view_name(match[1])
+        end
+        if match = stripped.match(SPRING_MVC_VIEW_RETURN)
+          return normalized_spring_mvc_view_name(match[1])
+        end
+        break if idx > fun_idx && stripped.matches?(SPRING_MVC_MAPPING_ANNOTATION)
+      end
+
+      nil
+    end
+
+    private def normalized_spring_mvc_view_name(name : String) : String?
+      view = name.strip
+      return if view.empty?
+      return if view.starts_with?("redirect:") || view.starts_with?("forward:")
+      view
+    end
+
+    private def annotation_block_above(lines : Array(String), idx : Int32) : Array(String)
+      result = [] of String
+      current = idx - 1
+      while current >= 0
+        stripped = lines[current].strip
+        if stripped.empty?
+          current -= 1
+          next
+        end
+        break unless stripped.starts_with?("@")
+
+        result.unshift(stripped)
+        current -= 1
+      end
+      result
+    end
+
+    KOTLIN_COLLECTION_ID_LOOKUP_PATTERN        = /\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*(firstOrNull|find|singleOrNull)\s*\{[^}]*\b(?:it|[A-Za-z_][A-Za-z0-9_]*)\.(?:id|[A-Za-z_][A-Za-z0-9_]*Id)\s*==/i
+    KOTLIN_COLLECTION_ID_LOOKUP_THROWS_PATTERN = /\b(?:firstOrNull|find|singleOrNull)\s*\{[^}]*\b(?:id|[A-Za-z_][A-Za-z0-9_]*Id)\b[^}]*\}[\s\S]{0,180}(?:\?:\s*throw|\borElseThrow\b|\bthrow\s+\w*(?:NotFound|NotExist|Missing)\b)/i
+
+    private def add_kotlin_collection_id_lookup_entries(context : AIContext, endpoint : Endpoint, path_info : PathInfo, snippet : String)
+      return unless object_lookup_identifier_param?(endpoint)
+      return unless match = snippet.match(KOTLIN_COLLECTION_ID_LOOKUP_PATTERN)
+
+      lookup_name = "#{match[1]}.#{match[2]}(id)"
+
+      unless context.signals.any? { |s| s.kind == "object_lookup" } || object_lookup_callee(endpoint)
+        context.push_signal(AIContextEntry.new(
+          "object_lookup",
+          lookup_name,
+          source: "route_source",
+          description: "Identifier input is used in a Kotlin collection lookup; review object-level authorization and not-found behavior around this access.",
+          path: path_info.path,
+          line: path_info.line,
+          confidence: 54,
+          snippet: snippet
+        ))
+      end
+
+      return if context.validators.any? { |v| v.kind == "existence_validation" }
+      return unless snippet.matches?(KOTLIN_COLLECTION_ID_LOOKUP_THROWS_PATTERN)
+
+      context.push_validator(AIContextEntry.new(
+        "existence_validation",
+        lookup_name,
+        source: "route_source",
+        description: "Existence or not-found validation inferred from a Kotlin collection id lookup followed by an exception path.",
+        path: path_info.path,
+        line: path_info.line,
+        confidence: 58,
+        snippet: snippet
+      ))
+    end
+
+    FOREIGN_IDENTIFIER_ASSIGNMENT_PATTERN = /\b([A-Za-z_][A-Za-z0-9_]*Id)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*Id)\b/
+    KOTLIN_WRITE_IN_SNIPPET_PATTERN       = /\b(?:save|insert|persist|update|create|add|addAll)\s*\(|\.\s*(?:save|insert|persist|update|add|addAll)\s*\(/i
+
+    private def add_foreign_identifier_write_signal(context : AIContext, endpoint : Endpoint, path_info : PathInfo, snippet : String)
+      return if context.signals.any? { |s| s.kind == "foreign_identifier_write" }
+      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return if context.signals.any? { |s| s.kind == "object_lookup" }
+      return if object_lookup_callee(endpoint)
+      return if context.validators.any? { |v| v.kind == "existence_validation" }
+      return unless endpoint.params.any? do |param|
+                      BODY_LIKE_PARAM_TYPES.includes?(param.param_type) &&
+                      !param.name.starts_with?("graphql_") &&
+                      identifier_like?(param.name)
+                    end
+
+      detection_source = expanded_source_window(path_info, 18) || snippet
+      return unless detection_source.matches?(KOTLIN_WRITE_IN_SNIPPET_PATTERN)
+      return unless match = detection_source.match(FOREIGN_IDENTIFIER_ASSIGNMENT_PATTERN)
+      # A same-named assignment (`userId = request.userId`, `val id = dto.id`)
+      # is a local read/copy, not a foreign id flowing into a different field.
+      # The real signal is a *different* destination field (`authorId = userId`).
+      return if match[1] == match[2]
+
+      context.push_signal(AIContextEntry.new(
+        "foreign_identifier_write",
+        "#{match[1]}=#{match[2]}",
+        source: "route_source",
+        description: "Identifier-like request input is assigned into a persisted object reference without a detected lookup or existence check; review ownership and foreign-object validation.",
+        path: path_info.path,
+        line: path_info.line,
+        confidence: 56,
+        snippet: snippet
+      ))
+    end
+
+    private def expanded_source_window(path_info : PathInfo, radius : Int32) : String?
+      line = path_info.line
+      return unless line
+      return if line < 1
+
+      lines = @reader.lines_for(path_info.path)
+      return if lines.empty? || line > lines.size
+
+      start_idx = Math.max(line - 1, 0)
+      end_idx = Math.min(line + radius - 1, lines.size - 1)
+      window = (start_idx..end_idx).map { |idx| lines[idx].strip }.join("\n").strip
+      window.empty? ? nil : window
     end
 
     private def add_missing_guard_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return if graphql_read_endpoint?(endpoint)
+      return if read_only_post_endpoint?(endpoint)
 
       has_authn = context.guards.any? { |g| g.kind == "auth_guard" }
       has_authz = context.guards.any? { |g| g.kind == "authz_guard" }
@@ -764,6 +1433,7 @@ module NoirAIContext
 
       # Existing authn-absence flow (preserves v1.0 behaviour).
       return unless context.guards.empty?
+      return if auth_lifecycle_endpoint?(endpoint) && !path_id_param
 
       if path_id_param
         context.push_signal(AIContextEntry.new(
@@ -787,6 +1457,75 @@ module NoirAIContext
           confidence: 28,
           snippet: route_snippet
         ))
+      end
+    end
+
+    AUTH_NAMESPACE_PATTERN            = /(?:^|\/)auth(?:\/|$)/i
+    AUTH_LIFECYCLE_SEGMENT_PATTERN    = /(?:^|\/)(login|log[_-]?in|logout|log[_-]?out|authenticate|refresh[_-]?token|verify|verification|reset[_-]?password|forgot[_-]?password|password[_-]?reset)(?:\/|$)/i
+    ACCOUNT_REGISTER_SEGMENT_PATTERN  = /(?:^|\/)(register|sign[_-]?up|signup)(?:\/|$)/i
+    ACCOUNT_NAMESPACE_SEGMENT_PATTERN = /(?:^|\/)(user|users|account|accounts|auth)(?:\/|$)/i
+
+    private def auth_lifecycle_endpoint?(endpoint : Endpoint) : Bool
+      return true if endpoint.url.matches?(AUTH_NAMESPACE_PATTERN)
+      return true if endpoint.url.matches?(AUTH_LIFECYCLE_SEGMENT_PATTERN)
+
+      endpoint.url.matches?(ACCOUNT_REGISTER_SEGMENT_PATTERN) &&
+        endpoint.url.matches?(ACCOUNT_NAMESPACE_SEGMENT_PATTERN)
+    end
+
+    private def graphql_read_endpoint?(endpoint : Endpoint) : Bool
+      return false unless graphql_endpoint?(endpoint)
+      !graphql_mutation_endpoint?(endpoint)
+    end
+
+    READ_ONLY_POST_CALLEE_PATTERN = /(?:^|[.:])(?:find|findAll|findOne|findBy\w+|get|list|listAll|count|search|query|retrieve)\w*\b/i
+
+    # A mutating verb anywhere in the callee name (start, after a separator, or
+    # as a CamelCase segment) disqualifies the endpoint from "read-only POST".
+    # Without this, a callee like `getOrCreate`/`findAndDelete` matches the
+    # read-only pattern via its leading read verb, silently suppressing the
+    # state-change review signal on an endpoint that does mutate.
+    MUTATING_POST_CALLEE_PATTERN = /(?:\A|[.:_])(?:create|save|update|delete|insert|remove|destroy|modify|persist|revoke|store)|(?:Create|Save|Update|Delete|Insert|Remove|Destroy|Modify|Persist|Revoke|Store)/
+
+    private def read_only_post_endpoint?(endpoint : Endpoint) : Bool
+      return false unless endpoint.method == "POST"
+      return false if endpoint.params.any? { |param| BODY_LIKE_PARAM_TYPES.includes?(param.param_type) }
+      return false if endpoint.callees.empty?
+      return false if endpoint.callees.any? { |callee| callee.name.matches?(MUTATING_POST_CALLEE_PATTERN) }
+
+      endpoint.callees.all? { |callee| callee.name.matches?(READ_ONLY_POST_CALLEE_PATTERN) }
+    end
+
+    private def graphql_endpoint?(endpoint : Endpoint) : Bool
+      return true if endpoint.url.includes?("/graphql#")
+
+      endpoint.tags.any? do |tag|
+        tag.name == "graphql" || tag.name == "graphql-root"
+      end
+    end
+
+    GRAPHQL_OPERATION_ROOTS = ["Query", "Mutation", "Subscription"]
+
+    private def graphql_field_endpoint?(endpoint : Endpoint) : Bool
+      return false unless graphql_endpoint?(endpoint)
+
+      if root_tag = endpoint.tags.find { |tag| tag.name == "graphql-root" }
+        return !GRAPHQL_OPERATION_ROOTS.includes?(root_tag.description)
+      end
+
+      if match = endpoint.url.match(/\/graphql#([^.#]+)\./)
+        return !GRAPHQL_OPERATION_ROOTS.includes?(match[1])
+      end
+
+      false
+    end
+
+    private def graphql_mutation_endpoint?(endpoint : Endpoint) : Bool
+      return true if endpoint.url.includes?("#Mutation.")
+
+      endpoint.tags.any? do |tag|
+        (tag.name == "graphql-root" && tag.description == "Mutation") ||
+          (tag.name == "graphql" && tag.description.starts_with?("Mutation."))
       end
     end
 

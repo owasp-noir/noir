@@ -12,7 +12,7 @@ class HuntParamTagger < Tagger
 
   TAG_DEFINITIONS = {
     "ssti" => {
-      "words"       => ["template", "preview", "activity", "content", "redirect"],
+      "words"       => ["template", "preview", "activity", "redirect"],
       "description" => "This parameter may be vulnerable to Server Side Template Injection (SSTI) attacks.",
     },
     "ssrf" => {
@@ -66,7 +66,8 @@ class HuntParamTagger < Tagger
     return false unless tag_name == "idor"
     return false unless BODY_LIKE_PARAM_TYPES.includes?(param.param_type)
 
-    param.name.downcase == "id"
+    normalized = param.name.downcase
+    normalized == "id" || normalized == "key"
   end
 
   private def tag_matches_param_name?(tag_name : String, words : Array(String), param : Param) : Bool

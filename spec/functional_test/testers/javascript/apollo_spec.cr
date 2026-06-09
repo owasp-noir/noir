@@ -16,7 +16,8 @@ FunctionalTester.new("fixtures/javascript/apollo/", {
     Param.new("graphql_query_users", "", "json"),
   ]),
   Endpoint.new("/graphql#Mutation.createUser", "POST", [
-    Param.new("input", "", "json"),
+    Param.new("name", "", "json"),
+    Param.new("email", "", "json"),
     Param.new("graphql_mutation_createUser", "", "json"),
   ]),
   Endpoint.new("/graphql#Mutation.deleteUser", "POST", [
