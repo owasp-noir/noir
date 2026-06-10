@@ -51,6 +51,21 @@ module NoirTechs
   ]
 
   TECHS = {
+    :android => {
+      :format    => ["XML"],
+      :similar   => ["android", "android-manifest", "androidmanifest", "android_manifest"],
+      :supported => {
+        :endpoint => true,
+        :method   => false,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :cpp_drogon => {
       :framework => "Drogon",
       :language  => "C++",

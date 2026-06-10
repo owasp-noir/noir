@@ -81,6 +81,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_spring", Java::Spring},
     {"java_struts2", Java::Struts2},
     {"lua_lapis", Lua::Lapis},
+    {"android", Mobile::Android},
     {"java_vertx", Java::Vertx},
     {"java_wicket", Java::Wicket},
     {"js_adonisjs", Javascript::Adonisjs},
