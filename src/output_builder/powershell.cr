@@ -4,6 +4,7 @@ require "../models/endpoint"
 class OutputBuilderPowershell < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
+      next if endpoint.mobile? # mobile deep links aren't HTTP requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
       cmd = "Invoke-WebRequest -Method \"#{escape_powershell(endpoint.method)}\" -Uri \"#{escape_powershell(baked[:url])}\""

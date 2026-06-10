@@ -7,6 +7,16 @@ struct Endpoint
   property url, method, params, protocol, kind, details, tags, callees, internal
   property ai_context : AIContext?
 
+  # Non-HTTP mobile deep-link protocols. These endpoints are app URLs you
+  # open (myapp://, intent://, verified https app links), not HTTP requests
+  # you send — so they are excluded from HTTP-shaped output (curl/httpie/
+  # powershell, OpenAPI) and from active probing / proxy delivery.
+  MOBILE_PROTOCOLS = Set{"mobile-scheme", "android-intent", "universal-link"}
+
+  def mobile? : Bool
+    MOBILE_PROTOCOLS.includes?(@protocol)
+  end
+
   # Free-form metadata for non-HTTP entry points (mobile deep-link
   # schemes, Android intents, universal links: action/category/host/
   # package/...). nil for ordinary endpoints and suppressed from

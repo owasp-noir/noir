@@ -10,6 +10,7 @@ class OutputBuilderOas3 < OutputBuilder
     paths = {} of String => Hash(String, JSON::Any)
 
     endpoints.each do |endpoint|
+      next if endpoint.mobile? # deep links aren't HTTP paths; keep them out of the spec
       parameters = [] of Hash(String, JSON::Any)
       json_properties = {} of String => JSON::Any
       form_properties = {} of String => JSON::Any
