@@ -27,6 +27,13 @@ module NoirMobileLinker
     handleIntent handleDeepLink onReceive onBind
   ]
 
+  # Inputs the handler reads from the inbound deep link. `getQueryParameter`
+  # reads a real URI query parameter (surfaced as a "query" param, baked
+  # into the URL like any other); the `get*Extra` family reads Intent extras
+  # (a Bundle, not part of the URI) and is surfaced as the "extra" type.
+  QUERY_PARAM_RE = /\.getQueryParameter\s*\(\s*"([^"]+)"/
+  EXTRA_PARAM_RE = /\.get(?:String|Int|Integer|Boolean|Long|Float|Double|Char|Byte|Short|Parcelable|Serializable|StringArray|CharSequence|Bundle)Extra\s*\(\s*"([^"]+)"/
+
   def self.apply(endpoints : Array(Endpoint), logger : NoirLogger) : Array(Endpoint)
     return endpoints unless endpoints.any? { |ep| android_handler_target?(ep) }
 
@@ -122,7 +129,18 @@ module NoirMobileLinker
     anchor_line = handler_anchor_line(content, simple)
     endpoint.details.add_path(PathInfo.new(path, anchor_line))
     callees.each { |callee| endpoint.push_callee(callee) }
+    extract_input_params(content).each { |param| endpoint.push_param(param) }
     endpoint
+  end
+
+  # Scans the handler source for inbound-deep-link reads. Scoped to the
+  # handler file (the component), which is the deep-link processing unit;
+  # only string-literal keys are captured.
+  private def self.extract_input_params(content : String) : Array(Param)
+    params = [] of Param
+    content.scan(QUERY_PARAM_RE) { |m| params << Param.new(m[1], "", "query") }
+    content.scan(EXTRA_PARAM_RE) { |m| params << Param.new(m[1], "", "extra") }
+    params
   end
 
   # Best-effort source line for the handler so the AI-context snippet window
