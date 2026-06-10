@@ -28,6 +28,26 @@ module Analyzer::Python
 
     BARE_DECORATORS = %w[route get post put delete patch head options]
 
+    # Per-line matchers, hoisted so they compile once: an interpolated
+    # regex literal recompiles (PCRE2 JIT) on every evaluation, and the
+    # bare-decorator patterns ran per decorator name on every source
+    # line. The `.to_s` expansion is byte-identical to the previous
+    # inline form, so matching behaviour is unchanged.
+    # Tuple shape: {deco_name, "@deco" guard, bare_re, original_line_re, keyword_path_re}
+    BARE_DECORATOR_PATTERNS = BARE_DECORATORS.map do |deco_name|
+      {deco_name,
+       "@#{deco_name}",
+       /^@#{deco_name}\([rf]?['"]([^'"]*)['"](.*)/,
+       /@#{deco_name}\s*\(\s*[rf]?['"]([^'"]*)['"]/,
+       /^\s*@#{deco_name}\s*\([^)]*\b(?:path|rule|uri)\s*=\s*[rf]?['"]([^'"]*)['"]/m}
+    end
+    PROGRAMMATIC_ROUTE_RE = /\b(#{PYTHON_VAR_NAME_REGEX})\.route\s*\((.*)\)\s*$/m
+    BOTTLE_INSTANCE_RE    = /^(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:bottle\.)?Bottle\(/
+    MOUNT_RE              = /\b(#{PYTHON_VAR_NAME_REGEX})\.mount\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})/
+
+    @keyword_regex_cache = Hash(::String, Regex).new
+    @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
     def analyze
       # Pulls from the detector-built file_map so subtree pruning and
       # --exclude-path apply to this pass too.
@@ -71,35 +91,41 @@ module Analyzer::Python
             lines.each_with_index do |line, line_index|
               effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
               stripped = effective_line.gsub(" ", "")
-              BARE_DECORATORS.each do |deco_name|
-                # `@route("/foo", method="POST")` or `@get("/foo")` on the stripped line.
-                if bare_match = stripped.match(/^@#{deco_name}\([rf]?['"]([^'"]*)['"](.*)/)
-                  # Recover spaces in path via the original line.
-                  path_value = bare_match[1]
-                  if orig_match = effective_line.match(/@#{deco_name}\s*\(\s*[rf]?['"]([^'"]*)['"]/)
-                    path_value = orig_match[1]
+              # `@deco` (contiguous in the source by both regex shapes) is a
+              # necessary condition for either match, so non-decorator lines
+              # skip the regex work entirely.
+              if stripped.includes?('@')
+                BARE_DECORATOR_PATTERNS.each do |deco_name, deco_guard, bare_re, orig_re, kw_re|
+                  next unless stripped.includes?(deco_guard)
+                  # `@route("/foo", method="POST")` or `@get("/foo")` on the stripped line.
+                  if bare_match = stripped.match(bare_re)
+                    # Recover spaces in path via the original line.
+                    path_value = bare_match[1]
+                    if orig_match = effective_line.match(orig_re)
+                      path_value = orig_match[1]
+                    end
+                    extra = deco_name == "route" ? bare_match[2] : "methods=['#{deco_name.upcase}']"
+                    process_route(
+                      path,
+                      lines,
+                      line_index,
+                      path_value,
+                      extra,
+                      definition_base_path: current_base_path,
+                      source: file_content
+                    )
+                  elsif kw_path_match = effective_line.match(kw_re)
+                    extra = deco_name == "route" ? effective_line : "methods=['#{deco_name.upcase}']"
+                    process_route(
+                      path,
+                      lines,
+                      line_index,
+                      kw_path_match[1],
+                      extra,
+                      definition_base_path: current_base_path,
+                      source: file_content
+                    )
                   end
-                  extra = deco_name == "route" ? bare_match[2] : "methods=['#{deco_name.upcase}']"
-                  process_route(
-                    path,
-                    lines,
-                    line_index,
-                    path_value,
-                    extra,
-                    definition_base_path: current_base_path,
-                    source: file_content
-                  )
-                elsif kw_path_match = effective_line.match(/^\s*@#{deco_name}\s*\([^)]*\b(?:path|rule|uri)\s*=\s*[rf]?['"]([^'"]*)['"]/m)
-                  extra = deco_name == "route" ? effective_line : "methods=['#{deco_name.upcase}']"
-                  process_route(
-                    path,
-                    lines,
-                    line_index,
-                    kw_path_match[1],
-                    extra,
-                    definition_base_path: current_base_path,
-                    source: file_content
-                  )
                 end
               end
 
@@ -130,7 +156,7 @@ module Analyzer::Python
                                            *,
                                            definition_base_path : String,
                                            source : String)
-      route_match = line.match(/\b(#{PYTHON_VAR_NAME_REGEX})\.route\s*\((.*)\)\s*$/m)
+      route_match = line.match(PROGRAMMATIC_ROUTE_RE)
       return unless route_match
 
       receiver = route_match[1]
@@ -166,14 +192,14 @@ module Analyzer::Python
 
       lines.each_with_index do |line, index|
         stripped = line.gsub(" ", "")
-        if instance_match = stripped.match(/^(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:bottle\.)?Bottle\(/)
+        if stripped.includes?("Bottle(") && (instance_match = stripped.match(BOTTLE_INSTANCE_RE))
           prefixes[instance_match[1]] ||= [""]
         end
 
         next unless line.includes?(".mount(")
 
         effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        effective_line.scan(/\b(#{PYTHON_VAR_NAME_REGEX})\.mount\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})/) do |mount_match|
+        effective_line.scan(MOUNT_RE) do |mount_match|
           next if mount_match.size < 4
           parent_router = mount_match[1]
           prefix = mount_match[2]
@@ -381,9 +407,16 @@ module Analyzer::Python
       parts
     end
 
+    # Memoized per keyword — the keyword set is tiny (`path`, `rule`,
+    # `uri`) but this runs per argument of every programmatic route.
+    private def keyword_string_regex(keyword : String) : Regex
+      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
     private def extract_keyword_string(args : Array(String), keyword : String) : String?
+      keyword_re = keyword_string_regex(keyword)
       args.each do |arg|
-        keyword_match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
+        keyword_match = arg.match(keyword_re)
         next unless keyword_match
 
         return extract_python_string(keyword_match[1])
@@ -456,6 +489,25 @@ module Analyzer::Python
     # Attribute names on accessor objects that are not user parameters.
     DICT_METHOD_NAMES = Set{"get", "getall", "getone", "items", "keys", "values", "pop"}
 
+    # `extract_request_params` runs once per route and used to rebuild
+    # three PCRE2 patterns per accessor on every call. The accessor set
+    # is fixed, so precompile the access patterns once here.
+    # Tuple shape: {noir_param_type, get_re, bracket_re, attribute_re}
+    DICT_ACCESSOR_PATTERNS = DICT_ACCESSORS.map do |accessor, param_type|
+      {param_type,
+       /request\.#{accessor}\.get\s*\(\s*['"]([^'"]+)['"]/,
+       /request\.#{accessor}\s*\[\s*['"]([^'"]+)['"]\s*\]/,
+       /request\.#{accessor}\.([A-Za-z_][A-Za-z0-9_]*)\b/}
+    end
+
+    private def json_var_regexes(var : String) : Tuple(Regex, Regex)
+      @json_var_regex_cache[var] ||= begin
+        v = Regex.escape(var)
+        {/#{v}\.get\s*\(\s*['"]([^'"]+)['"]/,
+         /#{v}\s*\[\s*['"]([^'"]+)['"]\s*\]/}
+      end
+    end
+
     # Scan a function body for Bottle's request accessors.
     # Bottle uses explicit accessor names (`request.forms` for form,
     # `request.json` for json, …) so method-based disambiguation isn't needed.
@@ -476,17 +528,17 @@ module Analyzer::Python
         json_variables << m[1] unless json_variables.includes?(m[1])
       end
 
-      DICT_ACCESSORS.each do |accessor, param_type|
+      DICT_ACCESSOR_PATTERNS.each do |param_type, get_re, bracket_re, attribute_re|
         # request.<accessor>.get("name")
-        body.scan(/request\.#{accessor}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        body.scan(get_re) do |m|
           record.call(m[1], param_type)
         end
         # request.<accessor>["name"]
-        body.scan(/request\.#{accessor}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+        body.scan(bracket_re) do |m|
           record.call(m[1], param_type)
         end
         # request.<accessor>.<attribute>  — skip dict-API method names.
-        body.scan(/request\.#{accessor}\.([A-Za-z_][A-Za-z0-9_]*)\b/) do |m|
+        body.scan(attribute_re) do |m|
           next if DICT_METHOD_NAMES.includes?(m[1])
           record.call(m[1], param_type)
         end
@@ -498,10 +550,11 @@ module Analyzer::Python
       end
 
       json_variables.each do |var|
-        body.scan(/#{Regex.escape(var)}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+        get_re, bracket_re = json_var_regexes(var)
+        body.scan(get_re) do |m|
           record.call(m[1], "json")
         end
-        body.scan(/#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+        body.scan(bracket_re) do |m|
           record.call(m[1], "json")
         end
       end

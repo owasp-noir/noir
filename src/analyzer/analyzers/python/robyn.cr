@@ -23,6 +23,16 @@ module Analyzer::Python
     HTTP_METHOD_DECORATORS = %w[get post put patch delete head options trace]
     WEBSOCKET_ATTRIBUTES   = {"websocket" => "GET"}
 
+    # Hoisted out of the per-line loops: an interpolated regex literal
+    # recompiles (PCRE2 JIT) on every evaluation, and these interpolate
+    # only constants. The `.to_s` expansion is byte-identical to the
+    # previous inline form, so matching behaviour is unchanged.
+    ROBYN_INSTANCE_RE = /^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:robyn\.)?Robyn\s*\(/
+    SUBROUTER_RE      = /^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:robyn\.)?SubRouter\s*\((.*)/m
+    INCLUDE_ROUTER_RE = /\b(#{PYTHON_VAR_NAME_REGEX})\.include_router\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/
+
+    @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
     def analyze
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
@@ -92,7 +102,7 @@ module Analyzer::Python
     #   SubRouter(__file__, "/api")
     private def collect_router_assignments(lines : Array(::String), router_prefixes : Hash(::String, ::String))
       lines.each_with_index do |line, index|
-        if m = line.match(/^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:robyn\.)?Robyn\s*\(/)
+        if line.includes?("Robyn") && (m = line.match(ROBYN_INSTANCE_RE))
           router_prefixes[m[1]] = ""
         end
 
@@ -101,7 +111,7 @@ module Analyzer::Python
                          else
                            line
                          end
-        if m = effective_line.match(/^\s*(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:robyn\.)?SubRouter\s*\((.*)/m)
+        if effective_line.includes?("SubRouter") && (m = effective_line.match(SUBROUTER_RE))
           name = m[1]
           tail = m[2]
           prefix = extract_subrouter_prefix(tail)
@@ -140,7 +150,7 @@ module Analyzer::Python
         next unless line.includes?(".include_router(")
 
         effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        effective_line.scan(/\b(#{PYTHON_VAR_NAME_REGEX})\.include_router\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})/) do |m|
+        effective_line.scan(INCLUDE_ROUTER_RE) do |m|
           next if m.size < 3
           includes << {m[1], m[2]}
         end
@@ -212,6 +222,17 @@ module Analyzer::Python
       body.join("\n")
     end
 
+    # Memoized per JSON-variable name (`data`, `body`, ...): the patterns
+    # interpolate a discovered name so they can't be class constants, but
+    # handler bodies reuse the same few names across a whole project.
+    private def json_var_regexes(var : ::String) : Tuple(Regex, Regex)
+      @json_var_regex_cache[var] ||= begin
+        v = Regex.escape(var)
+        {/#{v}\[['"]([^'"]+)['"]\]/,
+         /#{v}\.get\(['"]([^'"]+)['"]/}
+      end
+    end
+
     # Robyn exposes `request.json()`, `request.query_params`, and
     # `request.headers` for parameter access. The fixture-level idioms
     # are bracket / `.get()` access, which is enough to recover the
@@ -245,8 +266,9 @@ module Analyzer::Python
       end
 
       json_vars.each do |var|
-        body.scan(/#{Regex.escape(var)}\[['"]([^'"]+)['"]\]/) { |m| record.call(m[1], "json") }
-        body.scan(/#{Regex.escape(var)}\.get\(['"]([^'"]+)['"]/) { |m| record.call(m[1], "json") }
+        bracket_re, get_re = json_var_regexes(var)
+        body.scan(bracket_re) { |m| record.call(m[1], "json") }
+        body.scan(get_re) { |m| record.call(m[1], "json") }
       end
 
       # `request.query_params.get("name")` / `request.query_params["name"]`

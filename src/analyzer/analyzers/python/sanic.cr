@@ -24,6 +24,31 @@ module Analyzer::Python
       "header" => nil,
     }
 
+    # Hoisted out of the analyze loops: an interpolated regex literal
+    # recompiles (PCRE2 JIT) on every evaluation, and these interpolate
+    # only constants. The `.to_s` expansion is byte-identical to the
+    # previous inline form, so matching behaviour is unchanged.
+    SANIC_INSTANCE_RE   = /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Sanic\(/
+    STATIC_CALL_RE      = /\b(#{PYTHON_VAR_NAME_REGEX})\.static\s*\((.*)\)\s*$/m
+    ADD_ROUTE_CALL_RE   = /\b(#{PYTHON_VAR_NAME_REGEX})\.add_route\s*\((.*)\)\s*$/m
+    AS_VIEW_RE          = /^(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
+    DOTTED_REFERENCE_RE = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})*$/
+    BLUEPRINT_CALL_RE   = /\.blueprint\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})(.*?)\)/m
+
+    # `get_endpoints` rebuilt two PCRE2 patterns per request field on
+    # every handler-body line. The field set is fixed, so precompile the
+    # access patterns (and the `request.<field>` guard substring) once.
+    # Tuple shape: {guard_substring, noir_param_type, paren_re, bracket_re}
+    REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field, tuple|
+      {"request.#{field}",
+       tuple[1],
+       /request\.#{field}(?:\.get)?\(['"']([^'"']+)['"']\)/,
+       /request\.#{field}\[['"']([^'"']+)['"']\]/}
+    end
+
+    @keyword_regex_cache = Hash(::String, Regex).new
+    @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
     @file_content_cache = Hash(::String, ::String).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String))).new
     @programmatic_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String))).new
@@ -78,7 +103,7 @@ module Analyzer::Python
 
               # Identify Sanic instance assignments (tree-sitter extractor
               # doesn't cover this shape yet).
-              sanic_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Sanic\(/
+              sanic_match = line.includes?("Sanic(") ? line.match(SANIC_INSTANCE_RE) : nil
               if sanic_match
                 sanic_instance_name = sanic_match[1]
                 api_instances[sanic_instance_name] ||= ""
@@ -323,7 +348,7 @@ module Analyzer::Python
     end
 
     private def parse_static_route(line : ::String) : Tuple(::String, ::String)?
-      call_match = line.match(/\b(#{PYTHON_VAR_NAME_REGEX})\.static\s*\((.*)\)\s*$/m)
+      call_match = line.match(STATIC_CALL_RE)
       return unless call_match
 
       router_name = call_match[1]
@@ -337,7 +362,7 @@ module Analyzer::Python
     end
 
     private def parse_programmatic_class_route(line : ::String) : Tuple(::String, ::String, ::String, ::String)?
-      call_match = line.match(/\b(#{PYTHON_VAR_NAME_REGEX})\.add_route\s*\((.*)\)\s*$/m)
+      call_match = line.match(ADD_ROUTE_CALL_RE)
       return unless call_match
 
       router_name = call_match[1]
@@ -352,7 +377,7 @@ module Analyzer::Python
     end
 
     private def parse_programmatic_route(line : ::String) : Tuple(::String, ::String, ::String, ::String)?
-      call_match = line.match(/\b(#{PYTHON_VAR_NAME_REGEX})\.add_route\s*\((.*)\)\s*$/m)
+      call_match = line.match(ADD_ROUTE_CALL_RE)
       return unless call_match
 
       router_name = call_match[1]
@@ -371,7 +396,7 @@ module Analyzer::Python
       handler = extract_keyword_expression(args, "handler") || args[0]?
       return "" unless handler
 
-      if class_match = handler.strip.match(/^(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/)
+      if class_match = handler.strip.match(AS_VIEW_RE)
         return class_match[1]
       end
 
@@ -413,9 +438,17 @@ module Analyzer::Python
       methods
     end
 
+    # Memoized per keyword — the keyword set is tiny (`handler`, `uri`,
+    # `path`, `methods`, ...) but this runs per argument of every
+    # programmatic route.
+    private def keyword_expression_regex(keyword : ::String) : Regex
+      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
     private def extract_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
+      keyword_re = keyword_expression_regex(keyword)
       args.each do |arg|
-        keyword_match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
+        keyword_match = arg.match(keyword_re)
         return keyword_match[1].strip if keyword_match
       end
 
@@ -437,7 +470,7 @@ module Analyzer::Python
 
     private def clean_reference(expression : ::String) : ::String
       reference = expression.strip
-      return reference if reference.matches?(/^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})*$/)
+      return reference if reference.matches?(DOTTED_REFERENCE_RE)
 
       ""
     end
@@ -530,8 +563,12 @@ module Analyzer::Python
     end
 
     private def find_function_def(lines : Array(::String), function_name : ::String) : Int32?
+      # Compile the name-specific matcher once per call instead of on
+      # every line, and gate it behind cheap substring necessary checks.
+      function_def_re = /^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/
       lines.each_with_index do |line, index|
-        if line.match(/^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/)
+        next unless line.includes?("def") && line.includes?(function_name)
+        if line.match(function_def_re)
           return index
         end
       end
@@ -575,6 +612,9 @@ module Analyzer::Python
     end
 
     private def find_class_method_def(lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32?
+      # Compile the name-specific matcher once per call instead of on
+      # every line, and gate it behind a cheap substring necessary check.
+      method_def_re = /(\s*)(async\s+)?def\s+#{Regex.escape(method_name)}\s*\(/
       i = class_def_index + 1
       while i < lines.size
         line = lines[i]
@@ -582,7 +622,7 @@ module Analyzer::Python
           break if class_match[1].size <= class_indent
         end
 
-        if method_match = line.match(/(\s*)(async\s+)?def\s+#{Regex.escape(method_name)}\s*\(/)
+        if line.includes?(method_name) && (method_match = line.match(method_def_re))
           return i if method_match[1].size > class_indent
         end
 
@@ -607,7 +647,7 @@ module Analyzer::Python
     private def collect_blueprint_registrations(source : ::String,
                                                 registrations : Hash(ScopedNameKey, Array(::String)),
                                                 base_path : ::String)
-      source.scan(/\.blueprint\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})(.*?)\)/m) do |match|
+      source.scan(BLUEPRINT_CALL_RE) do |match|
         next if match.size < 3
         blueprint_name = match[1]
         tail = match[2]
@@ -663,10 +703,9 @@ module Analyzer::Python
 
       # Second pass: extract parameters
       codeblock_lines.each do |code_line|
-        REQUEST_PARAM_FIELDS.each do |field, (http_methods, param_type)|
-          if code_line.includes?("request.#{field}")
+        REQUEST_PARAM_FIELD_PATTERNS.each do |guard, param_type, param_regex, bracket_regex|
+          if code_line.includes?(guard)
             # Extract parameter access patterns
-            param_regex = /request\.#{field}(?:\.get)?\(['"']([^'"']+)['"']\)/
             code_line.scan(param_regex) do |match|
               param_name = match[1]
               param = Param.new(param_name, "", param_type)
@@ -674,7 +713,6 @@ module Analyzer::Python
             end
 
             # Handle bracket notation: request.args['param']
-            bracket_regex = /request\.#{field}\[['"']([^'"']+)['"']\]/
             code_line.scan(bracket_regex) do |match|
               param_name = match[1]
               param = Param.new(param_name, "", param_type)
@@ -685,8 +723,11 @@ module Analyzer::Python
 
         # Extract JSON parameters from variable usage
         json_variable_names.each do |json_var|
+          # The var name is a necessary substring for either pattern.
+          next unless code_line.includes?(json_var)
+          bracket_regex, get_regex = json_var_regexes(json_var)
+
           # Look for patterns like: json_var['param_name']
-          bracket_regex = /#{json_var}\[['"']([^'"']+)['"']\]/
           code_line.scan(bracket_regex) do |match|
             param_name = match[1]
             param = Param.new(param_name, "", "json")
@@ -694,7 +735,6 @@ module Analyzer::Python
           end
 
           # Look for patterns like: json_var.get('param_name')
-          get_regex = /#{json_var}\.get\(['"']([^'"']+)['"']\)/
           code_line.scan(get_regex) do |match|
             param_name = match[1]
             param = Param.new(param_name, "", "json")
@@ -714,6 +754,16 @@ module Analyzer::Python
       end
 
       endpoints
+    end
+
+    # Memoized per JSON-variable name (`data`, `body`, ...): the patterns
+    # interpolate a discovered name so they can't be class constants, but
+    # handler bodies reuse the same few names across a whole project.
+    private def json_var_regexes(json_var : ::String) : Tuple(Regex, Regex)
+      @json_var_regex_cache[json_var] ||= {
+        /#{json_var}\[['"']([^'"']+)['"']\]/,
+        /#{json_var}\.get\(['"']([^'"']+)['"']\)/,
+      }
     end
 
     private def join_paths(prefix : ::String, path : ::String) : ::String

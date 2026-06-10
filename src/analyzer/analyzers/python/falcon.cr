@@ -27,6 +27,9 @@ module Analyzer::Python
       "on_options" => "OPTIONS",
     }
 
+    @keyword_regex_cache = Hash(::String, Regex).new
+    @media_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
     def analyze
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
@@ -338,9 +341,17 @@ module Analyzer::Python
       parts
     end
 
+    # Memoized per keyword — the keyword set is tiny (`prefix`) but this
+    # runs per argument of every static-route declaration (an interpolated
+    # regex literal recompiles PCRE2 on every evaluation).
+    private def keyword_string_regex(keyword : ::String) : Regex
+      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
     private def extract_keyword_string(args : Array(::String), keyword : ::String) : ::String?
+      keyword_re = keyword_string_regex(keyword)
       args.each do |arg|
-        keyword_match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
+        keyword_match = arg.match(keyword_re)
         next unless keyword_match
 
         return extract_python_string(keyword_match[1])
@@ -368,6 +379,17 @@ module Analyzer::Python
     private def normalize_path(route_path : ::String) : ::String
       route_path.gsub(/\{([a-zA-Z_][a-zA-Z0-9_]*):[^}]+\}/) do |_match|
         "{#{$~[1]}}"
+      end
+    end
+
+    # Memoized per media-variable name (`data`, `body`, ...): the patterns
+    # interpolate a discovered name so they can't be class constants, but
+    # responder bodies reuse the same few names across a whole project.
+    private def media_var_regexes(var : ::String) : Tuple(Regex, Regex)
+      @media_var_regex_cache[var] ||= begin
+        v = Regex.escape(var)
+        {/(?:^|[^a-zA-Z0-9_])#{v}\s*\[\s*['"]([^'"]+)['"]\s*\]/,
+         /(?:^|[^a-zA-Z0-9_])#{v}\.get\s*\(\s*['"]([^'"]+)['"]/}
       end
     end
 
@@ -440,11 +462,14 @@ module Analyzer::Python
             record.call(m[1], "json")
           end
           media_vars.each do |var|
-            line.scan(/(?:^|[^a-zA-Z0-9_])#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+            # The var name is a necessary substring for either pattern.
+            next unless line.includes?(var)
+            bracket_re, get_re = media_var_regexes(var)
+            line.scan(bracket_re) do |m|
               media_field_seen = true
               record.call(m[1], "json")
             end
-            line.scan(/(?:^|[^a-zA-Z0-9_])#{Regex.escape(var)}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+            line.scan(get_re) do |m|
               media_field_seen = true
               record.call(m[1], "json")
             end
