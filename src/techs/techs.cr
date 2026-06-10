@@ -66,6 +66,21 @@ module NoirTechs
         },
       },
     },
+    :ios => {
+      :format    => ["PLIST"],
+      :similar   => ["ios", "info-plist", "infoplist", "info_plist", "entitlements"],
+      :supported => {
+        :endpoint => true,
+        :method   => false,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :cpp_drogon => {
       :framework => "Drogon",
       :language  => "C++",
