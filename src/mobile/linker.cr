@@ -168,18 +168,25 @@ module NoirMobileLinker
 
     anchor_line = handler_anchor_line(content, simple)
     endpoint.details.add_path(PathInfo.new(path, anchor_line))
+    extract_input_params(callees, content).each { |param| endpoint.push_param(param) }
     callees.each { |callee| endpoint.push_callee(callee) }
-    extract_input_params(content).each { |param| endpoint.push_param(param) }
     endpoint
   end
 
-  # Scans the handler source for inbound-deep-link reads. Scoped to the
-  # handler file (the component), which is the deep-link processing unit;
-  # only string-literal keys are captured.
-  private def self.extract_input_params(content : String) : Array(Param)
+  # Extracts inbound-deep-link reads from the *handler-method* call sites
+  # only. `callees` come from `callees_in_method` over HANDLER_METHODS, so
+  # scanning their source lines (rather than the whole file) keeps reads in
+  # unrelated methods of the same component from becoming phantom params.
+  private def self.extract_input_params(callees : Array(Callee), content : String) : Array(Param)
+    lines = content.lines
     params = [] of Param
-    content.scan(QUERY_PARAM_RE) { |m| params << Param.new(m[1], "", "query") }
-    content.scan(EXTRA_PARAM_RE) { |m| params << Param.new(m[1], "", "extra") }
+    callees.each do |callee|
+      line = callee.line
+      next unless line && line >= 1 && line <= lines.size
+      src = lines[line - 1]
+      src.scan(QUERY_PARAM_RE) { |m| params << Param.new(m[1], "", "query") }
+      src.scan(EXTRA_PARAM_RE) { |m| params << Param.new(m[1], "", "extra") }
+    end
     params
   end
 
