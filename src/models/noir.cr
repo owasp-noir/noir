@@ -6,6 +6,7 @@ require "../deliver/*"
 require "../output_builder/*"
 require "../optimizer/llm_optimizer.cr"
 require "../ai_context/augmentor.cr"
+require "../mobile/linker.cr"
 require "./endpoint.cr"
 require "./logger.cr"
 require "../utils/*"
@@ -144,6 +145,10 @@ class NoirRunner
     # Use the new optimizer module
     optimizer = LLMEndpointOptimizer.new(@logger, @options)
     @endpoints = optimizer.optimize(@endpoints)
+
+    # Link mobile deep-link endpoints to their handler source (callees +
+    # handler code_path) so taggers and AI context see the real surface.
+    @endpoints = NoirMobileLinker.apply(@endpoints, @logger)
 
     # Set status code
     if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
