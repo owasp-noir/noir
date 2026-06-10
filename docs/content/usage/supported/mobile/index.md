@@ -16,6 +16,10 @@ Noir extracts mobile app entry points — the deep links and exported components
 | Android | `res/values/strings.xml` | resolves `@string/` references used in schemes / hosts / paths |
 | iOS | `Info.plist` | `CFBundleURLTypes` custom URL schemes |
 | iOS | `*.entitlements` | `associated-domains` `applinks:` universal links |
+| Android | `/.well-known/assetlinks.json` | server-side App Links association (Digital Asset Links) |
+| iOS | `apple-app-site-association` | server-side universal-link `paths` / `components` patterns |
+
+The first four rows are the **client** side of the association, declared in the app bundle. The last two are the **server** side — the well-known files a host publishes so the OS opens the app for its URLs. Both flow through the same `universal-link` protocol and output model.
 
 ## Endpoint model
 
@@ -25,7 +29,7 @@ Mobile entry points are endpoints with `method = "GET"`; their nature is carried
 |---|---|---|
 | `mobile-scheme` | custom URL-scheme deep link | `myapp://complex/:id` |
 | `android-intent` | exported intent component with no data URI | `intent://com.example.app/.SyncService` |
-| `universal-link` | verified Android App Link / iOS universal link | `https://app.example.com/complex/:id` |
+| `universal-link` | verified Android App Link / iOS universal link, or a server-side `assetlinks.json` / `apple-app-site-association` pattern | `https://app.example.com/complex/:id`, `/buy/*` |
 
 In plain output they render under a `SCHEME` / `INTENT` / `UNIVERSAL` prefix. The handling component, intent action and category, host, and package are stored in a per-endpoint metadata map (serialized in JSON / YAML; omitted entirely for ordinary HTTP endpoints):
 
@@ -55,3 +59,5 @@ Mobile endpoints stay in the structured inventory — JSON, JSONL, YAML, SARIF, 
 * Source code must be present for handler linkage. A manifest- or plist-only scan still yields the endpoints, just without callees, params, or AI context.
 * Binary (compiled) `Info.plist` files are skipped; source-repo XML plists are parsed.
 * gradle `${applicationId}` placeholders and Jetpack Navigation deep links are not yet resolved.
+* `assetlinks.json` only declares the package association (no paths), so it yields a single `/*` endpoint per app. `apple-app-site-association` paths (`/buy/*`, `NOT /private/*`) and `components` are emitted individually; AASA exclusions are tagged `excluded`.
+* Only the plain-JSON form of `apple-app-site-association` is parsed; CMS-signed AASA files (older apps) are skipped.

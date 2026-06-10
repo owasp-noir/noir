@@ -83,6 +83,21 @@ module NoirTechs
         },
       },
     },
+    :well_known_applinks => {
+      :format    => ["JSON"],
+      :similar   => ["well_known_applinks", "assetlinks", "apple-app-site-association", "aasa", "applinks"],
+      :supported => {
+        :endpoint => true,
+        :method   => false,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :cpp_drogon => {
       :framework => "Drogon",
       :language  => "C++",
