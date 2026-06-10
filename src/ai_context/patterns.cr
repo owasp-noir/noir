@@ -195,8 +195,8 @@ module NoirAIContext
       "webview_load",
       "WebView load of a potentially attacker-controlled URL/HTML — a deep-link XSS/SSRF surface on mobile",
       80,
-      name_patterns: [/\.loadUrl\b/i, /\.loadData(WithBaseURL)?\b/i, /\.evaluateJavascript\b/i],
-      source_patterns: [/\.loadUrl\s*\(/i, /\.loadData(WithBaseURL)?\s*\(/i, /\.evaluateJavascript\s*\(/i]
+      name_patterns: [/\.loadUrl\b/i, /\.loadData(WithBaseURL)?\b/i, /\.evaluateJavascript\b/i, /\b(?:wk)?web_?view\w*\??\.load\b/i],
+      source_patterns: [/\.loadUrl\s*\(/i, /\.loadData(WithBaseURL)?\s*\(/i, /\.evaluateJavascript\s*\(/i, /\b(?:wk)?web_?view\w*\??\.load\s*\(/i, /\.load\s*\(\s*URLRequest/]
     ),
     PatternDefinition.new(
       "intent_redirect",
