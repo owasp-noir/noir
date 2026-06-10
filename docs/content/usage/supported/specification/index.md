@@ -62,4 +62,5 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Vercel | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Wsdl | XML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ☑️ | ✗ |
+| iOS (Info.plist) | PLIST | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | mitmproxy Flow | TNETSTRING | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
