@@ -18,6 +18,41 @@ module Analyzer::Python
     PATH_PARAM_REGEX       = /\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
     TYPED_PATH_PARAM_REGEX = /\{([a-zA-Z_][a-zA-Z0-9_]*):[a-zA-Z_][a-zA-Z0-9_]*\}/
 
+    # Hoisted out of the analyze loops: an interpolated regex literal
+    # recompiles (PCRE2 JIT) on every evaluation, and these interpolate
+    # only constants. The `.to_s` expansion is byte-identical to the
+    # previous inline form, so matching behaviour is unchanged.
+    ADD_ROUTE_RE        = /(#{DOT_NATION})\.add_(websocket_)?route\s*\((.*)\)/m
+    CLASS_METHOD_DEF_RE = /^\s*(?:async\s+)?def\s+(get|post|put|patch|delete|head|options)\s*\(([^)]*)\)/
+
+    # Request-access matchers interpolate a discovered request-var name
+    # (`request`, `self.request`, ...) so they can't be class constants,
+    # but a handler set only uses a handful of distinct names — memoize
+    # the compiled set per name instead of rebuilding it on every line
+    # of every handler body.
+    private record AwaitBodyRegexes,
+      json_await : Regex,
+      form_await : Regex,
+      json_assign : Regex,
+      form_assign : Regex
+
+    @await_body_regex_cache = Hash(::String, AwaitBodyRegexes).new
+    @attr_regex_cache = Hash(Tuple(::String, ::String), Tuple(Regex, Regex)).new
+    @body_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+    @keyword_expr_regex_cache = Hash(::String, Regex).new
+
+    private def await_body_regexes(request_name : ::String) : AwaitBodyRegexes
+      @await_body_regex_cache[request_name] ||= begin
+        rp = Regex.escape(request_name)
+        AwaitBodyRegexes.new(
+          json_await: /await\s+#{rp}\.json\s*\(/,
+          form_await: /await\s+#{rp}\.form\s*\(/,
+          json_assign: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{rp}\.json\s*\(/,
+          form_assign: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{rp}\.form\s*\(/,
+        )
+      end
+    end
+
     def analyze
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
@@ -74,7 +109,7 @@ module Analyzer::Python
         effective_line = effective_line.gsub(/((?:WebSocketRoute|Route)\s*\()\s*path\s*=\s*([rf]?['"][^'"]*['"])/, "\\1\\2,")
 
         if effective_line.includes?(".add_route(") || effective_line.includes?(".add_websocket_route(")
-          effective_line.scan(/(#{DOT_NATION})\.add_(websocket_)?route\s*\((.*)\)/m) do |programmatic_match|
+          effective_line.scan(ADD_ROUTE_RE) do |programmatic_match|
             next if programmatic_match.size < 4
             receiver = normalize_receiver(programmatic_match[1])
             websocket_route = !(programmatic_match[2]?).to_s.empty?
@@ -554,9 +589,16 @@ module Analyzer::Python
       methods.uniq
     end
 
+    # Memoized per keyword — the keyword set is tiny (`path`, `endpoint`,
+    # `methods`) but this runs per argument of every programmatic route.
+    private def keyword_expression_regex(keyword : ::String) : Regex
+      @keyword_expr_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
     private def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
+      keyword_re = keyword_expression_regex(keyword)
       args.each do |arg|
-        keyword_match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
+        keyword_match = arg.match(keyword_re)
         return keyword_match[1].strip if keyword_match
       end
 
@@ -688,7 +730,6 @@ module Analyzer::Python
       end
 
       class_indent = lines[class_line].size - lines[class_line].lstrip.size
-      methods_re = "get|post|put|patch|delete|head|options"
       i = class_line + 1
       while i < lines.size
         line = lines[i]
@@ -696,23 +737,24 @@ module Analyzer::Python
           indent = line.size - line.lstrip.size
           break if indent <= class_indent
 
-          if method_match = line.match(/^\s*(?:async\s+)?def\s+(#{methods_re})\s*\(([^)]*)\)/)
+          if method_match = line.match(CLASS_METHOD_DEF_RE)
             method = method_match[1].upcase
             request_name = extract_request_arg_name(method_match[2])
+            request_body_res = request_name ? await_body_regexes(request_name) : nil
             codeblock = parse_code_block(lines[i..])
             if codeblock
               params = [] of Param
               codeblock.split("\n").each do |cl|
-                if request_name
+                if request_name && request_body_res
                   collect_request_attr_params(cl, request_name, "path_params", "path", params)
                   collect_request_attr_params(cl, request_name, "query_params", "query", params)
                   collect_request_attr_params(cl, request_name, "headers", "header", params)
                   collect_request_attr_params(cl, request_name, "cookies", "cookie", params)
 
-                  if cl.matches?(/await\s+#{Regex.escape(request_name)}\.json\s*\(/)
+                  if cl.matches?(request_body_res.json_await)
                     add_unique(params, Param.new("body", "", "json"))
                   end
-                  if cl.matches?(/await\s+#{Regex.escape(request_name)}\.form\s*\(/)
+                  if cl.matches?(request_body_res.form_await)
                     add_unique(params, Param.new("body", "", "form"))
                   end
                 end
@@ -818,13 +860,14 @@ module Analyzer::Python
         return cache[handler_name]
       end
 
+      request_body_res = await_body_regexes(request_name)
       codeblock.split("\n").each do |cl|
         collect_websocket_params(cl, request_name, params)
 
-        if cl.matches?(/await\s+#{Regex.escape(request_name)}\.json\s*\(/)
+        if cl.matches?(request_body_res.json_await)
           add_unique(params, Param.new("body", "", "json"))
         end
-        if cl.matches?(/await\s+#{Regex.escape(request_name)}\.form\s*\(/)
+        if cl.matches?(request_body_res.form_await)
           add_unique(params, Param.new("body", "", "form"))
         end
       end
@@ -884,31 +927,49 @@ module Analyzer::Python
       end
     end
 
+    private def request_attr_regexes(request_name : ::String, attr : ::String) : Tuple(Regex, Regex)
+      @attr_regex_cache[{request_name, attr}] ||= begin
+        rp = Regex.escape(request_name)
+        {/#{rp}\.#{attr}\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
+         /#{rp}\.#{attr}\.get\(\s*[rf]?['"]([^'"]+)['"]/}
+      end
+    end
+
     private def collect_request_attr_params(line : ::String, request_name : ::String, attr : ::String, noir_type : ::String, params : Array(Param))
-      line.scan(/#{Regex.escape(request_name)}\.#{attr}\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
+      # The attr substring is a necessary condition for either pattern,
+      # so most lines skip the regex matches entirely.
+      return unless line.includes?(attr)
+      bracket_re, get_re = request_attr_regexes(request_name, attr)
+      line.scan(bracket_re) do |m|
         add_unique(params, Param.new(m[1], "", noir_type))
       end
-      line.scan(/#{Regex.escape(request_name)}\.#{attr}\.get\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
+      line.scan(get_re) do |m|
         add_unique(params, Param.new(m[1], "", noir_type))
       end
     end
 
+    private def body_var_regexes(var : ::String) : Tuple(Regex, Regex)
+      @body_var_regex_cache[var] ||= begin
+        v = Regex.escape(var)
+        {/(?:^|[^a-zA-Z0-9_])#{v}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
+         /(?:^|[^a-zA-Z0-9_])#{v}\.get\(\s*[rf]?['"]([^'"]+)['"]/}
+      end
+    end
+
     private def collect_request_body_params(codeblock : ::String, request_name : ::String, params : Array(Param))
-      request_pattern = Regex.escape(request_name)
-      {
-        "json" => "json",
-        "form" => "form",
-      }.each do |method_name, noir_type|
+      request_body_res = await_body_regexes(request_name)
+      { {"json", request_body_res.json_assign}, {"form", request_body_res.form_assign} }.each do |noir_type, assign_re|
         body_vars = [] of ::String
-        codeblock.scan(/([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{request_pattern}\.#{method_name}\s*\(/) do |m|
+        codeblock.scan(assign_re) do |m|
           body_vars << m[1]
         end
 
         body_vars.each do |var|
-          codeblock.scan(/(?:^|[^a-zA-Z0-9_])#{Regex.escape(var)}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
+          bracket_re, get_re = body_var_regexes(var)
+          codeblock.scan(bracket_re) do |m|
             add_unique(params, Param.new(m[1], "", noir_type))
           end
-          codeblock.scan(/(?:^|[^a-zA-Z0-9_])#{Regex.escape(var)}\.get\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
+          codeblock.scan(get_re) do |m|
             add_unique(params, Param.new(m[1], "", noir_type))
           end
         end

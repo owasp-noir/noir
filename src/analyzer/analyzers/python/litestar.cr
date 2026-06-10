@@ -24,6 +24,30 @@ module Analyzer::Python
     PATH_PARAM_REGEX       = /\{([a-zA-Z_][a-zA-Z0-9_]*)(?::[a-zA-Z_][a-zA-Z0-9_]*)?\}/
     TYPED_PATH_PARAM_REGEX = /\{([a-zA-Z_][a-zA-Z0-9_]*):[a-zA-Z_][a-zA-Z0-9_]*\}/
 
+    # Hoisted out of the per-line/per-param loops: an interpolated regex
+    # literal recompiles (PCRE2 JIT) on every evaluation, and these
+    # interpolate only constants or fixed sets. The `.to_s` expansion is
+    # byte-identical to the previous inline form, so matching behaviour
+    # is unchanged.
+    DOTTED_HANDLER_RE   = /(#{PYTHON_VAR_NAME_REGEX})\.(#{PYTHON_VAR_NAME_REGEX})/
+    CONTROLLER_CLASS_RE = /^\s*class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(([^)]*)\)/
+    CLASS_HEAD_RE       = /^\s*class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(/
+
+    # `classify_param` runs once per typed handler parameter and rebuilt
+    # one PCRE2 pattern per primitive type on every call.
+    PRIMITIVE_TYPE_PATTERNS = ["str", "int", "float", "bool", "bytes", "UUID", "date", "datetime"].map do |t|
+      /\b#{t}\b/
+    end
+
+    # `collect_request_attr_params` runs twice per handler-body line per
+    # attribute; the attribute set is fixed, so precompile the patterns.
+    REQUEST_ATTR_PATTERNS = %w[query_params path_params headers cookies].to_h do |attr|
+      {attr, {
+        /request\.#{attr}\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
+        /request\.#{attr}\.get\(\s*[rf]?['"]([^'"]+)['"]/,
+      }}
+    end
+
     def analyze
       python_files = get_files_by_extension(".py")
       external_handler_prefixes = Hash(::String, Hash(::String, ::String)).new do |hash, key|
@@ -274,7 +298,7 @@ module Analyzer::Python
       handlers_match = body.match(/route_handlers\s*=\s*\[([^\]]*)\]/m)
       return unless handlers_match
 
-      handlers_match[1].scan(/(#{PYTHON_VAR_NAME_REGEX})\.(#{PYTHON_VAR_NAME_REGEX})/) do |handler_match|
+      handlers_match[1].scan(DOTTED_HANDLER_RE) do |handler_match|
         next if handler_match.size < 3
         module_name = handler_match[1]
         handler_name = handler_match[2]
@@ -292,7 +316,8 @@ module Analyzer::Python
       prefixes = Hash(::String, ::String).new
 
       lines.each_with_index do |line, idx|
-        class_match = line.match(/^\s*class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(([^)]*)\)/)
+        next unless line.includes?("class")
+        class_match = line.match(CONTROLLER_CLASS_RE)
         next unless class_match
 
         class_name = class_match[1]
@@ -337,7 +362,7 @@ module Analyzer::Python
         unless line.strip.empty?
           indent = line.size - line.lstrip.size
           if indent < handler_indent
-            if class_match = line.match(/^\s*class\s+(#{PYTHON_VAR_NAME_REGEX})\s*\(/)
+            if line.includes?("class") && (class_match = line.match(CLASS_HEAD_RE))
               class_name = class_match[1]
               if controller_prefixes.has_key?(class_name)
                 return {class_name, controller_prefixes[class_name]}
@@ -425,9 +450,8 @@ module Analyzer::Python
       return "json" if stripped.includes?("Body")
       return "query" if stripped.includes?("Parameter") || stripped.includes?("Query")
 
-      primitive_types = ["str", "int", "float", "bool", "bytes", "UUID", "date", "datetime"]
-      primitive_types.each do |t|
-        return "query" if stripped.matches?(/\b#{t}\b/)
+      PRIMITIVE_TYPE_PATTERNS.each do |t_re|
+        return "query" if stripped.matches?(t_re)
       end
 
       # Pydantic/msgspec/dataclass models are treated as request body
@@ -446,10 +470,14 @@ module Analyzer::Python
     end
 
     private def collect_request_attr_params(line : ::String, attr : ::String, noir_type : ::String, params : Array(Param))
-      line.scan(/request\.#{attr}\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
+      # The attr substring is a necessary condition for either pattern,
+      # so most lines skip the regex matches entirely.
+      return unless line.includes?(attr)
+      bracket_re, get_re = REQUEST_ATTR_PATTERNS[attr]
+      line.scan(bracket_re) do |m|
         add_unique(params, Param.new(m[1], "", noir_type))
       end
-      line.scan(/request\.#{attr}\.get\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
+      line.scan(get_re) do |m|
         add_unique(params, Param.new(m[1], "", noir_type))
       end
     end

@@ -35,6 +35,23 @@ module Analyzer::Python
       "header" => ["headers"],
       "cookie" => ["cookies"],
     }
+
+    # `extract_request_params` runs once per endpoint and used to rebuild
+    # two PCRE2 patterns per accessor on every call (an interpolated regex
+    # literal recompiles on every evaluation). The accessor set is fixed,
+    # so precompile the access patterns once here; the `.to_s` expansion
+    # is byte-identical to the previous inline form.
+    # Tuple shape: {noir_param_type, bracket_re, get_re}
+    ACCESSOR_PATTERNS = ACCESSOR_MAP.flat_map do |param_type, accessors|
+      accessors.map do |accessor|
+        {param_type,
+         /(?:self\.)?request\.#{accessor}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
+         /(?:self\.)?request\.#{accessor}\.get(?:all|one)?\s*\(\s*[rf]?['"]([^'"]+)['"]/}
+      end
+    end
+
+    @keyword_regex_cache = Hash(String, Regex).new
+
     alias RouteNameKey = Tuple(String, String)
     alias RouteMap = Hash(RouteNameKey, Tuple(String, String))
 
@@ -352,9 +369,16 @@ module Analyzer::Python
       parts
     end
 
+    # Memoized per keyword — the keyword set is tiny (`name`) but this
+    # runs per argument of every static-view declaration.
+    private def keyword_string_regex(keyword : String) : Regex
+      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
     private def extract_python_keyword_string(args : Array(String), keyword : String) : String?
+      keyword_re = keyword_string_regex(keyword)
       args.each do |arg|
-        keyword_match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
+        keyword_match = arg.match(keyword_re)
         next unless keyword_match
 
         return extract_python_string(keyword_match[1])
@@ -491,14 +515,12 @@ module Analyzer::Python
         end
       end
 
-      ACCESSOR_MAP.each do |param_type, accessors|
-        accessors.each do |accessor|
-          body.scan(/(?:self\.)?request\.#{accessor}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
-            record.call(m[1], param_type)
-          end
-          body.scan(/(?:self\.)?request\.#{accessor}\.get(?:all|one)?\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
-            record.call(m[1], param_type)
-          end
+      ACCESSOR_PATTERNS.each do |param_type, bracket_re, get_re|
+        body.scan(bracket_re) do |m|
+          record.call(m[1], param_type)
+        end
+        body.scan(get_re) do |m|
+          record.call(m[1], param_type)
         end
       end
 
