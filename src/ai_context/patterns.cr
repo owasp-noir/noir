@@ -191,6 +191,20 @@ module NoirAIContext
         /\bRandom\s*\(\s*\)\s*\.\s*next(Int|Long|Bytes)?\s*\(/, # JVM/Kotlin non-CSPRNG
       ]
     ),
+    PatternDefinition.new(
+      "webview_load",
+      "WebView load of a potentially attacker-controlled URL/HTML — a deep-link XSS/SSRF surface on mobile",
+      80,
+      name_patterns: [/\.loadUrl\b/i, /\.loadData(WithBaseURL)?\b/i, /\.evaluateJavascript\b/i],
+      source_patterns: [/\.loadUrl\s*\(/i, /\.loadData(WithBaseURL)?\s*\(/i, /\.evaluateJavascript\s*\(/i]
+    ),
+    PatternDefinition.new(
+      "intent_redirect",
+      "Intent launched from inbound deep-link data — intent redirection / component-hijack surface",
+      70,
+      name_patterns: [/\bstartActivity(ForResult)?\b/, /\bsendBroadcast\b/, /\bstartService\b/, /\bbindService\b/],
+      source_patterns: [/\bstartActivity(ForResult)?\s*\(/, /\bsendBroadcast\s*\(/, /\bstartService\s*\(/]
+    ),
   ] of PatternDefinition
 
   VALIDATOR_PATTERNS = [

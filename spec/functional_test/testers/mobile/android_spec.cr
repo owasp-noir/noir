@@ -1,22 +1,37 @@
 require "../../func_spec.cr"
 
 # Mobile entry points keep method = "GET"; the mobile semantics live in
-# `protocol`. FunctionalTester checks url / method / protocol / params, so
-# the protocol is asserted because it differs from the default "http".
-#
-# One endpoint is emitted per deep-link URI (the handling component rides
-# in metadata["via"]); a bare intent:// endpoint appears only for the
-# exported, data-less component.
+# `protocol`. Endpoint is a struct, so `.tap(&.protocol=)` would NOT persist
+# (the block mutates a copy) — build via a Proc that mutates a local and
+# returns it, which does persist. FunctionalTester then asserts protocol
+# (since it differs from "http") and the linker-extracted callees.
+build = ->(url : String, protocol : String, params : Array(Param), callees : Array(String)) do
+  ep = Endpoint.new(url, "GET", params)
+  ep.protocol = protocol
+  callees.each { |name| ep.push_callee(Callee.new(name)) }
+  ep
+end
+
+no_params = [] of Param
+
 expected_endpoints = [
-  # Custom scheme deep links (mobile-scheme)
-  Endpoint.new("myapp://complex/:id", "GET", [Param.new("id", "", "path")]).tap(&.protocol = "mobile-scheme"),
-  Endpoint.new("myapp://accounts/profile", "GET").tap(&.protocol = "mobile-scheme"),
+  # Custom scheme deep link (mobile-scheme), enriched by the code-linkage
+  # pass with callees + input params read from DeepLinkActivity.onCreate:
+  # getQueryParameter -> query, get*Extra -> extra.
+  build.call("myapp://complex/:id", "mobile-scheme", [
+    Param.new("id", "", "path"),
+    Param.new("redirect", "", "query"),
+    Param.new("utm_source", "", "query"),
+    Param.new("userId", "", "extra"),
+    Param.new("verified", "", "extra"),
+  ], ["renderProfile", "webView.loadUrl"]),
+  build.call("myapp://accounts/profile", "mobile-scheme", no_params, [] of String),
   # Scheme resolved from @string/deep_link_scheme
-  Endpoint.new("myappstr://settings", "GET").tap(&.protocol = "mobile-scheme"),
+  build.call("myappstr://settings", "mobile-scheme", no_params, [] of String),
   # Verified App Link over https (universal-link)
-  Endpoint.new("https://myapp.example.com/complex/:id", "GET", [Param.new("id", "", "path")]).tap(&.protocol = "universal-link"),
+  build.call("https://myapp.example.com/complex/:id", "universal-link", [Param.new("id", "", "path")], [] of String),
   # Exported, data-less component (android-intent), synthetic intent:// scheme
-  Endpoint.new("intent://com.example.myapp/.SyncService", "GET").tap(&.protocol = "android-intent"),
+  build.call("intent://com.example.myapp/.SyncService", "android-intent", no_params, [] of String),
 ]
 
 FunctionalTester.new("fixtures/mobile/android/", {

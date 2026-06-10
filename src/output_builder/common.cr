@@ -108,6 +108,14 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
+      # Intent extras (Bundle inputs, not part of the URI) read by a mobile
+      # handler. Query params bake into the URL, so only "extra" is listed.
+      extra_params = endpoint.params.select { |p| p.param_type == "extra" }
+      if extra_params.size > 0
+        r_extras = extra_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
+        r_buffer << "\n  ○ extras: #{r_extras}"
+      end
+
       if baked[:body_type] == "form"
         form_params = endpoint.params.select { |p| p.param_type == "form" }
         unless form_params.empty?
