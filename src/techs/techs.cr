@@ -2,7 +2,7 @@ require "json"
 
 module NoirTechs
   CALLEE_SUPPORTED_TECHS = [
-    "android",
+    "android", "ios",
     "cpp_crow", "cpp_drogon",
     "clojure_compojure", "clojure_reitit", "clojure_ring",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
@@ -34,7 +34,7 @@ module NoirTechs
   ]
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
-    "android",
+    "android", "ios",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
     "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
     "elixir_bandit", "elixir_phoenix", "elixir_plug",
