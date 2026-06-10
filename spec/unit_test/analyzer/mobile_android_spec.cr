@@ -22,8 +22,7 @@ describe "Analyzer::Mobile::Android" do
   end
 
   it "normalizes templated {id} segments to :id" do
-    ep = find.call("myapp://complex/:id")
-    ep.should_not be_nil
+    find.call("myapp://complex/:id").should_not be_nil
   end
 
   it "uses pathPrefix as a literal path segment" do
@@ -36,25 +35,26 @@ describe "Analyzer::Mobile::Android" do
     ep.not_nil!.protocol.should eq("universal-link")
   end
 
-  it "emits scheme metadata (type/intent/host/package)" do
+  it "attaches the handling component as metadata[\"via\"]" do
     ep = find.call("myapp://complex/:id").not_nil!
     md = ep.metadata.not_nil!
-    md["type"].should eq("mobile-scheme")
-    md["intent"].should eq("android.intent.action.VIEW")
+    md["via"].should eq(".DeepLinkActivity")
+    md["action"].should eq("android.intent.action.VIEW")
     md["host"].should eq("complex")
     md["package"].should eq("com.example.myapp")
   end
 
-  it "emits an android-intent endpoint with the data URI it responds to" do
-    ep = find.call("intent://com.example.myapp/.DeepLinkActivity").not_nil!
-    ep.protocol.should eq("android-intent")
-    md = ep.metadata.not_nil!
-    md["type"].should eq("android-intent")
-    md["action"].should eq("android.intent.action.VIEW")
-    md["data"].should eq("myapp://complex/:id")
+  it "does not emit a separate intent:// entry for a deep-link component" do
+    find.call("intent://com.example.myapp/.DeepLinkActivity").should be_nil
   end
 
-  it "does not emit an intent endpoint for a MAIN/LAUNCHER component" do
+  it "emits a bare intent:// endpoint for an exported, data-less component" do
+    ep = find.call("intent://com.example.myapp/.SyncService").not_nil!
+    ep.protocol.should eq("android-intent")
+    ep.metadata.not_nil!["action"].should eq("com.example.ACTION_SYNC")
+  end
+
+  it "does not emit anything for a MAIN/LAUNCHER component" do
     find.call("intent://com.example.myapp/.MainActivity").should be_nil
   end
 end

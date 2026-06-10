@@ -4,14 +4,20 @@ require "../../../models/analyzer"
 module Analyzer::Mobile
   # Parses AndroidManifest.xml to surface mobile app entry points:
   #   * custom URL scheme deep links (intent-filter > data android:scheme)
-  #   * exported intent components (activity/service/receiver with a filter)
-  #   * App Links (autoVerify intent-filter on http/https)
+  #   * verified App Links (autoVerify intent-filter on http/https)
+  #   * exported components with a data-less action filter (IPC surface)
+  #
+  # One endpoint is emitted per deep-link URI; the handling component lives
+  # in `metadata["via"]`, not a separate entry. A bare `intent://component`
+  # endpoint is emitted only for exported components whose filter declares
+  # an action but no <data> URI (and isn't the launcher).
   #
   # All endpoints keep method = "GET"; the mobile semantics live in
-  # `protocol` (mobile-scheme / android-intent / universal-link) and the
-  # `metadata` hash. `@string/foo` values are resolved against
-  # res/values/strings.xml when present.
+  # `protocol` (mobile-scheme / universal-link / android-intent). `@string/`
+  # values are resolved against res/values/strings.xml when present.
   class Android < Analyzer
+    LAUNCHER_ACTION = "android.intent.action.MAIN"
+
     def analyze
       locator = CodeLocator.instance
       manifests = locator.all("android-manifest")
@@ -68,28 +74,32 @@ module Analyzer::Mobile
         each_child(filter, "data") { |d| data_nodes << d }
         auto_verify = bool_attr(filter, "autoVerify")
 
-        # Deep-link / app-link endpoints from <data> entries.
-        data_nodes.each do |data|
-          emit_data_endpoints(data, actions, categories, package, strings,
-            path, auto_verify, seen_urls)
-        end
-
-        # Exported intent component that handles a deep-link <data> intent —
-        # the issue's INTENT entries. Plain MAIN/LAUNCHER components carry no
-        # <data> and are intentionally excluded.
-        if exported && !data_nodes.empty?
-          emit_intent_endpoint(component_name, actions, categories, data_nodes,
-            package, strings, path, seen_urls)
+        if !data_nodes.empty?
+          # Deep-link / app-link URI(s) — the primary entry points. The
+          # handling component rides along as metadata["via"].
+          data_nodes.each do |data|
+            emit_data_endpoint(data, actions, categories, package, strings,
+              path, auto_verify, component_name, seen_urls)
+          end
+        elsif exported
+          # Exported component with an action but no <data>: an IPC surface
+          # reachable by explicit/implicit intent. The launcher (MAIN) is
+          # an app start, not a remote surface, so it's excluded.
+          ipc_actions = actions.reject { |a| a == LAUNCHER_ACTION }
+          unless ipc_actions.empty?
+            emit_intent_endpoint(component_name, ipc_actions, categories,
+              package, path, seen_urls)
+          end
         end
       end
     end
 
-    # Emits a mobile-scheme (custom scheme) or universal-link (http/https +
-    # autoVerify) endpoint for one <data> node.
-    private def emit_data_endpoints(data : XML::Node, actions : Array(String),
-                                    categories : Array(String), package : String,
-                                    strings : Hash(String, String), path : String,
-                                    auto_verify : Bool, seen_urls : Set(String))
+    # Emits a mobile-scheme (custom scheme) or universal-link (verified
+    # http/https) endpoint for one <data> node.
+    private def emit_data_endpoint(data : XML::Node, actions : Array(String),
+                                   categories : Array(String), package : String,
+                                   strings : Hash(String, String), path : String,
+                                   auto_verify : Bool, via : String, seen_urls : Set(String))
       scheme = resolve(attr(data, "scheme"), strings)
       return if scheme.nil? || scheme.empty?
 
@@ -103,24 +113,17 @@ module Analyzer::Mobile
       protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
       endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
       endpoint.protocol = protocol
-
-      metadata = {} of String => String
-      metadata["type"] = protocol
-      metadata["intent"] = actions.first if actions.size > 0
-      metadata["category"] = categories.first if categories.size > 0
-      metadata["host"] = host unless host.empty?
-      metadata["package"] = package unless package.empty?
-      endpoint.metadata = metadata
+      endpoint.metadata = build_metadata(via, actions, categories, host, package)
 
       mark_unresolved(endpoint, url)
       @result << endpoint
     end
 
-    # Emits an android-intent endpoint for an exported component, using the
-    # synthetic intent:// scheme so the optimizer leaves the URL untouched.
+    # Emits an android-intent endpoint for an exported, data-less component,
+    # using the synthetic intent:// scheme so the optimizer leaves the URL
+    # untouched.
     private def emit_intent_endpoint(component_name : String, actions : Array(String),
-                                     categories : Array(String), data_nodes : Array(XML::Node),
-                                     package : String, strings : Hash(String, String),
+                                     categories : Array(String), package : String,
                                      path : String, seen_urls : Set(String))
       component = component_name.empty? ? package : "#{package}/#{component_name}"
       url = "intent://#{component}"
@@ -128,30 +131,21 @@ module Analyzer::Mobile
 
       endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
       endpoint.protocol = "android-intent"
-
-      metadata = {} of String => String
-      metadata["type"] = "android-intent"
-      metadata["action"] = actions.first if actions.size > 0
-      metadata["category"] = categories.first if categories.size > 0
-      if data_uri = data_uri_for(data_nodes, strings)
-        metadata["data"] = data_uri
-      end
-      metadata["package"] = package unless package.empty?
-      endpoint.metadata = metadata
+      endpoint.metadata = build_metadata("", actions, categories, "", package)
 
       @result << endpoint
     end
 
-    # Builds a representative data URI (scheme://host/path) for an intent's
-    # <data> nodes so the INTENT entry can echo what it responds to.
-    private def data_uri_for(data_nodes : Array(XML::Node), strings : Hash(String, String)) : String?
-      data_nodes.each do |data|
-        scheme = resolve(attr(data, "scheme"), strings)
-        next if scheme.nil? || scheme.empty?
-        host = resolve(attr(data, "host"), strings) || ""
-        return "#{scheme}://#{host}#{normalize_path(data, strings)}"
-      end
-      nil
+    private def build_metadata(via : String, actions : Array(String),
+                               categories : Array(String), host : String,
+                               package : String) : Hash(String, String)
+      metadata = {} of String => String
+      metadata["via"] = via unless via.empty?
+      metadata["action"] = actions.first if actions.size > 0
+      metadata["category"] = categories.first if categories.size > 0
+      metadata["host"] = host unless host.empty?
+      metadata["package"] = package unless package.empty?
+      metadata
     end
 
     # Normalizes android:path / pathPrefix / pathPattern to a Noir-style

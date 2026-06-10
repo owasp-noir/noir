@@ -50,5 +50,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Exported component with a data-less custom action (IPC surface) -->
+        <service android:name=".SyncService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.ACTION_SYNC" />
+            </intent-filter>
+        </service>
+
     </application>
 </manifest>

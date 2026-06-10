@@ -10,10 +10,9 @@ class OutputBuilderCommon < OutputBuilder
     "universal-link" => "UNIVERSAL",
   }
 
-  # Fixed order so plain output is deterministic. "type" renders right
-  # under the prefix line and "path" comes from path params, so both are
-  # excluded here.
-  MOBILE_METADATA_KEYS = ["query", "intent", "action", "data", "category", "host", "package", "extras"]
+  # Fixed order so plain output is deterministic. The protocol drives the
+  # prefix and "path" comes from path params, so neither is repeated here.
+  MOBILE_METADATA_KEYS = ["via", "query", "action", "category", "host", "package", "extras"]
 
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
@@ -38,9 +37,6 @@ class OutputBuilderCommon < OutputBuilder
         r_label = mobile_label.colorize(:light_blue).toggle(@is_color)
         r_url = display_url.colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_label} #{r_url}"
-        if type_value = endpoint.metadata.try &.[]?("type")
-          r_buffer << "\n  ○ type: #{type_value.colorize(:cyan).toggle(@is_color)}"
-        end
       elsif endpoint.kind.empty?
         r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_method} #{r_url}"
