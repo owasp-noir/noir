@@ -1,0 +1,57 @@
++++
+title = "Mobile Apps"
+description = "How Noir extracts Android and iOS deep-link entry points and links them to the code that handles them."
+weight = 6
+sort_by = "weight"
+
++++
+
+Noir extracts mobile app entry points — the deep links and exported components an Android or iOS app exposes to the outside world — as endpoints, and links them to the source code that handles them. Deep links are a classic mobile attack surface: an externally supplied URL or intent flows into the app and can reach a WebView, an SQL query, or another component.
+
+## What Noir parses
+
+| Platform | Source file | What it yields |
+|---|---|---|
+| Android | `AndroidManifest.xml` | custom URL-scheme deep links, exported intent components, verified App Links |
+| Android | `res/values/strings.xml` | resolves `@string/` references used in schemes / hosts / paths |
+| iOS | `Info.plist` | `CFBundleURLTypes` custom URL schemes |
+| iOS | `*.entitlements` | `associated-domains` `applinks:` universal links |
+
+## Endpoint model
+
+Mobile entry points are endpoints with `method = "GET"`; their nature is carried in `protocol`:
+
+| protocol | meaning | example URL |
+|---|---|---|
+| `mobile-scheme` | custom URL-scheme deep link | `myapp://complex/:id` |
+| `android-intent` | exported intent component with no data URI | `intent://com.example.app/.SyncService` |
+| `universal-link` | verified Android App Link / iOS universal link | `https://app.example.com/complex/:id` |
+
+In plain output they render under a `SCHEME` / `INTENT` / `UNIVERSAL` prefix. The handling component, intent action and category, host, and package are stored in a per-endpoint metadata map (serialized in JSON / YAML; omitted entirely for ordinary HTTP endpoints):
+
+```
+SCHEME myapp://complex/:id
+  ○ via: .DeepLinkActivity
+  ○ action: android.intent.action.VIEW
+  ○ host: complex
+  ○ package: com.example.myapp
+```
+
+## Linking to handler code
+
+When the handler source is present in the scan, Noir connects each deep-link endpoint to the code that processes it:
+
+* **Android** — the manifest component (e.g. `.DeepLinkActivity`) is resolved to its `.kt` / `.java` file. The intent-handling methods (`onCreate`, `onNewIntent`, `onReceive`, …) contribute 1-hop callees, and the inputs they read become parameters: `uri.getQueryParameter("q")` → a `query` param (baked into the URL), and the `get*Extra` family → an `extra` param.
+* **iOS** — deep links are dispatched centrally, so Noir discovers the handlers and attaches them by kind: `.onOpenURL` / `application(_:open:)` / `scene(_:openURLContexts:)` to custom schemes, and the `userActivity` handlers to universal links. `URLQueryItem` reads become `query` params.
+
+With `--ai-context`, the handler body feeds Noir's source / sink / guard inference, so a deep link that flows into a WebView load or another sink surfaces with the taint path attached.
+
+## Output behavior
+
+Mobile endpoints stay in the structured inventory — JSON, JSONL, YAML, SARIF, Markdown, mermaid, HTML — and in the Elasticsearch / webhook exports, because they are part of the app's surface. They are **excluded** from HTTP-shaped output and delivery — cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, and active probe / proxy delivery — because an app URL is something you open, not an HTTP request you send.
+
+## Notes and limitations
+
+* Source code must be present for handler linkage. A manifest- or plist-only scan still yields the endpoints, just without callees, params, or AI context.
+* Binary (compiled) `Info.plist` files are skipped; source-repo XML plists are parsed.
+* gradle `${applicationId}` placeholders and Jetpack Navigation deep links are not yet resolved.
