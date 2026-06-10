@@ -404,6 +404,8 @@ module LLM
       "claude-opus-4-6"    => 200000,
       "claude-opus-4-7"    => 200000,
       "claude-opus-4-8"    => 1000000,
+      "claude-fable-5"     => 1000000,
+      "claude-mythos-5"    => 1000000,
       "default"            => 100000,
     },
     "azure" => {

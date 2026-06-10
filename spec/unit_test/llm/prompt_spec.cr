@@ -188,6 +188,14 @@ describe LLM do
         anthropic["claude-opus-4-8"].should eq(1000000)
       end
 
+      it "includes claude-fable-5 with 1000000 tokens" do
+        anthropic["claude-fable-5"].should eq(1000000)
+      end
+
+      it "includes claude-mythos-5 with 1000000 tokens" do
+        anthropic["claude-mythos-5"].should eq(1000000)
+      end
+
       it "has default of 100000" do
         anthropic["default"].should eq(100000)
       end
