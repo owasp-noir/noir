@@ -3,6 +3,7 @@ require "../models/code_locator"
 require "../ext/tree_sitter/tree_sitter"
 require "../miniparsers/kotlin_callee_extractor"
 require "../miniparsers/java_callee_extractor"
+require "../miniparsers/swift_callee_extractor"
 
 # Post-analysis pass that links mobile deep-link endpoints (produced by the
 # config-file analyzers from AndroidManifest.xml) to the source code that
@@ -35,7 +36,15 @@ module NoirMobileLinker
   EXTRA_PARAM_RE = /\.get(?:String|Int|Integer|Boolean|Long|Float|Double|Char|Byte|Short|Parcelable|Serializable|StringArray|CharSequence|Bundle)Extra\s*\(\s*"([^"]+)"/
 
   def self.apply(endpoints : Array(Endpoint), logger : NoirLogger) : Array(Endpoint)
-    return endpoints unless endpoints.any? { |ep| android_handler_target?(ep) }
+    link_android(endpoints, logger)
+    link_ios(endpoints, logger)
+    endpoints
+  end
+
+  # Android: each component maps to its own handler class (metadata["via"] /
+  # the intent:// component), resolved per endpoint.
+  private def self.link_android(endpoints : Array(Endpoint), logger : NoirLogger)
+    return unless endpoints.any? { |ep| android_handler_target?(ep) }
 
     index = ClassIndex.new
     endpoints.each_with_index do |endpoint, i|
@@ -52,8 +61,39 @@ module NoirMobileLinker
         logger.debug "Mobile linker failed for #{endpoint.url} (#{resolved[:path]}): #{e.message}"
       end
     end
+  end
 
-    endpoints
+  # iOS: deep links are dispatched centrally (App/SceneDelegate), so there is
+  # no per-endpoint `via`. Discover the handlers once and attach by kind —
+  # URL handlers (onOpenURL / application(open:) / scene(openURLContexts:))
+  # to custom schemes, userActivity handlers to universal links.
+  private def self.link_ios(endpoints : Array(Endpoint), logger : NoirLogger)
+    return unless endpoints.any? { |ep| ios_handler_target?(ep) }
+
+    begin
+      handlers = IosHandlers.discover
+    rescue e
+      logger.debug "Mobile linker (iOS) handler discovery failed: #{e.message}"
+      return
+    end
+
+    endpoints.each_with_index do |endpoint, i|
+      next unless ios_handler_target?(endpoint)
+      info = endpoint.protocol == "universal-link" ? handlers[:activity] : handlers[:url]
+      next if info.empty?
+      endpoints[i] = apply_handler_info(endpoint, info)
+    end
+  end
+
+  private def self.ios_handler_target?(endpoint : Endpoint) : Bool
+    MOBILE_PROTOCOLS.includes?(endpoint.protocol) && endpoint.details.technology == "ios"
+  end
+
+  private def self.apply_handler_info(endpoint : Endpoint, info : HandlerInfo) : Endpoint
+    info.code_paths.each { |pi| endpoint.details.add_path(pi) }
+    info.callees.each { |callee| endpoint.push_callee(callee) }
+    info.params.each { |param| endpoint.push_param(param) }
+    endpoint
   end
 
   # An endpoint we can resolve to an Android component: a mobile protocol
@@ -196,6 +236,126 @@ module NoirMobileLinker
           end
         end
       end
+    end
+  end
+
+  # Aggregated handler evidence to graft onto an endpoint.
+  struct HandlerInfo
+    getter code_paths : Array(PathInfo)
+    getter callees : Array(Callee)
+    getter params : Array(Param)
+
+    def initialize
+      @code_paths = [] of PathInfo
+      @callees = [] of Callee
+      @params = [] of Param
+    end
+
+    def empty? : Bool
+      @code_paths.empty? && @callees.empty? && @params.empty?
+    end
+  end
+
+  # Scans .swift files once for the central deep-link dispatch handlers and
+  # groups their callees/params by kind. URL handlers process custom schemes;
+  # userActivity handlers process universal links.
+  module IosHandlers
+    # Same-line markers for the brace that opens a handler body.
+    URL_HANDLER_RES = [
+      /\.onOpenURL\s*\{/,
+      /\bfunc\s+application\s*\(.*\bopen\s+url\s*:/,
+      /\bfunc\s+scene\s*\(.*\bopenURLContexts\b/,
+    ]
+    ACTIVITY_HANDLER_RES = [
+      /\bfunc\s+application\s*\(.*\bcontinue\s+userActivity\s*:/,
+      /\bfunc\s+scene\s*\(.*\bcontinue\s+userActivity\s*:/,
+      /\.onContinueUserActivity\s*\(/,
+    ]
+
+    # URLQueryItem name comparisons inside a handler — the iOS analog of
+    # Android's getQueryParameter.
+    QUERY_NAME_RE = /\.name\s*==\s*"([^"]+)"/
+
+    def self.discover : Hash(Symbol, NoirMobileLinker::HandlerInfo)
+      url = NoirMobileLinker::HandlerInfo.new
+      activity = NoirMobileLinker::HandlerInfo.new
+
+      CodeLocator.instance.files_by_extension(".swift").each do |path|
+        next if path.includes?("/.build/") || path.includes?("/.swiftpm/")
+        content = NoirMobileLinker.read_content(path)
+        next unless content
+        scan_file(path, content, url, activity)
+      end
+
+      {:url => url, :activity => activity}
+    end
+
+    private def self.scan_file(path : String, content : String,
+                               url : NoirMobileLinker::HandlerInfo,
+                               activity : NoirMobileLinker::HandlerInfo)
+      lines = content.lines
+      depth = 0
+      in_string = false
+
+      lines.each_with_index do |line, index|
+        stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
+        target = if URL_HANDLER_RES.any? { |re| stripped.matches?(re) }
+                   url
+                 elsif ACTIVITY_HANDLER_RES.any? { |re| stripped.matches?(re) }
+                   activity
+                 end
+        next unless target
+
+        brace = find_opening_brace(lines, index)
+        next unless brace
+        body, body_line = body_after_opening_brace(lines, brace[:index], brace[:col])
+
+        target.code_paths << PathInfo.new(path, index + 1)
+        Noir::SwiftCalleeExtractor.callees_for_body(body, path, body_line).each do |name, fpath, fline|
+          target.callees << Callee.new(name, path: fpath, line: fline)
+        end
+        body.scan(QUERY_NAME_RE) { |m| target.params << Param.new(m[1], "", "query") }
+      end
+    end
+
+    # Finds the first `{` at/after the matched line (same line, else the next
+    # few lines for a func whose brace is on its own line).
+    private def self.find_opening_brace(lines : Array(String), start : Int32) : NamedTuple(index: Int32, col: Int32)?
+      idx = start
+      while idx < lines.size && idx <= start + 3
+        col = lines[idx].index('{')
+        return {index: idx, col: col} if col
+        idx += 1
+      end
+      nil
+    end
+
+    # Brace-matched body text starting just after lines[opening_index][col],
+    # ignoring braces inside comments/strings. Ported from the Swift analyzers'
+    # shared body_after_opening_brace.
+    private def self.body_after_opening_brace(lines : Array(String), opening_index : Int32, col : Int32) : Tuple(String, Int32)
+      first = lines[opening_index][(col + 1)..]? || ""
+      clean, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first, 0, false)
+      brace = 1 + clean.count('{') - clean.count('}')
+      return {first, opening_index + 1} if brace <= 0
+
+      body = [first]
+      idx = opening_index + 1
+      while idx < lines.size && brace > 0
+        line = lines[idx]
+        stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
+        nxt = brace + stripped.count('{') - stripped.count('}')
+        if nxt <= 0
+          closing = stripped.rindex('}')
+          body << (closing ? line[0...closing] : line) unless line.strip == "}"
+          break
+        end
+        body << line
+        brace = nxt
+        idx += 1
+      end
+
+      {body.join("\n"), opening_index + 1}
     end
   end
 end
