@@ -280,8 +280,11 @@ module NoirMobileLinker
     ]
 
     # URLQueryItem name comparisons inside a handler — the iOS analog of
-    # Android's getQueryParameter.
-    QUERY_NAME_RE = /\.name\s*==\s*"([^"]+)"/
+    # Android's getQueryParameter. Anchored to the closure-shorthand form
+    # (`$0.name == "x"`) and an explicit `URLQueryItem(name: "x")` so a plain
+    # `user.name == "admin"` comparison can't become a phantom query param.
+    QUERY_NAME_RE = /\$\d+\.name\s*==\s*"([^"]+)"/
+    QUERY_ITEM_RE = /URLQueryItem\(\s*name:\s*"([^"]+)"/
 
     def self.discover : Hash(Symbol, NoirMobileLinker::HandlerInfo)
       url = NoirMobileLinker::HandlerInfo.new
@@ -322,6 +325,7 @@ module NoirMobileLinker
           target.callees << Callee.new(name, path: fpath, line: fline)
         end
         body.scan(QUERY_NAME_RE) { |m| target.params << Param.new(m[1], "", "query") }
+        body.scan(QUERY_ITEM_RE) { |m| target.params << Param.new(m[1], "", "query") }
       end
     end
 
@@ -344,7 +348,12 @@ module NoirMobileLinker
       first = lines[opening_index][(col + 1)..]? || ""
       clean, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(first, 0, false)
       brace = 1 + clean.count('{') - clean.count('}')
-      return {first, opening_index + 1} if brace <= 0
+      if brace <= 0
+        # Single-line body: trim the closing `}` and anything after it so a
+        # trailing `.padding()` etc. doesn't leak into the handler body.
+        closing = clean.rindex('}')
+        return {closing ? first[0...closing] : first, opening_index + 1}
+      end
 
       body = [first]
       idx = opening_index + 1
