@@ -39,6 +39,16 @@ describe "NoirMobileLinker" do
     names.should contain("renderProfile")
   end
 
+  it "extracts getQueryParameter reads as query params" do
+    linked.params.any? { |p| p.name == "redirect" && p.param_type == "query" }.should be_true
+    linked.params.any? { |p| p.name == "utm_source" && p.param_type == "query" }.should be_true
+  end
+
+  it "extracts get*Extra reads as extra params" do
+    linked.params.any? { |p| p.name == "userId" && p.param_type == "extra" }.should be_true
+    linked.params.any? { |p| p.name == "verified" && p.param_type == "extra" }.should be_true
+  end
+
   it "leaves an endpoint whose component has no resolvable source untouched" do
     result[1].callees.should be_empty
   end

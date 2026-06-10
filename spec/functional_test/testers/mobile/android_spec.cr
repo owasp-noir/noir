@@ -16,8 +16,15 @@ no_params = [] of Param
 
 expected_endpoints = [
   # Custom scheme deep link (mobile-scheme), enriched by the code-linkage
-  # pass with callees pulled from DeepLinkActivity.onCreate.
-  build.call("myapp://complex/:id", "mobile-scheme", [Param.new("id", "", "path")], ["renderProfile", "webView.loadUrl"]),
+  # pass with callees + input params read from DeepLinkActivity.onCreate:
+  # getQueryParameter -> query, get*Extra -> extra.
+  build.call("myapp://complex/:id", "mobile-scheme", [
+    Param.new("id", "", "path"),
+    Param.new("redirect", "", "query"),
+    Param.new("utm_source", "", "query"),
+    Param.new("userId", "", "extra"),
+    Param.new("verified", "", "extra"),
+  ], ["renderProfile", "webView.loadUrl"]),
   build.call("myapp://accounts/profile", "mobile-scheme", no_params, [] of String),
   # Scheme resolved from @string/deep_link_scheme
   build.call("myappstr://settings", "mobile-scheme", no_params, [] of String),
