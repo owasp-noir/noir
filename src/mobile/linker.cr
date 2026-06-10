@@ -20,8 +20,6 @@ require "../miniparsers/swift_callee_extractor"
 # endpoints (no `via`, dispatched by the App/SceneDelegate) are left for a
 # follow-up.
 module NoirMobileLinker
-  MOBILE_PROTOCOLS = Set{"mobile-scheme", "android-intent", "universal-link"}
-
   # Methods where an Android component reads its inbound intent / deep link.
   HANDLER_METHODS = %w[
     onCreate onNewIntent onStart onResume onStartCommand onHandleIntent
@@ -86,7 +84,7 @@ module NoirMobileLinker
   end
 
   private def self.ios_handler_target?(endpoint : Endpoint) : Bool
-    MOBILE_PROTOCOLS.includes?(endpoint.protocol) && endpoint.details.technology == "ios"
+    endpoint.mobile? && endpoint.details.technology == "ios"
   end
 
   private def self.apply_handler_info(endpoint : Endpoint, info : HandlerInfo) : Endpoint
@@ -100,7 +98,7 @@ module NoirMobileLinker
   # with either a `via` class (scheme / universal-link) or an intent://
   # component URL (android-intent). iOS schemes carry neither.
   private def self.android_handler_target?(endpoint : Endpoint) : Bool
-    return false unless MOBILE_PROTOCOLS.includes?(endpoint.protocol)
+    return false unless endpoint.mobile?
     return true if endpoint.url.starts_with?("intent://")
     !!(endpoint.metadata.try &.has_key?("via"))
   end

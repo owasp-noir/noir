@@ -5,6 +5,7 @@ require "json"
 class OutputBuilderHttpie < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
+      next if endpoint.mobile? # mobile deep links aren't HTTP requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
       parts = ["http"]

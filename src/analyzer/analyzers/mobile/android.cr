@@ -223,13 +223,20 @@ module Analyzer::Mobile
       attr(node, local_name) == "true"
     end
 
-    # Reads an attribute by local name, ignoring the `android:` namespace
-    # prefix (libxml2 exposes the prefixed name on the node).
+    ANDROID_NS = "http://schemas.android.com/apk/res/android"
+
+    # Reads an attribute by local name (libxml2 exposes the prefixed name).
+    # Prefers the `android:`-namespaced attribute so a `tools:`/other-prefix
+    # `scheme`/`host`/`exported` in the same tag can't shadow the real value;
+    # falls back to a non-namespaced match (e.g. `package` on <manifest>).
     private def attr(node : XML::Node, local_name : String) : String?
+      fallback : String? = nil
       node.attributes.each do |a|
-        return a.content if a.name == local_name
+        next unless a.name == local_name
+        return a.content if a.namespace.try(&.href) == ANDROID_NS
+        fallback ||= a.content
       end
-      nil
+      fallback
     end
 
     private def find_child(node : XML::Node, local_name : String) : XML::Node?
