@@ -7,6 +7,14 @@ struct Endpoint
   property url, method, params, protocol, kind, details, tags, callees, internal
   property ai_context : AIContext?
 
+  # Free-form metadata for non-HTTP entry points (mobile deep-link
+  # schemes, Android intents, universal links: action/category/host/
+  # package/...). nil for ordinary endpoints and suppressed from
+  # serialization so the JSON/YAML schema is unchanged for them.
+  @[JSON::Field(ignore_serialize: metadata.nil?)]
+  @[YAML::Field(ignore_serialize: metadata.nil?)]
+  property metadata : Hash(String, String)?
+
   # Per-endpoint context for AI code reviewers: 1-hop callees from the
   # handler body. Best-effort, intentionally incomplete on dynamic
   # dispatch / middleware / decorators. Populated by analyzers that
@@ -20,6 +28,7 @@ struct Endpoint
     @tags = [] of Tag
     @callees = [] of Callee
     @ai_context = nil
+    @metadata = nil
   end
 
   def initialize(@url : String, @method : String, @details : Details)
@@ -30,6 +39,7 @@ struct Endpoint
     @callees = [] of Callee
     @internal = false
     @ai_context = nil
+    @metadata = nil
   end
 
   def details=(details : Details)

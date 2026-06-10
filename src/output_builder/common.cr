@@ -2,6 +2,19 @@ require "../models/output_builder"
 require "../models/endpoint"
 
 class OutputBuilderCommon < OutputBuilder
+  # Mobile entry points keep method = "GET" internally; the protocol
+  # carries the real semantics and drives the display prefix.
+  MOBILE_PROTOCOL_LABELS = {
+    "mobile-scheme"  => "SCHEME",
+    "android-intent" => "INTENT",
+    "universal-link" => "UNIVERSAL",
+  }
+
+  # Fixed order so plain output is deterministic. "type" renders right
+  # under the prefix line and "path" comes from path params, so both are
+  # excluded here.
+  MOBILE_METADATA_KEYS = ["query", "intent", "action", "data", "category", "host", "package", "extras"]
+
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
@@ -18,7 +31,17 @@ class OutputBuilderCommon < OutputBuilder
       r_method = endpoint.method.colorize(r_method_color).toggle(@is_color)
 
       r_buffer = String::Builder.new
-      if endpoint.kind.empty?
+      if mobile_label = MOBILE_PROTOCOL_LABELS[endpoint.protocol]?
+        # intent:// is a synthetic scheme used so the optimizer treats
+        # component names as absolute URLs; hide it in the text output.
+        display_url = baked[:url].lchop("intent://")
+        r_label = mobile_label.colorize(:light_blue).toggle(@is_color)
+        r_url = display_url.colorize(:light_yellow).toggle(@is_color)
+        r_buffer << "\n#{r_label} #{r_url}"
+        if type_value = endpoint.metadata.try &.[]?("type")
+          r_buffer << "\n  ○ type: #{type_value.colorize(:cyan).toggle(@is_color)}"
+        end
+      elsif endpoint.kind.empty?
         r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_method} #{r_url}"
       else
@@ -78,6 +101,15 @@ class OutputBuilderCommon < OutputBuilder
       if baked[:path_param].size > 0
         r_path_param = baked[:path_param].join(", ").colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ path: #{r_path_param}"
+      end
+
+      if endpoint_metadata = endpoint.metadata
+        MOBILE_METADATA_KEYS.each do |key|
+          if value = endpoint_metadata[key]?
+            r_value = value.colorize(:cyan).toggle(@is_color)
+            r_buffer << "\n  ○ #{key}: #{r_value}"
+          end
+        end
       end
 
       if baked[:body_type] == "form"

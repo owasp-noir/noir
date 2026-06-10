@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.example.myapp">
+
+    <application android:label="MyApp">
+
+        <!-- Launcher activity: no <data>, must NOT produce any endpoint -->
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Custom scheme deep link with templated path -->
+        <activity android:name=".DeepLinkActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="myapp" android:host="complex" android:path="/{id}" />
+            </intent-filter>
+        </activity>
+
+        <!-- Custom scheme deep link using pathPrefix -->
+        <activity android:name=".AccountActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="myapp" android:host="accounts" android:pathPrefix="/profile" />
+            </intent-filter>
+        </activity>
+
+        <!-- Scheme resolved from @string/ reference -->
+        <activity android:name=".SettingsActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="@string/deep_link_scheme" android:host="settings" />
+            </intent-filter>
+        </activity>
+
+        <!-- Verified App Link over https (universal-link) -->
+        <activity android:name=".WebActivity" android:exported="true">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="myapp.example.com" android:path="/complex/{id}" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
