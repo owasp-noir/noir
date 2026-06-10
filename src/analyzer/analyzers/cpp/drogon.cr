@@ -26,6 +26,21 @@ module Analyzer::Cpp
 
     REGEX_REGISTER_HANDLER = /app\(\)\s*\.?\s*registerHandler(?:ViaRegex)?\s*\(\s*"([^"]+)"/
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The macro set is fixed, so precompile its
+    # matchers once; the method/class matchers interpolate discovered names
+    # and are memoized per name instead.
+    MACRO_CALL_PATTERNS = {
+      "METHOD_ADD"            => /\bMETHOD_ADD\s*\(/,
+      "ADD_METHOD_TO"         => /\bADD_METHOD_TO\s*\(/,
+      "ADD_METHOD_VIA_REGEX"  => /\bADD_METHOD_VIA_REGEX\s*\(/,
+      "PATH_ADD"              => /\bPATH_ADD\s*\(/,
+      "WS_PATH_ADD"           => /\bWS_PATH_ADD\s*\(/,
+      "WS_ADD_PATH_VIA_REGEX" => /\bWS_ADD_PATH_VIA_REGEX\s*\(/,
+    }
+    @method_def_regexes = Hash(String, Regex).new
+    @class_decl_regexes = Hash(String, Regex).new
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -218,7 +233,8 @@ module Analyzer::Cpp
     end
 
     private def each_macro_call(content : String, macro_name : String, &block : Array(String), Int32 ->)
-      content.scan(/\b#{macro_name}\s*\(/) do |match|
+      macro_regex = MACRO_CALL_PATTERNS[macro_name]? || /\b#{macro_name}\s*\(/
+      content.scan(macro_regex) do |match|
         call_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         open_paren = Noir::CppCalleeExtractor.find_next_code_char(content, '(', call_start)
         next unless open_paren
@@ -443,7 +459,8 @@ module Analyzer::Cpp
 
     private def extract_method_body_in_range(content : String, method_pattern : String, range : SourceRange) : Tuple(String, Int32)?
       range_start, range_end = range
-      content.scan(/\b#{method_pattern}\s*\(/) do |match|
+      method_regex = @method_def_regexes[method_pattern] ||= /\b#{method_pattern}\s*\(/
+      content.scan(method_regex) do |match|
         match_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         next if match_start < range_start || match_start >= range_end
         next if call_context?(content, match_start)
@@ -472,7 +489,8 @@ module Analyzer::Cpp
     end
 
     private def class_body_range(content : String, class_name : String) : SourceRange?
-      content.scan(/\b(?:class|struct)\s+#{Regex.escape(class_name)}\b/) do |match|
+      class_regex = @class_decl_regexes[class_name] ||= /\b(?:class|struct)\s+#{Regex.escape(class_name)}\b/
+      content.scan(class_regex) do |match|
         class_start = (content.char_index_to_byte_index(match.begin(0) || 0)) || 0
         open_brace = Noir::CppCalleeExtractor.find_next_code_char(content, '{', class_start)
         next unless open_brace

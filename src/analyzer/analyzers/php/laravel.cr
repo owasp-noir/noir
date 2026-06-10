@@ -3,6 +3,8 @@ require "../../../minilexers/php_lexer"
 
 module Analyzer::Php
   class Laravel < PhpEngine
+    @method_def_regexes = Hash(String, Regex).new
+
     private struct RouteGroup
       getter prefix, body, body_start, body_end
 
@@ -385,7 +387,10 @@ module Analyzer::Php
       return unless controller_path && File.exists?(controller_path)
 
       content = read_file_content(controller_path)
-      method_match = content.match(/(?:public|protected|private)\s+(?:static\s+)?function\s+#{Regex.escape(method_name)}\s*\(/)
+      # Memoized: an interpolated regex literal recompiles (PCRE2 JIT) on
+      # every evaluation, and action names repeat across controllers.
+      method_regex = @method_def_regexes[method_name] ||= /(?:public|protected|private)\s+(?:static\s+)?function\s+#{Regex.escape(method_name)}\s*\(/
+      method_match = content.match(method_regex)
       return unless method_match
 
       body_info = extract_php_method_body_after(content, method_match.begin(0))

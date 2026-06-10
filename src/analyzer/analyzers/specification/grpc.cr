@@ -272,8 +272,12 @@ module Analyzer::Specification
     end
 
     private def find_line_number(content : String, method_name : String) : Int32?
+      # Hoisted out of the loop: an interpolated regex literal recompiles
+      # (PCRE2 JIT) on every evaluation, i.e. once per line.
+      rpc_regex = /\brpc\s+#{Regex.escape(method_name)}\s*\(/
       content.each_line.with_index do |line, index|
-        if line =~ /\brpc\s+#{Regex.escape(method_name)}\s*\(/
+        next unless line.includes?(method_name)
+        if line =~ rpc_regex
           return index + 1
         end
       end

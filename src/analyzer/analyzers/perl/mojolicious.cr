@@ -406,8 +406,17 @@ module Analyzer::Perl
       end
     end
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). Only `controller` and `action` are looked
+    # up, so precompile their matchers once at load time.
+    NAMED_TO_ARG_PATTERNS = {
+      "controller" => /(?:^|[,\s])controller\s*=>\s*['"]([A-Za-z_][A-Za-z0-9_:\/-]*)['"]/,
+      "action"     => /(?:^|[,\s])action\s*=>\s*['"]([A-Za-z_][A-Za-z0-9_:\/-]*)['"]/,
+    }
+
     private def named_to_arg(args : String, name : String) : String?
-      if match = args.match(/(?:^|[,\s])#{name}\s*=>\s*['"]([A-Za-z_][A-Za-z0-9_:\/-]*)['"]/)
+      name_regex = NAMED_TO_ARG_PATTERNS[name]? || /(?:^|[,\s])#{name}\s*=>\s*['"]([A-Za-z_][A-Za-z0-9_:\/-]*)['"]/
+      if match = args.match(name_regex)
         match[1]
       end
     end

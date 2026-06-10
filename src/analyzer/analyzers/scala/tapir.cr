@@ -4,6 +4,13 @@ module Analyzer::Scala
   class Tapir < ScalaEngine
     HTTP_METHODS = %w[get post put delete patch head options connect trace]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile) — precompile the fixed per-verb matchers
+    # once at load time instead of per chain.
+    METHOD_CALL_PATTERNS = HTTP_METHODS.map do |m|
+      {m, /\.#{m}\b/}
+    end
+
     BASE_ENDPOINT_RE = /(?<![.\w])(?:[A-Za-z_]\w*[Ee]ndpoint|endpoint|infallibleEndpoint)\b/
 
     # Type token allows one level of nested brackets (e.g. Option[String], List[User]).
@@ -79,8 +86,8 @@ module Analyzer::Scala
     end
 
     private def detect_method(chain : String) : String?
-      HTTP_METHODS.each do |m|
-        return m if chain.matches?(/\.#{m}\b/)
+      METHOD_CALL_PATTERNS.each do |m, pattern|
+        return m if chain.matches?(pattern)
       end
 
       if mm = chain.match(/\.method\s*\(\s*Method\.([A-Z]+)\s*\)/)

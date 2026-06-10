@@ -25,6 +25,12 @@ module Analyzer::Dart
   # the parent router. Each top-level router (not mounted anywhere) is
   # emitted as a separate set of endpoints.
   class Shelf < Analyzer
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile); the router-variable matcher interpolates
+    # a discovered name (`router`, `app`, ...) that repeats across files,
+    # so memoize it per name.
+    @direct_call_regexes = Hash(String, Regex).new
+
     HTTP_METHOD_MAP = {
       "get"     => "GET",
       "post"    => "POST",
@@ -375,7 +381,7 @@ module Analyzer::Dart
                                   include_callee : Bool,
                                   routes : Array(Route),
                                   mounts : Array(Mount))
-      pattern = /(?<![\w$])#{Regex.escape(var_name)}\s*\.\s*([a-zA-Z_]\w*)\s*\(/
+      pattern = @direct_call_regexes[var_name] ||= /(?<![\w$])#{Regex.escape(var_name)}\s*\.\s*([a-zA-Z_]\w*)\s*\(/
       cleaned.scan(pattern) do |m|
         method = m[1]
         next unless relevant_method?(method)

@@ -582,8 +582,11 @@ module Analyzer::CSharp::MinimalApiSupport
   # Returns the member definitions (primary-constructor params or public
   # auto-properties) of a record/class/struct used with `[AsParameters]`.
   private def as_parameters_member_defs(type_name : String, lines : Array(String)) : Array(String)
+    # Hoisted out of the loop: an interpolated regex literal recompiles
+    # (PCRE2 JIT) on every evaluation, i.e. once per line.
+    type_decl_regex = /\b(?:record|class|struct)\s+#{Regex.escape(type_name)}\b/
     def_idx = lines.index do |l|
-      l.matches?(/\b(?:record|class|struct)\s+#{Regex.escape(type_name)}\b/)
+      l.includes?(type_name) && l.matches?(type_decl_regex)
     end
     return [] of String unless def_idx
 

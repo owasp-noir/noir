@@ -4,6 +4,13 @@ module Analyzer::Scala
   class Scalatra < ScalaEngine
     HTTP_METHODS = %w[get post put delete patch head options]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile), and this matcher used to be rebuilt for
+    # every verb on every line — precompile the fixed set once at load time.
+    ROUTE_PATTERNS = HTTP_METHODS.map do |method|
+      {method, /(?<![.\w])#{method}\s*\(\s*"([^"]+)"/}
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
       extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
@@ -19,10 +26,11 @@ module Analyzer::Scala
         stripped_line = (code_lines[index]? || "").strip
 
         # Match Scalatra route definitions: get("/path") { ... }
-        HTTP_METHODS.each do |method|
+        ROUTE_PATTERNS.each do |method, route_pattern|
           # Match: get("/users/:id") { ... } and get("/users", operation(...)) { ... }
           # Ensure it's not a method call on an object (e.g., cookies.get)
-          if route_match = stripped_line.match(/(?<![.\w])#{method}\s*\(\s*"([^"]+)"/)
+          next unless stripped_line.includes?(method)
+          if route_match = stripped_line.match(route_pattern)
             route_path = route_match[1]
             # Only process if it looks like a URL path (starts with /)
             next unless route_path.starts_with?("/")

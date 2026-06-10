@@ -4,6 +4,21 @@ module Analyzer::Scala
   class Akka < ScalaEngine
     HTTP_METHODS = %w[get post put delete patch head options]
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). `directive_args` runs twice per source
+    # line and the method matchers run once per HTTP verb per route, so
+    # precompile the fixed sets once at load time.
+    DIRECTIVE_ARGS_PATTERNS = {
+      "pathPrefix" => /(?<![.\w])pathPrefix\s*\(([^)]*)\)/,
+      "path"       => /(?<![.\w])path\s*\(([^)]*)\)/,
+    }
+    METHOD_BLOCK_PATTERNS = HTTP_METHODS.to_h do |method|
+      {method, /(?<![.\w])#{Regex.escape(method)}\s*\{/}
+    end
+    METHOD_SCOPE_PATTERNS = HTTP_METHODS.to_h do |method|
+      {method, /(?<![.\w])#{Regex.escape(method)}(?![\w])/}
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
       extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
@@ -126,10 +141,11 @@ module Analyzer::Scala
                                       method : String) : Array(Tuple(String, Int32))
       blocks = [] of Tuple(String, Int32)
       index = route_start
+      method_regex = METHOD_BLOCK_PATTERNS[method]? || /(?<![.\w])#{Regex.escape(method)}\s*\{/
 
       while index <= route_end
         stripped = structural_lines[index]? || ""
-        match = stripped.match(/(?<![.\w])#{Regex.escape(method)}\s*\{/)
+        match = stripped.includes?(method) ? stripped.match(method_regex) : nil
         unless match
           index += 1
           next
@@ -214,7 +230,9 @@ module Analyzer::Scala
     end
 
     private def directive_args(line : String, directive : String) : String?
-      match = line.match(/(?<![.\w])#{Regex.escape(directive)}\s*\(([^)]*)\)/)
+      return unless line.includes?(directive)
+      regex = DIRECTIVE_ARGS_PATTERNS[directive]? || /(?<![.\w])#{Regex.escape(directive)}\s*\(([^)]*)\)/
+      match = line.match(regex)
       return unless match
 
       match[1]
@@ -222,7 +240,7 @@ module Analyzer::Scala
 
     private def extract_method_param_scopes(content : String, method : String) : Array(String)
       scopes = [] of String
-      regex = /(?<![.\w])#{Regex.escape(method)}(?![\w])/
+      regex = METHOD_SCOPE_PATTERNS[method]? || /(?<![.\w])#{Regex.escape(method)}(?![\w])/
       search_from = 0
 
       while match = content.match(regex, search_from)

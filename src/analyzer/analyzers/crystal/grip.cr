@@ -2,6 +2,13 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Grip < CrystalEngine
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The verb set is fixed, so precompile the
+    # per-verb route matchers once at load time.
+    VERB_ROUTE_PATTERNS = %w[get post put patch delete options head].map do |method|
+      {method, /(?:^|[^.\w])#{method}\s+['"](.+?)['"]/}
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = [] of String
@@ -227,10 +234,10 @@ module Analyzer::Crystal
       scope_prefix = scopes.join("")
 
       # Match HTTP method calls: get "/path", Controller
-      %w[get post put patch delete options head].each do |method|
+      VERB_ROUTE_PATTERNS.each do |method, route_pattern|
         if content.includes?("#{method} ") && content.includes?("\"")
           # Require a token boundary so `input "/x"` isn't read as `put "/x"`.
-          if match = content.match(/(?:^|[^.\w])#{method}\s+['"](.+?)['"]/)
+          if match = content.match(route_pattern)
             path = normalize_crystal_interpolation(match[1])
             full_path = scope_prefix + path
             return Endpoint.new(full_path, method.upcase)

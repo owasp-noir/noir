@@ -5,6 +5,14 @@ module Analyzer::Go
   class Beego < GoEngine
     IMPORT_MARKER = "github.com/beego/beego"
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile), and this fixed accessor set used to be
+    # rebuilt for every line — precompile it once at load time.
+    CONTEXT_GETTER_PATTERNS = ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
+                               "GetInt64", "GetUint64", "GetBool", "GetFloat"].map do |pattern|
+      {pattern, /#{pattern}\("([^"]*)"\)/}
+    end
+
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -103,12 +111,12 @@ module Analyzer::Go
                         end
                       end
 
-                      ["GetString", "GetStrings", "GetInt", "GetInt8", "GetUint8", "GetInt16", "GetUint16", "GetInt32", "GetUint32",
-                       "GetInt64", "GetUint64", "GetBool", "GetFloat"].each do |pattern|
+                      CONTEXT_GETTER_PATTERNS.each do |pattern, getter_regex|
                         # Quote-bounded + scan so two accessor calls on one line
                         # each yield their own param (greedy `(.*)` captured across
                         # both, producing one garbage name).
-                        line.scan(/#{pattern}\("([^"]*)"\)/) do |m|
+                        next unless line.includes?(pattern)
+                        line.scan(getter_regex) do |m|
                           last_endpoint.params << Param.new(m[1], "", "query")
                         end
                       end

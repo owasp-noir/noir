@@ -8,6 +8,12 @@ module Analyzer::Scala
     alias ScopedKey = Tuple(String, String)
     alias MethodRegion = NamedTuple(signature: String, body: String, body_start: Int32)
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile); the `def <name>` matcher interpolates a
+    # discovered method name, so memoize it per name instead of rebuilding
+    # it for every action lookup.
+    @method_def_regexes = Hash(String, Regex).new
+
     def analyze
       file_list = all_files()
       routes_files = [] of String
@@ -200,7 +206,8 @@ module Analyzer::Scala
     # action-builder wrapper (`Action`, `Open`, `Auth`, custom builders) so it
     # is not reported as a callee, matching brace-style behavior.
     private def extract_method_body(structure : String, source : String, method_name : String) : MethodRegion?
-      match = structure.match(/\bdef\s+#{Regex.escape(method_name)}(?![A-Za-z0-9_$])/)
+      method_def_regex = @method_def_regexes[method_name] ||= /\bdef\s+#{Regex.escape(method_name)}(?![A-Za-z0-9_$])/
+      match = structure.match(method_def_regex)
       return unless match
       def_start = match.begin(0) || 0
       cursor = match.end(0)
@@ -745,10 +752,14 @@ module Analyzer::Scala
       candidates = @scala_paths.select { |path| configured_base_for(path) == including_base }
       candidates = @scala_paths if candidates.empty?
 
+      # Hoisted out of the loop: an interpolated regex literal recompiles
+      # (PCRE2 JIT) on every evaluation, i.e. once per candidate file.
+      class_decl_regex = /\b(?:class|object|trait)\s+#{Regex.escape(class_name)}\b/
+
       candidates.each do |path|
         next unless File.basename(path) == filename
         content = read_file_content(path)
-        next unless content.match(/\b(?:class|object|trait)\s+#{Regex.escape(class_name)}\b/)
+        next unless content.match(class_decl_regex)
         next unless content.includes?("SimpleRouter") ||
                     content.includes?("Router.from") ||
                     content.includes?("routing.sird") ||

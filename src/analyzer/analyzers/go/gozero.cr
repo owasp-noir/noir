@@ -5,6 +5,13 @@ module Analyzer::Go
   class GoZero < GoEngine
     IMPORT_MARKER = "github.com/zeromicro/go-zero"
 
+    # Crystal recompiles an interpolated regex literal on every evaluation
+    # (a full PCRE2 JIT compile). The accessor set is fixed, so precompile
+    # the per-accessor matchers once at load time.
+    PARAM_ACCESSOR_PATTERNS = ["Query", "PostForm", "GetHeader", "PathParam", "FormValue"].to_h do |pattern|
+      {pattern, /#{Regex.escape(pattern)}\(\s*"([^"]+)"/}
+    end
+
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -197,7 +204,8 @@ module Analyzer::Go
                    else                  "query"
                    end
 
-      if match = line.match(/#{Regex.escape(pattern)}\(\s*"([^"]+)"/)
+      accessor_regex = PARAM_ACCESSOR_PATTERNS[pattern]? || /#{Regex.escape(pattern)}\(\s*"([^"]+)"/
+      if match = line.match(accessor_regex)
         return Param.new(match[1], "", param_type)
       end
       Param.new("", "", "")
