@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/auth_graph"
+    app:startDestination="@id/loginFragment">
+
+    <!-- ${applicationId} used as the scheme of a navigation deep link
+         (the AppAuth redirect-scheme pattern) -->
+    <fragment
+        android:id="@+id/loginFragment"
+        android:name="com.example.ktsapp.LoginFragment">
+        <deepLink app:uri="${applicationId}://oauth/callback" />
+    </fragment>
+
+</navigation>

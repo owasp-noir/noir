@@ -14,12 +14,14 @@ Noir extracts mobile app entry points — the deep links and exported components
 |---|---|---|
 | Android | `AndroidManifest.xml` | custom URL-scheme deep links, exported intent components, verified App Links |
 | Android | `res/values/strings.xml` | resolves `@string/` references used in schemes / hosts / paths |
+| Android | `build.gradle` / `build.gradle.kts` | resolves `${applicationId}` and custom `manifestPlaceholders` used in package / component names / schemes / hosts; supplies the package when the manifest has no `package` attribute |
+| Android | `res/navigation/*.xml` | Jetpack Navigation `<deepLink app:uri="...">` deep links — the owning destination becomes the handling component |
 | iOS | `Info.plist` | `CFBundleURLTypes` custom URL schemes |
 | iOS | `*.entitlements` | `associated-domains` `applinks:` universal links |
 | Android | `/.well-known/assetlinks.json` | server-side App Links association (Digital Asset Links) |
 | iOS | `apple-app-site-association` | server-side universal-link `paths` / `components` patterns |
 
-The first four rows are the **client** side of the association, declared in the app bundle. The last two are the **server** side — the well-known files a host publishes so the OS opens the app for its URLs. Both flow through the same `universal-link` protocol and output model.
+The first six rows are the **client** side of the association, declared in the app bundle. The last two are the **server** side — the well-known files a host publishes so the OS opens the app for its URLs. Both flow through the same `universal-link` protocol and output model.
 
 ## Endpoint model
 
@@ -58,6 +60,7 @@ Mobile endpoints stay in the structured inventory — JSON, JSONL, YAML, SARIF, 
 
 * Source code must be present for handler linkage. A manifest- or plist-only scan still yields the endpoints, just without callees, params, or AI context.
 * Binary (compiled) `Info.plist` files are skipped; source-repo XML plists are parsed.
-* gradle `${applicationId}` placeholders and Jetpack Navigation deep links are not yet resolved.
+* gradle placeholder resolution reads the nearest `build.gradle(.kts)` above the manifest; when the same placeholder is declared more than once (e.g. a `buildTypes` override), the first declaration — by convention `defaultConfig` — wins. Variant-specific values are not modeled. A placeholder with no gradle value stays verbatim in the URL and the endpoint is tagged `unresolved`.
+* Scheme-less Jetpack Navigation URIs (which match both http and https at runtime) are emitted once under `https`. `{arg}` segments become `:arg` path params, `?key={arg}` query placeholders become `query` params, and a trailing `.*` wildcard keeps the literal prefix.
 * `assetlinks.json` only declares the package association (no paths), so it yields a single `/*` endpoint per app. `apple-app-site-association` paths (`/buy/*`, `NOT /private/*`) and `components` are emitted individually; AASA exclusions are tagged `excluded`.
 * Only the plain-JSON form of `apple-app-site-association` is parsed; CMS-signed AASA files (older apps) are skipped.

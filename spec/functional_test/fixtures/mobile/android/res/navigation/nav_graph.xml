@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/profileFragment">
+
+    <!-- Deep link with a templated path segment and a query placeholder -->
+    <fragment
+        android:id="@+id/profileFragment"
+        android:name="com.example.myapp.ProfileFragment">
+        <deepLink app:uri="myapp://users/{userId}?ref={ref}" />
+    </fragment>
+
+    <!-- Scheme-less URI: Navigation implies http/https; a trailing .* is a
+         wildcard match -->
+    <fragment
+        android:id="@+id/searchFragment"
+        android:name="com.example.myapp.SearchFragment">
+        <deepLink app:uri="nav.example.com/search/.*" />
+    </fragment>
+
+    <!-- Nested graph; the fragment name uses a gradle placeholder -->
+    <navigation
+        android:id="@+id/settings_nested"
+        app:startDestination="@id/notificationsFragment">
+        <fragment
+            android:id="@+id/notificationsFragment"
+            android:name="${applicationId}.NotificationsFragment">
+            <deepLink app:uri="myapp://settings/notifications" />
+        </fragment>
+    </navigation>
+
+</navigation>
