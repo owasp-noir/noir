@@ -21,6 +21,8 @@ expected_endpoints = [
   # is folded across multiple lines.
   build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL"]),
   build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL"]),
+  # CFBundleURLSchemes entry `$(BUNDLE_URL_SCHEME)` resolved from Config.xcconfig.
+  build.call("resolvedscheme://", "mobile-scheme", no_params, [] of String),
   # Universal links (universal-link), linked to the userActivity handler.
   build.call("https://myapp.example.com/", "universal-link", no_params, ["routeUniversalLink"]),
   build.call("https://www.example.com/", "universal-link", no_params, ["routeUniversalLink"]),

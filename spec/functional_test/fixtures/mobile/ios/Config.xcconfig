@@ -1,0 +1,4 @@
+// Build settings substituted into Info.plist at build time. The
+// CFBundleURLSchemes entry `$(BUNDLE_URL_SCHEME)` resolves from here.
+BUNDLE_URL_SCHEME = resolvedscheme
+APP_BUNDLE_ID = com.example.myapp

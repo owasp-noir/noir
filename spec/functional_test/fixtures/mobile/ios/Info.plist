@@ -14,6 +14,7 @@
 				<string>myapp</string>
 				<string>myapp-alt</string>
 				<string>https</string>
+				<string>$(BUNDLE_URL_SCHEME)</string>
 			</array>
 		</dict>
 	</array>
