@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A second values file: Android merges <string> resources across every
+     res/values/*.xml, not just strings.xml (e.g. Tusky keeps its
+     oauth_scheme here). The scheme below must resolve from this file. -->
+<resources>
+    <string name="alt_scheme" translatable="false">altscheme</string>
+</resources>
