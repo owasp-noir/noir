@@ -15,6 +15,7 @@ require "../../func_spec.cr"
 # Also note `string(name)` in handlers.go is filtered by `BUILTINS` —
 # Go primitive type-conversions don't surface as callees.
 helpers_path = "./spec/functional_test/fixtures/go/hertz_callees/helpers.go"
+remote_path = "./spec/functional_test/fixtures/go/hertz_callees/remote/feed.go"
 
 expected_endpoints = [
   Endpoint.new("/users", "POST").tap do |ep|
@@ -32,6 +33,11 @@ expected_endpoints = [
     ep.push_callee(Callee.new("buildProfile", helpers_path, 10))
     ep.push_callee(Callee.new("auditLog", helpers_path, 7))
     ep.push_callee(Callee.new("ctx.JSON", line: 19))
+  end,
+
+  Endpoint.new("/wrapped-feed", "GET").tap do |ep|
+    ep.push_callee(Callee.new("loadFeed", remote_path, 14))
+    ep.push_callee(Callee.new("ctx.JSON", remote_path, 11))
   end,
 ]
 

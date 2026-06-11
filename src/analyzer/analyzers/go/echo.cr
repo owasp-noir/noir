@@ -13,6 +13,7 @@ module Analyzer::Go
       # O(1) lookup into `package_function_bodies` rather than re-
       # walking every sibling source file.
       package_function_bodies = collect_package_function_bodies(file_contents)
+      import_path_function_bodies = collect_import_path_function_bodies(package_function_bodies)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
@@ -56,7 +57,14 @@ module Analyzer::Go
                     route_rows = Set(Int32).new
                     routes_by_line.each_key { |row| route_rows << row }
                     external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
+                      callees_needed?,
+                      content,
+                      path,
+                      route_rows,
+                      external_fns,
+                      imported_functions: import_path_function_bodies
+                    )
 
                     # `e.Static("/url", "./dir")` — same shape as Gin/Fiber/etc.
                     Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|

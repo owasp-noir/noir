@@ -11,7 +11,7 @@ module Analyzer::Go
       # `api := r.PathPrefix("/api/").Subrouter()`. The engine fixpoint
       # treats "Subrouter" as the grouping method and peeks through the
       # chain to read the PathPrefix argument.
-      package_groups, file_contents = collect_package_groups_ts("Subrouter")
+      package_groups, file_contents = collect_package_groups_ts("Subrouter", import_marker: IMPORT_MARKER)
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       # Mux's HandleFunc/Methods chain stores `route.line` on the
       # HandleFunc call_expression itself, so the row-keyed callee
@@ -21,6 +21,7 @@ module Analyzer::Go
       # wrapped method values (`mid.Use(as.Users, ...)`); resolve them to
       # their method bodies so callees/ai-context aren't empty.
       package_method_bodies = collect_package_controller_method_bodies(file_contents)
+      framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         WaitGroup.wait do |wg|
@@ -40,11 +41,12 @@ module Analyzer::Go
                   next if GoEngine.go_test_file?(path)
                   if File.exists?(path)
                     content = file_contents[path]? || read_file_content(path)
-                    next unless content.includes?(IMPORT_MARKER)
+                    dir = File.dirname(path)
+                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "HandleFunc", "Path", "PathPrefix", "Methods", "Queries"])
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
-                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    cross_file_groups = ts_groups_for_directory(package_groups, dir)
                     ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
                       content, cross_file_groups,
                       group_method: "Subrouter",
@@ -59,8 +61,8 @@ module Analyzer::Go
                     # Resolve 1-hop callees for every route (see Gin).
                     route_rows = Set(Int32).new
                     routes_by_line.each_key { |row| route_rows << row }
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                    external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, File.dirname(path))
+                    external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
+                    external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
                     callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
                     # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`

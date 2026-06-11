@@ -890,13 +890,14 @@ class EndpointOptimizer
     params.any? { |param| param.param_type == "path" && param.name == name }
   end
 
-  # Drop a literal format/extension suffix that shares the segment with the
-  # param (e.g. Play's `/:lang.json` -> `lang`, `/:id.gif` -> `id`). The split
-  # is intentionally limited to the `.` boundary so optional markers and other
-  # framework suffixes (e.g. Express's `/:id?`) are preserved verbatim.
+  # Drop literal suffixes that share the segment with the param (e.g. Play's
+  # `/:lang.json` -> `lang`, Fiber/Express optional markers `/:id?` -> `id`,
+  # and Express regex constraints `/:id(\\d+)` -> `id`). Path param names are
+  # identifiers; anything after the leading identifier describes the segment,
+  # not the parameter name.
   private def leading_path_param(raw : String) : String?
-    name = raw.split('.', 2).first
-    name.empty? ? nil : name
+    match = raw.match(/\A([A-Za-z_][A-Za-z0-9_]*)/)
+    match ? match[1] : nil
   end
 
   # Apply parameter values based on configuration

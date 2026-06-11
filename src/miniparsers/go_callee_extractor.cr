@@ -19,10 +19,10 @@ require "../ext/tree_sitter/tree_sitter"
 #     external map is built once per directory by
 #     `GoEngine#collect_package_function_bodies` so cross-file lookups
 #     are cheap.
-#   * `selector_expression` / other shapes — skipped for the first cut.
-#     Real-world examples include `pkg.Foo` (cross-package) and bound
-#     method values (`handler.Get`); resolving those needs full import
-#     resolution and is left as a follow-up.
+#   * `selector_expression` — resolve unambiguous same-package method
+#     values (`handler.Get`) through `external_methods`, and imported
+#     top-level function handlers (`pkg.Foo`) when the analyzer supplies
+#     a go.mod-backed import-path function index.
 #
 # Builtins (`len`, `make`, `append`, …) and Go's primitive type
 # constructors (`int`, `string`, `byte`, …) are filtered to keep the
@@ -149,9 +149,11 @@ module Noir::GoCalleeExtractor
                             file_path : String,
                             route_rows : Set(Int32),
                             external_functions : Hash(String, FunctionBody),
-                            external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new)
+                            external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new,
+                            imported_functions : Hash(String, Hash(String, FunctionBody)) = Hash(String, Hash(String, FunctionBody)).new,
+                            imported_methods : Hash(String, Hash(String, Array(FunctionBody))) = Hash(String, Hash(String, Array(FunctionBody))).new)
     return Hash(Int32, Array(Tuple(String, String, Int32))).new unless enabled
-    callees_for_routes(source, file_path, route_rows, external_functions, external_methods)
+    callees_for_routes(source, file_path, route_rows, external_functions, external_methods, imported_functions, imported_methods)
   end
 
   # For each call_expression at a row in `route_rows`, find the handler
@@ -166,9 +168,13 @@ module Noir::GoCalleeExtractor
                          file_path : String,
                          route_rows : Set(Int32),
                          external_functions : Hash(String, FunctionBody),
-                         external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new)
+                         external_methods : Hash(String, Array(FunctionBody)) = Hash(String, Array(FunctionBody)).new,
+                         imported_functions : Hash(String, Hash(String, FunctionBody)) = Hash(String, Hash(String, FunctionBody)).new,
+                         imported_methods : Hash(String, Hash(String, Array(FunctionBody))) = Hash(String, Hash(String, Array(FunctionBody))).new)
     by_route = Hash(Int32, Array(Tuple(String, String, Int32))).new
     return by_route if route_rows.empty?
+    import_aliases = imported_functions.empty? && imported_methods.empty? ? Hash(String, String).new : extract_import_aliases(source)
+    imported_receiver_vars = imported_methods.empty? ? Hash(String, String).new : extract_imported_receiver_vars(source, import_aliases)
 
     Noir::TreeSitter.parse_go(source) do |root|
       local_functions = Hash(String, LibTreeSitter::TSNode).new
@@ -184,44 +190,21 @@ module Noir::GoCalleeExtractor
         row = Noir::TreeSitter.node_start_row(node)
         next unless route_rows.includes?(row)
 
-        handler_arg = find_handler_arg(node, source).try { |arg| unwrap_handler_arg(arg, source) }
-        next unless handler_arg
-
         callees = [] of Tuple(String, String, Int32)
-        case Noir::TreeSitter.node_type(handler_arg)
-        when "func_literal"
-          if body = Noir::TreeSitter.field(handler_arg, "body")
-            walk_calls_in_node(body, source, file_path, callees, 0, external_functions)
-          end
-        when "identifier"
-          name = Noir::TreeSitter.node_text(handler_arg, source)
-          if fn_node = local_functions[name]?
-            if body = Noir::TreeSitter.field(fn_node, "body")
-              walk_calls_in_node(body, source, file_path, callees, 0, external_functions)
-            end
-          elsif extern = external_functions[name]?
-            callees.concat(calls_in_external(extern, external_functions))
-          elsif (methods = external_methods[name]?) && methods.size == 1
-            # A bare identifier that resolves to a single same-package
-            # method (rare, but `Handle("/x", Foo)` where `Foo` is a
-            # method value lifted to package scope).
-            callees.concat(calls_in_external(methods.first, external_functions))
-          end
-        when "selector_expression"
-          # Method-value handler: `as.Campaigns`, `s.handleOIDCRedirect`,
-          # `ctrl.Index`. Resolve by the field (method) name against the
-          # package method-body map; only attribute when the name is
-          # unambiguous so a shared method name across two receiver types
-          # can't mis-attribute callees.
-          field = Noir::TreeSitter.field(handler_arg, "field")
-          if field
-            method_name = Noir::TreeSitter.node_text(field, source)
-            if (methods = external_methods[method_name]?) && methods.size == 1
-              callees.concat(calls_in_external(methods.first, external_functions))
-            end
-          end
-        else
-          # other shapes (index/lambda results) — out of scope.
+        find_handler_args(node, source).each do |raw_handler_arg|
+          append_callees_for_handler_arg(
+            unwrap_handler_arg(raw_handler_arg, source),
+            source,
+            file_path,
+            local_functions,
+            external_functions,
+            external_methods,
+            import_aliases,
+            imported_functions,
+            imported_methods,
+            imported_receiver_vars,
+            callees
+          )
         end
 
         by_route[row] = callees unless callees.empty?
@@ -231,35 +214,237 @@ module Noir::GoCalleeExtractor
     by_route
   end
 
-  # First non-string positional argument after a string-literal arg in a
-  # verb-route call. Mirrors the convention used by
+  private def append_callees_for_handler_arg(handler_arg : LibTreeSitter::TSNode,
+                                             source : String,
+                                             file_path : String,
+                                             local_functions : Hash(String, LibTreeSitter::TSNode),
+                                             external_functions : Hash(String, FunctionBody),
+                                             external_methods : Hash(String, Array(FunctionBody)),
+                                             import_aliases : Hash(String, String),
+                                             imported_functions : Hash(String, Hash(String, FunctionBody)),
+                                             imported_methods : Hash(String, Hash(String, Array(FunctionBody))),
+                                             imported_receiver_vars : Hash(String, String),
+                                             sink : Array(Tuple(String, String, Int32)))
+    callees = [] of Tuple(String, String, Int32)
+
+    case Noir::TreeSitter.node_type(handler_arg)
+    when "func_literal"
+      if body = Noir::TreeSitter.field(handler_arg, "body")
+        walk_calls_in_node(body, source, file_path, callees, 0, external_functions)
+      end
+    when "identifier"
+      append_callees_for_identifier_handler(
+        Noir::TreeSitter.node_text(handler_arg, source),
+        source,
+        file_path,
+        local_functions,
+        external_functions,
+        external_methods,
+        callees
+      )
+    when "selector_expression"
+      append_callees_for_selector_handler(
+        handler_arg,
+        source,
+        external_functions,
+        external_methods,
+        import_aliases,
+        imported_functions,
+        imported_methods,
+        imported_receiver_vars,
+        callees
+      )
+    when "call_expression"
+      if function = Noir::TreeSitter.field(handler_arg, "function")
+        case Noir::TreeSitter.node_type(function)
+        when "identifier"
+          append_callees_for_identifier_handler(
+            Noir::TreeSitter.node_text(function, source),
+            source,
+            file_path,
+            local_functions,
+            external_functions,
+            external_methods,
+            callees
+          )
+        when "selector_expression"
+          append_callees_for_selector_handler(
+            function,
+            source,
+            external_functions,
+            external_methods,
+            import_aliases,
+            imported_functions,
+            imported_methods,
+            imported_receiver_vars,
+            callees
+          )
+        end
+      end
+
+      if fallback = fallback_handler_arg_from_call(handler_arg, source, local_functions, external_functions, external_methods)
+        append_callees_for_handler_arg(
+          unwrap_handler_arg(fallback, source),
+          source,
+          file_path,
+          local_functions,
+          external_functions,
+          external_methods,
+          import_aliases,
+          imported_functions,
+          imported_methods,
+          imported_receiver_vars,
+          callees
+        )
+      end
+    else
+      # other shapes (index/lambda results) — out of scope.
+    end
+
+    if callees.empty?
+      if fallback = unresolved_handler_reference(handler_arg, source, file_path)
+        callees << fallback
+      end
+    end
+
+    callees.each { |entry| sink << entry unless sink.includes?(entry) }
+  end
+
+  private def append_callees_for_identifier_handler(name : String,
+                                                    source : String,
+                                                    file_path : String,
+                                                    local_functions : Hash(String, LibTreeSitter::TSNode),
+                                                    external_functions : Hash(String, FunctionBody),
+                                                    external_methods : Hash(String, Array(FunctionBody)),
+                                                    sink : Array(Tuple(String, String, Int32)))
+    if fn_node = local_functions[name]?
+      if body = Noir::TreeSitter.field(fn_node, "body")
+        walk_calls_in_node(body, source, file_path, sink, 0, external_functions)
+      end
+    elsif extern = external_functions[name]?
+      sink.concat(calls_in_external(extern, external_functions))
+    elsif (methods = external_methods[name]?) && methods.size == 1
+      # A bare identifier that resolves to a single same-package method
+      # (rare, but `Handle("/x", Foo)` where `Foo` is a method value
+      # lifted to package scope).
+      sink.concat(calls_in_external(methods.first, external_functions))
+    end
+  end
+
+  private def fallback_handler_arg_from_call(call_node : LibTreeSitter::TSNode,
+                                             source : String,
+                                             local_functions : Hash(String, LibTreeSitter::TSNode),
+                                             external_functions : Hash(String, FunctionBody),
+                                             external_methods : Hash(String, Array(FunctionBody))) : LibTreeSitter::TSNode?
+    args = Noir::TreeSitter.field(call_node, "arguments")
+    return unless args
+
+    Noir::TreeSitter.each_named_child(args) do |arg|
+      next if string_literal_node?(arg)
+      candidate = unwrap_handler_arg(arg, source)
+      return candidate if fallback_handler_candidate?(candidate, source, local_functions, external_functions, external_methods)
+    end
+
+    nil
+  end
+
+  private def fallback_handler_candidate?(node : LibTreeSitter::TSNode,
+                                          source : String,
+                                          local_functions : Hash(String, LibTreeSitter::TSNode),
+                                          external_functions : Hash(String, FunctionBody),
+                                          external_methods : Hash(String, Array(FunctionBody))) : Bool
+    case Noir::TreeSitter.node_type(node)
+    when "func_literal", "selector_expression", "call_expression", "variadic_argument"
+      true
+    when "identifier"
+      name = Noir::TreeSitter.node_text(node, source)
+      local_functions.has_key?(name) || external_functions.has_key?(name) || external_methods.has_key?(name)
+    else
+      false
+    end
+  end
+
+  private def unresolved_handler_reference(handler_arg : LibTreeSitter::TSNode,
+                                           source : String,
+                                           file_path : String) : Tuple(String, String, Int32)?
+    ref_node = case Noir::TreeSitter.node_type(handler_arg)
+               when "selector_expression"
+                 handler_arg
+               when "call_expression"
+                 Noir::TreeSitter.field(handler_arg, "function")
+               end
+    return unless ref_node
+
+    name = callee_text(ref_node, source)
+    return if name.empty?
+    return if BUILTINS.includes?(name)
+    return if name.starts_with?("_")
+
+    {name, file_path, Noir::TreeSitter.node_start_row(ref_node) + 1}
+  end
+
+  private def append_callees_for_selector_handler(handler_arg : LibTreeSitter::TSNode,
+                                                  source : String,
+                                                  external_functions : Hash(String, FunctionBody),
+                                                  external_methods : Hash(String, Array(FunctionBody)),
+                                                  import_aliases : Hash(String, String),
+                                                  imported_functions : Hash(String, Hash(String, FunctionBody)),
+                                                  imported_methods : Hash(String, Hash(String, Array(FunctionBody))),
+                                                  imported_receiver_vars : Hash(String, String),
+                                                  sink : Array(Tuple(String, String, Int32)))
+    if imported = calls_for_imported_selector(handler_arg, source, import_aliases, imported_functions)
+      sink.concat(imported)
+      return
+    elsif imported = calls_for_imported_receiver_method(handler_arg, source, imported_receiver_vars, imported_methods, imported_functions)
+      sink.concat(imported)
+      return
+    end
+
+    # Method-value handler: `as.Campaigns`, `s.handleOIDCRedirect`,
+    # `ctrl.Index`. Resolve by the field (method) name against the
+    # package method-body map only after imported selectors have had a
+    # chance to resolve; otherwise `api.Get` or an imported
+    # `controller.Show` can be misattributed to a same-package method
+    # with the same field name.
+    field = Noir::TreeSitter.field(handler_arg, "field")
+    if field
+      method_name = Noir::TreeSitter.node_text(field, source)
+      if (methods = external_methods[method_name]?) && methods.size == 1
+        sink.concat(calls_in_external(methods.first, external_functions))
+      end
+    end
+  end
+
+  # Non-string positional arguments after the path in a verb-route call.
+  # Mirrors the convention used by
   # `TreeSitterGoRouteExtractor#decode_verb_call`.
   #
   # Mux builder chains are the exception: `.Path("/x").HandlerFunc(h)`
   # carries the path and handler in different calls. When the routed call
-  # itself is `Handler` / `HandlerFunc`, the first non-string arg is the
-  # handler.
-  private def find_handler_arg(call_node : LibTreeSitter::TSNode, source : String) : LibTreeSitter::TSNode?
+  # itself is `Handler` / `HandlerFunc`, every non-string arg is treated
+  # as a handler candidate.
+  private def find_handler_args(call_node : LibTreeSitter::TSNode, source : String) : Array(LibTreeSitter::TSNode)
+    found = [] of LibTreeSitter::TSNode
     args = Noir::TreeSitter.field(call_node, "arguments")
-    return unless args
+    return found unless args
     handler_only = handler_only_call?(call_node, source)
 
     if handler_only
-      # `.Handler(h)` / `.HandlerFunc(h)` builder calls: the handler is
-      # the first non-string argument.
+      # `.Handler(h)` / `.HandlerFunc(h)` builder calls: the handlers are
+      # all non-string arguments.
       Noir::TreeSitter.each_named_child(args) do |arg|
         ty = Noir::TreeSitter.node_type(arg)
         next if ty == "interpreted_string_literal" || ty == "raw_string_literal"
-        return arg
+        found << arg
       end
-      return
+      return found
     end
 
     # Verb/registration calls are path-first (`r.Get("/x", h)`). Treat the
     # FIRST positional argument as the path — a string literal in most
     # apps, but just as often a path constant/variable
     # (`r.Get(tokenPath, h)`) or a concatenation — then take the next
-    # non-string argument as the handler. Keying off "first arg = path"
+    # non-string arguments as handlers. Keying off "first arg = path"
     # rather than "first string literal = path" is what lets callee
     # resolution survive constant route paths.
     first = true
@@ -270,9 +455,9 @@ module Noir::GoCalleeExtractor
       end
       ty = Noir::TreeSitter.node_type(arg)
       next if ty == "interpreted_string_literal" || ty == "raw_string_literal"
-      return arg
+      found << arg
     end
-    nil
+    found
   end
 
   private def handler_only_call?(call_node : LibTreeSitter::TSNode, source : String) : Bool
@@ -292,32 +477,239 @@ module Noir::GoCalleeExtractor
 
   # Peel handler-wrapping calls down to the underlying handler so callee
   # resolution sees the real function. Covers the common wrappers in
-  # gorilla/mux and chi apps:
+  # gorilla/mux, chi, and generated Hertz apps:
   #
   #   * `http.HandlerFunc(h)`                         -> `h`
   #   * `mid.Use(as.Foo, mid.RequireLogin)`           -> `as.Foo`
   #   * `http.StripPrefix("/x", fileServer)`          -> `fileServer`
+  #   * `append(_mw(), handler)...`                    -> `handler`
   #   * nested combinations (`mid.Use(http.HandlerFunc(h), ...)`)
   #
-  # The rule is: a call_expression handler unwraps to its first non-string
-  # argument (the handler position; string args are prefixes/keys). The
-  # walk is depth-capped so a pathological chain can't recurse forever.
+  # Only known wrapper calls are peeled. Unknown call_expression handlers
+  # (for example `handlers.GetBooks(service)`) are preserved so the callee
+  # resolver can walk the factory function body instead of losing it by
+  # unwrapping to an arbitrary argument.
   private def unwrap_handler_arg(arg : LibTreeSitter::TSNode, source : String, depth : Int32 = 0) : LibTreeSitter::TSNode
     return arg if depth > 4
+
+    if Noir::TreeSitter.node_type(arg) == "variadic_argument"
+      return arg unless variadic_inner = first_named_child(arg)
+      return unwrap_handler_arg(variadic_inner, source, depth + 1)
+    end
+
     return arg unless Noir::TreeSitter.node_type(arg) == "call_expression"
 
     args = Noir::TreeSitter.field(arg, "arguments")
     return arg unless args
 
+    function = Noir::TreeSitter.field(arg, "function")
+    wrapper_name = function ? callee_text(function, source) : ""
+    return arg unless handler_wrapper_call?(wrapper_name)
+
     inner : LibTreeSitter::TSNode? = nil
-    Noir::TreeSitter.each_named_child(args) do |child|
-      ty = Noir::TreeSitter.node_type(child)
-      next if ty == "interpreted_string_literal" || ty == "raw_string_literal"
-      inner = child
-      break
+    if wrapper_name == "append"
+      Noir::TreeSitter.each_named_child(args) do |child|
+        next if string_literal_node?(child)
+        inner = child
+      end
+    else
+      Noir::TreeSitter.each_named_child(args) do |child|
+        next if string_literal_node?(child)
+        inner = child
+        break
+      end
     end
     return arg unless found = inner
     unwrap_handler_arg(found, source, depth + 1)
+  end
+
+  private def handler_wrapper_call?(name : String) : Bool
+    return true if name == "append"
+    return true if name == "HandlerFunc" || name.ends_with?(".HandlerFunc")
+    return true if name == "HertzHandler" || name.ends_with?(".HertzHandler")
+    return true if name == "StripPrefix" || name.ends_with?(".StripPrefix")
+    return true if name == "Use" || name.ends_with?(".Use")
+    false
+  end
+
+  private def first_named_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    found : LibTreeSitter::TSNode? = nil
+    Noir::TreeSitter.each_named_child(node) do |child|
+      found = child
+      break
+    end
+    found
+  end
+
+  private def identifier_or_first_child(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+    return node if Noir::TreeSitter.node_type(node) == "identifier"
+    first_named_child(node)
+  end
+
+  private def string_literal_node?(node : LibTreeSitter::TSNode) : Bool
+    ty = Noir::TreeSitter.node_type(node)
+    ty == "interpreted_string_literal" || ty == "raw_string_literal"
+  end
+
+  private def calls_for_imported_selector(handler_arg : LibTreeSitter::TSNode,
+                                          source : String,
+                                          import_aliases : Hash(String, String),
+                                          imported_functions : Hash(String, Hash(String, FunctionBody))) : Array(Tuple(String, String, Int32))?
+    return if import_aliases.empty? || imported_functions.empty?
+
+    operand = Noir::TreeSitter.field(handler_arg, "operand")
+    field = Noir::TreeSitter.field(handler_arg, "field")
+    return unless operand && field
+    return unless Noir::TreeSitter.node_type(operand) == "identifier"
+
+    package_ref = Noir::TreeSitter.node_text(operand, source)
+    import_path = import_aliases[package_ref]?
+    return unless import_path
+
+    package_functions = imported_functions[import_path]?
+    return unless package_functions
+
+    fn_name = Noir::TreeSitter.node_text(field, source)
+    fn = package_functions[fn_name]?
+    return unless fn
+
+    calls_in_external(fn, package_functions)
+  end
+
+  private def calls_for_imported_receiver_method(handler_arg : LibTreeSitter::TSNode,
+                                                 source : String,
+                                                 imported_receiver_vars : Hash(String, String),
+                                                 imported_methods : Hash(String, Hash(String, Array(FunctionBody))),
+                                                 imported_functions : Hash(String, Hash(String, FunctionBody))) : Array(Tuple(String, String, Int32))?
+    return if imported_receiver_vars.empty? || imported_methods.empty?
+
+    operand = Noir::TreeSitter.field(handler_arg, "operand")
+    field = Noir::TreeSitter.field(handler_arg, "field")
+    return unless operand && field
+    return unless Noir::TreeSitter.node_type(operand) == "identifier"
+
+    receiver_name = Noir::TreeSitter.node_text(operand, source)
+    import_path = imported_receiver_vars[receiver_name]?
+    return unless import_path
+
+    package_methods = imported_methods[import_path]?
+    return unless package_methods
+
+    method_name = Noir::TreeSitter.node_text(field, source)
+    methods = package_methods[method_name]?
+    return unless methods && methods.size == 1
+
+    package_functions = imported_functions[import_path]? || Hash(String, FunctionBody).new
+    calls_in_external(methods.first, package_functions)
+  end
+
+  private def extract_imported_receiver_vars(source : String, import_aliases : Hash(String, String)) : Hash(String, String)
+    vars = Hash(String, String).new
+    return vars if import_aliases.empty?
+
+    Noir::TreeSitter.parse_go(source) do |root|
+      walk(root) do |node|
+        next unless imported_receiver_assignment_node?(node)
+
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        if Noir::TreeSitter.node_type(node) == "var_spec"
+          left = Noir::TreeSitter.field(node, "name")
+          right = Noir::TreeSitter.field(node, "value")
+        end
+        next unless left && right
+
+        var_node = identifier_or_first_child(left)
+        rhs = first_named_child(right)
+        next unless var_node && rhs
+        next unless Noir::TreeSitter.node_type(var_node) == "identifier"
+
+        import_path = imported_receiver_import_path(rhs, source, import_aliases)
+        next unless import_path
+
+        vars[Noir::TreeSitter.node_text(var_node, source)] ||= import_path
+      end
+    end
+
+    vars
+  end
+
+  private def imported_receiver_assignment_node?(node : LibTreeSitter::TSNode) : Bool
+    case Noir::TreeSitter.node_type(node)
+    when "short_var_declaration", "assignment_statement", "var_spec"
+      true
+    else
+      false
+    end
+  end
+
+  private def imported_receiver_import_path(node : LibTreeSitter::TSNode,
+                                            source : String,
+                                            import_aliases : Hash(String, String)) : String?
+    case Noir::TreeSitter.node_type(node)
+    when "call_expression"
+      function = Noir::TreeSitter.field(node, "function")
+      return unless function
+      import_path_for_selector(function, source, import_aliases)
+    when "unary_expression", "parenthesized_expression"
+      first_named_child(node).try { |child| imported_receiver_import_path(child, source, import_aliases) }
+    when "composite_literal"
+      type_node = Noir::TreeSitter.field(node, "type")
+      return unless type_node
+      import_path_for_selector(type_node, source, import_aliases)
+    end
+  end
+
+  private def import_path_for_selector(node : LibTreeSitter::TSNode,
+                                       source : String,
+                                       import_aliases : Hash(String, String)) : String?
+    return unless Noir::TreeSitter.node_type(node) == "selector_expression"
+    operand = Noir::TreeSitter.field(node, "operand")
+    return unless operand && Noir::TreeSitter.node_type(operand) == "identifier"
+
+    import_aliases[Noir::TreeSitter.node_text(operand, source)]?
+  end
+
+  private def extract_import_aliases(source : String) : Hash(String, String)
+    aliases = Hash(String, String).new
+    Noir::TreeSitter.parse_go(source) do |root|
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "import_spec"
+
+        alias_name : String? = nil
+        import_path : String? = nil
+        Noir::TreeSitter.each_named_child(node) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "package_identifier"
+            alias_name = Noir::TreeSitter.node_text(child, source)
+          when "interpreted_string_literal", "raw_string_literal"
+            import_path = unquote_import_path(Noir::TreeSitter.node_text(child, source))
+          end
+        end
+
+        next unless path = import_path
+        name = alias_name || default_import_alias(path)
+        next if name.empty? || name == "_" || name == "."
+        aliases[name] = path
+      end
+    end
+    aliases
+  end
+
+  private def unquote_import_path(text : String) : String
+    return text[1...-1] if text.size >= 2 && ((text.starts_with?("\"") && text.ends_with?("\"")) || (text.starts_with?("`") && text.ends_with?("`")))
+    text
+  end
+
+  private def default_import_alias(import_path : String) : String
+    parts = import_path.split("/")
+    return "" if parts.empty?
+    last = parts.last
+    if last.matches?(/^v\d+$/) && parts.size > 1
+      parts[-2]
+    else
+      last
+    end
   end
 
   # Walk `body_node` for call expressions and append `(name, file_path,
