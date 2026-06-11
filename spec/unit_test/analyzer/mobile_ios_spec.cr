@@ -19,6 +19,12 @@ describe "Analyzer::Mobile::Ios" do
     find.call("myapp-alt://").not_nil!.protocol.should eq("mobile-scheme")
   end
 
+  it "suppresses generic web schemes registered as URL types" do
+    # An app may register `https` (e.g. to be selectable as a browser);
+    # a bare `https://` has no host and is not a deep-link entry point.
+    find.call("https://").should be_nil
+  end
+
   it "maps applinks: associated domains to universal links" do
     find.call("https://myapp.example.com/").not_nil!.protocol.should eq("universal-link")
   end

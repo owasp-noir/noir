@@ -88,10 +88,8 @@ module Analyzer::Mobile
         if !data_nodes.empty?
           # Deep-link / app-link URI(s) — the primary entry points. The
           # handling component rides along as metadata["via"].
-          data_nodes.each do |data|
-            emit_data_endpoint(data, actions, categories, package, strings,
-              placeholders, path, auto_verify, component_name, seen_urls)
-          end
+          emit_filter_endpoints(data_nodes, actions, categories, package, strings,
+            placeholders, path, auto_verify, component_name, seen_urls)
         elsif exported
           # Exported component with an action but no <data>: an IPC surface
           # reachable by explicit/implicit intent. The launcher (MAIN) is
@@ -105,30 +103,99 @@ module Analyzer::Mobile
       end
     end
 
-    # Emits a mobile-scheme (custom scheme) or universal-link (verified
-    # http/https) endpoint for one <data> node.
-    private def emit_data_endpoint(data : XML::Node, actions : Array(String),
-                                   categories : Array(String), package : String,
-                                   strings : Hash(String, String),
-                                   placeholders : Hash(String, String), path : String,
-                                   auto_verify : Bool, via : String, seen_urls : Set(String))
-      scheme = resolve(attr(data, "scheme"), strings, placeholders)
-      return if scheme.nil? || scheme.empty?
+    # Generic/standard schemes carry no app-specific meaning on their own.
+    # A host-less `http://` / `https://` / `file://` / `content://` is a
+    # content-source qualifier — typically paired with a `<data mimeType>`
+    # so the component can open a file type from a browser / file manager —
+    # not a deep-link entry point. Custom schemes (`myapp://`) stay even
+    # host-less, since that's how a runtime-routed custom scheme is declared.
+    GENERIC_SCHEMES = Set{"http", "https", "file", "content"}
 
-      host = resolve(attr(data, "host"), strings, placeholders) || ""
-      norm_path = normalize_path(data, strings, placeholders)
-      web = scheme == "http" || scheme == "https"
+    # Upper bound on endpoints emitted from a single intent-filter. A media
+    # router / browser filter can declare dozens of hosts × paths; the full
+    # cross product would flood the inventory with near-duplicates, so past
+    # the cap the path dimension is dropped (scheme × host) and, if still
+    # over, the result is truncated.
+    MAX_FILTER_COMBOS = 64
 
-      url = "#{scheme}://#{host}#{norm_path}"
-      return unless seen_urls.add?(url)
+    # Emits the deep-link endpoints for one intent-filter. Android matches a
+    # URI against the filter as a whole, treating its `<data>` children as
+    # independent sets: the scheme must be in the scheme set, the host (if
+    # any) in the host set, and the path must satisfy one of the path rules.
+    # A filter routinely splits `<data android:scheme=.../>` and
+    # `<data android:host=... pathPrefix=.../>` across separate elements, so
+    # the real surface is the cross product scheme × host × path — emitting
+    # each `<data>` element on its own produced a bare `scheme://` and missed
+    # the real `scheme://host/path`.
+    private def emit_filter_endpoints(data_nodes : Array(XML::Node),
+                                      actions : Array(String), categories : Array(String),
+                                      package : String, strings : Hash(String, String),
+                                      placeholders : Hash(String, String), path : String,
+                                      auto_verify : Bool, via : String, seen_urls : Set(String))
+      schemes = [] of String
+      hosts = [] of String
+      paths = [] of String
+      has_mime_type = false
 
-      protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
-      endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
-      endpoint.protocol = protocol
-      endpoint.metadata = build_metadata(via, actions, categories, host, package)
+      data_nodes.each do |data|
+        has_mime_type = true unless attr(data, "mimeType").nil?
+        if scheme = resolve(attr(data, "scheme"), strings, placeholders)
+          schemes << scheme unless scheme.empty? || schemes.includes?(scheme)
+        end
+        if host = resolve(attr(data, "host"), strings, placeholders)
+          hosts << host unless host.empty? || hosts.includes?(host)
+        end
+        norm = normalize_path(data, strings, placeholders)
+        paths << norm unless norm.empty? || paths.includes?(norm)
+      end
+      return if schemes.empty?
 
-      mark_unresolved(endpoint, url)
-      @result << endpoint
+      data_filter_combos(schemes, hosts, paths, has_mime_type).each do |scheme, host, norm_path|
+        web = scheme == "http" || scheme == "https"
+        url = "#{scheme}://#{host}#{norm_path}"
+        next unless seen_urls.add?(url)
+
+        protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
+        endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
+        endpoint.protocol = protocol
+        endpoint.metadata = build_metadata(via, actions, categories, host, package)
+        mark_unresolved(endpoint, url)
+        @result << endpoint
+      end
+    end
+
+    # Cross-products the scheme/host/path sets of one filter into
+    # (scheme, host, path) triples, applying the host-less generic-scheme
+    # suppression and the per-filter cap.
+    private def data_filter_combos(schemes : Array(String), hosts : Array(String),
+                                   paths : Array(String), has_mime_type : Bool) : Array({String, String, String})
+      combos = [] of {String, String, String}
+      effective_paths = paths.empty? ? [""] : paths
+
+      schemes.each do |scheme|
+        if hosts.empty?
+          # Host-less: keep only custom schemes. A generic scheme with no
+          # host — and any scheme in a content-type (mimeType) filter — is a
+          # file/content qualifier, not a remotely reachable deep link.
+          next if has_mime_type || GENERIC_SCHEMES.includes?(scheme)
+          combos << {scheme, "", ""}
+        else
+          hosts.each do |host|
+            effective_paths.each { |norm_path| combos << {scheme, host, norm_path} }
+          end
+        end
+      end
+
+      return combos if combos.size <= MAX_FILTER_COMBOS
+
+      # Over the cap: drop path granularity (scheme × host), then truncate.
+      @logger.debug "Capping intent-filter deep links (#{combos.size} combinations) at #{MAX_FILTER_COMBOS}"
+      collapsed = [] of {String, String, String}
+      seen = Set(String).new
+      combos.each do |scheme, host, _|
+        collapsed << {scheme, host, ""} if seen.add?("#{scheme}://#{host}")
+      end
+      collapsed.first(MAX_FILTER_COMBOS)
     end
 
     # Emits an android-intent endpoint for an exported, data-less component,

@@ -12,6 +12,11 @@ module Analyzer::Mobile
   # (deep links are dispatched by the App/SceneDelegate `onOpenURL` /
   # `application(_:open:)`), so `via` is filled later by the code layer.
   class Ios < Analyzer
+    # Generic web/file schemes an app may register without them being a
+    # real deep-link surface (a bare `http://` / `https://` has no host to
+    # address). Compared case-insensitively.
+    GENERIC_SCHEMES = Set{"http", "https", "file", "content"}
+
     def analyze
       locator = CodeLocator.instance
 
@@ -52,6 +57,11 @@ module Analyzer::Mobile
 
         each_array_string(schemes) do |scheme|
           next if scheme.empty?
+          # Generic web/file schemes (registered e.g. so the app is
+          # selectable as a browser) carry no app-specific deep-link
+          # surface — a bare `http://` / `https://` is not an addressable
+          # entry point, just noise in the inventory.
+          next if GENERIC_SCHEMES.includes?(scheme.downcase)
           url = "#{scheme}://"
           next unless seen.add?(url)
 

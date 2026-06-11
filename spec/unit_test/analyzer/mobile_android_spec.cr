@@ -58,6 +58,35 @@ describe "Analyzer::Mobile::Android" do
     find.call("intent://com.example.myapp/.MainActivity").should be_nil
   end
 
+  it "combines scheme and host/path split across separate <data> elements" do
+    # SplitLinkActivity declares schemes and host+path in separate <data>
+    # children; Android cross-products them, so all four resolve.
+    %w[
+      http://split.example.com/wiki/ https://split.example.com/wiki/
+      http://split.example.com/zh https://split.example.com/zh
+    ].each do |url|
+      ep = find.call(url).not_nil!
+      ep.protocol.should eq("universal-link") # autoVerify + http/https
+      ep.metadata.not_nil!["host"].should eq("split.example.com")
+      ep.metadata.not_nil!["via"].should eq(".SplitLinkActivity")
+    end
+  end
+
+  it "does not emit a bare scheme-only endpoint from the split-data filter" do
+    # The pre-combining behavior emitted `http://` / `https://` with no host.
+    find.call("http://").should be_nil
+    find.call("https://").should be_nil
+  end
+
+  it "suppresses scheme-only content-handler (mimeType) data entries" do
+    # FileImportActivity is a text/xml content handler; its file/content/
+    # https scheme-only <data> entries are content-source qualifiers, not
+    # deep links, and must not surface as endpoints.
+    find.call("file://").should be_nil
+    find.call("content://").should be_nil
+    endpoints.none? { |e| (e.metadata.try { |m| m["via"]? } || "").includes?("FileImportActivity") }.should be_true
+  end
+
   it "resolves gradle manifestPlaceholders in scheme / host / component name" do
     ep = find.call("myapp://links.example.com").not_nil!
     ep.protocol.should eq("mobile-scheme")

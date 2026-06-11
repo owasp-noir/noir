@@ -48,6 +48,14 @@ expected_endpoints = [
   build.call("https://nav.example.com/search/", "mobile-scheme", no_params, [] of String),
   # Deep link inside a nested <navigation> graph
   build.call("myapp://settings/notifications", "mobile-scheme", no_params, [] of String),
+  # App Link whose scheme and host/path are split across separate <data>
+  # elements: Android combines them, so http/https × the two paths all
+  # resolve (autoVerify -> universal-link). The scheme-only file/content/
+  # https content-handler filter on FileImportActivity produces nothing.
+  build.call("http://split.example.com/wiki/", "universal-link", no_params, [] of String),
+  build.call("https://split.example.com/wiki/", "universal-link", no_params, [] of String),
+  build.call("http://split.example.com/zh", "universal-link", no_params, [] of String),
+  build.call("https://split.example.com/zh", "universal-link", no_params, [] of String),
 ]
 
 FunctionalTester.new("fixtures/mobile/android/", {

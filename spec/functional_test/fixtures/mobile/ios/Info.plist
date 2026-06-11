@@ -13,6 +13,7 @@
 			<array>
 				<string>myapp</string>
 				<string>myapp-alt</string>
+				<string>https</string>
 			</array>
 		</dict>
 	</array>
