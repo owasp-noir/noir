@@ -21,6 +21,7 @@ sort_by = "weight"
 | Apache httpd | CONF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
+| App Links / Universal Links (server-side) | JSON | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ | ✗ |
 | Asyncapi | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Asyncapi | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Azure Functions | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |

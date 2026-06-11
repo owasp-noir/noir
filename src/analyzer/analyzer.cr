@@ -83,6 +83,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"lua_lapis", Lua::Lapis},
     {"android", Mobile::Android},
     {"ios", Mobile::Ios},
+    {"well_known_applinks", Mobile::WellKnown},
     {"java_vertx", Java::Vertx},
     {"java_wicket", Java::Wicket},
     {"js_adonisjs", Javascript::Adonisjs},

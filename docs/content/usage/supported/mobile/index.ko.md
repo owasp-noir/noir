@@ -16,6 +16,10 @@ Noir는 모바일 앱이 외부에 노출하는 진입점 — 딥링크와 expor
 | Android | `res/values/strings.xml` | 스킴·호스트·경로에 쓰인 `@string/` 참조 해석 |
 | iOS | `Info.plist` | `CFBundleURLTypes` 커스텀 URL 스킴 |
 | iOS | `*.entitlements` | `associated-domains`의 `applinks:` 유니버설 링크 |
+| Android | `/.well-known/assetlinks.json` | 서버 측 App Links 연결 선언(Digital Asset Links) |
+| iOS | `apple-app-site-association` | 서버 측 유니버설 링크 `paths` / `components` 패턴 |
+
+앞의 네 행은 앱 번들에 선언되는 **클라이언트** 측 연결이고, 마지막 두 행은 **서버** 측 — OS가 해당 호스트의 URL에 대해 앱을 열도록 호스트가 게시하는 well-known 파일 — 입니다. 둘 다 동일한 `universal-link` protocol과 출력 모델을 통해 처리됩니다.
 
 ## 엔드포인트 모델
 
@@ -25,7 +29,7 @@ Noir는 모바일 앱이 외부에 노출하는 진입점 — 딥링크와 expor
 |---|---|---|
 | `mobile-scheme` | 커스텀 URL 스킴 딥링크 | `myapp://complex/:id` |
 | `android-intent` | data URI 없는 exported 인텐트 컴포넌트 | `intent://com.example.app/.SyncService` |
-| `universal-link` | 검증된 Android App Link / iOS 유니버설 링크 | `https://app.example.com/complex/:id` |
+| `universal-link` | 검증된 Android App Link / iOS 유니버설 링크, 또는 서버 측 `assetlinks.json` / `apple-app-site-association` 패턴 | `https://app.example.com/complex/:id`, `/buy/*` |
 
 plain 출력에서는 `SCHEME` / `INTENT` / `UNIVERSAL` 프리픽스로 표시됩니다. 처리 컴포넌트, 인텐트 action·category, 호스트, 패키지는 엔드포인트별 metadata 맵에 저장됩니다(JSON / YAML에 직렬화되며, 일반 HTTP 엔드포인트에서는 완전히 생략됩니다).
 
@@ -55,3 +59,5 @@ SCHEME myapp://complex/:id
 * 핸들러 연결에는 소스 코드가 필요합니다. 매니페스트·plist만 있는 스캔도 엔드포인트는 추출하지만 callee·파라미터·AI 컨텍스트는 붙지 않습니다.
 * 바이너리(컴파일된) `Info.plist`는 건너뜁니다. 소스 저장소의 XML plist는 파싱합니다.
 * gradle `${applicationId}` 플레이스홀더와 Jetpack Navigation 딥링크는 아직 해석하지 않습니다.
+* `assetlinks.json`은 패키지 연결만 선언하고 경로는 없으므로 앱당 `/*` 엔드포인트 하나를 만듭니다. `apple-app-site-association`의 경로(`/buy/*`, `NOT /private/*`)와 `components`는 개별적으로 추출되며, AASA 제외 패턴은 `excluded` 태그가 붙습니다.
+* `apple-app-site-association`은 plain-JSON 형식만 파싱합니다. CMS로 서명된 AASA 파일(구형 앱)은 건너뜁니다.

@@ -1,0 +1,33 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "ABCDE12345.com.example.myapp",
+        "paths": [
+          "/buy/*",
+          "NOT /private/*",
+          "/help/website/*"
+        ]
+      },
+      {
+        "appIDs": ["ABCDE12345.com.example.myapp"],
+        "components": [
+          {
+            "/": "/articles/*",
+            "?": { "articleNumber": "????" },
+            "comment": "Matches any URL whose path starts with /articles/"
+          },
+          {
+            "/": "/secret/*",
+            "exclude": true,
+            "comment": "Excludes secret paths"
+          }
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": ["ABCDE12345.com.example.myapp"]
+  }
+}
