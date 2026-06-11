@@ -68,6 +68,17 @@ describe "Analyzer::Mobile::Android" do
     find.call("intent://com.example.myapp/.MainActivity").should be_nil
   end
 
+  it "drops local-content (file/content) and bare-* wildcard-host data filters" do
+    find.call("content://*").should be_nil
+    find.call("file://*").should be_nil
+    find.call("http://*").should be_nil
+  end
+
+  it "renders an opaque scheme without a // authority" do
+    find.call("mailto:").not_nil!.protocol.should eq("mobile-scheme")
+    find.call("mailto://").should be_nil
+  end
+
   it "combines scheme and host/path split across separate <data> elements" do
     # SplitLinkActivity declares schemes and host+path in separate <data>
     # children; Android cross-products them, so all four resolve.
