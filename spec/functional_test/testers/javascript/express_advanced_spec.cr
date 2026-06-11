@@ -24,7 +24,6 @@ expected_endpoints = [
   # Optional parameters (WORKING)
   Endpoint.new("/posts/:id?", "GET", [
     Param.new("id", "", "path"),
-    Param.new("id?", "", "path"),
     Param.new("filter", "", "query"),
   ]),
 

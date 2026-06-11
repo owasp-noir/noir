@@ -33,6 +33,10 @@ expected_endpoints = [
   Endpoint.new("/healthz", "GET"),
   # handlers.go: deeply nested groups
   Endpoint.new("/api/v2/status", "GET"),
+  # Fiber optional path param: `?` is an optional marker, not part of the name.
+  Endpoint.new("/geo/:ip?", "GET", [
+    Param.new("ip", "", "path"),
+  ]),
   # handlers.go: POST with form and header
   Endpoint.new("/upload", "POST", [
     Param.new("file_name", "", "form"),

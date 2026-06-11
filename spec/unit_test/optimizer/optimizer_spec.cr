@@ -728,6 +728,20 @@ describe "EndpointOptimizer" do
       result[1].params[0].name.should eq("post_id")
     end
 
+    it "strips colon path parameter suffixes from the parameter name" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/geo/:ip?", "GET"),          # Fiber / Express optional segment
+        Endpoint.new("/users/:id(\\d+)", "GET"),   # Express regex-constrained segment
+        Endpoint.new("/assets/:file.json", "GET"), # Play/format suffix
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+      result[0].params.map(&.name).should eq(["ip"])
+      result[1].params.map(&.name).should eq(["id"])
+      result[2].params.map(&.name).should eq(["file"])
+    end
+
     it "does not duplicate a path param the analyzer already recorded with a type" do
       optimizer = EndpointOptimizer.new(logger, options)
       # Haskell's Servant/Yesod analyzers store the captured type in the param

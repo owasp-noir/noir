@@ -39,16 +39,20 @@ func main() {
 	})
 
 	app.Static("/", "/public")
-	
+
 	// Test additional HTTP methods
 	app.Put("/update-put", func(c *fiber.Ctx) error {
 		return c.SendString("PUT")
 	})
-	
+
 	app.Delete("/delete-item", func(c *fiber.Ctx) error {
 		return c.SendString("DELETE")
 	})
-	
+
+	app.Get("/geo/:ip?", func(c *fiber.Ctx) error {
+		return c.SendString("geo")
+	})
+
 	// Multi-line route definition
 	app.Get(
 		"/multiline",

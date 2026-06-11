@@ -217,6 +217,51 @@ module Analyzer::Go
       result
     end
 
+    # Builds `{import_path => {function_name => body}}` for local Go
+    # packages under the configured base paths. This is gated on callee
+    # demand and reuses `package_function_bodies`, so default route scans
+    # do not pay for go.mod discovery. It lets generated routers like
+    # Hertz resolve `feed.Feed` when `feed` imports a sibling package from
+    # the same module.
+    def collect_import_path_function_bodies(package_function_bodies : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody))) : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody))
+      result = Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)).new
+      return result unless callees_needed?
+
+      modules = collect_go_modules
+      return result if modules.empty?
+
+      package_function_bodies.each do |dir, functions|
+        next if functions.empty?
+        import_path = import_path_for_dir(dir, modules)
+        next unless import_path
+        result[import_path] = functions
+      end
+
+      result
+    end
+
+    # Builds `{import_path => {method_name => [body, ...]}}` for local Go
+    # packages under the configured base paths. This complements
+    # `collect_import_path_function_bodies` for route handlers referenced
+    # as method values on imported package instances, e.g.
+    # `handler := api.NewHandler(svc); app.Get("/x", handler.Show)`.
+    def collect_import_path_method_bodies(package_method_bodies : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)))) : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)))
+      result = Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))).new
+      return result unless callees_needed?
+
+      modules = collect_go_modules
+      return result if modules.empty?
+
+      package_method_bodies.each do |dir, methods|
+        next if methods.empty?
+        import_path = import_path_for_dir(dir, modules)
+        next unless import_path
+        result[import_path] = methods
+      end
+
+      result
+    end
+
     # Returns the cross-file function-body map for the given directory,
     # or an empty map when the directory has no captured functions.
     def ts_function_bodies_for_directory(package_function_bodies : Hash(String, Hash(String, Noir::GoCalleeExtractor::FunctionBody)), dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
@@ -376,13 +421,18 @@ module Analyzer::Go
       file_path = p_dir["file_path"]
       return Path[file_path].normalize.to_s if file_path.starts_with?("/") && Dir.exists?(file_path)
 
-      root = if source_path = p_dir["source_path"]?
-               base_path_for_path(source_path)
-             else
-               base_path
-             end
-
       normalized_file_path = file_path.lstrip("/")
+      root = base_path
+      if source_path = p_dir["source_path"]?
+        source_dir = File.dirname(source_path)
+        source_relative = Path[(source_dir + "/" + normalized_file_path).gsub_repeatedly("//", "/")].normalize.to_s
+        if Dir.exists?(source_relative)
+          return preserve_relative_prefix(source_relative, source_path)
+        end
+
+        root = base_path_for_path(source_path)
+      end
+
       raw_full_path = (root + "/" + normalized_file_path).gsub_repeatedly("//", "/")
       normalized_full_path = Path[raw_full_path].normalize.to_s
 
@@ -393,8 +443,50 @@ module Analyzer::Go
       end
     end
 
+    private def preserve_relative_prefix(path : String, reference : String) : String
+      if reference.starts_with?("./") && !path.starts_with?("./") && !path.starts_with?("/")
+        "./#{path}"
+      else
+        path
+      end
+    end
+
     private def base_path_for_path(path : String) : String
       configured_base_for(path)
+    end
+
+    private def collect_go_modules : Array(Tuple(String, String))
+      modules = [] of Tuple(String, String)
+      all_files.each do |path|
+        next unless File.basename(path) == "go.mod"
+        next if File.directory?(path)
+        next if path.split("/").includes?("vendor")
+
+        begin
+          content = read_file_content(path)
+        rescue File::NotFoundError
+          next
+        end
+
+        match = content.match(/^\s*module\s+(\S+)/m)
+        next unless match
+        modules << {match[1], File.expand_path(File.dirname(path))}
+      end
+
+      modules.sort_by! { |(_module_path, dir)| -dir.size }
+      modules
+    end
+
+    private def import_path_for_dir(dir : String, modules : Array(Tuple(String, String))) : String?
+      expanded_dir = File.expand_path(dir)
+      modules.each do |module_path, module_dir|
+        next unless expanded_dir == module_dir || expanded_dir.starts_with?("#{module_dir}/")
+
+        rel = expanded_dir[module_dir.size..].lstrip("/")
+        return rel.empty? ? module_path : "#{module_path}/#{rel}"
+      end
+
+      nil
     end
   end
 end

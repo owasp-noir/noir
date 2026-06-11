@@ -2,17 +2,19 @@ require "../../../spec_helper"
 require "../../../../src/models/code_locator"
 require "../../../../src/analyzer/analyzers/specification/graphql_sdl"
 
-private def analyze_sdl(content : String, path : String = "/tmp/schema.graphql")
-  File.write(path, content)
+private def analyze_sdl(content : String, path : String? = nil)
+  sdl_path = path || File.tempname("noir_graphql_sdl_", ".graphql")
+  File.write(sdl_path, content)
   locator = CodeLocator.instance
   locator.clear "graphql-sdl"
-  locator.push "graphql-sdl", path
+  locator.push "graphql-sdl", sdl_path
 
   options = create_test_options
   analyzer = Analyzer::Specification::GraphqlSdl.new options
   analyzer.analyze
 ensure
-  File.delete(path) if File.exists?(path)
+  CodeLocator.instance.clear "graphql-sdl"
+  File.delete(sdl_path) if sdl_path && File.exists?(sdl_path)
 end
 
 private def tag_descriptions(endpoint : Endpoint, name : String) : Array(String)
