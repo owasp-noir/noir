@@ -7,6 +7,14 @@ module Analyzer::Javascript
     HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     EXTENSIONS   = [".js", ".jsx", ".ts", ".tsx", ".mjs"]
 
+    # Compiled once per verb — interpolated regex literals would otherwise
+    # be rebuilt (full PCRE2 compile) for every method on every file.
+    EXPORT_VERB_FUNCTION_RES     = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
+    EXPORT_VERB_CONST_RES        = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=/} }.to_h
+    EXPORT_VERB_BRACE_RES        = HTTP_METHODS.map { |m| {m, /export\s+\{[^}]*\b#{m}\b[^}]*\}/} }.to_h
+    EXPORT_VERB_FUNCTION_SIG_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b\s*\([^)]*\)/} }.to_h
+    EXPORT_VERB_CONST_ARROW_RES  = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/} }.to_h
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
@@ -159,7 +167,7 @@ module Analyzer::Javascript
         action_name = match[1]
         next if seen.includes?(action_name)
         seen << action_name
-        original_match = content.match(/export\s+async\s+function\s+#{Regex.escape(action_name)}\s*\(([^)]*)\)/)
+        original_match = content.match(cached_regex("nextjs:action_fn:#{action_name}") { /export\s+async\s+function\s+#{Regex.escape(action_name)}\s*\(([^)]*)\)/ })
         register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
       end
 
@@ -168,7 +176,7 @@ module Analyzer::Javascript
         action_name = match[1]
         next if seen.includes?(action_name)
         seen << action_name
-        original_match = content.match(/export\s+const\s+#{Regex.escape(action_name)}\s*=\s*async\s*\(([^)]*)\)/)
+        original_match = content.match(cached_regex("nextjs:action_const:#{action_name}") { /export\s+const\s+#{Regex.escape(action_name)}\s*=\s*async\s*\(([^)]*)\)/ })
         register_server_action(path, action_name, match[2], sanitized, match, content, original_match, result, mutex, include_callee)
       end
 
@@ -231,14 +239,15 @@ module Analyzer::Javascript
     end
 
     private def extract_direct_exported_method_body(content : String, method : String) : Tuple(String, Int32)?
-      escaped_method = Regex.escape(method)
-      function_match = content.match(/export\s+(?:async\s+)?function\s+#{escaped_method}\b\s*\([^)]*\)/)
+      # `method` is always one of HTTP_METHODS here, so the per-verb
+      # precompiled tables apply.
+      function_match = content.match(EXPORT_VERB_FUNCTION_SIG_RES[method])
       if function_match
         match_end = function_match.end(0)
         return extract_braced_body(content, match_end) if match_end
       end
 
-      const_match = content.match(/export\s+const\s+#{escaped_method}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/)
+      const_match = content.match(EXPORT_VERB_CONST_ARROW_RES[method])
       if const_match
         match_end = const_match.end(0)
         extract_braced_body(content, match_end) if match_end
@@ -246,14 +255,13 @@ module Analyzer::Javascript
     end
 
     private def extract_named_function_body(content : String, name : String) : Tuple(String, Int32)?
-      escaped_name = Regex.escape(name)
-      function_match = content.match(/(?:^|[^\w$])(?:async\s+)?function\s+#{escaped_name}\b\s*\([^)]*\)/)
+      function_match = content.match(cached_regex("nextjs:named_fn:#{name}") { /(?:^|[^\w$])(?:async\s+)?function\s+#{Regex.escape(name)}\b\s*\([^)]*\)/ })
       if function_match
         match_end = function_match.end(0)
         return extract_braced_body(content, match_end) if match_end
       end
 
-      const_match = content.match(/(?:const|let|var)\s+#{escaped_name}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/)
+      const_match = content.match(cached_regex("nextjs:named_const:#{name}") { /(?:const|let|var)\s+#{Regex.escape(name)}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/ })
       if const_match
         match_end = const_match.end(0)
         extract_braced_body(content, match_end) if match_end
@@ -318,8 +326,8 @@ module Analyzer::Javascript
       # If named HTTP method exports exist, use them; otherwise default handler covers all.
       explicit = [] of String
       HTTP_METHODS.each do |m|
-        if content.match(/export\s+(?:async\s+)?function\s+#{m}\b/) ||
-           content.match(/export\s+const\s+#{m}\s*=/)
+        if content.match(EXPORT_VERB_FUNCTION_RES[m]) ||
+           content.match(EXPORT_VERB_CONST_RES[m])
           explicit << m
         end
       end
@@ -373,9 +381,9 @@ module Analyzer::Javascript
     private def extract_app_router_methods(content : String) : Array(String)
       methods = [] of String
       HTTP_METHODS.each do |m|
-        if content.match(/export\s+(?:async\s+)?function\s+#{m}\b/) ||
-           content.match(/export\s+const\s+#{m}\s*=/) ||
-           content.match(/export\s+\{[^}]*\b#{m}\b[^}]*\}/)
+        if content.match(EXPORT_VERB_FUNCTION_RES[m]) ||
+           content.match(EXPORT_VERB_CONST_RES[m]) ||
+           content.match(EXPORT_VERB_BRACE_RES[m])
           methods << m
         end
       end
@@ -454,11 +462,10 @@ module Analyzer::Javascript
         # Aliased: const body = await request.json(); then body.X or body["X"]
         content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:request|req)\.json\s*\(\s*\)/) do |m|
           varname = m[1]
-          escaped = Regex.escape(varname)
-          content.scan(/\b#{escaped}\.(\w+)/) do |mm|
+          content.scan(cached_regex("nextjs:var_dot:#{varname}") { /\b#{Regex.escape(varname)}\.(\w+)/ }) do |mm|
             add_param(endpoint, mm[1], "json")
           end
-          content.scan(/\b#{escaped}\[['"]([^'"]+)['"]\]/) do |mm|
+          content.scan(cached_regex("nextjs:var_bracket:#{varname}") { /\b#{Regex.escape(varname)}\[['"]([^'"]+)['"]\]/ }) do |mm|
             add_param(endpoint, mm[1], "json")
           end
         end
@@ -471,8 +478,7 @@ module Analyzer::Javascript
           form_vars << m[1] unless form_vars.includes?(m[1])
         end
         form_vars.each do |varname|
-          escaped = Regex.escape(varname)
-          content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+          content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |m|
             add_param(endpoint, m[1], "form")
           end
         end
@@ -502,11 +508,11 @@ module Analyzer::Javascript
         add_unresolved_param(endpoint, m[1], "cookie")
       end
       content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?cookies\s*\(\s*\)/) do |m|
-        escaped = Regex.escape(m[1])
-        content.scan(/\b#{escaped}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |mm| # store.get("literal")
+        varname = m[1]
+        content.scan(cached_regex("nextjs:var_get:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/ }) do |mm| # store.get("literal")
           add_param(endpoint, mm[1], "cookie")
         end
-        content.scan(/\b#{escaped}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |mm| # store.get(CONST) — unresolved
+        content.scan(cached_regex("nextjs:var_get_ident:#{varname}") { /\b#{Regex.escape(varname)}\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/ }) do |mm| # store.get(CONST) — unresolved
           add_unresolved_param(endpoint, mm[1], "cookie")
         end
       end

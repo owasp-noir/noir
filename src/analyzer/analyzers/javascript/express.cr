@@ -248,7 +248,9 @@ module Analyzer::Javascript
           http_methods = %w[get post put delete patch options head all]
 
           http_methods.each do |http_method|
-            endpoint_pattern = /#{router_var}\.#{http_method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
+            endpoint_pattern = cached_regex("express:nested_router:#{router_var}:#{http_method}") do
+              /#{router_var}\.#{http_method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
+            end
 
             content.scan(endpoint_pattern) do |em|
               if em.size > 1
@@ -379,7 +381,9 @@ module Analyzer::Javascript
 
         http_methods.each do |method|
           # Enhanced pattern to catch more route handler formats
-          pattern = /#{router_prefix_router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*/
+          pattern = cached_regex("express:prefix_router:#{router_prefix_router_name}:#{method}") do
+            /#{router_prefix_router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*/
+          end
 
           content.scan(pattern) do |m|
             if m.size > 0
@@ -422,7 +426,9 @@ module Analyzer::Javascript
       http_methods = %w[get post put delete patch options head all]
 
       http_methods.each do |method|
-        pattern = /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"](?:[^{]*)\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m
+        pattern = cached_regex("express:versioned_router:#{router_name}:#{method}") do
+          /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"](?:[^{]*)\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m
+        end
 
         content.scan(pattern) do |m|
           if m.size > 1

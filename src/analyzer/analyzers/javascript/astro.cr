@@ -143,6 +143,12 @@ module Analyzer::Javascript
     # Look for explicit verb exports first
     # (`export const GET = ...` / `export async function POST() {}`),
     # then fall back to the cross-method catch-all set.
+    # Compiled once per verb — interpolated regex literals would otherwise
+    # be rebuilt (full PCRE2 compile) for every method on every file.
+    EXPORT_FUNCTION_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
+    EXPORT_CONST_RES    = HTTP_METHODS.map { |m| {m, /export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/} }.to_h
+    EXPORT_BRACE_RES    = HTTP_METHODS.map { |m| {m, /export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/} }.to_h
+
     private def detect_api_methods(content : String) : Array(String)
       explicit = [] of String
       HTTP_METHODS.each do |m|
@@ -150,9 +156,9 @@ module Analyzer::Javascript
         # `export const GET = ...`, `export const GET: APIRoute = ...`
         # (the trailing TypeScript type annotation is optional), and
         # the `export { GET }` re-export form.
-        if content.match(/export\s+(?:async\s+)?function\s+#{m}\b/) ||
-           content.match(/export\s+(?:const|let|var)\s+#{m}\b\s*(?::[^=]+)?=/) ||
-           content.match(/export\s+\{\s*[^}]*\b#{m}\b[^}]*\}/)
+        if content.match(EXPORT_FUNCTION_RES[m]) ||
+           content.match(EXPORT_CONST_RES[m]) ||
+           content.match(EXPORT_BRACE_RES[m])
           explicit << m
         end
       end

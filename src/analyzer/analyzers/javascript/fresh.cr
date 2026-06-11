@@ -52,6 +52,13 @@ module Analyzer::Javascript
 
     FALLBACK_HANDLER_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
+    # Compiled once per verb — interpolated regex literals would otherwise
+    # be rebuilt (full PCRE2 compile) on every evaluation.
+    HANDLER_METHOD_BODY_RES = HTTP_METHODS.map { |v| {v, /(?:^|[\{,\s])(?:async\s+)?#{v}\s*\([^)]*\)\s*\{(.*?)^\s*\}/m} }.to_h
+    HANDLER_PROPERTY_RES    = HTTP_METHODS.map { |v| {v, /(?:^|[\{,\s])#{v}\s*:\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/} }.to_h
+    VERB_KEY_SHORTHAND_RES  = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])(?:async\s+)?#{v}\s*\(/} }.to_h
+    VERB_KEY_PROPERTY_RES   = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])#{v}\s*:/} }.to_h
+
     # Files that are framework plumbing rather than routes.
     SKIPPED_LEAVES = ["_app", "_layout", "_404", "_500", "_middleware"]
 
@@ -115,12 +122,12 @@ module Analyzer::Javascript
       handler_block = extract_handler_object(content)
       return [] of Noir::JSCalleeExtractor::Entry unless handler_block
 
-      if method = handler_block.match(/(?:^|[\{,\s])(?:async\s+)?#{verb}\s*\([^)]*\)\s*\{(.*?)^\s*\}/m)
+      if method = handler_block.match(HANDLER_METHOD_BODY_RES[verb])
         start_line = content[0, content.index(method[0]) || 0].count('\n') + 1
         return Noir::JSCalleeExtractor.callees_for_function_body(method[1], path, start_line, language: javascript_source_language(path))
       end
 
-      if property = handler_block.match(/(?:^|[\{,\s])#{verb}\s*:\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/)
+      if property = handler_block.match(HANDLER_PROPERTY_RES[verb])
         body_start = property.end(0) || 0
         body = handler_block[body_start..]? || ""
         block_start = content.index(handler_block) || 0
@@ -267,8 +274,8 @@ module Analyzer::Javascript
     private def extract_verb_keys(block : String) : Array(String)
       verbs = [] of String
       HTTP_METHODS.each do |m|
-        if block.match(/(^|[\{,\s])(?:async\s+)?#{m}\s*\(/) ||
-           block.match(/(^|[\{,\s])#{m}\s*:/)
+        if block.match(VERB_KEY_SHORTHAND_RES[m]) ||
+           block.match(VERB_KEY_PROPERTY_RES[m])
           verbs << m
         end
       end

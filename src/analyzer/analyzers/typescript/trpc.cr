@@ -118,8 +118,9 @@ module Analyzer::Typescript
     end
 
     private def extract_object_assignment_body(content : String, identifier : String) : Tuple(String, Int32)?
-      escaped = Regex.escape(identifier)
-      pattern = /\b(?:export\s+)?(?:const|let|var)\s+#{escaped}(?:\s*:[^=]+)?\s*=\s*\{/
+      pattern = cached_regex("trpc:object_assign:#{identifier}") do
+        /\b(?:export\s+)?(?:const|let|var)\s+#{Regex.escape(identifier)}(?:\s*:[^=]+)?\s*=\s*\{/
+      end
 
       content.scan(pattern) do |match|
         match_start = match.begin(0) || 0

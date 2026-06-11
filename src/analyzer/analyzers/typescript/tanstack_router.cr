@@ -148,8 +148,10 @@ module Analyzer::Typescript
     end
 
     private def extract_string_property(block : String, property : String) : String?
-      escaped_property = Regex.escape(property)
-      match = block.match(/(?:^|[,{]\s*)#{escaped_property}\s*:\s*['"`]([^'"`]+)['"`]/m)
+      property_re = cached_regex("tanstack:string_prop:#{property}") do
+        /(?:^|[,{]\s*)#{Regex.escape(property)}\s*:\s*['"`]([^'"`]+)['"`]/m
+      end
+      match = block.match(property_re)
       match.try(&.[1])
     end
 
@@ -389,11 +391,11 @@ module Analyzer::Typescript
         search_name = validate_search_argument_name(value)
         next unless search_name
 
-        value.scan(/\b#{Regex.escape(search_name)}\s*\.\s*([A-Za-z_$][\w$]*)/) do |param_match|
+        value.scan(cached_regex("tanstack:search_dot:#{search_name}") { /\b#{Regex.escape(search_name)}\s*\.\s*([A-Za-z_$][\w$]*)/ }) do |param_match|
           push_unique_query_param(endpoint, param_match[1])
         end
 
-        value.scan(/\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*#{Regex.escape(search_name)}\b/) do |destructure_match|
+        value.scan(cached_regex("tanstack:search_destructure:#{search_name}") { /\b(?:const|let|var)\s*\{([^}]+)\}\s*=\s*#{Regex.escape(search_name)}\b/ }) do |destructure_match|
           destructure_match[1].split(",").each do |param|
             param_name = param.strip.split(":").first.strip.split("=").first.strip
             push_unique_query_param(endpoint, param_name)

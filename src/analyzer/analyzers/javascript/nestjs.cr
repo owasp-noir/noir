@@ -4,6 +4,10 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nestjs < JavascriptEngine
+    # Request-object fields read in handler bodies, paired with the param
+    # type they map to. Iterated in this order when extracting params.
+    REQUEST_OBJECT_FIELDS = { {"query", "query"}, {"body", "body"}, {"headers", "header"}, {"params", "path"} }
+
     private struct GlobalPrefixExclude
       getter path : String
       getter method : String?
@@ -857,16 +861,16 @@ module Analyzer::Javascript
       end
       request_names << "req" if request_names.empty?
 
+      # The dot/bracket field regexes are memoized per request-object name
+      # ("req" dominates), so each pattern compiles once per scan instead
+      # of once per handler.
       request_names.each do |name|
-        escaped = Regex.escape(name)
-        body.scan(/\b#{escaped}\.query\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "query")) }
-        body.scan(/\b#{escaped}\.query\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "query")) }
-        body.scan(/\b#{escaped}\.body\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "body")) }
-        body.scan(/\b#{escaped}\.body\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "body")) }
-        body.scan(/\b#{escaped}\.headers\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "header")) }
-        body.scan(/\b#{escaped}\.headers\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "header")) }
-        body.scan(/\b#{escaped}\.params\.(\w+)/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "path")) }
-        body.scan(/\b#{escaped}\.params\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/) { |m| push_unique_param(endpoint, Param.new(m[1], "", "path")) }
+        REQUEST_OBJECT_FIELDS.each do |field, param_type|
+          dot_re = cached_regex("nestjs:req_dot:#{name}:#{field}") { /\b#{Regex.escape(name)}\.#{field}\.(\w+)/ }
+          bracket_re = cached_regex("nestjs:req_bracket:#{name}:#{field}") { /\b#{Regex.escape(name)}\.#{field}\s*\[\s*['"`]([^'"`]+)['"`]\s*\]/ }
+          body.scan(dot_re) { |m| push_unique_param(endpoint, Param.new(m[1], "", param_type)) }
+          body.scan(bracket_re) { |m| push_unique_param(endpoint, Param.new(m[1], "", param_type)) }
+        end
       end
     end
 
