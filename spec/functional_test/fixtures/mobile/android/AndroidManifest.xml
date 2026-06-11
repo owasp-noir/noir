@@ -104,6 +104,16 @@
             </intent-filter>
         </activity>
 
+        <!-- `market://details?id=…` (Play Store) DOES use an authority, so it
+             must keep its `//` (not be treated as an opaque scheme). -->
+        <activity android:name=".StoreActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="market" android:host="details" />
+            </intent-filter>
+        </activity>
+
         <!-- Verified App Link over https (universal-link) -->
         <activity android:name=".WebActivity" android:exported="true">
             <intent-filter android:autoVerify="true">

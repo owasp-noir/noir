@@ -79,6 +79,12 @@ describe "Analyzer::Mobile::Android" do
     find.call("mailto://").should be_nil
   end
 
+  it "keeps the // authority on schemes that use one (market://details)" do
+    # `market://details?id=…` and streaming `mms://host` are NOT opaque.
+    find.call("market://details").not_nil!.protocol.should eq("mobile-scheme")
+    find.call("market:").should be_nil
+  end
+
   it "combines scheme and host/path split across separate <data> elements" do
     # SplitLinkActivity declares schemes and host+path in separate <data>
     # children; Android cross-products them, so all four resolve.

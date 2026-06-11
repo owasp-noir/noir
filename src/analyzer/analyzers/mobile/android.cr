@@ -119,8 +119,10 @@ module Analyzer::Mobile
 
     # Opaque (authority-less) schemes: `mailto:foo@bar`, `tel:123`, `geo:…`.
     # They take no `//host` part, so the URL is rendered as `scheme:` rather
-    # than `scheme://`.
-    OPAQUE_SCHEMES = Set{"mailto", "tel", "sms", "smsto", "mms", "geo", "market"}
+    # than `scheme://`. Deliberately conservative: `market://details?id=…`
+    # (Play Store) and `mms://host` (media streaming, e.g. VLC) DO use an
+    # authority, so they are NOT listed here.
+    OPAQUE_SCHEMES = Set{"mailto", "tel", "sms", "smsto", "geo"}
 
     # Upper bound on endpoints emitted from a single intent-filter. A media
     # router / browser filter can declare dozens of hosts × paths; the full

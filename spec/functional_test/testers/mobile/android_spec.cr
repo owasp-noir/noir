@@ -35,6 +35,8 @@ expected_endpoints = [
   # Opaque scheme: `mailto:` has no // authority. (The sibling file/content/
   # `http://*` wildcard-host filter on ShareActivity yields nothing.)
   build.call("mailto:", "mobile-scheme", no_params, [] of String),
+  # `market://details` keeps its authority (NOT opaque despite the short list).
+  build.call("market://details", "mobile-scheme", no_params, [] of String),
   # Verified App Link over https (universal-link)
   build.call("https://myapp.example.com/complex/:id", "universal-link", [Param.new("id", "", "path")], [] of String),
   # Exported, data-less component (android-intent), synthetic intent:// scheme
