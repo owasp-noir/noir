@@ -52,8 +52,16 @@ module Analyzer::Python
     FLASK_INSTANCE_RE     = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask\.)?Flask\(/
     INIT_APP_RE           = /(#{PYTHON_VAR_NAME_REGEX})\.init_app\((#{PYTHON_VAR_NAME_REGEX})/
     REGISTER_BLUEPRINT_RE = /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
-    VIEW_ASSIGN_RE        = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
-    ADD_URL_RULE_RE       = /(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/m
+
+    # Source-ownership and add_url_rule helpers — same constant-only
+    # interpolation (DOT_NATION), hoisted so the per-file/per-call sites
+    # don't recompile them.
+    ROUTE_DECORATOR_RE  = /^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m
+    ROUTE_REGISTRAR_RE  = /\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/
+    VIEW_FUNC_KWARG_RE  = /view_func=(#{DOT_NATION})(?:,|\)|$)/
+    DOTTED_REFERENCE_RE = /^#{DOT_NATION}$/
+    VIEW_ASSIGN_RE      = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
+    ADD_URL_RULE_RE     = /(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/m
 
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
@@ -875,8 +883,8 @@ module Analyzer::Python
       # only drops the duplicate mislabel (jupyterhub examples/service-
       # fastapi was reported as python_flask).
       return false if clean.matches?(/^\s*(?:from|import)\s+(?:fastapi|sanic|litestar|starlette|quart|robyn)\b/m)
-      return true if clean.matches?(/^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m)
-      return true if clean.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
+      return true if clean.matches?(ROUTE_DECORATOR_RE)
+      return true if clean.matches?(ROUTE_REGISTRAR_RE)
 
       false
     end
@@ -886,8 +894,8 @@ module Analyzer::Python
 
       clean = source.gsub(/#.*?(?:\n|\z)/m, "\n")
       return false if clean.matches?(/\b(?:Flask|Blueprint|Api|Namespace)\s*\(/)
-      return false if clean.matches?(/^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m)
-      return false if clean.matches?(/\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/)
+      return false if clean.matches?(ROUTE_DECORATOR_RE)
+      return false if clean.matches?(ROUTE_REGISTRAR_RE)
 
       true
     end
@@ -1131,7 +1139,7 @@ module Analyzer::Python
     end
 
     private def extract_add_url_rule_function_name(args_str : ::String) : ::String
-      if view_func_match = args_str.match(/view_func=(#{DOT_NATION})(?:,|\)|$)/)
+      if view_func_match = args_str.match(VIEW_FUNC_KWARG_RE)
         return view_func_match[1]
       end
 
@@ -1143,7 +1151,7 @@ module Analyzer::Python
                  else
                    ""
                  end
-      view_arg.matches?(/^#{DOT_NATION}$/) ? view_arg : ""
+      view_arg.matches?(DOTTED_REFERENCE_RE) ? view_arg : ""
     end
 
     private def resolve_external_function_view(function_ref : ::String,
@@ -1238,13 +1246,28 @@ module Analyzer::Python
     end
 
     private def find_function_def(lines : Array(::String), function_name : ::String) : Int32?
+      # Compile once per call; an interpolated literal inside the loop
+      # would be recompiled on every line.
+      def_re = /^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/
       lines.each_with_index do |line, index|
-        if line.match(/^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/)
+        if line.match(def_re)
           return index
         end
       end
 
       nil
+    end
+
+    # JSON-variable access patterns interpolate a discovered (dynamic but
+    # low-cardinality) identifier, so they can't be hoisted to constants —
+    # memoize them per variable name instead.
+    @json_param_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
+    private def json_param_regexes(json_variable_name : ::String) : Tuple(Regex, Regex)
+      @json_param_regex_cache[json_variable_name] ||= {
+        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\[[rf]?['"]([^'"]*)['"]\]/,
+        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\.get\([rf]?['"]([^'"]*)['"]/,
+      }
     end
 
     # Extracts request parameters from a code block by detecting JSON variable
@@ -1275,22 +1298,33 @@ module Analyzer::Python
           if matches.size == 0
             matches = codeblock_line.scan(get_re)
           end
-          if matches.size == 0
-            noir_param_type = "json"
-            json_variable_names.each do |json_variable_name|
-              matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\[[rf]?['"]([^'"]*)['"]\]/)
-              if matches.size == 0
-                matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\.get\([rf]?['"]([^'"]*)['"]/)
-              end
-              break if matches.size > 0
-            end
-          end
 
           matches.each do |parameter_match|
             next if parameter_match.size != 2
             param_name = parameter_match[1]
             params << Param.new(param_name, "", noir_param_type)
           end
+        end
+
+        # JSON dict access on the variables found above. This used to run
+        # inside the field-pattern loop (once per missed field — i.e.
+        # effectively per field per line), recompiling two interpolated
+        # regexes each time and appending the same matches repeatedly;
+        # `get_filtered_params` deduplicates by (name, param_type), so
+        # scanning once per line is output-identical.
+        json_variable_names.each do |json_variable_name|
+          bracket_json_re, get_json_re = json_param_regexes(json_variable_name)
+          matches = codeblock_line.scan(bracket_json_re)
+          if matches.size == 0
+            matches = codeblock_line.scan(get_json_re)
+          end
+          next if matches.size == 0
+
+          matches.each do |parameter_match|
+            next if parameter_match.size != 2
+            params << Param.new(parameter_match[1], "", "json")
+          end
+          break
         end
       end
 

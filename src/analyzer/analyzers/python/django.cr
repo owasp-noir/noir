@@ -14,6 +14,11 @@ module Analyzer::Python
     REGEX_ROUTE_MAPPING = /\b(?:url|path|re_path|register)\s*\(\s*r?['"]([^"']*)['"][^,]*,\s*([^),]*)/
     REGEX_INCLUDE_URLS  = /\binclude\s*\(\s*r?['"]([^'"\\]*)['"]/
 
+    # `def get(...)` / `async def post(...)` method heads in class-based
+    # views. Precompiled — an interpolated literal would be recompiled on
+    # every line of every CBV class body.
+    REGEX_CBV_METHOD_DEF = /\s+(?:async\s+)?def\s+(#{HTTP_METHODS.join("|")})\s*\(/
+
     # Map request parameters to their respective fields
     REQUEST_PARAM_FIELD_MAP = {
       "GET"          => {["GET"], "query"},
@@ -1323,7 +1328,6 @@ module Analyzer::Python
       end
 
       # Class Based View
-      regext_http_methods = HTTP_METHODS.join "|"
       class_start_index = content.index /class\s+#{function_or_class_name}\s*[\(:]/
       if !class_start_index.nil?
         class_codeblock = parse_python_class_codeblock(content, class_start_index) || parse_code_block(content[class_start_index..])
@@ -1363,7 +1367,7 @@ module Analyzer::Python
 
           # Check HTTP methods in class methods
           lines.each_with_index do |line, offset|
-            method_function_match = line.match(/\s+(?:async\s+)?def\s+(#{regext_http_methods})\s*\(/)
+            method_function_match = line.match(REGEX_CBV_METHOD_DEF)
             any_method_function_match = line.match(/\s+(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
             if !any_method_function_match.nil?
               current_http_method = nil
