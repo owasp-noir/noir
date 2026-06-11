@@ -5,7 +5,7 @@ fastify.route({
   method: 'GET',
   url: '/single',
   handler: async (request, reply) => {
-    return { ok: true }
+    return reply.send(statusService.single())
   }
 })
 
@@ -14,7 +14,7 @@ fastify.route({
   method: ['GET', 'POST'],
   url: '/items/:id',
   handler: async (request, reply) => {
-    return { id: request.params.id }
+    return reply.send(buildItem(request.params.id))
   }
 })
 
@@ -25,7 +25,7 @@ fastify.route({
   url: '/users/:userId',
   handler: async (request, reply) => {
     const email = request.body.email
-    return { ok: true }
+    return reply.send(UserService.update(email))
   }
 })
 

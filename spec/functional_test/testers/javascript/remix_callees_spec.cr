@@ -53,3 +53,32 @@ FunctionalTester.new("fixtures/javascript/remix_callees/", {
 }, expected_endpoints, {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
+
+describe "Remix callee source attribution" do
+  before_each do
+    CodeLocator.instance.clear_all
+  end
+
+  it "uses direct and aliased loader/action handler lines" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/remix_callees/")])
+    options["include_callee"] = YAML::Any.new(true)
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    api_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users" }
+    api_get.details.code_paths.first.line.should eq(3)
+
+    api_post = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/users" }
+    api_post.details.code_paths.first.line.should eq(12)
+
+    user_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/users/{id}" }
+    user_get.details.code_paths.first.line.should eq(3)
+
+    user_post = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/users/{id}" }
+    user_post.details.code_paths.first.line.should eq(8)
+  end
+end

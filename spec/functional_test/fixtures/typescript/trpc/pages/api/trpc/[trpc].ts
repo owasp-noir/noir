@@ -3,5 +3,6 @@ import { appRouter } from '../../../server/root'
 
 export default createNextApiHandler({
   router: appRouter,
+  endpoint : '/custom-trpc',
   createContext: () => ({}),
 })

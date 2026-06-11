@@ -194,3 +194,30 @@ describe "Next.js App Router method-local params" do
     post.params.any? { |param| param.name == "username" && param.param_type == "json" }.should be_true
   end
 end
+
+describe "Next.js source attribution" do
+  it "uses handler and server-action lines instead of the file start" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    pages = app.endpoints.find! { |endpoint| endpoint.method == "GET" && endpoint.url == "/api/users" }
+    pages.details.code_paths.first.line.should eq(3)
+
+    app_get = app.endpoints.find! { |endpoint| endpoint.method == "GET" && endpoint.url == "/api/products/{id}" }
+    app_get.details.code_paths.first.line.should eq(8)
+
+    app_delete = app.endpoints.find! { |endpoint| endpoint.method == "DELETE" && endpoint.url == "/api/products/{id}" }
+    app_delete.details.code_paths.first.line.should eq(20)
+
+    create_action = app.endpoints.find! { |endpoint| endpoint.method == "POST" && endpoint.url == "/createUser" }
+    create_action.details.code_paths.first.line.should eq(3)
+
+    delete_action = app.endpoints.find! { |endpoint| endpoint.method == "POST" && endpoint.url == "/deleteUser" }
+    delete_action.details.code_paths.first.line.should eq(9)
+  end
+end

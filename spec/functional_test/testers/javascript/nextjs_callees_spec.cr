@@ -74,3 +74,28 @@ FunctionalTester.new("fixtures/javascript/nextjs_callees/", {
 ], {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
+
+describe "Next.js callee source attribution" do
+  it "uses aliased route handlers and server-action export lines" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs_callees/")])
+    options["include_callee"] = YAML::Any.new(true)
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    report = app.endpoints.find! { |endpoint| endpoint.method == "GET" && endpoint.url == "/api/reports" }
+    report.details.code_paths.first.line.should eq(3)
+
+    post = app.endpoints.find! { |endpoint| endpoint.method == "POST" && endpoint.url == "/api/orders/{id}" }
+    post.details.code_paths.first.line.should eq(13)
+
+    create_action = app.endpoints.find! { |endpoint| endpoint.method == "POST" && endpoint.url == "/createUser" }
+    create_action.details.code_paths.first.line.should eq(3)
+
+    delete_action = app.endpoints.find! { |endpoint| endpoint.method == "POST" && endpoint.url == "/deleteUser" }
+    delete_action.details.code_paths.first.line.should eq(12)
+  end
+end

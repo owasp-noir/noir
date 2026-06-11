@@ -1,4 +1,5 @@
 require "../../engines/javascript_engine"
+require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
@@ -6,7 +7,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
-      include_callee = any_to_bool(@options["include_callee"])
+      include_callee = callees_needed?
 
       parallel_file_scan do |path|
         begin
@@ -42,7 +43,7 @@ module Analyzer::Javascript
           # never a real config — issue #1903).
           unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
                  Noir::JSRouteExtractor.minified_content?(content)
-            extract_route_configs(path, content, result)
+            extract_route_configs(path, content, result, include_callee)
           end
 
           collect_static_paths(path, content, static_dirs, :fastify)
@@ -69,7 +70,7 @@ module Analyzer::Javascript
     # shared parser misses: the config object may span multiple lines,
     # and `methods` may be an array. For each block, decode the method
     # (or methods) and the url/path and emit one endpoint per method.
-    private def extract_route_configs(path : String, content : String, result : Array(Endpoint))
+    private def extract_route_configs(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
       http_methods = %w[get post put delete patch options head]
 
       # Match the call site `instance.route(` and walk the balanced
@@ -127,6 +128,7 @@ module Analyzer::Javascript
           p = line_to_param(handler_line)
           body_params << p if !p.name.empty? && !body_params.any? { |bp| bp.name == p.name && bp.param_type == p.param_type }
         end
+        route_callees = include_callee ? route_config_callees(config, path, line_no) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
           method_up = http_method.upcase
@@ -144,10 +146,113 @@ module Analyzer::Javascript
           body_params.each do |bp|
             endpoint.push_param(bp) unless endpoint.params.any? { |p| p.name == bp.name && p.param_type == bp.param_type }
           end
+          attach_js_callees(endpoint, route_callees)
 
           result << endpoint
         end
       end
+    end
+
+    private def route_config_callees(config : String, path : String, start_line : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      if handler = route_config_handler_body(config, start_line)
+        body, body_line = handler
+        Noir::JSCalleeExtractor.callees_for_function_body(body, path, body_line, language: javascript_source_language(path))
+      else
+        [] of Noir::JSCalleeExtractor::Entry
+      end
+    end
+
+    private def route_config_handler_body(config : String, start_line : Int32) : Tuple(String, Int32)?
+      if match = config.match(/(?:^|[,{]\s*)handler\s*:/m)
+        value_start = skip_whitespace(config, match.end(0) || 0)
+        arrow_idx = config.index("=>", value_start)
+        function_idx = config.index(/\bfunction\b/, value_start)
+
+        if function_idx && (!arrow_idx || function_idx < arrow_idx)
+          if open_brace = config.index("{", function_idx)
+            return block_body(config, open_brace, start_line)
+          end
+        elsif arrow_idx
+          body_start = skip_whitespace(config, arrow_idx + 2)
+          if config[body_start]? == '{'
+            return block_body(config, body_start, start_line)
+          end
+
+          body_end = route_config_value_end(config, body_start)
+          body = config[body_start...body_end].strip
+          return {body, start_line + config[0...body_start].count('\n')} unless body.empty?
+        end
+      end
+
+      if match = config.match(/(?:^|[,{]\s*)handler\s*\(/m)
+        open_paren = config.index("(", match.begin(0) || 0)
+        return unless open_paren
+
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(config, open_paren)
+        return unless close_paren
+
+        open_brace = skip_whitespace(config, close_paren + 1)
+        return unless config[open_brace]? == '{'
+
+        block_body(config, open_brace, start_line)
+      end
+    end
+
+    private def block_body(config : String, open_brace : Int32, start_line : Int32) : Tuple(String, Int32)?
+      close_brace = Noir::JSRouteExtractor.find_matching_brace(config, open_brace)
+      return unless close_brace
+
+      body = config[(open_brace + 1)...close_brace]
+      {body, start_line + config[0...open_brace].count('\n')}
+    end
+
+    private def skip_whitespace(content : String, pos : Int32) : Int32
+      i = pos
+      while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    private def route_config_value_end(config : String, start : Int32) : Int32
+      depth = 0
+      quote : Char? = nil
+      escaped = false
+      i = start
+
+      while i < config.size
+        char = config[i]
+
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          i += 1
+          next
+        end
+
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']'
+          depth -= 1 if depth > 0
+        when '}'
+          return i if depth == 0
+          depth -= 1
+        when ','
+          return i if depth == 0
+        end
+
+        i += 1
+      end
+
+      i
     end
 
     # Helper method to create an endpoint with details
@@ -162,100 +267,98 @@ module Analyzer::Javascript
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
       # Original regex-based analysis as a fallback
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        last_endpoint = Endpoint.new("", "")
-        # current_router_base = ""
-        fastify_instances = [] of String
-        route_plugin_prefixes = {} of String => String
-        plugin_functions = {} of String => Bool
-        file_content = file.gets_to_end
+      last_endpoint = Endpoint.new("", "")
+      # current_router_base = ""
+      fastify_instances = [] of String
+      route_plugin_prefixes = {} of String => String
+      plugin_functions = {} of String => Bool
+      file_content = read_file_content(path)
 
-        collect_static_paths(path, file_content, static_dirs, :fastify)
+      collect_static_paths(path, file_content, static_dirs, :fastify)
 
-        # First scan for fastify instances and plugin registrations
-        file_content.each_line do |line|
-          # Detect Fastify initialization
-          if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:require\s*\(\s*['"]fastify['"]\s*\)|\s*fastify\()/
-            fastify_instances << $1
+      # First scan for fastify instances and plugin registrations
+      file_content.each_line do |line|
+        # Detect Fastify initialization
+        if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:require\s*\(\s*['"]fastify['"]\s*\)|\s*fastify\()/
+          fastify_instances << $1
+        end
+
+        # Detect plugin function declarations
+        if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(\s*(?:fastify|app|server)\s*,\s*options\s*\)\s*=>/
+          plugin_functions[$1] = true
+        end
+
+        # Also detect traditional function syntax for plugins
+        if line =~ /(?:function\s+(\w+)\s*\(\s*(?:fastify|app|server)(?:\s*,\s*options)?\s*\)|(?:const|let|var)\s+(\w+)\s*=\s*function\s*\(\s*(?:fastify|app|server)(?:\s*,\s*options)?\s*\))/
+          plugin_name = $1 || $2
+          plugin_functions[plugin_name] = true unless plugin_name.empty?
+        end
+
+        # Detect plugin registration with prefix - more flexible pattern matching
+        if line =~ /(\w+)\.register\s*\(\s*(\w+)(?:[^{]*|\s*,\s*)\{[^}]*prefix\s*:\s*['"]([^'"]+)['"]/
+          # fastify_var = $1
+          plugin_var = $2
+          prefix = $3
+          if plugin_functions.has_key?(plugin_var) || plugin_var.includes?("Routes")
+            route_plugin_prefixes[plugin_var] = prefix
           end
+        end
+      end
 
-          # Detect plugin function declarations
-          if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\(\s*(?:fastify|app|server)\s*,\s*options\s*\)\s*=>/
-            plugin_functions[$1] = true
-          end
+      # Now process the file line by line for endpoints
+      current_plugin_var = ""
+      inside_plugin_function = false
+      plugin_indent_level = 0
+      plugin_prefix = ""
 
-          # Also detect traditional function syntax for plugins
-          if line =~ /(?:function\s+(\w+)\s*\(\s*(?:fastify|app|server)(?:\s*,\s*options)?\s*\)|(?:const|let|var)\s+(\w+)\s*=\s*function\s*\(\s*(?:fastify|app|server)(?:\s*,\s*options)?\s*\))/
-            plugin_name = $1 || $2
-            plugin_functions[plugin_name] = true unless plugin_name.empty?
-          end
+      file_content.each_line.with_index do |line, index|
+        # Detect plugin function definitions
+        if !inside_plugin_function && line =~ /(?:const|let|var)\s+(\w+Routes|\w+)\s*=\s*(?:async\s*)?\(\s*(?:fastify|app|server)\s*,\s*options\s*\)\s*=>/
+          function_name = $1
+          current_plugin_var = function_name
+          inside_plugin_function = true
+          plugin_indent_level = line.index("{") || 0
+          plugin_prefix = route_plugin_prefixes.fetch(current_plugin_var, "")
+        end
 
-          # Detect plugin registration with prefix - more flexible pattern matching
-          if line =~ /(\w+)\.register\s*\(\s*(\w+)(?:[^{]*|\s*,\s*)\{[^}]*prefix\s*:\s*['"]([^'"]+)['"]/
-            # fastify_var = $1
-            plugin_var = $2
-            prefix = $3
-            if plugin_functions.has_key?(plugin_var) || plugin_var.includes?("Routes")
-              route_plugin_prefixes[plugin_var] = prefix
+        # Check if we're exiting a plugin function
+        if inside_plugin_function && line =~ /^\s*\}\s*;?\s*$/
+          # Check if the indentation level matches with the function start
+          if line.strip == "}" || line.strip == "};"
+            current_indent = line.index("}") || 0
+            if current_indent <= plugin_indent_level
+              inside_plugin_function = false
+              current_plugin_var = ""
+              plugin_prefix = ""
             end
           end
         end
 
-        # Now process the file line by line for endpoints
-        current_plugin_var = ""
-        inside_plugin_function = false
-        plugin_indent_level = 0
-        plugin_prefix = ""
-
-        file_content.each_line.with_index do |line, index|
-          # Detect plugin function definitions
-          if !inside_plugin_function && line =~ /(?:const|let|var)\s+(\w+Routes|\w+)\s*=\s*(?:async\s*)?\(\s*(?:fastify|app|server)\s*,\s*options\s*\)\s*=>/
-            function_name = $1
-            current_plugin_var = function_name
-            inside_plugin_function = true
-            plugin_indent_level = line.index("{") || 0
-            plugin_prefix = route_plugin_prefixes.fetch(current_plugin_var, "")
-          end
-
-          # Check if we're exiting a plugin function
-          if inside_plugin_function && line =~ /^\s*\}\s*;?\s*$/
-            # Check if the indentation level matches with the function start
-            if line.strip == "}" || line.strip == "};"
-              current_indent = line.index("}") || 0
-              if current_indent <= plugin_indent_level
-                inside_plugin_function = false
-                current_plugin_var = ""
-                plugin_prefix = ""
-              end
+        # Detect regular routes or routes within plugins
+        endpoint = line_to_endpoint(line)
+        unless endpoint.method.empty?
+          # Apply plugin prefix if inside a plugin function
+          if inside_plugin_function && !plugin_prefix.empty?
+            # Handle path joining properly
+            if endpoint.url.starts_with?("/") && plugin_prefix.ends_with?("/")
+              endpoint.url = "#{plugin_prefix[0..-2]}#{endpoint.url}"
+            elsif !endpoint.url.starts_with?("/") && !plugin_prefix.ends_with?("/")
+              endpoint.url = "#{plugin_prefix}/#{endpoint.url}"
+            else
+              endpoint.url = "#{plugin_prefix}#{endpoint.url}"
             end
           end
 
-          # Detect regular routes or routes within plugins
-          endpoint = line_to_endpoint(line)
-          unless endpoint.method.empty?
-            # Apply plugin prefix if inside a plugin function
-            if inside_plugin_function && !plugin_prefix.empty?
-              # Handle path joining properly
-              if endpoint.url.starts_with?("/") && plugin_prefix.ends_with?("/")
-                endpoint.url = "#{plugin_prefix[0..-2]}#{endpoint.url}"
-              elsif !endpoint.url.starts_with?("/") && !plugin_prefix.ends_with?("/")
-                endpoint.url = "#{plugin_prefix}/#{endpoint.url}"
-              else
-                endpoint.url = "#{plugin_prefix}#{endpoint.url}"
-              end
-            end
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint.details = details
+          result << endpoint
+          last_endpoint = endpoint
+        end
 
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint.details = details
-            result << endpoint
-            last_endpoint = endpoint
-          end
-
-          # Get parameters from line
-          param = line_to_param(line)
-          if !param.name.empty? && !last_endpoint.method.empty?
-            last_endpoint.push_param(param)
-          end
+        # Get parameters from line
+        param = line_to_param(line)
+        if !param.name.empty? && !last_endpoint.method.empty?
+          last_endpoint.push_param(param)
         end
       end
     end

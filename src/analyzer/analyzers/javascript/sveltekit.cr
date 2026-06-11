@@ -100,7 +100,7 @@ module Analyzer::Javascript
 
       methods = detect_api_methods(content)
       endpoints = methods.map do |verb|
-        endpoint = build_endpoint(url, verb, path)
+        endpoint = build_endpoint(url, verb, path, api_method_line(content, verb) || 1)
         attach_callees(endpoint, path, content, verb) if include_callee
         endpoint
       end
@@ -110,9 +110,9 @@ module Analyzer::Javascript
       end
     end
 
-    private def build_endpoint(url : String, verb : String, path : String) : Endpoint
+    private def build_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
       endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, 1))
+      endpoint.details = Details.new(PathInfo.new(path, line))
       url.scan(/\{(\w+)\}/) do |match|
         endpoint.push_param(Param.new(match[1], "", "path"))
       end
@@ -164,6 +164,25 @@ module Analyzer::Javascript
         end
       end
       explicit.empty? ? FALLBACK_API_METHODS : explicit
+    end
+
+    private def api_method_line(content : String, verb : String) : Int32?
+      if match = content.match(EXPORT_FUNCTION_RES[verb])
+        return line_for_match(content, match)
+      end
+
+      if match = content.match(EXPORT_CONST_RES[verb])
+        return line_for_match(content, match)
+      end
+
+      if content.includes?("export {") && content.includes?(verb)
+        Noir::JSCalleeExtractor.exported_function_line(content, verb)
+      end
+    end
+
+    private def line_for_match(content : String, match : Regex::MatchData) : Int32
+      start = match.begin(0) || 0
+      content.to_slice[0, start].count('\n'.ord.to_u8) + 1
     end
 
     private def attach_callees(endpoint : Endpoint, path : String, content : String, verb : String)

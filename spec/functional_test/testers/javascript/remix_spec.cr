@@ -27,3 +27,31 @@ FunctionalTester.new("fixtures/javascript/remix/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+describe "Remix route source attribution" do
+  before_each do
+    CodeLocator.instance.clear_all
+  end
+
+  it "uses loader and action handler lines" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/remix/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    api_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users" }
+    api_get.details.code_paths.first.line.should eq(3)
+
+    api_post = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/users" }
+    api_post.details.code_paths.first.line.should eq(7)
+
+    user_get = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/users/{id}" }
+    user_get.details.code_paths.first.line.should eq(3)
+
+    user_delete = app.endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/users/{id}" }
+    user_delete.details.code_paths.first.line.should eq(7)
+  end
+end

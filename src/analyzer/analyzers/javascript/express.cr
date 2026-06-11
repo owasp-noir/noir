@@ -16,7 +16,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Phase 1: Pre-scan to build router mount map
       scan_for_router_mounts
@@ -54,7 +54,7 @@ module Analyzer::Javascript
           # parse-community/parse-server alone parks ~51 routes in
           # `src/Routers/*.js` (AudiencesRouter, GlobalConfigRouter,
           # UsersRouter, ...) via this pattern.
-          extract_parse_server_routes(path, content, result)
+          extract_parse_server_routes(path, content, result, include_callee)
         rescue e
           logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -77,7 +77,7 @@ module Analyzer::Javascript
     # literal so non-PromiseRouter `this.route(...)` shapes (e.g.
     # routing-controllers' `this.route` builder) don't accidentally
     # fire — the latter takes no quoted-method first argument.
-    private def extract_parse_server_routes(path : String, content : String, result : Array(Endpoint))
+    private def extract_parse_server_routes(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
       # Cheap guard: the Parse Server idiom is literally `this.route(`.
       # Skip the full-content regex scan on every other file so a large
       # frontend tree doesn't pay it once per JS/TS file (issue #1903).
@@ -97,15 +97,133 @@ module Analyzer::Javascript
         next if seen.includes?(key)
         seen << key
 
-        line = m.begin ? content[0...m.begin].count('\n') + 1 : 1
+        match_start = m.begin(0) || m.begin || 0
+        call_start = content.index("this.route", match_start) || match_start
+        line = content[0...call_start].count('\n') + 1
         details = Details.new(PathInfo.new(path, line))
         endpoint = Endpoint.new(url, method, details)
         url.scan(/:(\w+)/) do |pm|
           next unless pm.size > 0
           endpoint.push_param(Param.new(pm[1], "", "path"))
         end
+        attach_js_callees(endpoint, parse_server_route_callees(content, path, call_start)) if include_callee
         result << endpoint
       end
+    end
+
+    private def parse_server_route_callees(content : String, path : String, call_start : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      paren_open = content.index("(", call_start)
+      return [] of Noir::JSCalleeExtractor::Entry unless paren_open
+
+      paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
+      return [] of Noir::JSCalleeExtractor::Entry unless paren_close
+
+      args = split_top_level_args(content, paren_open + 1, paren_close)
+      return [] of Noir::JSCalleeExtractor::Entry if args.size < 3
+
+      callees = [] of Noir::JSCalleeExtractor::Entry
+      args[2..].each do |handler_source, handler_start|
+        callees.concat(handler_callees(handler_source, handler_start, content, path))
+      end
+      callees
+    end
+
+    private def handler_callees(handler_source : String, handler_start : Int32, content : String, path : String) : Array(Noir::JSCalleeExtractor::Entry)
+      if arrow_idx = handler_source.index("=>")
+        body_start = skip_whitespace(content, handler_start + arrow_idx + 2)
+        return [] of Noir::JSCalleeExtractor::Entry if body_start >= content.size
+
+        if content[body_start]? == '{'
+          return block_handler_callees(content, path, body_start)
+        end
+
+        body = content[body_start...(handler_start + handler_source.size)].strip
+        return [] of Noir::JSCalleeExtractor::Entry if body.empty?
+
+        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, body_start), language: javascript_source_language(path))
+      end
+
+      function_idx = handler_source.index(/\bfunction\b/)
+      return [] of Noir::JSCalleeExtractor::Entry unless function_idx
+
+      open_brace = content.index("{", handler_start + function_idx)
+      return [] of Noir::JSCalleeExtractor::Entry unless open_brace
+
+      block_handler_callees(content, path, open_brace)
+    end
+
+    private def block_handler_callees(content : String, path : String, open_brace : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+      return [] of Noir::JSCalleeExtractor::Entry unless close_brace
+
+      body = content[(open_brace + 1)...close_brace]
+      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, open_brace), language: javascript_source_language(path))
+    end
+
+    private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
+      args = [] of Tuple(String, Int32)
+      arg_start = start_pos
+      depth = 0
+      quote : Char? = nil
+      escaped = false
+      i = start_pos
+
+      while i < end_pos
+        char = content[i]
+
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          i += 1
+          next
+        end
+
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when ','
+          if depth == 0
+            args << normalized_arg(content, arg_start, i)
+            arg_start = i + 1
+          end
+        end
+
+        i += 1
+      end
+
+      args << normalized_arg(content, arg_start, end_pos)
+      args
+    end
+
+    private def normalized_arg(content : String, start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
+      start_idx = skip_whitespace(content, start_pos)
+      stop_idx = end_pos
+      while stop_idx > start_idx && content[stop_idx - 1].whitespace?
+        stop_idx -= 1
+      end
+
+      {content[start_idx...stop_idx], start_idx}
+    end
+
+    private def skip_whitespace(content : String, pos : Int32) : Int32
+      i = pos
+      while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    private def line_for_pos(content : String, pos : Int32) : Int32
+      content[0...pos].count('\n') + 1
     end
 
     # Process static directories and add endpoints for each file

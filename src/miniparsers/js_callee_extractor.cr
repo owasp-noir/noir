@@ -96,6 +96,21 @@ module Noir::JSCalleeExtractor
     [] of Entry
   end
 
+  def exported_function_line(source : String,
+                             export_name : String) : Int32?
+    source_for_ast = normalize_handler_source(source)
+    line : Int32? = nil
+    Noir::TreeSitter.parse_javascript(source_for_ast) do |root|
+      if handler = exported_handler(root, root, source_for_ast, export_name, 0)
+        line = Noir::TreeSitter.node_start_row(handler) + 1
+      end
+    end
+
+    line
+  rescue
+    nil
+  end
+
   def callees_for_default_event_handler(source : String,
                                         file_path : String,
                                         *,
@@ -185,8 +200,10 @@ module Noir::JSCalleeExtractor
       route_info = route_info_for_call(node, source)
       if route_info
         method, path, handler = route_info
-        line = Noir::TreeSitter.node_start_row(node) + 1
-        by_route[route_key(method, path, line)] = callees_in_handler(handler, source, file_path, definitions)
+        callees = callees_in_handler(handler, source, file_path, definitions)
+        route_call_lines(node).each do |line|
+          by_route[route_key(method, path, line)] = callees
+        end
       end
     end
 
@@ -691,6 +708,20 @@ module Noir::JSCalleeExtractor
 
     property = Noir::TreeSitter.field(function, "property")
     property ? Noir::TreeSitter.node_text(property, source).downcase : ""
+  end
+
+  private def route_call_lines(call : LibTreeSitter::TSNode) : Array(Int32)
+    lines = [Noir::TreeSitter.node_start_row(call) + 1]
+    function = Noir::TreeSitter.field(call, "function") || first_named_child(call)
+    if function && Noir::TreeSitter.node_type(function) == "member_expression"
+      property = Noir::TreeSitter.field(function, "property")
+      if property
+        property_line = Noir::TreeSitter.node_start_row(property) + 1
+        lines << property_line unless lines.includes?(property_line)
+      end
+    end
+
+    lines
   end
 
   private def arguments_node(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

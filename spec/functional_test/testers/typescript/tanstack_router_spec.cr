@@ -47,3 +47,23 @@ FunctionalTester.new("fixtures/typescript/tanstack_router/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+describe "TanStack Router source attribution" do
+  it "keeps createFileRoute line numbers and skips test/string fixtures" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/typescript/tanstack_router/")])
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    posts = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/posts" }
+    posts.details.code_paths.first.line.should eq(4)
+
+    urls = app.endpoints.map(&.url)
+    urls.should_not contain("/test-only")
+    urls.should_not contain("/snapshot-only")
+    urls.should_not contain("/docs-only")
+  end
+end

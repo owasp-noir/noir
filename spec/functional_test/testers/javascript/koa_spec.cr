@@ -29,6 +29,9 @@ expected_endpoints = [
   Endpoint.new("/strapi/items/:id", "PUT", [
     Param.new("id", "", "path"),
   ]),
+  Endpoint.new("/strapi/items/:id", "DELETE", [
+    Param.new("id", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/javascript/koa/", {
