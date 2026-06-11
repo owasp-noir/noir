@@ -257,17 +257,17 @@ module Noir
       return params if request_names.empty?
 
       request_names.each do |request_name|
-        receiver = Regex.escape(request_name)
+        query_re, first_header_re, header_re = server_request_param_regexes(request_name)
 
-        body.scan(/\b#{receiver}\s*\.\s*queryParam\s*\(\s*"([^"]+)"/) do |match|
+        body.scan(query_re) do |match|
           push_unique_param(params, Param.new(match[1], "", "query"))
         end
 
-        body.scan(/\b#{receiver}\s*\.\s*headers\s*\(\s*\)\s*\.\s*firstHeader\s*\(\s*"([^"]+)"/) do |match|
+        body.scan(first_header_re) do |match|
           push_unique_param(params, Param.new(match[1], "", "header"))
         end
 
-        body.scan(/\b#{receiver}\s*\.\s*header\s*\(\s*"([^"]+)"/) do |match|
+        body.scan(header_re) do |match|
           push_unique_param(params, Param.new(match[1], "", "header"))
         end
       end
@@ -1083,20 +1083,47 @@ module Noir
       names.uniq
     end
 
+    # The receiver names are discovered per handler but draw from a tiny
+    # vocabulary (`request`, `req`, …), so the compiled patterns are
+    # memoized per name/prefix — interpolated literals here would be
+    # recompiled for every handler method.
+    @@server_request_param_regexes = Hash(String, Tuple(Regex, Regex, Regex)).new
+    @@body_type_regexes = Hash(String, Tuple(Regex, Regex, Regex)).new
+
+    private def server_request_param_regexes(request_name : String) : Tuple(Regex, Regex, Regex)
+      @@server_request_param_regexes[request_name] ||= begin
+        receiver = Regex.escape(request_name)
+        {
+          /\b#{receiver}\s*\.\s*queryParam\s*\(\s*"([^"]+)"/,
+          /\b#{receiver}\s*\.\s*headers\s*\(\s*\)\s*\.\s*firstHeader\s*\(\s*"([^"]+)"/,
+          /\b#{receiver}\s*\.\s*header\s*\(\s*"([^"]+)"/,
+        }
+      end
+    end
+
+    private def body_type_regexes(prefix : String) : Tuple(Regex, Regex, Regex)
+      @@body_type_regexes[prefix] ||= {
+        /#{prefix}\.\s*(?:awaitBody|bodyToMono)\s*<\s*([A-Za-z_][A-Za-z0-9_.]*)\s*>/,
+        /#{prefix}\.\s*awaitBodyOrNull\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class/,
+        /#{prefix}\.\s*bodyToMono\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class(?:\.java)?/,
+      }
+    end
+
     private def body_type_names(body : String, request_names : Array(String)? = nil) : Array(String)
       names = [] of String
       receiver = request_names && !request_names.empty? ? "(?:#{request_names.map { |name| Regex.escape(name) }.join("|")})" : nil
       prefix = receiver ? "\\b#{receiver}\\s*" : ""
+      await_body_re, await_body_or_null_re, body_to_mono_re = body_type_regexes(prefix)
 
-      body.scan(/#{prefix}\.\s*(?:awaitBody|bodyToMono)\s*<\s*([A-Za-z_][A-Za-z0-9_.]*)\s*>/) do |match|
+      body.scan(await_body_re) do |match|
         add_type_name(names, match[1])
       end
 
-      body.scan(/#{prefix}\.\s*awaitBodyOrNull\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class/) do |match|
+      body.scan(await_body_or_null_re) do |match|
         add_type_name(names, match[1])
       end
 
-      body.scan(/#{prefix}\.\s*bodyToMono\s*\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*::\s*class(?:\.java)?/) do |match|
+      body.scan(body_to_mono_re) do |match|
         add_type_name(names, match[1])
       end
 

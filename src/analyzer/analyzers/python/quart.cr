@@ -56,6 +56,19 @@ module Analyzer::Python
     WEBSOCKET_ATTRIBUTES = {"websocket" => "GET"}
 
     @file_content_cache = Hash(::String, ::String).new
+
+    # JSON-variable access patterns interpolate a discovered (dynamic but
+    # low-cardinality) identifier, so they can't be hoisted to constants —
+    # memoize them per variable name instead.
+    @json_param_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
+    private def json_param_regexes(json_variable_name : ::String) : Tuple(Regex, Regex)
+      @json_param_regex_cache[json_variable_name] ||= {
+        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\[[rf]?['"]([^'"]*)['"]\]/,
+        /[^a-zA-Z_]#{Regex.escape(json_variable_name)}\.get\([rf]?['"]([^'"]*)['"]/,
+      }
+    end
+
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Bool))).new
     @method_view_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, Array(::String)))).new
@@ -387,8 +400,13 @@ module Analyzer::Python
       ""
     end
 
+    # Constant-only interpolation (DOT_NATION) — hoisted so the per-call
+    # sites don't recompile them.
+    VIEW_FUNC_KWARG_RE  = /view_func\s*=\s*(#{DOT_NATION})(?:\s*,|\s*\)|\s*$)/
+    DOTTED_REFERENCE_RE = /^#{DOT_NATION}$/
+
     private def extract_add_url_rule_function_name(args : ::String) : ::String
-      if view_func_match = args.match(/view_func\s*=\s*(#{DOT_NATION})(?:\s*,|\s*\)|\s*$)/)
+      if view_func_match = args.match(VIEW_FUNC_KWARG_RE)
         return view_func_match[1]
       end
 
@@ -400,7 +418,7 @@ module Analyzer::Python
                  else
                    ""
                  end
-      view_arg.matches?(/^#{DOT_NATION}$/) ? view_arg : ""
+      view_arg.matches?(DOTTED_REFERENCE_RE) ? view_arg : ""
     end
 
     private def resolve_external_function_view(function_ref : ::String,
@@ -611,6 +629,9 @@ module Analyzer::Python
     end
 
     private def find_method_def(lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
+      # Compile once per call; an interpolated literal inside the loop
+      # would be recompiled on every line.
+      method_def_re = /(\s*)(async\s+)?def\s+#{Regex.escape(method_name)}\s*\(/
       i = class_def_index + 1
       while i < lines.size
         line = lines[i]
@@ -618,7 +639,7 @@ module Analyzer::Python
           break if class_match[1].size <= class_indent
         end
 
-        if method_match = line.match(/(\s*)(async\s+)?def\s+#{Regex.escape(method_name)}\s*\(/)
+        if method_match = line.match(method_def_re)
           return i if method_match[1].size > class_indent
         end
         i += 1
@@ -628,8 +649,9 @@ module Analyzer::Python
     end
 
     private def find_function_def(lines : Array(::String), function_name : ::String) : Int32
+      def_re = /^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/
       lines.each_with_index do |line, index|
-        if line.match(/^\s*(?:async\s+)?def\s+#{Regex.escape(function_name)}\s*\(/)
+        if line.match(def_re)
           return index
         end
       end
@@ -734,6 +756,8 @@ module Analyzer::Python
     private def extract_request_params(codeblock_lines : Array(::String)) : Array(Param)
       params = [] of Param
       json_variable_names = [] of ::String
+      # (json-variable regexes are memoized in @json_param_regex_cache —
+      # they interpolate a discovered identifier so they can't be consts.)
 
       codeblock_lines.each do |codeblock_line|
         match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*(?:await\s+)?json\.loads\((?:await\s+)?request\.data/
@@ -753,21 +777,32 @@ module Analyzer::Python
           if matches.size == 0
             matches = codeblock_line.scan(get_re)
           end
-          if matches.size == 0
-            noir_param_type = "json"
-            json_variable_names.each do |json_variable_name|
-              matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\[[rf]?['"]([^'"]*)['"]\]/)
-              if matches.size == 0
-                matches = codeblock_line.scan(/[^a-zA-Z_]#{json_variable_name}\.get\([rf]?['"]([^'"]*)['"]/)
-              end
-              break if matches.size > 0
-            end
-          end
 
           matches.each do |parameter_match|
             next if parameter_match.size != 2
             params << Param.new(parameter_match[1], "", noir_param_type)
           end
+        end
+
+        # JSON dict access on the variables found above. This used to run
+        # inside the field-pattern loop (once per missed field — i.e.
+        # effectively per field per line), recompiling two interpolated
+        # regexes each time and appending the same matches repeatedly;
+        # `get_filtered_params` deduplicates by (name, param_type), so
+        # scanning once per line is output-identical.
+        json_variable_names.each do |json_variable_name|
+          bracket_json_re, get_json_re = json_param_regexes(json_variable_name)
+          matches = codeblock_line.scan(bracket_json_re)
+          if matches.size == 0
+            matches = codeblock_line.scan(get_json_re)
+          end
+          next if matches.size == 0
+
+          matches.each do |parameter_match|
+            next if parameter_match.size != 2
+            params << Param.new(parameter_match[1], "", "json")
+          end
+          break
         end
       end
 

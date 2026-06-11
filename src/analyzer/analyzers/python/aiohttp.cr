@@ -91,6 +91,20 @@ module Analyzer::Python
       @alias_route_origin_regex_cache[alias_name] ||= /^\s*#{Regex.escape(alias_name)}\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/
     end
 
+    # `<var>["key"]` / `<var>.get("key")` access patterns for variables
+    # bound to `await request.json()` / `await request.post()`. The
+    # variable name is discovered (dynamic but low-cardinality), so the
+    # compiled pair is memoized per name instead of being rebuilt per
+    # handler body.
+    @body_var_access_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
+    private def body_var_access_regexes(var : ::String) : Tuple(Regex, Regex)
+      @body_var_access_regex_cache[var] ||= {
+        /[^a-zA-Z_]#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/,
+        /[^a-zA-Z_]#{Regex.escape(var)}\.get\s*\(\s*['"]([^'"]+)['"]/,
+      }
+    end
+
     def analyze
       handler_routes = Hash(::String, Array(Tuple(::String, ::String, Int32, ::String))).new
       # path => [{route_path, http_method, line_index, handler_name}]
@@ -957,10 +971,11 @@ module Analyzer::Python
         end
 
         json_vars.each do |var|
-          body.scan(/[^a-zA-Z_]#{var}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+          bracket_re, get_re = body_var_access_regexes(var)
+          body.scan(bracket_re) do |m|
             record.call(m[1], "json")
           end
-          body.scan(/[^a-zA-Z_]#{var}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          body.scan(get_re) do |m|
             record.call(m[1], "json")
           end
         end
@@ -978,10 +993,11 @@ module Analyzer::Python
         end
 
         form_vars.each do |var|
-          body.scan(/[^a-zA-Z_]#{var}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+          bracket_re, get_re = body_var_access_regexes(var)
+          body.scan(bracket_re) do |m|
             record.call(m[1], "form")
           end
-          body.scan(/[^a-zA-Z_]#{var}\.get\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          body.scan(get_re) do |m|
             record.call(m[1], "form")
           end
         end

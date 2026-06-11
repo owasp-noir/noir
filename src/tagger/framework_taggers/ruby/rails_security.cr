@@ -190,11 +190,16 @@ class RailsSecurityTagger < FrameworkTagger
   # Detect the action across the symbol/string/`%i[]`/`%w[]` filter forms:
   #   only: :create | only: [:create, :update] | only: %i[create update]
   #   except: "create" | except: ["create"]
+  # Memoized per action name — this runs per macro line per action, and
+  # an interpolated literal would recompile the pattern on every check.
+  @action_token_regexes = Hash(String, Regex).new
+
   private def action_in_filter?(line : String, action_name : String?) : Bool
     return false if action_name.nil?
     # Whole-token match (symbol/quote prefix + delimiter) so action `create`
     # is NOT matched by `:create_comment` / `except: [:show_all]`.
-    return true if line.matches?(/(?::|"|')#{Regex.escape(action_name)}(?:"|'|,|\s|\]|\)|$)/)
+    action_re = @action_token_regexes[action_name] ||= /(?::|"|')#{Regex.escape(action_name)}(?:"|'|,|\s|\]|\)|$)/
+    return true if line.matches?(action_re)
     if m = line.match(/%[iIwW]\[([^\]]*)\]/)
       return m[1].split.includes?(action_name)
     end

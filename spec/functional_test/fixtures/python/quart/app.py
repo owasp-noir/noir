@@ -76,6 +76,15 @@ class DispatchReportView(View):
         return jsonify({"owner": owner})
 
 
+@app.route("/sync-update", methods=["POST"])
+async def sync_update():
+    body = await request.get_json()
+    # field access and json-variable access on the SAME line — locks the
+    # once-per-line json fallback in extract_request_params
+    page = request.args["page"] if body["name"] else None
+    return {"page": page}
+
+
 @app.websocket("/ws")
 async def ws():
     while True:

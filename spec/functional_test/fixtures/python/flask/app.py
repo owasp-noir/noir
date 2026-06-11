@@ -84,6 +84,14 @@ def json_sample():
 
     return jsonify(data), 200
 
+@app.route('/update_record', methods=['POST'])
+def update_record():
+    record = request.get_json()
+    # field access and json-variable access on the SAME line — locks the
+    # once-per-line json fallback in extract_request_params
+    page = request.args['page'] if record['name'] else None
+    return jsonify(record)
+
 @app.route('/')
 def index():
     return render_template('index.html')

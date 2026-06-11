@@ -251,10 +251,17 @@ class SpringSecurityTagger < FrameworkTagger
     statements
   end
 
+  # Call-name and ant-pattern regexes interpolate low-cardinality dynamic
+  # strings; memoize them so per-statement / per-URL checks don't
+  # recompile a PCRE2 pattern each time.
+  @origin_call_regexes = Hash(String, Regex).new
+  @ant_pattern_regexes = Hash(String, Regex).new
+
   private def wildcard_origin_call?(stmt : String, call_names : Array(String)) : Bool
     call_names.any? do |call_name|
+      call_re = @origin_call_regexes[call_name] ||= /#{Regex.escape(call_name)}\s*\(([^)]*)\)/
       wildcard = false
-      stmt.scan(/#{call_name}\s*\(([^)]*)\)/) do |m|
+      stmt.scan(call_re) do |m|
         args = m[1]
         wildcard = true if args.includes?("\"*\"") || args.includes?("'*'")
       end
@@ -448,10 +455,13 @@ class SpringSecurityTagger < FrameworkTagger
   # Ant-style pattern match (`/**` → any depth, `*` → one segment), prefix
   # anchored like spring_auth so `/api/**` matches `/api/posts/1`.
   private def matches_ant_pattern?(url : String, pattern : String) : Bool
-    regex_str = pattern.gsub("**", "DOUBLE_STAR")
-      .gsub("*", "[^/]*")
-      .gsub("DOUBLE_STAR", ".*")
-    url.matches?(/^#{regex_str}/)
+    ant_re = @ant_pattern_regexes[pattern] ||= begin
+      regex_str = pattern.gsub("**", "DOUBLE_STAR")
+        .gsub("*", "[^/]*")
+        .gsub("DOUBLE_STAR", ".*")
+      /^#{regex_str}/
+    end
+    url.matches?(ant_re)
   rescue ex
     @logger.debug "SpringSecurityTagger: failed to match ant pattern '#{pattern}': #{ex.message}"
     false

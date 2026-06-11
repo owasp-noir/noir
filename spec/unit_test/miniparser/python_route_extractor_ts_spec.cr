@@ -21,6 +21,7 @@ describe Noir::TreeSitterPythonRouteExtractor do
       {"/get_ip", ["GET"], "json_sample"},
       {"/login", ["POST"], "login_sample"},
       {"/sign", ["GET", "POST"], "sign_sample"},
+      {"/update_record", ["POST"], "update_record"},
     ])
 
     decos.each(&.router_name.should eq("app"))
