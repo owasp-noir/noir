@@ -27,20 +27,26 @@ module Analyzer::Typescript
 
       parallel_file_scan([".js", ".ts", ".jsx", ".tsx", ".cts", ".mts", ".cjs", ".mjs"]) do |path|
         begin
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            raw = file.gets_to_end
-            content = Noir::JSRouteExtractor.strip_js_comments(raw)
-            base_path = configured_base_for(path)
-            collected = collect_routers(content, path, base_path)
-            unless collected.empty?
-              routers_mu.synchronize do
-                collected.each { |r| routers[router_key(r)] = r }
-              end
+          next if trpc_test_fixture_path?(path)
+
+          raw = read_file_content(path)
+          next unless trpc_candidate?(raw)
+          next if Noir::JSRouteExtractor.test_stub_only?(path, raw)
+
+          content = Noir::JSRouteExtractor.strip_js_comments(raw)
+          next unless trpc_candidate?(content)
+
+          literal_mask = string_literal_mask(content)
+          base_path = configured_base_for(path)
+          collected = collect_routers(content, path, base_path, literal_mask)
+          unless collected.empty?
+            routers_mu.synchronize do
+              collected.each { |r| routers[router_key(r)] = r }
             end
-            if found = extract_prefix(content)
-              prefix_mu.synchronize do
-                url_prefixes[base_path] = found
-              end
+          end
+          if found = extract_prefix(content, literal_mask)
+            prefix_mu.synchronize do
+              url_prefixes[base_path] = found
             end
           end
         rescue e
@@ -72,6 +78,89 @@ module Analyzer::Typescript
       result
     end
 
+    ROUTER_HINTS = [
+      "router(",
+      "router (",
+      "createTRPCRouter",
+    ]
+
+    PROCEDURE_HINTS = [
+      ".query(",
+      ".query (",
+      ".mutation(",
+      ".mutation (",
+      ".subscription(",
+      ".subscription (",
+    ]
+
+    PREFIX_HINTS = [
+      "endpoint:",
+      "createExpressMiddleware",
+      "createKoaMiddleware",
+      "fastifyTRPCPlugin",
+      "fastifyTRPC",
+    ]
+
+    private def trpc_candidate?(content : String) : Bool
+      content.matches?(/endpoint\s*:/) ||
+        PREFIX_HINTS.any? { |hint| content.includes?(hint) } ||
+        (ROUTER_HINTS.any? { |hint| content.includes?(hint) } &&
+          PROCEDURE_HINTS.any? { |hint| content.includes?(hint) })
+    end
+
+    TEST_FIXTURE_PATH_MARKERS = [
+      "/test/",
+      "/tests/",
+      "/__tests__/",
+      "/e2e/",
+      "/snapshots/",
+      "/test-files/",
+    ]
+
+    private def trpc_test_fixture_path?(path : String) : Bool
+      TEST_FIXTURE_PATH_MARKERS.any? { |marker| path.includes?(marker) } ||
+        path.includes?(".test.") ||
+        path.includes?(".spec.")
+    end
+
+    private def string_literal_mask(content : String) : Array(Bool)
+      mask = Array(Bool).new(content.bytesize, false)
+      i = 0
+
+      while i < content.bytesize
+        byte = content.byte_at(i)
+        if byte == '\''.ord || byte == '"'.ord || byte == '`'.ord
+          quote = byte
+          mask[i] = true
+          i += 1
+
+          while i < content.bytesize
+            current = content.byte_at(i)
+            mask[i] = true
+
+            if current == '\\'.ord && i + 1 < content.bytesize
+              i += 1
+              mask[i] = true
+            elsif current == quote
+              i += 1
+              break
+            end
+
+            i += 1
+          end
+        else
+          i += 1
+        end
+      end
+
+      mask
+    end
+
+    private def literal_position?(literal_mask : Array(Bool), pos : Int32?) : Bool
+      return false unless pos
+      pos < literal_mask.size && literal_mask[pos]
+    end
+
     private def router_key(router : Router) : RouterKey
       router_key(router.base_path, router.name)
     end
@@ -80,7 +169,7 @@ module Analyzer::Typescript
       {base_path, name}
     end
 
-    private def collect_routers(content : String, path : String, base_path : String) : Array(Router)
+    private def collect_routers(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
       collected = [] of Router
       # Capture `(export )? (const|let|var) NAME = <prefix>?(router|createTRPCRouter)({...})`.
       # Prefix tolerates `t.router(`, `initTRPC.create().router(`, `_.router(` etc.
@@ -88,6 +177,8 @@ module Analyzer::Typescript
 
       content.scan(pattern) do |match|
         match_start = match.begin(0) || 0
+        next if literal_position?(literal_mask, match_start)
+
         match_end = match.end(0) || 0
         next if match_end == 0
 
@@ -106,7 +197,9 @@ module Analyzer::Typescript
 
       content.scan(identifier_arg_pattern) do |match|
         match_start = match.begin(0) || 0
-        body_info = extract_object_assignment_body(content, match[2])
+        next if literal_position?(literal_mask, match_start)
+
+        body_info = extract_object_assignment_body(content, match[2], literal_mask)
         next unless body_info
 
         body, object_line = body_info
@@ -117,13 +210,15 @@ module Analyzer::Typescript
       collected
     end
 
-    private def extract_object_assignment_body(content : String, identifier : String) : Tuple(String, Int32)?
+    private def extract_object_assignment_body(content : String, identifier : String, literal_mask : Array(Bool)) : Tuple(String, Int32)?
       pattern = cached_regex("trpc:object_assign:#{identifier}") do
         /\b(?:export\s+)?(?:const|let|var)\s+#{Regex.escape(identifier)}(?:\s*:[^=]+)?\s*=\s*\{/
       end
 
       content.scan(pattern) do |match|
         match_start = match.begin(0) || 0
+        next if literal_position?(literal_mask, match_start)
+
         match_end = match.end(0) || 0
         next if match_end == 0
 
@@ -141,19 +236,22 @@ module Analyzer::Typescript
       nil
     end
 
-    private def extract_prefix(content : String) : String?
+    private def extract_prefix(content : String, literal_mask : Array(Bool)) : String?
       # Explicit endpoint option in fetch/openapi handlers.
-      if m = content.match(/endpoint\s*:\s*['"`]([^'"`]+)['"`]/)
+      content.scan(/endpoint\s*:\s*['"`]([^'"`]+)['"`]/) do |m|
+        next if literal_position?(literal_mask, m.begin(0))
         return m[1]
       end
 
       # Express/Koa-style mounting: `app.use('/api/trpc', trpcExpress.createExpressMiddleware(...))`.
-      if m = content.match(/\.\s*use\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*[^)]*?(?:trpcExpress\.createExpressMiddleware|createExpressMiddleware|createKoaMiddleware)/m)
+      content.scan(/\.\s*use\s*\(\s*['"`]([^'"`]+)['"`]\s*,\s*[^)]*?(?:trpcExpress\.createExpressMiddleware|createExpressMiddleware|createKoaMiddleware)/m) do |m|
+        next if literal_position?(literal_mask, m.begin(0))
         return m[1]
       end
 
       # Fastify plugin: `fastify.register(fastifyTRPCPlugin, { prefix: '/api/trpc' })`.
-      if m = content.match(/(?:fastifyTRPCPlugin|fastifyTRPC)\b[^)]*?prefix\s*:\s*['"`]([^'"`]+)['"`]/m)
+      content.scan(/(?:fastifyTRPCPlugin|fastifyTRPC)\b[^)]*?prefix\s*:\s*['"`]([^'"`]+)['"`]/m) do |m|
+        next if literal_position?(literal_mask, m.begin(0))
         return m[1]
       end
 
@@ -315,11 +413,11 @@ module Analyzer::Typescript
         dotted = prefix_dotted.empty? ? key : "#{prefix_dotted}.#{key}"
         base = url_prefix.empty? ? "/" : url_prefix.chomp('/')
         url = "#{base}/#{dotted}"
+        procedure_line = router.line + value_line - 1
         endpoint = Endpoint.new(url, method)
-        endpoint.details = Details.new(PathInfo.new(router.file, router.line))
+        endpoint.details = Details.new(PathInfo.new(router.file, procedure_line))
 
         attach_input_params(value, method, endpoint)
-        procedure_line = router.line + value_line - 1
         attach_procedure_callees(value, router.file, procedure_line, endpoint) if callees_needed?
 
         result << endpoint

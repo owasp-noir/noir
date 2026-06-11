@@ -79,15 +79,18 @@ module Analyzer::Javascript
         verbs = detect_verbs(is_page, has_loader, has_action)
         next if verbs.empty?
 
+        loader_line = has_loader ? exported_handler_line(content, "loader") : nil
+        action_line = has_action ? exported_handler_line(content, "action") : nil
         loader_callees = include_callee && has_loader ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "loader") : nil
         action_callees = include_callee && has_action ? Noir::JSCalleeExtractor.callees_for_exported_function(content, path, "action") : nil
 
         endpoints = verbs.map do |verb|
-          endpoint = build_endpoint(url, verb, path)
+          endpoint_line = verb == "GET" ? (loader_line || 1) : (action_line || 1)
+          endpoint = build_endpoint(url, verb, path, endpoint_line)
           if include_callee
             callees = verb == "GET" ? loader_callees : action_callees
-            callees.try &.each do |name, callee_path, line|
-              endpoint.push_callee(Callee.new(name, path: callee_path, line: line))
+            callees.try &.each do |name, callee_path, callee_line|
+              endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
             end
           end
           endpoint
@@ -101,9 +104,9 @@ module Analyzer::Javascript
       result
     end
 
-    private def build_endpoint(url : String, verb : String, path : String) : Endpoint
+    private def build_endpoint(url : String, verb : String, path : String, line : Int32 = 1) : Endpoint
       endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, 1))
+      endpoint.details = Details.new(PathInfo.new(path, line))
       url.scan(/\{(\w+)\}/) do |match|
         endpoint.push_param(Param.new(match[1], "", "path"))
       end
@@ -171,6 +174,53 @@ module Analyzer::Javascript
       content.matches?(cached_regex("remix:export_fn:#{name}") { /export\s+(?:async\s+)?function\s+#{name}\b/ }) ||
         content.matches?(cached_regex("remix:export_const:#{name}") { /export\s+(?:const|let|var)\s+#{name}\b\s*(?::[^=]+)?=/ }) ||
         content.matches?(cached_regex("remix:export_brace:#{name}") { /export\s+\{\s*[^}]*\b#{name}\b[^}]*\}/ })
+    end
+
+    private def exported_handler_line(content : String, name : String) : Int32?
+      if match = content.match(cached_regex("remix:line_export_fn:#{name}") { /export\s+(?:async\s+)?function\s+#{Regex.escape(name)}\b/ })
+        return line_for_match(content, match)
+      end
+
+      if match = content.match(cached_regex("remix:line_export_const:#{name}") { /export\s+(?:const|let|var)\s+#{Regex.escape(name)}\b\s*(?::[^=]+)?=/ })
+        return line_for_match(content, match)
+      end
+
+      if local_name = exported_alias_for(content, name)
+        named_handler_line(content, local_name)
+      end
+    end
+
+    private def exported_alias_for(content : String, exported_name : String) : String?
+      content.scan(/export\s+\{\s*([^}]+)\}/) do |match|
+        match[1].split(",").each do |part|
+          pieces = part.strip.split(/\s+as\s+/)
+          next if pieces.empty?
+
+          if pieces.size == 1
+            local_name = pieces[0].strip
+            return local_name if local_name == exported_name
+          elsif pieces.size == 2
+            local_name = pieces[0].strip
+            alias_name = pieces[1].strip
+            return local_name if alias_name == exported_name
+          end
+        end
+      end
+    end
+
+    private def named_handler_line(content : String, name : String) : Int32?
+      if match = content.match(cached_regex("remix:line_named_fn:#{name}") { /\b(?:async\s+)?function\s+#{Regex.escape(name)}\b/ })
+        return line_for_match(content, match)
+      end
+
+      if match = content.match(cached_regex("remix:line_named_const:#{name}") { /\b(?:const|let|var)\s+#{Regex.escape(name)}\b\s*(?::[^=]+)?=/ })
+        line_for_match(content, match)
+      end
+    end
+
+    private def line_for_match(content : String, match : Regex::MatchData) : Int32
+      start = match.begin(0) || 0
+      content.to_slice[0, start].count('\n'.ord.to_u8) + 1
     end
   end
 end

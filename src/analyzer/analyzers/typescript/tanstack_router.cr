@@ -26,31 +26,66 @@ module Analyzer::Typescript
     end
 
     private def analyze_tanstack_file(path : String, result : Array(Endpoint))
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        raw = file.gets_to_end
-        # Comments can hold stale routes; drop them so a commented-out
-        # `createFileRoute('/old')` doesn't get reported.
-        content = Noir::JSRouteExtractor.strip_js_comments(raw)
+      return if tanstack_test_fixture_path?(path)
 
-        # Extract routes from createFileRoute
-        analyze_file_routes(content, path, result)
+      raw = read_file_content(path)
+      return unless tanstack_route_candidate?(raw)
+      return if Noir::JSRouteExtractor.test_stub_only?(path, raw)
 
-        # Extract code-based route trees from createRoute
-        analyze_create_routes(content, path, result)
+      # Comments can hold stale routes; drop them so a commented-out
+      # `createFileRoute('/old')` doesn't get reported.
+      content = Noir::JSRouteExtractor.strip_js_comments(raw)
+      return unless tanstack_route_candidate?(content)
 
-        # Extract routes from createLazyFileRoute
-        analyze_lazy_file_routes(content, path, result)
-      end
+      literal_mask = string_literal_mask(content)
+
+      # Extract routes from createFileRoute
+      analyze_file_routes(content, path, result, literal_mask)
+
+      # Extract code-based route trees from createRoute
+      analyze_create_routes(content, path, result, literal_mask)
+
+      # Extract routes from createLazyFileRoute
+      analyze_lazy_file_routes(content, path, result, literal_mask)
     rescue e : Exception
       logger.debug "Error analyzing TanStack Router file #{path}: #{e.message}"
     end
 
-    private def analyze_file_routes(content : String, path : String, result : Array(Endpoint))
+    ROUTE_CONSTRUCTOR_HINTS = [
+      "createFileRoute",
+      "createLazyFileRoute",
+      "createRoute",
+      "createRootRoute",
+      "createRootRouteWithContext",
+    ]
+
+    private def tanstack_route_candidate?(content : String) : Bool
+      ROUTE_CONSTRUCTOR_HINTS.any? { |hint| content.includes?(hint) }
+    end
+
+    TEST_FIXTURE_PATH_MARKERS = [
+      "/test/",
+      "/tests/",
+      "/__tests__/",
+      "/e2e/",
+      "/snapshots/",
+      "/test-files/",
+    ]
+
+    private def tanstack_test_fixture_path?(path : String) : Bool
+      TEST_FIXTURE_PATH_MARKERS.any? { |marker| path.includes?(marker) } ||
+        path.includes?(".test.") ||
+        path.includes?(".spec.")
+    end
+
+    private def analyze_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))
       # Pattern for createFileRoute('/path')
       # Example: export const Route = createFileRoute('/posts/$postId')()
       file_route_pattern = /createFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/
 
       content.scan(file_route_pattern) do |match|
+        next if literal_position?(literal_mask, match.begin(0))
+
         if match.size > 0
           route_path = match[1]
           next if pathless_only_route?(route_path)
@@ -58,7 +93,7 @@ module Analyzer::Typescript
           # Convert TanStack Router path params ($param) to standard format (:param)
           normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path)
+          endpoint = create_endpoint(normalized_path, "GET", path, match.begin(0) || 0, content)
           extract_path_parameters(normalized_path, endpoint)
           extract_search_params(content, endpoint)
           attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
@@ -67,19 +102,21 @@ module Analyzer::Typescript
       end
     end
 
-    private def analyze_lazy_file_routes(content : String, path : String, result : Array(Endpoint))
+    private def analyze_lazy_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))
       # Pattern for createLazyFileRoute('/path')
       # Example: export const Route = createLazyFileRoute('/posts/$postId')()
       lazy_file_route_pattern = /createLazyFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/
 
       content.scan(lazy_file_route_pattern) do |match|
+        next if literal_position?(literal_mask, match.begin(0))
+
         if match.size > 0
           route_path = match[1]
           next if pathless_only_route?(route_path)
 
           normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path)
+          endpoint = create_endpoint(normalized_path, "GET", path, match.begin(0) || 0, content)
           extract_path_parameters(normalized_path, endpoint)
           extract_search_params(content, endpoint)
           attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
@@ -88,8 +125,8 @@ module Analyzer::Typescript
       end
     end
 
-    private def analyze_create_routes(content : String, path : String, result : Array(Endpoint))
-      routes = extract_code_routes(content)
+    private def analyze_create_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))
+      routes = extract_code_routes(content, literal_mask)
       unless routes.empty?
         route_map = Hash(String, CodeRoute).new
         routes.each { |route| route_map[route.name] = route }
@@ -112,6 +149,8 @@ module Analyzer::Typescript
       root_route_pattern = /createRootRoute(?:WithContext(?:\s*<[^>]+>)?\s*\(\s*\))?\s*\(\s*\{[^}]*path\s*:\s*['"`]([^'"`]+)['"`][^}]*\}/
 
       content.scan(root_route_pattern) do |match|
+        next if literal_position?(literal_mask, match.begin(0))
+
         if match.size > 0
           route_path = match[1]
           normalized_path = normalize_path(route_path)
@@ -124,12 +163,14 @@ module Analyzer::Typescript
       end
     end
 
-    private def extract_code_routes(content : String) : Array(CodeRoute)
+    private def extract_code_routes(content : String, literal_mask : Array(Bool)) : Array(CodeRoute)
       routes = [] of CodeRoute
       assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*createRoute\s*\(/
 
       content.scan(assignment_pattern) do |match|
         start_pos = match.begin(0)
+        next if literal_position?(literal_mask, start_pos)
+
         open_paren = match.end(0).try { |idx| content.rindex('(', idx - 1) }
         next unless start_pos && open_paren
 
@@ -145,6 +186,44 @@ module Analyzer::Typescript
       end
 
       routes
+    end
+
+    private def string_literal_mask(content : String) : Array(Bool)
+      mask = Array(Bool).new(content.bytesize, false)
+      i = 0
+
+      while i < content.bytesize
+        byte = content.byte_at(i)
+        if byte == '\''.ord || byte == '"'.ord || byte == '`'.ord
+          quote = byte
+          mask[i] = true
+          i += 1
+
+          while i < content.bytesize
+            current = content.byte_at(i)
+            mask[i] = true
+
+            if current == '\\'.ord && i + 1 < content.bytesize
+              i += 1
+              mask[i] = true
+            elsif current == quote
+              i += 1
+              break
+            end
+
+            i += 1
+          end
+        else
+          i += 1
+        end
+      end
+
+      mask
+    end
+
+    private def literal_position?(literal_mask : Array(Bool), pos : Int32?) : Bool
+      return false unless pos
+      pos < literal_mask.size && literal_mask[pos]
     end
 
     private def extract_string_property(block : String, property : String) : String?

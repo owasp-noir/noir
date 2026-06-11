@@ -77,16 +77,17 @@ module Analyzer::Javascript
       sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
       methods = detect_pages_router_methods(sanitized)
-      default_body_info = include_callee ? extract_default_export_body(content) : nil
+      default_body_info = extract_default_export_body(content)
+      default_source_line = default_body_info.try(&.[1]) || 1
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
-        endpoint.details = Details.new(PathInfo.new(path, 1))
+        body_info = extract_exported_method_body(content, method) || default_body_info
+        endpoint.details = Details.new(PathInfo.new(path, body_info.try(&.[1]) || default_source_line))
 
         extract_path_params(url, endpoint)
         extract_pages_router_params(sanitized, endpoint)
         if include_callee
-          body_info = extract_exported_method_body(content, method) || default_body_info
           attach_callees(endpoint, path, body_info) if body_info
         end
 
@@ -133,15 +134,15 @@ module Analyzer::Javascript
 
       methods.each do |method|
         endpoint = Endpoint.new(url, method)
-        endpoint.details = Details.new(PathInfo.new(path, 1))
-        body_info = include_callee ? extract_exported_method_body(content, method) : nil
+        method_body_info = extract_exported_method_body(content, method)
+        endpoint.details = Details.new(PathInfo.new(path, method_body_info.try(&.[1]) || 1))
         param_body_info = extract_exported_method_body(sanitized, method)
         param_source = param_body_info.try(&.[0]) || sanitized
 
         extract_path_params(url, endpoint)
         extract_app_router_params(param_source, endpoint)
         if include_callee
-          attach_callees(endpoint, path, body_info) if body_info
+          attach_callees(endpoint, path, method_body_info) if method_body_info
         end
 
         mutex.synchronize { result << endpoint }
@@ -195,7 +196,7 @@ module Analyzer::Javascript
       url = "/" + action_name
       endpoint = Endpoint.new(url, "POST")
       endpoint.kind = "server-action"
-      endpoint.details = Details.new(PathInfo.new(path, 1))
+      endpoint.details = Details.new(PathInfo.new(path, param_body_info.try(&.[1]) || line_for_index(sanitized, match.begin(0) || 0)))
 
       extract_server_action_params(args, body, endpoint)
       attach_callees(endpoint, path, callee_body_info) if include_callee && callee_body_info

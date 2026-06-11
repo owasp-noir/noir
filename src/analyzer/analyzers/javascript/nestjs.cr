@@ -113,27 +113,25 @@ module Analyzer::Javascript
     end
 
     private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(GlobalPrefixConfig), global_prefix_mutex : Mutex)
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
+      content = read_file_content(path)
 
-        collect_static_paths(path, content, static_dirs, :nestjs)
-        collect_static_paths(path, content, static_dirs, :express) if nestjs_bootstrap_source?(content)
+      collect_static_paths(path, content, static_dirs, :nestjs)
+      collect_static_paths(path, content, static_dirs, :express) if nestjs_bootstrap_source?(content)
 
-        # Strip JS/TS comments so commented-out decorators
-        # (e.g. `// @Get('/old')`) don't generate phantom routes.
-        sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
+      # Strip JS/TS comments so commented-out decorators
+      # (e.g. `// @Get('/old')`) don't generate phantom routes.
+      sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
-        # `app.setGlobalPrefix('api')` in a bootstrap file scopes
-        # every controller below it. Record it now; apply once after
-        # all files have been parsed.
-        if prefix = extract_global_prefix_config(sanitized)
-          global_prefix_mutex.synchronize do
-            global_prefix_holder << prefix if global_prefix_holder.empty?
-          end
+      # `app.setGlobalPrefix('api')` in a bootstrap file scopes
+      # every controller below it. Record it now; apply once after
+      # all files have been parsed.
+      if prefix = extract_global_prefix_config(sanitized)
+        global_prefix_mutex.synchronize do
+          global_prefix_holder << prefix if global_prefix_holder.empty?
         end
-
-        analyze_nestjs_controllers(sanitized, path, result, include_callee)
       end
+
+      analyze_nestjs_controllers(sanitized, path, result, include_callee)
     rescue e : Exception
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
     end

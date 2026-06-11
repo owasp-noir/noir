@@ -6,7 +6,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       parallel_file_scan do |path|
         begin
@@ -15,9 +15,9 @@ module Analyzer::Javascript
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
-            # Add file location details
-            details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-            endpoint.details = details
+            if endpoint.details.code_paths.empty?
+              endpoint.details = Details.new(PathInfo.new(path))
+            end
 
             # Parse path parameters from the URL path itself
             if endpoint.url.includes?(":")
@@ -61,130 +61,128 @@ module Analyzer::Javascript
 
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
       # Original regex-based analysis as a fallback
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        last_endpoint = Endpoint.new("", "")
-        server_var_names = [] of String
-        router_var_names = [] of String
-        router_base_paths = {} of String => String
-        current_router_base = ""
-        current_router_var = ""
-        file_content = file.gets_to_end
+      last_endpoint = Endpoint.new("", "")
+      server_var_names = [] of String
+      router_var_names = [] of String
+      router_base_paths = {} of String => String
+      current_router_base = ""
+      current_router_var = ""
+      file_content = read_file_content(path)
 
-        collect_static_paths(path, file_content, static_dirs, :restify)
+      collect_static_paths(path, file_content, static_dirs, :restify)
 
-        # First scan for server and router variable declarations
-        file_content.each_line do |line|
-          # Detect Restify server creation
-          if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*restify\.createServer/
-            server_var_names << $1
-          end
+      # First scan for server and router variable declarations
+      file_content.each_line do |line|
+        # Detect Restify server creation
+        if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*restify\.createServer/
+          server_var_names << $1
+        end
 
-          # Detect router initialization - improved to catch more router variable patterns
-          if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:new\s+)?(?:restify\.)?Router/
+        # Detect router initialization - improved to catch more router variable patterns
+        if line =~ /(?:const|let|var)\s+(\w+)\s*=\s*(?:new\s+)?(?:restify\.)?Router/
+          router_var_names << $1
+          current_router_var = $1
+        end
+
+        # Also detect variables with Router in the name
+        if line =~ /(?:const|let|var)\s+(\w+Router)\s*=/
+          unless router_var_names.includes?($1)
             router_var_names << $1
-            current_router_var = $1
-          end
-
-          # Also detect variables with Router in the name
-          if line =~ /(?:const|let|var)\s+(\w+Router)\s*=/
-            unless router_var_names.includes?($1)
-              router_var_names << $1
-            end
-          end
-
-          # Detect router mounting with use
-          if line =~ /\.use\s*\(\s*['"]([^'"]+)['"]/
-            current_router_base = $1
-          end
-
-          # Detect applyRoutes with base path - improved pattern matching
-          if line =~ /(\w+)\.applyRoutes\s*\(\s*(\w+)(?:\s*,\s*['"]([^'"]+)['"])?/
-            router_var = $1
-            # server_var = $2
-            base_path = $3 || ""
-
-            if router_var_names.includes?(router_var)
-              router_base_paths[router_var] = base_path
-            end
           end
         end
 
-        # Special handling for function-based route definitions
-        function_routes = extract_function_routes(file_content, server_var_names)
-        function_routes.each do |endpoint|
-          details = Details.new(PathInfo.new(path, 1))
-          endpoint.details = details
-
-          # Extract path parameters from the URL
-          if endpoint.url.includes?(":")
-            endpoint.url.scan(/:(\w+)/) do |m|
-              if m.size > 0
-                param = Param.new(m[1], "", "path")
-                endpoint.push_param(param)
-              end
-            end
-          end
-
-          result << endpoint
+        # Detect router mounting with use
+        if line =~ /\.use\s*\(\s*['"]([^'"]+)['"]/
+          current_router_base = $1
         end
 
-        # Now process the file line by line for endpoints
-        file_content.each_line.with_index do |line, index|
-          endpoint = line_to_endpoint(line, server_var_names, router_var_names)
+        # Detect applyRoutes with base path - improved pattern matching
+        if line =~ /(\w+)\.applyRoutes\s*\(\s*(\w+)(?:\s*,\s*['"]([^'"]+)['"])?/
+          router_var = $1
+          # server_var = $2
+          base_path = $3 || ""
 
-          unless endpoint.method.empty?
-            # Store the variable this endpoint is associated with
-            endpoint_var = extract_endpoint_var(line)
-
-            # Apply base paths from applyRoutes if applicable
-            if !endpoint_var.empty? && router_base_paths.has_key?(endpoint_var)
-              base_path = router_base_paths[endpoint_var]
-              # Ensure proper path joining
-              unless base_path.empty?
-                if endpoint.url.starts_with?("/") && base_path.ends_with?("/")
-                  endpoint.url = "#{base_path[0..-2]}#{endpoint.url}"
-                elsif !endpoint.url.starts_with?("/") && !base_path.ends_with?("/")
-                  endpoint.url = "#{base_path}/#{endpoint.url}"
-                else
-                  endpoint.url = "#{base_path}#{endpoint.url}"
-                end
-              end
-              # Apply current router base if this is a generic router endpoint
-            elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
-              endpoint.url = "#{current_router_base}/#{endpoint.url}"
-            elsif !current_router_base.empty? && endpoint.url != "/" && !endpoint.url.starts_with?(current_router_base)
-              endpoint.url = "#{current_router_base}#{endpoint.url}"
-            end
-
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint.details = details
-            result << endpoint
-            last_endpoint = endpoint
-          end
-
-          # Extract parameters from the URL path itself
-          if !last_endpoint.method.empty? && !last_endpoint.url.empty? && last_endpoint.url.includes?(":")
-            last_endpoint.url.scan(/:(\w+)/) do |m|
-              if m.size > 0
-                param = Param.new(m[1], "", "path")
-                last_endpoint.push_param(param)
-              end
-            end
-          end
-
-          # Get parameters from line
-          param = line_to_param(line)
-          unless param.name.empty? || last_endpoint.method.empty?
-            last_endpoint.push_param(param)
+          if router_var_names.includes?(router_var)
+            router_base_paths[router_var] = base_path
           end
         end
-
-        # After processing all lines, look for router patterns we might have missed
-        scan_for_router_endpoints(file_content, result, path, router_var_names, router_base_paths)
-
-        # Directly detect test fixture router patterns
-        detect_test_fixture_routers(file_content, result, path)
       end
+
+      # Special handling for function-based route definitions
+      function_routes = extract_function_routes(file_content, server_var_names)
+      function_routes.each do |endpoint|
+        details = Details.new(PathInfo.new(path, 1))
+        endpoint.details = details
+
+        # Extract path parameters from the URL
+        if endpoint.url.includes?(":")
+          endpoint.url.scan(/:(\w+)/) do |m|
+            if m.size > 0
+              param = Param.new(m[1], "", "path")
+              endpoint.push_param(param)
+            end
+          end
+        end
+
+        result << endpoint
+      end
+
+      # Now process the file line by line for endpoints
+      file_content.each_line.with_index do |line, index|
+        endpoint = line_to_endpoint(line, server_var_names, router_var_names)
+
+        unless endpoint.method.empty?
+          # Store the variable this endpoint is associated with
+          endpoint_var = extract_endpoint_var(line)
+
+          # Apply base paths from applyRoutes if applicable
+          if !endpoint_var.empty? && router_base_paths.has_key?(endpoint_var)
+            base_path = router_base_paths[endpoint_var]
+            # Ensure proper path joining
+            unless base_path.empty?
+              if endpoint.url.starts_with?("/") && base_path.ends_with?("/")
+                endpoint.url = "#{base_path[0..-2]}#{endpoint.url}"
+              elsif !endpoint.url.starts_with?("/") && !base_path.ends_with?("/")
+                endpoint.url = "#{base_path}/#{endpoint.url}"
+              else
+                endpoint.url = "#{base_path}#{endpoint.url}"
+              end
+            end
+            # Apply current router base if this is a generic router endpoint
+          elsif !current_router_base.empty? && !endpoint.url.starts_with?("/")
+            endpoint.url = "#{current_router_base}/#{endpoint.url}"
+          elsif !current_router_base.empty? && endpoint.url != "/" && !endpoint.url.starts_with?(current_router_base)
+            endpoint.url = "#{current_router_base}#{endpoint.url}"
+          end
+
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint.details = details
+          result << endpoint
+          last_endpoint = endpoint
+        end
+
+        # Extract parameters from the URL path itself
+        if !last_endpoint.method.empty? && !last_endpoint.url.empty? && last_endpoint.url.includes?(":")
+          last_endpoint.url.scan(/:(\w+)/) do |m|
+            if m.size > 0
+              param = Param.new(m[1], "", "path")
+              last_endpoint.push_param(param)
+            end
+          end
+        end
+
+        # Get parameters from line
+        param = line_to_param(line)
+        unless param.name.empty? || last_endpoint.method.empty?
+          last_endpoint.push_param(param)
+        end
+      end
+
+      # After processing all lines, look for router patterns we might have missed
+      scan_for_router_endpoints(file_content, result, path, router_var_names, router_base_paths)
+
+      # Directly detect test fixture router patterns
+      detect_test_fixture_routers(file_content, result, path)
     end
 
     # Method to extract routes defined within functions

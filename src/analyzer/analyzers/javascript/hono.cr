@@ -5,6 +5,9 @@ require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Hono < JavascriptEngine
+    ON_ROUTE_CALL_HINTS   = [".on(", ".on ("]
+    ON_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*on(?:\s|\n|\r)*\(/
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
@@ -14,7 +17,7 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         begin
           content = read_file_content(path)
-          include_callee = any_to_bool(@options["include_callee"])
+          include_callee = callees_needed?
           callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee, route_callees: callees_by_route)
@@ -30,9 +33,10 @@ module Analyzer::Javascript
           # gate, `app.on('GET', '/x10', ...)` from hono's own
           # `*.test.ts` suites slips through, and without the minified
           # gate a multi-MB bundle pays the full scan (issue #1903).
-          unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
-                 Noir::JSRouteExtractor.minified_content?(content)
-            extract_on_routes(path, content, result, callees_by_route)
+          if on_route_candidate?(content) &&
+             !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
+             !Noir::JSRouteExtractor.minified_content?(content)
+            extract_on_routes(path, content, result, callees_by_route, include_callee)
           end
 
           collect_static_paths(path, content, static_dirs, :hono)
@@ -51,34 +55,47 @@ module Analyzer::Javascript
       process_js_static_dirs(static_dirs, result)
     end
 
+    private def on_route_candidate?(content : String) : Bool
+      ON_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) } ||
+        content.matches?(ON_ROUTE_CALL_PATTERN)
+    end
+
     private def extract_on_routes(path : String,
                                   content : String,
                                   result : Array(Endpoint),
-                                  callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)))
+                                  callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)),
+                                  include_callee : Bool)
       http_methods = %w[get post put delete patch options head]
       lines = content.lines
+      line_offset = 0
       lines.each_with_index do |line, index|
         methods = [] of String
         url = ""
+        call_start = nil.as(Int32?)
 
         # app.on('GET', '/path', ...) - single method string
-        if line =~ /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]/
-          method = $1.downcase
+        if match = line.match(/\b(?:app|router|hono)\s*\.\s*on\s*\(\s*['"](\w+)['"]\s*,\s*['"]([^'"]+)['"]/)
+          method = match[1].downcase
           if http_methods.includes?(method)
             methods << method
-            url = $2
+            url = match[2]
+            call_start = line_offset + (match.begin(0) || 0)
           end
           # app.on(['GET', 'POST'], '/path', ...) - array of methods
-        elsif line =~ /\b(?:app|router|hono)\s*\.\s*on\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]/
-          methods_str = $1
-          url = $2
+        elsif match = line.match(/\b(?:app|router|hono)\s*\.\s*on\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]/)
+          methods_str = match[1]
+          url = match[2]
+          call_start = line_offset + (match.begin(0) || 0)
           methods_str.scan(/['"](\w+)['"]/) do |m|
             method = m[1].downcase
             methods << method if http_methods.includes?(method) && !methods.includes?(method)
           end
         end
 
-        next if methods.empty? || url.empty?
+        if methods.empty? || url.empty?
+          line_offset += line.bytesize + 1
+          next
+        end
 
         # Pre-extract handler-body params once so each method-variant
         # endpoint gets the same params without re-walking lines.
@@ -90,6 +107,7 @@ module Analyzer::Javascript
             body_params << param
           end
         end
+        direct_callees = include_callee && call_start ? on_route_callees(content, path, call_start) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
           next if result.any? { |e| e.url == url && e.method == http_method.upcase }
@@ -98,33 +116,145 @@ module Analyzer::Javascript
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint.details = details
           Noir::JSRouteExtractor.attach_callees(endpoint, callees_by_route, http_method.upcase, url, index + 1)
+          attach_js_callees(endpoint, direct_callees)
 
           body_params.each { |param| endpoint.push_param(param) }
           extract_path_params(endpoint)
 
           result << endpoint
         end
+        line_offset += line.bytesize + 1
       end
     end
 
-    private def analyze_with_regex(path : String, result : Array(Endpoint))
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        last_endpoint = Endpoint.new("", "")
-        file_content = file.gets_to_end
+    private def on_route_callees(content : String, path : String, call_start : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      paren_open = content.index("(", call_start)
+      return [] of Noir::JSCalleeExtractor::Entry unless paren_open
 
-        file_content.each_line.with_index do |line, index|
-          endpoints = line_to_endpoints(line)
-          endpoints.each do |endpoint|
-            details = Details.new(PathInfo.new(path, index + 1))
-            endpoint.details = details
-            result << endpoint
-            last_endpoint = endpoint
+      paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
+      return [] of Noir::JSCalleeExtractor::Entry unless paren_close
+
+      args = split_top_level_args(content, paren_open + 1, paren_close)
+      return [] of Noir::JSCalleeExtractor::Entry if args.size < 3
+
+      handler_source, handler_start = args[2]
+      handler_callees(handler_source, handler_start, content, path)
+    end
+
+    private def handler_callees(handler_source : String, handler_start : Int32, content : String, path : String) : Array(Noir::JSCalleeExtractor::Entry)
+      if arrow_idx = handler_source.index("=>")
+        body_start = skip_whitespace(content, handler_start + arrow_idx + 2)
+        return [] of Noir::JSCalleeExtractor::Entry if body_start >= content.size
+
+        if content[body_start]? == '{'
+          return block_handler_callees(content, path, body_start)
+        end
+
+        body = content[body_start...(handler_start + handler_source.size)].strip
+        return [] of Noir::JSCalleeExtractor::Entry if body.empty?
+
+        return Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, body_start), language: javascript_source_language(path))
+      end
+
+      function_idx = handler_source.index(/\bfunction\b/)
+      return [] of Noir::JSCalleeExtractor::Entry unless function_idx
+
+      open_brace = content.index("{", handler_start + function_idx)
+      return [] of Noir::JSCalleeExtractor::Entry unless open_brace
+
+      block_handler_callees(content, path, open_brace)
+    end
+
+    private def block_handler_callees(content : String, path : String, open_brace : Int32) : Array(Noir::JSCalleeExtractor::Entry)
+      close_brace = Noir::JSRouteExtractor.find_matching_brace(content, open_brace)
+      return [] of Noir::JSCalleeExtractor::Entry unless close_brace
+
+      body = content[(open_brace + 1)...close_brace]
+      Noir::JSCalleeExtractor.callees_for_function_body(body, path, line_for_pos(content, open_brace), language: javascript_source_language(path))
+    end
+
+    private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
+      args = [] of Tuple(String, Int32)
+      arg_start = start_pos
+      depth = 0
+      quote : Char? = nil
+      escaped = false
+      i = start_pos
+
+      while i < end_pos
+        char = content[i]
+
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
           end
+          i += 1
+          next
+        end
 
-          line_to_params(line).each do |param|
-            unless last_endpoint.method.empty?
-              last_endpoint.push_param(param)
-            end
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when ','
+          if depth == 0
+            args << normalized_arg(content, arg_start, i)
+            arg_start = i + 1
+          end
+        end
+
+        i += 1
+      end
+
+      args << normalized_arg(content, arg_start, end_pos)
+      args
+    end
+
+    private def normalized_arg(content : String, start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
+      start_idx = skip_whitespace(content, start_pos)
+      stop_idx = end_pos
+      while stop_idx > start_idx && content[stop_idx - 1].whitespace?
+        stop_idx -= 1
+      end
+
+      {content[start_idx...stop_idx], start_idx}
+    end
+
+    private def skip_whitespace(content : String, pos : Int32) : Int32
+      i = pos
+      while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    private def line_for_pos(content : String, pos : Int32) : Int32
+      content[0...pos].count('\n') + 1
+    end
+
+    private def analyze_with_regex(path : String, result : Array(Endpoint))
+      last_endpoint = Endpoint.new("", "")
+      file_content = read_file_content(path)
+
+      file_content.each_line.with_index do |line, index|
+        endpoints = line_to_endpoints(line)
+        endpoints.each do |endpoint|
+          details = Details.new(PathInfo.new(path, index + 1))
+          endpoint.details = details
+          result << endpoint
+          last_endpoint = endpoint
+        end
+
+        line_to_params(line).each do |param|
+          unless last_endpoint.method.empty?
+            last_endpoint.push_param(param)
           end
         end
       end

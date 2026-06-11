@@ -38,3 +38,32 @@ FunctionalTester.new("fixtures/javascript/sveltekit_callees/", {
 ], {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
+
+describe "SvelteKit callee source attribution" do
+  before_each do
+    CodeLocator.instance.clear_all
+  end
+
+  it "uses direct and aliased exported API handler lines" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/sveltekit_callees/")])
+    options["include_callee"] = YAML::Any.new(true)
+    options["nolog"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    list = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/api/users" }
+    list.details.code_paths.first.line.should eq(3)
+
+    create = app.endpoints.find! { |ep| ep.method == "POST" && ep.url == "/api/users" }
+    create.details.code_paths.first.line.should eq(11)
+
+    update = app.endpoints.find! { |ep| ep.method == "PUT" && ep.url == "/api/users/{id}" }
+    update.details.code_paths.first.line.should eq(3)
+
+    delete = app.endpoints.find! { |ep| ep.method == "DELETE" && ep.url == "/api/users/{id}" }
+    delete.details.code_paths.first.line.should eq(11)
+  end
+end

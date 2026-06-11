@@ -19,6 +19,24 @@ describe Noir::JSCalleeExtractor do
     ])
   end
 
+  it "keys multiline chained route callees by the call start line" do
+    source = <<-JS
+      app
+        .get('/split', async (req, res) => {
+          return res.json(await loadSplit())
+        })
+      JS
+
+    callees = Noir::JSCalleeExtractor.callees_for_routes(source, "app.js")
+    route_callees = callees[Noir::JSCalleeExtractor.route_key("GET", "/split", 1)]
+    route_callees.map(&.[0]).should eq([
+      "res.json",
+      "loadSplit",
+    ])
+    method_line_callees = callees[Noir::JSCalleeExtractor.route_key("GET", "/split", 2)]
+    method_line_callees.map(&.[0]).should eq(route_callees.map(&.[0]))
+  end
+
   it "extracts callees from a standalone function body with adjusted lines" do
     body = <<-JS
 
@@ -71,6 +89,9 @@ describe Noir::JSCalleeExtractor do
       {"json", 7},
       {"deleteUser", 7},
     ])
+
+    Noir::JSCalleeExtractor.exported_function_line(source, "GET").should eq(1)
+    Noir::JSCalleeExtractor.exported_function_line(source, "DELETE").should eq(7)
   end
 
   it "extracts callees from typed exported arrow handlers" do

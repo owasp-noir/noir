@@ -22,5 +22,15 @@ module.exports = (strapi) => {
             path: '/strapi/items/:id',
             handler: 'item.update',
         },
+        {
+            method: 'DELETE',
+            path: '/strapi/items/:id',
+            config: {
+                auth: {
+                    scope: ['admin::items.delete'],
+                },
+            },
+            handler: 'item.delete',
+        },
     ];
 };
