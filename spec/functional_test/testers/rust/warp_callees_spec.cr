@@ -21,6 +21,14 @@ create_user = Endpoint.new("/users", "POST", [
   ep.push_callee(Callee.new("UserPresenter::render", line: 28))
 end
 
+external = Endpoint.new("/external", "POST", [
+  Param.new("CreateUser", "", "json"),
+]).tap do |ep|
+  ep.push_callee(Callee.new("ExternalService::create", line: 2))
+  ep.push_callee(Callee.new("AuditLog::write_external", line: 3))
+  ep.push_callee(Callee.new("UserPresenter::render", line: 4))
+end
+
 profile = Endpoint.new("/profile", "GET", [
   Param.new("SearchQuery", "", "query"),
 ]).tap do |ep|
@@ -37,6 +45,7 @@ expected_endpoints = [
   home,
   get_user,
   create_user,
+  external,
   profile,
   generic,
 ]

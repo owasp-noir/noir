@@ -38,6 +38,8 @@ pub unsafe fn generic_handler<T>() -> impl Reply {
     GenericPresenter::render(value)
 }
 
+mod external;
+
 #[tokio::main]
 async fn main() {
     let home = warp::path::end()
@@ -56,6 +58,12 @@ async fn main() {
         .and(warp::post())
         .and_then(create_user);
 
+    let external_route = warp::path("external")
+        .and(warp::path::end())
+        .and(warp::body::json::<CreateUser>())
+        .and(warp::post())
+        .and_then(external::create_external);
+
     let profile_route = warp::path("profile")
         .and(warp::path::end())
         .and(warp::query::<SearchQuery>())
@@ -70,6 +78,7 @@ async fn main() {
     let routes = home
         .or(get_user_route)
         .or(create_user_route)
+        .or(external_route)
         .or(profile_route)
         .or(generic_route);
 

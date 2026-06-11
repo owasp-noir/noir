@@ -13,6 +13,7 @@ module Analyzer::Rust
   class Axum < RustEngine
     alias UtoipaScopedKey = Tuple(String, String, String)
     alias UtoipaNestEdge = Tuple(UtoipaScopedKey, String)
+    alias HandlerContext = NamedTuple(params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry))
 
     # Verbs accepted as the inner handler call (`get(...)`, `post(...)`,
     # …). Anything outside this set is treated as `GET` to match the
@@ -37,9 +38,16 @@ module Analyzer::Rust
     # collectors); `analyze_file` then emits each `#[utoipa::path]` handler
     # at its composed URL.
     @utoipa_prefix : Hash(UtoipaScopedKey, Array(String))? = nil
+    @external_handler_context_cache = {} of String => HandlerContext
+    @external_handler_miss_cache = Set(String).new
+    @external_handler_context_cache_mutex = Mutex.new
 
     def analyze
       @utoipa_prefix = build_utoipa_prefix_index
+      @external_handler_context_cache_mutex.synchronize do
+        @external_handler_context_cache.clear
+        @external_handler_miss_cache.clear
+      end
       super
     end
 
@@ -63,7 +71,8 @@ module Analyzer::Rust
       test_regions = RustEngine.collect_cfg_test_regions(source)
 
       Noir::TreeSitter.parse_rust(source) do |root|
-        function_index = include_callee ? build_function_index(root, source) : Hash(String, LibTreeSitter::TSNode).new
+        function_index = build_function_index(root, source)
+        handler_context_cache = {} of String => HandlerContext
         router_functions = build_router_function_index(root, source)
         mounted_router_names = collect_mounted_router_names(root, source, test_regions)
         nested_router_prefixes = collect_nested_router_prefixes(root, source, test_regions, "", mounted_router_names)
@@ -82,10 +91,10 @@ module Analyzer::Rust
             RustEngine.fan_out_verbs(raw_verb).each do |verb|
               details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
               endpoint = Endpoint.new(path_str, verb, details)
+              extract_path_params(path_str, endpoint)
 
-              if include_callee && handler_name
-                entries = callee_entries_for_handler(function_index, source, path, handler_name)
-                attach_rust_callees(endpoint, entries)
+              if handler_name
+                attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
               end
 
               endpoints << endpoint
@@ -121,10 +130,10 @@ module Analyzer::Rust
               RustEngine.fan_out_verbs(raw_verb).each do |verb|
                 details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
                 endpoint = Endpoint.new(path_str, verb, details)
+                extract_path_params(path_str, endpoint)
 
-                if include_callee && handler_name
-                  entries = callee_entries_for_handler(function_index, source, path, handler_name)
-                  attach_rust_callees(endpoint, entries)
+                if handler_name
+                  attach_handler_context(endpoint, function_index, source, path, handler_name, include_callee, handler_context_cache)
                 end
 
                 endpoints << endpoint
@@ -144,7 +153,7 @@ module Analyzer::Rust
         # via `routes!()`, not `.route()`), composed with their OpenApiRouter
         # nest prefix.
         if source.includes?("utoipa::path")
-          collect_utoipa_endpoints(root, source, path, test_regions, include_callee, function_index, endpoints)
+          collect_utoipa_endpoints(root, source, path, test_regions, include_callee, function_index, handler_context_cache, endpoints)
         end
       end
 
@@ -608,6 +617,121 @@ module Analyzer::Rust
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
+    private def extract_path_params(route : String, endpoint : Endpoint)
+      route.scan(/:([A-Za-z_]\w*)/) do |match|
+        push_path_param(endpoint, match[1])
+      end
+
+      route.scan(/\{\**([A-Za-z_]\w*)\}/) do |match|
+        push_path_param(endpoint, match[1])
+      end
+
+      route.scan(%r{/\*([A-Za-z_]\w*)}) do |match|
+        push_path_param(endpoint, match[1])
+      end
+    end
+
+    private def push_path_param(endpoint : Endpoint, name : String)
+      endpoint.push_param(Param.new(name, "", "path"))
+    end
+
+    private def extract_function_params(function : LibTreeSitter::TSNode,
+                                        source : String,
+                                        endpoint : Endpoint)
+      header_vars = Set(String).new
+      cookie_vars = Set(String).new
+
+      params = Noir::TreeSitter.field(function, "parameters")
+      if params
+        Noir::TreeSitter.each_named_child(params) do |param|
+          text = Noir::TreeSitter.node_text(param, source)
+          extract_function_param_text(text, endpoint)
+          if binding = param_binding_name(text)
+            header_vars.add(binding) if text.includes?("HeaderMap")
+            cookie_vars.add(binding) if text.includes?("CookieJar")
+          end
+        end
+      end
+
+      body = Noir::TreeSitter.field(function, "body")
+      return unless body
+
+      collect_header_and_cookie_params(body, source, endpoint, header_vars, cookie_vars)
+    end
+
+    private def extract_function_param_text(text : String, endpoint : Endpoint)
+      endpoint.push_param(Param.new("query", "", "query")) if extractor_param?(text, "Query")
+      endpoint.push_param(Param.new("body", "", "json")) if extractor_param?(text, "Json")
+      endpoint.push_param(Param.new("form", "", "form")) if extractor_param?(text, "Form")
+    end
+
+    private def extractor_param?(text : String, type_name : String) : Bool
+      text.includes?("#{type_name}<") ||
+        !!text.match(/#{type_name}\s*\(\s*[^)]+\s*\)/) ||
+        !!text.match(/:\s*(?:[A-Za-z_]\w*::)*#{type_name}\b/)
+    end
+
+    private def param_binding_name(text : String) : String?
+      match = text.match(/^\s*(?:mut\s+)?([A-Za-z_]\w*)\s*:/)
+      match.try(&.[1])
+    end
+
+    private def collect_header_and_cookie_params(body : LibTreeSitter::TSNode,
+                                                 source : String,
+                                                 endpoint : Endpoint,
+                                                 header_vars : Set(String),
+                                                 cookie_vars : Set(String))
+      walk(body) do |call|
+        next unless Noir::TreeSitter.node_type(call) == "call_expression"
+
+        fn_text = call_function_text(call, source)
+        next unless fn_text
+
+        if header_read_call?(fn_text, header_vars)
+          first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source).try do |name|
+            endpoint.push_param(Param.new(name, "", "header")) if header_name?(name)
+          end
+        elsif cookie_read_call?(fn_text, cookie_vars)
+          first_string_literal_text(Noir::TreeSitter.field(call, "arguments"), source).try do |name|
+            endpoint.push_param(Param.new(name, "", "cookie"))
+          end
+        end
+      end
+    end
+
+    private def header_read_call?(fn_text : String, header_vars : Set(String)) : Bool
+      return true if fn_text.ends_with?(".headers().get")
+
+      header_vars.any? { |name| fn_text == "#{name}.get" }
+    end
+
+    private def cookie_read_call?(fn_text : String, cookie_vars : Set(String)) : Bool
+      return true if fn_text.ends_with?(".cookie")
+
+      cookie_vars.any? { |name| fn_text == "#{name}.get" }
+    end
+
+    private def header_name?(name : String) : Bool
+      name.includes?("-") || name.in?(%w[Authorization Content-Type Accept])
+    end
+
+    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
+      function = Noir::TreeSitter.field(call, "function")
+      function ? Noir::TreeSitter.node_text(function, source) : nil
+    end
+
+    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
+      return unless node
+      return string_literal_text(node, source) if Noir::TreeSitter.node_type(node) == "string_literal"
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        if text = first_string_literal_text(child, source)
+          return text
+        end
+      end
+      nil
+    end
+
     private def string_literal_text(node : LibTreeSitter::TSNode, source : String) : String?
       return unless Noir::TreeSitter.node_type(node) == "string_literal"
       # tree-sitter-rust splits a literal with escapes into multiple children
@@ -658,10 +782,10 @@ module Analyzer::Rust
 
         name = Noir::TreeSitter.node_text(name_node, source)
         if scope.empty?
-          index[name] = body_node unless index.has_key?(name)
+          index[name] = node unless index.has_key?(name)
         else
           qualified_name = "#{scope.join("::")}::#{name}"
-          index[qualified_name] = body_node unless index.has_key?(qualified_name)
+          index[qualified_name] = node unless index.has_key?(qualified_name)
         end
       when "mod_item"
         name_node = Noir::TreeSitter.field(node, "name")
@@ -679,27 +803,69 @@ module Analyzer::Rust
       end
     end
 
-    private def callee_entries_for_handler(index : Hash(String, LibTreeSitter::TSNode),
-                                           source : String,
-                                           path : String,
-                                           handler_name : String) : Array(Noir::RustCalleeExtractor::Entry)
-      if body_node = function_body_for_handler(index, handler_name)
-        return Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, path)
+    private def attach_handler_context(endpoint : Endpoint,
+                                       index : Hash(String, LibTreeSitter::TSNode),
+                                       source : String,
+                                       path : String,
+                                       handler_name : String,
+                                       include_callee : Bool,
+                                       handler_context_cache : Hash(String, HandlerContext))
+      cache_key = "#{path}\0#{handler_name}\0#{include_callee}"
+      if context = handler_context_cache[cache_key]?
+        attach_cached_handler_context(endpoint, context)
+        return
       end
 
-      external_handler_callees(handler_name, path)
+      if function = function_for_handler(index, handler_name)
+        context = handler_context_for_function(function, source, path, include_callee)
+        handler_context_cache[cache_key] = context
+        attach_cached_handler_context(endpoint, context)
+        return
+      end
+
+      attach_external_handler_context(endpoint, handler_name, path, include_callee, handler_context_cache)
     end
 
-    private def function_body_for_handler(index : Hash(String, LibTreeSitter::TSNode), handler_name : String) : LibTreeSitter::TSNode?
+    private def function_for_handler(index : Hash(String, LibTreeSitter::TSNode), handler_name : String) : LibTreeSitter::TSNode?
       return index[handler_name]? if index.has_key?(handler_name)
       return if handler_name.includes?("::")
 
       index[handler_name]?
     end
 
-    private def external_handler_callees(handler_name : String, current_path : String) : Array(Noir::RustCalleeExtractor::Entry)
+    private def callee_entries_for_function(function : LibTreeSitter::TSNode,
+                                            source : String,
+                                            path : String) : Array(Noir::RustCalleeExtractor::Entry)
+      body = Noir::TreeSitter.field(function, "body")
+      return [] of Noir::RustCalleeExtractor::Entry unless body
+
+      Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
+    end
+
+    private def handler_context_for_function(function : LibTreeSitter::TSNode,
+                                             source : String,
+                                             path : String,
+                                             include_callee : Bool) : HandlerContext
+      endpoint = Endpoint.new("", "GET")
+      extract_function_params(function, source, endpoint)
+      callees = include_callee ? callee_entries_for_function(function, source, path) : [] of Noir::RustCalleeExtractor::Entry
+      {params: endpoint.params, callees: callees}
+    end
+
+    private def attach_cached_handler_context(endpoint : Endpoint, context : HandlerContext)
+      context[:params].each do |param|
+        endpoint.push_param(param)
+      end
+      attach_rust_callees(endpoint, context[:callees]) unless context[:callees].empty?
+    end
+
+    private def attach_external_handler_context(endpoint : Endpoint,
+                                                handler_name : String,
+                                                current_path : String,
+                                                include_callee : Bool,
+                                                handler_context_cache : Hash(String, HandlerContext))
       parts = handler_name.split("::").reject(&.empty?)
-      return [] of Noir::RustCalleeExtractor::Entry if parts.size < 2
+      return if parts.size < 2
 
       function_name = parts.last
       module_parts = parts[0...-1]
@@ -707,18 +873,54 @@ module Analyzer::Rust
       candidate_module_paths(current_path, module_parts).each do |candidate|
         next unless File.exists?(candidate)
 
-        source = read_file_content(candidate)
-        entries = [] of Noir::RustCalleeExtractor::Entry
-        Noir::TreeSitter.parse_rust(source) do |root|
-          index = build_function_index(root, source)
-          if body_node = index[function_name]?
-            entries = Noir::RustCalleeExtractorTS.callees_in_body(body_node, source, candidate)
-          end
+        cache_key = "#{candidate}\0#{function_name}\0#{include_callee}"
+        if context = handler_context_cache[cache_key]?
+          attach_cached_handler_context(endpoint, context)
+          return
         end
-        return entries
+
+        if context = cached_external_handler_context(candidate, function_name, include_callee)
+          handler_context_cache[cache_key] = context
+          attach_cached_handler_context(endpoint, context)
+          return
+        end
+      end
+    end
+
+    private def cached_external_handler_context(candidate : String,
+                                                function_name : String,
+                                                include_callee : Bool) : HandlerContext?
+      cache_key = "#{candidate}\0#{function_name}\0#{include_callee}"
+      miss_key = "#{candidate}\0#{function_name}"
+
+      @external_handler_context_cache_mutex.synchronize do
+        return @external_handler_context_cache[cache_key]? if @external_handler_context_cache.has_key?(cache_key)
+        return if @external_handler_miss_cache.includes?(miss_key)
+
+        context = parse_external_handler_context(candidate, function_name, include_callee)
+        if context
+          @external_handler_context_cache[cache_key] = context
+        else
+          @external_handler_miss_cache.add(miss_key)
+        end
+        context
+      end
+    end
+
+    private def parse_external_handler_context(candidate : String,
+                                               function_name : String,
+                                               include_callee : Bool) : HandlerContext?
+      source = read_file_content(candidate)
+      context = nil.as(HandlerContext?)
+
+      Noir::TreeSitter.parse_rust(source) do |root|
+        index = build_function_index(root, source)
+        if function = index[function_name]?
+          context = handler_context_for_function(function, source, candidate, include_callee)
+        end
       end
 
-      [] of Noir::RustCalleeExtractor::Entry
+      context
     end
 
     private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
@@ -773,6 +975,7 @@ module Analyzer::Rust
     private def collect_utoipa_endpoints(root : LibTreeSitter::TSNode, source : String, path : String,
                                          test_regions : Array(Tuple(Int32, Int32)), include_callee : Bool,
                                          function_index : Hash(String, LibTreeSitter::TSNode),
+                                         handler_context_cache : Hash(String, HandlerContext),
                                          endpoints : Array(Endpoint))
       file_mod = primary_module(path)
       base = configured_base_for(path)
@@ -804,9 +1007,9 @@ module Analyzer::Rust
           urls.each do |url|
             details = Details.new(PathInfo.new(path, attr_row))
             endpoint = Endpoint.new(url, verb, details)
-            if include_callee && leaf
-              entries = callee_entries_for_handler(function_index, source, path, leaf)
-              attach_rust_callees(endpoint, entries)
+            extract_path_params(url, endpoint)
+            if leaf
+              attach_handler_context(endpoint, function_index, source, path, leaf, include_callee, handler_context_cache)
             end
             endpoints << endpoint
           end

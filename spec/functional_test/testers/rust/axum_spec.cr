@@ -12,10 +12,24 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/foo", "GET"),
   Endpoint.new("/bar", "POST"),
+  Endpoint.new("/search", "GET", [
+    Param.new("query", "", "query"),
+  ]),
+  Endpoint.new("/submit", "POST", [
+    Param.new("form", "", "form"),
+  ]),
+  Endpoint.new("/headers", "GET", [
+    Param.new("X-Request-Id", "", "header"),
+  ]),
+  Endpoint.new("/session", "GET", [
+    Param.new("session_id", "", "cookie"),
+  ]),
   Endpoint.new("/api/users", "GET"),
   Endpoint.new("/api/admin", "POST"),
   Endpoint.new("/v1/projects", "GET"),
-  Endpoint.new("/v1/projects/{id}", "GET"),
+  Endpoint.new("/v1/projects/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
   Endpoint.new("/root/api/audit", "GET"),
 ]
 %w[/ws /favicon.ico /assets/* /*].each do |path|

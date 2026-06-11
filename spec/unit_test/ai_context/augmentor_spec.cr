@@ -2485,6 +2485,30 @@ describe "NoirAIContext" do
     end
   end
 
+  it "emits ssrf for Rust reqwest direct HTTP callees with URL-like input" do
+    source = <<-RUST
+      async fn proxy(url: String) -> String {
+          reqwest::get(url).await.unwrap().text().await.unwrap()
+      }
+      RUST
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/fetch/{url}", "GET", [
+        Param.new("url", "", "path"),
+      ])
+      details = endpoint.details
+      details.technology = "rust_axum"
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("reqwest::get", path, 2))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("outbound_http")
+      context.sinks.map(&.name).should contain("reqwest::get")
+      context.signals.map(&.kind).should contain("ssrf")
+    end
+  end
+
   it "includes WebClient target URIs in outbound HTTP sink evidence" do
     source = <<-CODE
       fun withDetails(id: Long) {

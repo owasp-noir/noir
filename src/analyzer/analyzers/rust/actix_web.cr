@@ -12,6 +12,7 @@ module Analyzer::Rust
   # it, skipping intermediate attribute_items and doc comments.
   class ActixWeb < RustEngine
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
+    alias GlobalFunctionEntry = NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, callees: Array(Noir::RustCalleeExtractor::Entry))
 
     # Cross-file scope registrations: `web::scope("/auth").service(mod::handler)`
     # frequently mounts a `#[get("/x")]` handler that lives in a *different*
@@ -36,7 +37,7 @@ module Analyzer::Rust
     # `/api` prefix. `analyze` records each configured fn's scope prefix(es)
     # up front; the builder pass prepends them to routes emitted inside the fn.
     @configure_fn_prefix : Array(NamedTuple(base: String, ref: String, prefix: String, source_path: String))? = nil
-    @global_function_index : Array(NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, body_text: String?, body_start_line: Int32))? = nil
+    @global_function_index : Array(GlobalFunctionEntry)? = nil
     @project_import_aliases : Hash(String, String)? = nil
 
     def analyze
@@ -905,10 +906,7 @@ module Analyzer::Rust
       entry = lookup_global_function(handler_name)
       return unless entry
       extract_function_params_from_text(entry[:params_text], endpoint)
-      if include_callee && (body = entry[:body_text])
-        callees = Noir::RustCalleeExtractorTS.callees_for_body_text(body, entry[:path], entry[:body_start_line])
-        attach_rust_callees(endpoint, callees)
-      end
+      attach_rust_callees(endpoint, entry[:callees]) if include_callee
     end
 
     private def lookup_global_function(ref : String)
@@ -930,7 +928,7 @@ module Analyzer::Rust
         return cached
       end
 
-      entries = [] of NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, body_text: String?, body_start_line: Int32)
+      entries = [] of GlobalFunctionEntry
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
@@ -944,13 +942,17 @@ module Analyzer::Rust
               next unless name_node
               body = Noir::TreeSitter.field(node, "body")
               params = Noir::TreeSitter.field(node, "parameters")
+              callees = if callees_needed? && body
+                          Noir::RustCalleeExtractorTS.callees_in_body(body, src, fpath)
+                        else
+                          [] of Noir::RustCalleeExtractor::Entry
+                        end
               entries << {
-                name:            Noir::TreeSitter.node_text(name_node, src),
-                path:            fpath,
-                hints:           module_hints(fpath),
-                params_text:     params ? Noir::TreeSitter.node_text(params, src) : nil,
-                body_text:       body ? Noir::TreeSitter.node_text(body, src) : nil,
-                body_start_line: body ? Noir::TreeSitter.node_start_row(body) + 1 : 1,
+                name:        Noir::TreeSitter.node_text(name_node, src),
+                path:        fpath,
+                hints:       module_hints(fpath),
+                params_text: params ? Noir::TreeSitter.node_text(params, src) : nil,
+                callees:     callees,
               }
             end
           end
