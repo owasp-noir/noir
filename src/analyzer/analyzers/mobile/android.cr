@@ -111,6 +111,17 @@ module Analyzer::Mobile
     # host-less, since that's how a runtime-routed custom scheme is declared.
     GENERIC_SCHEMES = Set{"http", "https", "file", "content"}
 
+    # Local-content schemes. `file://` / `content://` URIs always point at
+    # on-device content (a file picked from a file manager, a ContentProvider
+    # row), never a remotely reachable deep link — so they are suppressed
+    # regardless of host (including a bare `*` wildcard host).
+    LOCAL_SCHEMES = Set{"file", "content"}
+
+    # Opaque (authority-less) schemes: `mailto:foo@bar`, `tel:123`, `geo:…`.
+    # They take no `//host` part, so the URL is rendered as `scheme:` rather
+    # than `scheme://`.
+    OPAQUE_SCHEMES = Set{"mailto", "tel", "sms", "smsto", "mms", "geo", "market"}
+
     # Upper bound on endpoints emitted from a single intent-filter. A media
     # router / browser filter can declare dozens of hosts × paths; the full
     # cross product would flood the inventory with near-duplicates, so past
@@ -143,7 +154,10 @@ module Analyzer::Mobile
           schemes << scheme unless scheme.empty? || schemes.includes?(scheme)
         end
         if host = resolve(attr(data, "host"), strings, placeholders)
-          hosts << host unless host.empty? || hosts.includes?(host)
+          # A bare `*` host matches any authority — it carries no specific
+          # target, so treat it as host-less (`scheme://*` == `scheme://`).
+          # A wildcard *subdomain* (`*.example.com`) is kept as-is.
+          hosts << host unless host.empty? || host == "*" || hosts.includes?(host)
         end
         norm = normalize_path(data, strings, placeholders)
         paths << norm unless norm.empty? || paths.includes?(norm)
@@ -152,7 +166,7 @@ module Analyzer::Mobile
 
       data_filter_combos(schemes, hosts, paths, has_mime_type).each do |scheme, host, norm_path|
         web = scheme == "http" || scheme == "https"
-        url = "#{scheme}://#{host}#{norm_path}"
+        url = build_data_url(scheme, host, norm_path)
         next unless seen_urls.add?(url)
 
         protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
@@ -173,6 +187,8 @@ module Analyzer::Mobile
       effective_paths = paths.empty? ? [""] : paths
 
       schemes.each do |scheme|
+        # Local-content schemes never describe a remote deep link.
+        next if LOCAL_SCHEMES.includes?(scheme)
         if hosts.empty?
           # Host-less: keep only custom schemes. A generic scheme with no
           # host — and any scheme in a content-type (mimeType) filter — is a
@@ -213,6 +229,14 @@ module Analyzer::Mobile
       endpoint.metadata = build_metadata("", actions, categories, "", package)
 
       @result << endpoint
+    end
+
+    # Renders a `<data>` URL. Opaque schemes (mailto/tel/geo/…) have no
+    # `//authority`, so they're emitted as `scheme:`; everything else uses
+    # the usual `scheme://host/path`.
+    private def build_data_url(scheme : String, host : String, norm_path : String) : String
+      return "#{scheme}:" if OPAQUE_SCHEMES.includes?(scheme)
+      "#{scheme}://#{host}#{norm_path}"
     end
 
     # --- Jetpack Navigation (res/navigation/*.xml) -------------------------

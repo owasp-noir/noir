@@ -32,6 +32,9 @@ expected_endpoints = [
   build.call("altscheme://alt", "mobile-scheme", no_params, [] of String),
   # Unresolvable @string scheme: kept verbatim, NOT rooted to /@string/...
   build.call("@string/missing_scheme://ghost", "mobile-scheme", no_params, [] of String),
+  # Opaque scheme: `mailto:` has no // authority. (The sibling file/content/
+  # `http://*` wildcard-host filter on ShareActivity yields nothing.)
+  build.call("mailto:", "mobile-scheme", no_params, [] of String),
   # Verified App Link over https (universal-link)
   build.call("https://myapp.example.com/complex/:id", "universal-link", [Param.new("id", "", "path")], [] of String),
   # Exported, data-less component (android-intent), synthetic intent:// scheme

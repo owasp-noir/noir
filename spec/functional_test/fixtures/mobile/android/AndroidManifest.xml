@@ -82,6 +82,28 @@
             </intent-filter>
         </activity>
 
+        <!-- Local-content + bare-wildcard-host handler: file/content are
+             always dropped (on-device content, not a deep link), and a bare
+             `*` host makes http host-less and dropped too. Yields nothing. -->
+        <activity android:name=".ShareActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="content" android:host="*" />
+                <data android:scheme="file" android:host="*" />
+                <data android:scheme="http" android:host="*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Opaque-scheme handler: `mailto:` takes no // authority. -->
+        <activity android:name=".ComposeActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="mailto" />
+            </intent-filter>
+        </activity>
+
         <!-- Verified App Link over https (universal-link) -->
         <activity android:name=".WebActivity" android:exported="true">
             <intent-filter android:autoVerify="true">
