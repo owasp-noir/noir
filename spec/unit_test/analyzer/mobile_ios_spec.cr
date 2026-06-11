@@ -32,6 +32,13 @@ describe "Analyzer::Mobile::Ios" do
     find.call("$(BUNDLE_URL_SCHEME)://").should be_nil
   end
 
+  it "resolves nested Xcode build-setting scheme placeholders from .xcconfig" do
+    # CFBundleURLSchemes has `$(NESTED_BUNDLE_URL_SCHEME)`; Config.xcconfig
+    # resolves it through `$(BUNDLE_URL_SCHEME)`.
+    find.call("resolvedscheme-nested://").not_nil!.protocol.should eq("mobile-scheme")
+    find.call("$(NESTED_BUNDLE_URL_SCHEME)://").should be_nil
+  end
+
   it "maps applinks: associated domains to universal links" do
     find.call("https://myapp.example.com/").not_nil!.protocol.should eq("universal-link")
   end
