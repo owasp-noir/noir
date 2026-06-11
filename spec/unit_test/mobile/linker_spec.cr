@@ -3,7 +3,6 @@ require "../../spec_helper"
 require "../../../src/models/logger"
 require "../../../src/models/code_locator"
 require "../../../src/mobile/linker.cr"
-require "file_utils"
 
 # The linker resolves an Android mobile endpoint's handler component to its
 # source file, attaches the handler as a code_path, and pulls 1-hop callees
