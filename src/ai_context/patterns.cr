@@ -55,8 +55,25 @@ module NoirAIContext
       "outbound_http",
       "Potential outbound HTTP/client sink inferred from code or callee name",
       64,
-      name_patterns: [/\bhttp\b/i, /\bfetch\b/i, /\bclient\b/i, /\baxios\b/i, /\bgetForObject\b/i, /\bexchange\b/i],
-      source_patterns: [/requests\.(get|post|put|delete)/i, /\bfetch\s*\(/i, /\baxios\./i, /\bhttp\.(Get|Post|NewRequest)/, /\bclient\.(get|post|request)/i, /\b\w+\.(getForObject|postForObject|exchange)\s*\(/i]
+      name_patterns: [
+        /\b(?:reqwest|hyper|hyper_util|ureq|surf|isahc|attohttpc|awc)::[A-Za-z_][A-Za-z0-9_:!]*/i,
+        /\bhttp\b/i,
+        /\bfetch\b/i,
+        /\bclient\b/i,
+        /\baxios\b/i,
+        /\bgetForObject\b/i,
+        /\bexchange\b/i,
+      ],
+      source_patterns: [
+        /requests\.(get|post|put|delete)/i,
+        /\bfetch\s*\(/i,
+        /\baxios\./i,
+        /\bhttp\.(Get|Post|NewRequest)/,
+        /\bclient\.(get|post|request)/i,
+        /\b\w+\.(getForObject|postForObject|exchange)\s*\(/i,
+        /\b(?:reqwest|ureq|surf|isahc|attohttpc)::(?:get|post|put|delete|patch|request)\s*(?:::<[^>]+>)?\s*\(/i,
+        /\b(?:hyper|hyper_util|awc)::[A-Za-z0-9_:]*Client\b/,
+      ]
     ),
     # ----- New in v1.1 (--ai-context coverage expansion) -----
     #

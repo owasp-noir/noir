@@ -1,4 +1,5 @@
-use axum::{response::Html, routing::{any, get, post}, Router};
+use axum::{extract::{Form, Query}, http::HeaderMap, response::Html, routing::{any, get, post}, Router};
+use axum_extra::extract::CookieJar;
 use tower_http::services::ServeDir;
 
 #[tokio::main]
@@ -7,6 +8,10 @@ async fn main() {
         .route("/", get(handler))
         .route("/foo", get(handler))
         .route("/bar", post(handler))
+        .route("/search", get(search))
+        .route("/submit", post(submit))
+        .route("/headers", get(headers))
+        .route("/session", get(session))
         // Verb-agnostic registration — typically used for WebSocket
         // upgrade endpoints. axum 0.7 exports `routing::any`.
         .route("/ws", any(handler))
@@ -38,6 +43,24 @@ async fn main() {
 
 async fn handler() -> Html<&'static str> {
     Html("<h1>Hello, World!</h1>")
+}
+
+async fn search(Query(params): Query<SearchParams>) -> Html<&'static str> {
+    Html(SearchService::render(params))
+}
+
+async fn submit(Form(form): Form<LoginForm>) -> Html<&'static str> {
+    Html(LoginService::render(form))
+}
+
+async fn headers(headers: HeaderMap) -> Html<&'static str> {
+    let request_id = headers.get("X-Request-Id");
+    Html(HeaderService::render(request_id))
+}
+
+async fn session(jar: CookieJar) -> Html<&'static str> {
+    let session = jar.get("session_id");
+    Html(SessionService::render(session))
 }
 
 fn v1_routes() -> Router {

@@ -1,11 +1,14 @@
 use axum::{response::Html, routing::{get, post}, Json, Router};
 
+mod external;
+
 #[tokio::main]
 async fn main() {
     let app = Router::new()
         .route("/", get(home))
         .route("/profile", get(profile))
-        .route("/users", post(create_user));
+        .route("/users", post(create_user))
+        .route("/external", post(external::create_external));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await

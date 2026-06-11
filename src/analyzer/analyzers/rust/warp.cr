@@ -27,6 +27,18 @@ module Analyzer::Rust
       "options" => "OPTIONS",
     }
 
+    @external_handler_callee_cache = {} of String => Array(Noir::RustCalleeExtractor::Entry)
+    @external_handler_miss_cache = Set(String).new
+    @external_handler_callee_cache_mutex = Mutex.new
+
+    def analyze
+      @external_handler_callee_cache_mutex.synchronize do
+        @external_handler_callee_cache.clear
+        @external_handler_miss_cache.clear
+      end
+      super
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
@@ -59,8 +71,12 @@ module Analyzer::Rust
 
           if include_callee
             handler_name = find_handler_name(value, source)
-            if handler_name && (handler_fn = function_index[handler_name]?)
-              attach_handler_callees(handler_fn, source, path, endpoint)
+            if handler_name
+              if handler_fn = function_for_handler(function_index, handler_name)
+                attach_handler_callees(handler_fn, source, path, endpoint)
+              else
+                attach_external_handler_callees(handler_name, path, endpoint)
+              end
             end
           end
 
@@ -283,19 +299,23 @@ module Analyzer::Rust
           when "identifier"
             found = Noir::TreeSitter.node_text(arg, source)
           when "scoped_identifier"
-            found = Noir::TreeSitter.node_text(arg, source).split("::").last
+            found = Noir::TreeSitter.node_text(arg, source)
           when "generic_function"
             # `handlers::generic_handler::<u32>` — peel the turbofish.
             inner = Noir::TreeSitter.field(arg, "function")
             if inner
-              text = Noir::TreeSitter.node_text(inner, source)
-              found = text.split("::").last
+              found = Noir::TreeSitter.node_text(inner, source)
             end
           end
           break if found
         end
       end
       found
+    end
+
+    private def function_for_handler(index : Hash(String, LibTreeSitter::TSNode), handler_name : String) : LibTreeSitter::TSNode?
+      leaf = handler_name.split("::").last
+      index[handler_name]? || index[leaf]?
     end
 
     private def attach_handler_callees(function : LibTreeSitter::TSNode,
@@ -306,6 +326,101 @@ module Analyzer::Rust
       return unless body
       entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
       attach_rust_callees(endpoint, entries)
+    end
+
+    private def attach_external_handler_callees(handler_name : String,
+                                                current_path : String,
+                                                endpoint : Endpoint)
+      parts = handler_name.split("::").reject(&.empty?)
+      return if parts.size < 2
+
+      function_name = parts.last
+      module_parts = parts[0...-1]
+
+      candidate_module_paths(current_path, module_parts).each do |candidate|
+        next unless File.exists?(candidate)
+
+        if entries = cached_external_handler_callees(candidate, function_name)
+          attach_rust_callees(endpoint, entries)
+          return
+        end
+      end
+    end
+
+    private def cached_external_handler_callees(candidate : String,
+                                                function_name : String) : Array(Noir::RustCalleeExtractor::Entry)?
+      cache_key = "#{candidate}\0#{function_name}"
+
+      @external_handler_callee_cache_mutex.synchronize do
+        return @external_handler_callee_cache[cache_key]? if @external_handler_callee_cache.has_key?(cache_key)
+        return if @external_handler_miss_cache.includes?(cache_key)
+
+        entries = parse_external_handler_callees(candidate, function_name)
+        if entries
+          @external_handler_callee_cache[cache_key] = entries
+        else
+          @external_handler_miss_cache.add(cache_key)
+        end
+        entries
+      end
+    end
+
+    private def parse_external_handler_callees(candidate : String,
+                                               function_name : String) : Array(Noir::RustCalleeExtractor::Entry)?
+      source = read_file_content(candidate)
+      entries = nil.as(Array(Noir::RustCalleeExtractor::Entry)?)
+
+      Noir::TreeSitter.parse_rust(source) do |root|
+        index = build_function_index(root, source)
+        if function = index[function_name]?
+          body = Noir::TreeSitter.field(function, "body")
+          entries = body ? Noir::RustCalleeExtractorTS.callees_in_body(body, source, candidate) : [] of Noir::RustCalleeExtractor::Entry
+        end
+      end
+
+      entries
+    end
+
+    private def candidate_module_paths(current_path : String, module_parts : Array(String)) : Array(String)
+      return [] of String if module_parts.empty?
+
+      base_dir, parts = module_base_dir(current_path, module_parts)
+      return [] of String if parts.empty?
+
+      module_path = parts.join("/")
+      [
+        File.join(base_dir, "#{module_path}.rs"),
+        File.join(base_dir, module_path, "mod.rs"),
+      ]
+    end
+
+    private def module_base_dir(current_path : String, module_parts : Array(String)) : Tuple(String, Array(String))
+      first = module_parts.first
+      rest = module_parts[1..]? || [] of String
+
+      case first
+      when "crate"
+        {crate_src_dir(current_path), rest}
+      when "self"
+        {current_module_dir(current_path), rest}
+      when "super"
+        {File.dirname(current_module_dir(current_path)), rest}
+      else
+        {current_module_dir(current_path), module_parts}
+      end
+    end
+
+    private def current_module_dir(current_path : String) : String
+      File.dirname(current_path)
+    end
+
+    private def crate_src_dir(current_path : String) : String
+      marker = "/src/"
+      if idx = current_path.rindex(marker)
+        current_path[0, idx + marker.size - 1]
+      else
+        File.dirname(current_path)
+      end
     end
 
     private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
