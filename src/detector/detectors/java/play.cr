@@ -25,7 +25,9 @@ module Detector::Java
     end
 
     def applicable?(filename : String) : Bool
-      filename.ends_with?(".java") || filename.ends_with?(".gradle") || filename.ends_with?(".gradle.kts") || filename.ends_with?(".xml") || filename.ends_with?(".properties") || filename.ends_with?(".yml") || filename.ends_with?(".yaml") || filename.ends_with?("routes") || filename.ends_with?("routes.conf")
+      filename.ends_with?(".java") ||
+        filename.ends_with?("routes") ||
+        filename.ends_with?("routes.conf")
     end
 
     def set_name

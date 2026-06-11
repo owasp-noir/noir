@@ -59,7 +59,7 @@ module Analyzer::Mobile
       if application = find_child(manifest, "application")
         {"activity", "activity-alias", "service", "receiver"}.each do |component_tag|
           each_child(application, component_tag) do |component|
-            process_component(component, package, strings, placeholders, path, seen_urls)
+            process_component(component, component_tag, package, strings, placeholders, path, seen_urls)
           end
         end
       end
@@ -67,12 +67,13 @@ module Analyzer::Mobile
       parse_navigation_graphs(path, package, strings, placeholders, seen_urls)
     end
 
-    private def process_component(component : XML::Node,
+    private def process_component(component : XML::Node, component_tag : String,
                                   package : String, strings : Hash(String, String),
                                   placeholders : Hash(String, String),
                                   path : String, seen_urls : Set(String))
       exported = bool_attr(component, "exported")
       component_name = substitute(attr(component, "name") || "", placeholders)
+      handler_name = component_tag == "activity-alias" ? substitute(attr(component, "targetActivity") || component_name, placeholders) : component_name
 
       filters = [] of XML::Node
       each_child(component, "intent-filter") { |f| filters << f }
@@ -89,7 +90,7 @@ module Analyzer::Mobile
           # Deep-link / app-link URI(s) — the primary entry points. The
           # handling component rides along as metadata["via"].
           emit_filter_endpoints(data_nodes, actions, categories, package, strings,
-            placeholders, path, auto_verify, component_name, seen_urls)
+            placeholders, path, auto_verify, handler_name, seen_urls)
         elsif exported
           # Exported component with an action but no <data>: an IPC surface
           # reachable by explicit/implicit intent. The launcher (MAIN) is

@@ -54,6 +54,13 @@ describe "Analyzer::Mobile::Android" do
     md["package"].should eq("com.example.myapp")
   end
 
+  it "uses activity-alias targetActivity as the linkable handler" do
+    ep = find.call("myapp://alias").not_nil!
+    md = ep.metadata.not_nil!
+    md["via"].should eq(".AliasTargetActivity")
+    md["host"].should eq("alias")
+  end
+
   it "does not emit a separate intent:// entry for a deep-link component" do
     find.call("intent://com.example.myapp/.DeepLinkActivity").should be_nil
   end

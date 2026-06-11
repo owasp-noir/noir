@@ -25,6 +25,17 @@ expected_endpoints = [
     Param.new("userId", "", "extra"),
     Param.new("verified", "", "extra"),
   ], ["renderProfile", "webView.loadUrl"]),
+  # Lifecycle setup before the Intent reads should not consume the bounded
+  # callee list; the linker should keep input/delegation calls and extract
+  # constant-named extras such as Intent.EXTRA_REFERRER.
+  build.call("myapp://router", "mobile-scheme", [
+    Param.new("EXTRA_REFERRER", "", "extra"),
+    Param.new("EXTRA_TEXT", "", "extra"),
+    Param.new("EXTRA_STREAM", "", "extra"),
+  ], ["intent.getStringExtra", "getInboundUrl", "handleDeepLink", "prepareInboundUrl", "lookupUrlAndDownload"]),
+  build.call("myapp://alias", "mobile-scheme", [
+    Param.new("aliasToken", "", "extra"),
+  ], ["intent.getStringExtra", "dispatchAlias"]),
   build.call("myapp://accounts/profile", "mobile-scheme", no_params, [] of String),
   # Scheme resolved from @string/deep_link_scheme
   build.call("myappstr://settings", "mobile-scheme", no_params, [] of String),

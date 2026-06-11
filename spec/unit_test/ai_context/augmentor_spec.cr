@@ -1286,6 +1286,30 @@ describe "NoirAIContext" do
     mobile_ctx.sinks.map(&.kind).should contain("intent_redirect")
   end
 
+  it "classifies mobile URL lookup downloads as outbound HTTP instead of file I/O" do
+    source = <<-CODE
+      private void lookupUrlAndDownload(String url) {
+          download = PodcastSearcherRegistry.lookupUrl(url)
+              .subscribe(this::onFeedFound)
+      }
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("itpc://example.org/feed", "GET")
+      endpoint.protocol = "mobile-scheme"
+      endpoint.push_param(Param.new("ARG_FEEDURL", "", "extra"))
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+      endpoint.push_callee(Callee.new("lookupUrlAndDownload", path, 1))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+      context.sinks.map(&.kind).should contain("outbound_http")
+      context.sinks.map(&.kind).should_not contain("file_io")
+    end
+  end
+
   it "surfaces database query parameter binding as validator evidence" do
     source = <<-CODE
       suspend fun findOne(id: String): Post? =
@@ -2275,6 +2299,16 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should contain("unsafe_method")
     context.signals.find!(&.kind.== "unsafe_method").name.should contain("GET")
     context.signals.find!(&.kind.== "unsafe_method").name.should contain("User.destroy")
+  end
+
+  it "does NOT emit unsafe_method for mobile deep-link endpoints" do
+    endpoint = Endpoint.new("myapp://open", "GET")
+    endpoint.protocol = "mobile-scheme"
+    endpoint.push_callee(Callee.new("binding.loginScrollView.updatePadding", "LoginActivity.kt", 85))
+    endpoint.push_callee(Callee.new("VaultRepository.deleteFile", "PanicResponderActivity.java", 40))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("unsafe_method")
   end
 
   it "does NOT emit unsafe_method for POST/PUT/DELETE handlers with mutating callees" do

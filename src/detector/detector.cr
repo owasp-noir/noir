@@ -32,6 +32,88 @@ class AtomicFlag
   end
 end
 
+DETECTOR_IGNORED_DIR_NAMES = Set{
+  # Source control / IDE / agent state
+  ".git", ".idea", ".vscode", ".claude",
+  # Language-specific dependency / build caches
+  "node_modules", "vendor", "__pycache__", ".venv", "venv",
+  ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
+  ".cargo", ".terraform",
+  # Common build / dist / cache outputs
+  "dist", "build", "target", "out", "tmp", ".cache",
+  ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
+  ".serverless", ".expo",
+  # Test coverage / reports
+  "coverage", ".coverage",
+  # iOS / macOS noise
+  "Pods", "__MACOSX",
+}
+
+ANDROID_SOURCE_SUBDIRS = Set{
+  "aidl",
+  "assets",
+  "cpp",
+  "java",
+  "jni",
+  "kotlin",
+  "res",
+}
+
+MOBILE_DETECTOR_NAMES = Set{
+  "android",
+  "ios",
+  "well_known_applinks",
+}
+
+def detector_android_source_prefixes_for_manifest(manifest_path : String) : Array(String)
+  prefixes = [] of String
+  manifest_dir = File.dirname(manifest_path)
+  manifest_dir_parts = manifest_dir.split(File::SEPARATOR)
+  src_index = manifest_dir_parts.rindex("src")
+
+  source_set_root = if src_index && src_index == manifest_dir_parts.size - 2
+                      manifest_dir
+                    end
+
+  if source_set_root
+    ANDROID_SOURCE_SUBDIRS.each do |subdir|
+      prefixes << File.join(source_set_root, subdir) + File::SEPARATOR
+    end
+  else
+    ANDROID_SOURCE_SUBDIRS.each do |subdir|
+      prefixes << File.join(manifest_dir, subdir) + File::SEPARATOR
+      prefixes << File.join(manifest_dir, "src", subdir) + File::SEPARATOR
+      prefixes << File.join(manifest_dir, "src", "main", subdir) + File::SEPARATOR
+    end
+  end
+
+  prefixes
+end
+
+def detector_add_android_source_prefixes_from_dir(dir : String, prefixes : Array(String))
+  manifest_path = File.join(dir, "AndroidManifest.xml")
+  return unless File.exists?(manifest_path)
+
+  begin
+    content = File.read(manifest_path, encoding: "utf-8", invalid: :skip)
+    return unless content.includes?("<manifest")
+  rescue File::NotFoundError | File::AccessDeniedError
+    return
+  end
+
+  detector_android_source_prefixes_for_manifest(manifest_path).each do |prefix|
+    prefixes << prefix unless prefixes.includes?(prefix)
+  end
+end
+
+def detector_android_source_file?(path : String, prefixes : Array(String)) : Bool
+  prefixes.any? { |prefix| path.starts_with?(prefix) }
+end
+
+def detector_mobile_detector?(name : String) : Bool
+  MOBILE_DETECTOR_NAMES.includes?(name)
+end
+
 def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
   techs = [] of String
   passive_result = [] of PassiveScanResult
@@ -258,8 +340,18 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   locator = CodeLocator.instance
   wg = WaitGroup.new
 
-  # Clear file_map before starting
+  # Clear detector-populated locator keys before starting. These arrays
+  # are side effects of idempotent? == false mobile/spec detectors, so
+  # they should represent the current detection run only.
   locator.clear("file_map")
+  locator.clear("android-manifest")
+  locator.clear("android-assetlinks")
+  locator.clear("ios-info-plist")
+  locator.clear("ios-entitlements")
+  locator.clear("ios-aasa")
+
+  android_source_scope_active = detector_list.any? { |detector| detector_mobile_detector?(detector.name) }
+  android_source_prefixes = [] of String
 
   # Thread for reading files and sending their contents to the channel
   wg.add(1)
@@ -269,32 +361,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       skipped_content_reads = 0
       total_files = 0
       skipped_ignored_dirs = 0
-
-      # Directory names that are pruned at the walker level: once the
-      # walker meets a subdirectory with one of these names, that whole
-      # subtree is skipped without being enumerated.
-      #
-      # Critical invariant for issue #912: the base path itself is never
-      # matched against this set — we *start* the walk at the base, so a
-      # user pointing `-b` at e.g. `/projects/node_modules/my-app` will
-      # still have their project scanned. Only descendants of the base
-      # are subject to pruning.
-      ignored_dir_names = Set{
-        # Source control / IDE / agent state
-        ".git", ".idea", ".vscode", ".claude",
-        # Language-specific dependency / build caches
-        "node_modules", "vendor", "__pycache__", ".venv", "venv",
-        ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
-        ".cargo", ".terraform",
-        # Common build / dist / cache outputs
-        "dist", "build", "target", "out", "tmp", ".cache",
-        ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
-        ".serverless", ".expo",
-        # Test coverage / reports
-        "coverage", ".coverage",
-        # iOS / macOS noise
-        "Pods", "__MACOSX",
-      }
 
       # User-supplied --exclude-path patterns (comma-separated globs).
       # Patterns containing "/" are matched against the relative path;
@@ -325,6 +391,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           # for source. Resolve the ambiguity contextually: skip `lib/`
           # only when a sibling `shard.yml` is present.
           dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
+          if android_source_scope_active
+            detector_add_android_source_prefixes_from_dir(dir, android_source_prefixes)
+          end
           begin
             Dir.each_child(dir) do |entry|
               full_path = File.join(dir, entry)
@@ -334,7 +403,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               if info.directory?
                 # Subtree prune happens here. Entry name (not full path)
                 # so the base-as-node_modules case from #912 is safe.
-                if ignored_dir_names.includes?(entry)
+                if DETECTOR_IGNORED_DIR_NAMES.includes?(entry)
                   skipped_ignored_dirs += 1
                   next
                 end
@@ -383,6 +452,11 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               candidate_detector_indices = [] of Int32
               detector_list.each_with_index do |detector, idx|
                 candidate_detector_indices << idx if detector.applicable?(full_path)
+              end
+              if detector_android_source_file?(full_path, android_source_prefixes)
+                candidate_detector_indices.reject! do |idx|
+                  !detector_mobile_detector?(detector_list[idx].name)
+                end
               end
 
               if candidate_detector_indices.empty? && active_passive_scans.empty?

@@ -33,8 +33,9 @@ module NoirMobileLinker
   # reads a real URI query parameter (surfaced as a "query" param, baked
   # into the URL like any other); the `get*Extra` family reads Intent extras
   # (a Bundle, not part of the URI) and is surfaced as the "extra" type.
-  QUERY_PARAM_RE = /\.getQueryParameter\s*\(\s*"([^"]+)"/
-  EXTRA_PARAM_RE = /\.get(?:String|Int|Integer|Boolean|Long|Float|Double|Char|Byte|Short|Parcelable|Serializable|StringArray|CharSequence|Bundle)Extra\s*\(\s*"([^"]+)"/
+  QUERY_PARAM_RE  = /\.getQueryParameter\s*\(\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_][A-Za-z0-9_.]*))/
+  EXTRA_PARAM_RE  = /\.(?:get\w*Extra|hasExtra)\s*\(\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_][A-Za-z0-9_.]*))/
+  BUNDLE_PARAM_RE = /\b(?:arguments|requireArguments\(\)|getArguments\(\)|savedStateHandle|extras|intent\.extras|intent\.getExtras\(\))\??\s*\.\s*get(?:String|Int|Integer|Boolean|Long|Float|Double|Char|Byte|Short|Parcelable|Serializable|StringArray|CharSequence|Bundle)?(?:\s*<[^>]+>)?\s*\(\s*(?:"([^"]+)"|'([^']+)'|([A-Za-z_][A-Za-z0-9_.]*))/
 
   def self.apply(endpoints : Array(Endpoint), logger : NoirLogger) : Array(Endpoint)
     link_android(endpoints, logger)
@@ -48,6 +49,7 @@ module NoirMobileLinker
     return unless endpoints.any? { |ep| android_handler_target?(ep) }
 
     index = ClassIndex.new
+    handler_cache = {} of String => HandlerInfo
     endpoints.each_with_index do |endpoint, i|
       next unless android_handler_target?(endpoint)
       cls = handler_class(endpoint)
@@ -57,7 +59,13 @@ module NoirMobileLinker
       next unless resolved
 
       begin
-        endpoints[i] = link_handler(endpoint, cls[:simple], resolved[:path], resolved[:lang])
+        cache_key = "#{resolved[:lang]}:#{resolved[:path]}:#{cls[:simple]}"
+        info = handler_cache[cache_key]? || begin
+          fresh = android_handler_info(cls[:simple], resolved[:path], resolved[:lang])
+          handler_cache[cache_key] = fresh
+          fresh
+        end
+        endpoints[i] = apply_handler_info(endpoint, info)
       rescue e
         logger.debug "Mobile linker failed for #{endpoint.url} (#{resolved[:path]}): #{e.message}"
       end
@@ -144,8 +152,8 @@ module NoirMobileLinker
     File.read(path, encoding: "utf-8", invalid: :skip)
   end
 
-  private def self.link_handler(endpoint : Endpoint, simple : String,
-                                path : String, lang : Symbol) : Endpoint
+  private def self.android_handler_info(simple : String, path : String, lang : Symbol) : HandlerInfo
+    info = HandlerInfo.new
     content = read_content(path) || ""
 
     callees = [] of Callee
@@ -153,7 +161,13 @@ module NoirMobileLinker
       Noir::TreeSitter.parse_kotlin(content) do |root|
         HANDLER_METHODS.each do |method|
           Noir::KotlinCalleeExtractor.callees_in_method(root, content, path, simple, method).each do |name, fpath, line|
-            callees << Callee.new(name, path: fpath, line: line)
+            append_android_callee(callees, name, fpath, line)
+          end
+        end
+        android_delegate_methods(callees).each do |delegate|
+          target_line = delegate[:line].try { |line| line - 1 }
+          Noir::KotlinCalleeExtractor.callees_in_method(root, content, path, simple, delegate[:name], target_line).each do |name, fpath, line|
+            append_android_callee(callees, name, fpath, line)
           end
         end
       end
@@ -161,17 +175,121 @@ module NoirMobileLinker
       Noir::TreeSitter.parse_java(content) do |root|
         HANDLER_METHODS.each do |method|
           Noir::JavaCalleeExtractor.callees_in_method(root, content, path, simple, method).each do |name, fpath, line|
-            callees << Callee.new(name, path: fpath, line: line)
+            append_android_callee(callees, name, fpath, line)
+          end
+        end
+        android_delegate_methods(callees).each do |delegate|
+          target_line = delegate[:line].try { |line| line - 1 }
+          Noir::JavaCalleeExtractor.callees_in_method(root, content, path, simple, delegate[:name], target_line).each do |name, fpath, line|
+            append_android_callee(callees, name, fpath, line)
           end
         end
       end
     end
 
+    callees = prioritize_android_callees(callees)
     anchor_line = handler_anchor_line(content, simple)
-    endpoint.details.add_path(PathInfo.new(path, anchor_line))
-    extract_input_params(callees, content).each { |param| endpoint.push_param(param) }
-    callees.each { |callee| endpoint.push_callee(callee) }
-    endpoint
+    info.code_paths << PathInfo.new(path, anchor_line)
+    extract_input_params(callees, content).each { |param| info.params << param }
+    callees.first(Callee::MAX_PER_ENDPOINT).each do |callee|
+      info.callees << callee
+      if android_delegate_callee?(callee)
+        if callee_path = callee.path
+          info.code_paths << PathInfo.new(callee_path, callee.line)
+        end
+      end
+    end
+    info
+  end
+
+  private def self.append_android_callee(callees : Array(Callee), name : String, path : String, line : Int32)
+    callee = Callee.new(name, path: path, line: line)
+    callees << callee unless callees.includes?(callee)
+  end
+
+  # Android lifecycle methods often perform large amounts of UI setup before
+  # they touch the inbound Intent/Uri. Keep the bounded callee list focused on
+  # deep-link handling, input reads, dispatch, and sinks so important calls are
+  # not pushed out by `setContentView` / `findViewById` noise.
+  private def self.prioritize_android_callees(callees : Array(Callee)) : Array(Callee)
+    scored = [] of Tuple(Callee, Int32, Int32)
+    callees.each_with_index do |callee, index|
+      score = android_callee_score(callee)
+      scored << {callee, score, index} unless score < 0
+    end
+
+    scored.sort_by! { |entry| {-entry[1], entry[0].line || Int32::MAX, entry[2]} }
+    scored.map(&.[0])
+  end
+
+  private def self.android_callee_score(callee : Callee) : Int32
+    name = callee.name
+    return -1 if android_noise_callee?(name)
+
+    score = 0
+    score += 100 if android_input_callee?(name)
+    score += 90 if android_mobile_sink_callee?(name)
+    score += 80 if name.matches?(/\b(create|destroy|delete|update|save|insert|remove|persist|clear|wipe|reset)\w*/i)
+    score += 70 if android_delegate_name?(name)
+    score += 40 if name.matches?(/\b(?:service|repository|repo|dao|manager|client|gateway|api)\b/i)
+    score
+  end
+
+  private def self.android_noise_callee?(name : String) : Bool
+    return true if name.starts_with?("super.")
+    return true if name.starts_with?("savedInstanceState.")
+    return true if name.starts_with?("BuildConfig.")
+    return true if name.starts_with?("ThemeHelper.")
+    return true if name.starts_with?("TextUtils.")
+    return true if name.starts_with?("Log.")
+    return true if name.starts_with?("ThemeSwitcher.")
+    return true if name.starts_with?("ThemeUtils.")
+    return true if name.starts_with?("viewBinding.")
+    return true if name == "Bridge.restoreInstanceState"
+    return true if name.matches?(/\Aget(?:String|Text|Color|Drawable)\z/)
+    return true if name == "finish"
+    return true if name.matches?(/(?:^|\.)(?:removeExtra|setData|setAction)\b/)
+    return true if name.matches?(/(?:^|\.)(?:update\w*(?:Menu|Icon|Card|View|Text|Title|Toolbar|Layout)|set\w*(?:Text|Selection|Visibility|Enabled|Checked))\b/)
+    return true if name.matches?(/(?:^|\.)(?:setContentView|findViewById|setSupportActionBar|setTheme|setTitle|invalidateOptionsMenu|getWindow|getActionBar|getSupportActionBar|getSupportFragmentManager|getOnBackPressedDispatcher|setVolumeControlStream|setProgressBarIndeterminateVisibility|getLayoutInflater|setOnClickListener|setCardBackgroundColor)\b/)
+    return true if name.matches?(/(?:^|\.)(?:getFragments|registerFragmentLifecycleCallbacks|unregisterFragmentLifecycleCallbacks)\b/)
+    return true if name.matches?(/(?:^|\.)(?:updatePadding|setOnWindowInsetsChangeListener|getInsets)\b/)
+    return true if name.matches?(/\b\w+Binding\.inflate\b/)
+    return true if name.matches?(/\b(?:systemBars|ime|Toast\.makeText)\b/)
+    false
+  end
+
+  private def self.android_input_callee?(name : String) : Bool
+    return true if name.matches?(/(?:^|\.)(?:getIntent|getData|getDataString|getExtras|get\w+Extra|getQueryParameter|getArguments|requireArguments)\b/)
+    name.matches?(/(?:^|\.)(?:arguments|savedStateHandle|extras|bundle)\.get(?:String|Int|Boolean|Long|Parcelable|Serializable)\b/i)
+  end
+
+  private def self.android_mobile_sink_callee?(name : String) : Bool
+    name.matches?(/(?:^|\.)(?:loadUrl|loadData|loadDataWithBaseURL|evaluateJavascript|startActivity|startActivityForResult|sendBroadcast|startService|bindService)\b/)
+  end
+
+  private def self.android_delegate_callee?(callee : Callee) : Bool
+    return false unless callee.path && callee.line
+    android_delegate_name?(callee.name)
+  end
+
+  private def self.android_delegate_methods(callees : Array(Callee)) : Array(NamedTuple(name: String, line: Int32?))
+    methods = [] of NamedTuple(name: String, line: Int32?)
+    seen = Set(String).new
+
+    callees.each do |callee|
+      next unless android_delegate_callee?(callee)
+      method = callee.name.split('.').last
+      next if method.empty? || HANDLER_METHODS.includes?(method)
+      next unless seen.add?(method)
+
+      methods << {name: method, line: callee.line}
+    end
+
+    methods
+  end
+
+  private def self.android_delegate_name?(name : String) : Bool
+    name.matches?(/(?:^|\.)(?:handle|route|dispatch|open|process|parse|resolve|prepare|lookup|download|fetch|validate|subscribe|get\w*Url|onSuccess|onFailure|show\w*Dialog)\w*/i)
   end
 
   # Extracts inbound-deep-link reads from the *handler-method* call sites
@@ -185,10 +303,16 @@ module NoirMobileLinker
       line = callee.line
       next unless line && line >= 1 && line <= lines.size
       src = lines[line - 1]
-      src.scan(QUERY_PARAM_RE) { |m| params << Param.new(m[1], "", "query") }
-      src.scan(EXTRA_PARAM_RE) { |m| params << Param.new(m[1], "", "extra") }
+      src.scan(QUERY_PARAM_RE) { |m| params << Param.new(param_name(m), "", "query") }
+      src.scan(EXTRA_PARAM_RE) { |m| params << Param.new(param_name(m), "", "extra") }
+      src.scan(BUNDLE_PARAM_RE) { |m| params << Param.new(param_name(m), "", "extra") }
     end
     params
+  end
+
+  private def self.param_name(match : Regex::MatchData) : String
+    raw = match[1]? || match[2]? || match[3]? || ""
+    raw.split('.').last
   end
 
   # Best-effort source line for the handler so the AI-context snippet window

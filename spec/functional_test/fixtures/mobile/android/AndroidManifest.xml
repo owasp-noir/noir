@@ -45,6 +45,32 @@
             </intent-filter>
         </activity>
 
+        <!-- Lifecycle noise before the Intent reads exercises Android callee
+             prioritization: the linked callee cap should keep the deep-link
+             handling calls, not just UI setup. -->
+        <activity android:name=".RouterActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="myapp" android:host="router" />
+            </intent-filter>
+        </activity>
+
+        <!-- Alias deep link: the alias component owns the intent-filter, but
+             Android launches targetActivity. The source linker should use the
+             target activity for callees/params. -->
+        <activity android:name=".AliasTargetActivity" android:exported="false" />
+        <activity-alias
+            android:name=".PublicAliasActivity"
+            android:targetActivity=".AliasTargetActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="myapp" android:host="alias" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Custom scheme deep link using pathPrefix -->
         <activity android:name=".AccountActivity" android:exported="true">
             <intent-filter>

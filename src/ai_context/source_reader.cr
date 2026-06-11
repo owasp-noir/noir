@@ -16,14 +16,23 @@ module NoirAIContext
     MAX_LEAD_DECORATOR_LINES = 4
 
     @file_cache : Hash(String, Array(String))
+    @snippet_cache : Hash(String, String)
+    @route_scope_cache : Hash(String, String)
 
     def initialize
       @file_cache = {} of String => Array(String)
+      @snippet_cache = {} of String => String
+      @route_scope_cache = {} of String => String
     end
 
     def snippet_for(path : String?, line : Int32?, radius : Int32) : String?
       return unless path && line
       return if line < 1
+
+      cache_key = "#{path}:#{line}:#{radius}"
+      if cached = @snippet_cache[cache_key]?
+        return cached
+      end
 
       lines = read_lines(path)
       return if line > lines.size
@@ -38,12 +47,19 @@ module NoirAIContext
 
       snippet = selected.join(" | ").gsub(/\s+/, " ").strip
       return if snippet.empty?
-      snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
+      snippet = snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
+      @snippet_cache[cache_key] = snippet
+      snippet
     end
 
     def route_scope_snippet_for(path : String?, line : Int32?) : String?
       return unless path && line
       return if line < 1
+
+      cache_key = "#{path}:#{line}"
+      if cached = @route_scope_cache[cache_key]?
+        return cached
+      end
 
       lines = read_lines(path)
       return if line > lines.size
@@ -153,7 +169,9 @@ module NoirAIContext
 
       snippet = selected.join(" | ").gsub(/\s+/, " ").strip
       return if snippet.empty?
-      snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
+      snippet = snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
+      @route_scope_cache[cache_key] = snippet
+      snippet
     end
 
     def lines_for(path : String?) : Array(String)

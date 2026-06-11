@@ -252,6 +252,7 @@ module NoirAIContext
     METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE)['"])/i
 
     private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return if endpoint.mobile?
       return unless SAFE_METHODS.includes?(endpoint.method)
       return if context.signals.any? { |s| s.kind == "unsafe_method" }
 
@@ -1023,7 +1024,8 @@ module NoirAIContext
           snippet: callee_snippet
         ))
 
-        if sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")
+        if raw_sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")
+          sink = normalize_mobile_sink(endpoint, raw_sink)
           context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
         end
 
@@ -1047,6 +1049,33 @@ module NoirAIContext
         confidence: sink.confidence,
         snippet: sink.snippet
       )
+    end
+
+    private def normalize_mobile_sink(endpoint : Endpoint, sink : AIContextEntry) : AIContextEntry
+      return sink unless mobile_url_download_sink?(endpoint, sink)
+
+      AIContextEntry.new(
+        "outbound_http",
+        sink.name,
+        source: sink.source,
+        description: "Potential outbound HTTP/client sink inferred from mobile URL lookup/download flow",
+        path: sink.path,
+        line: sink.line,
+        confidence: sink.confidence,
+        snippet: sink.snippet
+      )
+    end
+
+    private def mobile_url_download_sink?(endpoint : Endpoint, sink : AIContextEntry) : Bool
+      return false unless endpoint.mobile?
+      return false unless sink.kind == "file_io"
+
+      evidence = "#{sink.name}\n#{sink.snippet || ""}"
+      return false unless evidence.matches?(/\bdownload/i)
+      return false unless evidence.matches?(/\b(?:url|uri|https?|deeplink|feedUrl|lookupUrl|prepareUrl)\b/i)
+      return false if evidence.matches?(/\b(?:File\.(?:open|read|write)|readFile|writeFile|send_file|sendFile|upload|file(?:Name|Path)?|path)\b/i)
+
+      true
     end
 
     private def outbound_uri_from_snippet(snippet : String?, line : Int32?) : String?
@@ -1136,8 +1165,8 @@ module NoirAIContext
         # sink, which silently dropped the second / third class.
         sink_patterns_for(endpoint).each do |pattern|
           next if context.sinks.any? { |s| s.kind == pattern.kind }
-          if sink = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
-            context.push_sink(sink)
+          if raw_sink = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
+            context.push_sink(normalize_mobile_sink(endpoint, raw_sink))
           end
         end
         add_spring_mvc_template_render_sink(context, endpoint, path_info, snippet)
