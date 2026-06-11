@@ -88,10 +88,8 @@ module Analyzer::Mobile
         if !data_nodes.empty?
           # Deep-link / app-link URI(s) — the primary entry points. The
           # handling component rides along as metadata["via"].
-          data_nodes.each do |data|
-            emit_data_endpoint(data, actions, categories, package, strings,
-              placeholders, path, auto_verify, component_name, seen_urls)
-          end
+          emit_filter_endpoints(data_nodes, actions, categories, package, strings,
+            placeholders, path, auto_verify, component_name, seen_urls)
         elsif exported
           # Exported component with an action but no <data>: an IPC surface
           # reachable by explicit/implicit intent. The launcher (MAIN) is
@@ -105,30 +103,99 @@ module Analyzer::Mobile
       end
     end
 
-    # Emits a mobile-scheme (custom scheme) or universal-link (verified
-    # http/https) endpoint for one <data> node.
-    private def emit_data_endpoint(data : XML::Node, actions : Array(String),
-                                   categories : Array(String), package : String,
-                                   strings : Hash(String, String),
-                                   placeholders : Hash(String, String), path : String,
-                                   auto_verify : Bool, via : String, seen_urls : Set(String))
-      scheme = resolve(attr(data, "scheme"), strings, placeholders)
-      return if scheme.nil? || scheme.empty?
+    # Generic/standard schemes carry no app-specific meaning on their own.
+    # A host-less `http://` / `https://` / `file://` / `content://` is a
+    # content-source qualifier — typically paired with a `<data mimeType>`
+    # so the component can open a file type from a browser / file manager —
+    # not a deep-link entry point. Custom schemes (`myapp://`) stay even
+    # host-less, since that's how a runtime-routed custom scheme is declared.
+    GENERIC_SCHEMES = Set{"http", "https", "file", "content"}
 
-      host = resolve(attr(data, "host"), strings, placeholders) || ""
-      norm_path = normalize_path(data, strings, placeholders)
-      web = scheme == "http" || scheme == "https"
+    # Upper bound on endpoints emitted from a single intent-filter. A media
+    # router / browser filter can declare dozens of hosts × paths; the full
+    # cross product would flood the inventory with near-duplicates, so past
+    # the cap the path dimension is dropped (scheme × host) and, if still
+    # over, the result is truncated.
+    MAX_FILTER_COMBOS = 64
 
-      url = "#{scheme}://#{host}#{norm_path}"
-      return unless seen_urls.add?(url)
+    # Emits the deep-link endpoints for one intent-filter. Android matches a
+    # URI against the filter as a whole, treating its `<data>` children as
+    # independent sets: the scheme must be in the scheme set, the host (if
+    # any) in the host set, and the path must satisfy one of the path rules.
+    # A filter routinely splits `<data android:scheme=.../>` and
+    # `<data android:host=... pathPrefix=.../>` across separate elements, so
+    # the real surface is the cross product scheme × host × path — emitting
+    # each `<data>` element on its own produced a bare `scheme://` and missed
+    # the real `scheme://host/path`.
+    private def emit_filter_endpoints(data_nodes : Array(XML::Node),
+                                      actions : Array(String), categories : Array(String),
+                                      package : String, strings : Hash(String, String),
+                                      placeholders : Hash(String, String), path : String,
+                                      auto_verify : Bool, via : String, seen_urls : Set(String))
+      schemes = [] of String
+      hosts = [] of String
+      paths = [] of String
+      has_mime_type = false
 
-      protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
-      endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
-      endpoint.protocol = protocol
-      endpoint.metadata = build_metadata(via, actions, categories, host, package)
+      data_nodes.each do |data|
+        has_mime_type = true unless attr(data, "mimeType").nil?
+        if scheme = resolve(attr(data, "scheme"), strings, placeholders)
+          schemes << scheme unless scheme.empty? || schemes.includes?(scheme)
+        end
+        if host = resolve(attr(data, "host"), strings, placeholders)
+          hosts << host unless host.empty? || hosts.includes?(host)
+        end
+        norm = normalize_path(data, strings, placeholders)
+        paths << norm unless norm.empty? || paths.includes?(norm)
+      end
+      return if schemes.empty?
 
-      mark_unresolved(endpoint, url)
-      @result << endpoint
+      data_filter_combos(schemes, hosts, paths, has_mime_type).each do |scheme, host, norm_path|
+        web = scheme == "http" || scheme == "https"
+        url = "#{scheme}://#{host}#{norm_path}"
+        next unless seen_urls.add?(url)
+
+        protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
+        endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
+        endpoint.protocol = protocol
+        endpoint.metadata = build_metadata(via, actions, categories, host, package)
+        mark_unresolved(endpoint, url)
+        @result << endpoint
+      end
+    end
+
+    # Cross-products the scheme/host/path sets of one filter into
+    # (scheme, host, path) triples, applying the host-less generic-scheme
+    # suppression and the per-filter cap.
+    private def data_filter_combos(schemes : Array(String), hosts : Array(String),
+                                   paths : Array(String), has_mime_type : Bool) : Array({String, String, String})
+      combos = [] of {String, String, String}
+      effective_paths = paths.empty? ? [""] : paths
+
+      schemes.each do |scheme|
+        if hosts.empty?
+          # Host-less: keep only custom schemes. A generic scheme with no
+          # host — and any scheme in a content-type (mimeType) filter — is a
+          # file/content qualifier, not a remotely reachable deep link.
+          next if has_mime_type || GENERIC_SCHEMES.includes?(scheme)
+          combos << {scheme, "", ""}
+        else
+          hosts.each do |host|
+            effective_paths.each { |norm_path| combos << {scheme, host, norm_path} }
+          end
+        end
+      end
+
+      return combos if combos.size <= MAX_FILTER_COMBOS
+
+      # Over the cap: drop path granularity (scheme × host), then truncate.
+      @logger.debug "Capping intent-filter deep links (#{combos.size} combinations) at #{MAX_FILTER_COMBOS}"
+      collapsed = [] of {String, String, String}
+      seen = Set(String).new
+      combos.each do |scheme, host, _|
+        collapsed << {scheme, host, ""} if seen.add?("#{scheme}://#{host}")
+      end
+      collapsed.first(MAX_FILTER_COMBOS)
     end
 
     # Emits an android-intent endpoint for an exported, data-less component,
@@ -280,6 +347,14 @@ module Analyzer::Mobile
     # the quote requirement keeps `applicationIdSuffix` from matching.
     APPLICATION_ID_RE = /\bapplicationId\s*(?:=\s*)?["']([^"']+)["']/
     NAMESPACE_RE      = /\bnamespace\s*(?:=\s*)?["']([^"']+)["']/
+    # Unquoted value: a gradle constant reference, e.g. `applicationId APP_ID`
+    # (groovy) or `applicationId = NEWPIPE_APPLICATION_ID_OLD` (kts). The
+    # `(?![A-Za-z0-9_])` after the key keeps `applicationIdSuffix` out, and
+    # the UPPER_SNAKE value requirement keeps prose in a `// applicationId is
+    # ...` comment from matching (gradle constants are upper-case by
+    # convention; a camelCase val is intentionally not followed).
+    APPLICATION_ID_CONST_RE = /\bapplicationId(?![A-Za-z0-9_])\s*(?:=\s*)?([A-Z][A-Z0-9_]+)\b/
+    NAMESPACE_CONST_RE      = /\bnamespace(?![A-Za-z0-9_])\s*(?:=\s*)?([A-Z][A-Z0-9_]+)\b/
     # The bracketed segment after `manifestPlaceholders` — a groovy map
     # literal (`= [k: "v"]`), a kts `+= mapOf("k" to "v")`, or a
     # `putAll(mapOf(...))` — captured up to the first closing bracket.
@@ -295,7 +370,7 @@ module Analyzer::Mobile
       return GradleConfig.empty unless gradle_path
 
       begin
-        parse_gradle(read_file_content(gradle_path))
+        parse_gradle(read_file_content(gradle_path), gradle_path)
       rescue e
         @logger.debug "Failed to parse gradle file #{gradle_path}: #{e.message}"
         GradleConfig.empty
@@ -323,9 +398,13 @@ module Analyzer::Mobile
     # so defaultConfig values (declared first by convention) take precedence
     # over buildType / flavor overrides; variant-specific placeholder values
     # are intentionally not modeled.
-    private def parse_gradle(content : String) : GradleConfig
-      application_id = content.match(APPLICATION_ID_RE).try(&.[1])
-      namespace = content.match(NAMESPACE_RE).try(&.[1])
+    private def parse_gradle(content : String, gradle_path : String) : GradleConfig
+      # Prefer a quoted literal; fall back to a constant reference
+      # (`applicationId APP_ID`) resolved against this script or buildSrc.
+      application_id = content.match(APPLICATION_ID_RE).try(&.[1]) ||
+                       resolve_const_ref(content, APPLICATION_ID_CONST_RE, gradle_path)
+      namespace = content.match(NAMESPACE_RE).try(&.[1]) ||
+                  resolve_const_ref(content, NAMESPACE_CONST_RE, gradle_path)
       placeholders = {} of String => String
 
       content.scan(PLACEHOLDER_MAP_RE) do |m|
@@ -346,6 +425,56 @@ module Analyzer::Mobile
       end
 
       GradleConfig.new(application_id, namespace, placeholders)
+    end
+
+    # How far up from the module script to look for a `buildSrc/` source tree
+    # holding shared gradle constants.
+    BUILDSRC_SEARCH_DEPTH = 4
+
+    # Matches a constant reference (`applicationId APP_ID`) and resolves the
+    # named constant to its string literal. Returns nil when the value is not
+    # a bare identifier (e.g. a method call) or the constant can't be found.
+    private def resolve_const_ref(content : String, ref_re : Regex, gradle_path : String) : String?
+      name = content.match(ref_re).try(&.[1])
+      return unless name
+      resolve_constant(name, content, gradle_path)
+    end
+
+    # Resolves a gradle constant to its string literal: the same build script
+    # first (groovy `def APP_ID = "..."`), then a sibling `buildSrc/` source
+    # tree (kotlin `const val APP_ID = "..."`), where multi-module projects
+    # keep shared identifiers.
+    private def resolve_constant(name : String, content : String, gradle_path : String) : String?
+      def_re = /\b#{Regex.escape(name)}\s*=\s*["']([^"']+)["']/
+      if m = content.match(def_re)
+        return m[1]
+      end
+      resolve_buildsrc_constant(def_re, gradle_path)
+    end
+
+    private def resolve_buildsrc_constant(def_re : Regex, gradle_path : String) : String?
+      dir = File.dirname(File.expand_path(gradle_path))
+      BUILDSRC_SEARCH_DEPTH.times do
+        buildsrc = File.join(dir, "buildSrc")
+        if Dir.exists?(buildsrc)
+          {"*.kt", "*.kts", "*.gradle"}.each do |pattern|
+            Dir.glob(File.join(buildsrc, "**", pattern)).sort.each do |src|
+              begin
+                if m = read_file_content(src).match(def_re)
+                  return m[1]
+                end
+              rescue
+                next
+              end
+            end
+          end
+          return # buildSrc found but constant absent — stop walking up
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      nil
     end
 
     # Replaces `${placeholder}` references with their gradle values; unknown

@@ -80,5 +80,35 @@
             </intent-filter>
         </service>
 
+        <!-- App Link declared the common way: scheme and host/path split
+             across separate <data> elements. Android combines them as a
+             cross product, so this yields http/https × the two paths. -->
+        <activity android:name=".SplitLinkActivity" android:exported="true">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="split.example.com" android:pathPrefix="/wiki/" />
+                <data android:host="split.example.com" android:pathPattern="/zh.*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Content-type (mimeType) handler: opens an XML file from a file
+             manager / browser. The scheme-only file/content/https <data>
+             entries are content-source qualifiers, NOT deep links, so this
+             filter must produce no endpoints. -->
+        <activity android:name=".FileImportActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/xml" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:scheme="https" />
+            </intent-filter>
+        </activity>
+
     </application>
 </manifest>
