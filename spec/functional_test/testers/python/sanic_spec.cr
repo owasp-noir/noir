@@ -40,6 +40,12 @@ expected_endpoints = [
   ]),
   Endpoint.new("/assets/*", "GET"),
   Endpoint.new("/api/v1/reports/files/*", "GET"),
+  Endpoint.new("/programmatic-feed/{channel}", "GET", [
+    Param.new("channel", "", "path"),
+    Param.new("token", "", "query"),
+  ]).tap do |endpoint|
+    endpoint.protocol = "ws"
+  end,
 ]
 
 tester = FunctionalTester.new("fixtures/python/sanic/", {

@@ -136,6 +136,10 @@ urlpatterns = [
         r'^legacy/(?P<legacy_id>[0-9]+)/$',
         views.legacy_detail,
         name='legacy_detail'),
+    re_path(
+        r'^nested/(?P<nested_slug>[\w-]+(/[\w-]+)*)_(?P<pk>\d+)/$',
+        views.nested_regex_detail,
+        name='nested_regex_detail'),
 ]
 urlpatterns = base_patterns + urlpatterns
 urlpatterns.extend(extended_patterns)

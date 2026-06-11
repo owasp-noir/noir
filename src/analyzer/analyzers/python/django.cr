@@ -6,6 +6,8 @@ module Analyzer::Python
     # Base path for the Django project
     @django_base_path : ::String = ""
     @visited_url_paths = Hash(String, Bool).new
+    @django_app_config_path_cache = Hash(::String, ::String).new
+    @visited_app_config_paths = Set(::String).new
 
     # Regular expressions for extracting Django URL configurations
     REGEX_ROOT_URLCONF  = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
@@ -246,6 +248,7 @@ module Analyzer::Python
       original_content = content
       package_map = find_imported_modules(@django_base_path, url_base_path, content)
       import_aliases = extract_python_import_aliases(original_content)
+      app_config_refs = extract_django_app_config_refs(original_content)
       drf_router_registrations = extract_drf_router_registrations(content)
       urlpattern_lists = extract_urlpattern_lists(content)
       route_path = PathInfo.new(django_urls.filepath)
@@ -284,6 +287,13 @@ module Analyzer::Python
             end
           end
           next if new_django_urls
+
+          if app_config_path = resolve_django_app_config_include_path(view, app_config_refs)
+            extract_endpoints_from_django_app_config(join_url_parts(django_urls.prefix, route).lchop("/"), app_config_path, route_path).each do |endpoint|
+              endpoints << endpoint
+            end
+            next
+          end
 
           if imported_urlconf_path = extract_imported_include_target(view, package_map)
             new_django_urls = DjangoUrls.new("#{django_urls.prefix}#{route}", imported_urlconf_path, django_urls.basepath)
@@ -332,23 +342,8 @@ module Analyzer::Python
             endpoints << Endpoint.new(url, "GET", Details.new(route_path))
           else
             view = extract_wrapped_view_reference(view)
-            dotted_as_names_split = view.split(".")
-
-            filepath = ""
-            function_or_class_name = ""
-            dotted_as_names_split.each_with_index do |name, index|
-              if (package_map.has_key? name) && (index < dotted_as_names_split.size)
-                filepath, package_type = package_map[name]
-                function_or_class_name = name
-                if package_type == PackageType::FILE && index + 1 < dotted_as_names_split.size
-                  function_or_class_name = dotted_as_names_split[index + 1]
-                end
-
-                break
-              end
-            end
-
-            if !filepath.empty? && /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
+            if view_target = resolve_django_view_target(view, package_map)
+              filepath, function_or_class_name = view_target
               extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
                 append_code_path(endpoint.details, route_path)
                 endpoints << endpoint
@@ -366,23 +361,34 @@ module Analyzer::Python
     end
 
     private def extract_urlpatterns_contents(content : ::String, urlpattern_lists : Hash(::String, ::String)) : Array(::String)
+      extract_url_list_contents(content, urlpattern_lists, ["urlpatterns"])
+    end
+
+    private def extract_app_config_url_contents(content : ::String, urlpattern_lists : Hash(::String, ::String)) : Array(::String)
+      extract_url_list_contents(content, urlpattern_lists, ["urls", "urlpatterns"])
+    end
+
+    private def extract_url_list_contents(content : ::String,
+                                          urlpattern_lists : Hash(::String, ::String),
+                                          list_names : Array(::String)) : Array(::String)
       contents = [] of ::String
       lines = content.split("\n")
+      list_name_re = list_names.map { |name| Regex.escape(name) }.join("|")
 
       lines.each_with_index do |line, index|
-        if line.matches?(/^\s*urlpatterns\s*=/)
+        if line.matches?(/^\s*(?:#{list_name_re})\s*=/)
           logical_line = collect_python_expression(lines, index, line)
-          if assignment_match = logical_line.match(/^\s*urlpatterns\s*=\s*(.+)$/m)
+          if assignment_match = logical_line.match(/^\s*(?:#{list_name_re})\s*=\s*(.+)$/m)
             add_urlpattern_expression_contents(contents, assignment_match[1], urlpattern_lists)
           end
-        elsif line.matches?(/^\s*urlpatterns\s*\+=/)
+        elsif line.matches?(/^\s*(?:#{list_name_re})\s*\+=/)
           logical_line = collect_python_expression(lines, index, line)
-          if append_match = logical_line.match(/^\s*urlpatterns\s*\+=\s*(.+)$/m)
+          if append_match = logical_line.match(/^\s*(?:#{list_name_re})\s*\+=\s*(.+)$/m)
             add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists)
           end
-        elsif line.matches?(/^\s*urlpatterns\s*\.\s*extend\s*\(/)
+        elsif line.matches?(/^\s*(?:#{list_name_re})\s*\.\s*extend\s*\(/)
           logical_line = collect_python_expression(lines, index, line)
-          if extend_match = logical_line.match(/^\s*urlpatterns\s*\.\s*extend\s*\((.*)\)\s*$/m)
+          if extend_match = logical_line.match(/^\s*(?:#{list_name_re})\s*\.\s*extend\s*\((.*)\)\s*$/m)
             add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists)
           end
         end
@@ -508,6 +514,190 @@ module Analyzer::Python
       pattern_lists
     end
 
+    private def extract_django_app_config_refs(content : ::String) : Hash(::String, ::String)
+      refs = Hash(::String, ::String).new
+      content.each_line do |line|
+        next if line.lstrip.starts_with?("#")
+        line.scan(/\bself\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*apps\.get_app_config\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          next unless match.size == 3
+          refs[match[1]] = match[2]
+        end
+      end
+      refs
+    end
+
+    private def resolve_django_app_config_include_path(view : ::String,
+                                                       app_config_refs : Hash(::String, ::String)) : ::String?
+      if direct_match = view.match(/\bapps\.get_app_config\s*\(\s*['"]([^'"]+)['"]\s*\)\.urls\b/)
+        return resolve_django_app_config_path(direct_match[1])
+      end
+
+      if self_match = view.match(/\bself\.([A-Za-z_][A-Za-z0-9_]*)\.urls\b/)
+        ref_name = self_match[1]
+        if label = app_config_refs[ref_name]?
+          resolve_django_app_config_path(label)
+        end
+      end
+    end
+
+    private def resolve_django_app_config_path(label : ::String) : ::String?
+      cache_key = "#{@django_base_path}:#{label}"
+      if cached = @django_app_config_path_cache[cache_key]?
+        return cached.empty? ? nil : cached
+      end
+
+      escaped_label = Regex.escape(label)
+      label_re = Regex.new("^\\s*label\\s*=\\s*[r]?['\"]#{escaped_label}['\"]")
+      exact_name_re = Regex.new("^\\s*name\\s*=\\s*[r]?['\"]#{escaped_label}['\"]")
+      tail_name_re = Regex.new("^\\s*name\\s*=\\s*[r]?['\"][^'\"]*\\.#{escaped_label}['\"]")
+
+      candidates = all_files.select do |file|
+        next false unless file.ends_with?(".py")
+        next false if file.includes?("/site-packages/")
+        next false if PythonEngine.python_test_path?(file, base_path_for(file))
+        base = File.basename(file)
+        base == "apps.py" || base == "config.py"
+      end
+      candidates.sort_by! { |file| {file.ends_with?("/config.py") ? 0 : 1, file.count('/'), file} }
+
+      candidates.each do |file|
+        begin
+          content = read_file_content(file)
+        rescue
+          next
+        end
+
+        if content.each_line.any? { |line| line.matches?(label_re) || line.matches?(exact_name_re) || line.matches?(tail_name_re) }
+          @django_app_config_path_cache[cache_key] = file
+          return file
+        end
+      end
+
+      @django_app_config_path_cache[cache_key] = ""
+      nil
+    end
+
+    private def extract_endpoints_from_django_app_config(prefix : ::String,
+                                                         app_config_path : ::String,
+                                                         parent_route_path : PathInfo) : Array(Endpoint)
+      endpoints = [] of Endpoint
+      expanded_key = "#{File.expand_path(app_config_path)}:#{prefix}"
+      return endpoints if @visited_app_config_paths.includes?(expanded_key)
+      @visited_app_config_paths << expanded_key
+
+      begin
+        content = read_file_content(app_config_path)
+        package_map = find_imported_modules(@django_base_path, File.dirname(app_config_path), content)
+        urlpattern_lists = extract_urlpattern_lists(content)
+        app_config_refs = extract_django_app_config_refs(content)
+        route_path = PathInfo.new(app_config_path)
+
+        extract_app_config_url_contents(content, urlpattern_lists).each do |pattern_content|
+          extract_app_config_pattern_endpoints(prefix, pattern_content, app_config_path, package_map, urlpattern_lists, app_config_refs, route_path, parent_route_path).each do |endpoint|
+            endpoints << endpoint
+          end
+        end
+      rescue e
+        logger.debug e.message
+      end
+
+      endpoints
+    end
+
+    private def extract_app_config_pattern_endpoints(prefix : ::String,
+                                                     pattern_content : ::String,
+                                                     current_app_config_path : ::String,
+                                                     package_map,
+                                                     urlpattern_lists : Hash(::String, ::String),
+                                                     app_config_refs : Hash(::String, ::String),
+                                                     route_path : PathInfo,
+                                                     parent_route_path : PathInfo) : Array(Endpoint)
+      endpoints = [] of Endpoint
+
+      extract_route_mappings(pattern_content).each do |route_mapping|
+        route, view = route_mapping
+        route = normalize_django_route(route)
+        nested_prefix = join_url_parts(prefix, route).lchop("/")
+
+        if nested_app_config_path = resolve_django_app_config_include_path(view, app_config_refs)
+          extract_endpoints_from_django_app_config(nested_prefix, nested_app_config_path, route_path).each do |endpoint|
+            append_code_path(endpoint.details, parent_route_path)
+            endpoints << endpoint
+          end
+          next
+        end
+
+        if local_patterns = extract_local_include_target(view)
+          if nested_pattern_content = urlpattern_lists[local_patterns]?
+            extract_app_config_pattern_endpoints(nested_prefix, nested_pattern_content, current_app_config_path, package_map, urlpattern_lists, app_config_refs, route_path, parent_route_path).each do |endpoint|
+              endpoints << endpoint
+            end
+            next
+          end
+        end
+
+        if inline_patterns = extract_inline_include_patterns(view)
+          extract_app_config_pattern_endpoints(nested_prefix, inline_patterns, current_app_config_path, package_map, urlpattern_lists, app_config_refs, route_path, parent_route_path).each do |endpoint|
+            endpoints << endpoint
+          end
+          next
+        end
+
+        if imported_urlconf_path = extract_imported_include_target(view, package_map)
+          new_django_urls = DjangoUrls.new(nested_prefix, imported_urlconf_path, @django_base_path)
+          unless @visited_url_paths.has_key? new_django_urls.filepath
+            extract_endpoints(new_django_urls).each do |endpoint|
+              append_code_path(endpoint.details, route_path)
+              append_code_path(endpoint.details, parent_route_path)
+              endpoints << endpoint
+            end
+          end
+          next
+        end
+
+        url = join_url_parts(prefix, route)
+        if view.empty?
+          endpoint = Endpoint.new(url, "GET", Details.new(route_path))
+          append_code_path(endpoint.details, parent_route_path)
+          endpoints << endpoint
+        else
+          view = extract_wrapped_view_reference(view)
+          if view_target = resolve_django_view_target(view, package_map)
+            filepath, function_or_class_name = view_target
+            extract_endpoints_from_file(url, filepath, function_or_class_name).each do |endpoint|
+              append_code_path(endpoint.details, route_path)
+              append_code_path(endpoint.details, parent_route_path)
+              endpoints << endpoint
+            end
+          else
+            endpoint = Endpoint.new(url, "GET", Details.new(route_path))
+            append_code_path(endpoint.details, parent_route_path)
+            endpoints << endpoint
+          end
+        end
+      end
+
+      endpoints
+    end
+
+    private def resolve_django_view_target(view : ::String, package_map) : Tuple(::String, ::String)?
+      dotted_as_names_split = view.split(".")
+
+      dotted_as_names_split.each_with_index do |name, index|
+        if (package_map.has_key? name) && (index < dotted_as_names_split.size)
+          filepath, package_type = package_map[name]
+          function_or_class_name = name
+          if package_type == PackageType::FILE && index + 1 < dotted_as_names_split.size
+            function_or_class_name = dotted_as_names_split[index + 1]
+          end
+
+          return {filepath, function_or_class_name} if !filepath.empty? && /^[a-zA-Z_][a-zA-Z0-9_]*$/.match(function_or_class_name)
+        end
+      end
+
+      nil
+    end
+
     private def python_bracket_delta(line : ::String) : Int32
       depth = 0
       in_quote : Char? = nil
@@ -587,9 +777,66 @@ module Analyzer::Python
 
     private def normalize_django_route(route : ::String) : ::String
       normalized = route.gsub(/^\^/, "").gsub(/\$$/, "")
-      normalized.gsub(/\(\?P<([A-Za-z_][A-Za-z0-9_]*)>[^)]*\)/) do
-        "{#{$~[1]}}"
+      normalize_django_named_regex_groups(normalized)
+    end
+
+    private def normalize_django_named_regex_groups(route : ::String) : ::String
+      normalized = String.build do |io|
+        index = 0
+        while index < route.size
+          if route.byte_slice(index, 4) == "(?P<"
+            name_start = index + 4
+            name_end = route.index('>', name_start)
+            unless name_end
+              io << route[index]
+              index += 1
+              next
+            end
+
+            name = route[name_start...name_end]
+            if name.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
+              group_end = django_named_group_end(route, name_end + 1)
+              if group_end
+                io << "{#{name}}"
+                index = group_end + 1
+                next
+              end
+            end
+          end
+
+          io << route[index]
+          index += 1
+        end
       end
+      normalized
+    end
+
+    private def django_named_group_end(route : ::String, start_index : Int32) : Int32?
+      depth = 1
+      index = start_index
+      in_char_class = false
+      escaped = false
+
+      while index < route.size
+        ch = route[index]
+        if escaped
+          escaped = false
+        elsif ch == '\\'
+          escaped = true
+        elsif in_char_class
+          in_char_class = false if ch == ']'
+        elsif ch == '['
+          in_char_class = true
+        elsif ch == '('
+          depth += 1
+        elsif ch == ')'
+          depth -= 1
+          return index if depth == 0
+        end
+        index += 1
+      end
+
+      nil
     end
 
     private def extract_python_import_aliases(content : ::String) : Hash(::String, ::String)

@@ -224,6 +224,32 @@ describe "EndpointOptimizer" do
       end
     end
 
+    it "does not leak code paths across OAS endpoints that reused Details" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      oas_details = Details.new(PathInfo.new("openapi.json", 1))
+      oas_details.technology = "oas3"
+      oas_tags = Endpoint.new("/api/tags", "GET", oas_details)
+      oas_users = Endpoint.new("/api/users", "POST", oas_details)
+
+      tags_details = Details.new(PathInfo.new("tags.py", 12))
+      tags_details.technology = "python_litestar"
+      tags_endpoint = Endpoint.new("/api/tags", "GET", tags_details)
+
+      users_details = Details.new(PathInfo.new("users.py", 24))
+      users_details.technology = "python_litestar"
+      users_endpoint = Endpoint.new("/api/users", "POST", users_details)
+
+      result = optimizer.optimize_endpoints([oas_tags, oas_users, tags_endpoint, users_endpoint])
+
+      result.size.should eq(2)
+      tags = result.find! { |endpoint| endpoint.url == "/api/tags" }
+      users = result.find! { |endpoint| endpoint.url == "/api/users" }
+
+      tags.details.code_paths.map(&.path).should eq(["openapi.json", "tags.py"])
+      users.details.code_paths.map(&.path).should eq(["openapi.json", "users.py"])
+    end
+
     it "merges Postman colon path templates with Kotlin Spring brace templates" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-postman-colon-#{Process.pid}-#{Time.utc.to_unix_ms}")
@@ -711,6 +737,19 @@ describe "EndpointOptimizer" do
       result[0].params.map(&.name).should eq(["xMin", "yMin", "xMax", "yMax"])
       result[0].params.all? { |p| p.param_type == "path" }.should be_true
       result[1].params.map(&.name).should eq(["userName", "x", "y"])
+    end
+
+    it "does not treat regex quantifiers as curly brace path params" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/archive/\\d{4}/", "GET"),
+        Endpoint.new("/archive/{year}/", "GET"),
+      ]
+
+      result = optimizer.add_path_parameters(endpoints)
+
+      result[0].params.should be_empty
+      result[1].params.map(&.name).should eq(["year"])
     end
 
     it "extracts parameters from colon patterns" do

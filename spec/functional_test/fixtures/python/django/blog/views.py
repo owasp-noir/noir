@@ -460,6 +460,19 @@ def legacy_detail(request, legacy_id):
     preview = request.GET.get('preview')
     return HttpResponse(f"{legacy_id}:{preview}")
 
+def nested_regex_detail(request, nested_slug, pk):
+    preview = request.GET.get('preview')
+    return HttpResponse(f"{nested_slug}:{pk}:{preview}")
+
+@require_POST
+def shop_orders(request):
+    token = request.POST.get('token')
+    return HttpResponse(token)
+
+def shop_daily_report(request):
+    period = request.GET.get('period')
+    return HttpResponse(period)
+
 def local_report_list(request):
     owner = request.GET.get('owner')
     return HttpResponse(owner)

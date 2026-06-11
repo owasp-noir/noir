@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from api import api
 from db import save_user, audit_log
 
@@ -15,6 +15,10 @@ def rate_limit(_n):
 
 def build_status():
     return {"ok": True}
+
+
+def require_admin():
+    return True
 
 
 def export_file(file_path: str):
@@ -71,3 +75,12 @@ def list_reports(
     user = save_user("report")
     audit_log(user)
     return {"ok": True}
+
+
+@app.get(
+    "/decorated",
+    dependencies=[Depends(require_admin)],
+)
+def decorated(limit: int = 10):
+    audit_log(limit)
+    return {"limit": limit}

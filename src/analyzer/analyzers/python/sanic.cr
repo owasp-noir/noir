@@ -28,12 +28,13 @@ module Analyzer::Python
     # recompiles (PCRE2 JIT) on every evaluation, and these interpolate
     # only constants. The `.to_s` expansion is byte-identical to the
     # previous inline form, so matching behaviour is unchanged.
-    SANIC_INSTANCE_RE   = /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Sanic\(/
-    STATIC_CALL_RE      = /\b(#{PYTHON_VAR_NAME_REGEX})\.static\s*\((.*)\)\s*$/m
-    ADD_ROUTE_CALL_RE   = /\b(#{PYTHON_VAR_NAME_REGEX})\.add_route\s*\((.*)\)\s*$/m
-    AS_VIEW_RE          = /^(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
-    DOTTED_REFERENCE_RE = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})*$/
-    BLUEPRINT_CALL_RE   = /\.blueprint\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})(.*?)\)/m
+    SANIC_INSTANCE_RE           = /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:sanic\.)?Sanic\(/
+    STATIC_CALL_RE              = /\b(#{PYTHON_VAR_NAME_REGEX})\.static\s*\((.*)\)\s*$/m
+    ADD_ROUTE_CALL_RE           = /\b(#{PYTHON_VAR_NAME_REGEX})\.add_route\s*\((.*)\)\s*$/m
+    ADD_WEBSOCKET_ROUTE_CALL_RE = /\b(#{PYTHON_VAR_NAME_REGEX})\.add_websocket_route\s*\((.*)\)\s*$/m
+    AS_VIEW_RE                  = /^(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
+    DOTTED_REFERENCE_RE         = /^#{PYTHON_VAR_NAME_REGEX}(?:\.#{PYTHON_VAR_NAME_REGEX})*$/
+    BLUEPRINT_CALL_RE           = /\.blueprint\s*\(\s*(#{PYTHON_VAR_NAME_REGEX})(.*?)\)/m
 
     # `get_endpoints` rebuilt two PCRE2 patterns per request field on
     # every handler-body line. The field set is fixed, so precompile the
@@ -52,6 +53,7 @@ module Analyzer::Python
     @file_content_cache = Hash(::String, ::String).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String))).new
     @programmatic_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String))).new
+    @programmatic_websocket_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String))).new
     @programmatic_class_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String))).new
     @static_routes = Hash(::String, Array(Tuple(Int32, ::String, ::String))).new
 
@@ -120,6 +122,15 @@ module Analyzer::Python
                   router_name, route_path, handler_name, extra_params = route_info
                   @programmatic_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
                   @programmatic_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
+                end
+              end
+
+              if line.includes?(".add_websocket_route(")
+                effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+                if route_info = parse_programmatic_websocket_route(effective_line)
+                  router_name, route_path, handler_name, extra_params = route_info
+                  @programmatic_websocket_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+                  @programmatic_websocket_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
                 end
               end
 
@@ -247,6 +258,7 @@ module Analyzer::Python
           handler_path = path
           handler_source = source
           handler_lines = lines
+          function_def_index ||= find_self_method_def(lines, line_index, handler_name)
           if function_def_index.nil?
             import_modules = find_imported_modules(definition_base_path, path, source)
             resolved = resolve_external_handler(handler_name, path, import_modules)
@@ -275,6 +287,57 @@ module Analyzer::Python
           registration_prefixes.each do |registration_prefix|
             full_prefix = join_paths(registration_prefix, prefix)
             get_endpoints("GET", route_path, extra_params, codeblock_lines, full_prefix).each do |endpoint|
+              endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
+              handler_callees.each { |c| endpoint.push_callee(c) }
+              result << endpoint
+            end
+          end
+        end
+      end
+
+      @programmatic_websocket_routes.each do |router_name, router_info_list|
+        router_info_list.each do |route_info|
+          line_index, path, route_path, extra_params, handler_name = route_info
+          source = fetch_file_content(path)
+          lines = source.lines
+          definition_base_path = python_base_path_for(path)
+          api_instances = path_api_instances[path]
+          prefix = api_instances[router_name]? || ""
+          registration_prefixes = blueprint_registration_prefixes[{definition_base_path, router_name}]? || [""]
+
+          function_def_index = find_function_def(lines, handler_name)
+          handler_path = path
+          handler_source = source
+          handler_lines = lines
+          function_def_index ||= find_self_method_def(lines, line_index, handler_name)
+          if function_def_index.nil?
+            import_modules = find_imported_modules(definition_base_path, path, source)
+            resolved = resolve_external_handler(handler_name, path, import_modules)
+            next unless resolved
+
+            handler_path, function_name = resolved
+            next unless File.exists?(handler_path)
+
+            handler_source = fetch_file_content(handler_path)
+            handler_lines = handler_source.lines
+            function_def_index = find_function_def(handler_lines, function_name)
+            next if function_def_index.nil?
+          end
+
+          codeblock = parse_code_block(handler_lines[function_def_index..])
+          next if codeblock.nil?
+          codeblock_lines = codeblock.split("\n")
+          handler_callees = build_callees_from(
+            codeblock,
+            function_def_index,
+            handler_path,
+            definition_base_path: definition_base_path,
+            source: handler_source
+          )
+
+          registration_prefixes.each do |registration_prefix|
+            full_prefix = join_paths(registration_prefix, prefix)
+            get_endpoints("GET", route_path, extra_params, codeblock_lines, full_prefix, "websocket").each do |endpoint|
               endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
               handler_callees.each { |c| endpoint.push_callee(c) }
               result << endpoint
@@ -392,6 +455,19 @@ module Analyzer::Python
       {router_name, route_path, handler_name, extra_params}
     end
 
+    private def parse_programmatic_websocket_route(line : ::String) : Tuple(::String, ::String, ::String, ::String)?
+      call_match = line.match(ADD_WEBSOCKET_ROUTE_CALL_RE)
+      return unless call_match
+
+      router_name = call_match[1]
+      args = split_python_arguments(call_match[2])
+      handler_name = extract_programmatic_handler(args)
+      route_path = extract_programmatic_route_path(args)
+      return if handler_name.empty? || route_path.empty?
+
+      {router_name, route_path, handler_name, "methods=['GET']"}
+    end
+
     private def extract_programmatic_handler_class(args : Array(::String)) : ::String
       handler = extract_keyword_expression(args, "handler") || args[0]?
       return "" unless handler
@@ -497,6 +573,36 @@ module Analyzer::Python
       if import_info = import_modules[reference]?
         import_path = import_info.first
         return {import_path, reference} unless import_path.empty?
+      end
+
+      nil
+    end
+
+    private def find_self_method_def(lines : Array(::String), route_line_index : Int32, handler_name : ::String) : Int32?
+      return unless handler_name.starts_with?("self.")
+
+      method_name = handler_name.split(".", 2)[1]?
+      return if method_name.nil? || method_name.empty?
+
+      class_scope = find_enclosing_class_scope(lines, route_line_index)
+      return unless class_scope
+
+      class_def_index, class_indent = class_scope
+      find_class_method_def(lines, class_def_index, class_indent, method_name)
+    end
+
+    private def find_enclosing_class_scope(lines : Array(::String), line_index : Int32) : Tuple(Int32, Int32)?
+      current_line = lines[line_index]?
+      return unless current_line
+
+      current_indent = current_line.index(/\S/) || 0
+      i = line_index
+      while i >= 0
+        if class_match = lines[i].match(/^(\s*)class\s+/)
+          class_indent = class_match[1].size
+          return {i, class_indent} if class_indent < current_indent
+        end
+        i -= 1
       end
 
       nil
