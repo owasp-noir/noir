@@ -1256,6 +1256,36 @@ describe "NoirAIContext" do
     context.sinks.map(&.kind).should_not contain("data_store_query")
   end
 
+  it "scopes the mobile webview_load sink to mobile endpoints" do
+    # The two mobile-only sinks live in the global catalog but must only
+    # apply to deep-link endpoints. An HTTP route handler with a
+    # `.loadUrl` callee must NOT get a webview_load sink.
+    http_ep = Endpoint.new("/page", "GET")
+    http_ep.push_callee(Callee.new("webView.loadUrl", "PageController.kt", 12))
+    http_ctx = NoirAIContext.apply([http_ep])[0].ai_context.should_not be_nil
+    http_ctx.sinks.map(&.kind).should_not contain("webview_load")
+
+    # The same callee on a deep-link endpoint DOES surface the sink.
+    mobile_ep = Endpoint.new("myapp://open", "GET")
+    mobile_ep.protocol = "mobile-scheme"
+    mobile_ep.push_callee(Callee.new("webView.loadUrl", "DeepLinkActivity.kt", 12))
+    mobile_ctx = NoirAIContext.apply([mobile_ep])[0].ai_context.should_not be_nil
+    mobile_ctx.sinks.map(&.kind).should contain("webview_load")
+  end
+
+  it "scopes the mobile intent_redirect sink to mobile endpoints" do
+    http_ep = Endpoint.new("/dispatch", "POST")
+    http_ep.push_callee(Callee.new("startActivity", "DispatchController.java", 20))
+    http_ctx = NoirAIContext.apply([http_ep])[0].ai_context.should_not be_nil
+    http_ctx.sinks.map(&.kind).should_not contain("intent_redirect")
+
+    mobile_ep = Endpoint.new("intent://com.example/.Dispatch", "GET")
+    mobile_ep.protocol = "android-intent"
+    mobile_ep.push_callee(Callee.new("startActivity", "DispatchActivity.java", 20))
+    mobile_ctx = NoirAIContext.apply([mobile_ep])[0].ai_context.should_not be_nil
+    mobile_ctx.sinks.map(&.kind).should contain("intent_redirect")
+  end
+
   it "surfaces database query parameter binding as validator evidence" do
     source = <<-CODE
       suspend fun findOne(id: String): Post? =

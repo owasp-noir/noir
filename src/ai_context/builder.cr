@@ -1000,7 +1000,15 @@ module NoirAIContext
       graphql_tag.try(&.description) || endpoint.url
     end
 
+    # The mobile-only sinks (webview_load / intent_redirect) are matched
+    # only for deep-link endpoints; HTTP route handlers get the catalog
+    # without them. See `MOBILE_SINK_KINDS` in patterns.cr.
+    private def sink_patterns_for(endpoint : Endpoint) : Array(PatternDefinition)
+      endpoint.mobile? ? SINK_PATTERNS : NON_MOBILE_SINK_PATTERNS
+    end
+
     private def add_callee_entries(context : AIContext, endpoint : Endpoint)
+      sink_patterns = sink_patterns_for(endpoint)
       endpoint.callees.each do |callee|
         callee_snippet = @reader.snippet_for(callee.path, callee.line, CALLEE_SNIPPET_RADIUS)
 
@@ -1015,7 +1023,7 @@ module NoirAIContext
           snippet: callee_snippet
         ))
 
-        if sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, SINK_PATTERNS, callee.path, callee.line, "callee")
+        if sink = PatternMatcher.detect_from_patterns(callee.name, callee_snippet, sink_patterns, callee.path, callee.line, "callee")
           context.push_sink(enrich_callee_sink(sink, callee, callee_snippet))
         end
 
@@ -1126,7 +1134,7 @@ module NoirAIContext
         # double-emit but a route that's both `xss` and `sql` will
         # surface both. Previously we capped the whole route at one
         # sink, which silently dropped the second / third class.
-        SINK_PATTERNS.each do |pattern|
+        sink_patterns_for(endpoint).each do |pattern|
           next if context.sinks.any? { |s| s.kind == pattern.kind }
           if sink = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
             context.push_sink(sink)

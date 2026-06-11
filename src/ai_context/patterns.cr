@@ -207,6 +207,20 @@ module NoirAIContext
     ),
   ] of PatternDefinition
 
+  # Sink kinds that only make sense on a mobile deep-link endpoint — a
+  # WebView load or an intent launch fed by inbound deep-link data. They
+  # live in the global SINK_PATTERNS so the catalog stays in one place,
+  # but the Builder evaluates them only for `endpoint.mobile?` endpoints:
+  # an HTTP route handler never opens a WebView or launches an Android
+  # intent, so firing these against every route is conceptually wrong
+  # (and a latent FP source as the name/source patterns broaden).
+  MOBILE_SINK_KINDS = Set{"webview_load", "intent_redirect"}
+
+  # The non-mobile view of the sink catalog, computed once. Used for
+  # HTTP endpoints so the two mobile-only sinks above are never matched
+  # against server-side route/callee snippets.
+  NON_MOBILE_SINK_PATTERNS = SINK_PATTERNS.reject { |pattern| MOBILE_SINK_KINDS.includes?(pattern.kind) }
+
   VALIDATOR_PATTERNS = [
     PatternDefinition.new(
       "validation",
