@@ -9,6 +9,12 @@
             openURL:(NSURL *)url
             options:(NSDictionary<UIApplicationOpenURLOptionsKey, id> *)options
 {
+    NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+    for (NSURLQueryItem *item in components.queryItems) {
+        if ([item.name isEqualToString:@"token"]) {
+            return [self handleObjcDeepLink:item.value];
+        }
+    }
     return [self handleObjcDeepLink:url];
 }
 

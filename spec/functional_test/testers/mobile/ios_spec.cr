@@ -16,12 +16,12 @@ no_params = [] of Param
 
 expected_endpoints = [
   # Custom schemes (mobile-scheme), linked to the URL handlers: SceneDelegate
-  # `scene(_:openURLContexts:)` callees + the redirect query param, plus
+  # `scene(_:openURLContexts:)` callees + the `redirect` query param, plus
   # `routeOpenURL` from the AppDelegate `application(_:open:)` (multi-line
-  # signature) and `handleObjcDeepLink` from the Objective-C
-  # `application:openURL:` in LegacyAppDelegate.m.
-  build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
-  build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
+  # signature), and `handleObjcDeepLink` + the `token` query param from the
+  # Objective-C `application:openURL:` in LegacyAppDelegate.m.
+  build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
+  build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query"), Param.new("token", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
   # CFBundleURLSchemes entry `$(BUNDLE_URL_SCHEME)` resolved from Config.xcconfig.
   build.call("resolvedscheme://", "mobile-scheme", no_params, [] of String),
   # Universal links (universal-link), linked to the userActivity handlers:
