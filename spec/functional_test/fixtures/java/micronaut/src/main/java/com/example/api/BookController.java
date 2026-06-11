@@ -1,6 +1,7 @@
 package com.example.api;
 
 import io.micronaut.http.HttpResponse;
+import io.micronaut.http.HttpRequest;
 import io.micronaut.http.MediaType;
 import io.micronaut.http.annotation.Body;
 import io.micronaut.http.annotation.Controller;
@@ -15,6 +16,10 @@ import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Put;
 import io.micronaut.http.annotation.QueryValue;
 import io.micronaut.http.annotation.RequestBean;
+import io.micronaut.http.multipart.CompletedFileUpload;
+import io.micronaut.security.authentication.Authentication;
+import java.security.Principal;
+import java.time.Month;
 
 @Controller("/books")
 public class BookController implements BookApi {
@@ -73,6 +78,21 @@ public class BookController implements BookApi {
         return HttpResponse.ok();
     }
 
+    @Get("/template{?q}")
+    public HttpResponse<?> template(@QueryValue String q) {
+        return HttpResponse.ok();
+    }
+
+    @Get("/paged{?filter*}")
+    public HttpResponse<?> paged(BookFilter filter) {
+        return HttpResponse.ok();
+    }
+
+    @Get("/calendar/{month}")
+    public HttpResponse<?> calendar(Month month, Principal principal, Authentication authentication, HttpRequest<?> request) {
+        return HttpResponse.ok();
+    }
+
     @Post
     @Consumes(MediaType.APPLICATION_JSON)
     public HttpResponse<?> create(@Body Book book) {
@@ -81,6 +101,18 @@ public class BookController implements BookApi {
 
     @Post(value = "/forms", consumes = MediaType.APPLICATION_FORM_URLENCODED)
     public HttpResponse<?> formBody(@Body Book book) {
+        return HttpResponse.ok();
+    }
+
+    @Post("/attachment")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    public HttpResponse<?> attachment(CompletedFileUpload file) {
+        return HttpResponse.ok();
+    }
+
+    @Post("/scalar")
+    public HttpResponse<?> scalarBody(@Body("isbn") String isbn,
+                                      @Body("name") String name) {
         return HttpResponse.ok();
     }
 

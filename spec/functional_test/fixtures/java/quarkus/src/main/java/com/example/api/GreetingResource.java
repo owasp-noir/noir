@@ -7,8 +7,11 @@ import jakarta.ws.rs.DELETE;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.container.AsyncResponse;
+import jakarta.ws.rs.container.Suspended;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.jboss.resteasy.plugins.providers.multipart.MultipartFormDataInput;
 import org.jboss.resteasy.reactive.RestPath;
 import org.jboss.resteasy.reactive.RestQuery;
 import org.jboss.resteasy.reactive.RestHeader;
@@ -42,7 +45,17 @@ public class GreetingResource {
     @Path("/login")
     @Consumes(MediaType.APPLICATION_FORM_URLENCODED)
     public Response login(@RestForm String username,
-                          @RestForm("pwd") String password) {
+                          @RestForm("pwd") String password,
+                          RoutingContext ctx,
+                          @Suspended AsyncResponse ar) {
+        return Response.ok().build();
+    }
+
+    @POST
+    @Path("/upload")
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    public Response upload(MultipartFormDataInput data) {
+        data.getFormDataMap().get("image");
         return Response.ok().build();
     }
 
@@ -59,4 +72,7 @@ public class GreetingResource {
                            @RestCookie("session") String session) {
         return Response.noContent().build();
     }
+}
+
+class RoutingContext {
 }

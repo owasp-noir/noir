@@ -31,6 +31,16 @@ expected_endpoints = [
     Param.new("author", "", "query"),
     Param.new("year", "", "query"),
   ]),
+  Endpoint.new("/books/template", "GET", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/books/paged", "GET", [
+    Param.new("author", "", "query"),
+    Param.new("year", "", "query"),
+  ]),
+  Endpoint.new("/books/calendar/{month}", "GET", [
+    Param.new("month", "", "path"),
+  ]),
   Endpoint.new("/books/interface/{isbn}", "GET", [
     Param.new("isbn", "", "path"),
     Param.new("edition", "", "query"),
@@ -48,6 +58,13 @@ expected_endpoints = [
     Param.new("title", "", "form"),
     Param.new("author", "", "form"),
     Param.new("year", "", "form"),
+  ]),
+  Endpoint.new("/books/attachment", "POST", [
+    Param.new("file", "", "form"),
+  ]),
+  Endpoint.new("/books/scalar", "POST", [
+    Param.new("isbn", "", "json"),
+    Param.new("name", "", "json"),
   ]),
   Endpoint.new("/books/login", "POST", [
     Param.new("username", "", "query"),

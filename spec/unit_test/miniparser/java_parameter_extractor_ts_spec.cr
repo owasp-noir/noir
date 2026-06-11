@@ -396,6 +396,103 @@ describe Noir::TreeSitterJavaParameterExtractor do
       params.map(&.name).should eq(["title"])
     end
 
+    it "skips support objects supplied by path-only @ModelAttribute methods" do
+      source = <<-JAVA
+        @RequestMapping("/owners/{ownerId}")
+        class PetController {
+            @ModelAttribute("owner")
+            public Owner findOwner(@PathVariable("ownerId") int ownerId) { return null; }
+
+            @GetMapping("/pets/new")
+            public String init(Owner owner, Model model) { return ""; }
+
+            @PostMapping("/pets/new")
+            public String create(Owner owner, @Valid Pet pet, BindingResult result) { return ""; }
+        }
+        JAVA
+      class_fields = {
+        "Owner" => [
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("firstName", "private", true, ""),
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("lastName", "private", true, ""),
+        ],
+        "Pet" => [
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("name", "private", true, ""),
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("birthDate", "private", true, ""),
+        ],
+      }
+
+      get_params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "PetController", "init", "GET", nil, class_fields
+      )
+      get_params.should be_empty
+
+      post_params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "PetController", "create", "POST", nil, class_fields
+      )
+      post_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"name", "form"},
+        {"birthDate", "form"},
+      ])
+    end
+
+    it "keeps optional @ModelAttribute form objects bindable" do
+      source = <<-JAVA
+        class OwnerController {
+            @ModelAttribute("owner")
+            public Owner findOwner(@PathVariable(name = "ownerId", required = false) Integer ownerId) { return null; }
+
+            @GetMapping("/owners")
+            public String search(@RequestParam(defaultValue = "1") int page, Owner owner, BindingResult result) { return ""; }
+        }
+        JAVA
+      class_fields = {
+        "Owner" => [
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("firstName", "private", true, ""),
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("lastName", "private", true, ""),
+        ],
+      }
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "OwnerController", "search", "GET", nil, class_fields
+      )
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"page", "query"},
+        {"firstName", "query"},
+        {"lastName", "query"},
+      ])
+    end
+
+    it "skips model.put support objects from @ModelAttribute supplier bodies" do
+      source = <<-JAVA
+        class VisitController {
+            @ModelAttribute("visit")
+            public Visit load(@PathVariable int ownerId, Map<String, Object> model) {
+                Owner owner = owners.findById(ownerId).get();
+                model.put("owner", owner);
+                return new Visit();
+            }
+
+            @PostMapping("/visits")
+            public String create(@ModelAttribute Owner owner, @Valid Visit visit, BindingResult result) { return ""; }
+        }
+        JAVA
+      class_fields = {
+        "Owner" => [
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("firstName", "private", true, ""),
+        ],
+        "Visit" => [
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("date", "private", true, ""),
+          Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("description", "private", true, ""),
+        ],
+      }
+      params = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters(
+        source, "VisitController", "create", "POST", nil, class_fields
+      )
+      params.map { |p| {p.name, p.param_type} }.should eq([
+        {"date", "form"},
+        {"description", "form"},
+      ])
+    end
+
     it "skips framework argument-resolver types not present in the DTO index" do
       source = <<-JAVA
         class C {

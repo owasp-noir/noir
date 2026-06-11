@@ -255,6 +255,98 @@ describe Noir::TreeSitterJaxRsExtractor do
     ])
   end
 
+  it "skips injected context types without dropping explicit request params" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import io.quarkus.security.identity.SecurityIdentity;
+      import io.smallrye.jwt.auth.principal.JsonWebToken;
+      import io.vertx.ext.web.RoutingContext;
+      import jakarta.ws.rs.POST;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.container.AsyncResponse;
+      import jakarta.ws.rs.container.Suspended;
+      import jakarta.ws.rs.core.SecurityContext;
+      import jakarta.ws.rs.core.Response;
+      import org.jboss.resteasy.reactive.RestForm;
+
+      @Path("/auth")
+      public class LoginResource {
+          @POST
+          @Path("/login")
+          public Response login(@RestForm String username,
+                                RoutingContext ctx,
+                                SecurityContext securityContext,
+                                SecurityIdentity identity,
+                                JsonWebToken token,
+                                @Suspended AsyncResponse ar,
+                                LoginPayload payload) {
+              return Response.ok().build();
+          }
+      }
+
+      class LoginPayload {
+          public String otp;
+      }
+      JAVA
+
+    dto_index = {
+      "LoginPayload" => [
+        Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("otp", "public", false, ""),
+      ],
+    }
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source, dto_index: dto_index)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"POST", "/auth/login", [
+        Param.new("username", "", "form"),
+        Param.new("otp", "", "json"),
+      ]},
+    ])
+  end
+
+  it "extracts multipart form fields from MultipartFormDataInput usage" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import jakarta.ws.rs.Consumes;
+      import jakarta.ws.rs.POST;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.core.MediaType;
+      import jakarta.ws.rs.core.Response;
+      import org.jboss.resteasy.plugins.providers.multipart.MultipartFormDataInput;
+
+      @Path("/images")
+      public class ImageResource {
+          @POST
+          @Path("/watermark")
+          @Consumes(MediaType.MULTIPART_FORM_DATA)
+          public Response watermark(MultipartFormDataInput data) {
+              data.getFormDataMap().get("image").get(0);
+              data.getFormDataMap().get("metadata");
+              return Response.accepted().build();
+          }
+
+          @POST
+          @Path("/raw")
+          @Consumes("multipart/form-data")
+          public Response raw(MultipartFormDataInput data) {
+              return Response.accepted().build();
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"POST", "/images/watermark", [
+        Param.new("image", "", "form"),
+        Param.new("metadata", "", "form"),
+      ]},
+      {"POST", "/images/raw", [
+        Param.new("data", "", "form"),
+      ]},
+    ])
+  end
+
   it "extracts Jakarta ServerEndpoint routes with ws protocol" do
     source = <<-JAVA
       package com.example.api;

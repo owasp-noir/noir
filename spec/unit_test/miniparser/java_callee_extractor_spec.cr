@@ -40,6 +40,43 @@ describe Noir::JavaCalleeExtractor do
       callees.each(&.[1].should(eq("UserController.java")))
     end
 
+    it "captures Java method references as dotted callees" do
+      source = <<-JAVA
+        package app;
+        class QueueResource {
+          public List<Quark> receive() {
+            return messages.stream()
+              .map(Message::body)
+              .map(this::toQuark)
+              .map(FileObject::from)
+              .collect(Collectors.toList());
+          }
+          private Quark toQuark(String message) {
+            return parse(message);
+          }
+          private Quark parse(String message) { return null; }
+        }
+        JAVA
+
+      to_quark_line = source.lines.index!(&.includes?("private Quark toQuark")) + 1
+      callees = [] of Tuple(String, String, Int32)
+      with_java_root(source) do |root|
+        callees = Noir::JavaCalleeExtractor.callees_in_method(
+          root, source, "QueueResource.java", "QueueResource", "receive"
+        )
+      end
+
+      names = callees.map(&.[0])
+      names.should contain("Message.body")
+      names.should contain("this.toQuark")
+      names.should contain("FileObject.from")
+      names.should contain("Collectors.toList")
+
+      local_ref = callees.find { |entry| entry[0] == "this.toQuark" }
+      local_ref.should_not be_nil
+      local_ref.not_nil![2].should eq(to_quark_line)
+    end
+
     it "returns an empty list when the class or method can't be found" do
       source = <<-JAVA
         package app;
@@ -185,6 +222,7 @@ describe Noir::JavaCalleeExtractor do
           public void m() {
             a();
             b.c();
+            xs.stream().map(Type::from);
           }
         }
         JAVA
@@ -208,6 +246,7 @@ describe Noir::JavaCalleeExtractor do
       names = callees.not_nil!.map(&.[0])
       names.should contain("a")
       names.should contain("b.c")
+      names.should contain("Type.from")
     end
   end
 end

@@ -63,6 +63,16 @@ module Noir
       "integer", "character",
     }
 
+    INJECTED_PARAM_TYPES = Set{
+      "authentication", "httprequest", "httpheaders", "pageable",
+      "principal", "x509authentication",
+    }
+
+    FORM_FILE_PARAM_TYPES = Set{
+      "completedfileupload", "streamingfileupload", "completedpart",
+      "partdata",
+    }
+
     struct Route
       getter verb : String
       getter path : String
@@ -257,17 +267,21 @@ module Noir
         method_paths = annotation_paths(method_args, source, constants, class_name)
         method_paths = [""] if method_paths.empty?
         method_consumes = consumes_format(member, source) ||
-                          consumes_format(method_args, source, Set{"consumes", "processes"}) ||
+                          consumes_format_args(method_args, source, Set{"consumes", "processes"}) ||
                           class_consumes
 
-        params = collect_method_params(member, source, method_consumes, dto_index, constants, class_name)
         callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         line = Noir::TreeSitter.node_start_row(verb_node)
 
         controller_paths.each do |class_path|
           method_paths.each do |method_path|
             full_path = join_paths(class_path, method_path)
-            routes << Route.new(verb, full_path, class_name, method_name, line, params.dup, callees)
+            normalized_path = strip_uri_template_query(full_path)
+            query_vars = uri_template_query_vars(full_path)
+            path_vars = uri_template_path_vars(normalized_path)
+            params = collect_method_params(member, source, method_consumes, dto_index, constants, class_name, query_vars.to_set, path_vars.to_set)
+            merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
+            routes << Route.new(verb, normalized_path, class_name, method_name, line, params, callees)
           end
         end
       end
@@ -309,17 +323,21 @@ module Noir
         method_paths = annotation_paths(method_args, source, constants, interface_name)
         method_paths = [""] if method_paths.empty?
         method_consumes = consumes_format(member, source) ||
-                          consumes_format(method_args, source, Set{"consumes", "processes"}) ||
+                          consumes_format_args(method_args, source, Set{"consumes", "processes"}) ||
                           interface_consumes
 
-        params = collect_method_params(member, source, method_consumes, dto_index, constants, interface_name)
         callees = include_callees ? collect_method_callees(member, source) : [] of Tuple(String, Int32)
         line = Noir::TreeSitter.node_start_row(verb_node)
 
         interface_paths.each do |interface_path|
           method_paths.each do |method_path|
             full_path = join_paths(interface_path, method_path)
-            routes[interface_name] << Route.new(verb, full_path, interface_name, method_name, line, params.dup, callees)
+            normalized_path = strip_uri_template_query(full_path)
+            query_vars = uri_template_query_vars(full_path)
+            path_vars = uri_template_path_vars(normalized_path)
+            params = collect_method_params(member, source, method_consumes, dto_index, constants, interface_name, query_vars.to_set, path_vars.to_set)
+            merge_query_template_params(params, unbound_query_template_vars(member, source, query_vars))
+            routes[interface_name] << Route.new(verb, normalized_path, interface_name, method_name, line, params, callees)
           end
         end
       end
@@ -556,14 +574,14 @@ module Noir
       result : String? = nil
       each_annotation(decl, source) do |name, args, _|
         next unless name == "Consumes"
-        result = consumes_format(args, source)
+        result = consumes_format_args(args, source)
       end
       result
     end
 
-    private def consumes_format(args : LibTreeSitter::TSNode?,
-                                source : String,
-                                keys : Set(String)? = nil) : String?
+    private def consumes_format_args(args : LibTreeSitter::TSNode?,
+                                     source : String,
+                                     keys : Set(String)? = nil) : String?
       return unless args
 
       if keys
@@ -621,6 +639,56 @@ module Noir
       "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
 
+    private def strip_uri_template_query(path : String) : String
+      normalized = path.gsub(/\{\?[^}]*\}/, "")
+      normalized.empty? ? "/" : normalized
+    end
+
+    private def uri_template_query_vars(path : String) : Array(String)
+      vars = [] of String
+      path.scan(/\{\?([^}]*)\}/) do |match|
+        match[1].split(',').each do |raw|
+          name = normalize_uri_template_var(raw)
+          vars << name unless name.empty?
+        end
+      end
+      vars.uniq
+    end
+
+    private def uri_template_path_vars(path : String) : Array(String)
+      vars = [] of String
+      path.scan(/\{([^}?][^}]*)\}/) do |match|
+        name = normalize_uri_template_var(match[1])
+        vars << name unless name.empty?
+      end
+      vars.uniq
+    end
+
+    private def normalize_uri_template_var(raw : String) : String
+      name = raw.strip
+      name = name.rstrip('*')
+      if colon = name.index(':')
+        name = name[...colon]
+      end
+      name.strip
+    end
+
+    private def merge_query_template_params(params : Array(Param), query_vars : Array(String))
+      query_vars.each do |name|
+        next if params.any? { |param| param.name == name && param.param_type == "query" }
+        params << Param.new(name, "", "query")
+      end
+    end
+
+    private def unbound_query_template_vars(method : LibTreeSitter::TSNode,
+                                            source : String,
+                                            query_vars : Array(String)) : Array(String)
+      return query_vars if query_vars.empty?
+
+      names = formal_parameter_names(method, source)
+      query_vars.reject { |name| names.includes?(name) }
+    end
+
     # ---- formal parameter walk --------------------------------------
 
     private def collect_method_params(method : LibTreeSitter::TSNode,
@@ -628,14 +696,16 @@ module Noir
                                       method_format : String?,
                                       dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                       constants : Hash(String, String),
-                                      current_class : String) : Array(Param)
+                                      current_class : String,
+                                      query_template_vars = Set(String).new,
+                                      path_template_vars = Set(String).new) : Array(Param)
       params = [] of Param
       formal = formal_parameters_node(method)
       return params unless formal
 
       Noir::TreeSitter.each_named_child(formal) do |param|
         next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
-        emit_param_for(param, source, method_format, dto_index, constants, current_class, params)
+        emit_param_for(param, source, method_format, dto_index, constants, current_class, params, query_template_vars, path_template_vars)
       end
       params
     end
@@ -647,13 +717,28 @@ module Noir
       nil
     end
 
+    private def formal_parameter_names(method : LibTreeSitter::TSNode, source : String) : Set(String)
+      names = Set(String).new
+      formal = formal_parameters_node(method)
+      return names unless formal
+
+      Noir::TreeSitter.each_named_child(formal) do |param|
+        next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
+        name, _type_name = parameter_name_and_type(param, source)
+        names << name unless name.empty?
+      end
+      names
+    end
+
     private def emit_param_for(param : LibTreeSitter::TSNode,
                                source : String,
                                method_format : String?,
                                dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
                                constants : Hash(String, String),
                                current_class : String,
-                               sink : Array(Param))
+                               sink : Array(Param),
+                               query_template_vars = Set(String).new,
+                               path_template_vars = Set(String).new)
       param_name, type_name = parameter_name_and_type(param, source)
       return if param_name.empty?
 
@@ -690,13 +775,31 @@ module Noir
         # already emitted above
         return
       end
+      return if path_template_vars.includes?(param_name)
+
+      if query_template_vars.includes?(param_name)
+        emit_dto_fields(type_name, dto_index, "query", default_value, sink) do
+          sink << Param.new(param_name, param_value(default_value, ""), "query")
+        end
+        return
+      end
 
       # `@Body` and un-annotated complex parameters share the same
       # body-expansion path. Skip primitives (the `model: Model`
       # equivalent in Spring) so framework-injected helpers don't
       # leak into the param list.
-      return if PRIMITIVE_TYPES.includes?(type_name.downcase)
       format = method_format || "json"
+      if ann_kind == :body && PRIMITIVE_TYPES.includes?(type_name.downcase)
+        sink << Param.new(ann_arg.presence || param_name, param_value(default_value, ""), format)
+        return
+      end
+
+      return if PRIMITIVE_TYPES.includes?(type_name.downcase)
+      return if INJECTED_PARAM_TYPES.includes?(type_name.downcase)
+      if format == "form" && FORM_FILE_PARAM_TYPES.includes?(type_name.downcase)
+        sink << Param.new(ann_arg.presence || param_name, param_value(default_value, ""), "form")
+        return
+      end
       emit_dto_fields(type_name, dto_index, format, default_value, sink) do
         sink << Param.new(ann_arg.presence || param_name, param_value(default_value, type_name), format)
       end

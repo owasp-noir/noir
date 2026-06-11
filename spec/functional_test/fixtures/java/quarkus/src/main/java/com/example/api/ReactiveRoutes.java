@@ -1,5 +1,7 @@
 package com.example.api;
 
+import static io.quarkus.vertx.web.Route.HandlerType.FAILURE;
+
 import io.quarkus.vertx.web.Body;
 import io.quarkus.vertx.web.Header;
 import io.quarkus.vertx.web.Param;
@@ -23,5 +25,13 @@ public class ReactiveRoutes {
     @Route(path = "/status")
     public String status() {
         return "ok";
+    }
+
+    @Route(path = "/*", type = FAILURE)
+    public void failure() {
+    }
+
+    @Route(path = "/qualified-failure", type = io.quarkus.vertx.web.Route.HandlerType.FAILURE)
+    public void qualifiedFailure() {
     }
 }

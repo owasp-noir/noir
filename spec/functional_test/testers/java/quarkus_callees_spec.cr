@@ -19,6 +19,26 @@ expected_endpoints = [
     ep.push_callee(Callee.new("AuditLog.write", line: 30))
     ep.push_callee(Callee.new("Response.ok", line: 31))
   end,
+
+  Endpoint.new("/reactive/jobs/:jobId", "POST", [
+    Param.new("jobId", "", "path"),
+    Param.new("payload", "", "json"),
+  ]).tap do |ep|
+    ep.push_callee(Callee.new("validate", line: 16))
+    ep.push_callee(Callee.new("this.sanitize", line: 17))
+    ep.push_callee(Callee.new("sanitizer.apply", line: 18))
+    ep.push_callee(Callee.new("service.submit", line: 19))
+    ep.push_callee(Callee.new("AuditLog.write", line: 20))
+  end,
+
+  Endpoint.new("/reactive/profile", "GET").tap do |ep|
+    ep.push_callee(Callee.new("this.buildProfile", line: 26))
+    ep.push_callee(Callee.new("AuditLog.write", line: 27))
+  end,
+
+  Endpoint.new("/reactive/overloaded", "POST").tap do |ep|
+    ep.push_callee(Callee.new("routeOverload", line: 48))
+  end,
 ]
 
 FunctionalTester.new("fixtures/java/quarkus_callees/", {

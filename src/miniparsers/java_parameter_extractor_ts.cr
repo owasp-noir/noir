@@ -99,6 +99,14 @@ module Noir
       end
     end
 
+    private struct ModelAttributeSupplier
+      getter name : String
+      getter type_name : String
+
+      def initialize(@name, @type_name)
+      end
+    end
+
     # Scan every `class_declaration` / `interface_declaration` in
     # `source` and return `{class_name => [FieldInfo]}`. Only classes
     # with at least one field appear; setter detection walks sibling
@@ -250,7 +258,8 @@ module Noir
       method = find_method(root, source, class_name, method_name, target_line)
       return [] of Param unless method
       constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
-      collect_method_params(method, source, verb, parameter_format, class_fields, constants, class_name)
+      model_attributes = model_attribute_suppliers(root, source, class_name)
+      collect_method_params(method, source, verb, parameter_format, class_fields, constants, class_name, model_attributes)
     end
 
     # Find `@*Mapping` annotation on (class_name, method_name) and
@@ -459,6 +468,162 @@ module Noir
       matched || first
     end
 
+    private def find_class(root : LibTreeSitter::TSNode,
+                           source : String,
+                           class_name : String) : LibTreeSitter::TSNode?
+      result : LibTreeSitter::TSNode? = nil
+      walk_class_containers(root) do |decl|
+        next if result
+        name_node = Noir::TreeSitter.field(decl, "name")
+        next unless name_node
+        result = decl if Noir::TreeSitter.node_text(name_node, source) == class_name
+      end
+      result
+    end
+
+    private def model_attribute_suppliers(root : LibTreeSitter::TSNode,
+                                          source : String,
+                                          class_name : String) : Array(ModelAttributeSupplier)
+      suppliers = [] of ModelAttributeSupplier
+      class_decl = find_class(root, source, class_name)
+      return suppliers unless class_decl
+      body = Noir::TreeSitter.field(class_decl, "body")
+      return suppliers unless body
+
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+        ann = annotation_node_on(member, source, "ModelAttribute")
+        next unless ann
+
+        return_type = method_return_type(member, source)
+        unless return_type.empty? || return_type == "void"
+          attr_name = annotation_string_arg(ann, source) || default_model_attribute_name(return_type)
+          if path_only_model_attribute_supplier?(member, source)
+            suppliers << ModelAttributeSupplier.new(attr_name, simple_type_name(return_type))
+          end
+        end
+
+        suppliers.concat(model_put_suppliers(member, source))
+      end
+
+      suppliers.uniq { |supplier| {supplier.name, supplier.type_name} }
+    end
+
+    private def model_put_suppliers(method : LibTreeSitter::TSNode,
+                                    source : String) : Array(ModelAttributeSupplier)
+      suppliers = [] of ModelAttributeSupplier
+      text = Noir::TreeSitter.node_text(method, source)
+      declarations = Hash(String, String).new
+
+      text.scan(/\b([A-Z][A-Za-z0-9_.$]*(?:\s*<[^;=()]*>)?)\s+([a-z][A-Za-z0-9_]*)\s*=/m) do |match|
+        declarations[match[2]] = simple_type_name(match[1])
+      end
+
+      text.scan(/\b[A-Za-z_][A-Za-z0-9_]*\.put\(\s*"([^"]+)"\s*,\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/m) do |match|
+        attr_name = match[1]
+        var_name = match[2]
+        if type_name = declarations[var_name]?
+          suppliers << ModelAttributeSupplier.new(attr_name, type_name)
+        end
+      end
+
+      suppliers
+    end
+
+    private def path_only_model_attribute_supplier?(method : LibTreeSitter::TSNode, source : String) : Bool
+      params = Noir::TreeSitter.field(method, "parameters")
+      return false unless params
+
+      saw_path_variable = false
+      Noir::TreeSitter.each_named_child(params) do |param|
+        next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
+        next if framework_model_output_param?(param, source)
+
+        ann = annotation_node_on(param, source, "PathVariable")
+        return false unless ann
+        return false if annotation_text(ann, source).includes?("required = false") ||
+                        annotation_text(ann, source).includes?("required=false")
+        saw_path_variable = true
+      end
+
+      saw_path_variable
+    end
+
+    private def framework_model_output_param?(param : LibTreeSitter::TSNode, source : String) : Bool
+      type_node = Noir::TreeSitter.field(param, "type")
+      return false unless type_node
+
+      type_name = simple_type_name(Noir::TreeSitter.node_text(type_node, source)).downcase
+      type_name == "map" || type_name == "model" || type_name == "modelmap"
+    end
+
+    private def method_return_type(method : LibTreeSitter::TSNode, source : String) : String
+      if type_node = Noir::TreeSitter.field(method, "type")
+        return simple_type_name(Noir::TreeSitter.node_text(type_node, source))
+      end
+
+      ""
+    end
+
+    private def annotation_node_on(decl : LibTreeSitter::TSNode,
+                                   source : String,
+                                   annotation_name : String) : LibTreeSitter::TSNode?
+      mods = find_modifiers(decl)
+      return unless mods
+      Noir::TreeSitter.each_named_child(mods) do |ann|
+        ty = Noir::TreeSitter.node_type(ann)
+        next unless ty == "annotation" || ty == "marker_annotation"
+        n = Noir::TreeSitter.field(ann, "name")
+        next unless n
+        return ann if simple_name(Noir::TreeSitter.node_text(n, source)) == annotation_name
+      end
+      nil
+    end
+
+    private def annotation_string_arg(ann : LibTreeSitter::TSNode, source : String) : String?
+      args = Noir::TreeSitter.field(ann, "arguments")
+      return unless args
+
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        case Noir::TreeSitter.node_type(arg)
+        when "string_literal"
+          return decode_string_literal(arg, source)
+        when "element_value_pair"
+          key = Noir::TreeSitter.field(arg, "key")
+          val = Noir::TreeSitter.field(arg, "value")
+          next unless key && val
+          next unless Noir::TreeSitter.node_text(key, source) == "value" ||
+                      Noir::TreeSitter.node_text(key, source) == "name"
+          return decode_string_literal(val, source) if Noir::TreeSitter.node_type(val) == "string_literal"
+        end
+      end
+      nil
+    end
+
+    private def annotation_text(ann : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.node_text(ann, source)
+    end
+
+    private def default_model_attribute_name(type_name : String) : String
+      simple = simple_type_name(type_name)
+      return "" if simple.empty?
+
+      simple[0].downcase.to_s + simple[1..]
+    end
+
+    private def simple_type_name(type_name : String) : String
+      name = type_name.strip
+      name = name.sub(/\A(?:public|protected|private|static|final|abstract)\s+/, "")
+      if idx = name.index('<')
+        name = name[...idx]
+      end
+      name = name.gsub(/\[\s*\]/, "")
+      if idx = name.rindex('.')
+        name = name[(idx + 1)..]
+      end
+      name.strip
+    end
+
     # Iterate annotation names (marker or full) attached to a
     # declaration's `modifiers` child. Yields just the simple name
     # (e.g. `"RequestParam"` even for `@org.springframework.web.bind.
@@ -603,7 +768,8 @@ module Noir
                                       parameter_format : String?,
                                       class_fields : Hash(String, Array(FieldInfo)),
                                       constants : Hash(String, String),
-                                      current_class : String) : Array(Param)
+                                      current_class : String,
+                                      model_attributes = [] of ModelAttributeSupplier) : Array(Param)
       params = [] of Param
       fparams = Noir::TreeSitter.field(method, "parameters")
       return params unless fparams
@@ -616,7 +782,7 @@ module Noir
 
       Noir::TreeSitter.each_named_child(fparams) do |fp|
         next unless Noir::TreeSitter.node_type(fp) == "formal_parameter"
-        current_format = emit_param_for(fp, method, source, verb, current_format, class_fields, constants, current_class, params)
+        current_format = emit_param_for(fp, method, source, verb, current_format, class_fields, constants, current_class, params, model_attributes)
       end
 
       # Collapse duplicate `(name, type)` params. A handler binding two
@@ -637,7 +803,8 @@ module Noir
                                class_fields : Hash(String, Array(FieldInfo)),
                                constants : Hash(String, String),
                                current_class : String,
-                               sink : Array(Param)) : String?
+                               sink : Array(Param),
+                               model_attributes = [] of ModelAttributeSupplier) : String?
       type_node = Noir::TreeSitter.field(fp, "type")
       name_node = Noir::TreeSitter.field(fp, "name")
       return parameter_format unless type_node && name_node
@@ -651,6 +818,8 @@ module Noir
       ann_kind = nil
       ann_node : LibTreeSitter::TSNode? = nil
       injected_param = false
+      validated_param = false
+      model_attribute_name : String? = nil
       if mods = find_modifiers(fp)
         Noir::TreeSitter.each_named_child(mods) do |ann|
           ty = Noir::TreeSitter.node_type(ann)
@@ -659,6 +828,8 @@ module Noir
           next unless n
           sn = simple_name(Noir::TreeSitter.node_text(n, source))
           injected_param = true if INJECTED_PARAM_ANNOTATIONS.includes?(sn)
+          validated_param = true if sn == "Valid" || sn == "Validated"
+          model_attribute_name = annotation_string_arg(ann, source) if sn == "ModelAttribute"
           case sn
           when "PathVariable"
             ann_kind = :path
@@ -691,6 +862,10 @@ module Noir
       # input — drop it before the implicit-binding path can expand its
       # (often DTO-typed) fields into phantom params.
       return parameter_format if ann_kind.nil? && injected_param
+      if ann_kind.nil? && !validated_param &&
+         supplied_model_attribute_param?(arg_name, type_name, model_attribute_name, model_attributes)
+        return parameter_format
+      end
 
       effective_format = parameter_format
       case ann_kind
@@ -774,6 +949,19 @@ module Noir
       end
 
       effective_format
+    end
+
+    private def supplied_model_attribute_param?(arg_name : String,
+                                                type_name : String,
+                                                model_attribute_name : String?,
+                                                model_attributes : Array(ModelAttributeSupplier)) : Bool
+      return false if model_attributes.empty?
+
+      param_type = simple_type_name(type_name)
+      model_attributes.any? do |supplier|
+        supplier.type_name == param_type &&
+          (supplier.name == arg_name || (!model_attribute_name.nil? && supplier.name == model_attribute_name))
+      end
     end
 
     # True when `type_name` is a scalar Spring binds from one request
