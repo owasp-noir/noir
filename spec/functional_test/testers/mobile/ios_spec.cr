@@ -17,14 +17,17 @@ no_params = [] of Param
 expected_endpoints = [
   # Custom schemes (mobile-scheme), linked to the URL handlers: SceneDelegate
   # `scene(_:openURLContexts:)` callees + the redirect query param, plus
-  # `routeOpenURL` from the AppDelegate `application(_:open:)` whose signature
-  # is folded across multiple lines.
-  build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL"]),
-  build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL"]),
+  # `routeOpenURL` from the AppDelegate `application(_:open:)` (multi-line
+  # signature) and `handleObjcDeepLink` from the Objective-C
+  # `application:openURL:` in LegacyAppDelegate.m.
+  build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
+  build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL", "handleObjcDeepLink"]),
   # CFBundleURLSchemes entry `$(BUNDLE_URL_SCHEME)` resolved from Config.xcconfig.
   build.call("resolvedscheme://", "mobile-scheme", no_params, [] of String),
-  # Universal links (universal-link), linked to the userActivity handler.
-  build.call("https://myapp.example.com/", "universal-link", no_params, ["routeUniversalLink"]),
+  # Universal links (universal-link), linked to the userActivity handlers:
+  # the Swift `routeUniversalLink` and the Objective-C `routeObjcUniversalLink`
+  # from LegacyAppDelegate.m `application:continueUserActivity:`.
+  build.call("https://myapp.example.com/", "universal-link", no_params, ["routeUniversalLink", "routeObjcUniversalLink"]),
   build.call("https://www.example.com/", "universal-link", no_params, ["routeUniversalLink"]),
 ]
 
