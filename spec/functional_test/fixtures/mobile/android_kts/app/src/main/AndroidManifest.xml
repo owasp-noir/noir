@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Modern AGP manifest: no `package` attribute — the package comes from
+     build.gradle.kts (applicationId / namespace), two directories up. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application android:label="KtsApp">
+
+        <!-- Component name from ${applicationId}; scheme/host from kts
+             manifestPlaceholders (indexed assignment + mapOf forms) -->
+        <activity android:name="${applicationId}.AuthActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${authScheme}" android:host="${authHost}" android:path="/callback" />
+            </intent-filter>
+        </activity>
+
+        <!-- Placeholder declared via manifestPlaceholders.put(...) -->
+        <activity android:name=".LegacyActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${legacyScheme}" android:host="legacy" />
+            </intent-filter>
+        </activity>
+
+        <!-- Exported, data-less service: intent:// URL must use the gradle
+             applicationId since the manifest has no package attribute -->
+        <service android:name=".KtsService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.ACTION_KTS" />
+            </intent-filter>
+        </service>
+
+    </application>
+</manifest>

@@ -21,9 +21,11 @@ require "../miniparsers/swift_callee_extractor"
 # follow-up.
 module NoirMobileLinker
   # Methods where an Android component reads its inbound intent / deep link.
+  # onCreateView / onViewCreated cover Jetpack Navigation fragment
+  # destinations, which receive deep-link path/query values as arguments.
   HANDLER_METHODS = %w[
     onCreate onNewIntent onStart onResume onStartCommand onHandleIntent
-    handleIntent handleDeepLink onReceive onBind
+    handleIntent handleDeepLink onReceive onBind onCreateView onViewCreated
   ]
 
   # Inputs the handler reads from the inbound deep link. `getQueryParameter`

@@ -6,6 +6,7 @@ module Analyzer::Mobile
   #   * custom URL scheme deep links (intent-filter > data android:scheme)
   #   * verified App Links (autoVerify intent-filter on http/https)
   #   * exported components with a data-less action filter (IPC surface)
+  #   * Jetpack Navigation deep links (res/navigation/*.xml <deepLink>)
   #
   # One endpoint is emitted per deep-link URI; the handling component lives
   # in `metadata["via"]`, not a separate entry. A bare `intent://component`
@@ -14,7 +15,9 @@ module Analyzer::Mobile
   #
   # All endpoints keep method = "GET"; the mobile semantics live in
   # `protocol` (mobile-scheme / universal-link / android-intent). `@string/`
-  # values are resolved against res/values/strings.xml when present.
+  # values are resolved against res/values/strings.xml when present, and
+  # gradle manifest placeholders (`${applicationId}`, custom
+  # `manifestPlaceholders`) against the nearest build.gradle(.kts).
   class Android < Analyzer
     LAUNCHER_ACTION = "android.intent.action.MAIN"
 
@@ -42,26 +45,34 @@ module Analyzer::Mobile
       manifest = find_child(doc, "manifest")
       return unless manifest
 
-      package = attr(manifest, "package") || ""
       strings = load_strings(path)
+      gradle = load_gradle(path)
+      placeholders = gradle.placeholders
 
-      application = find_child(manifest, "application")
-      return unless application
+      # Modern AGP projects omit the `package` attribute (the namespace /
+      # applicationId live in build.gradle), and older ones may template it.
+      package = substitute(attr(manifest, "package") || "", placeholders)
+      package = gradle.package_fallback if package.empty?
 
       seen_urls = Set(String).new
 
-      {"activity", "activity-alias", "service", "receiver"}.each do |component_tag|
-        each_child(application, component_tag) do |component|
-          process_component(component, package, strings, path, seen_urls)
+      if application = find_child(manifest, "application")
+        {"activity", "activity-alias", "service", "receiver"}.each do |component_tag|
+          each_child(application, component_tag) do |component|
+            process_component(component, package, strings, placeholders, path, seen_urls)
+          end
         end
       end
+
+      parse_navigation_graphs(path, package, strings, placeholders, seen_urls)
     end
 
     private def process_component(component : XML::Node,
                                   package : String, strings : Hash(String, String),
+                                  placeholders : Hash(String, String),
                                   path : String, seen_urls : Set(String))
       exported = bool_attr(component, "exported")
-      component_name = attr(component, "name") || ""
+      component_name = substitute(attr(component, "name") || "", placeholders)
 
       filters = [] of XML::Node
       each_child(component, "intent-filter") { |f| filters << f }
@@ -79,7 +90,7 @@ module Analyzer::Mobile
           # handling component rides along as metadata["via"].
           data_nodes.each do |data|
             emit_data_endpoint(data, actions, categories, package, strings,
-              path, auto_verify, component_name, seen_urls)
+              placeholders, path, auto_verify, component_name, seen_urls)
           end
         elsif exported
           # Exported component with an action but no <data>: an IPC surface
@@ -98,13 +109,14 @@ module Analyzer::Mobile
     # http/https) endpoint for one <data> node.
     private def emit_data_endpoint(data : XML::Node, actions : Array(String),
                                    categories : Array(String), package : String,
-                                   strings : Hash(String, String), path : String,
+                                   strings : Hash(String, String),
+                                   placeholders : Hash(String, String), path : String,
                                    auto_verify : Bool, via : String, seen_urls : Set(String))
-      scheme = resolve(attr(data, "scheme"), strings)
+      scheme = resolve(attr(data, "scheme"), strings, placeholders)
       return if scheme.nil? || scheme.empty?
 
-      host = resolve(attr(data, "host"), strings) || ""
-      norm_path = normalize_path(data, strings)
+      host = resolve(attr(data, "host"), strings, placeholders) || ""
+      norm_path = normalize_path(data, strings, placeholders)
       web = scheme == "http" || scheme == "https"
 
       url = "#{scheme}://#{host}#{norm_path}"
@@ -136,6 +148,215 @@ module Analyzer::Mobile
       @result << endpoint
     end
 
+    # --- Jetpack Navigation (res/navigation/*.xml) -------------------------
+
+    # Scheme emitted for scheme-less Navigation URIs. Navigation matches
+    # both http and https for them; one canonical https endpoint keeps the
+    # inventory free of http/https twins.
+    NAV_DEFAULT_SCHEME = "https"
+    NAV_VIEW_ACTION    = "android.intent.action.VIEW"
+
+    # Jetpack Navigation graphs declare deep links outside the manifest:
+    # res/navigation/*.xml <deepLink app:uri="..."> under a destination
+    # (fragment / activity / dialog / nested <navigation>). They reuse the
+    # mobile-scheme / universal-link model; the destination's android:name
+    # becomes metadata["via"] so the code linker resolves the handler the
+    # same way as a manifest component.
+    private def parse_navigation_graphs(manifest_path : String, package : String,
+                                        strings : Hash(String, String),
+                                        placeholders : Hash(String, String),
+                                        seen_urls : Set(String))
+      nav_dir = File.join(File.dirname(manifest_path), "res", "navigation")
+      return unless Dir.exists?(nav_dir)
+
+      Dir.glob(File.join(nav_dir, "*.xml")).sort.each do |nav_path|
+        begin
+          doc = XML.parse(read_file_content(nav_path))
+          root = find_child(doc, "navigation")
+          next unless root
+          walk_navigation(root, "", package, strings, placeholders, nav_path, seen_urls)
+        rescue e
+          @logger.debug "Failed to parse navigation graph #{nav_path}: #{e.message}"
+          @logger.debug_sub e
+        end
+      end
+    end
+
+    # Recursively visits destinations, carrying the nearest android:name
+    # down as the handling component for any <deepLink> beneath it (nested
+    # <navigation> elements have no name of their own).
+    private def walk_navigation(node : XML::Node, via : String, package : String,
+                                strings : Hash(String, String),
+                                placeholders : Hash(String, String),
+                                nav_path : String, seen_urls : Set(String))
+      node.children.each do |child|
+        next unless child.element?
+        if child.name == "deepLink"
+          emit_nav_deep_link(child, via, package, strings, placeholders, nav_path, seen_urls)
+        else
+          child_via = resolve(attr(child, "name"), strings, placeholders) || via
+          walk_navigation(child, child_via, package, strings, placeholders, nav_path, seen_urls)
+        end
+      end
+    end
+
+    # Emits one endpoint per <deepLink app:uri="...">. Navigation URIs may
+    # omit the scheme (http/https implied), template path/query values with
+    # `{arg}`, and end a path in a `.*` wildcard. Query placeholders become
+    # `query` params and the query string is dropped from the URL, matching
+    # how the HTTP analyzers model queries. mimeType/action-only deepLinks
+    # (no uri) are not addressable from outside and are skipped.
+    private def emit_nav_deep_link(node : XML::Node, via : String, package : String,
+                                   strings : Hash(String, String),
+                                   placeholders : Hash(String, String),
+                                   nav_path : String, seen_urls : Set(String))
+      uri = resolve(attr(node, "uri"), strings, placeholders)
+      return if uri.nil? || uri.empty?
+
+      if m = uri.match(%r{\A([A-Za-z][A-Za-z0-9+.\-]*)://})
+        scheme = m[1]
+        rest = uri[m[0].size..]
+      else
+        scheme = NAV_DEFAULT_SCHEME
+        rest = uri.lchop("//")
+      end
+
+      rest, _, query = rest.partition('?')
+      if slash = rest.index('/')
+        host = rest[0...slash]
+        raw_path = rest[slash..]
+      else
+        host = rest
+        raw_path = ""
+      end
+      # A trailing `.*` is a wildcard match; keep the literal prefix.
+      raw_path = raw_path.sub(/\.\*\z/, "")
+
+      url = "#{scheme}://#{host}#{templatize(raw_path)}"
+      return unless seen_urls.add?(url)
+
+      web = scheme == "http" || scheme == "https"
+      auto_verify = bool_attr(node, "autoVerify")
+      protocol = (web && auto_verify) ? "universal-link" : "mobile-scheme"
+
+      endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(nav_path)))
+      endpoint.protocol = protocol
+      action = attr(node, "action") || NAV_VIEW_ACTION
+      endpoint.metadata = build_metadata(via, [action], [] of String, host, package)
+
+      query.split('&').each do |pair|
+        name = pair.partition('=')[0]
+        endpoint.push_param(Param.new(name, "", "query")) unless name.empty?
+      end
+
+      mark_unresolved(endpoint, url)
+      @result << endpoint
+    end
+
+    # --- gradle (${applicationId} / manifestPlaceholders) ------------------
+
+    # Gradle-derived manifest context: the `${applicationId}` / custom
+    # manifestPlaceholders substitution map, plus the module namespace /
+    # applicationId used as a package fallback for manifests without a
+    # `package` attribute.
+    private struct GradleConfig
+      getter application_id : String?
+      getter namespace : String?
+      getter placeholders : Hash(String, String)
+
+      def initialize(@application_id, @namespace, @placeholders)
+      end
+
+      def self.empty
+        new(nil, nil, {} of String => String)
+      end
+
+      def package_fallback : String
+        application_id || namespace || ""
+      end
+    end
+
+    # `applicationId "com.x"` (groovy) / `applicationId = "com.x"` (kts);
+    # the quote requirement keeps `applicationIdSuffix` from matching.
+    APPLICATION_ID_RE = /\bapplicationId\s*(?:=\s*)?["']([^"']+)["']/
+    NAMESPACE_RE      = /\bnamespace\s*(?:=\s*)?["']([^"']+)["']/
+    # The bracketed segment after `manifestPlaceholders` — a groovy map
+    # literal (`= [k: "v"]`), a kts `+= mapOf("k" to "v")`, or a
+    # `putAll(mapOf(...))` — captured up to the first closing bracket.
+    PLACEHOLDER_MAP_RE = /manifestPlaceholders[^\[(\n]*[\[(]([^\])]*)/
+    # `key: "value"`, `"key": "value"` (groovy) and `"key" to "value"` (kts).
+    PLACEHOLDER_PAIR_RE = /["']?([A-Za-z_]\w*)["']?\s*(?::|\bto\b)\s*["']([^"']*)["']/
+    # `manifestPlaceholders["key"] = "value"` / `manifestPlaceholders.put("key", "value")` (kts).
+    PLACEHOLDER_INDEX_RE = /manifestPlaceholders\s*\[\s*["'](\w+)["']\s*\]\s*=\s*["']([^"']*)["']/
+    PLACEHOLDER_PUT_RE   = /manifestPlaceholders\s*\.\s*put\s*\(\s*["'](\w+)["']\s*,\s*["']([^"']*)["']\s*\)/
+
+    private def load_gradle(manifest_path : String) : GradleConfig
+      gradle_path = find_gradle_file(manifest_path)
+      return GradleConfig.empty unless gradle_path
+
+      begin
+        parse_gradle(read_file_content(gradle_path))
+      rescue e
+        @logger.debug "Failed to parse gradle file #{gradle_path}: #{e.message}"
+        GradleConfig.empty
+      end
+    end
+
+    # The module build script lives above the manifest (`app/build.gradle`
+    # vs `app/src/main/AndroidManifest.xml`); the nearest one wins so a
+    # root-project script can't shadow the module's applicationId.
+    private def find_gradle_file(manifest_path : String) : String?
+      dir = File.dirname(File.expand_path(manifest_path))
+      4.times do
+        {"build.gradle", "build.gradle.kts"}.each do |name|
+          candidate = File.join(dir, name)
+          return candidate if File.exists?(candidate)
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      nil
+    end
+
+    # Regex-based extraction over both gradle DSLs. First occurrence wins,
+    # so defaultConfig values (declared first by convention) take precedence
+    # over buildType / flavor overrides; variant-specific placeholder values
+    # are intentionally not modeled.
+    private def parse_gradle(content : String) : GradleConfig
+      application_id = content.match(APPLICATION_ID_RE).try(&.[1])
+      namespace = content.match(NAMESPACE_RE).try(&.[1])
+      placeholders = {} of String => String
+
+      content.scan(PLACEHOLDER_MAP_RE) do |m|
+        m[1].scan(PLACEHOLDER_PAIR_RE) do |pair|
+          placeholders[pair[1]] = pair[2] unless placeholders.has_key?(pair[1])
+        end
+      end
+      {PLACEHOLDER_INDEX_RE, PLACEHOLDER_PUT_RE}.each do |re|
+        content.scan(re) do |m|
+          placeholders[m[1]] = m[2] unless placeholders.has_key?(m[1])
+        end
+      end
+
+      # AGP always provides ${applicationId} even without an explicit
+      # manifestPlaceholders entry.
+      if app_id = application_id
+        placeholders["applicationId"] = app_id unless placeholders.has_key?("applicationId")
+      end
+
+      GradleConfig.new(application_id, namespace, placeholders)
+    end
+
+    # Replaces `${placeholder}` references with their gradle values; unknown
+    # placeholders are kept verbatim so `mark_unresolved` can tag them.
+    private def substitute(value : String, placeholders : Hash(String, String)) : String
+      return value unless value.includes?("${")
+      value.gsub(/\$\{(\w+)\}/) { |s| placeholders[$~[1]]? || s }
+    end
+
+    # -----------------------------------------------------------------------
+
     private def build_metadata(via : String, actions : Array(String),
                                categories : Array(String), host : String,
                                package : String) : Hash(String, String)
@@ -151,14 +372,15 @@ module Analyzer::Mobile
     # Normalizes android:path / pathPrefix / pathPattern to a Noir-style
     # path. Templated `{id}` segments are rewritten to `:id` so the
     # optimizer's path-param pass picks them up.
-    private def normalize_path(data : XML::Node, strings : Hash(String, String)) : String
-      if path = resolve(attr(data, "path"), strings)
+    private def normalize_path(data : XML::Node, strings : Hash(String, String),
+                               placeholders : Hash(String, String)) : String
+      if path = resolve(attr(data, "path"), strings, placeholders)
         return templatize(path)
       end
-      if prefix = resolve(attr(data, "pathPrefix"), strings)
+      if prefix = resolve(attr(data, "pathPrefix"), strings, placeholders)
         return templatize(prefix)
       end
-      if pattern = resolve(attr(data, "pathPattern"), strings)
+      if pattern = resolve(attr(data, "pathPattern"), strings, placeholders)
         # Patterns are regex-ish (.* / .*foo); keep the literal prefix only.
         literal = pattern.split(/[.*\\]/).first
         return templatize(literal)
@@ -166,24 +388,28 @@ module Analyzer::Mobile
       ""
     end
 
+    # The `$` lookbehind keeps an unresolved gradle `${placeholder}` intact
+    # (for the unresolved tag) while `{id}` still becomes `:id`.
     private def templatize(path : String) : String
-      path.gsub(/\{([^}]+)\}/, ":\\1")
+      path.gsub(/(?<!\$)\{([^}]+)\}/, ":\\1")
     end
 
     private def mark_unresolved(endpoint : Endpoint, url : String)
-      return unless url.includes?("@string/") || url.includes?("@{")
+      return unless url.includes?("@string/") || url.includes?("@{") || url.includes?("${")
       endpoint.add_tag(Tag.new("unresolved", "Contains an unresolved manifest reference", "android"))
     end
 
-    # Resolves @string/foo against res/values/strings.xml; leaves any other
-    # value as-is and passes nil through.
-    private def resolve(value : String?, strings : Hash(String, String)) : String?
+    # Resolves @string/foo against res/values/strings.xml and gradle
+    # `${placeholder}` references; leaves any other value as-is and passes
+    # nil through.
+    private def resolve(value : String?, strings : Hash(String, String),
+                        placeholders : Hash(String, String)) : String?
       return value if value.nil?
       if value.starts_with?("@string/")
         key = value.lchop("@string/")
-        return strings[key]? || value
+        value = strings[key]? || value
       end
-      value
+      substitute(value, placeholders)
     end
 
     # Loads <manifest_dir>/res/values/strings.xml into a name→value hash.
@@ -228,7 +454,8 @@ module Analyzer::Mobile
     # Reads an attribute by local name (libxml2 exposes the prefixed name).
     # Prefers the `android:`-namespaced attribute so a `tools:`/other-prefix
     # `scheme`/`host`/`exported` in the same tag can't shadow the real value;
-    # falls back to a non-namespaced match (e.g. `package` on <manifest>).
+    # falls back to a non-namespaced match (e.g. `package` on <manifest>,
+    # `app:uri` on a navigation <deepLink>).
     private def attr(node : XML::Node, local_name : String) : String?
       fallback : String? = nil
       node.attributes.each do |a|

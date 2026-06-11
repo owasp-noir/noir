@@ -14,12 +14,14 @@ Noir는 모바일 앱이 외부에 노출하는 진입점 — 딥링크와 expor
 |---|---|---|
 | Android | `AndroidManifest.xml` | 커스텀 URL 스킴 딥링크, exported 인텐트 컴포넌트, 검증된 App Link |
 | Android | `res/values/strings.xml` | 스킴·호스트·경로에 쓰인 `@string/` 참조 해석 |
+| Android | `build.gradle` / `build.gradle.kts` | 패키지·컴포넌트 이름·스킴·호스트에 쓰인 `${applicationId}`와 커스텀 `manifestPlaceholders` 해석. 매니페스트에 `package` 속성이 없으면 패키지도 여기서 가져옵니다 |
+| Android | `res/navigation/*.xml` | Jetpack Navigation `<deepLink app:uri="...">` 딥링크 — 소속 destination이 처리 컴포넌트가 됩니다 |
 | iOS | `Info.plist` | `CFBundleURLTypes` 커스텀 URL 스킴 |
 | iOS | `*.entitlements` | `associated-domains`의 `applinks:` 유니버설 링크 |
 | Android | `/.well-known/assetlinks.json` | 서버 측 App Links 연결 선언(Digital Asset Links) |
 | iOS | `apple-app-site-association` | 서버 측 유니버설 링크 `paths` / `components` 패턴 |
 
-앞의 네 행은 앱 번들에 선언되는 **클라이언트** 측 연결이고, 마지막 두 행은 **서버** 측 — OS가 해당 호스트의 URL에 대해 앱을 열도록 호스트가 게시하는 well-known 파일 — 입니다. 둘 다 동일한 `universal-link` protocol과 출력 모델을 통해 처리됩니다.
+앞의 여섯 행은 앱 번들에 선언되는 **클라이언트** 측 연결이고, 마지막 두 행은 **서버** 측 — OS가 해당 호스트의 URL에 대해 앱을 열도록 호스트가 게시하는 well-known 파일 — 입니다. 둘 다 동일한 `universal-link` protocol과 출력 모델을 통해 처리됩니다.
 
 ## 엔드포인트 모델
 
@@ -58,6 +60,7 @@ SCHEME myapp://complex/:id
 
 * 핸들러 연결에는 소스 코드가 필요합니다. 매니페스트·plist만 있는 스캔도 엔드포인트는 추출하지만 callee·파라미터·AI 컨텍스트는 붙지 않습니다.
 * 바이너리(컴파일된) `Info.plist`는 건너뜁니다. 소스 저장소의 XML plist는 파싱합니다.
-* gradle `${applicationId}` 플레이스홀더와 Jetpack Navigation 딥링크는 아직 해석하지 않습니다.
+* gradle 플레이스홀더는 매니페스트 위쪽에서 가장 가까운 `build.gradle(.kts)`를 읽어 해석합니다. 같은 플레이스홀더가 여러 번 선언되면(예: `buildTypes` 오버라이드) 먼저 선언된 쪽 — 관례상 `defaultConfig` — 이 우선하며, 빌드 variant별 값은 모델링하지 않습니다. gradle에 값이 없는 플레이스홀더는 URL에 그대로 남고 엔드포인트에 `unresolved` 태그가 붙습니다.
+* 스킴 없는 Jetpack Navigation URI(런타임에는 http·https 모두 매칭)는 `https` 하나로 추출합니다. `{arg}` 세그먼트는 `:arg` path 파라미터로, `?key={arg}` 쿼리 플레이스홀더는 `query` 파라미터로 바뀌고, 끝의 `.*` 와일드카드는 리터럴 프리픽스만 남깁니다.
 * `assetlinks.json`은 패키지 연결만 선언하고 경로는 없으므로 앱당 `/*` 엔드포인트 하나를 만듭니다. `apple-app-site-association`의 경로(`/buy/*`, `NOT /private/*`)와 `components`는 개별적으로 추출되며, AASA 제외 패턴은 `excluded` 태그가 붙습니다.
 * `apple-app-site-association`은 plain-JSON 형식만 파싱합니다. CMS로 서명된 AASA 파일(구형 앱)은 건너뜁니다.

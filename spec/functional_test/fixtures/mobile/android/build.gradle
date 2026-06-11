@@ -1,0 +1,22 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.example.myapp'
+
+    defaultConfig {
+        applicationId "com.example.myapp"
+        manifestPlaceholders = [
+            deepLinkScheme: "myapp",
+            deepLinkHost  : "links.example.com"
+        ]
+    }
+
+    buildTypes {
+        debug {
+            // Override that must NOT win over defaultConfig (first wins).
+            manifestPlaceholders = [deepLinkHost: "debug.example.com"]
+        }
+    }
+}

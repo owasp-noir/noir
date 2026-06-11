@@ -86,6 +86,10 @@ class EndpointOptimizer
     # through the block-local binding only edits a copy. Rewrite
     # via array index so the in-place change actually persists.
     endpoints.each_with_index do |endpoint, idx|
+      # Mobile deep-link URLs are not HTTP route templates: a `${...}`
+      # there is an unresolved gradle manifest placeholder (kept verbatim
+      # and tagged by the Android analyzer), not a JS template literal.
+      next if endpoint.mobile?
       endpoint.url = normalize_url_shape(endpoint.url)
       endpoints[idx] = endpoint
     end
@@ -247,8 +251,11 @@ class EndpointOptimizer
           tiny_tmp.url = "/#{tiny_tmp.url}"
         end
 
-        tiny_tmp.url = normalize_url_shape(tiny_tmp.url)
-        dedup_url = normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
+        # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
+        # unresolved gradle manifest placeholder, not a JS template literal
+        # for the shape-normalizer to rewrite.
+        tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.mobile?
+        dedup_url = tiny_tmp.mobile? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
 
         key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, cross_tech_keys)}
 

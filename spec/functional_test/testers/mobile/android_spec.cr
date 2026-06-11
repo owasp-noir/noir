@@ -32,6 +32,22 @@ expected_endpoints = [
   build.call("https://myapp.example.com/complex/:id", "universal-link", [Param.new("id", "", "path")], [] of String),
   # Exported, data-less component (android-intent), synthetic intent:// scheme
   build.call("intent://com.example.myapp/.SyncService", "android-intent", no_params, [] of String),
+  # gradle manifestPlaceholders: ${deepLinkScheme} / ${deepLinkHost} resolved
+  # from build.gradle defaultConfig (the buildTypes override must not win)
+  build.call("myapp://links.example.com", "mobile-scheme", no_params, [] of String),
+  # Placeholder missing from build.gradle: kept verbatim (tagged unresolved)
+  build.call("myapp://${missingHost}", "mobile-scheme", no_params, [] of String),
+  # Jetpack Navigation deep link: {userId} -> :userId path param, ?ref={ref}
+  # -> query param; linked to ProfileFragment.onViewCreated for callees.
+  build.call("myapp://users/:userId", "mobile-scheme", [
+    Param.new("userId", "", "path"),
+    Param.new("ref", "", "query"),
+  ], ["loadProfile"]),
+  # Scheme-less Navigation URI: http/https implied, emitted under https;
+  # the trailing `.*` wildcard keeps the literal prefix only.
+  build.call("https://nav.example.com/search/", "mobile-scheme", no_params, [] of String),
+  # Deep link inside a nested <navigation> graph
+  build.call("myapp://settings/notifications", "mobile-scheme", no_params, [] of String),
 ]
 
 FunctionalTester.new("fixtures/mobile/android/", {

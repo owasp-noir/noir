@@ -4,11 +4,34 @@
 
     <application android:label="MyApp">
 
-        <!-- Launcher activity: no <data>, must NOT produce any endpoint -->
+        <!-- Launcher activity: no <data>, must NOT produce any endpoint.
+             The <nav-graph> reference is resolved by globbing
+             res/navigation/*.xml, not by following this element. -->
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <nav-graph android:resource="@navigation/nav_graph" />
+        </activity>
+
+        <!-- gradle manifest placeholders: component name from
+             ${applicationId}, scheme/host from manifestPlaceholders -->
+        <activity android:name="${applicationId}.PlaceholderActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${deepLinkScheme}" android:host="${deepLinkHost}" />
+            </intent-filter>
+        </activity>
+
+        <!-- Placeholder missing from build.gradle: kept verbatim and
+             tagged "unresolved" -->
+        <activity android:name=".UnresolvedActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="myapp" android:host="${missingHost}" />
             </intent-filter>
         </activity>
 
