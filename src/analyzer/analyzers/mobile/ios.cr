@@ -81,8 +81,9 @@ module Analyzer::Mobile
 
     # How far up from the Info.plist to look for the project's .xcconfig
     # files, and how many to read.
-    XCCONFIG_SEARCH_DEPTH =  6
-    MAX_XCCONFIG_FILES    = 40
+    XCCONFIG_SEARCH_DEPTH            =  6
+    MAX_XCCONFIG_FILES               = 40
+    MAX_BUILD_VAR_SUBSTITUTION_DEPTH =  8
     # `KEY = value` (xcconfig assignment); the value runs to a trailing
     # comment / end of line.
     XCCONFIG_ASSIGN_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\n]*)$/
@@ -129,11 +130,22 @@ module Analyzer::Mobile
       @logger.debug "Failed to parse xcconfig #{path}: #{e.message}"
     end
 
-    # Resolves `$(VAR)` / `${VAR}` against the xcconfig map; unknown
-    # references are kept verbatim (same behavior as before this resolver).
+    # Resolves `$(VAR)` / `${VAR}` against the xcconfig map. Values in
+    # xcconfig files may themselves point at another build setting
+    # (`APP_SCHEME = ${BRANDED_SCHEME}`), so resolve repeatedly with a
+    # bounded depth. Unknown or cyclic references are kept verbatim.
     private def substitute_build_vars(value : String, vars : Hash(String, String)) : String
       return value unless value.includes?("$(") || value.includes?("${")
-      value.gsub(BUILD_VAR_RE) { vars[$~[1]]? || $~[0] }
+
+      resolved = value
+      MAX_BUILD_VAR_SUBSTITUTION_DEPTH.times do
+        next_value = resolved.gsub(BUILD_VAR_RE) { vars[$~[1]]? || $~[0] }
+        break if next_value == resolved
+
+        resolved = next_value
+        break unless resolved.includes?("$(") || resolved.includes?("${")
+      end
+      resolved
     end
 
     private def parse_entitlements(doc : XML::Node, path : String)
