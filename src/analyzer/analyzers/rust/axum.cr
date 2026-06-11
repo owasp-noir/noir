@@ -665,10 +665,19 @@ module Analyzer::Rust
       endpoint.push_param(Param.new("form", "", "form")) if extractor_param?(text, "Form")
     end
 
+    # Precompiled per extractor type; interpolated regex literals here would
+    # be recompiled on every function parameter.
+    EXTRACTOR_PARAM_RES = {
+      "Query" => {/Query\s*\(\s*[^)]+\s*\)/, /:\s*(?:[A-Za-z_]\w*::)*Query\b/},
+      "Json"  => {/Json\s*\(\s*[^)]+\s*\)/, /:\s*(?:[A-Za-z_]\w*::)*Json\b/},
+      "Form"  => {/Form\s*\(\s*[^)]+\s*\)/, /:\s*(?:[A-Za-z_]\w*::)*Form\b/},
+    }
+
     private def extractor_param?(text : String, type_name : String) : Bool
+      call_re, type_re = EXTRACTOR_PARAM_RES[type_name]
       text.includes?("#{type_name}<") ||
-        !!text.match(/#{type_name}\s*\(\s*[^)]+\s*\)/) ||
-        !!text.match(/:\s*(?:[A-Za-z_]\w*::)*#{type_name}\b/)
+        !!text.match(call_re) ||
+        !!text.match(type_re)
     end
 
     private def param_binding_name(text : String) : String?

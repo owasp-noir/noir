@@ -765,10 +765,10 @@ module NoirMobileLinker
       return 0 if remaining <= 0
 
       found = 0
+      case_re = Regex.new("^\\s*case\\s+\\.#{Regex.escape(action.action)}\\b")
 
       swift_method_bodies(content, action.method, action.action_type).each do |method|
         lines = method[:body].lines
-        case_re = Regex.new("^\\s*case\\s+\\.#{Regex.escape(action.action)}\\b")
         depth = 0
         in_string = false
 

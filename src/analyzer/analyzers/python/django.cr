@@ -373,22 +373,30 @@ module Analyzer::Python
                                           list_names : Array(::String)) : Array(::String)
       contents = [] of ::String
       lines = content.split("\n")
+      # Compile once per call; interpolated regex literals inside the
+      # per-line loop would be recompiled on every line.
       list_name_re = list_names.map { |name| Regex.escape(name) }.join("|")
+      assign_check_re = /^\s*(?:#{list_name_re})\s*=/
+      assign_capture_re = /^\s*(?:#{list_name_re})\s*=\s*(.+)$/m
+      append_check_re = /^\s*(?:#{list_name_re})\s*\+=/
+      append_capture_re = /^\s*(?:#{list_name_re})\s*\+=\s*(.+)$/m
+      extend_check_re = /^\s*(?:#{list_name_re})\s*\.\s*extend\s*\(/
+      extend_capture_re = /^\s*(?:#{list_name_re})\s*\.\s*extend\s*\((.*)\)\s*$/m
 
       lines.each_with_index do |line, index|
-        if line.matches?(/^\s*(?:#{list_name_re})\s*=/)
+        if line.matches?(assign_check_re)
           logical_line = collect_python_expression(lines, index, line)
-          if assignment_match = logical_line.match(/^\s*(?:#{list_name_re})\s*=\s*(.+)$/m)
+          if assignment_match = logical_line.match(assign_capture_re)
             add_urlpattern_expression_contents(contents, assignment_match[1], urlpattern_lists)
           end
-        elsif line.matches?(/^\s*(?:#{list_name_re})\s*\+=/)
+        elsif line.matches?(append_check_re)
           logical_line = collect_python_expression(lines, index, line)
-          if append_match = logical_line.match(/^\s*(?:#{list_name_re})\s*\+=\s*(.+)$/m)
+          if append_match = logical_line.match(append_capture_re)
             add_urlpattern_expression_contents(contents, append_match[1], urlpattern_lists)
           end
-        elsif line.matches?(/^\s*(?:#{list_name_re})\s*\.\s*extend\s*\(/)
+        elsif line.matches?(extend_check_re)
           logical_line = collect_python_expression(lines, index, line)
-          if extend_match = logical_line.match(/^\s*(?:#{list_name_re})\s*\.\s*extend\s*\((.*)\)\s*$/m)
+          if extend_match = logical_line.match(extend_capture_re)
             add_urlpattern_expression_contents(contents, extend_match[1], urlpattern_lists)
           end
         end
