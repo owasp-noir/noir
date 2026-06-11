@@ -33,8 +33,7 @@ module Noir
   #     index (same pipeline as Spring's `@RequestBody`).
   #
   # Out of scope for this first cut: meta-annotations,
-  # `@MatrixParam`, `@Context` (always skipped — framework
-  # injection, not user input).
+  # `@MatrixParam`.
   module TreeSitterJaxRsExtractor
     extend self
 
@@ -76,6 +75,24 @@ module Noir
       "boolean", "byte", "char", "short", "int", "long",
       "float", "double", "void", "string", "object",
       "integer", "character",
+    }
+
+    # Framework-provided method parameters that can be injected by
+    # type in RESTEasy Reactive / Quarkus or are commonly carried by
+    # JAX-RS/Servlet `@Context` / `@Suspended`. These are never
+    # request bodies.
+    INJECTED_PARAM_TYPES = Set{
+      "routingcontext", "httpserverrequest", "httpserverresponse",
+      "containerrequestcontext", "containerresponsecontext",
+      "securitycontext", "uriinfo", "httpheaders", "resourcecontext",
+      "providers", "sse", "sseeventsink", "asyncresponse",
+      "httpservletrequest", "httpservletresponse",
+      "servletrequest", "servletresponse",
+      "securityidentity", "jsonwebtoken",
+    }
+
+    MULTIPART_FORM_PARAM_TYPES = Set{
+      "multipartformdatainput", "multipartinput", "formdatamultipart",
     }
 
     alias SourceEntry = Tuple(String, String) # file_path, source
@@ -642,6 +659,8 @@ module Noir
           result = "form"
         elsif text.includes?("APPLICATION_JSON") || text.includes?("application/json")
           result = "json"
+        elsif text.includes?("MULTIPART_FORM_DATA") || text.includes?("multipart/form-data")
+          result = "form"
         end
       end
       result
@@ -684,9 +703,10 @@ module Noir
       formal = formal_parameters_node(method)
       return params unless formal
 
+      multipart_fields = multipart_form_fields(method, source)
       Noir::TreeSitter.each_named_child(formal) do |param|
         next unless Noir::TreeSitter.node_type(param) == "formal_parameter"
-        emit_param_for(param, source, verb, method_format, dto_index, bean_index, constants, current_class, params)
+        emit_param_for(param, source, verb, method_format, dto_index, bean_index, constants, current_class, params, multipart_fields)
       end
       params
     end
@@ -706,7 +726,8 @@ module Noir
                                bean_index : Hash(String, Array(Param)),
                                constants : Hash(String, String),
                                current_class : String,
-                               sink : Array(Param))
+                               sink : Array(Param),
+                               multipart_fields = Hash(String, Array(String)).new)
       param_name, type_name = parameter_name_and_type(param, source)
       return if param_name.empty?
 
@@ -721,7 +742,7 @@ module Noir
           ann_arg = first_string_arg(args, source, constants, current_class)
         elsif name == "BeanParam"
           ann_kind = :bean
-        elsif name == "Context"
+        elsif name == "Context" || name == "Suspended"
           ann_kind = :context
         elsif name == "DefaultValue"
           default_value = first_string_arg(args, source, constants, current_class)
@@ -735,8 +756,8 @@ module Noir
 
       case ann_kind
       when :path, :context
-        # @PathParam → URL carries it; @Context → framework
-        # injection. Skip in both cases.
+        # @PathParam carries it in the URL; @Context/@Suspended are
+        # framework injection. Skip in both cases.
         return
       when :bean
         if fields = bean_index[type_name]?
@@ -756,7 +777,17 @@ module Noir
       # we know them, otherwise emit a single `body` param so the
       # caller still sees something.
       return if PRIMITIVE_TYPES.includes?(type_name.downcase)
+      return if INJECTED_PARAM_TYPES.includes?(type_name.downcase)
       format = method_format || "json"
+      if MULTIPART_FORM_PARAM_TYPES.includes?(type_name.downcase)
+        fields = multipart_fields[param_name]? || [] of String
+        if fields.empty?
+          sink << Param.new(param_name, "", "form")
+        else
+          fields.each { |field| sink << Param.new(field, "", "form") }
+        end
+        return
+      end
       if fields = dto_index[type_name]?
         fields.each do |field|
           next unless field.access_modifier == "public" || field.has_setter?
@@ -781,6 +812,86 @@ module Noir
         end
       end
       {name, type_name}
+    end
+
+    private def multipart_form_fields(method : LibTreeSitter::TSNode, source : String) : Hash(String, Array(String))
+      fields = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
+      body = Noir::TreeSitter.field(method, "body")
+      return fields unless body
+
+      collect_multipart_form_fields(body, source, fields, 0)
+      fields
+    end
+
+    private def collect_multipart_form_fields(node : LibTreeSitter::TSNode,
+                                              source : String,
+                                              fields : Hash(String, Array(String)),
+                                              depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+      if Noir::TreeSitter.node_type(node) == "method_invocation"
+        collect_multipart_form_field_from_call(node, source, fields)
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_multipart_form_fields(child, source, fields, depth + 1)
+      end
+    end
+
+    private def collect_multipart_form_field_from_call(call : LibTreeSitter::TSNode,
+                                                       source : String,
+                                                       fields : Hash(String, Array(String)))
+      name = method_invocation_name(call, source)
+      carrier = ""
+      field_name : String? = nil
+
+      if name == "get"
+        object = Noir::TreeSitter.field(call, "object")
+        if object && Noir::TreeSitter.node_type(object) == "method_invocation" &&
+           method_invocation_name(object, source) == "getFormDataMap"
+          carrier = method_invocation_receiver(object, source)
+          field_name = first_string_arg(method_invocation_args(call), source)
+        end
+      elsif name == "getFormDataPart"
+        carrier = method_invocation_receiver(call, source)
+        field_name = first_string_arg(method_invocation_args(call), source)
+      end
+
+      return if carrier.empty?
+      field = field_name
+      return unless field
+      return if field.empty?
+
+      fields[carrier] << field unless fields[carrier].includes?(field)
+    end
+
+    private def method_invocation_name(call : LibTreeSitter::TSNode, source : String) : String
+      if name_node = Noir::TreeSitter.field(call, "name")
+        return Noir::TreeSitter.node_text(name_node, source)
+      end
+
+      ""
+    end
+
+    private def method_invocation_receiver(call : LibTreeSitter::TSNode, source : String) : String
+      object = Noir::TreeSitter.field(call, "object")
+      return "" unless object
+
+      case Noir::TreeSitter.node_type(object)
+      when "identifier"
+        Noir::TreeSitter.node_text(object, source)
+      when "field_access", "scoped_identifier"
+        last_segment(Noir::TreeSitter.node_text(object, source))
+      else
+        ""
+      end
+    end
+
+    private def method_invocation_args(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(call) do |child|
+        return child if Noir::TreeSitter.node_type(child) == "argument_list"
+      end
+      nil
     end
 
     private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String

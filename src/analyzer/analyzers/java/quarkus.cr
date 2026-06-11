@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
+require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 require "yaml"
@@ -64,7 +65,7 @@ module Analyzer::Java
         application_base_path = application_base_path_for(path, package_name, application_base_paths)
         configured_base_path = configured_base_path_for(path, path_configs, application_base_path)
 
-        extract_reactive_route_endpoints(content, path, path_configs).each do |endpoint|
+        extract_reactive_route_endpoints(content, path, path_configs, include_callee).each do |endpoint|
           @result << endpoint
         end
 
@@ -295,19 +296,30 @@ module Analyzer::Java
       end
     end
 
+    private struct ReactiveMethodCallees
+      getter start_byte : Int32
+      getter end_byte : Int32
+      getter callees : Array(Callee)
+
+      def initialize(@start_byte, @end_byte, @callees)
+      end
+    end
+
     private def extract_reactive_route_endpoints(content : String,
                                                  path : String,
-                                                 configs : Hash(String, QuarkusPathConfig)) : Array(Endpoint)
+                                                 configs : Hash(String, QuarkusPathConfig),
+                                                 include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless content.includes?("io.quarkus.vertx.web.Route")
 
       http_root_path = (configs[project_root_for(path)]? || QuarkusPathConfig.new).http_root_path
       route_bases = reactive_route_bases(content)
+      method_callees = include_callee ? reactive_route_method_callees(content, path) : [] of ReactiveMethodCallees
 
       content.scan(/@Route\b\s*(?:\((.*?)\))?/m) do |match|
         offset = match.begin(0) || 0
         body = match[1]? || ""
-        next if body.includes?("HandlerType.FAILURE")
+        next if reactive_failure_route?(body)
 
         method_name = route_method_name_after(content, match.end(0) || offset)
         next if method_name.empty?
@@ -322,11 +334,60 @@ module Analyzer::Java
         reactive_route_methods(body).each do |method|
           next if endpoints.any? { |endpoint| endpoint.url == endpoint_path && endpoint.method == method }
 
-          endpoints << Endpoint.new(endpoint_path, method, params, details)
+          endpoint = Endpoint.new(endpoint_path, method, params, details)
+          if callees = reactive_method_callees_for(method_callees, content, offset)
+            callees.each { |callee| endpoint.push_callee(callee) }
+          end
+          endpoints << endpoint
         end
       end
 
       endpoints
+    end
+
+    private def reactive_route_method_callees(content : String, path : String) : Array(ReactiveMethodCallees)
+      result = [] of ReactiveMethodCallees
+      Noir::TreeSitter.parse_java(content) do |root|
+        walk_method_declarations(root) do |method|
+          body = Noir::TreeSitter.field(method, "body")
+          next unless body
+
+          callees = Noir::JavaCalleeExtractor.callees_in_body(body, content, path).map do |(name, callee_path, callee_line)|
+            Callee.new(name, path: callee_path, line: callee_line)
+          end
+          result << ReactiveMethodCallees.new(
+            LibTreeSitter.ts_node_start_byte(method).to_i,
+            LibTreeSitter.ts_node_end_byte(method).to_i,
+            callees
+          )
+        end
+      end
+      result
+    end
+
+    private def reactive_method_callees_for(method_callees : Array(ReactiveMethodCallees),
+                                            content : String,
+                                            annotation_offset : Int32) : Array(Callee)?
+      annotation_byte = content.char_index_to_byte_index(annotation_offset) || annotation_offset
+      method_callees.find do |entry|
+        annotation_byte >= entry.start_byte && annotation_byte < entry.end_byte
+      end.try(&.callees)
+    end
+
+    private def walk_method_declarations(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      if Noir::TreeSitter.node_type(node) == "method_declaration"
+        block.call(node)
+        return
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk_method_declarations(child, &block)
+      end
+    end
+
+    private def reactive_failure_route?(annotation_body : String) : Bool
+      annotation_body.includes?("HandlerType.FAILURE") ||
+        !!annotation_body.match(/\btype\s*=\s*(?:Route\.)?FAILURE\b/)
     end
 
     private def reactive_route_bases(content : String) : Array(ReactiveRouteBase)
@@ -367,6 +428,13 @@ module Analyzer::Java
       annotation_body.scan(/(?:Route\.)?HttpMethod\.([A-Z]+)/) do |match|
         method = match[1].upcase
         methods << method if HTTP_METHOD_NAMES.includes?(method)
+      end
+
+      annotation_body.scan(/\bmethods?\s*=\s*(\{[^}]*\}|[A-Z_][A-Z0-9_]*)/m) do |match|
+        match[1].scan(/\b([A-Z]+)\b/) do |method_match|
+          method = method_match[1].upcase
+          methods << method if HTTP_METHOD_NAMES.includes?(method)
+        end
       end
 
       methods.empty? ? ["GET"] : methods.uniq

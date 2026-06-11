@@ -45,12 +45,16 @@ describe Noir::TreeSitterMicronautExtractor do
 
       import io.micronaut.http.MediaType;
       import io.micronaut.http.annotation.Body;
+      import io.micronaut.http.annotation.Consumes;
       import io.micronaut.http.annotation.Controller;
       import io.micronaut.http.annotation.Get;
       import io.micronaut.http.annotation.Header;
       import io.micronaut.http.annotation.Post;
       import io.micronaut.http.annotation.QueryValue;
       import io.micronaut.http.annotation.RequestBean;
+      import io.micronaut.http.multipart.CompletedFileUpload;
+
+      import static io.micronaut.http.MediaType.MULTIPART_FORM_DATA;
 
       @Controller("/books")
       public class BookController {
@@ -65,8 +69,24 @@ describe Noir::TreeSitterMicronautExtractor do
               return "";
           }
 
+          @Post("/scalar")
+          public String scalar(@Body("isbn") String isbn, @Body("name") String name) {
+              return "";
+          }
+
+          @Post(value = "/scalar-form", consumes = MediaType.APPLICATION_FORM_URLENCODED)
+          public String scalarForm(@Body("name") String name) {
+              return "";
+          }
+
           @Post(value = "/process", processes = MediaType.MULTIPART_FORM_DATA)
           public String process(@Body Book book) {
+              return "";
+          }
+
+          @Consumes(MULTIPART_FORM_DATA)
+          @Post("/attachment")
+          public String attachment(CompletedFileUpload file) {
               return "";
           }
 
@@ -108,13 +128,77 @@ describe Noir::TreeSitterMicronautExtractor do
       {"POST", "/books/forms", [
         Param.new("title", "", "form"),
       ]},
+      {"POST", "/books/scalar", [
+        Param.new("isbn", "", "json"),
+        Param.new("name", "", "json"),
+      ]},
+      {"POST", "/books/scalar-form", [
+        Param.new("name", "", "form"),
+      ]},
       {"POST", "/books/process", [
         Param.new("title", "", "form"),
+      ]},
+      {"POST", "/books/attachment", [
+        Param.new("file", "", "form"),
       ]},
       {"GET", "/books/filter", [
         Param.new("author", "", "query"),
         Param.new("year", "", "query"),
       ]},
+    ])
+  end
+
+  it "normalizes URI query templates and expands matching complex parameters as query params" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import io.micronaut.http.annotation.Controller;
+      import io.micronaut.http.annotation.Get;
+      import io.micronaut.http.annotation.QueryValue;
+
+      @Controller("/genres")
+      public class GenreController {
+          @Get("/list{?args*}")
+          public String list(SortingAndOrderArguments args) {
+              return "";
+          }
+
+          @Get("/search{?q}")
+          public String search(@QueryValue String q) {
+              return "";
+          }
+
+          @Get("/{month}")
+          public String byMonth(Month month, Principal principal, HttpRequest<?> request, Pageable pageable) {
+              return "";
+          }
+      }
+
+      class SortingAndOrderArguments {
+          private Integer offset;
+          private Integer max;
+          public void setOffset(Integer offset) { this.offset = offset; }
+          public void setMax(Integer max) { this.max = max; }
+      }
+      JAVA
+
+    dto_index = {
+      "SortingAndOrderArguments" => [
+        Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("offset", "private", true, ""),
+        Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("max", "private", true, ""),
+      ],
+    } of String => Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)
+
+    routes = Noir::TreeSitterMicronautExtractor.extract_routes(source, dto_index)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"GET", "/genres/list", [
+        Param.new("offset", "", "query"),
+        Param.new("max", "", "query"),
+      ]},
+      {"GET", "/genres/search", [
+        Param.new("q", "", "query"),
+      ]},
+      {"GET", "/genres/{month}", [] of Param},
     ])
   end
 

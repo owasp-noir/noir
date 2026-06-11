@@ -9,12 +9,14 @@ require "../ext/tree_sitter/tree_sitter"
 #
 #   1. Find the (class_name, method_name) `method_declaration` in the
 #      already-parsed root.
-#   2. Walk its body for `method_invocation` nodes.
+#   2. Walk its body for `method_invocation` / `method_reference` nodes.
 #   3. For each, reconstruct a textual callee:
 #        * `foo()`              → `foo`
 #        * `service.save(x)`    → `service.save`
 #        * `this.foo()`         → `this.foo`
 #        * `Foo.bar()` (static) → `Foo.bar`
+#        * `Message::body`      → `Message.body`
+#        * `this::toDto`        → `this.toDto`
 #        * `getFoo().bar()`     → "" (chained on a call — dropped as
 #                                 noise, mirroring the Python/Go
 #                                 chained-call filter)
@@ -53,7 +55,8 @@ module Noir::JavaCalleeExtractor
     decl_index = build_method_decl_index(root, source)
 
     walk(body) do |n|
-      next unless Noir::TreeSitter.node_type(n) == "method_invocation"
+      node_type = Noir::TreeSitter.node_type(n)
+      next unless node_type == "method_invocation" || node_type == "method_reference"
       name = callee_text(n, source)
       next if name.empty?
       row = Noir::TreeSitter.node_start_row(n)
@@ -84,7 +87,8 @@ module Noir::JavaCalleeExtractor
                       file_path : String) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     walk(body) do |n|
-      next unless Noir::TreeSitter.node_type(n) == "method_invocation"
+      node_type = Noir::TreeSitter.node_type(n)
+      next unless node_type == "method_invocation" || node_type == "method_reference"
       name = callee_text(n, source)
       next if name.empty?
       row = Noir::TreeSitter.node_start_row(n)
@@ -96,6 +100,10 @@ module Noir::JavaCalleeExtractor
   # ---- private helpers -----------------------------------------------
 
   private def callee_text(call : LibTreeSitter::TSNode, source : String) : String
+    if Noir::TreeSitter.node_type(call) == "method_reference"
+      return method_reference_text(call, source)
+    end
+
     name_node = Noir::TreeSitter.field(call, "name")
     return "" unless name_node
     name = Noir::TreeSitter.node_text(name_node, source)
@@ -107,6 +115,29 @@ module Noir::JavaCalleeExtractor
     receiver = receiver_text(object, source)
     return "" if receiver.empty? # chained-on-call or unsupported receiver
     "#{receiver}.#{name}"
+  end
+
+  private def method_reference_text(ref : LibTreeSitter::TSNode, source : String) : String
+    receiver, name = method_reference_parts(ref, source)
+    return "" if receiver.empty? || name.empty?
+
+    "#{receiver}.#{name}"
+  end
+
+  private def method_reference_parts(ref : LibTreeSitter::TSNode, source : String) : Tuple(String, String)
+    text = Noir::TreeSitter.node_text(ref, source).strip
+    pieces = text.split("::", 2)
+    return {"", ""} unless pieces.size == 2
+
+    receiver = pieces[0].strip.gsub(/\s+/, "")
+    name = pieces[1].strip.gsub(/\A<[^>]+>\s*/, "")
+    # Match the chained-call filter used for method invocations:
+    # `factory()::build` is a call-chain continuation, not a clean 1-hop
+    # callee target.
+    return {"", ""} if receiver.empty? || receiver.includes?("(")
+    return {"", ""} if name.empty?
+
+    {receiver, name}
   end
 
   # Reconstruct a dotted receiver text from `identifier` / `field_access`
@@ -208,6 +239,7 @@ module Noir::JavaCalleeExtractor
   # line (1-based) only when the call is unambiguous:
   #   - unqualified `foo(...)` (no `object` field), or
   #   - `this.foo(...)` (object is the literal `this`),
+  #   - `this::foo` method reference,
   # AND the same-file declaration map contains exactly one match.
   # Returns `nil` for qualified non-`this` calls, ambiguous names, and
   # names with no matching same-file declaration — callers fall back to
@@ -215,6 +247,12 @@ module Noir::JavaCalleeExtractor
   private def resolve_same_file_line(call : LibTreeSitter::TSNode,
                                      source : String,
                                      decl_index : Hash(String, Int32?)) : Int32?
+    if Noir::TreeSitter.node_type(call) == "method_reference"
+      receiver, name = method_reference_parts(call, source)
+      return unless receiver == "this"
+      return resolve_decl_line(name, decl_index)
+    end
+
     name_node = Noir::TreeSitter.field(call, "name")
     return unless name_node
     name = Noir::TreeSitter.node_text(name_node, source)
@@ -225,6 +263,10 @@ module Noir::JavaCalleeExtractor
       return unless Noir::TreeSitter.node_type(object) == "this"
     end
 
+    resolve_decl_line(name, decl_index)
+  end
+
+  private def resolve_decl_line(name : String, decl_index : Hash(String, Int32?)) : Int32?
     return unless decl_index.has_key?(name)
     row = decl_index[name]
     return if row.nil?

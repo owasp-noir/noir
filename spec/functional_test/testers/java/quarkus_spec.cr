@@ -17,6 +17,9 @@ expected_endpoints = [
     Param.new("username", "", "form"),
     Param.new("pwd", "", "form"),
   ]),
+  Endpoint.new("/platform/q/greetings/upload", "POST", [
+    Param.new("image", "", "form"),
+  ]),
   Endpoint.new("/platform/q/greetings/{id}", "PUT", [
     Param.new("id", "", "path"),
     Param.new("message", "", "json"),
