@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No `package` attribute: the package comes from the gradle applicationId,
+     which is a groovy GString ("${appPkg}") resolved from a `def`. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application android:label="GStringApp">
+
+        <!-- ${applicationId} host resolves only if the GString applicationId
+             was followed to its `def` literal. -->
+        <activity android:name=".AuthActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="gstringscheme" android:host="${applicationId}" />
+            </intent-filter>
+        </activity>
+
+        <!-- Data-less exported service: the intent:// URL must carry the
+             resolved package, not an empty intent:/// . -->
+        <service android:name=".GStringService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.ACTION_GSTRING" />
+            </intent-filter>
+        </service>
+
+    </application>
+</manifest>

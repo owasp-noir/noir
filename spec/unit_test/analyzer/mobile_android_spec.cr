@@ -200,3 +200,29 @@ describe "Analyzer::Mobile::Android (gradle constant reference)" do
     find.call("intent://com.example.constapp/.ConstService").not_nil!.protocol.should eq("android-intent")
   end
 end
+
+# applicationId built from a groovy GString (`applicationId "${appPkg}"`)
+# whose `def appPkg = "..."` lives in the same script (the Aegis shape).
+describe "Analyzer::Mobile::Android (gradle GString applicationId)" do
+  options = create_test_options
+  manifest = File.expand_path(
+    File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "android_gradle_gstring",
+      "AndroidManifest.xml"))
+
+  CodeLocator.instance.clear("android-manifest")
+  CodeLocator.instance.push("android-manifest", manifest)
+  endpoints = Analyzer::Mobile::Android.new(options).analyze
+
+  find = ->(url : String) { endpoints.find { |e| e.url == url } }
+
+  it "resolves a GString applicationId into ${applicationId}" do
+    ep = find.call("gstringscheme://com.example.gstringapp").not_nil!
+    ep.protocol.should eq("mobile-scheme")
+    ep.tags.any? { |t| t.name == "unresolved" }.should be_false
+  end
+
+  it "uses the GString-resolved applicationId as the intent:// package" do
+    find.call("intent:///.GStringService").should be_nil
+    find.call("intent://com.example.gstringapp/.GStringService").not_nil!.protocol.should eq("android-intent")
+  end
+end

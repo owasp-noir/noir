@@ -401,10 +401,14 @@ module Analyzer::Mobile
     private def parse_gradle(content : String, gradle_path : String) : GradleConfig
       # Prefer a quoted literal; fall back to a constant reference
       # (`applicationId APP_ID`) resolved against this script or buildSrc.
+      # A quoted literal may itself be a groovy GString (`"${packageName}"`),
+      # so resolve any interpolation it carries.
       application_id = content.match(APPLICATION_ID_RE).try(&.[1]) ||
                        resolve_const_ref(content, APPLICATION_ID_CONST_RE, gradle_path)
+      application_id = resolve_gstring(application_id, content, gradle_path)
       namespace = content.match(NAMESPACE_RE).try(&.[1]) ||
                   resolve_const_ref(content, NAMESPACE_CONST_RE, gradle_path)
+      namespace = resolve_gstring(namespace, content, gradle_path)
       placeholders = {} of String => String
 
       content.scan(PLACEHOLDER_MAP_RE) do |m|
@@ -430,6 +434,16 @@ module Analyzer::Mobile
     # How far up from the module script to look for a `buildSrc/` source tree
     # holding shared gradle constants.
     BUILDSRC_SEARCH_DEPTH = 4
+
+    # Resolves groovy GString interpolations (`applicationId "${packageName}"`)
+    # in a captured applicationId / namespace value by looking each `${name}`
+    # up as a gradle constant (same script, then buildSrc). The name comes
+    # straight from `${...}`, so there is no loose prose-matching risk;
+    # unknown names stay verbatim and nil passes through.
+    private def resolve_gstring(value : String?, content : String, gradle_path : String) : String?
+      return value if value.nil? || !value.includes?("${")
+      value.gsub(/\$\{(\w+)\}/) { resolve_constant($~[1], content, gradle_path) || $~[0] }
+    end
 
     # Matches a constant reference (`applicationId APP_ID`) and resolves the
     # named constant to its string literal. Returns nil when the value is not
