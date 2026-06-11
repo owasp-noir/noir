@@ -8,6 +8,7 @@ expected_endpoints = [
   Endpoint.new("/create_record", "PUT"),
   Endpoint.new("/delete_record", "DELETE", [Param.new("name", "", "json")]),
   Endpoint.new("/get_ip", "GET", [Param.new("X-Forwarded-For", "", "header")]),
+  Endpoint.new("/update_record", "POST", [Param.new("page", "", "query"), Param.new("name", "", "json")]),
   Endpoint.new("/", "GET"),
 ]
 

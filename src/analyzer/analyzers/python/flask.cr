@@ -55,7 +55,9 @@ module Analyzer::Python
 
     # Source-ownership and add_url_rule helpers — same constant-only
     # interpolation (DOT_NATION), hoisted so the per-file/per-call sites
-    # don't recompile them.
+    # don't recompile them. VIEW_FUNC_KWARG_RE has no whitespace tolerance
+    # (unlike Quart's) because Flask's add_url_rule args are matched on
+    # space-stripped lines.
     ROUTE_DECORATOR_RE  = /^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m
     ROUTE_REGISTRAR_RE  = /\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/
     VIEW_FUNC_KWARG_RE  = /view_func=(#{DOT_NATION})(?:,|\)|$)/

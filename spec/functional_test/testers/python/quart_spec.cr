@@ -27,6 +27,7 @@ expected_endpoints = [
     Param.new("term", "", "query"),
     Param.new("X-Trace-Id", "", "header"),
   ]),
+  Endpoint.new("/sync-update", "POST", [Param.new("page", "", "query"), Param.new("name", "", "json")]),
   Endpoint.new("/ws", "GET"),
 ]
 

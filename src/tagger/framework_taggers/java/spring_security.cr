@@ -259,7 +259,7 @@ class SpringSecurityTagger < FrameworkTagger
 
   private def wildcard_origin_call?(stmt : String, call_names : Array(String)) : Bool
     call_names.any? do |call_name|
-      call_re = @origin_call_regexes[call_name] ||= /#{call_name}\s*\(([^)]*)\)/
+      call_re = @origin_call_regexes[call_name] ||= /#{Regex.escape(call_name)}\s*\(([^)]*)\)/
       wildcard = false
       stmt.scan(call_re) do |m|
         args = m[1]
