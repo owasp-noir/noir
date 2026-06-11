@@ -28,6 +28,10 @@ expected_endpoints = [
   build.call("myapp://accounts/profile", "mobile-scheme", no_params, [] of String),
   # Scheme resolved from @string/deep_link_scheme
   build.call("myappstr://settings", "mobile-scheme", no_params, [] of String),
+  # Scheme resolved from a second values file (donottranslate.xml)
+  build.call("altscheme://alt", "mobile-scheme", no_params, [] of String),
+  # Unresolvable @string scheme: kept verbatim, NOT rooted to /@string/...
+  build.call("@string/missing_scheme://ghost", "mobile-scheme", no_params, [] of String),
   # Verified App Link over https (universal-link)
   build.call("https://myapp.example.com/complex/:id", "universal-link", [Param.new("id", "", "path")], [] of String),
   # Exported, data-less component (android-intent), synthetic intent:// scheme

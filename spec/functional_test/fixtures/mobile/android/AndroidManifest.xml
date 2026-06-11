@@ -63,6 +63,25 @@
             </intent-filter>
         </activity>
 
+        <!-- Scheme resolved from a non-strings.xml values file (donottranslate.xml) -->
+        <activity android:name=".AltActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="@string/alt_scheme" android:host="alt" />
+            </intent-filter>
+        </activity>
+
+        <!-- Unresolvable @string scheme: stays verbatim and must NOT be
+             rooted into `/@string/...` by the optimizer. -->
+        <activity android:name=".GhostActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="@string/missing_scheme" android:host="ghost" />
+            </intent-filter>
+        </activity>
+
         <!-- Verified App Link over https (universal-link) -->
         <activity android:name=".WebActivity" android:exported="true">
             <intent-filter android:autoVerify="true">

@@ -541,24 +541,27 @@ module Analyzer::Mobile
       substitute(value, placeholders)
     end
 
-    # Loads <manifest_dir>/res/values/strings.xml into a name→value hash.
-    # Returns an empty hash if the file is missing or unparsable.
+    # Loads <string> resources from every res/values/*.xml file. Android
+    # merges string resources across all value files, not just strings.xml —
+    # apps routinely keep deep-link bits elsewhere (e.g. Tusky declares its
+    # oauth_scheme in donottranslate.xml). Returns name→value (first
+    # definition wins); empty if the values directory is absent.
     private def load_strings(manifest_path : String) : Hash(String, String)
       strings = {} of String => String
-      strings_path = File.join(File.dirname(manifest_path), "res", "values", "strings.xml")
-      return strings unless File.exists?(strings_path)
+      values_dir = File.join(File.dirname(manifest_path), "res", "values")
+      return strings unless Dir.exists?(values_dir)
 
-      begin
-        content = read_file_content(strings_path)
-        doc = XML.parse(content)
-        if resources = find_child(doc, "resources")
+      Dir.glob(File.join(values_dir, "*.xml")).sort.each do |path|
+        begin
+          doc = XML.parse(read_file_content(path))
+          next unless resources = find_child(doc, "resources")
           each_child(resources, "string") do |node|
             name = attr(node, "name")
-            strings[name] = node.content if name
+            strings[name] = node.content if name && !strings.has_key?(name)
           end
+        rescue e
+          @logger.debug "Failed to parse values file #{path}: #{e.message}"
         end
-      rescue e
-        @logger.debug "Failed to parse strings.xml #{strings_path}: #{e.message}"
       end
 
       strings

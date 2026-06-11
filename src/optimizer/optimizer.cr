@@ -246,8 +246,10 @@ class EndpointOptimizer
         # `'/'` char literal — comparing the `Char` returned by `[]` to
         # the `"/"` string is always true, which would prepend a slash
         # even to already-rooted URLs (the double-slash collapse below
-        # papered over it).
-        if !absolute_url && tiny_tmp.url[0] != '/'
+        # papered over it). Mobile deep links are exempt: an unresolved
+        # `@string/...://` or `${...}://` scheme isn't a relative path, so
+        # rooting it (`/@string/...`) would corrupt the URL.
+        if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.mobile?
           tiny_tmp.url = "/#{tiny_tmp.url}"
         end
 
@@ -534,7 +536,8 @@ class EndpointOptimizer
 
     normalized = url
     absolute_url = normalized.matches?(ABSOLUTE_URL_RE)
-    normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/'
+    normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.mobile?
+    return normalized if endpoint.mobile?
     normalized = normalize_url_shape(normalized, collection_endpoint?(endpoint))
     normalized
   end
@@ -709,8 +712,10 @@ class EndpointOptimizer
         # An endpoint that already carries its own scheme + host (HAR /
         # OAS absolute URLs) is self-contained. Prefixing the target or
         # collapsing its scheme `//` would corrupt it, so pass it
-        # through untouched.
-        if tmp_endpoint.url.matches?(ABSOLUTE_URL_RE)
+        # through untouched. Mobile deep links (incl. ones with an
+        # unresolved `@string/...://` scheme) are app URLs, not paths under
+        # the scanned host, so they are never base-joined either.
+        if tmp_endpoint.url.matches?(ABSOLUTE_URL_RE) || tmp_endpoint.mobile?
           tmp << tmp_endpoint
           next
         end

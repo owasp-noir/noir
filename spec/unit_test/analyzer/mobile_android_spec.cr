@@ -21,6 +21,16 @@ describe "Analyzer::Mobile::Android" do
     ep.not_nil!.protocol.should eq("mobile-scheme")
   end
 
+  it "resolves @string/ references from any res/values/*.xml file" do
+    # alt_scheme lives in donottranslate.xml, not strings.xml.
+    find.call("altscheme://alt").not_nil!.protocol.should eq("mobile-scheme")
+  end
+
+  it "keeps an unresolvable @string scheme verbatim and tags it unresolved" do
+    ep = find.call("@string/missing_scheme://ghost").not_nil!
+    ep.tags.any? { |t| t.name == "unresolved" }.should be_true
+  end
+
   it "normalizes templated {id} segments to :id" do
     find.call("myapp://complex/:id").should_not be_nil
   end
