@@ -436,7 +436,7 @@ module Analyzer::Mobile
     # a bare identifier (e.g. a method call) or the constant can't be found.
     private def resolve_const_ref(content : String, ref_re : Regex, gradle_path : String) : String?
       name = content.match(ref_re).try(&.[1])
-      return nil unless name
+      return unless name
       resolve_constant(name, content, gradle_path)
     end
 
@@ -468,7 +468,7 @@ module Analyzer::Mobile
               end
             end
           end
-          return nil # buildSrc found but constant absent — stop walking up
+          return # buildSrc found but constant absent — stop walking up
         end
         parent = File.dirname(dir)
         break if parent == dir
