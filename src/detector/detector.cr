@@ -49,6 +49,13 @@ DETECTOR_IGNORED_DIR_NAMES = Set{
   "Pods", "__MACOSX",
 }
 
+DETECTOR_IGNORED_DIR_SUFFIXES = Set{
+  # Xcode asset catalogs. They contain images plus many Contents.json
+  # metadata files; none are source/spec files for route detection, and
+  # large iOS apps can carry hundreds of them.
+  ".xcassets",
+}
+
 ANDROID_SOURCE_SUBDIRS = Set{
   "aidl",
   "assets",
@@ -336,6 +343,21 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   min_severity = options["passive_scan_severity"]?.try(&.to_s) || "high"
   active_passive_scans = NoirPassiveScan.filter_rules_by_severity(passive_scans, min_severity)
 
+  generic_json_spec_detector_names = Set{
+    "apisix",
+    "asyncapi",
+    "aws_cloudformation",
+    "caddy",
+    "caido",
+    "envoy",
+    "har",
+    "insomnia",
+    "oas2",
+    "oas3",
+    "postman",
+  }
+  generic_json_spec_marker = /"(?:openapi|swagger|asyncapi|_postman_id|__export_format|_type|routes|uri|uris|upstream_id|plugins|log|entries|host|method|path|raw|is_tls|port|apps|http|virtual_hosts|domains|AWSTemplateFormatVersion)"|schema\.(?:getpostman|postman)\.com|AWS::Serverless-2016-10-31/
+
   channel = Channel(Tuple(String, String, Array(Int32))).new(Analyzer::DEFAULT_CONTENT_CHANNEL_CAPACITY)
   locator = CodeLocator.instance
   wg = WaitGroup.new
@@ -403,7 +425,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               if info.directory?
                 # Subtree prune happens here. Entry name (not full path)
                 # so the base-as-node_modules case from #912 is safe.
-                if DETECTOR_IGNORED_DIR_NAMES.includes?(entry)
+                if DETECTOR_IGNORED_DIR_NAMES.includes?(entry) || DETECTOR_IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
                   skipped_ignored_dirs += 1
                   next
                 end
@@ -474,6 +496,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 logger.debug "Skipping #{full_path}: binary content (file is text-extension but bytes look binary)"
                 skipped_files += 1
                 next
+              end
+
+              if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)
+                candidate_detector_indices = candidate_detector_indices.reject do |idx|
+                  generic_json_spec_detector_names.includes?(detector_list[idx].name)
+                end
               end
 
               channel.send({full_path, content, candidate_detector_indices})

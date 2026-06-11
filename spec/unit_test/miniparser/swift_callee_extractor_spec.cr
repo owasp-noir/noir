@@ -32,11 +32,18 @@ describe Noir::SwiftCalleeExtractor do
       if shouldAudit {
           SafeService.run()
       }
+      switch url.host {
+      case "post":
+          PostService.run()
+      default:
+          break
+      }
       SWIFT
 
     callees = Noir::SwiftCalleeExtractor.callees_for_body(body, "routes.swift", 20)
     callees.map { |name, _, line| {name, line} }.should eq([
       {"SafeService.run", 26},
+      {"PostService.run", 30},
     ])
   end
 

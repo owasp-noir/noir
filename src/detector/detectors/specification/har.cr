@@ -8,7 +8,7 @@ module Detector::Specification
   class Har < Detector
     def detect(filename : String, file_contents : String) : Bool
       if (filename.ends_with? ".har") || (filename.ends_with? ".json")
-        if valid_json? file_contents
+        if filename.ends_with?(".har") || har_json_candidate?(file_contents)
           begin
             data = HAR.from_string(file_contents)
             if data.version.to_s.includes? "1."
@@ -35,6 +35,10 @@ module Detector::Specification
     # Registers HAR file paths in `CodeLocator`.
     def idempotent? : Bool
       false
+    end
+
+    private def har_json_candidate?(content : String) : Bool
+      content.includes?("\"log\"") && content.includes?("\"entries\"")
     end
   end
 end

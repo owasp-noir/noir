@@ -7,9 +7,11 @@ module Detector::Specification
   class Oas2 < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if filename.ends_with?(".json") && valid_json?(file_contents)
-        data = JSON.parse(file_contents)
+      return false unless file_contents.includes?("swagger")
+
+      if filename.ends_with?(".json")
         begin
+          data = JSON.parse(file_contents)
           if data["swagger"].as_s.includes? "2."
             check = true
             locator = CodeLocator.instance
@@ -17,9 +19,9 @@ module Detector::Specification
           end
         rescue
         end
-      elsif (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && valid_yaml?(file_contents)
-        data = YAML.parse(file_contents)
+      elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         begin
+          data = YAML.parse(file_contents)
           if data["swagger"].as_s.includes? "2."
             check = true
             locator = CodeLocator.instance

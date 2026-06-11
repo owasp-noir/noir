@@ -17,6 +17,8 @@ module Analyzer::Mobile
     # address). Compared case-insensitively.
     GENERIC_SCHEMES = Set{"http", "https", "file", "content"}
 
+    @build_vars_cache = {} of String => Hash(String, Array(String))
+
     def analyze
       locator = CodeLocator.instance
 
@@ -63,44 +65,60 @@ module Analyzer::Mobile
           # `${APPLICATION_SCHEME}`) are substituted at build time from
           # .xcconfig — resolve them here so Firefox/Element surface
           # `firefox://` / `element://` instead of the literal variable.
-          scheme = substitute_build_vars(raw_scheme, build_vars)
+          schemes = substitute_build_vars(raw_scheme, build_vars)
           # Generic web/file schemes (registered e.g. so the app is
           # selectable as a browser) carry no app-specific deep-link
           # surface — a bare `http://` / `https://` is not an addressable
           # entry point, just noise in the inventory.
-          next if GENERIC_SCHEMES.includes?(scheme.downcase)
-          url = "#{scheme}://"
-          next unless seen.add?(url)
+          schemes.each do |scheme|
+            next if unresolved_build_var?(scheme)
+            next if GENERIC_SCHEMES.includes?(scheme.downcase)
+            url = "#{scheme}://"
+            next unless seen.add?(url)
 
-          endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
-          endpoint.protocol = "mobile-scheme"
-          @result << endpoint
+            endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
+            endpoint.protocol = "mobile-scheme"
+            @result << endpoint
+          end
         end
       end
     end
 
-    # How far up from the Info.plist to look for the project's .xcconfig
+    # How far up from the Info.plist to look for the project's build settings
     # files, and how many to read.
     XCCONFIG_SEARCH_DEPTH            =  6
     MAX_XCCONFIG_FILES               = 40
+    MAX_PBXPROJ_FILES                = 10
+    MAX_BUILD_VAR_VALUES_PER_KEY     = 16
+    MAX_BUILD_VAR_EXPANSIONS         = 32
     MAX_BUILD_VAR_SUBSTITUTION_DEPTH =  8
     # `KEY = value` (xcconfig assignment); the value runs to a trailing
     # comment / end of line.
     XCCONFIG_ASSIGN_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\n]*)$/
+    # `KEY = value;` (project.pbxproj build setting assignment).
+    PBXPROJ_ASSIGN_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]*)\s*;\s*$/
     # `$(VAR)` / `${VAR}` build-setting reference.
     BUILD_VAR_RE = /\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]/
 
-    # Loads `KEY = value` definitions from the project's .xcconfig files, so
-    # build-setting placeholders in CFBundleURLSchemes can be resolved. The
-    # files are gathered from the enclosing Xcode project root (so variant
-    # configs in Config/ or Variants/ are seen, not just the ones nearest the
-    # Info.plist); first definition wins.
-    private def load_xcconfig_vars(plist_path : String) : Hash(String, String)
-      vars = {} of String => String
+    # Loads build-setting definitions from the project's .xcconfig and
+    # project.pbxproj files, so CFBundleURLSchemes placeholders can be resolved.
+    # Values are gathered from the enclosing Xcode project root and kept as a
+    # small set per key because open-source repos often carry multiple app
+    # flavors in one tree (e.g. Firefox Focus/Klar).
+    private def load_xcconfig_vars(plist_path : String) : Hash(String, Array(String))
       root = xcode_project_root(plist_path) || File.dirname(File.expand_path(plist_path))
+      if cached = @build_vars_cache[root]?
+        return cached
+      end
+
+      vars = {} of String => Array(String)
       Dir.glob(File.join(root, "**", "*.xcconfig")).sort.first(MAX_XCCONFIG_FILES).each do |xc|
         parse_xcconfig(xc, vars)
       end
+      Dir.glob(File.join(root, "**", "project.pbxproj")).sort.first(MAX_PBXPROJ_FILES).each do |pbx|
+        parse_pbxproj(pbx, vars)
+      end
+      @build_vars_cache[root] = vars
       vars
     end
 
@@ -119,33 +137,81 @@ module Analyzer::Mobile
       nil
     end
 
-    private def parse_xcconfig(path : String, vars : Hash(String, String))
+    private def parse_xcconfig(path : String, vars : Hash(String, Array(String)))
       read_file_content(path).each_line do |line|
         next if line.lstrip.starts_with?("//") || line.lstrip.starts_with?('#')
         next unless m = line.match(XCCONFIG_ASSIGN_RE)
-        value = m[2].sub(%r{//.*$}, "").gsub("$(inherited)", "").strip
-        vars[m[1]] = value unless value.empty? || vars.has_key?(m[1])
+        store_build_var(vars, m[1], clean_build_var_value(m[2]))
       end
     rescue e
       @logger.debug "Failed to parse xcconfig #{path}: #{e.message}"
     end
 
+    private def parse_pbxproj(path : String, vars : Hash(String, Array(String)))
+      read_file_content(path).each_line do |line|
+        next unless m = line.match(PBXPROJ_ASSIGN_RE)
+        store_build_var(vars, m[1], clean_build_var_value(m[2]))
+      end
+    rescue e
+      @logger.debug "Failed to parse pbxproj #{path}: #{e.message}"
+    end
+
+    private def store_build_var(vars : Hash(String, Array(String)), key : String, value : String)
+      return if value.empty? || value == "("
+
+      values = vars[key] ||= [] of String
+      return if values.includes?(value) || values.size >= MAX_BUILD_VAR_VALUES_PER_KEY
+
+      values << value
+    end
+
+    private def clean_build_var_value(raw_value : String) : String
+      value = raw_value.sub(%r{//.*$}, "").gsub("$(inherited)", "").strip
+      if value.size >= 2 && value.starts_with?('"') && value.ends_with?('"')
+        value = value[1...-1]
+      end
+      value.strip
+    end
+
     # Resolves `$(VAR)` / `${VAR}` against the xcconfig map. Values in
     # xcconfig files may themselves point at another build setting
     # (`APP_SCHEME = ${BRANDED_SCHEME}`), so resolve repeatedly with a
-    # bounded depth. Unknown or cyclic references are kept verbatim.
-    private def substitute_build_vars(value : String, vars : Hash(String, String)) : String
-      return value unless value.includes?("$(") || value.includes?("${")
+    # bounded depth. Unknown or cyclic references are kept verbatim and
+    # filtered by `unresolved_build_var?` before endpoint creation.
+    private def substitute_build_vars(value : String, vars : Hash(String, Array(String))) : Array(String)
+      return [value] unless value.includes?("$(") || value.includes?("${")
 
-      resolved = value
+      resolved = [value]
       MAX_BUILD_VAR_SUBSTITUTION_DEPTH.times do
-        next_value = resolved.gsub(BUILD_VAR_RE) { vars[$~[1]]? || $~[0] }
-        break if next_value == resolved
+        changed = false
+        next_values = [] of String
 
-        resolved = next_value
-        break unless resolved.includes?("$(") || resolved.includes?("${")
+        resolved.each do |candidate|
+          if match = candidate.match(BUILD_VAR_RE)
+            if replacements = vars[match[1]]?
+              replacements.each do |replacement|
+                next_values << candidate.sub(match[0], replacement)
+              end
+              changed = true
+            else
+              next_values << candidate
+            end
+          else
+            next_values << candidate
+          end
+        end
+
+        next_values = next_values.uniq.first(MAX_BUILD_VAR_EXPANSIONS)
+        break unless changed
+
+        resolved = next_values
+        break unless resolved.any? { |candidate| candidate.includes?("$(") || candidate.includes?("${") }
       end
       resolved
+    end
+
+    private def unresolved_build_var?(value : String) : Bool
+      value.includes?("$(") || value.includes?("${")
     end
 
     private def parse_entitlements(doc : XML::Node, path : String)

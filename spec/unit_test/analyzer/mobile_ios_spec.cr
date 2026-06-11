@@ -39,6 +39,12 @@ describe "Analyzer::Mobile::Ios" do
     find.call("$(NESTED_BUNDLE_URL_SCHEME)://").should be_nil
   end
 
+  it "resolves project.pbxproj build-setting scheme placeholders for multiple app flavors" do
+    find.call("pbxscheme://").not_nil!.protocol.should eq("mobile-scheme")
+    find.call("pbxscheme-alt://").not_nil!.protocol.should eq("mobile-scheme")
+    find.call("$(PBXPROJ_URL_SCHEME)://").should be_nil
+  end
+
   it "maps applinks: associated domains to universal links" do
     find.call("https://myapp.example.com/").not_nil!.protocol.should eq("universal-link")
   end

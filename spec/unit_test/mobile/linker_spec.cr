@@ -1,3 +1,4 @@
+require "file_utils"
 require "../../spec_helper"
 require "../../../src/models/logger"
 require "../../../src/models/code_locator"
@@ -119,6 +120,265 @@ describe "NoirMobileLinker" do
     ensure
       FileUtils.rm_rf(root) if Dir.exists?(root)
       locator.clear("file_map")
+    end
+  end
+end
+
+describe "NoirMobileLinker iOS handlers" do
+  base = File.expand_path(File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "ios"))
+  files = [
+    File.join(base, "AppDelegate.swift"),
+    File.join(base, "AppStateMachine.swift"),
+    File.join(base, "SceneDelegate.swift"),
+    File.join(base, "LegacyAppDelegate.m"),
+    File.join(base, "Tests", "FakeAppDelegateTests.swift"),
+  ]
+
+  logger = NoirLogger.new(false, false, false, true)
+  locator = CodeLocator.instance
+  locator.clear("file_map")
+  files.each { |path| locator.register_file(path, File.read(path)) }
+
+  scheme = Endpoint.new("myapp://", "GET")
+  scheme.protocol = "mobile-scheme"
+  scheme_details = scheme.details
+  scheme_details.technology = "ios"
+  scheme.details = scheme_details
+
+  universal = Endpoint.new("https://myapp.example.com/", "GET")
+  universal.protocol = "universal-link"
+  universal_details = universal.details
+  universal_details.technology = "ios"
+  universal.details = universal_details
+
+  result = NoirMobileLinker.apply([scheme, universal], logger)
+  linked_scheme = result[0]
+  linked_universal = result[1]
+
+  it "links Swift and Objective-C URL handlers to custom schemes" do
+    names = linked_scheme.callees.map(&.name)
+    names.should contain("routeOpenURL")
+    names.should contain("logOpen")
+    names.should contain("handleDeepLink")
+    names.should contain("webView?.load")
+    names.should contain("openURL")
+    names.should contain("coordinator.shouldProcessDeepLink")
+    names.should contain("coordinator.handleURL")
+    names.should contain("handleObjcDeepLink")
+  end
+
+  it "links Swift and Objective-C userActivity handlers to universal links" do
+    names = linked_universal.callees.map(&.name)
+    names.should contain("routeUniversalLink")
+    names.should contain("routeObjcUniversalLink")
+  end
+
+  it "extracts query params from Swift and Objective-C URL handlers" do
+    linked_scheme.params.any? { |p| p.name == "redirect" && p.param_type == "query" }.should be_true
+    linked_scheme.params.any? { |p| p.name == "token" && p.param_type == "query" }.should be_true
+  end
+
+  it "skips test-only iOS handlers" do
+    linked_scheme.callees.map(&.name).should_not contain("TestOnlyDeepLinkHandler.run")
+  end
+
+  it "filters low-signal iOS framework and collection callees" do
+    names = linked_scheme.callees.map(&.name)
+    names.should_not contain("URL")
+    names.should_not contain("URLRequest")
+    names.should_not contain("URLComponents")
+    names.should_not contain("components?.queryItems?.first")
+    names.should_not contain("componentsWithURL")
+    names.should_not contain("isEqualToString")
+    names.should_not contain("UIApplication.shared.canOpenURL")
+    names.should_not contain("NotificationCenter.default.post")
+    names.should_not contain("print")
+    names.should_not contain("url.host")
+  end
+end
+
+describe "NoirMobileLinker iOS multi-app scoping" do
+  logger = NoirLogger.new(false, false, false, true)
+
+  it "uses a broader generated-project fallback when no Xcode project exists" do
+    root = File.tempname("noir-ios-generated-project")
+    config_dir = File.join(root, "Config")
+    source_dir = File.join(root, "Sources")
+    plist = File.join(config_dir, "Info.plist")
+    delegate = File.join(source_dir, "AppDelegate.swift")
+
+    begin
+      Dir.mkdir_p(config_dir)
+      Dir.mkdir_p(source_dir)
+      File.write(plist, "")
+      File.write(delegate, <<-SWIFT)
+        final class AppDelegate {
+          func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+            GeneratedProjectRouter.route(url)
+            return true
+          }
+        }
+        SWIFT
+
+      locator = CodeLocator.instance
+      locator.clear("file_map")
+      locator.register_file(delegate, File.read(delegate))
+
+      endpoint = Endpoint.new("generated://", "GET", Details.new(PathInfo.new(plist)))
+      endpoint.protocol = "mobile-scheme"
+      endpoint_details = endpoint.details
+      endpoint_details.technology = "ios"
+      endpoint.details = endpoint_details
+
+      linked = NoirMobileLinker.apply([endpoint], logger)
+      linked[0].callees.map(&.name).should contain("GeneratedProjectRouter.route")
+    ensure
+      FileUtils.rm_rf(root) if root
+      CodeLocator.instance.clear("file_map")
+    end
+  end
+
+  it "only follows forwarded action cases for the dispatched action type" do
+    root = File.tempname("noir-ios-forwarded-action")
+    plist = File.join(root, "Info.plist")
+    delegate = File.join(root, "AppDelegate.swift")
+    state_machine = File.join(root, "AppStateMachine.swift")
+    unrelated = File.join(root, "UnrelatedAction.swift")
+
+    begin
+      Dir.mkdir_p(File.join(root, "App.xcodeproj"))
+      File.write(File.join(root, "App.xcodeproj", "project.pbxproj"), "")
+      File.write(plist, "")
+      File.write(delegate, <<-SWIFT)
+        final class AppDelegate {
+          private let stateMachine: AppStateMachine = AppStateMachine()
+
+          func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+            stateMachine.handle(.openURL(url))
+            return true
+          }
+        }
+        SWIFT
+      File.write(state_machine, <<-SWIFT)
+        enum AppAction {
+          case openURL(URL)
+        }
+
+        final class AppStateMachine {
+          let currentState = ForegroundState()
+
+          func handle(_ action: AppAction) {
+            currentState.handle(action: action)
+          }
+        }
+
+        final class ForegroundState {
+          func handle(action: AppAction) {
+            switch action {
+            case .openURL(let url):
+              RealDeepLinkRouter.route(url)
+            }
+          }
+        }
+        SWIFT
+      File.write(unrelated, <<-SWIFT)
+        enum OtherAction {
+          case openURL(URL)
+        }
+
+        final class OtherState {
+          func handle(action: OtherAction) {
+            switch action {
+            case .openURL(let url):
+              UnrelatedRouter.route(url)
+            }
+          }
+        }
+        SWIFT
+
+      locator = CodeLocator.instance
+      locator.clear("file_map")
+      [delegate, state_machine, unrelated].each { |path| locator.register_file(path, File.read(path)) }
+
+      endpoint = Endpoint.new("forwarded://", "GET", Details.new(PathInfo.new(plist)))
+      endpoint.protocol = "mobile-scheme"
+      endpoint_details = endpoint.details
+      endpoint_details.technology = "ios"
+      endpoint.details = endpoint_details
+
+      linked = NoirMobileLinker.apply([endpoint], logger)
+      names = linked[0].callees.map(&.name)
+
+      names.should contain("stateMachine.handle")
+      names.should contain("RealDeepLinkRouter.route")
+      names.should_not contain("UnrelatedRouter.route")
+    ensure
+      FileUtils.rm_rf(root) if root
+      CodeLocator.instance.clear("file_map")
+    end
+  end
+
+  it "does not attach handlers from a sibling iOS app in the same repository" do
+    root = File.tempname("noir-ios-multi-app")
+    app_a = File.join(root, "AppA")
+    app_b = File.join(root, "AppB")
+    app_a_delegate = File.join(app_a, "AppDelegate.swift")
+    app_b_delegate = File.join(app_b, "AppDelegate.swift")
+    app_a_plist = File.join(app_a, "Info.plist")
+    app_b_plist = File.join(app_b, "Info.plist")
+
+    begin
+      Dir.mkdir_p(File.join(app_a, "AppA.xcodeproj"))
+      Dir.mkdir_p(File.join(app_b, "AppB.xcodeproj"))
+      File.write(File.join(app_a, "AppA.xcodeproj", "project.pbxproj"), "")
+      File.write(File.join(app_b, "AppB.xcodeproj", "project.pbxproj"), "")
+      File.write(app_a_plist, "")
+      File.write(app_b_plist, "")
+      File.write(app_a_delegate, <<-SWIFT)
+        final class AppDelegate {
+          func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+            AppADeepLinkRouter.route(url)
+            return true
+          }
+        }
+        SWIFT
+      File.write(app_b_delegate, <<-SWIFT)
+        final class AppDelegate {
+          func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+            AppBDeepLinkRouter.route(url)
+            return true
+          }
+        }
+        SWIFT
+
+      locator = CodeLocator.instance
+      locator.clear("file_map")
+      locator.register_file(app_a_delegate, File.read(app_a_delegate))
+      locator.register_file(app_b_delegate, File.read(app_b_delegate))
+
+      endpoint_a = Endpoint.new("appa://", "GET", Details.new(PathInfo.new(app_a_plist)))
+      endpoint_a.protocol = "mobile-scheme"
+      endpoint_a_details = endpoint_a.details
+      endpoint_a_details.technology = "ios"
+      endpoint_a.details = endpoint_a_details
+
+      endpoint_b = Endpoint.new("appb://", "GET", Details.new(PathInfo.new(app_b_plist)))
+      endpoint_b.protocol = "mobile-scheme"
+      endpoint_b_details = endpoint_b.details
+      endpoint_b_details.technology = "ios"
+      endpoint_b.details = endpoint_b_details
+
+      linked = NoirMobileLinker.apply([endpoint_a, endpoint_b], logger)
+      app_a_callees = linked[0].callees.map(&.name)
+      app_b_callees = linked[1].callees.map(&.name)
+
+      app_a_callees.should contain("AppADeepLinkRouter.route")
+      app_a_callees.should_not contain("AppBDeepLinkRouter.route")
+      app_b_callees.should contain("AppBDeepLinkRouter.route")
+      app_b_callees.should_not contain("AppADeepLinkRouter.route")
+    ensure
+      FileUtils.rm_rf(root) if root
+      CodeLocator.instance.clear("file_map")
     end
   end
 end

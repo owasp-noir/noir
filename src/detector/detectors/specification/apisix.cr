@@ -6,13 +6,17 @@ require "../../../models/code_locator"
 module Detector::Specification
   class Apisix < Detector
     def detect(filename : String, file_contents : String) : Bool
-      if filename.ends_with?(".json") && valid_json?(file_contents)
+      if filename.ends_with?(".json")
+        return false unless apisix_candidate?(file_contents)
+
         data = JSON.parse(file_contents)
         if apisix_routes_json?(data)
           CodeLocator.instance.push("apisix-json", filename)
           return true
         end
-      elsif (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && valid_yaml?(file_contents)
+      elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+        return false unless apisix_candidate?(file_contents)
+
         data = YAML.parse(file_contents)
         if apisix_routes_yaml?(data)
           CodeLocator.instance.push("apisix-yaml", filename)
@@ -20,6 +24,8 @@ module Detector::Specification
         end
       end
 
+      false
+    rescue
       false
     end
 
@@ -81,6 +87,12 @@ module Detector::Specification
 
     private def non_empty_text?(text : String?) : Bool
       !!(text && !text.empty?)
+    end
+
+    private def apisix_candidate?(content : String) : Bool
+      content.includes?("routes") &&
+        (content.includes?("uri") || content.includes?("uris")) &&
+        (content.includes?("upstream_id") || content.includes?("plugins"))
     end
   end
 end

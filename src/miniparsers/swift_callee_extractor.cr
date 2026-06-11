@@ -17,7 +17,7 @@ module Noir::SwiftCalleeExtractor
     "while", "await",
   }
 
-  RECEIVER_CALL_REGEX = /([A-Za-z_]\w*(?:\??\.[A-Za-z_]\w*)+)\s*(?:\(|\{)/
+  RECEIVER_CALL_REGEX = /([A-Za-z_]\w*(?:\??\.[A-Za-z_]\w*)+)\s*(\(|\{)/
   BARE_CALL_REGEX     = /(?<![.\w])([A-Za-z_]\w*)\s*(\(|\{)/
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
@@ -130,6 +130,11 @@ module Noir::SwiftCalleeExtractor
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
     line.scan(RECEIVER_CALL_REGEX) do |match|
       name = match[1]
+      delimiter = match[2]
+      if delimiter == "{"
+        name_start = match.begin(1) || 0
+        next if control_flow_condition?(line, name_start)
+      end
       next if skip_callee?(name)
 
       entries << {name, file_path, line_number}

@@ -6,7 +6,7 @@ module Detector::Specification
   class Caido < Detector
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".json")
-      return false unless valid_json?(file_contents)
+      return false unless caido_json_candidate?(file_contents)
 
       begin
         data = JSON.parse(file_contents)
@@ -48,6 +48,14 @@ module Detector::Specification
     # Registers Caido export paths in `CodeLocator`.
     def idempotent? : Bool
       false
+    end
+
+    private def caido_json_candidate?(content : String) : Bool
+      content.includes?("\"host\"") &&
+        content.includes?("\"method\"") &&
+        content.includes?("\"path\"") &&
+        content.includes?("\"raw\"") &&
+        (content.includes?("\"is_tls\"") || content.includes?("\"port\""))
     end
   end
 end

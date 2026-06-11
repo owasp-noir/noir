@@ -1271,6 +1271,9 @@ describe "NoirAIContext" do
     mobile_ep.push_callee(Callee.new("webView.loadUrl", "DeepLinkActivity.kt", 12))
     mobile_ctx = NoirAIContext.apply([mobile_ep])[0].ai_context.should_not be_nil
     mobile_ctx.sinks.map(&.kind).should contain("webview_load")
+    mobile_ctx.sources.map(&.name).should contain("deep_link.mobile_scheme")
+    mobile_ctx.signals.map(&.kind).should contain("deep_link_input")
+    mobile_ctx.signals.map(&.kind).should contain("priority_review")
   end
 
   it "scopes the mobile intent_redirect sink to mobile endpoints" do
@@ -1284,6 +1287,37 @@ describe "NoirAIContext" do
     mobile_ep.push_callee(Callee.new("startActivity", "DispatchActivity.java", 20))
     mobile_ctx = NoirAIContext.apply([mobile_ep])[0].ai_context.should_not be_nil
     mobile_ctx.sinks.map(&.kind).should contain("intent_redirect")
+    mobile_ctx.sources.map(&.name).should contain("deep_link.android_intent")
+    mobile_ctx.signals.map(&.kind).should contain("deep_link_input")
+    mobile_ctx.signals.map(&.kind).should contain("priority_review")
+  end
+
+  it "anchors mobile deep-link AI sources to handler source when available" do
+    source = <<-CODE
+      func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        if let urlContext = URLContexts.first {
+          handleUrl(context: urlContext)
+        }
+      }
+      CODE
+
+    path = "/tmp/noir-ai-context-mobile-#{Random.rand(1_000_000)}.swift"
+    File.write(path, source)
+    begin
+      endpoint = Endpoint.new("myapp://open", "GET", Details.new(PathInfo.new("Info.plist")))
+      endpoint.protocol = "mobile-scheme"
+      endpoint.details.add_path(PathInfo.new(path, 1))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      source_entry = context.sources.find { |entry| entry.name == "deep_link.mobile_scheme" }
+      source_entry = source_entry.should_not be_nil
+
+      source_entry.path.should eq(path)
+      source_entry.snippet.should_not be_nil
+      context.signals.map(&.kind).should contain("deep_link_input")
+    ensure
+      File.delete(path) if File.exists?(path)
+    end
   end
 
   it "classifies mobile URL lookup downloads as outbound HTTP instead of file I/O" do

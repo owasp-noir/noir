@@ -6,9 +6,9 @@ module Detector::Specification
   class Postman < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if filename.ends_with?(".json") && valid_json?(file_contents)
-        data = JSON.parse(file_contents)
+      if filename.ends_with?(".json") && postman_json_candidate?(file_contents)
         begin
+          data = JSON.parse(file_contents)
           # Check for Postman Collection v2.1.0 or v2.0.0 schema
           if data["info"]? && data["info"]["schema"]?
             schema = data["info"]["schema"].as_s
@@ -41,6 +41,12 @@ module Detector::Specification
     # Registers Postman collection paths in `CodeLocator`.
     def idempotent? : Bool
       false
+    end
+
+    private def postman_json_candidate?(content : String) : Bool
+      content.includes?("schema.getpostman.com") ||
+        content.includes?("schema.postman.com") ||
+        content.includes?("\"_postman_id\"")
     end
   end
 end

@@ -34,7 +34,8 @@ module Detector::Specification
     end
 
     private def detect_yaml(content : String) : Bool
-      return false unless valid_yaml?(content)
+      return false unless cloudformation_candidate?(content)
+
       data = YAML.parse(content)
       root = data.as_h?
       return false unless root
@@ -47,7 +48,8 @@ module Detector::Specification
     end
 
     private def detect_json(content : String) : Bool
-      return false unless valid_json?(content)
+      return false unless cloudformation_candidate?(content)
+
       data = JSON.parse(content)
       root = data.as_h?
       return false unless root
@@ -79,6 +81,10 @@ module Detector::Specification
         return arr.any? { |item| json_transform_includes_sam?(item) }
       end
       false
+    end
+
+    private def cloudformation_candidate?(content : String) : Bool
+      content.includes?("AWSTemplateFormatVersion") || content.includes?(SAM_TRANSFORM)
     end
   end
 end

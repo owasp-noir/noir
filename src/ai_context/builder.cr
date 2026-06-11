@@ -16,6 +16,7 @@ module NoirAIContext
 
     STATE_CHANGING_METHODS = Set{"POST", "PUT", "PATCH", "DELETE"}
     BODY_LIKE_PARAM_TYPES  = Set{"json", "form"}
+    MOBILE_SOURCE_EXTS     = Set{".swift", ".m", ".mm", ".kt", ".java"}
 
     @reader : SourceReader
 
@@ -43,6 +44,7 @@ module NoirAIContext
       add_method_signal(context, endpoint, anchor, route_snippet)
       add_internal_signal(context, endpoint, anchor, route_snippet)
       add_param_signals(context, endpoint, anchor, route_snippet)
+      add_mobile_deep_link_source(context, endpoint, anchor, route_snippet)
       add_tag_entries(context, endpoint, anchor, route_snippet)
       add_graphql_resolver_signal(context, endpoint)
       add_callee_entries(context, endpoint)
@@ -138,6 +140,7 @@ module NoirAIContext
       "server_secret_source",
       "unsafe_method",
       "log_injection",
+      "deep_link_input",
     }
 
     # Categories whose mere presence is a security-review signal —
@@ -146,7 +149,7 @@ module NoirAIContext
     PRIORITY_SCORING_SINK_BLACKLIST = Set{
       "sql", "data_store_query", "command_exec", "code_eval",
       "deserialization", "template_injection", "xss",
-      "mass_assignment", "crypto_weak",
+      "mass_assignment", "crypto_weak", "webview_load", "intent_redirect",
     }
 
     # Roll-up "this endpoint deserves attention" hint. Counts the
@@ -690,6 +693,68 @@ module NoirAIContext
         confidence: 78,
         snippet: route_snippet
       ))
+    end
+
+    private def add_mobile_deep_link_source(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
+      return unless endpoint.mobile?
+
+      source_anchor = mobile_handler_anchor(endpoint) || anchor
+      snippet = if source_anchor == anchor
+                  route_snippet
+                else
+                  @reader.snippet_for(source_anchor.try(&.path), source_anchor.try(&.line), ROUTE_SNIPPET_RADIUS)
+                end
+      source_name = mobile_deep_link_source_name(endpoint)
+
+      context.push_source(AIContextEntry.new(
+        "request_input",
+        source_name,
+        source: "mobile_deep_link",
+        description: mobile_deep_link_source_description(endpoint),
+        path: source_anchor.try(&.path),
+        line: source_anchor.try(&.line),
+        confidence: 86,
+        snippet: snippet
+      ))
+
+      context.push_signal(AIContextEntry.new(
+        "deep_link_input",
+        source_name,
+        source: "mobile_deep_link",
+        description: "Mobile deep-link entry point receives URL/userActivity data from outside the app; review downstream parsing, routing, and WebView/intent usage.",
+        path: source_anchor.try(&.path),
+        line: source_anchor.try(&.line),
+        confidence: 74,
+        snippet: snippet
+      ))
+    end
+
+    private def mobile_handler_anchor(endpoint : Endpoint) : PathInfo?
+      endpoint.details.code_paths.find do |path_info|
+        MOBILE_SOURCE_EXTS.includes?(File.extname(path_info.path))
+      end
+    end
+
+    private def mobile_deep_link_source_name(endpoint : Endpoint) : String
+      case endpoint.protocol
+      when "universal-link"
+        "deep_link.universal_link"
+      when "android-intent"
+        "deep_link.android_intent"
+      else
+        "deep_link.mobile_scheme"
+      end
+    end
+
+    private def mobile_deep_link_source_description(endpoint : Endpoint) : String
+      case endpoint.protocol
+      when "universal-link"
+        "Universal Link URL supplied by the operating system from an external HTTPS navigation."
+      when "android-intent"
+        "Android intent deep-link data supplied by another app or browser."
+      else
+        "Custom URL-scheme deep-link supplied by another app or browser."
+      end
     end
 
     private def add_param_signals(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)

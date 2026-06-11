@@ -14,13 +14,15 @@ module Detector::Specification
         CodeLocator.instance.push("caddy-spec", filename)
         true
       elsif filename.ends_with?(".json")
-        return false unless valid_json?(file_contents)
         return false unless caddy_json?(file_contents)
+        JSON.parse(file_contents)
         CodeLocator.instance.push("caddy-spec", filename)
         true
       else
         false
       end
+    rescue
+      false
     end
 
     def applicable?(filename : String) : Bool

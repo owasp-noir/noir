@@ -1,0 +1,24 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		1D0000010000000000000001 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PBXPROJ_URL_SCHEME = "pbxscheme";
+			};
+			name = Debug;
+		};
+		1D0000010000000000000002 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PBXPROJ_URL_SCHEME = "pbxscheme-alt";
+			};
+			name = Release;
+		};
+	};
+	rootObject = 1D0000010000000000000003;
+}
