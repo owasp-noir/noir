@@ -226,8 +226,12 @@ module Analyzer::Javascript
 
               http_methods.each do |method|
                 # Handle both string paths and object patterns with path property
-                string_pattern = /#{Regex.escape(param_name)}\.#{method}\s*\(\s*['"]([^'"]+)['"]/
-                object_pattern = /#{Regex.escape(param_name)}\.#{method}\s*\(\s*\{\s*path\s*:\s*['"]([^'"]+)['"]/
+                string_pattern = cached_regex("restify:fn_string:#{param_name}:#{method}") do
+                  /#{Regex.escape(param_name)}\.#{method}\s*\(\s*['"]([^'"]+)['"]/
+                end
+                object_pattern = cached_regex("restify:fn_object:#{param_name}:#{method}") do
+                  /#{Regex.escape(param_name)}\.#{method}\s*\(\s*\{\s*path\s*:\s*['"]([^'"]+)['"]/
+                end
 
                 # Extract string paths
                 function_body.scan(string_pattern) do |route_m|
@@ -291,7 +295,9 @@ module Analyzer::Javascript
 
           http_methods.each do |method|
             # Look for route handlers on this router
-            handler_pattern = /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
+            handler_pattern = cached_regex("restify:router_handler:#{router_name}:#{method}") do
+              /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
+            end
 
             content.scan(handler_pattern) do |route_m|
               if route_m.size > 1
@@ -345,7 +351,9 @@ module Analyzer::Javascript
         http_methods = %w[get post put delete patch options head del]
 
         http_methods.each do |method|
-          pattern = /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
+          pattern = cached_regex("restify:router_route:#{router_name}:#{method}") do
+            /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
+          end
 
           content.scan(pattern) do |route_m|
             if route_m.size > 1
@@ -517,8 +525,15 @@ module Analyzer::Javascript
       Param.new("", "", "")
     end
 
+    HTTP_METHOD_KEYS = %w[get post put delete patch options head del]
+    # Compiled once — interpolated regex literals would otherwise be
+    # rebuilt (full PCRE2 compile) for every method on every line.
+    ROUTER_NAME_METHOD_RES = HTTP_METHOD_KEYS.map { |m| {m, /\b(?:\w+Router)\s*\.\s*#{m}\s*\(\s*['"]([^'"]+)['"]/} }.to_h
+    DOT_METHOD_RES         = HTTP_METHOD_KEYS.map { |m| {m, /\.\s*#{m}\s*\(\s*['"]([^'"]+)['"]/} }.to_h
+    VERSIONED_PATH_RES     = HTTP_METHOD_KEYS.map { |m| {m, /\.#{m}\s*\(\s*\{\s*path\s*:\s*['"]([^'"]+)['"]/} }.to_h
+
     def line_to_endpoint(line : String, server_vars = [] of String, router_vars = [] of String) : Endpoint
-      http_methods = %w[get post put delete patch options head del]
+      http_methods = HTTP_METHOD_KEYS
 
       # Build a regex pattern that includes all server and router variable names
       var_pattern = (server_vars + router_vars).join("|")
@@ -526,7 +541,10 @@ module Analyzer::Javascript
 
       http_methods.each do |method|
         # Match server.method, router.method patterns
-        if line =~ /\b(?:#{var_pattern})\s*\.\s*#{method}\s*\(\s*['"]([^'"]+)['"]/
+        var_method_re = cached_regex("restify:var_method:#{var_pattern}:#{method}") do
+          /\b(?:#{var_pattern})\s*\.\s*#{method}\s*\(\s*['"]([^'"]+)['"]/
+        end
+        if line =~ var_method_re
           path = $1
           # Normalizing 'del' to 'delete' for HTTP method naming consistency
           method_normalized = method == "del" ? "DELETE" : method.upcase
@@ -534,14 +552,14 @@ module Analyzer::Javascript
         end
 
         # Generic patterns with dot notation - handle additional router variables
-        if line =~ /\b(?:\w+Router)\s*\.\s*#{method}\s*\(\s*['"]([^'"]+)['"]/
+        if line =~ ROUTER_NAME_METHOD_RES[method]
           path = $1
           method_normalized = method == "del" ? "DELETE" : method.upcase
           return Endpoint.new(path, method_normalized)
         end
 
         # Generic patterns with dot notation
-        if line =~ /\.\s*#{method}\s*\(\s*['"]([^'"]+)['"]/
+        if line =~ DOT_METHOD_RES[method]
           path = $1
           method_normalized = method == "del" ? "DELETE" : method.upcase
           return Endpoint.new(path, method_normalized)
@@ -549,7 +567,10 @@ module Analyzer::Javascript
       end
 
       # Handle route method with HTTP method as parameter
-      if line =~ /\b(?:#{var_pattern})\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(?:get|post|put|delete|patch|options|head|del)\s*\(/
+      var_route_re = cached_regex("restify:var_route:#{var_pattern}") do
+        /\b(?:#{var_pattern})\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(?:get|post|put|delete|patch|options|head|del)\s*\(/
+      end
+      if line =~ var_route_re
         path = $1
         method = line.scan(/\.(?:get|post|put|delete|patch|options|head|del)\s*\(/)[0][0].gsub(/[\.\s\(]/, "")
         method_normalized = method == "del" ? "DELETE" : method.upcase
@@ -564,7 +585,7 @@ module Analyzer::Javascript
 
       # Handle other HTTP methods with the versioned endpoint format
       http_methods.each do |http_method|
-        if line =~ /\.#{http_method}\s*\(\s*\{\s*path\s*:\s*['"]([^'"]+)['"]/
+        if line =~ VERSIONED_PATH_RES[http_method]
           path = $1
           method_normalized = http_method == "del" ? "DELETE" : http_method.upcase
           return Endpoint.new(path, method_normalized)
@@ -744,9 +765,12 @@ module Analyzer::Javascript
       end
     end
 
+    # Compiled once per method key — these run against every restify file.
+    ANY_VAR_METHOD_RES = HTTP_METHOD_KEYS.map { |m| {m, /(\w+Router|\w+Server|\w+)\s*\.\s*#{m}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m} }.to_h
+
     private def extract_routes_for_method(content : String, result : Array(Endpoint), path : String, method_key : String, method_normalized : String)
       # Look for all router/server variables that might define routes
-      var_pattern = /(\w+Router|\w+Server|\w+)\s*\.\s*#{method_key}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*(?:\{[^}]*\})*[^}]*)\}/m
+      var_pattern = ANY_VAR_METHOD_RES[method_key]
 
       content.scan(var_pattern) do |method_match|
         if method_match.size > 2

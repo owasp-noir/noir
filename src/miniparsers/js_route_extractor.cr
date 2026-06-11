@@ -674,6 +674,31 @@ module Noir
       method
     end
 
+    # Memoizes the direct-call patterns built in extract_params_from_context;
+    # the alternation is derived from the route's HTTP method, so the key set
+    # is tiny. Fibers are cooperative (no preview_mt), so the plain Hash is
+    # safe under the analyzers' parallel file scans.
+    @@direct_call_res = Hash(String, Regex).new
+
+    # Equivalent to matching /['"`]<literal>['"`]/ — the literal bracketed by
+    # a quote character on each side — without compiling a per-path regex.
+    private def self.quoted_substring?(window : String, literal : String) : Bool
+      search_from = 0
+      while found = window.index(literal, search_from)
+        after_idx = found + literal.size
+        if found > 0 && after_idx < window.size
+          before = window[found - 1]
+          after = window[after_idx]
+          if (before == '\'' || before == '"' || before == '`') &&
+             (after == '\'' || after == '"' || after == '`')
+            return true
+          end
+        end
+        search_from = found + 1
+      end
+      false
+    end
+
     def self.extract_params_from_context(content : String, pattern : JSRoutePattern, endpoint : Endpoint)
       # Extract additional parameters from the route handler content
       # Look for the route declaration and then analyze the handler function
@@ -719,14 +744,18 @@ module Noir
         start_idx = pattern.start_pos
         search_window = content[start_idx, Math.min(content.size - start_idx, 500)]
         method_alternation = method_variations.map { |method| Regex.escape(method) }.join("|")
-        direct_call_pattern = /\.\s*(?:#{method_alternation})\s*\(/i
+        # Memoized — method_alternation has ~8 distinct values, and an
+        # interpolated regex literal would recompile (full PCRE2 compile)
+        # once per endpoint.
+        direct_call_pattern = @@direct_call_res.fetch(method_alternation) do
+          @@direct_call_res[method_alternation] = /\.\s*(?:#{method_alternation})\s*\(/i
+        end
         if direct_match = search_window.match(direct_call_pattern)
           candidate_idx = start_idx + (direct_match.begin(0) || 0)
           open_paren = content.index("(", candidate_idx)
           if open_paren
             arg_window = content[open_paren, Math.min(content.size - open_paren, 300)]
-            escaped_lookup_path = Regex.escape(lookup_path)
-            if arg_window.matches?(/['"`]#{escaped_lookup_path}['"`]/)
+            if quoted_substring?(arg_window, lookup_path)
               idx = candidate_idx
               found_declaration = "direct"
             end

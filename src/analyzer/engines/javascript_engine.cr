@@ -37,6 +37,20 @@ module Analyzer::Javascript
       end
     end
 
+    # Crystal recompiles an interpolated regex literal (/...#{x}.../) on
+    # every evaluation — a full PCRE2 JIT compile. Patterns keyed by a
+    # discovered name ("req", "query", "body", router vars, ...) are
+    # low-cardinality across a scan, so memoize them per analyzer
+    # instance. Fibers are cooperative (no preview_mt), so the plain
+    # Hash is safe under parallel_file_scan.
+    @dynamic_regex_cache = Hash(String, Regex).new
+
+    protected def cached_regex(key : String, & : -> Regex) : Regex
+      @dynamic_regex_cache.fetch(key) do
+        @dynamic_regex_cache[key] = yield
+      end
+    end
+
     protected def attach_js_callees(endpoint : Endpoint, callees : Array(Noir::JSCalleeExtractor::Entry))
       callees.each do |name, callee_path, line|
         endpoint.push_callee(Callee.new(name, path: callee_path, line: line))

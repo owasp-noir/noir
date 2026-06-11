@@ -92,7 +92,7 @@ module Analyzer::Javascript
           # Pattern 2: Variable assignment - const query = getQuery(event); query.param
           if content.match(/(?:const|let|var)\s+(\w+)\s*=\s*(?:getQuery|useQuery)\s*\(\s*event\s*\)/)
             query_var = $1
-            content.scan(/#{Regex.escape(query_var)}\.(\w+)/) do |m|
+            content.scan(cached_regex("nitro:query_dot:#{query_var}") { /#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
               param_name = m[1]
               next if ["toString", "valueOf", "constructor"].includes?(param_name)
               param = Param.new(param_name, "", "query")

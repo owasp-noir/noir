@@ -13,6 +13,16 @@ module Analyzer::Javascript
   class RouterMountScanner
     include ExpressConstants
 
+    # Mount-call verbs scanned for literal prefixes (`.use('/p', r)` /
+    # `.route('/p', app)`). Compiled once per verb — interpolated regex
+    # literals would otherwise be rebuilt (full PCRE2 compile) on every
+    # scan_literal_mount_calls invocation.
+    MOUNT_CALL_NAMES   = %w[use route]
+    MOUNT_STRING_RES   = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/} }.to_h
+    MOUNT_BACKTICK_RES = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*`([^`$]+)`\s*,\s*/} }.to_h
+    MOUNT_IDENT_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*(\w+)\s*,\s*/} }.to_h
+    MOUNT_ARRAY_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*\[([^\]]+)\]\s*,\s*/m} }.to_h
+
     # Type alias for file context used in two-pass processing
     alias FileContext = NamedTuple(
       require_map: Hash(String, String),
@@ -177,7 +187,7 @@ module Analyzer::Javascript
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
       prefix_constants : Hash(String, String),
     )
-      content.scan(/(\w+)\.#{call_name}\s*\(\s*['"]([^'"]+)['"]\s*,\s*/) do |m|
+      content.scan(MOUNT_STRING_RES[call_name]) do |m|
         next unless m.size >= 3
 
         caller = m[1]
@@ -188,7 +198,7 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      content.scan(/(\w+)\.#{call_name}\s*\(\s*`([^`$]+)`\s*,\s*/) do |m|
+      content.scan(MOUNT_BACKTICK_RES[call_name]) do |m|
         next unless m.size >= 3
 
         caller = m[1]
@@ -199,7 +209,7 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      content.scan(/(\w+)\.#{call_name}\s*\(\s*(\w+)\s*,\s*/) do |m|
+      content.scan(MOUNT_IDENT_RES[call_name]) do |m|
         next unless m.size >= 3
 
         prefix = prefix_constants[m[2]]?
@@ -212,7 +222,7 @@ module Analyzer::Javascript
           require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
       end
 
-      content.scan(/(\w+)\.#{call_name}\s*\(\s*\[([^\]]+)\]\s*,\s*/m) do |m|
+      content.scan(MOUNT_ARRAY_RES[call_name]) do |m|
         next unless m.size >= 3
 
         caller = m[1]

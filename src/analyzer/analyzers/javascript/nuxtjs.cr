@@ -136,14 +136,14 @@ module Analyzer::Javascript
           # Pattern 2: Variable assignment - const query = getQuery(event); query.param
           sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:await\s+)?(?:getQuery|useQuery|getValidatedQuery)\s*\(\s*event(?:\s*,[\s\S]*?)?\s*\)/) do |var_match|
             query_var = var_match[1]
-            sanitized.scan(/#{Regex.escape(query_var)}\.(\w+)/) do |m|
+            sanitized.scan(cached_regex("nuxtjs:query_dot:#{query_var}") { /#{Regex.escape(query_var)}\.(\w+)/ }) do |m|
               param_name = m[1]
               # Skip common non-parameter properties like 'toString', 'valueOf', etc.
               next if ["toString", "valueOf", "constructor"].includes?(param_name)
               param = Param.new(param_name, "", "query")
               endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
             end
-            sanitized.scan(/#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+            sanitized.scan(cached_regex("nuxtjs:query_bracket:#{query_var}") { /#{Regex.escape(query_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
               param_name = m[1]
               param = Param.new(param_name, "", "query")
               endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
@@ -164,13 +164,12 @@ module Analyzer::Javascript
               body_vars << m[1] unless body_vars.includes?(m[1])
             end
             body_vars.each do |body_var|
-              escaped = Regex.escape(body_var)
-              sanitized.scan(/\b#{escaped}\.(\w+)/) do |m|
+              sanitized.scan(cached_regex("nuxtjs:var_dot:#{body_var}") { /\b#{Regex.escape(body_var)}\.(\w+)/ }) do |m|
                 param_name = m[1]
                 param = Param.new(param_name, "", "body")
                 endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "body" }
               end
-              sanitized.scan(/\b#{escaped}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
+              sanitized.scan(cached_regex("nuxtjs:var_bracket:#{body_var}") { /\b#{Regex.escape(body_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |m|
                 param_name = m[1]
                 param = Param.new(param_name, "", "body")
                 endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "body" }
@@ -190,13 +189,13 @@ module Analyzer::Javascript
             endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
           end
           sanitized.scan(/(?:const|let|var)\s+(\w+)\s*=\s*getHeaders\s*\(\s*event\s*\)/) do |m|
-            escaped = Regex.escape(m[1])
-            sanitized.scan(/\b#{escaped}\.(\w+)/) do |mm|
+            headers_var = m[1]
+            sanitized.scan(cached_regex("nuxtjs:var_dot:#{headers_var}") { /\b#{Regex.escape(headers_var)}\.(\w+)/ }) do |mm|
               header_name = mm[1]
               param = Param.new(header_name, "", "header")
               endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }
             end
-            sanitized.scan(/\b#{escaped}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |mm|
+            sanitized.scan(cached_regex("nuxtjs:var_bracket:#{headers_var}") { /\b#{Regex.escape(headers_var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/ }) do |mm|
               header_name = mm[1]
               param = Param.new(header_name, "", "header")
               endpoint.push_param(param) unless endpoint.params.any? { |p| p.name == header_name && p.param_type == "header" }

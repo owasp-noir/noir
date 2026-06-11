@@ -312,12 +312,17 @@ module Analyzer::Javascript
       Param.new("", "", "")
     end
 
+    HTTP_METHODS = %w[get post put delete patch options head]
+    # Compiled once — an interpolated regex literal would otherwise be
+    # rebuilt (full PCRE2 compile) for every method on every line.
+    ROUTE_CALL_RES = HTTP_METHODS.map { |m| {m, /\b(?:fastify|app|server)\s*\.\s*#{m}\s*\(\s*['"]([^'"]+)['"]/} }.to_h
+
     def line_to_endpoint(line : String) : Endpoint
-      http_methods = %w[get post put delete patch options head]
+      http_methods = HTTP_METHODS
 
       http_methods.each do |method|
         # Match fastify.method patterns
-        if line =~ /\b(?:fastify|app|server)\s*\.\s*#{method}\s*\(\s*['"]([^'"]+)['"]/
+        if line =~ ROUTE_CALL_RES[method]
           path = $1
           return Endpoint.new(path, method.upcase)
         end

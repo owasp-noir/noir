@@ -166,9 +166,11 @@ module Analyzer::Javascript
     end
 
     private def export_named?(content : String, name : String) : Bool
-      content.matches?(/export\s+(?:async\s+)?function\s+#{name}\b/) ||
-        content.matches?(/export\s+(?:const|let|var)\s+#{name}\b\s*(?::[^=]+)?=/) ||
-        content.matches?(/export\s+\{\s*[^}]*\b#{name}\b[^}]*\}/)
+      # `name` is "loader" / "action" — memoized so the three patterns
+      # compile once per scan instead of once per file.
+      content.matches?(cached_regex("remix:export_fn:#{name}") { /export\s+(?:async\s+)?function\s+#{name}\b/ }) ||
+        content.matches?(cached_regex("remix:export_const:#{name}") { /export\s+(?:const|let|var)\s+#{name}\b\s*(?::[^=]+)?=/ }) ||
+        content.matches?(cached_regex("remix:export_brace:#{name}") { /export\s+\{\s*[^}]*\b#{name}\b[^}]*\}/ })
     end
   end
 end
