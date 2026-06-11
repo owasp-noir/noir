@@ -4,6 +4,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "../miniparsers/kotlin_callee_extractor"
 require "../miniparsers/java_callee_extractor"
 require "../miniparsers/swift_callee_extractor"
+require "../miniparsers/objc_callee_extractor"
 
 # Post-analysis pass that links mobile deep-link endpoints (produced by the
 # config-file analyzers from AndroidManifest.xml) to the source code that
@@ -283,6 +284,20 @@ module NoirMobileLinker
     # before classifying it against the handler patterns above.
     SIGNATURE_START_RE = /\bfunc\s+(?:application|scene)\s*\(/
 
+    # Objective-C counterparts. The same delegate methods are written as
+    # message-style declarations: `- (BOOL)application:(UIApplication *)app
+    # openURL:(NSURL *)url options:…`. Matched on the folded signature, so a
+    # wrapped parameter list still classifies.
+    OBJC_URL_HANDLER_RES = [
+      /\bapplication:.*\bopenURL:/,
+      /\bscene:.*\bopenURLContexts:/,
+    ]
+    OBJC_ACTIVITY_HANDLER_RES = [
+      /\bapplication:.*\bcontinueUserActivity:/,
+      /\bscene:.*\bcontinueUserActivity:/,
+    ]
+    OBJC_SIGNATURE_START_RE = /^\s*[+-]\s*\([^)]*\)\s*(?:application|scene):/
+
     # URLQueryItem name comparisons inside a handler — the iOS analog of
     # Android's getQueryParameter. Anchored to the closure-shorthand form
     # (`$0.name == "x"`) and an explicit `URLQueryItem(name: "x")` so a plain
@@ -295,18 +310,40 @@ module NoirMobileLinker
       activity = NoirMobileLinker::HandlerInfo.new
 
       CodeLocator.instance.files_by_extension(".swift").each do |path|
-        next if path.includes?("/.build/") || path.includes?("/.swiftpm/")
+        next if skip_ios_source?(path)
         content = NoirMobileLinker.read_content(path)
         next unless content
-        scan_file(path, content, url, activity)
+        scan_file(path, content, url, activity,
+          URL_HANDLER_RES, ACTIVITY_HANDLER_RES, SIGNATURE_START_RE, objc: false)
+      end
+
+      {".m", ".mm"}.each do |ext|
+        CodeLocator.instance.files_by_extension(ext).each do |path|
+          next if skip_ios_source?(path)
+          content = NoirMobileLinker.read_content(path)
+          next unless content
+          scan_file(path, content, url, activity,
+            OBJC_URL_HANDLER_RES, OBJC_ACTIVITY_HANDLER_RES, OBJC_SIGNATURE_START_RE, objc: true)
+        end
       end
 
       {:url => url, :activity => activity}
     end
 
+    private def self.skip_ios_source?(path : String) : Bool
+      path.includes?("/.build/") || path.includes?("/.swiftpm/") ||
+        path.includes?("/Pods/") || path.includes?("/Carthage/")
+    end
+
+    # Scans one source file for the central deep-link dispatch handlers,
+    # accumulating callees (and Swift query params) into the shared
+    # `url` / `activity` handler info. `objc` selects the Objective-C handler
+    # patterns + callee extractor; otherwise the Swift ones are used.
     private def self.scan_file(path : String, content : String,
                                url : NoirMobileLinker::HandlerInfo,
-                               activity : NoirMobileLinker::HandlerInfo)
+                               activity : NoirMobileLinker::HandlerInfo,
+                               url_res : Array(Regex), activity_res : Array(Regex),
+                               sig_re : Regex, objc : Bool)
       lines = content.lines
       depth = 0
       in_string = false
@@ -314,25 +351,25 @@ module NoirMobileLinker
       lines.each_with_index do |line, index|
         stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
 
-        # A handler's func signature may span several lines (SwiftLint folds
-        # long parameter lists), e.g.
+        # A handler's signature may span several lines (SwiftLint / Objective-C
+        # both wrap long parameter lists), e.g.
         #   func application(
         #     _ app: UIApplication,
         #     open url: URL
         #   ) -> Bool {
         # so when a line opens such a signature, fold it through to the body
-        # brace before matching — otherwise no single line carries both
-        # `func application(` and `open url:` and the handler is missed.
+        # brace before matching — otherwise no single line carries both the
+        # method name and the `openURL` / `continueUserActivity` discriminator.
         signature = stripped
-        if stripped.matches?(SIGNATURE_START_RE) && !stripped.includes?('{')
+        if stripped.matches?(sig_re) && !stripped.includes?('{')
           if sig_brace = find_opening_brace(lines, index)
             signature = lines[index..sig_brace[:index]].join(" ")
           end
         end
 
-        target = if URL_HANDLER_RES.any? { |re| signature.matches?(re) }
+        target = if url_res.any? { |re| signature.matches?(re) }
                    url
-                 elsif ACTIVITY_HANDLER_RES.any? { |re| signature.matches?(re) }
+                 elsif activity_res.any? { |re| signature.matches?(re) }
                    activity
                  end
         next unless target
@@ -342,11 +379,16 @@ module NoirMobileLinker
         body, body_line = body_after_opening_brace(lines, brace[:index], brace[:col])
 
         target.code_paths << PathInfo.new(path, index + 1)
-        Noir::SwiftCalleeExtractor.callees_for_body(body, path, body_line).each do |name, fpath, fline|
+        callees = objc ? Noir::ObjcCalleeExtractor.callees_for_body(body, path, body_line) : Noir::SwiftCalleeExtractor.callees_for_body(body, path, body_line)
+        callees.each do |name, fpath, fline|
           target.callees << Callee.new(name, path: fpath, line: fline)
         end
-        body.scan(QUERY_NAME_RE) { |m| target.params << Param.new(m[1], "", "query") }
-        body.scan(QUERY_ITEM_RE) { |m| target.params << Param.new(m[1], "", "query") }
+        # Query-param extraction is Swift-specific (URLQueryItem idioms);
+        # Objective-C query reads are left to a follow-up.
+        unless objc
+          body.scan(QUERY_NAME_RE) { |m| target.params << Param.new(m[1], "", "query") }
+          body.scan(QUERY_ITEM_RE) { |m| target.params << Param.new(m[1], "", "query") }
+        end
       end
     end
 
