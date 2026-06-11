@@ -278,6 +278,10 @@ module NoirMobileLinker
       /\bfunc\s+scene\s*\(.*\bcontinue\s+userActivity\s*:/,
       /\.onContinueUserActivity\s*\(/,
     ]
+    # Opening of an `application(...)` / `scene(...)` delegate method whose
+    # parameter list may wrap across lines; used to fold the signature
+    # before classifying it against the handler patterns above.
+    SIGNATURE_START_RE = /\bfunc\s+(?:application|scene)\s*\(/
 
     # URLQueryItem name comparisons inside a handler — the iOS analog of
     # Android's getQueryParameter. Anchored to the closure-shorthand form
@@ -309,9 +313,26 @@ module NoirMobileLinker
 
       lines.each_with_index do |line, index|
         stripped, depth, in_string = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, depth, in_string)
-        target = if URL_HANDLER_RES.any? { |re| stripped.matches?(re) }
+
+        # A handler's func signature may span several lines (SwiftLint folds
+        # long parameter lists), e.g.
+        #   func application(
+        #     _ app: UIApplication,
+        #     open url: URL
+        #   ) -> Bool {
+        # so when a line opens such a signature, fold it through to the body
+        # brace before matching — otherwise no single line carries both
+        # `func application(` and `open url:` and the handler is missed.
+        signature = stripped
+        if stripped.matches?(SIGNATURE_START_RE) && !stripped.includes?('{')
+          if sig_brace = find_opening_brace(lines, index)
+            signature = lines[index..sig_brace[:index]].join(" ")
+          end
+        end
+
+        target = if URL_HANDLER_RES.any? { |re| signature.matches?(re) }
                    url
-                 elsif ACTIVITY_HANDLER_RES.any? { |re| stripped.matches?(re) }
+                 elsif ACTIVITY_HANDLER_RES.any? { |re| signature.matches?(re) }
                    activity
                  end
         next unless target
@@ -329,11 +350,13 @@ module NoirMobileLinker
       end
     end
 
-    # Finds the first `{` at/after the matched line (same line, else the next
-    # few lines for a func whose brace is on its own line).
+    # Finds the first `{` at/after the matched line (same line, else within a
+    # few lines for a func whose parameter list and/or brace wrap onto their
+    # own lines — a folded multi-line signature can run several lines before
+    # the body brace).
     private def self.find_opening_brace(lines : Array(String), start : Int32) : NamedTuple(index: Int32, col: Int32)?
       idx = start
-      while idx < lines.size && idx <= start + 3
+      while idx < lines.size && idx <= start + 6
         col = lines[idx].index('{')
         return {index: idx, col: col} if col
         idx += 1

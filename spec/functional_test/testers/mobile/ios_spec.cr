@@ -15,10 +15,12 @@ end
 no_params = [] of Param
 
 expected_endpoints = [
-  # Custom schemes (mobile-scheme), linked to the SceneDelegate URL handler:
-  # callees + the redirect query param read from URLQueryItem.
-  build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load"]),
-  build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load"]),
+  # Custom schemes (mobile-scheme), linked to the URL handlers: SceneDelegate
+  # `scene(_:openURLContexts:)` callees + the redirect query param, plus
+  # `routeOpenURL` from the AppDelegate `application(_:open:)` whose signature
+  # is folded across multiple lines.
+  build.call("myapp://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL"]),
+  build.call("myapp-alt://", "mobile-scheme", [Param.new("redirect", "", "query")], ["handleDeepLink", "webView?.load", "routeOpenURL"]),
   # Universal links (universal-link), linked to the userActivity handler.
   build.call("https://myapp.example.com/", "universal-link", no_params, ["routeUniversalLink"]),
   build.call("https://www.example.com/", "universal-link", no_params, ["routeUniversalLink"]),
