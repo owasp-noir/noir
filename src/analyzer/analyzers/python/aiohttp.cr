@@ -85,6 +85,11 @@ module Analyzer::Python
       dict : Array(Tuple(::String, ::String, Regex, Regex))
 
     @request_param_regex_cache = Hash(::String, RequestParamRegexes).new
+    @alias_route_origin_regex_cache = Hash(::String, Regex).new
+
+    private def alias_route_origin_regex(alias_name : ::String) : Regex
+      @alias_route_origin_regex_cache[alias_name] ||= /^\s*#{Regex.escape(alias_name)}\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/
+    end
 
     def analyze
       handler_routes = Hash(::String, Array(Tuple(::String, ::String, Int32, ::String))).new
@@ -236,7 +241,7 @@ module Analyzer::Python
                 method = alias_route_match[2].upcase
                 route_path = alias_route_match[3]
                 handler_name = alias_route_match[4]
-                if orig_match = line.match(/^\s*#{Regex.escape(alias_route_match[1])}\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+                if orig_match = line.match(alias_route_origin_regex(alias_route_match[1]))
                   route_path = orig_match[1]
                 end
                 prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
