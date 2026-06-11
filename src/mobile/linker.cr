@@ -305,6 +305,16 @@ module NoirMobileLinker
     QUERY_NAME_RE = /\$\d+\.name\s*==\s*"([^"]+)"/
     QUERY_ITEM_RE = /URLQueryItem\(\s*name:\s*"([^"]+)"/
 
+    # Objective-C query reads. The dominant idiom is iterating
+    # `components.queryItems` and comparing the item's `name` against a
+    # literal — `[item.name isEqualToString:@"token"]` (e.g. VLC reads
+    # plexToken / payment_intent this way). Anchored to `.name` / `name]`
+    # (not a bare `isEqualToString:`) so a `[host isEqualToString:@"new"]`
+    # check can't become a phantom param. Also the explicit query-item
+    # constructor.
+    OBJC_QUERY_NAME_RE = /(?:\.name|\bname\])\s+isEqualToString:\s*@"([^"]+)"/
+    OBJC_QUERY_ITEM_RE = /\bqueryItemWithName:\s*@"([^"]+)"/
+
     def self.discover : Hash(Symbol, NoirMobileLinker::HandlerInfo)
       url = NoirMobileLinker::HandlerInfo.new
       activity = NoirMobileLinker::HandlerInfo.new
@@ -383,12 +393,10 @@ module NoirMobileLinker
         callees.each do |name, fpath, fline|
           target.callees << Callee.new(name, path: fpath, line: fline)
         end
-        # Query-param extraction is Swift-specific (URLQueryItem idioms);
-        # Objective-C query reads are left to a follow-up.
-        unless objc
-          body.scan(QUERY_NAME_RE) { |m| target.params << Param.new(m[1], "", "query") }
-          body.scan(QUERY_ITEM_RE) { |m| target.params << Param.new(m[1], "", "query") }
-        end
+        # Query params read from the inbound URL, per dialect.
+        name_re, item_re = objc ? {OBJC_QUERY_NAME_RE, OBJC_QUERY_ITEM_RE} : {QUERY_NAME_RE, QUERY_ITEM_RE}
+        body.scan(name_re) { |m| target.params << Param.new(m[1], "", "query") }
+        body.scan(item_re) { |m| target.params << Param.new(m[1], "", "query") }
       end
     end
 
