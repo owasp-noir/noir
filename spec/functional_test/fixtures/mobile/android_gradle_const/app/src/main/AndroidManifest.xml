@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No `package` attribute: the package comes from the gradle applicationId,
+     which is itself a buildSrc constant reference (applicationId = APP_ID). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application android:label="ConstApp">
+
+        <!-- ${applicationId} as the deep-link host: resolves only if the
+             constant reference was followed to its buildSrc literal. -->
+        <activity android:name=".AuthActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="constapp" android:host="${applicationId}" />
+            </intent-filter>
+        </activity>
+
+        <!-- Data-less exported service: the intent:// URL must carry the
+             resolved package, not an empty `intent:///`. -->
+        <service android:name=".ConstService" android:exported="true">
+            <intent-filter>
+                <action android:name="com.example.ACTION_CONST" />
+            </intent-filter>
+        </service>
+
+    </application>
+</manifest>

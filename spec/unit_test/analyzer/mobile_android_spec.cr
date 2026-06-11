@@ -164,3 +164,29 @@ describe "Analyzer::Mobile::Android (gradle kts / package fallback)" do
     ep.metadata.not_nil!["via"].should eq("com.example.ktsapp.LoginFragment")
   end
 end
+
+# applicationId declared as a constant reference (`applicationId = APP_ID`)
+# whose literal lives in a sibling buildSrc/ source tree (the NewPipe shape).
+describe "Analyzer::Mobile::Android (gradle constant reference)" do
+  options = create_test_options
+  manifest = File.expand_path(
+    File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "android_gradle_const",
+      "app", "src", "main", "AndroidManifest.xml"))
+
+  CodeLocator.instance.clear("android-manifest")
+  CodeLocator.instance.push("android-manifest", manifest)
+  endpoints = Analyzer::Mobile::Android.new(options).analyze
+
+  find = ->(url : String) { endpoints.find { |e| e.url == url } }
+
+  it "resolves a constant-referenced applicationId from buildSrc into ${applicationId}" do
+    ep = find.call("constapp://com.example.constapp").not_nil!
+    ep.protocol.should eq("mobile-scheme")
+    ep.tags.any? { |t| t.name == "unresolved" }.should be_false
+  end
+
+  it "uses the resolved applicationId as the intent:// package (no empty intent:///)" do
+    find.call("intent:///.ConstService").should be_nil
+    find.call("intent://com.example.constapp/.ConstService").not_nil!.protocol.should eq("android-intent")
+  end
+end

@@ -347,6 +347,14 @@ module Analyzer::Mobile
     # the quote requirement keeps `applicationIdSuffix` from matching.
     APPLICATION_ID_RE = /\bapplicationId\s*(?:=\s*)?["']([^"']+)["']/
     NAMESPACE_RE      = /\bnamespace\s*(?:=\s*)?["']([^"']+)["']/
+    # Unquoted value: a gradle constant reference, e.g. `applicationId APP_ID`
+    # (groovy) or `applicationId = NEWPIPE_APPLICATION_ID_OLD` (kts). The
+    # `(?![A-Za-z0-9_])` after the key keeps `applicationIdSuffix` out, and
+    # the UPPER_SNAKE value requirement keeps prose in a `// applicationId is
+    # ...` comment from matching (gradle constants are upper-case by
+    # convention; a camelCase val is intentionally not followed).
+    APPLICATION_ID_CONST_RE = /\bapplicationId(?![A-Za-z0-9_])\s*(?:=\s*)?([A-Z][A-Z0-9_]+)\b/
+    NAMESPACE_CONST_RE      = /\bnamespace(?![A-Za-z0-9_])\s*(?:=\s*)?([A-Z][A-Z0-9_]+)\b/
     # The bracketed segment after `manifestPlaceholders` — a groovy map
     # literal (`= [k: "v"]`), a kts `+= mapOf("k" to "v")`, or a
     # `putAll(mapOf(...))` — captured up to the first closing bracket.
@@ -362,7 +370,7 @@ module Analyzer::Mobile
       return GradleConfig.empty unless gradle_path
 
       begin
-        parse_gradle(read_file_content(gradle_path))
+        parse_gradle(read_file_content(gradle_path), gradle_path)
       rescue e
         @logger.debug "Failed to parse gradle file #{gradle_path}: #{e.message}"
         GradleConfig.empty
@@ -390,9 +398,13 @@ module Analyzer::Mobile
     # so defaultConfig values (declared first by convention) take precedence
     # over buildType / flavor overrides; variant-specific placeholder values
     # are intentionally not modeled.
-    private def parse_gradle(content : String) : GradleConfig
-      application_id = content.match(APPLICATION_ID_RE).try(&.[1])
-      namespace = content.match(NAMESPACE_RE).try(&.[1])
+    private def parse_gradle(content : String, gradle_path : String) : GradleConfig
+      # Prefer a quoted literal; fall back to a constant reference
+      # (`applicationId APP_ID`) resolved against this script or buildSrc.
+      application_id = content.match(APPLICATION_ID_RE).try(&.[1]) ||
+                       resolve_const_ref(content, APPLICATION_ID_CONST_RE, gradle_path)
+      namespace = content.match(NAMESPACE_RE).try(&.[1]) ||
+                  resolve_const_ref(content, NAMESPACE_CONST_RE, gradle_path)
       placeholders = {} of String => String
 
       content.scan(PLACEHOLDER_MAP_RE) do |m|
@@ -413,6 +425,56 @@ module Analyzer::Mobile
       end
 
       GradleConfig.new(application_id, namespace, placeholders)
+    end
+
+    # How far up from the module script to look for a `buildSrc/` source tree
+    # holding shared gradle constants.
+    BUILDSRC_SEARCH_DEPTH = 4
+
+    # Matches a constant reference (`applicationId APP_ID`) and resolves the
+    # named constant to its string literal. Returns nil when the value is not
+    # a bare identifier (e.g. a method call) or the constant can't be found.
+    private def resolve_const_ref(content : String, ref_re : Regex, gradle_path : String) : String?
+      name = content.match(ref_re).try(&.[1])
+      return nil unless name
+      resolve_constant(name, content, gradle_path)
+    end
+
+    # Resolves a gradle constant to its string literal: the same build script
+    # first (groovy `def APP_ID = "..."`), then a sibling `buildSrc/` source
+    # tree (kotlin `const val APP_ID = "..."`), where multi-module projects
+    # keep shared identifiers.
+    private def resolve_constant(name : String, content : String, gradle_path : String) : String?
+      def_re = /\b#{Regex.escape(name)}\s*=\s*["']([^"']+)["']/
+      if m = content.match(def_re)
+        return m[1]
+      end
+      resolve_buildsrc_constant(def_re, gradle_path)
+    end
+
+    private def resolve_buildsrc_constant(def_re : Regex, gradle_path : String) : String?
+      dir = File.dirname(File.expand_path(gradle_path))
+      BUILDSRC_SEARCH_DEPTH.times do
+        buildsrc = File.join(dir, "buildSrc")
+        if Dir.exists?(buildsrc)
+          {"*.kt", "*.kts", "*.gradle"}.each do |pattern|
+            Dir.glob(File.join(buildsrc, "**", pattern)).sort.each do |src|
+              begin
+                if m = read_file_content(src).match(def_re)
+                  return m[1]
+                end
+              rescue
+                next
+              end
+            end
+          end
+          return nil # buildSrc found but constant absent — stop walking up
+        end
+        parent = File.dirname(dir)
+        break if parent == dir
+        dir = parent
+      end
+      nil
     end
 
     # Replaces `${placeholder}` references with their gradle values; unknown
