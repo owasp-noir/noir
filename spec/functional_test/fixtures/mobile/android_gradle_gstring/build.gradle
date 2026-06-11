@@ -1,0 +1,15 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The id is built from a groovy `def` via GString interpolation, the Aegis
+// shape: the applicationId literal is "${appPkg}", not a plain string.
+def appPkg = "com.example.gstringapp"
+
+android {
+    namespace appPkg
+
+    defaultConfig {
+        applicationId "${appPkg}"
+    }
+}
