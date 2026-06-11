@@ -66,6 +66,31 @@ describe "Initialize 4 arguments" do
   end
 end
 
+describe "Endpoint detail ownership" do
+  it "does not share mutable code paths from reused Details" do
+    shared_details = Details.new(PathInfo.new("openapi.json", 1))
+
+    first = Endpoint.new("/first", "GET", shared_details)
+    second = Endpoint.new("/second", "GET", shared_details)
+
+    first.details.add_path(PathInfo.new("first_controller.py", 10))
+
+    first.details.code_paths.map(&.path).should eq(["openapi.json", "first_controller.py"])
+    second.details.code_paths.map(&.path).should eq(["openapi.json"])
+  end
+
+  it "does not share mutable tags from reused Params" do
+    param = Param.new("token", "", "header")
+    first = Endpoint.new("/first", "GET", [param])
+    second = Endpoint.new("/second", "GET", [param])
+
+    first.params[0].add_tag(Tag.new("auth", "", "test"))
+
+    first.params[0].tags.size.should eq(1)
+    second.params[0].tags.should be_empty
+  end
+end
+
 describe "Endpoint equality" do
   it "same endpoints" do
     endpoint1 = Endpoint.new("/abcd", "GET")

@@ -3,6 +3,10 @@ require "../../../src/models/code_locator"
 require "../../../src/analyzer/engines/python_engine"
 
 class PythonEngineSpecHarness < Analyzer::Python::PythonEngine
+  def def_line_after(lines : Array(String), decorator_line : Int32) : Int32?
+    find_def_line(lines, decorator_line)
+  end
+
   def callees_from(body : String,
                    body_start_line : Int32,
                    path : String,
@@ -52,5 +56,20 @@ describe Analyzer::Python::PythonEngine do
     callees[0].name.should eq("unknown_call")
     callees[0].path.should eq(caller_path)
     callees[0].line.should eq(2)
+  end
+
+  it "skips multi-line route decorators when locating the decorated function" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    lines = [
+      "@router.get(",
+      "  \"/users\",",
+      "  dependencies=[Depends(require_admin)],",
+      ")",
+      "@audit_required",
+      "def list_users(limit: int = 100):",
+      "    return []",
+    ]
+
+    harness.def_line_after(lines, 0).should eq(5)
   end
 end

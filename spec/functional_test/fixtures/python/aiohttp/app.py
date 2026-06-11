@@ -34,6 +34,11 @@ async def delete_user(request):
     return web.Response(text=f"deleted {user_id}")
 
 
+async def alias_user(request):
+    alias_id = request.match_info['alias_id']
+    return web.Response(text=f"alias {alias_id}")
+
+
 async def websocket_feed(request):
     channel = request.match_info['channel']
     token = request.query.get('token')
@@ -145,6 +150,9 @@ def setup_routes(app):
     app.router.add_put('/users/{id}', update_user)
     app.router.add_delete('/users/{id}', delete_user)
     app.router.add_route('PATCH', '/users/{id}', update_user)
+    add_route = app.router.add_route
+    add_route('GET', '/alias/{alias_id}', alias_user, name='alias-user')
+    add_route('*', '/wildcard', index, name='wildcard')
     app.router.add_get('/feed/{channel}', websocket_feed)
     app.router.add_routes([web.view('/reports/{id}', ReportView)])
     app.router.add_static('/assets/', path='static')

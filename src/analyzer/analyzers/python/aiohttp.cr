@@ -42,6 +42,8 @@ module Analyzer::Python
     ADD_METHOD_RE       = /(#{DOT_NATION})\.add_(#{METHODS_ALT})\([rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
     ADD_STATIC_RE       = /(#{DOT_NATION})\.add_static\([rf]?['"]([^'"]*)['"]/
     ADD_ROUTE_RE        = /(#{DOT_NATION})\.add_route\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    ADD_ROUTE_ALIAS_RE  = /^(#{PYTHON_VAR_NAME_REGEX})\([rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    ROUTE_ALIAS_RE      = /^(#{PYTHON_VAR_NAME_REGEX})=(#{DOT_NATION})\.add_route/
     ADD_VIEW_RE         = /(#{DOT_NATION})\.add_view\([rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
     WEB_METHOD_GUARD_RE = /\bweb\.(?:#{METHODS_ALT})\s*\(/
     WEB_METHOD_RE       = /\bweb\.(#{METHODS_ALT})\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
@@ -101,12 +103,13 @@ module Analyzer::Python
           File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
             file_content = file.gets_to_end
             lines = file_content.lines
-            next unless lines.any?(&.includes?("aiohttp"))
+            next unless aiohttp_relevant_source?(file_content)
 
             import_modules = find_imported_modules(current_base_path, path, file_content)
             app_prefixes = collect_app_prefixes(lines)
             route_table_prefixes = collect_route_table_prefixes(lines, app_prefixes)
             route_list_prefixes = collect_route_list_prefixes(lines, app_prefixes)
+            route_aliases = Hash(::String, ::String).new
 
             handler_routes[path] ||= [] of Tuple(::String, ::String, Int32, ::String)
             class_view_routes[path] ||= [] of Tuple(::String, Int32, ::String)
@@ -158,15 +161,17 @@ module Analyzer::Python
                 if orig_match = line.match(/@#{aiohttp_route_deco[1]}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
                   route_path = orig_match[1]
                 end
-                process_decorator_route(
-                  path,
-                  lines,
-                  line_index,
-                  route_path,
-                  method,
-                  definition_base_path: current_base_path,
-                  source: file_content
-                )
+                expand_aiohttp_methods(method).each do |expanded_method|
+                  process_decorator_route(
+                    path,
+                    lines,
+                    line_index,
+                    route_path,
+                    expanded_method,
+                    definition_base_path: current_base_path,
+                    source: file_content
+                  )
+                end
               end
 
               # Style A: app.router.add_<method>("/path", handler)
@@ -203,6 +208,10 @@ module Analyzer::Python
               end
 
               # Style A: app.router.add_route("METHOD", "/path", handler)
+              if stripped.includes?(".add_route") && (alias_match = stripped.match(ROUTE_ALIAS_RE))
+                route_aliases[alias_match[1]] = alias_match[2]
+              end
+
               add_route_match = stripped.includes?(".add_route(") ? stripped.match(ADD_ROUTE_RE) : nil
               if add_route_match
                 receiver = add_route_match[1]
@@ -213,7 +222,27 @@ module Analyzer::Python
                   route_path = orig_match[1]
                 end
                 prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
-                  handler_routes[path] << {join_paths(prefix, route_path), method, line_index, handler_name}
+                  expand_aiohttp_methods(method).each do |expanded_method|
+                    handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
+                  end
+                end
+              end
+
+              # Style A alias:
+              #   add_route = app.router.add_route
+              #   add_route("GET", "/path", handler)
+              alias_route_match = stripped.includes?("(") ? stripped.match(ADD_ROUTE_ALIAS_RE) : nil
+              if alias_route_match && (receiver = route_aliases[alias_route_match[1]]?)
+                method = alias_route_match[2].upcase
+                route_path = alias_route_match[3]
+                handler_name = alias_route_match[4]
+                if orig_match = line.match(/^\s*#{Regex.escape(alias_route_match[1])}\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+                  route_path = orig_match[1]
+                end
+                prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
+                  expand_aiohttp_methods(method).each do |expanded_method|
+                    handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
+                  end
                 end
               end
 
@@ -328,6 +357,24 @@ module Analyzer::Python
       end
 
       result
+    end
+
+    private def aiohttp_relevant_source?(source : ::String) : Bool
+      source.includes?("aiohttp") ||
+        source.includes?("RouteTableDef") ||
+        source.includes?("web.") ||
+        HTTP_METHOD_NAMES.any? { |method| source.includes?(".add_#{method}(") } ||
+        source.includes?(".add_route") ||
+        source.includes?(".add_routes(") ||
+        source.includes?(".add_static(") ||
+        source.includes?(".add_view(")
+    end
+
+    private def expand_aiohttp_methods(method : ::String) : Array(::String)
+      normalized = method.upcase
+      return HTTP_METHOD_NAMES.map(&.upcase) if normalized == "*"
+
+      [normalized]
     end
 
     private def emit_class_view_endpoints(path : ::String,

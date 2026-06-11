@@ -31,8 +31,10 @@ struct Endpoint
   # opt in; empty for the rest.
   @callees : Array(Callee) = [] of Callee
 
-  def initialize(@url : String, @method : String, @params : Array(Param) = [] of Param,
-                 @details : Details = Details.new, @internal : Bool = false)
+  def initialize(@url : String, @method : String, params : Array(Param) = [] of Param,
+                 details : Details = Details.new, @internal : Bool = false)
+    @params = params.map(&.detached_copy)
+    @details = details.detached_copy
     @protocol = "http"
     @kind = ""
     @tags = [] of Tag
@@ -41,8 +43,9 @@ struct Endpoint
     @metadata = nil
   end
 
-  def initialize(@url : String, @method : String, @details : Details)
+  def initialize(@url : String, @method : String, details : Details)
     @params = [] of Param
+    @details = details.detached_copy
     @protocol = "http"
     @kind = ""
     @tags = [] of Tag
@@ -53,7 +56,7 @@ struct Endpoint
   end
 
   def details=(details : Details)
-    @details = details
+    @details = details.detached_copy
   end
 
   def protocol=(protocol : String)
@@ -157,6 +160,12 @@ struct Param
     return if @tags.any? { |existing| existing.name == tag.name && existing.tagger == tag.tagger }
     @tags << tag
   end
+
+  def detached_copy : Param
+    copy = Param.new(@name, @value, @param_type)
+    @tags.each { |tag| copy.add_tag(tag) }
+    copy
+  end
 end
 
 struct Details
@@ -174,6 +183,18 @@ struct Details
 
   def add_path(code_path : PathInfo)
     @code_paths << code_path
+  end
+
+  def detached_copy : Details
+    copy = Details.new
+    @code_paths.each { |code_path| copy.add_path(code_path) }
+    if status_code = @status_code
+      copy.status_code = status_code
+    end
+    if technology = @technology
+      copy.technology = technology
+    end
+    copy
   end
 
   def status_code=(status_code : Int32)

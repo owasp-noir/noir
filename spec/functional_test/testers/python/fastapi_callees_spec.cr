@@ -54,7 +54,7 @@ expected_endpoints = [
   #    body callees are resolved.
   Endpoint.new("/exports/{file_path}", "GET").tap do |ep|
     ep.push_param(Param.new("file_path", "", "path"))
-    ep.push_callee(Callee.new("export_file", main_path, 27))
+    ep.push_callee(Callee.new("export_file", main_path, 31))
     ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 
@@ -64,6 +64,15 @@ expected_endpoints = [
   #    as the end of the block.
   Endpoint.new("/reports", "GET").tap do |ep|
     ep.push_callee(Callee.new("save_user", db_path, 1))
+    ep.push_callee(Callee.new("audit_log", db_path, 5))
+  end,
+
+  # 8. GET /decorated — multi-line route decorator with a Depends()
+  #    call before the handler. The decorator continuation must not be
+  #    treated as the handler def; otherwise `limit` is missed and
+  #    Depends is emitted as a handler callee.
+  Endpoint.new("/decorated", "GET").tap do |ep|
+    ep.push_param(Param.new("limit", "10", "query"))
     ep.push_callee(Callee.new("audit_log", db_path, 5))
   end,
 ]
@@ -88,5 +97,22 @@ describe "FastAPI programmatic route callees" do
     endpoint = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/exports/{file_path}" }
     endpoint.callees.should be_empty
     endpoint.params.select { |param| param.name == "file_path" }.map(&.param_type).should eq(["path"])
+  end
+end
+
+describe "FastAPI multi-line decorator callee scope" do
+  it "does not treat decorator dependency calls as handler callees" do
+    options = ConfigInitializer.new.default_options
+    options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/python/fastapi_callees/")])
+    options["nolog"] = YAML::Any.new(true)
+    options["include_callee"] = YAML::Any.new(true)
+
+    app = NoirRunner.new(options)
+    app.detect
+    app.analyze
+
+    endpoint = app.endpoints.find! { |ep| ep.method == "GET" && ep.url == "/decorated" }
+    endpoint.params.any? { |param| param.name == "limit" && param.param_type == "query" }.should be_true
+    endpoint.callees.map(&.name).should_not contain("Depends")
   end
 end

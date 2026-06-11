@@ -330,16 +330,21 @@ module Analyzer::Python
         end
 
         class_indent = line.size - line.lstrip.size
+        class_attr_indent = class_indent + INDENTATION_SIZE
         body_idx = idx + 1
         while body_idx < lines.size
           body_line = lines[body_idx]
           unless body_line.strip.empty?
             indent = body_line.size - body_line.lstrip.size
             break if indent <= class_indent
+            stripped = body_line.lstrip
+            break if indent == class_attr_indent && (stripped.starts_with?("@") || stripped.starts_with?("def ") || stripped.starts_with?("async def "))
 
-            if path_attr = body_line.match(/^\s*path\s*=\s*[rf]?['"]([^'"]*)['"]/)
-              prefix = path_attr[1]
-              break
+            if indent == class_attr_indent
+              if path_attr = body_line.match(/^\s*path\s*=\s*[rf]?['"]([^'"]*)['"]/)
+                prefix = path_attr[1]
+                break
+              end
             end
           end
           body_idx += 1

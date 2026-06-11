@@ -34,6 +34,7 @@ expected_endpoints = [
     Param.new("data", "", "json"),
   ]),
   Endpoint.new("/external/summary", "GET", [Param.new("mode", "", "query")]),
+  Endpoint.new("/absolute/status", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/python/litestar/", {

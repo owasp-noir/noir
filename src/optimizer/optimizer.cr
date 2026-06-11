@@ -754,13 +754,12 @@ class EndpointOptimizer
     endpoints.each do |endpoint|
       new_endpoint = endpoint
 
-      # `{param}` patterns. The placeholder may sit at a segment
-      # boundary (`/{id}`) or share a segment with sibling variables
-      # separated by a comma — Spring's matrix-style `@GetMapping(
-      # "/bbox/{xMin},{yMin},{xMax},{yMax}")` packs four into one
-      # segment, so allow a leading `,` as well as `/` (otherwise only
-      # the first variable in the segment is captured).
-      endpoint.url.scan(/[\/,]\{([^}]+)\}/).each do |match|
+      # `{param}` patterns. A placeholder may sit at a segment boundary
+      # (`/{id}`) or share a segment with literal separators
+      # (`/{slug}_{pk}`, `/{name}.json`, `/{x},{y}`). Scan all brace
+      # placeholders in the URL instead of assuming the preceding
+      # character is `/` or `,`.
+      endpoint.url.scan(/\{([^}]+)\}/).each do |match|
         raw = match[1]
         # Strip a leading `*` from catch-all path variables (Spring,
         # Armeria and ASP.NET all spell the rest-of-path capture as
@@ -768,7 +767,7 @@ class EndpointOptimizer
         # constraint after `:`. The parameter is named `name`, not
         # `*name` or `name:regex`.
         param = raw.split(":")[0].lstrip('*')
-        next if param.empty?
+        next unless valid_path_param_name?(param)
         new_endpoint.url = register_path_param(new_endpoint.url, new_endpoint.params, "{#{raw}}", param)
       end
 

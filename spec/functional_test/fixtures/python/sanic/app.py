@@ -99,6 +99,20 @@ class ReportMethodView(HTTPMethodView):
         return response.json({'id': report_id, 'title': title})
 
 
+class ProgrammaticWebsocketApp:
+    def __init__(self):
+        self.app = Sanic("programmatic_ws")
+        self.app.add_websocket_route(
+            self.feed,
+            "/programmatic-feed/<channel>",
+            name="programmatic-feed",
+        )
+
+    async def feed(self, request: Request, ws, channel: str):
+        token = request.args.get("token")
+        await ws.send(json.dumps({"channel": channel, "token": token}))
+
+
 app.add_route(
     update_report,
     '/reports/<report_id:int>/status',

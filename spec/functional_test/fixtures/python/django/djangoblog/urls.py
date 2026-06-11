@@ -13,10 +13,12 @@ Including another URLconf
     1. Import the include() function: from django.conf.urls import url, include
     2. Add a URL to urlpatterns:  url(r'^blog/', include('blog.urls'))
 """
+from django.apps import apps
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.sitemaps.views import sitemap
 from django.urls import include
+from django.urls import path
 from django.urls import re_path
 from haystack.views import search_view_factory
 
@@ -40,6 +42,7 @@ handler500 = 'blog.views.server_error_view'
 handle403 = 'blog.views.permission_denied_view'
 urlpatterns = [
                   re_path(r'', include('blog.urls', namespace='blog')),
+                  path('shop/', include(apps.get_app_config('fixture_shop').urls[0])),
                   # [REDACTED]
               ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:

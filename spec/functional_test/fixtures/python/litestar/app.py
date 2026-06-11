@@ -123,6 +123,17 @@ class ReportsController(Controller):
         return {"org_id": org_id, "title": data.title}
 
 
+class AbsoluteController(Controller):
+    @get(
+        path="/absolute/status",
+    )
+    async def absolute_status(self) -> dict:
+        make_cookie(
+            path="/not-a-controller-prefix",
+        )
+        return {}
+
+
 router = Router(path="/api", route_handlers=[list_items, get_item])
 admin_router = Router(path="/admin", route_handlers=[ReportsController])
 external_router = Router(path="/external", route_handlers=[external_handlers.external_summary])
@@ -145,4 +156,5 @@ app = Litestar(route_handlers=[
     router,
     admin_router,
     external_router,
+    AbsoluteController,
 ])

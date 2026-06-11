@@ -19,6 +19,16 @@ expected_endpoints = [
   Endpoint.new("/users/{id}", "PATCH", [
     Param.new("id", "", "path"),
   ]),
+  Endpoint.new("/alias/{alias_id}", "GET", [
+    Param.new("alias_id", "", "path"),
+  ]),
+  Endpoint.new("/wildcard", "GET"),
+  Endpoint.new("/wildcard", "POST"),
+  Endpoint.new("/wildcard", "PUT"),
+  Endpoint.new("/wildcard", "DELETE"),
+  Endpoint.new("/wildcard", "PATCH"),
+  Endpoint.new("/wildcard", "HEAD"),
+  Endpoint.new("/wildcard", "OPTIONS"),
   Endpoint.new("/feed/{channel}", "GET", [
     Param.new("channel", "", "path"),
     Param.new("token", "", "query"),

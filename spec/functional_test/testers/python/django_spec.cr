@@ -151,6 +151,13 @@ expected_endpoints = [
     Param.new("preview", "", "query"),
     Param.new("legacy_id", "", "path"),
   ]),
+  Endpoint.new("/nested/{nested_slug}_{pk}/", "GET", [
+    Param.new("preview", "", "query"),
+    Param.new("nested_slug", "", "path"),
+    Param.new("pk", "", "path"),
+  ]),
+  Endpoint.new("/shop/orders/", "POST", [Param.new("token", "", "form")]),
+  Endpoint.new("/shop/reports/daily/", "GET", [Param.new("period", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/python/django/", {
