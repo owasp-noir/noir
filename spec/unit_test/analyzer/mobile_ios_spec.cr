@@ -25,6 +25,13 @@ describe "Analyzer::Mobile::Ios" do
     find.call("https://").should be_nil
   end
 
+  it "resolves an Xcode build-setting scheme placeholder from .xcconfig" do
+    # CFBundleURLSchemes has `$(BUNDLE_URL_SCHEME)`; Config.xcconfig defines
+    # `BUNDLE_URL_SCHEME = resolvedscheme`.
+    find.call("resolvedscheme://").not_nil!.protocol.should eq("mobile-scheme")
+    find.call("$(BUNDLE_URL_SCHEME)://").should be_nil
+  end
+
   it "maps applinks: associated domains to universal links" do
     find.call("https://myapp.example.com/").not_nil!.protocol.should eq("universal-link")
   end
