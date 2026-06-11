@@ -17,10 +17,10 @@ describe Noir::ObjcCalleeExtractor do
     names.should contain("performMagicLinkAuthenticationWith")
     names.should contain("handleOpenNoteWithUrl")
     names.should contain("componentsWithURL")
-    names.should contain("host")                # `[c host]` no-arg message
+    names.should contain("host") # `[c host]` no-arg message
     names.should contain("isEqualToString")
-    names.should contain("sharedManager")       # inner of a nested send
-    names.should contain("newNoteWithContent")  # outer of a nested send
+    names.should contain("sharedManager")      # inner of a nested send
+    names.should contain("newNoteWithContent") # outer of a nested send
     names.should contain("presentNote")
   end
 
