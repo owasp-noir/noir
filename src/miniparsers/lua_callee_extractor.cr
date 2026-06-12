@@ -43,15 +43,24 @@ module Noir::LuaCalleeExtractor
   BARE_CALL_REGEX     = /(?<![A-Za-z0-9_.:\\@])([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|(?=\s*(?:["'{]|\[\[)))/
   COMMAND_CALL_REGEX  = /(?:^\s*|[=,;]\s*|\breturn\s+)([A-Za-z_][A-Za-z0-9_]*)\s+(?=["'{A-Za-z_@\[])/
 
+  # The structural scanners below address characters by integer index. On a
+  # String that is not single-byte-optimizable (any non-ASCII character —
+  # even one in a comment), `String#[](Int)` is O(n), so the per-character
+  # loops degrade to O(n²) and hang the scan on a large file. They run over an
+  # `Array(Char)` (O(1) indexing) while preserving exact character semantics;
+  # every structural token matched is ASCII and substrings are rebuilt from
+  # the real characters. Public String entry points are kept as thin overloads.
+
   def function_bodies(source : String, file_path : String) : Hash(String, FunctionBody)
     bodies = {} of String => FunctionBody
-    stripped = strip_non_code(source)
+    chars = source.chars
+    stripped = strip_non_code(chars)
 
     stripped.scan(/\bfunction\s+([A-Za-z_][A-Za-z0-9_]*(?:(?:[:.])[A-Za-z_][A-Za-z0-9_]*)*)\s*\(/) do |match|
       function_index = match.begin(0) || 0
-      next unless function_keyword_at?(source, function_index)
+      next unless function_keyword_at?(chars, function_index)
 
-      if body = extract_function_at(source, function_index)
+      if body = extract_function_at(chars, function_index)
         name = match[1]
         add_function_body(bodies, name, body, file_path)
       end
@@ -59,9 +68,9 @@ module Noir::LuaCalleeExtractor
 
     stripped.scan(/(?:^|[\n,{])\s*(?:local\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*function\b/) do |match|
       function_index = (match.begin(0) || 0) + match[0].rindex!("function")
-      next unless function_keyword_at?(source, function_index)
+      next unless function_keyword_at?(chars, function_index)
 
-      if body = extract_function_at(source, function_index)
+      if body = extract_function_at(chars, function_index)
         add_function_body(bodies, match[1], body, file_path)
       end
     end
@@ -71,7 +80,7 @@ module Noir::LuaCalleeExtractor
 
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
-    stripped = strip_nested_function_bodies(strip_non_code(body))
+    stripped = strip_nested_function_bodies(strip_non_code(body).chars)
 
     stripped.each_line.with_index do |line, offset|
       scan_line(line, file_path, start_line + offset, entries)
@@ -90,55 +99,68 @@ module Noir::LuaCalleeExtractor
                              start_index : Int32,
                              search_limit : Int32 = source.size,
                              body_limit : Int32 = source.size) : Tuple(String, Int32)?
-    function_index = find_keyword(source, "function", start_index, search_limit)
+    chars = source.chars
+    function_index = find_keyword(chars, "function", start_index, search_limit)
     return unless function_index
 
-    extract_function_at(source, function_index, body_limit)
+    extract_function_at(chars, function_index, body_limit)
   end
 
+  # Public String overload kept for callers outside this module.
   def extract_function_at(source : String,
                           function_index : Int32,
                           limit : Int32 = source.size) : Tuple(String, Int32)?
-    return unless function_keyword_at?(source, function_index)
+    extract_function_at(source.chars, function_index, limit)
+  end
 
-    body_start = function_body_start(source, function_index, limit)
-    body_end = matching_function_end(source, function_index, limit)
+  def extract_function_at(chars : Array(Char),
+                          function_index : Int32,
+                          limit : Int32 = chars.size) : Tuple(String, Int32)?
+    return unless function_keyword_at?(chars, function_index)
+
+    body_start = function_body_start(chars, function_index, limit)
+    body_end = matching_function_end(chars, function_index, limit)
     return unless body_end
     return if body_end < body_start
 
-    {source[body_start...body_end], line_number_for(source, body_start)}
+    {chars[body_start...body_end].join, line_number_for(chars, body_start)}
   end
 
+  # Public String overload kept for callers outside this module.
   def extract_moonscript_block_after(source : String, arrow_end_index : Int32) : Tuple(String, Int32)?
-    route_line_start = line_start_for(source, arrow_end_index)
-    route_indent = indentation_at(source, route_line_start)
-    route_line_end = line_end_for(source, arrow_end_index)
-    tail = source[arrow_end_index...route_line_end].strip
+    extract_moonscript_block_after(source.chars, arrow_end_index)
+  end
+
+  def extract_moonscript_block_after(chars : Array(Char), arrow_end_index : Int32) : Tuple(String, Int32)?
+    route_line_start = line_start_for(chars, arrow_end_index)
+    route_indent = indentation_at(chars, route_line_start)
+    route_line_end = line_end_for(chars, arrow_end_index)
+    tail = chars[arrow_end_index...route_line_end].join.strip
     unless tail.empty?
-      return {tail, line_number_for(source, arrow_end_index)}
+      return {tail, line_number_for(chars, arrow_end_index)}
     end
 
     body_lines = [] of String
     body_start_line = nil
-    index = route_line_end < source.size ? route_line_end + 1 : source.size
+    index = route_line_end < chars.size ? route_line_end + 1 : chars.size
 
-    while index < source.size
-      current_end = line_end_for(source, index)
-      line = source[index...current_end]
+    while index < chars.size
+      current_end = line_end_for(chars, index)
+      line = chars[index...current_end].join
       stripped = line.strip
 
       if stripped.empty?
         body_lines << line if body_start_line
-        index = current_end < source.size ? current_end + 1 : source.size
+        index = current_end < chars.size ? current_end + 1 : chars.size
         next
       end
 
-      indent = indentation_at(source, index)
+      indent = indentation_at(chars, index)
       break if indent <= route_indent
 
-      body_start_line ||= line_number_for(source, index)
+      body_start_line ||= line_number_for(chars, index)
       body_lines << line
-      index = current_end < source.size ? current_end + 1 : source.size
+      index = current_end < chars.size ? current_end + 1 : chars.size
     end
 
     return unless body_start_line
@@ -155,49 +177,61 @@ module Noir::LuaCalleeExtractor
   # follows, so `respond_to` blocks and wrapped handlers are captured
   # whole. `start_line` is the header line, matching the offsets callers
   # already expect for inline arrows.
+  #
+  # Public String overload kept for callers outside this module.
   def moonscript_value_region(source : String, value_start : Int32) : Tuple(String, Int32)?
-    return if value_start >= source.size
+    moonscript_value_region(source.chars, value_start)
+  end
 
-    header_line_start = line_start_for(source, value_start)
-    header_indent = indentation_at(source, header_line_start)
-    region_end = line_end_for(source, value_start)
-    index = region_end < source.size ? region_end + 1 : source.size
+  def moonscript_value_region(chars : Array(Char), value_start : Int32) : Tuple(String, Int32)?
+    return if value_start >= chars.size
 
-    while index < source.size
-      current_end = line_end_for(source, index)
-      line = source[index...current_end]
+    header_line_start = line_start_for(chars, value_start)
+    header_indent = indentation_at(chars, header_line_start)
+    region_end = line_end_for(chars, value_start)
+    index = region_end < chars.size ? region_end + 1 : chars.size
+
+    while index < chars.size
+      current_end = line_end_for(chars, index)
+      line = chars[index...current_end].join
 
       if line.strip.empty?
         region_end = current_end
-        index = current_end < source.size ? current_end + 1 : source.size
+        index = current_end < chars.size ? current_end + 1 : chars.size
         next
       end
 
-      break if indentation_at(source, index) <= header_indent
+      break if indentation_at(chars, index) <= header_indent
 
       region_end = current_end
-      index = current_end < source.size ? current_end + 1 : source.size
+      index = current_end < chars.size ? current_end + 1 : chars.size
     end
 
     return if region_end <= value_start
-    {source[value_start...region_end], line_number_for(source, value_start)}
+    {chars[value_start...region_end].join, line_number_for(chars, value_start)}
   end
 
+  # Public String overload kept for callers outside this module.
   def find_matching_delimiter(source : String, open_index : Int32, open_char : Char, close_char : Char,
                               limit : Int32 = source.size) : Int32?
+    find_matching_delimiter(source.chars, open_index, open_char, close_char, limit)
+  end
+
+  def find_matching_delimiter(chars : Array(Char), open_index : Int32, open_char : Char, close_char : Char,
+                              limit : Int32 = chars.size) : Int32?
     depth = 0
     index = open_index
 
-    while index < limit && index < source.size
-      char = source[index]
-      if comment_start?(source, index)
-        index = skip_comment(source, index, limit)
+    while index < limit && index < chars.size
+      char = chars[index]
+      if comment_start?(chars, index)
+        index = skip_comment(chars, index, limit)
         next
-      elsif long_bracket_start?(source, index)
-        index = skip_long_bracket(source, index, limit)
+      elsif long_bracket_start?(chars, index)
+        index = skip_long_bracket(chars, index, limit)
         next
       elsif char == '"' || char == '\''
-        index = skip_short_string(source, index, limit)
+        index = skip_short_string(chars, index, limit)
         next
       elsif char == open_char
         depth += 1
@@ -212,6 +246,7 @@ module Noir::LuaCalleeExtractor
     nil
   end
 
+  # Public String overload kept for callers outside this module.
   def line_number_for(source : String, index : Int32) : Int32
     return 1 if index <= 0
 
@@ -219,25 +254,43 @@ module Noir::LuaCalleeExtractor
     source[0...limit].count('\n') + 1
   end
 
+  def line_number_for(chars : Array(Char), index : Int32) : Int32
+    return 1 if index <= 0
+
+    limit = index > chars.size ? chars.size : index
+    count = 1
+    i = 0
+    while i < limit
+      count += 1 if chars[i] == '\n'
+      i += 1
+    end
+    count
+  end
+
+  # Public String overload kept for callers outside this module.
   def strip_non_code(source : String) : String
+    strip_non_code(source.chars)
+  end
+
+  def strip_non_code(chars : Array(Char)) : String
     stripped = String::Builder.new
     index = 0
 
-    while index < source.size
-      char = source[index]
-      if comment_start?(source, index)
-        finish = skip_comment(source, index, source.size)
-        append_blanks(stripped, source, index, finish)
+    while index < chars.size
+      char = chars[index]
+      if comment_start?(chars, index)
+        finish = skip_comment(chars, index, chars.size)
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
-      elsif long_bracket_start?(source, index)
-        finish = skip_long_bracket(source, index, source.size)
-        append_string_placeholder(stripped, source, index, finish, "[[]]")
+      elsif long_bracket_start?(chars, index)
+        finish = skip_long_bracket(chars, index, chars.size)
+        append_string_placeholder(stripped, chars, index, finish, "[[]]")
         index = finish
         next
       elsif char == '"' || char == '\''
-        finish = skip_short_string(source, index, source.size)
-        append_string_placeholder(stripped, source, index, finish, "#{char}#{char}")
+        finish = skip_short_string(chars, index, chars.size)
+        append_string_placeholder(stripped, chars, index, finish, "#{char}#{char}")
         index = finish
         next
       end
@@ -305,57 +358,57 @@ module Noir::LuaCalleeExtractor
     !!prefix.match(/\bfunction\s+$/)
   end
 
-  private def strip_nested_function_bodies(source : String) : String
+  private def strip_nested_function_bodies(chars : Array(Char)) : String
     stripped = String::Builder.new
     index = 0
 
-    while index < source.size
-      if function_keyword_at?(source, index)
-        finish = if function_end = matching_function_end(source, index, source.size)
+    while index < chars.size
+      if function_keyword_at?(chars, index)
+        finish = if function_end = matching_function_end(chars, index, chars.size)
                    function_end + "end".size
                  else
                    index + "function".size
                  end
-        append_blanks(stripped, source, index, finish)
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
       end
 
-      stripped << source[index]
+      stripped << chars[index]
       index += 1
     end
 
     stripped.to_s
   end
 
-  private def function_body_start(source : String, function_index : Int32, limit : Int32) : Int32
-    paren_index = find_char(source, '(', function_index, limit)
+  private def function_body_start(chars : Array(Char), function_index : Int32, limit : Int32) : Int32
+    paren_index = find_char(chars, '(', function_index, limit)
     return function_index + "function".size unless paren_index
 
-    close_index = find_matching_delimiter(source, paren_index, '(', ')', limit)
+    close_index = find_matching_delimiter(chars, paren_index, '(', ')', limit)
     return close_index + 1 if close_index
 
     function_index + "function".size
   end
 
-  private def matching_function_end(source : String, function_index : Int32, limit : Int32) : Int32?
+  private def matching_function_end(chars : Array(Char), function_index : Int32, limit : Int32) : Int32?
     depth = 0
     pending_do = 0
     index = function_index
 
-    while index < limit && index < source.size
-      if comment_start?(source, index)
-        index = skip_comment(source, index, limit)
+    while index < limit && index < chars.size
+      if comment_start?(chars, index)
+        index = skip_comment(chars, index, limit)
         next
-      elsif long_bracket_start?(source, index)
-        index = skip_long_bracket(source, index, limit)
+      elsif long_bracket_start?(chars, index)
+        index = skip_long_bracket(chars, index, limit)
         next
-      elsif source[index] == '"' || source[index] == '\''
-        index = skip_short_string(source, index, limit)
+      elsif chars[index] == '"' || chars[index] == '\''
+        index = skip_short_string(chars, index, limit)
         next
-      elsif identifier_start?(source[index])
+      elsif identifier_start?(chars[index])
         token_start = index
-        token, index = read_identifier(source, index, limit)
+        token, index = read_identifier(chars, index, limit)
         case token
         when "function", "if", "repeat"
           depth += 1
@@ -383,22 +436,22 @@ module Noir::LuaCalleeExtractor
     nil
   end
 
-  private def find_keyword(source : String, keyword : String, start_index : Int32, limit : Int32) : Int32?
+  private def find_keyword(chars : Array(Char), keyword : String, start_index : Int32, limit : Int32) : Int32?
     index = start_index
 
-    while index < limit && index < source.size
-      if comment_start?(source, index)
-        index = skip_comment(source, index, limit)
+    while index < limit && index < chars.size
+      if comment_start?(chars, index)
+        index = skip_comment(chars, index, limit)
         next
-      elsif long_bracket_start?(source, index)
-        index = skip_long_bracket(source, index, limit)
+      elsif long_bracket_start?(chars, index)
+        index = skip_long_bracket(chars, index, limit)
         next
-      elsif source[index] == '"' || source[index] == '\''
-        index = skip_short_string(source, index, limit)
+      elsif chars[index] == '"' || chars[index] == '\''
+        index = skip_short_string(chars, index, limit)
         next
-      elsif identifier_start?(source[index])
+      elsif identifier_start?(chars[index])
         token_start = index
-        token, index = read_identifier(source, index, limit)
+        token, index = read_identifier(chars, index, limit)
         return token_start if token == keyword
         next
       end
@@ -409,22 +462,22 @@ module Noir::LuaCalleeExtractor
     nil
   end
 
-  private def find_char(source : String, target : Char, start_index : Int32, limit : Int32) : Int32?
+  private def find_char(chars : Array(Char), target : Char, start_index : Int32, limit : Int32) : Int32?
     index = start_index
 
-    while index < limit && index < source.size
-      if comment_start?(source, index)
-        index = skip_comment(source, index, limit)
+    while index < limit && index < chars.size
+      if comment_start?(chars, index)
+        index = skip_comment(chars, index, limit)
         next
-      elsif long_bracket_start?(source, index)
-        index = skip_long_bracket(source, index, limit)
+      elsif long_bracket_start?(chars, index)
+        index = skip_long_bracket(chars, index, limit)
         next
-      elsif source[index] == '"' || source[index] == '\''
-        index = skip_short_string(source, index, limit)
+      elsif chars[index] == '"' || chars[index] == '\''
+        index = skip_short_string(chars, index, limit)
         next
       end
 
-      return index if source[index] == target
+      return index if chars[index] == target
 
       index += 1
     end
@@ -432,21 +485,21 @@ module Noir::LuaCalleeExtractor
     nil
   end
 
-  private def function_keyword_at?(source : String, index : Int32) : Bool
-    return false unless source[index, "function".size]? == "function"
-    before = index > 0 ? source[index - 1] : '\0'
+  private def function_keyword_at?(chars : Array(Char), index : Int32) : Bool
+    return false unless chars[index, "function".size]?.try(&.join) == "function"
+    before = index > 0 ? chars[index - 1] : '\0'
     after_index = index + "function".size
-    after = after_index < source.size ? source[after_index] : '\0'
+    after = after_index < chars.size ? chars[after_index] : '\0'
     !identifier_part?(before) && !identifier_part?(after)
   end
 
-  private def read_identifier(source : String, index : Int32, limit : Int32) : Tuple(String, Int32)
+  private def read_identifier(chars : Array(Char), index : Int32, limit : Int32) : Tuple(String, Int32)
     cursor = index
-    while cursor < limit && cursor < source.size && identifier_part?(source[cursor])
+    while cursor < limit && cursor < chars.size && identifier_part?(chars[cursor])
       cursor += 1
     end
 
-    {source[index...cursor], cursor}
+    {chars[index...cursor].join, cursor}
   end
 
   private def identifier_start?(char : Char) : Bool
@@ -457,54 +510,54 @@ module Noir::LuaCalleeExtractor
     char.ascii_alphanumeric? || char == '_'
   end
 
-  private def comment_start?(source : String, index : Int32) : Bool
-    index + 1 < source.size && source[index] == '-' && source[index + 1] == '-'
+  private def comment_start?(chars : Array(Char), index : Int32) : Bool
+    index + 1 < chars.size && chars[index] == '-' && chars[index + 1] == '-'
   end
 
-  private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
-    if index + 2 < limit && long_bracket_start?(source, index + 2)
-      skip_long_bracket(source, index + 2, limit)
+  private def skip_comment(chars : Array(Char), index : Int32, limit : Int32) : Int32
+    if index + 2 < limit && long_bracket_start?(chars, index + 2)
+      skip_long_bracket(chars, index + 2, limit)
     else
       cursor = index
-      while cursor < limit && cursor < source.size && source[cursor] != '\n'
+      while cursor < limit && cursor < chars.size && chars[cursor] != '\n'
         cursor += 1
       end
       cursor
     end
   end
 
-  private def long_bracket_start?(source : String, index : Int32) : Bool
-    !!long_bracket_equals(source, index)
+  private def long_bracket_start?(chars : Array(Char), index : Int32) : Bool
+    !!long_bracket_equals(chars, index)
   end
 
-  private def long_bracket_equals(source : String, index : Int32) : Int32?
-    return unless index < source.size && source[index] == '['
+  private def long_bracket_equals(chars : Array(Char), index : Int32) : Int32?
+    return unless index < chars.size && chars[index] == '['
 
     cursor = index + 1
     equals = 0
-    while cursor < source.size && source[cursor] == '='
+    while cursor < chars.size && chars[cursor] == '='
       equals += 1
       cursor += 1
     end
 
-    return equals if cursor < source.size && source[cursor] == '['
+    return equals if cursor < chars.size && chars[cursor] == '['
     nil
   end
 
-  private def skip_long_bracket(source : String, index : Int32, limit : Int32) : Int32
-    equals = long_bracket_equals(source, index)
+  private def skip_long_bracket(chars : Array(Char), index : Int32, limit : Int32) : Int32
+    equals = long_bracket_equals(chars, index)
     return index + 1 unless equals
 
     cursor = index + equals + 2
-    while cursor < limit && cursor < source.size
-      if source[cursor] == ']'
+    while cursor < limit && cursor < chars.size
+      if chars[cursor] == ']'
         close_cursor = cursor + 1
         seen_equals = 0
-        while close_cursor < source.size && source[close_cursor] == '='
+        while close_cursor < chars.size && chars[close_cursor] == '='
           seen_equals += 1
           close_cursor += 1
         end
-        return close_cursor + 1 if seen_equals == equals && close_cursor < source.size && source[close_cursor] == ']'
+        return close_cursor + 1 if seen_equals == equals && close_cursor < chars.size && chars[close_cursor] == ']'
       end
       cursor += 1
     end
@@ -512,13 +565,13 @@ module Noir::LuaCalleeExtractor
     limit
   end
 
-  private def skip_short_string(source : String, index : Int32, limit : Int32) : Int32
-    quote = source[index]
+  private def skip_short_string(chars : Array(Char), index : Int32, limit : Int32) : Int32
+    quote = chars[index]
     cursor = index + 1
     escaped = false
 
-    while cursor < limit && cursor < source.size
-      char = source[cursor]
+    while cursor < limit && cursor < chars.size
+      char = chars[cursor]
       if escaped
         escaped = false
       elsif char == '\\'
@@ -532,20 +585,20 @@ module Noir::LuaCalleeExtractor
     limit
   end
 
-  private def append_blanks(builder : String::Builder, source : String, start_index : Int32, finish_index : Int32)
+  private def append_blanks(builder : String::Builder, chars : Array(Char), start_index : Int32, finish_index : Int32)
     index = start_index
-    while index < finish_index && index < source.size
-      builder << (source[index] == '\n' ? '\n' : ' ')
+    while index < finish_index && index < chars.size
+      builder << (chars[index] == '\n' ? '\n' : ' ')
       index += 1
     end
   end
 
-  private def append_string_placeholder(builder : String::Builder, source : String,
+  private def append_string_placeholder(builder : String::Builder, chars : Array(Char),
                                         start_index : Int32, finish_index : Int32, placeholder : String)
     placeholder_index = 0
     index = start_index
-    while index < finish_index && index < source.size
-      if source[index] == '\n'
+    while index < finish_index && index < chars.size
+      if chars[index] == '\n'
         builder << '\n'
       elsif placeholder_index < placeholder.size
         builder << placeholder[placeholder_index]
@@ -557,27 +610,27 @@ module Noir::LuaCalleeExtractor
     end
   end
 
-  private def line_start_for(source : String, index : Int32) : Int32
+  private def line_start_for(chars : Array(Char), index : Int32) : Int32
     cursor = index
-    while cursor > 0 && source[cursor - 1] != '\n'
+    while cursor > 0 && chars[cursor - 1] != '\n'
       cursor -= 1
     end
     cursor
   end
 
-  private def line_end_for(source : String, index : Int32) : Int32
+  private def line_end_for(chars : Array(Char), index : Int32) : Int32
     cursor = index
-    while cursor < source.size && source[cursor] != '\n'
+    while cursor < chars.size && chars[cursor] != '\n'
       cursor += 1
     end
     cursor
   end
 
-  private def indentation_at(source : String, line_start : Int32) : Int32
+  private def indentation_at(chars : Array(Char), line_start : Int32) : Int32
     cursor = line_start
     indent = 0
-    while cursor < source.size
-      case source[cursor]
+    while cursor < chars.size
+      case chars[cursor]
       when ' '
         indent += 1
       when '\t'
