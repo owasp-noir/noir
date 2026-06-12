@@ -760,10 +760,15 @@ module Analyzer::Fsharp
     private def line_for_offset(content : String, offset : Int32) : Int32
       return 1 if offset <= 0
       limit = offset > content.size ? content.size : offset
+      # Walk with a Char::Reader rather than `content[i]`: integer indexing is
+      # O(n) on a non-ASCII string, so the per-character loop was O(n²) and hung
+      # the scan on a large file with a single multi-byte character in it.
       count = 1
+      reader = Char::Reader.new(content)
       i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
+      while i < limit && reader.has_next?
+        count += 1 if reader.current_char == '\n'
+        reader.next_char
         i += 1
       end
       count
