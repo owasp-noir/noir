@@ -166,12 +166,19 @@ module Analyzer::CSharp
       prefixes = Hash(String, String).new
       group_assignment_regex = /(?:var\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\.MapGroup\s*\(\s*"([^"]+)"\s*\)/
 
-      block_lines.join("\n").scan(group_assignment_regex) do |match|
-        variable = match[1]
-        parent = match[2]
-        prefix = match[3]
-        parent_prefix = prefixes[parent]? || ""
-        prefixes[variable] = join_route_parts(parent_prefix, prefix)
+      block_lines.each do |line|
+        # The assignment can only match a line that mentions `MapGroup`. Skipping
+        # the rest keeps the unbounded identifier captures from backtracking across
+        # a long token run (e.g. a multi-kilobyte route literal), which is O(n²).
+        next unless line.includes?("MapGroup")
+
+        line.scan(group_assignment_regex) do |match|
+          variable = match[1]
+          parent = match[2]
+          prefix = match[3]
+          parent_prefix = prefixes[parent]? || ""
+          prefixes[variable] = join_route_parts(parent_prefix, prefix)
+        end
       end
 
       prefixes

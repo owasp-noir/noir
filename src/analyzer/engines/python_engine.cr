@@ -67,9 +67,12 @@ module Analyzer::Python
       param_line = def_line.split("(", 2)[1]
 
       index = 0
-      param_name = ""
-      param_type = ""
-      param_default = ""
+      # Accumulate field text in builders rather than `String += Char`: a single
+      # giant parameter default (e.g. a multi-kilobyte literal) otherwise makes the
+      # per-character append O(n²) and can hang the scan.
+      param_name = String::Builder.new
+      param_type = String::Builder.new
+      param_default = String::Builder.new
 
       is_option = false
       is_default = false
@@ -93,11 +96,11 @@ module Analyzer::Python
               index += 1
               next
             elsif parentheses_count == 1 && char == ','
-              parameters << FunctionParameter.new(param_name.strip, param_type.strip, param_default.strip)
+              parameters << FunctionParameter.new(param_name.to_s.strip, param_type.to_s.strip, param_default.to_s.strip)
 
-              param_name = ""
-              param_type = ""
-              param_default = ""
+              param_name = String::Builder.new
+              param_type = String::Builder.new
+              param_default = String::Builder.new
               is_option = false
               is_default = false
               index += 1
@@ -105,8 +108,9 @@ module Analyzer::Python
             elsif char == ')'
               parentheses_count -= 1
               if parentheses_count == 0
-                if param_name.size != 0
-                  parameters << FunctionParameter.new(param_name.strip, param_type.strip, param_default.strip)
+                name_text = param_name.to_s
+                if name_text.bytesize != 0
+                  parameters << FunctionParameter.new(name_text.strip, param_type.to_s.strip, param_default.to_s.strip)
                 end
                 break
               end
@@ -118,11 +122,11 @@ module Analyzer::Python
           end
 
           if is_default
-            param_default += char
+            param_default << char
           elsif is_option
-            param_type += char
+            param_type << char
           else
-            param_name += char
+            param_name << char
           end
 
           index += 1

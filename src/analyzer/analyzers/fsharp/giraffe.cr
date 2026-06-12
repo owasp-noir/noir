@@ -83,6 +83,15 @@ module Analyzer::Fsharp
           scope_stack.pop
         end
 
+        # No route combinator begins with a quote, so a string literal reached
+        # here is not part of one. Jump past it in a single step — walking it
+        # character by character (each re-slicing `cleaned[i..]`) is O(n²) and
+        # hangs the scan on a multi-kilobyte literal.
+        if cleaned[i] == '"'
+          i = skip_string_literal(cleaned, i)
+          next
+        end
+
         rest = cleaned[i..]
 
         # subRoute / subRouteCi / subRoutef "/prefix" (handler)
@@ -548,6 +557,34 @@ module Analyzer::Fsharp
       window = collected.to_s
       methods = METHOD_WORD_PATTERNS.select { |_, pattern| window.match(pattern) }.map { |m, _| m }
       methods.first?
+    end
+
+    # Returns the index just past the string literal that opens at `open_idx`
+    # (which must be a `"`). Handles triple-quoted (`"""…"""`) and ordinary
+    # backslash-escaped strings; an unterminated literal returns the end of text.
+    private def skip_string_literal(text : String, open_idx : Int32) : Int32
+      size = text.size
+      if open_idx + 2 < size && text[open_idx + 1] == '"' && text[open_idx + 2] == '"'
+        j = open_idx + 3
+        while j + 2 < size
+          break if text[j] == '"' && text[j + 1] == '"' && text[j + 2] == '"'
+          j += 1
+        end
+        return j + 2 < size ? j + 3 : size
+      end
+
+      j = open_idx + 1
+      while j < size
+        c = text[j]
+        if c == '\\'
+          j += 2
+          next
+        elsif c == '"'
+          return j + 1
+        end
+        j += 1
+      end
+      size
     end
 
     private def find_matching_paren(text : String, open_idx : Int32) : Int32?
