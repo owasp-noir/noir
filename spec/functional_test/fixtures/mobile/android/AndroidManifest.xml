@@ -187,5 +187,39 @@
             </intent-filter>
         </activity>
 
+        <!-- Exported component with NO intent-filter: cannot be matched by an
+             implicit intent, but an explicit intent naming the component still
+             reaches it, so it is an IPC surface (android-intent, explicit). The
+             handler source links callees/extras like any other component. -->
+        <activity android:name=".ExportedActivity" android:exported="true" />
+
+        <!-- Exported, filter-less activity-alias: addressed by its own name
+             (kept in the URL), but the handler code is the target activity, so
+             `via` resolves to targetActivity for the code linker. -->
+        <activity-alias
+            android:name=".ExportedAlias"
+            android:targetActivity=".AliasTargetActivity"
+            android:exported="true" />
+
+        <!-- Exported, filter-less service: another explicit-intent surface. -->
+        <service android:name=".ExportedService" android:exported="true" />
+
+        <!-- Exported, filter-less receiver guarded by a custom permission: the
+             permission rides along in metadata but does not suppress it (a
+             normal/dangerous permission is still obtainable by another app). -->
+        <receiver android:name=".ExportedReceiver" android:exported="true"
+            android:permission="com.example.permission.CUSTOM" />
+
+        <!-- NOT exported, no filter: internal only, must NOT be reported. -->
+        <activity android:name=".InternalActivity" android:exported="false" />
+
+        <!-- Implicitly not exported (filter-less default): must NOT be reported. -->
+        <activity android:name=".DefaultActivity" />
+
+        <!-- Exported but explicitly disabled: not a live entry point, so it
+             must NOT be reported even though exported="true". -->
+        <activity android:name=".DisabledActivity" android:exported="true"
+            android:enabled="false" />
+
     </application>
 </manifest>

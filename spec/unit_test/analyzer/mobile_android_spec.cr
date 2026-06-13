@@ -71,6 +71,47 @@ describe "Analyzer::Mobile::Android" do
     ep.metadata.not_nil!["action"].should eq("com.example.ACTION_SYNC")
   end
 
+  it "emits an explicit android-intent surface for an exported, filter-less component" do
+    ep = find.call("intent://com.example.myapp/.ExportedActivity").not_nil!
+    ep.protocol.should eq("android-intent")
+    md = ep.metadata.not_nil!
+    md["component_type"].should eq("activity")
+    md["explicit"].should eq("true")
+    md["exported"].should eq("true")
+    md["package"].should eq("com.example.myapp")
+    # No intent-filter, so no action/category metadata.
+    md.has_key?("action").should be_false
+  end
+
+  it "records the component kind for filter-less service / receiver surfaces" do
+    find.call("intent://com.example.myapp/.ExportedService").not_nil!.metadata.not_nil!["component_type"].should eq("service")
+    find.call("intent://com.example.myapp/.ExportedReceiver").not_nil!.metadata.not_nil!["component_type"].should eq("receiver")
+  end
+
+  it "carries a guarding android:permission in metadata without suppressing the surface" do
+    md = find.call("intent://com.example.myapp/.ExportedReceiver").not_nil!.metadata.not_nil!
+    md["permission"].should eq("com.example.permission.CUSTOM")
+  end
+
+  it "uses targetActivity as via for a filter-less exported activity-alias" do
+    # The alias is addressed by its own name in the URL, but its handler code
+    # lives in targetActivity, so `via` points there for the linker.
+    ep = find.call("intent://com.example.myapp/.ExportedAlias").not_nil!
+    md = ep.metadata.not_nil!
+    md["component_type"].should eq("activity-alias")
+    md["via"].should eq(".AliasTargetActivity")
+    md["explicit"].should eq("true")
+  end
+
+  it "does not report a filter-less component that is not exported" do
+    find.call("intent://com.example.myapp/.InternalActivity").should be_nil
+    find.call("intent://com.example.myapp/.DefaultActivity").should be_nil
+  end
+
+  it "does not report an exported component that is explicitly disabled" do
+    find.call("intent://com.example.myapp/.DisabledActivity").should be_nil
+  end
+
   it "does not emit anything for a MAIN/LAUNCHER component" do
     find.call("intent://com.example.myapp/.MainActivity").should be_nil
   end
