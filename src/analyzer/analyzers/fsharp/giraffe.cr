@@ -73,6 +73,10 @@ module Analyzer::Fsharp
 
     private def process_file(path : String, content : String, include_callee : Bool)
       cleaned = strip_fsharp_comments(content)
+      # Address `cleaned` through an `Array(Char)`: integer `String#[](Int)` is
+      # O(n) on non-ASCII source (one em-dash defeats single-byte optimization),
+      # so the per-character work below — and the literal skip — would be O(n²).
+      cleaned_chars = cleaned.chars
       scope_stack = [] of SubRouteScope
       string_constants = collect_string_constants(cleaned)
 
@@ -87,8 +91,8 @@ module Analyzer::Fsharp
         # here is not part of one. Jump past it in a single step — walking it
         # character by character (each re-slicing `cleaned[i..]`) is O(n²) and
         # hangs the scan on a multi-kilobyte literal.
-        if cleaned[i] == '"'
-          i = skip_string_literal(cleaned, i)
+        if cleaned_chars[i] == '"'
+          i = skip_string_literal(cleaned_chars, i)
           next
         end
 
@@ -562,12 +566,14 @@ module Analyzer::Fsharp
     # Returns the index just past the string literal that opens at `open_idx`
     # (which must be a `"`). Handles triple-quoted (`"""…"""`) and ordinary
     # backslash-escaped strings; an unterminated literal returns the end of text.
-    private def skip_string_literal(text : String, open_idx : Int32) : Int32
-      size = text.size
-      if open_idx + 2 < size && text[open_idx + 1] == '"' && text[open_idx + 2] == '"'
+    # Scans over an `Array(Char)` so each access is O(1) — integer `String#[]`
+    # would be O(n) on non-ASCII source, making the skip itself O(n²).
+    private def skip_string_literal(chars : Array(Char), open_idx : Int32) : Int32
+      size = chars.size
+      if open_idx + 2 < size && chars[open_idx + 1] == '"' && chars[open_idx + 2] == '"'
         j = open_idx + 3
         while j + 2 < size
-          break if text[j] == '"' && text[j + 1] == '"' && text[j + 2] == '"'
+          break if chars[j] == '"' && chars[j + 1] == '"' && chars[j + 2] == '"'
           j += 1
         end
         return j + 2 < size ? j + 3 : size
@@ -575,7 +581,7 @@ module Analyzer::Fsharp
 
       j = open_idx + 1
       while j < size
-        c = text[j]
+        c = chars[j]
         if c == '\\'
           j += 2
           next
