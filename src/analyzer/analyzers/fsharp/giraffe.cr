@@ -73,6 +73,10 @@ module Analyzer::Fsharp
 
     private def process_file(path : String, content : String, include_callee : Bool)
       cleaned = strip_fsharp_comments(content)
+      # Address `cleaned` through an `Array(Char)`: integer `String#[](Int)` is
+      # O(n) on non-ASCII source (one em-dash defeats single-byte optimization),
+      # so the per-character work below — and the literal skip — would be O(n²).
+      cleaned_chars = cleaned.chars
       scope_stack = [] of SubRouteScope
       string_constants = collect_string_constants(cleaned)
 
@@ -81,6 +85,15 @@ module Analyzer::Fsharp
         # Drop sub-route scopes whose closing paren has already passed.
         while !scope_stack.empty? && scope_stack.last[:end_pos] <= i
           scope_stack.pop
+        end
+
+        # No route combinator begins with a quote, so a string literal reached
+        # here is not part of one. Jump past it in a single step — walking it
+        # character by character (each re-slicing `cleaned[i..]`) is O(n²) and
+        # hangs the scan on a multi-kilobyte literal.
+        if cleaned_chars[i] == '"'
+          i = skip_string_literal(cleaned_chars, i)
+          next
         end
 
         rest = cleaned[i..]
@@ -550,6 +563,36 @@ module Analyzer::Fsharp
       methods.first?
     end
 
+    # Returns the index just past the string literal that opens at `open_idx`
+    # (which must be a `"`). Handles triple-quoted (`"""…"""`) and ordinary
+    # backslash-escaped strings; an unterminated literal returns the end of text.
+    # Scans over an `Array(Char)` so each access is O(1) — integer `String#[]`
+    # would be O(n) on non-ASCII source, making the skip itself O(n²).
+    private def skip_string_literal(chars : Array(Char), open_idx : Int32) : Int32
+      size = chars.size
+      if open_idx + 2 < size && chars[open_idx + 1] == '"' && chars[open_idx + 2] == '"'
+        j = open_idx + 3
+        while j + 2 < size
+          break if chars[j] == '"' && chars[j + 1] == '"' && chars[j + 2] == '"'
+          j += 1
+        end
+        return j + 2 < size ? j + 3 : size
+      end
+
+      j = open_idx + 1
+      while j < size
+        c = chars[j]
+        if c == '\\'
+          j += 2
+          next
+        elsif c == '"'
+          return j + 1
+        end
+        j += 1
+      end
+      size
+    end
+
     private def find_matching_paren(text : String, open_idx : Int32) : Int32?
       find_matching_delimiter(text, open_idx, '(', ')')
     end
@@ -723,10 +766,15 @@ module Analyzer::Fsharp
     private def line_for_offset(content : String, offset : Int32) : Int32
       return 1 if offset <= 0
       limit = offset > content.size ? content.size : offset
+      # Walk with a Char::Reader rather than `content[i]`: integer indexing is
+      # O(n) on a non-ASCII string, so the per-character loop was O(n²) and hung
+      # the scan on a large file with a single multi-byte character in it.
       count = 1
+      reader = Char::Reader.new(content)
       i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
+      while i < limit && reader.has_next?
+        count += 1 if reader.current_char == '\n'
+        reader.next_char
         i += 1
       end
       count

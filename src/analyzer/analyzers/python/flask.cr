@@ -1279,14 +1279,23 @@ module Analyzer::Python
       json_variable_names = [] of ::String
 
       # Parse JSON variable names (e.g. data = json.loads(request.data), data = request.json)
+      #
+      # The `(ident).*=` shape backtracks catastrophically over a long run of word
+      # characters (the trailing literal's required code unit is a plain letter, so
+      # PCRE2 can't pre-reject). Gate each regex on a cheap substring check so a
+      # multi-kilobyte line that lacks the marker never reaches the matcher.
       codeblock_lines.each do |codeblock_line|
-        match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*json\.loads\(request\.data/
-        if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
-          json_variable_names << match[1]
+        if codeblock_line.includes?("json.loads")
+          match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*json\.loads\(request\.data/
+          if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
+            json_variable_names << match[1]
+          end
         end
-        match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.(?:get_json\([^)]*\)|json)/
-        if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
-          json_variable_names << match[1]
+        if codeblock_line.includes?("request.json") || codeblock_line.includes?("request.get_json")
+          match = codeblock_line.match /([a-zA-Z_][a-zA-Z0-9_]*).*=\s*request\.(?:get_json\([^)]*\)|json)/
+          if !match.nil? && match.size == 2 && !json_variable_names.includes?(match[1])
+            json_variable_names << match[1]
+          end
         end
       end
 

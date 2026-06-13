@@ -177,42 +177,47 @@ module Noir::HaskellCalleeExtractor
     RESERVED.includes?(name.split('.').last)
   end
 
+  # Scans over an `Array(Char)` rather than `String#[](Int)`: integer indexing
+  # is O(n) on a string that is not single-byte-optimizable (any non-ASCII
+  # character — e.g. an em-dash in a comment), which made this per-character
+  # loop O(n²) and able to hang the scan on a large file.
   private def strip_non_code(source : String) : String
+    chars = source.chars
     index = 0
     stripped = String::Builder.new
 
-    while index < source.size
-      char = source[index]
+    while index < chars.size
+      char = chars[index]
 
-      if index + 1 < source.size && char == '-' && source[index + 1] == '-'
-        index = append_blanks_until_line_end(stripped, source, index)
+      if index + 1 < chars.size && char == '-' && chars[index + 1] == '-'
+        index = append_blanks_until_line_end(stripped, chars, index)
         next
       end
 
-      if index + 1 < source.size && char == '{' && source[index + 1] == '-'
-        finish = skip_block_comment(source, index)
-        append_blanks(stripped, source, index, finish)
+      if index + 1 < chars.size && char == '{' && chars[index + 1] == '-'
+        finish = skip_block_comment(chars, index)
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
       end
 
       if char == '"'
-        finish = skip_string(source, index)
-        append_blanks(stripped, source, index, finish)
+        finish = skip_string(chars, index)
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
       end
 
-      if char == '\'' && char_literal_start?(source, index)
-        finish = skip_char(source, index)
-        append_blanks(stripped, source, index, finish)
+      if char == '\'' && char_literal_start?(chars, index)
+        finish = skip_char(chars, index)
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
       end
 
-      if quasiquote_start?(source, index)
-        finish = skip_quasiquote(source, index)
-        append_blanks(stripped, source, index, finish)
+      if quasiquote_start?(chars, index)
+        finish = skip_quasiquote(chars, index)
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
       end
@@ -224,40 +229,40 @@ module Noir::HaskellCalleeExtractor
     stripped.to_s
   end
 
-  private def char_literal_start?(source : String, start : Int32) : Bool
-    return false if start + 2 >= source.size
-    return false if source[start + 1] == '['
+  private def char_literal_start?(chars : Array(Char), start : Int32) : Bool
+    return false if start + 2 >= chars.size
+    return false if chars[start + 1] == '['
 
-    finish = skip_char(source, start)
-    return false if finish >= source.size
+    finish = skip_char(chars, start)
+    return false if finish >= chars.size
     finish - start <= 8
   end
 
-  private def append_blanks_until_line_end(stripped : String::Builder, source : String, start : Int32) : Int32
+  private def append_blanks_until_line_end(stripped : String::Builder, chars : Array(Char), start : Int32) : Int32
     index = start
-    while index < source.size && source[index] != '\n'
+    while index < chars.size && chars[index] != '\n'
       stripped << ' '
       index += 1
     end
     index
   end
 
-  private def append_blanks(stripped : String::Builder, source : String, start : Int32, finish : Int32)
+  private def append_blanks(stripped : String::Builder, chars : Array(Char), start : Int32, finish : Int32)
     index = start
-    while index < finish && index < source.size
-      stripped << (source[index] == '\n' ? '\n' : ' ')
+    while index < finish && index < chars.size
+      stripped << (chars[index] == '\n' ? '\n' : ' ')
       index += 1
     end
   end
 
-  private def skip_block_comment(source : String, start : Int32) : Int32
+  private def skip_block_comment(chars : Array(Char), start : Int32) : Int32
     index = start + 2
     depth = 1
-    while index < source.size && depth > 0
-      if index + 1 < source.size && source[index] == '{' && source[index + 1] == '-'
+    while index < chars.size && depth > 0
+      if index + 1 < chars.size && chars[index] == '{' && chars[index + 1] == '-'
         depth += 1
         index += 2
-      elsif index + 1 < source.size && source[index] == '-' && source[index + 1] == '}'
+      elsif index + 1 < chars.size && chars[index] == '-' && chars[index + 1] == '}'
         depth -= 1
         index += 2
       else
@@ -267,55 +272,55 @@ module Noir::HaskellCalleeExtractor
     index
   end
 
-  private def skip_string(source : String, start : Int32) : Int32
+  private def skip_string(chars : Array(Char), start : Int32) : Int32
     index = start + 1
-    while index < source.size
-      if source[index] == '\\' && index + 1 < source.size
+    while index < chars.size
+      if chars[index] == '\\' && index + 1 < chars.size
         index += 2
         next
       end
-      return index + 1 if source[index] == '"'
+      return index + 1 if chars[index] == '"'
 
       index += 1
     end
-    source.size
+    chars.size
   end
 
-  private def skip_char(source : String, start : Int32) : Int32
+  private def skip_char(chars : Array(Char), start : Int32) : Int32
     index = start + 1
-    while index < source.size
-      if source[index] == '\\' && index + 1 < source.size
+    while index < chars.size
+      if chars[index] == '\\' && index + 1 < chars.size
         index += 2
         next
       end
-      return index + 1 if source[index] == '\''
+      return index + 1 if chars[index] == '\''
 
       index += 1
     end
-    source.size
+    chars.size
   end
 
-  private def quasiquote_start?(source : String, start : Int32) : Bool
-    return false unless source[start] == '['
+  private def quasiquote_start?(chars : Array(Char), start : Int32) : Bool
+    return false unless chars[start] == '['
 
     index = start + 1
-    return false unless source[index]? && (source[index].ascii_letter? || source[index] == '_')
+    return false unless chars[index]? && (chars[index].ascii_letter? || chars[index] == '_')
 
-    while index < source.size && (source[index].alphanumeric? || source[index] == '_' || source[index] == '\'')
+    while index < chars.size && (chars[index].alphanumeric? || chars[index] == '_' || chars[index] == '\'')
       index += 1
     end
 
-    index < source.size && source[index] == '|'
+    index < chars.size && chars[index] == '|'
   end
 
-  private def skip_quasiquote(source : String, start : Int32) : Int32
+  private def skip_quasiquote(chars : Array(Char), start : Int32) : Int32
     index = start + 1
-    while index + 1 < source.size
-      return index + 2 if source[index] == '|' && source[index + 1] == ']'
+    while index + 1 < chars.size
+      return index + 2 if chars[index] == '|' && chars[index + 1] == ']'
 
       index += 1
     end
-    source.size
+    chars.size
   end
 
   private def dedup_entries(entries : Array(Entry)) : Array(Entry)

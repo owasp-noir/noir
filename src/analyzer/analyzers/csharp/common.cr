@@ -76,13 +76,21 @@ module Analyzer::CSharp::Common
   # counter open and run the signature away, while the returned text is built
   # from the real `lines`.
   protected def build_signature(lines : Array(String), masked : Array(String), start_index : Int32) : Tuple(String, Int32)
+    # A caller can hand us a `start_index` that ran past the end of the file
+    # (e.g. after folding an unbalanced multi-line attribute that consumed
+    # every remaining line). Bail out instead of indexing out of bounds.
+    return {"", start_index} if start_index < 0 || start_index >= lines.size
+
     signature = lines[start_index]
-    paren_count = masked[start_index].count('(') - masked[start_index].count(')')
+    start_mask = masked[start_index]?
+    paren_count = start_mask ? start_mask.count('(') - start_mask.count(')') : 0
     index = start_index + 1
 
     while paren_count > 0 && index < lines.size
       signature += " " + lines[index]
-      paren_count += masked[index].count('(') - masked[index].count(')')
+      if m = masked[index]?
+        paren_count += m.count('(') - m.count(')')
+      end
       index += 1
     end
 

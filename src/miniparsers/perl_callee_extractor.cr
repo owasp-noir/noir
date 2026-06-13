@@ -27,9 +27,17 @@ module Noir::PerlCalleeExtractor
   QUALIFIED_CALL_REGEX = /(?<![A-Za-z0-9_:])([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+)\s*(?:\(|(?=\s+(?:[A-Za-z_$'"]|\{|\[)))/
   BARE_CALL_REGEX      = /(?<![A-Za-z0-9_:>$])([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(|(?=\s+(?:[A-Za-z_$'"]|\{|\[)))/
 
+  # The structural scanners below address characters by integer index. On a
+  # String that is not single-byte-optimizable (i.e. contains any non-ASCII
+  # character — an em-dash in a comment is enough), `String#[](Int)` is O(n),
+  # so the per-character loops degrade to O(n²) and can hang the scan on a
+  # large file. Working over an `Array(Char)` keeps every index access O(1)
+  # while preserving exact character semantics; the only structural tokens we
+  # ever match are ASCII, and substrings are rebuilt from the real characters.
+
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
-    stripped = strip_nested_sub_bodies(strip_non_code(body))
+    stripped = strip_nested_sub_bodies(strip_non_code(body).chars)
 
     stripped.each_line.with_index do |line, offset|
       scan_line(line, file_path, start_line + offset, entries)
@@ -66,12 +74,13 @@ module Noir::PerlCalleeExtractor
 
   def named_sub_bodies(source : String, file_path : String) : Hash(String, SubBody)
     bodies = {} of String => SubBody
-    stripped = strip_non_code(source)
+    chars = source.chars
+    stripped = strip_non_code(chars)
 
     stripped.scan(/\bsub\s+([A-Za-z_][A-Za-z0-9_]*)\b/) do |match|
       sub_index = match.begin(0) || 0
-      next unless sub_keyword_at?(source, sub_index)
-      next unless body = extract_sub_at(source, sub_index)
+      next unless sub_keyword_at?(chars, sub_index)
+      next unless body = extract_sub_at(chars, sub_index)
 
       body_text, start_line = body
       bodies[match[1]] ||= {body: body_text, path: file_path, start_line: start_line}
@@ -84,40 +93,54 @@ module Noir::PerlCalleeExtractor
                         start_index : Int32,
                         search_limit : Int32 = source.size,
                         body_limit : Int32 = source.size) : Tuple(String, Int32)?
-    sub_index = find_keyword(source, "sub", start_index, search_limit)
+    chars = source.chars
+    sub_index = find_keyword(chars, "sub", start_index, search_limit)
     return unless sub_index
 
-    extract_sub_at(source, sub_index, body_limit)
+    extract_sub_at(chars, sub_index, body_limit)
   end
 
+  # Public String overload kept for callers outside this module.
   def extract_sub_at(source : String,
                      sub_index : Int32,
                      limit : Int32 = source.size) : Tuple(String, Int32)?
-    return unless sub_keyword_at?(source, sub_index)
-
-    open_brace = find_char(source, '{', sub_index, limit)
-    return unless open_brace
-    close_brace = find_matching_delimiter(source, open_brace, '{', '}', limit)
-    return unless close_brace
-
-    {source[(open_brace + 1)...close_brace], line_number_for(source, open_brace + 1)}
+    extract_sub_at(source.chars, sub_index, limit)
   end
 
+  def extract_sub_at(chars : Array(Char),
+                     sub_index : Int32,
+                     limit : Int32 = chars.size) : Tuple(String, Int32)?
+    return unless sub_keyword_at?(chars, sub_index)
+
+    open_brace = find_char(chars, '{', sub_index, limit)
+    return unless open_brace
+    close_brace = find_matching_delimiter(chars, open_brace, '{', '}', limit)
+    return unless close_brace
+
+    {chars[(open_brace + 1)...close_brace].join, line_number_for(chars, open_brace + 1)}
+  end
+
+  # Public String overload kept for callers outside this module.
   def find_matching_delimiter(source : String, open_index : Int32, open_char : Char, close_char : Char,
                               limit : Int32 = source.size) : Int32?
+    find_matching_delimiter(source.chars, open_index, open_char, close_char, limit)
+  end
+
+  def find_matching_delimiter(chars : Array(Char), open_index : Int32, open_char : Char, close_char : Char,
+                              limit : Int32 = chars.size) : Int32?
     depth = 0
     index = open_index
 
-    while index < limit && index < source.size
-      char = source[index]
-      if comment_start?(source, index)
-        index = skip_comment(source, index, limit)
+    while index < limit && index < chars.size
+      char = chars[index]
+      if comment_start?(chars, index)
+        index = skip_comment(chars, index, limit)
         next
-      elsif quote_like_start?(source, index)
-        index = skip_quote_like(source, index, limit)
+      elsif quote_like_start?(chars, index)
+        index = skip_quote_like(chars, index, limit)
         next
       elsif char == '"' || char == '\''
-        index = skip_short_string(source, index, limit)
+        index = skip_short_string(chars, index, limit)
         next
       elsif char == open_char
         depth += 1
@@ -132,25 +155,30 @@ module Noir::PerlCalleeExtractor
     nil
   end
 
+  # Public String overload kept for callers outside this module.
   def strip_non_code(source : String) : String
+    strip_non_code(source.chars)
+  end
+
+  def strip_non_code(chars : Array(Char)) : String
     stripped = String::Builder.new
     index = 0
 
-    while index < source.size
-      char = source[index]
-      if comment_start?(source, index)
-        finish = skip_comment(source, index, source.size)
-        append_blanks(stripped, source, index, finish)
+    while index < chars.size
+      char = chars[index]
+      if comment_start?(chars, index)
+        finish = skip_comment(chars, index, chars.size)
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
-      elsif quote_like_start?(source, index)
-        finish = skip_quote_like(source, index, source.size)
-        append_string_placeholder(stripped, source, index, finish)
+      elsif quote_like_start?(chars, index)
+        finish = skip_quote_like(chars, index, chars.size)
+        append_string_placeholder(stripped, chars, index, finish)
         index = finish
         next
       elsif char == '"' || char == '\''
-        finish = skip_short_string(source, index, source.size)
-        append_string_placeholder(stripped, source, index, finish)
+        finish = skip_short_string(chars, index, chars.size)
+        append_string_placeholder(stripped, chars, index, finish)
         index = finish
         next
       end
@@ -162,11 +190,25 @@ module Noir::PerlCalleeExtractor
     stripped.to_s
   end
 
+  # Public String overload kept for callers outside this module.
   def line_number_for(source : String, index : Int32) : Int32
     return 1 if index <= 0
 
     limit = index > source.size ? source.size : index
     source[0...limit].count('\n') + 1
+  end
+
+  def line_number_for(chars : Array(Char), index : Int32) : Int32
+    return 1 if index <= 0
+
+    limit = index > chars.size ? chars.size : index
+    count = 1
+    i = 0
+    while i < limit
+      count += 1 if chars[i] == '\n'
+      i += 1
+    end
+    count
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
@@ -213,29 +255,29 @@ module Noir::PerlCalleeExtractor
     !!prefix.match(/\bsub\s+$/)
   end
 
-  private def strip_nested_sub_bodies(source : String) : String
+  private def strip_nested_sub_bodies(chars : Array(Char)) : String
     stripped = String::Builder.new
     index = 0
 
-    while index < source.size
-      if sub_keyword_at?(source, index)
-        finish = find_matching_sub_end(source, index) || index + "sub".size
-        append_blanks(stripped, source, index, finish)
+    while index < chars.size
+      if sub_keyword_at?(chars, index)
+        finish = find_matching_sub_end(chars, index) || index + "sub".size
+        append_blanks(stripped, chars, index, finish)
         index = finish
         next
       end
 
-      stripped << source[index]
+      stripped << chars[index]
       index += 1
     end
 
     stripped.to_s
   end
 
-  private def find_matching_sub_end(source : String, sub_index : Int32) : Int32?
-    open_brace = find_char(source, '{', sub_index, source.size)
+  private def find_matching_sub_end(chars : Array(Char), sub_index : Int32) : Int32?
+    open_brace = find_char(chars, '{', sub_index, chars.size)
     return unless open_brace
-    close_brace = find_matching_delimiter(source, open_brace, '{', '}', source.size)
+    close_brace = find_matching_delimiter(chars, open_brace, '{', '}', chars.size)
     return unless close_brace
     close_brace + 1
   end
@@ -259,22 +301,22 @@ module Noir::PerlCalleeExtractor
     name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2").downcase
   end
 
-  private def find_keyword(source : String, keyword : String, start_index : Int32, limit : Int32) : Int32?
+  private def find_keyword(chars : Array(Char), keyword : String, start_index : Int32, limit : Int32) : Int32?
     index = start_index
 
-    while index < limit && index < source.size
-      if comment_start?(source, index)
-        index = skip_comment(source, index, limit)
+    while index < limit && index < chars.size
+      if comment_start?(chars, index)
+        index = skip_comment(chars, index, limit)
         next
-      elsif quote_like_start?(source, index)
-        index = skip_quote_like(source, index, limit)
+      elsif quote_like_start?(chars, index)
+        index = skip_quote_like(chars, index, limit)
         next
-      elsif source[index] == '"' || source[index] == '\''
-        index = skip_short_string(source, index, limit)
+      elsif chars[index] == '"' || chars[index] == '\''
+        index = skip_short_string(chars, index, limit)
         next
-      elsif identifier_start?(source[index])
+      elsif identifier_start?(chars[index])
         token_start = index
-        token, index = read_identifier(source, index, limit)
+        token, index = read_identifier(chars, index, limit)
         return token_start if token == keyword
         next
       end
@@ -285,22 +327,22 @@ module Noir::PerlCalleeExtractor
     nil
   end
 
-  private def find_char(source : String, target : Char, start_index : Int32, limit : Int32) : Int32?
+  private def find_char(chars : Array(Char), target : Char, start_index : Int32, limit : Int32) : Int32?
     index = start_index
 
-    while index < limit && index < source.size
-      if comment_start?(source, index)
-        index = skip_comment(source, index, limit)
+    while index < limit && index < chars.size
+      if comment_start?(chars, index)
+        index = skip_comment(chars, index, limit)
         next
-      elsif quote_like_start?(source, index)
-        index = skip_quote_like(source, index, limit)
+      elsif quote_like_start?(chars, index)
+        index = skip_quote_like(chars, index, limit)
         next
-      elsif source[index] == '"' || source[index] == '\''
-        index = skip_short_string(source, index, limit)
+      elsif chars[index] == '"' || chars[index] == '\''
+        index = skip_short_string(chars, index, limit)
         next
       end
 
-      return index if source[index] == target
+      return index if chars[index] == target
 
       index += 1
     end
@@ -308,21 +350,21 @@ module Noir::PerlCalleeExtractor
     nil
   end
 
-  private def sub_keyword_at?(source : String, index : Int32) : Bool
-    return false unless source[index, "sub".size]? == "sub"
-    before = index > 0 ? source[index - 1] : '\0'
+  private def sub_keyword_at?(chars : Array(Char), index : Int32) : Bool
+    return false unless chars[index]? == 's' && chars[index + 1]? == 'u' && chars[index + 2]? == 'b'
+    before = index > 0 ? chars[index - 1] : '\0'
     after_index = index + "sub".size
-    after = after_index < source.size ? source[after_index] : '\0'
+    after = after_index < chars.size ? chars[after_index] : '\0'
     !identifier_part?(before) && !identifier_part?(after)
   end
 
-  private def read_identifier(source : String, index : Int32, limit : Int32) : Tuple(String, Int32)
+  private def read_identifier(chars : Array(Char), index : Int32, limit : Int32) : Tuple(String, Int32)
     cursor = index
-    while cursor < limit && cursor < source.size && identifier_part?(source[cursor])
+    while cursor < limit && cursor < chars.size && identifier_part?(chars[cursor])
       cursor += 1
     end
 
-    {source[index...cursor], cursor}
+    {chars[index...cursor].join, cursor}
   end
 
   private def identifier_start?(char : Char) : Bool
@@ -333,54 +375,54 @@ module Noir::PerlCalleeExtractor
     char.ascii_alphanumeric? || char == '_'
   end
 
-  private def comment_start?(source : String, index : Int32) : Bool
-    source[index] == '#'
+  private def comment_start?(chars : Array(Char), index : Int32) : Bool
+    chars[index] == '#'
   end
 
-  private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
+  private def skip_comment(chars : Array(Char), index : Int32, limit : Int32) : Int32
     cursor = index
-    while cursor < limit && cursor < source.size && source[cursor] != '\n'
+    while cursor < limit && cursor < chars.size && chars[cursor] != '\n'
       cursor += 1
     end
     cursor
   end
 
-  private def quote_like_start?(source : String, index : Int32) : Bool
-    return false unless index < source.size
-    return false unless source[index] == 'q'
-    return false if index > 0 && identifier_part?(source[index - 1])
+  private def quote_like_start?(chars : Array(Char), index : Int32) : Bool
+    return false unless index < chars.size
+    return false unless chars[index] == 'q'
+    return false if index > 0 && identifier_part?(chars[index - 1])
 
     cursor = index + 1
-    if cursor < source.size && {'q', 'r', 'w', 'x'}.includes?(source[cursor])
+    if cursor < chars.size && {'q', 'r', 'w', 'x'}.includes?(chars[cursor])
       cursor += 1
-    elsif cursor < source.size && identifier_part?(source[cursor])
+    elsif cursor < chars.size && identifier_part?(chars[cursor])
       return false
     end
 
-    while cursor < source.size && source[cursor].whitespace?
+    while cursor < chars.size && chars[cursor].whitespace?
       cursor += 1
     end
-    return false if cursor >= source.size
+    return false if cursor >= chars.size
 
-    !!quote_close_char(source[cursor])
+    !!quote_close_char(chars[cursor])
   end
 
-  private def skip_quote_like(source : String, index : Int32, limit : Int32) : Int32
+  private def skip_quote_like(chars : Array(Char), index : Int32, limit : Int32) : Int32
     cursor = index + 1
-    cursor += 1 if cursor < limit && cursor < source.size && {'q', 'r', 'w', 'x'}.includes?(source[cursor])
-    while cursor < limit && cursor < source.size && source[cursor].whitespace?
+    cursor += 1 if cursor < limit && cursor < chars.size && {'q', 'r', 'w', 'x'}.includes?(chars[cursor])
+    while cursor < limit && cursor < chars.size && chars[cursor].whitespace?
       cursor += 1
     end
-    return index + 1 if cursor >= limit || cursor >= source.size
+    return index + 1 if cursor >= limit || cursor >= chars.size
 
-    open_char = source[cursor]
+    open_char = chars[cursor]
     close_char = quote_close_char(open_char)
     return index + 1 unless close_char
 
     cursor += 1
     escaped = false
-    while cursor < limit && cursor < source.size
-      char = source[cursor]
+    while cursor < limit && cursor < chars.size
+      char = chars[cursor]
       if escaped
         escaped = false
       elsif char == '\\'
@@ -404,13 +446,13 @@ module Noir::PerlCalleeExtractor
     end
   end
 
-  private def skip_short_string(source : String, index : Int32, limit : Int32) : Int32
-    quote = source[index]
+  private def skip_short_string(chars : Array(Char), index : Int32, limit : Int32) : Int32
+    quote = chars[index]
     cursor = index + 1
     escaped = false
 
-    while cursor < limit && cursor < source.size
-      char = source[cursor]
+    while cursor < limit && cursor < chars.size
+      char = chars[cursor]
       if escaped
         escaped = false
       elsif char == '\\'
@@ -424,19 +466,19 @@ module Noir::PerlCalleeExtractor
     limit
   end
 
-  private def append_blanks(builder : String::Builder, source : String, start_index : Int32, finish_index : Int32)
+  private def append_blanks(builder : String::Builder, chars : Array(Char), start_index : Int32, finish_index : Int32)
     index = start_index
-    while index < finish_index && index < source.size
-      builder << (source[index] == '\n' ? '\n' : ' ')
+    while index < finish_index && index < chars.size
+      builder << (chars[index] == '\n' ? '\n' : ' ')
       index += 1
     end
   end
 
-  private def append_string_placeholder(builder : String::Builder, source : String, start_index : Int32, finish_index : Int32)
+  private def append_string_placeholder(builder : String::Builder, chars : Array(Char), start_index : Int32, finish_index : Int32)
     placeholder_written = false
     index = start_index
-    while index < finish_index && index < source.size
-      if source[index] == '\n'
+    while index < finish_index && index < chars.size
+      if chars[index] == '\n'
         builder << '\n'
       elsif !placeholder_written
         builder << ' '
