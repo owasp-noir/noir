@@ -52,6 +52,19 @@ expected_endpoints = [
   build.call("https://myapp.example.com/complex/:id", "universal-link", [Param.new("id", "", "path")], [] of String),
   # Exported, data-less component (android-intent), synthetic intent:// scheme
   build.call("intent://com.example.myapp/.SyncService", "android-intent", no_params, [] of String),
+  # Exported components with NO intent-filter: explicit-intent IPC surfaces.
+  # The activity ships handler source, so the linker grafts the intent read +
+  # forward and the `token` extra; the service / receiver are config-only here.
+  build.call("intent://com.example.myapp/.ExportedActivity", "android-intent", [
+    Param.new("token", "", "extra"),
+  ], ["intent.getStringExtra", "handleExplicitIntent", "startActivity"]),
+  build.call("intent://com.example.myapp/.ExportedService", "android-intent", no_params, [] of String),
+  build.call("intent://com.example.myapp/.ExportedReceiver", "android-intent", no_params, [] of String),
+  # Filter-less exported activity-alias: addressed by its own name, but `via`
+  # resolves to targetActivity, so it links AliasTargetActivity's callees.
+  build.call("intent://com.example.myapp/.ExportedAlias", "android-intent", [
+    Param.new("aliasToken", "", "extra"),
+  ], ["intent.getStringExtra", "dispatchAlias"]),
   # gradle manifestPlaceholders: ${deepLinkScheme} / ${deepLinkHost} resolved
   # from build.gradle defaultConfig (the buildTypes override must not win)
   build.call("myapp://links.example.com", "mobile-scheme", no_params, [] of String),

@@ -6,12 +6,16 @@ module Analyzer::Mobile
   #   * custom URL scheme deep links (intent-filter > data android:scheme)
   #   * verified App Links (autoVerify intent-filter on http/https)
   #   * exported components with a data-less action filter (IPC surface)
+  #   * exported components with no intent-filter (explicit-intent surface)
   #   * Jetpack Navigation deep links (res/navigation/*.xml <deepLink>)
   #
   # One endpoint is emitted per deep-link URI; the handling component lives
   # in `metadata["via"]`, not a separate entry. A bare `intent://component`
-  # endpoint is emitted only for exported components whose filter declares
-  # an action but no <data> URI (and isn't the launcher).
+  # endpoint models the Android IPC surface: it is emitted for an exported
+  # component whose filter declares an action but no <data> URI (and isn't
+  # the launcher), and for an exported component with no intent-filter at all
+  # — the latter is still reachable by an explicit intent naming the component
+  # (tagged `explicit` in metadata).
   #
   # All endpoints keep method = "GET"; the mobile semantics live in
   # `protocol` (mobile-scheme / universal-link / android-intent). `@string/`
@@ -71,13 +75,31 @@ module Analyzer::Mobile
                                   package : String, strings : Hash(String, String),
                                   placeholders : Hash(String, String),
                                   path : String, seen_urls : Set(String))
+      # A component explicitly disabled in the manifest can't be launched
+      # (until something re-enables it at runtime), so it isn't a live entry
+      # point — skip it regardless of how it would otherwise be reached.
+      return if attr(component, "enabled") == "false"
+
       exported = bool_attr(component, "exported")
       component_name = substitute(attr(component, "name") || "", placeholders)
       handler_name = component_tag == "activity-alias" ? substitute(attr(component, "targetActivity") || component_name, placeholders) : component_name
 
       filters = [] of XML::Node
       each_child(component, "intent-filter") { |f| filters << f }
-      return if filters.empty?
+
+      if filters.empty?
+        # No intent-filter: a filter-less component defaults to NOT exported,
+        # so it is reachable from another app only when `exported="true"` is
+        # set explicitly — and then an explicit intent naming `package/component`
+        # still reaches it without any action/category/data. The launcher is the
+        # only filter-less component that is implicitly an app surface, and it
+        # always declares a MAIN filter, so it never lands here.
+        if exported
+          emit_explicit_component_endpoint(component_name, handler_name, component_tag,
+            package, attr(component, "permission"), path, seen_urls)
+        end
+        return
+      end
 
       filters.each do |filter|
         actions = collect_names(filter, "action")
@@ -230,6 +252,41 @@ module Analyzer::Mobile
       endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
       endpoint.protocol = "android-intent"
       endpoint.metadata = build_metadata("", actions, categories, "", package)
+
+      @result << endpoint
+    end
+
+    # Emits an android-intent endpoint for an exported component that declares
+    # no intent-filter. Such a component can't be matched implicitly, but an
+    # explicit intent naming `package/component` still reaches it, so it is part
+    # of the IPC attack surface a security reviewer wants inventoried. Reuses
+    # the synthetic intent:// scheme (so the optimizer/linker treat it like any
+    # other intent component) and records the component kind, the explicit/
+    # exported flags, and any guarding `android:permission` in metadata.
+    private def emit_explicit_component_endpoint(component_name : String, handler_name : String,
+                                                 component_tag : String, package : String,
+                                                 permission : String?, path : String,
+                                                 seen_urls : Set(String))
+      component = component_name.empty? ? package : "#{package}/#{component_name}"
+      url = "intent://#{component}"
+      return unless seen_urls.add?(url)
+
+      endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
+      endpoint.protocol = "android-intent"
+
+      metadata = {} of String => String
+      # An activity-alias is addressed by its own name (kept in the URL), but
+      # its handler code lives in the target activity — surface that as `via`
+      # so the code linker resolves the right class.
+      metadata["via"] = handler_name unless handler_name.empty? || handler_name == component_name
+      metadata["component_type"] = component_tag
+      metadata["exported"] = "true"
+      metadata["explicit"] = "true"
+      metadata["package"] = package unless package.empty?
+      if perm = permission
+        metadata["permission"] = perm unless perm.empty?
+      end
+      endpoint.metadata = metadata
 
       @result << endpoint
     end

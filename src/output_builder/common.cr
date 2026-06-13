@@ -12,7 +12,10 @@ class OutputBuilderCommon < OutputBuilder
 
   # Fixed order so plain output is deterministic. The protocol drives the
   # prefix and "path" comes from path params, so neither is repeated here.
-  MOBILE_METADATA_KEYS = ["via", "query", "action", "category", "host", "package", "extras"]
+  # component_type/exported/explicit/permission only appear on explicit-intent
+  # (filter-less exported) components; absent keys are skipped per endpoint.
+  MOBILE_METADATA_KEYS = ["via", "query", "action", "category", "host", "package",
+                          "component_type", "exported", "explicit", "permission", "extras"]
 
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
