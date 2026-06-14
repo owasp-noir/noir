@@ -510,7 +510,7 @@ module NoirTechs
           :cookie => false,
         },
         :static_path => false,
-        :websocket   => false,
+        :websocket   => true,
       },
     },
     :dart_serverpod => {

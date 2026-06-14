@@ -591,7 +591,7 @@ Each card below lists a framework's supported features. **Route** covers endpoin
         <span class="tech-chip off">header</span>
         <span class="tech-chip off">cookie</span>
         <span class="tech-chip off">static</span>
-        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">websocket</span>
         <span class="tech-chip on">callee</span>
       </div>
     </div>

@@ -33,6 +33,9 @@ expected_endpoints = [
   # mirror and contributes nothing.)
   Endpoint.new("/articles/{id}", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/articles/{id}", "PUT", [Param.new("id", "", "path")]),
+  # `ws.dart` upgrades to a WebSocket (`webSocketHandler`), so it serves a
+  # single GET (the upgrade handshake) — not the fall-back verb set.
+  Endpoint.new("/ws", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/dart/dart_frog/", {
@@ -46,4 +49,12 @@ tester.perform_tests
 # as an HTTP endpoint.
 it "ignores routes/ files without an onRequest handler" do
   tester.app.endpoints.any? { |e| e.url == "/dashboard_route" }.should be_false
+end
+
+# A `webSocketHandler` route is a single GET with the `ws` protocol, not a
+# 5-verb fall-back.
+it "narrows a WebSocket route to GET and marks the ws protocol" do
+  ws = tester.app.endpoints.select { |e| e.url == "/ws" }
+  ws.map(&.method).should eq(["GET"])
+  ws.first.protocol.should eq("ws")
 end

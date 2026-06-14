@@ -86,11 +86,15 @@ module Analyzer::Dart
           # other non-route `.dart` that happens to live under `routes/`.
           next unless content.matches?(ON_REQUEST_HANDLER_REGEX)
 
-          methods = detect_methods(content)
+          # A `dart_frog_web_socket` route upgrades an HTTP GET; it does
+          # not serve the other verbs, so narrow it to GET (rather than the
+          # fall-back verb set) and mark the protocol as WebSocket.
+          websocket = websocket_route?(content)
+          methods = websocket ? ["GET"] : detect_methods(content)
           callees = include_callee ? callees_for_on_request(content, path) : [] of Noir::DartCalleeExtractor::Entry
           mutex.synchronize do
             methods.each do |verb|
-              result << build_endpoint(url, verb, path, callees)
+              result << build_endpoint(url, verb, path, callees, websocket)
             end
           end
         end
@@ -101,11 +105,19 @@ module Analyzer::Dart
       result
     end
 
+    # A route file whose handler upgrades to a WebSocket. `webSocketHandler`
+    # is the `package:dart_frog_web_socket` entry point.
+    private def websocket_route?(content : String) : Bool
+      content.includes?("webSocketHandler")
+    end
+
     private def build_endpoint(url : String,
                                verb : String,
                                path : String,
-                               callees : Array(Noir::DartCalleeExtractor::Entry) = [] of Noir::DartCalleeExtractor::Entry) : Endpoint
+                               callees : Array(Noir::DartCalleeExtractor::Entry) = [] of Noir::DartCalleeExtractor::Entry,
+                               websocket : Bool = false) : Endpoint
       endpoint = Endpoint.new(url, verb)
+      endpoint.protocol = "ws" if websocket
       endpoint.details = Details.new(PathInfo.new(path, 1))
       url.scan(/\{(\w+)\}/) do |match|
         endpoint.push_param(Param.new(match[1], "", "path"))

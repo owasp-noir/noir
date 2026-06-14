@@ -591,7 +591,7 @@ sort_by = "weight"
         <span class="tech-chip off">header</span>
         <span class="tech-chip off">cookie</span>
         <span class="tech-chip off">static</span>
-        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">websocket</span>
         <span class="tech-chip on">callee</span>
       </div>
     </div>
