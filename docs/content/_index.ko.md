@@ -101,7 +101,7 @@ template = "landing"
         <div class="feature-number">06</div>
         <h3>유연한 출력</h3>
         <div class="feature-formats">
-          <code>JSON</code><code>JSONL</code><code>YAML</code><code>TOML</code><code>OAS2</code><code>OAS3</code><code>SARIF</code><code>HTML</code><code>Markdown</code><code>cURL</code><code>HTTPie</code><code>PowerShell</code><code>Postman</code><code>Mermaid</code><code>Only-URL</code><code>Only-Param</code><code>Only-Header</code><code>Only-Cookie</code><code>Only-Tag</code>
+          <code>JSON</code><code>JSONL</code><code>YAML</code><code>TOML</code><code>OAS2</code><code>OAS3</code><code>SARIF</code><code>HTML</code><code>Markdown</code><code>cURL</code><code>HTTPie</code><code>PowerShell</code><code>ADB</code><code>simctl</code><code>Postman</code><code>Mermaid</code><code>Only-URL</code><code>Only-Param</code><code>Only-Header</code><code>Only-Cookie</code><code>Only-Tag</code>
         </div>
       </div>
     </div>

@@ -53,6 +53,46 @@ Invoke-WebRequest -Method POST -Uri "https://www.example.com/query" -Headers @{"
 Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
 
+## ADB (Android)
+
+모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트들은 이를 건너뜁니다. `-f adb` 는 그 반대로 동작합니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령어로 변환합니다.
+
+`adb` 는 Android 전용이므로, Android 출처 진입점만 명령어로 만들고 실행할 수 없는 나머지(HTTP 엔드포인트, iOS 스킴은 [`-f simctl`](#simctl-ios) 사용, 도메인만 선언하는 App Links)는 건너뜁니다. 건너뛴 항목은 종류별로 한 줄씩 stderr 경고로 알려줍니다(덕분에 stdout 명령어 목록은 파이프로 넘기기 좋게 유지됨).
+
+```bash
+noir scan ./my-android-app -f adb
+```
+
+출력 예시
+```bash
+# 커스텀 스킴 딥링크 / 검증된 앱 링크 → VIEW 인텐트로 am start
+adb shell am start -a 'android.intent.action.VIEW' -c 'android.intent.category.BROWSABLE' -d 'myapp://host/path' -p 'com.example.app'
+# 명시적 액티비티 / 서비스 / 리시버 → am start / startservice / broadcast
+adb shell am start -n 'com.example.app/.ExportedActivity'
+adb shell am startservice -n 'com.example.app/.SyncService'
+adb shell am broadcast -n 'com.example.app/.BootReceiver'
+# 익스포트된 ContentProvider → content query
+adb shell content query --uri 'content://com.example.app.provider'
+```
+
+액션, 카테고리, 패키지는 매니페스트의 intent-filter에서 가져오므로 각 실행 명령이 선언된 필터와 일치합니다. 핸들러에서 발견된 인텐트 extra는 `--es` 문자열 extra로 출력됩니다(빈 템플릿으로 두거나 `--pvalue` 로 값을 채울 수 있습니다). 이 진입점들이 어떻게 추출되는지는 [Mobile Apps](../../supported/mobile/) 문서를 참고하세요.
+
+## simctl (iOS)
+
+`-f simctl` 은 `-f adb` 의 iOS 짝입니다. Noir가 찾아낸 iOS 커스텀 스킴 딥링크와 유니버설 링크를 부팅된 iOS 시뮬레이터에서 열 수 있는 [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/simulator) 명령어로 변환합니다. iOS에는 인텐트나 콘텐츠 프로바이더에 해당하는 개념이 없어, 모든 명령은 단일 `openurl` 입니다.
+
+```bash
+noir scan ./my-ios-app -f simctl
+```
+
+출력 예시
+```bash
+xcrun simctl openurl booted 'myapp://host/path?token='
+xcrun simctl openurl booted 'https://app.example.com/buy'
+```
+
+`-f adb` 와 마찬가지로 `simctl` 도 플랫폼 전용입니다. iOS 출처 진입점만 명령어로 만들고 열 수 없는 나머지(HTTP 엔드포인트, Android 진입점은 `-f adb` 사용, 도메인만 선언하는 App Links)는 건너뛰며, 종류별로 한 줄씩 stderr 경고로 알려줍니다.
+
 ## 파라미터 값 채우기
 
 Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`, `query=` …) 생성된 명령은 템플릿처럼 동작합니다. 그대로 실행하거나 퍼징 입력 시드를 만들고 싶다면 `--pvalue` 로 값을 미리 채울 수 있습니다.
