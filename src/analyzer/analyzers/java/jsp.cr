@@ -57,7 +57,7 @@ module Analyzer::Java
                       content = file.gets_to_end
                       params_query = extract_params(content)
                       details = Details.new(PathInfo.new(path))
-                      result << Endpoint.new("/#{relative_path}", "GET", params_query, details)
+                      result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
                       extract_form_endpoints(content, details).each do |endpoint|
                         result << endpoint
                       end
@@ -346,6 +346,13 @@ module Analyzer::Java
       patterns = [] of String
       body = annotation_body.strip
 
+      # `initParams = {@WebInitParam(name="x", value="y"), ...}` nests its
+      # own `value=` attributes that are init-param values, NOT URL
+      # patterns. Strip the block before scanning so a
+      # `@WebInitParam(value="Not provided")` can't surface as a
+      # `/Not provided` route.
+      body = body.gsub(/\binitParams\s*=\s*\{[^}]*\}/m, "")
+
       if body.starts_with?("\"") || body.starts_with?("'") || body.starts_with?("{")
         body.scan(/["']([^"']+)["']/) do |match|
           add_pattern(patterns, match[1])
@@ -439,6 +446,23 @@ module Analyzer::Java
 
     private def web_inf_jsp?(relative_path : String) : Bool
       relative_path.split(File::SEPARATOR).includes?("WEB-INF")
+    end
+
+    # A JSP is served relative to the WEB application root, not the repo
+    # root. `src/main/webapp/jsp/index.jsp` is reachable at `/jsp/index.jsp`,
+    # so strip the build-layout webapp-root prefix; otherwise the whole
+    # source path (`/libraries-otel/.../src/main/webapp/index.jsp`) leaked
+    # into the URL.
+    WEBAPP_ROOT_MARKERS = ["src/main/webapp/", "src/main/resources/META-INF/resources/", "WebContent/", "WebRoot/"]
+
+    private def jsp_request_path(relative_path : String) : String
+      normalized = relative_path.gsub(File::SEPARATOR, "/")
+      WEBAPP_ROOT_MARKERS.each do |marker|
+        if idx = normalized.index(marker)
+          return "/#{normalized[(idx + marker.size)..]}"
+        end
+      end
+      "/#{normalized}"
     end
 
     private def xml_child_text(node : XML::Node, local_name : String) : String
