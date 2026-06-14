@@ -1,47 +1,197 @@
 require "../../engines/crystal_engine"
+require "../../../utils/url_path"
 
 module Analyzer::Crystal
   class Marten < CrystalEngine
     alias HandlerActionKey = Tuple(String, String, String)
     @handler_callees = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
+    # One `path "…", Target[, name: …]` line inside a routing map. `target`
+    # is either a handler const (leaf route) or another map const (mount).
+    record MartenMapEntry, path : String, target : String, file : String, line : Int32
+
+    # A `Marten::Routing::Map.draw do … end` block: the application's main
+    # map (`Marten.routes.draw`, fqn `__main__`) or a named sub-map
+    # (`Auth::ROUTES = Marten::Routing::Map.draw`, fqn `Auth::ROUTES`).
+    record MartenRouteMap, fqn : String, entries : Array(MartenMapEntry)
+
+    MAIN_MAP_FQN = "__main__"
+
     def analyze
       collect_public_dir_endpoints
       @handler_callees = include_callee? ? collect_handler_callees : Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
+      # Marten splits routing across files: a main `Marten.routes.draw`
+      # mounts per-app sub-maps (`path "/auth", Auth::ROUTES`) whose own
+      # `path` declarations live in `src/apps/*/routes.cr`. Parse every map
+      # up front so mounts can compose their prefix onto the sub-map's
+      # routes (`/auth` + `/signin` => `/auth/signin`) instead of emitting
+      # the sub-routes bare and the mount line as a junk endpoint.
+      main_maps = [] of MartenRouteMap
+      named_maps = Hash(String, MartenRouteMap).new
+      mutex = Mutex.new
+
       parallel_file_scan do |path|
-        result.concat(analyze_file(path))
+        local_main = [] of MartenRouteMap
+        local_named = Hash(String, MartenRouteMap).new
+        parse_route_maps_in_file(read_source_lines(path), path, local_main, local_named)
+        next if local_main.empty? && local_named.empty?
+        mutex.synchronize do
+          main_maps.concat(local_main)
+          local_named.each { |fqn, map| named_maps[fqn] = map }
+        end
       end
 
+      emit_maps(main_maps, named_maps)
       result
     end
 
+    # Map parsing replaces the per-file walk; `analyze` drives everything.
     def analyze_file(path : String) : Array(Endpoint)
-      endpoints = [] of Endpoint
-      lines = read_source_lines(path)
+      [] of Endpoint
+    end
 
-      last_endpoint = Endpoint.new("", "")
-      lines.each_with_index do |line, index|
-        # Parse route definitions
-        endpoint = line_to_endpoint(line)
-        unless endpoint.method.empty?
-          details = Details.new(PathInfo.new(path, index + 1))
-          endpoint.details = details
-          attach_route_callees(endpoint, line, path) if include_callee?
-          endpoints << endpoint
-          last_endpoint = endpoint
+    # Walk a file, collecting each routing map (main or named) it declares.
+    private def parse_route_maps_in_file(lines : Array(String),
+                                         path : String,
+                                         main_maps : Array(MartenRouteMap),
+                                         named_maps : Hash(String, MartenRouteMap)) : Nil
+      module_stack = [] of NamedTuple(name: String, indent: Int32)
+      index = 0
+
+      while index < lines.size
+        line = Noir::CrystalCalleeExtractor.strip_comment(lines[index])
+        content = line.lstrip
+        if content.empty?
+          index += 1
+          next
+        end
+        indent = line.size - content.size
+
+        while !module_stack.empty? && module_stack.last[:indent] >= indent
+          module_stack.pop
         end
 
-        # Parse parameter usage
-        param = line_to_param(line)
-        unless param.name.empty?
-          unless last_endpoint.method.empty?
-            last_endpoint.push_param(param)
+        if mod = content.match(/^(?:abstract\s+)?module\s+([A-Z]\w*(?:::[A-Z]\w*)*)/)
+          module_stack << {name: mod[1], indent: indent}
+          index += 1
+          next
+        end
+
+        if content.matches?(/^Marten\.routes\.draw\b/)
+          entries, index = parse_draw_block(lines, index, indent, path)
+          main_maps << MartenRouteMap.new(MAIN_MAP_FQN, entries)
+          next
+        end
+
+        if const = content.match(/^([A-Z]\w*)\s*=\s*Marten::Routing::Map\.draw\b/)
+          scope = module_stack.map(&.[:name]).join("::")
+          fqn = scope.empty? ? const[1] : "#{scope}::#{const[1]}"
+          entries, index = parse_draw_block(lines, index, indent, path)
+          named_maps[fqn] = MartenRouteMap.new(fqn, entries)
+          next
+        end
+
+        index += 1
+      end
+    end
+
+    # Collect the `path` entries of a `…draw do … end` block opened at
+    # `start_index`. Returns the entries and the index just past the
+    # block's closing `end`. Routes nested in an `if Marten.env.…` guard
+    # sit at a deeper indent and are still collected; the block closes at
+    # the first `end` back at (or shallower than) the opener's column.
+    private def parse_draw_block(lines : Array(String),
+                                 start_index : Int32,
+                                 opener_indent : Int32,
+                                 path : String) : Tuple(Array(MartenMapEntry), Int32)
+      entries = [] of MartenMapEntry
+      index = start_index + 1
+
+      while index < lines.size
+        line = Noir::CrystalCalleeExtractor.strip_comment(lines[index])
+        content = line.lstrip
+        if content.empty?
+          index += 1
+          next
+        end
+        indent = line.size - content.size
+
+        if indent <= opener_indent && content.matches?(/^end\b/)
+          index += 1
+          break
+        end
+
+        if route = content.match(/^path\s+['"](.*?)['"]\s*,\s*((?:::)?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)/)
+          route_path = normalize_crystal_interpolation(route[1])
+          entries << MartenMapEntry.new(route_path, route[2], path, index + 1)
+        end
+
+        index += 1
+      end
+
+      {entries, index}
+    end
+
+    # Emit endpoints by walking each main map and composing mount prefixes
+    # onto sub-map routes. A sub-map referenced by no map (orphan) is still
+    # emitted bare so its routes are never lost.
+    private def emit_maps(main_maps : Array(MartenRouteMap),
+                          named_maps : Hash(String, MartenRouteMap)) : Nil
+      referenced = Set(String).new
+      (main_maps + named_maps.values).each do |map|
+        map.entries.each do |entry|
+          if target = resolve_map(entry.target, named_maps)
+            referenced << target.fqn
           end
         end
       end
 
-      endpoints
+      main_maps.each { |map| walk_map(map, "", named_maps, Set(String).new) }
+      named_maps.each do |fqn, map|
+        next if referenced.includes?(fqn)
+        walk_map(map, "", named_maps, Set(String).new)
+      end
+    end
+
+    private def walk_map(map : MartenRouteMap,
+                         prefix : String,
+                         named_maps : Hash(String, MartenRouteMap),
+                         visiting : Set(String)) : Nil
+      return if visiting.includes?(map.fqn)
+      visiting = visiting.dup
+      visiting << map.fqn
+
+      map.entries.each do |entry|
+        if target = resolve_map(entry.target, named_maps)
+          walk_map(target, Noir::URLPath.join(prefix, entry.path), named_maps, visiting)
+        else
+          emit_leaf(entry, prefix)
+        end
+      end
+    end
+
+    private def resolve_map(target : String,
+                            named_maps : Hash(String, MartenRouteMap)) : MartenRouteMap?
+      normalized = normalize_absolute_crystal_const(target)
+      named_maps[normalized]? || named_maps.values.find(&.fqn.ends_with?("::#{normalized}"))
+    end
+
+    private def emit_leaf(entry : MartenMapEntry, prefix : String) : Nil
+      url = Noir::URLPath.join(prefix, entry.path)
+      return unless valid_crystal_route_path?(url)
+
+      endpoint = Endpoint.new(url, "GET")
+      endpoint.details = Details.new(PathInfo.new(entry.file, entry.line))
+
+      if include_callee?
+        handler = normalize_absolute_crystal_const(entry.target)
+        if callees = @handler_callees[handler_action_key(configured_base_for(entry.file), handler, "get")]?
+          attach_crystal_callees(endpoint, callees)
+        end
+      end
+
+      @result << endpoint
     end
 
     private def collect_public_dir_endpoints
@@ -122,21 +272,6 @@ module Analyzer::Crystal
       end
     end
 
-    private def attach_route_callees(endpoint : Endpoint, line : String, path : String)
-      handler = extract_route_target(line)
-      return unless handler
-
-      if callees = @handler_callees[handler_action_key(configured_base_for(path), handler, "get")]?
-        attach_crystal_callees(endpoint, callees)
-      end
-    end
-
-    private def extract_route_target(line : String) : String?
-      if match = line.match(/\bpath\s+['"][^'"]+['"]\s*,\s*((?:::)?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)/)
-        normalize_absolute_crystal_const(match[1])
-      end
-    end
-
     private def qualified_crystal_const(name : String, scope_stack : Array(Tuple(String, String))) : String
       return normalize_absolute_crystal_const(name) if name.starts_with?("::")
 
@@ -166,69 +301,6 @@ module Analyzer::Crystal
 
     private def handler_action_key(base : String, handler : String, action : String) : HandlerActionKey
       {base, handler, action}
-    end
-
-    def line_to_param(content : String) : Param
-      content = Noir::CrystalCalleeExtractor.strip_comment(content)
-
-      # Query parameters: request.query_params["param"]
-      if content.includes? "request.query_params["
-        param = content.split("request.query_params[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "query")
-      end
-
-      # Form/JSON data: request.data["param"]
-      if content.includes? "request.data["
-        param = content.split("request.data[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "form")
-      end
-
-      # Headers: request.headers["header"]
-      if content.includes? "request.headers["
-        param = content.split("request.headers[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "header")
-      end
-
-      # Cookies: request.cookies["cookie"]
-      if content.includes? "request.cookies["
-        param = content.split("request.cookies[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "cookie")
-      end
-
-      # Path parameters: params["param"]
-      if content.includes? "params["
-        param = content.split("params[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
-        return Param.new(param, "", "path")
-      end
-
-      Param.new("", "", "")
-    end
-
-    def line_to_endpoint(content : String) : Endpoint
-      content = Noir::CrystalCalleeExtractor.strip_comment(content)
-
-      # Parse Marten route definitions: path "/route", Handler
-      content.scan(/(?:^|[^.\w])path\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          route = normalize_crystal_interpolation(match[1].to_s)
-
-          # Extract HTTP methods from handler class patterns
-          # For now, assume GET for routes, but could be enhanced to detect handler methods
-          return Endpoint.new(route, "GET")
-        end
-      end
-
-      # Parse handler method definitions for specific HTTP methods
-      content.scan(/\bdef\s+(get|post|put|delete|patch|head|options)\s*/) do |match|
-        if match.size > 1
-          method = match[1].to_s.upcase
-          # Note: For handler methods, we'd need to associate them with routes
-          # This is a simplified version that just detects method handlers exist
-          return Endpoint.new("", method)
-        end
-      end
-
-      Endpoint.new("", "")
     end
   end
 end
