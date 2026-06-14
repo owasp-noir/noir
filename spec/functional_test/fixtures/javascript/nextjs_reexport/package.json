@@ -1,0 +1,8 @@
+{
+  "name": "nextjs-reexport-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "next": "15.5.15"
+  }
+}
