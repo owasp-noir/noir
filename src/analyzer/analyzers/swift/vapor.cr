@@ -10,9 +10,11 @@ module Analyzer::Swift
     # app.get("path") { ... }
     # app.post("path", "segment") { ... }
     # routes.get("path", ":param") { ... }
-    ROUTE_PATTERN              = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\(/
-    ON_ROUTE_PATTERN           = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
-    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*)\.)?grouped\s*\(/
+    ROUTE_PATTERN    = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\(/
+    ON_ROUTE_PATTERN = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
+    # The base may be a dotted receiver (`app.routes.grouped(...)`), an implicit
+    # `self` (bare `grouped(...)`), or a single identifier (`router.grouped(...)`).
+    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.)?grouped\s*\(/
     GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
     FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 

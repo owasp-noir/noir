@@ -2,6 +2,7 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/hello", "GET"),
+  Endpoint.new("/v2/ping", "GET"),
   Endpoint.new("/users", "POST"),
   Endpoint.new("/users/:userID", "GET"),
   Endpoint.new("/users/:userID/posts/:postID", "PUT"),
