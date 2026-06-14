@@ -44,5 +44,5 @@ it "composes nested Angel3 group() prefixes" do
 end
 
 it "does not treat a package:http client get() as a route" do
-  tester.app.endpoints.any? { |found| found.url.includes?("example.com") }.should be_false
+  tester.app.endpoints.any?(&.url.includes?("example.com")).should be_false
 end
