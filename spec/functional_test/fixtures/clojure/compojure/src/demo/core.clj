@@ -37,6 +37,19 @@
   (GET "/orders/:id{[0-9]+}" [id :<< as-int]
     {:id id})
 
+  ; An anonymous-fn coercion `#(Integer/parseInt %)` after `:<<` must be
+  ; dropped whole — the Java class/method symbols inside it (`Integer`,
+  ; `parseInt`) must NOT leak as query params. Only `n` is a path param.
+  (GET "/coerce/:n" [n :<< #(Integer/parseInt %)]
+    {:n n})
+
+  ; Vector path form with an inline regex constraint: the route path is the
+  ; vector's first string. The `:item-id #"[0-9]+"` constraint pair is routing
+  ; metadata, not a param. The kebab-case `item-id` must stay intact (the
+  ; optimizer must not truncate it to a phantom `item` path param).
+  (GET ["/items/:item-id" :item-id #"[0-9]+"] [item-id]
+    {:item-id item-id})
+
   (context "/api" []
     (POST "/users" request
       request)
