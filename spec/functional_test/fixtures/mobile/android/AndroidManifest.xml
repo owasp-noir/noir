@@ -221,5 +221,46 @@
         <activity android:name=".DisabledActivity" android:exported="true"
             android:enabled="false" />
 
+        <!-- Exported ContentProvider with no permission: world-reachable via
+             content://authority by any app. The handler source links the
+             query/openFile callees so the SQL sink surfaces in AI context. -->
+        <provider
+            android:name=".ExportedProvider"
+            android:authorities="com.example.myapp.provider"
+            android:exported="true" />
+
+        <!-- Exported provider guarded by read/write permissions and declaring
+             a path-permission override + ad-hoc URI grants (via the child
+             element). All ride in metadata; none suppress the surface. -->
+        <provider
+            android:name=".SecretProvider"
+            android:authorities="com.example.myapp.secret"
+            android:exported="true"
+            android:readPermission="com.example.permission.READ_SECRET"
+            android:writePermission="com.example.permission.WRITE_SECRET">
+            <path-permission android:pathPrefix="/public" />
+            <grant-uri-permission android:pathPattern=".*" />
+        </provider>
+
+        <!-- Multiple authorities: each is an independently addressable surface,
+             so two endpoints are emitted. grantUriPermissions via the attribute. -->
+        <provider
+            android:name=".MultiAuthProvider"
+            android:authorities="com.example.myapp.first;com.example.myapp.second"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+
+        <!-- NOT exported: internal only, must NOT be reported. -->
+        <provider
+            android:name=".InternalProvider"
+            android:authorities="com.example.myapp.internal"
+            android:exported="false" />
+
+        <!-- Default (no exported attribute): API 17+ defaults to not-exported,
+             so it must NOT be reported. -->
+        <provider
+            android:name=".DefaultProvider"
+            android:authorities="com.example.myapp.default" />
+
     </application>
 </manifest>

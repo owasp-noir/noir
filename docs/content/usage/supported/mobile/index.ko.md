@@ -12,7 +12,7 @@ Noir는 모바일 앱이 외부에 노출하는 진입점 — 딥링크와 expor
 
 | 플랫폼 | 소스 파일 | 추출 내용 |
 |---|---|---|
-| Android | `AndroidManifest.xml` | 커스텀 URL 스킴 딥링크, exported 인텐트 컴포넌트, 검증된 App Link |
+| Android | `AndroidManifest.xml` | 커스텀 URL 스킴 딥링크, exported 인텐트 컴포넌트, exported ContentProvider, 검증된 App Link |
 | Android | `res/values/strings.xml` | 스킴·호스트·경로에 쓰인 `@string/` 참조 해석 |
 | Android | `build.gradle` / `build.gradle.kts` | 패키지·컴포넌트 이름·스킴·호스트에 쓰인 `${applicationId}`와 커스텀 `manifestPlaceholders` 해석. 매니페스트에 `package` 속성이 없으면 패키지도 여기서 가져옵니다 |
 | Android | `res/navigation/*.xml` | Jetpack Navigation `<deepLink app:uri="...">` 딥링크 — 소속 destination이 처리 컴포넌트가 됩니다 |
@@ -31,9 +31,10 @@ Noir는 모바일 앱이 외부에 노출하는 진입점 — 딥링크와 expor
 |---|---|---|
 | `mobile-scheme` | 커스텀 URL 스킴 딥링크 | `myapp://complex/:id` |
 | `android-intent` | 인텐트로 도달 가능한 exported 컴포넌트 — data URI 없는 action 필터, 또는 intent-filter가 전혀 없는 경우(명시적 인텐트 전용) | `intent://com.example.app/.SyncService` |
+| `android-provider` | 다른 앱이 `content://authority` URI로 도달할 수 있는 exported ContentProvider | `content://com.example.app.provider` |
 | `universal-link` | 검증된 Android App Link / iOS 유니버설 링크, 또는 서버 측 `assetlinks.json` / `apple-app-site-association` 패턴 | `https://app.example.com/complex/:id`, `/buy/*` |
 
-plain 출력에서는 `SCHEME` / `INTENT` / `UNIVERSAL` 프리픽스로 표시됩니다. 처리 컴포넌트, 인텐트 action·category, 호스트, 패키지는 엔드포인트별 metadata 맵에 저장됩니다(JSON / YAML에 직렬화되며, 일반 HTTP 엔드포인트에서는 완전히 생략됩니다).
+plain 출력에서는 `SCHEME` / `INTENT` / `PROVIDER` / `UNIVERSAL` 프리픽스로 표시됩니다. 처리 컴포넌트, 인텐트 action·category, 호스트, 패키지는 엔드포인트별 metadata 맵에 저장됩니다(JSON / YAML에 직렬화되며, 일반 HTTP 엔드포인트에서는 완전히 생략됩니다).
 
 ```
 SCHEME myapp://complex/:id
@@ -63,5 +64,6 @@ SCHEME myapp://complex/:id
 * gradle 플레이스홀더는 매니페스트 위쪽에서 가장 가까운 `build.gradle(.kts)`를 읽어 해석합니다. 같은 플레이스홀더가 여러 번 선언되면(예: `buildTypes` 오버라이드) 먼저 선언된 쪽 — 관례상 `defaultConfig` — 이 우선하며, 빌드 variant별 값은 모델링하지 않습니다. gradle에 값이 없는 플레이스홀더는 URL에 그대로 남고 엔드포인트에 `unresolved` 태그가 붙습니다.
 * 스킴 없는 Jetpack Navigation URI(런타임에는 http·https 모두 매칭)는 `https` 하나로 추출합니다. `{arg}` 세그먼트는 `:arg` path 파라미터로, `?key={arg}` 쿼리 플레이스홀더는 `query` 파라미터로 바뀌고, 끝의 `.*` 와일드카드는 리터럴 프리픽스만 남깁니다.
 * intent-filter가 없는 `android:exported="true"` 컴포넌트는 명시적 인텐트 표면(`android-intent`, metadata에 `explicit`/`exported`/`component_type` 포함)으로 보고됩니다. action·category·data URI가 없어도, 컴포넌트 이름을 지정한 명시적 인텐트는 여전히 그 컴포넌트에 도달합니다. exported가 아니거나 `android:enabled="false"`인 필터 없는 컴포넌트는 보고하지 않습니다. 보호용 `android:permission`은 metadata에 기록되지만 표면을 숨기지는 않습니다 — `normal`/`dangerous` 권한은 다른 앱이 여전히 획득할 수 있기 때문입니다.
+* exported `<provider>`(ContentProvider)는 `android-provider` 표면으로 보고됩니다 — `android:authorities` 항목마다 `content://authority` 엔드포인트 하나씩. provider 클래스가 핸들러(`via`)로 연결되므로 `query` / `insert` / `openFile` 메서드의 callee가 수집되어, raw SQL·파일 싱크가 AI 컨텍스트에 드러납니다. `android:readPermission` / `android:writePermission` / `android:permission`, `android:grantUriPermissions`(또는 `<grant-uri-permission>` 자식), 그리고 `<path-permission>` 오버라이드의 존재 여부가 metadata에 실립니다 — 모두 기록만 하고 숨기지 않습니다. 명시적으로 exported된 provider만 보고합니다(최신 SDK에서 provider 기본값은 not-exported). `<path-permission>`의 경로별 실효 권한은 표시만 하고 해석하지는 않습니다.
 * `assetlinks.json`은 패키지 연결만 선언하고 경로는 없으므로 앱당 `/*` 엔드포인트 하나를 만듭니다. `apple-app-site-association`의 경로(`/buy/*`, `NOT /private/*`)와 `components`는 개별적으로 추출되며, AASA 제외 패턴은 `excluded` 태그가 붙습니다.
 * `apple-app-site-association`은 plain-JSON 형식만 파싱합니다. CMS로 서명된 AASA 파일(구형 앱)은 건너뜁니다.

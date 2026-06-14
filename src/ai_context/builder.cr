@@ -717,11 +717,16 @@ module NoirAIContext
         snippet: snippet
       ))
 
+      signal_description = if endpoint.protocol == "android-provider"
+                             "Exported ContentProvider entry point receives a content:// URI and selection from another app; review downstream SQL, file, and path handling."
+                           else
+                             "Mobile deep-link entry point receives URL/userActivity data from outside the app; review downstream parsing, routing, and WebView/intent usage."
+                           end
       context.push_signal(AIContextEntry.new(
         "deep_link_input",
         source_name,
         source: "mobile_deep_link",
-        description: "Mobile deep-link entry point receives URL/userActivity data from outside the app; review downstream parsing, routing, and WebView/intent usage.",
+        description: signal_description,
         path: source_anchor.try(&.path),
         line: source_anchor.try(&.line),
         confidence: 74,
@@ -741,6 +746,8 @@ module NoirAIContext
         "deep_link.universal_link"
       when "android-intent"
         "deep_link.android_intent"
+      when "android-provider"
+        "ipc.content_provider"
       else
         "deep_link.mobile_scheme"
       end
@@ -752,6 +759,8 @@ module NoirAIContext
         "Universal Link URL supplied by the operating system from an external HTTPS navigation."
       when "android-intent"
         "Android intent deep-link data supplied by another app or browser."
+      when "android-provider"
+        "ContentProvider query/openFile reachable from another app via content:// URI; review the URI, selection, and selectionArgs for SQL injection and path traversal."
       else
         "Custom URL-scheme deep-link supplied by another app or browser."
       end

@@ -65,6 +65,18 @@ expected_endpoints = [
   build.call("intent://com.example.myapp/.ExportedAlias", "android-intent", [
     Param.new("aliasToken", "", "extra"),
   ], ["intent.getStringExtra", "dispatchAlias"]),
+  # Exported ContentProvider (android-provider, content://authority). The
+  # handler source links the provider methods (query/insert), so the raw-SQL
+  # sinks surface as callees for AI context.
+  build.call("content://com.example.myapp.provider", "android-provider", no_params,
+    ["db.rawQuery", "dbHelper.writableDatabase.execSQL"]),
+  # Permission-guarded provider: config-only here (no handler source), but the
+  # read/write permissions + path-permission flag ride in metadata (asserted
+  # in the unit spec).
+  build.call("content://com.example.myapp.secret", "android-provider", no_params, [] of String),
+  # Multiple authorities -> one endpoint each.
+  build.call("content://com.example.myapp.first", "android-provider", no_params, [] of String),
+  build.call("content://com.example.myapp.second", "android-provider", no_params, [] of String),
   # gradle manifestPlaceholders: ${deepLinkScheme} / ${deepLinkHost} resolved
   # from build.gradle defaultConfig (the buildTypes override must not win)
   build.call("myapp://links.example.com", "mobile-scheme", no_params, [] of String),

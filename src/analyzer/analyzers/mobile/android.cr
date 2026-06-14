@@ -7,6 +7,7 @@ module Analyzer::Mobile
   #   * verified App Links (autoVerify intent-filter on http/https)
   #   * exported components with a data-less action filter (IPC surface)
   #   * exported components with no intent-filter (explicit-intent surface)
+  #   * exported ContentProviders (content://authority IPC surface)
   #   * Jetpack Navigation deep links (res/navigation/*.xml <deepLink>)
   #
   # One endpoint is emitted per deep-link URI; the handling component lives
@@ -65,6 +66,12 @@ module Analyzer::Mobile
           each_child(application, component_tag) do |component|
             process_component(component, component_tag, package, strings, placeholders, path, seen_urls)
           end
+        end
+
+        # Providers aren't reached by an intent naming the component; they are
+        # addressed by `content://authority`, so they have their own surface.
+        each_child(application, "provider") do |provider|
+          process_provider(provider, package, strings, placeholders, path, seen_urls)
         end
       end
 
@@ -289,6 +296,75 @@ module Analyzer::Mobile
       endpoint.metadata = metadata
 
       @result << endpoint
+    end
+
+    # Processes a `<provider>` (ContentProvider). Unlike the other components,
+    # a provider isn't reached by an intent naming it — it is addressed by a
+    # `content://<authority>` URI through a ContentResolver, so it is modeled
+    # with its own `android-provider` protocol. Only an explicitly exported
+    # provider is reported: pre-API-17 a provider defaulted to exported, but
+    # modern tooling requires the attribute, so requiring `exported="true"`
+    # keeps this conservative — matching how filter-less components are gated.
+    private def process_provider(provider : XML::Node, package : String,
+                                 strings : Hash(String, String),
+                                 placeholders : Hash(String, String),
+                                 path : String, seen_urls : Set(String))
+      return if attr(provider, "enabled") == "false"
+      return unless bool_attr(provider, "exported")
+
+      raw_authorities = attr(provider, "authorities")
+      return if raw_authorities.nil? || raw_authorities.empty?
+
+      component_name = substitute(attr(provider, "name") || "", placeholders)
+
+      metadata = {} of String => String
+      # The provider class handles the surface, so surface it as `via` for the
+      # code linker (an authority is rarely the class name).
+      metadata["via"] = component_name unless component_name.empty?
+      metadata["component_type"] = "provider"
+      metadata["exported"] = "true"
+      metadata["package"] = package unless package.empty?
+      # Read/write may be guarded separately; the umbrella `android:permission`
+      # covers both unless a more specific one overrides it. All are recorded,
+      # not suppressed — the protection level (and so whether another app can
+      # actually hold the permission) is the reviewer's call.
+      add_permission(metadata, "permission", attr(provider, "permission"))
+      add_permission(metadata, "read_permission", attr(provider, "readPermission"))
+      add_permission(metadata, "write_permission", attr(provider, "writePermission"))
+      metadata["grant_uri_permissions"] = "true" if provider_grants_uri?(provider)
+      # `<path-permission>` children apply per-path overrides — frequently an
+      # unprotected sub-path of an otherwise guarded provider. Flag their
+      # presence so a reviewer inspects the granular rules; the effective
+      # per-path permission is intentionally not guessed here.
+      metadata["path_permissions"] = "true" if has_child?(provider, "path-permission")
+
+      # `android:authorities` is a semicolon-separated list; each authority is
+      # an independently addressable surface.
+      raw_authorities.split(';').each do |raw_authority|
+        authority = substitute(raw_authority.strip, placeholders)
+        next if authority.empty?
+
+        url = "content://#{authority}"
+        next unless seen_urls.add?(url)
+
+        endpoint = Endpoint.new(url, "GET", Details.new(PathInfo.new(path)))
+        endpoint.protocol = "android-provider"
+        endpoint.metadata = metadata.dup
+        mark_unresolved(endpoint, url)
+        @result << endpoint
+      end
+    end
+
+    # A provider grants ad-hoc URI access when `android:grantUriPermissions` is
+    # set or it declares `<grant-uri-permission>` children — in either case a
+    # caller can be handed temporary read/write access to specific URIs.
+    private def provider_grants_uri?(provider : XML::Node) : Bool
+      bool_attr(provider, "grantUriPermissions") || has_child?(provider, "grant-uri-permission")
+    end
+
+    private def add_permission(metadata : Hash(String, String), key : String, value : String?)
+      return if value.nil? || value.empty?
+      metadata[key] = value
     end
 
     # Renders a `<data>` URL. Opaque schemes (mailto/tel/geo/…) have no
@@ -701,6 +777,10 @@ module Analyzer::Mobile
         return c if c.element? && c.name == local_name
       end
       nil
+    end
+
+    private def has_child?(node : XML::Node, local_name : String) : Bool
+      !find_child(node, local_name).nil?
     end
 
     private def each_child(node : XML::Node, local_name : String, &)
