@@ -28,15 +28,16 @@ module Noir
   #     wrappers (no prefix change). Tagging is handled elsewhere; we
   #     just descend so wrapped routes are still discovered.
   #   * `routing { ... }` and `application.routing { ... }` entry points.
+  #   * Type-safe `@Resource` routing — `get<VideoStream> { }`,
+  #     `resource<Login> { post { } }`, `method(HttpMethod.Get) { handle<T> }` —
+  #     with cross-file parent-path composition.
   #   * Inside each verb's lambda body:
   #     - `call.receive<T>()` → `body` parameter typed `T` as `json`
   #     - `call.parameters["name"]` → `name` parameter as `query`
   #     - `call.request.headers["name"]` → `name` parameter as `header`
   #
-  # Not covered yet (out of scope for this first cut):
+  # Not covered yet:
   #
-  #   * Resource-based routing (`get<Resource> { ... }`).
-  #   * Type-safe routing via `@Resource`.
   #   * `install(plugin) { ... }` plugin scoping that affects routing.
   module TreeSitterKotlinKtorRouteExtractor
     extend self
@@ -235,24 +236,88 @@ module Noir
       ty = Noir::TreeSitter.node_type(node)
 
       if ty == "class_declaration" || ty == "object_declaration"
-        name = resource_class_name(node, source)
-        unless name.empty?
-          lexical = lexical_prefix.empty? ? name : "#{lexical_prefix}.#{name}"
-          if own = resource_annotation_path(node, source)
-            sink << RawResource.new(name, lexical, own, ctor_param_type_names(node, source))
-          end
-          if body = resource_class_body(node)
-            Noir::TreeSitter.each_named_child(body) do |member|
-              collect_resource_classes(member, source, lexical, sink, depth + 1)
-            end
-          end
-          return
-        end
+        add_resource_class(node, source, lexical_prefix, sink, depth, nil)
+        return
       end
 
+      # Iterate the children, carrying a "detached" @Resource path.
+      # tree-sitter-kotlin occasionally mis-parses an `@Resource("/p")`
+      # that sits behind certain leading comments as a standalone
+      # `prefix_expression` sibling, leaving the class that immediately
+      # follows it without its `modifiers`/annotation. We pair the
+      # orphaned path with that bare class so the resource still resolves
+      # (see the youkube sample / the extractor spec). Comments between
+      # the two are transparent; anything else clears the carry.
+      pending : String? = nil
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_resource_classes(child, source, lexical_prefix, sink, depth + 1)
+        cty = Noir::TreeSitter.node_type(child)
+        if cty == "class_declaration" || cty == "object_declaration"
+          add_resource_class(child, source, lexical_prefix, sink, depth + 1, pending)
+          pending = nil
+        elsif dp = detached_resource_path(child, source)
+          pending = dp
+        elsif cty == "multiline_comment" || cty == "line_comment"
+          # transparent — keep the carried path
+        else
+          pending = nil
+          collect_resource_classes(child, source, lexical_prefix, sink, depth + 1)
+        end
       end
+    end
+
+    # Record a `@Resource`-annotated class (resolving its own annotation,
+    # or `fallback_path` when tree-sitter detached the annotation), then
+    # descend into its body for nested resource classes.
+    private def add_resource_class(node : LibTreeSitter::TSNode,
+                                   source : String,
+                                   lexical_prefix : String,
+                                   sink : Array(RawResource),
+                                   depth : Int32,
+                                   fallback_path : String?)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+      name = resource_class_name(node, source)
+      return if name.empty?
+      lexical = lexical_prefix.empty? ? name : "#{lexical_prefix}.#{name}"
+      if own = (resource_annotation_path(node, source) || fallback_path)
+        sink << RawResource.new(name, lexical, own, ctor_param_type_names(node, source))
+      end
+      if body = resource_class_body(node)
+        collect_resource_classes(body, source, lexical, sink, depth + 1)
+      end
+    end
+
+    # Recognise a `@Resource("/path")` that tree-sitter-kotlin mis-parsed
+    # as a standalone `(prefix_expression (annotation (user_type Resource))
+    # (parenthesized_expression (string_literal …)))` node — the
+    # annotation detached from the class that follows. Returns the path,
+    # or nil for any other node.
+    private def detached_resource_path(node : LibTreeSitter::TSNode, source : String) : String?
+      return nil unless Noir::TreeSitter.node_type(node) == "prefix_expression"
+      ann : LibTreeSitter::TSNode? = nil
+      paren : LibTreeSitter::TSNode? = nil
+      Noir::TreeSitter.each_named_child(node) do |c|
+        case Noir::TreeSitter.node_type(c)
+        when "annotation"               then ann = c
+        when "parenthesized_expression" then paren = c
+        end
+      end
+      a = ann
+      p = paren
+      return nil unless a && p
+
+      is_resource = false
+      Noir::TreeSitter.each_named_child(a) do |c|
+        if Noir::TreeSitter.node_type(c) == "user_type"
+          is_resource = simple_type_name(Noir::TreeSitter.node_text(c, source)) == "Resource"
+        end
+      end
+      return nil unless is_resource
+
+      result : String? = nil
+      Noir::TreeSitter.each_named_child(p) do |c|
+        result = decode_string_literal(c, source) if Noir::TreeSitter.node_type(c) == "string_literal"
+      end
+      result
     end
 
     private def resource_class_name(decl : LibTreeSitter::TSNode, source : String) : String
@@ -481,6 +546,31 @@ module Noir
             walk(body, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
           end
           return
+        when active && name == "resource"
+          # `resource<Login> { ... }` is the typed analogue of
+          # `route("/path") { ... }`: it pushes the @Resource-composed
+          # path of its `<Type>` as the prefix for the nested verb
+          # handlers (`post { }`, `method(...) { handle<T> { } }`). When
+          # the type resolves, descend with the composed prefix; otherwise
+          # fall through to a best-effort walk at the current prefix rather
+          # than dropping the whole sub-tree.
+          type_name = call_type_argument_name(node, source)
+          if type_name && (rp = resolve_resource_path(type_name, resource_paths))
+            if body = call_lambda_body(node)
+              walk(body, source, join_paths(prefix, rp), routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
+            end
+            return
+          end
+        when active && name == "method"
+          # Path-less verb selector `method(HttpMethod.Get) { handle { } }`
+          # that binds the enclosing prefix (typically inside a
+          # `resource<T> { }` / `route("/x") { }` block). Without an
+          # HttpMethod argument it isn't a route selector — fall through.
+          if (method = call_http_method_argument(node, source)) && (body = call_lambda_body(node))
+            emit_method_route(node, body, source, method, prefix, routes, include_callees) if has_handle_call?(body, source)
+            walk(body, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
+            return
+          end
         when active && (name == "staticResources" || name == "staticFiles")
           # `staticResources("/assets", "files")` / `staticFiles("/r", dir)`
           # mount a static directory at a URL prefix — surface that prefix
