@@ -42,6 +42,10 @@ expected_endpoints = [
   Endpoint.new("/internal/status", "GET", [
     Param.new("region", "", "query"),
   ]),
+  Endpoint.new("/accounts/overview", "GET", [
+    Param.new("region", "", "query"),
+  ]),
+  Endpoint.new("/accounts/billing/invoices", "GET"),
   Endpoint.new("/nested/v1/metrics/{metric_id}", "GET", [
     Param.new("metric_id", "", "path"),
     Param.new("window", "", "query"),

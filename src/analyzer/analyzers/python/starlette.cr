@@ -193,7 +193,7 @@ module Analyzer::Python
         end
 
         if static_path = parse_staticfiles_mount_path(effective_line)
-          route_prefixes = mounted_route_prefixes_for_line(line_index, mounted_route_list_ranges) || [mount_stack.map(&.[0]).join]
+          route_prefixes = compose_route_prefixes(line_index, mounted_route_list_ranges, mount_stack)
           route_prefixes.each do |prefix|
             result << Endpoint.new(static_route_path(normalize_route_url(prefix, static_path)), "GET", Details.new(PathInfo.new(path, line_index + 1)))
           end
@@ -221,7 +221,7 @@ module Analyzer::Python
           explicit_methods = !methods.empty?
 
           path_params = extract_path_params(route_path)
-          route_prefixes = mounted_route_prefixes_for_line(line_index, mounted_route_list_ranges) || [mount_stack.map(&.[0]).join]
+          route_prefixes = compose_route_prefixes(line_index, mounted_route_list_ranges, mount_stack)
 
           handler_params = [] of Param
           handler_callees = [] of Callee
@@ -566,6 +566,24 @@ module Analyzer::Python
       end
 
       nil
+    end
+
+    # Compose the variable-assigned route-list prefix (outer mount,
+    # resolved by name) with any active inline `Mount('/x', routes=[...])`
+    # on the paren stack (inner mount). A route nested in an inline Mount
+    # that itself lives inside a variable-assigned list (`routes = [...,
+    # Mount('/admin', routes=[Route('/x')])]; app = Starlette(routes=routes)`)
+    # matches the list range, which previously short-circuited and dropped
+    # the inline mount's `/admin` prefix entirely.
+    private def compose_route_prefixes(line_index : Int32,
+                                       mounted_route_list_ranges : Array(Tuple(Int32, Int32, Array(::String))),
+                                       mount_stack : Array(Tuple(::String, Int32))) : Array(::String)
+      mount_prefix = mount_stack.map(&.[0]).join
+      if range_prefixes = mounted_route_prefixes_for_line(line_index, mounted_route_list_ranges)
+        range_prefixes.map { |prefix| "#{prefix}#{mount_prefix}" }
+      else
+        [mount_prefix]
+      end
     end
 
     private def extract_path_params(route_path : ::String) : Array(Param)

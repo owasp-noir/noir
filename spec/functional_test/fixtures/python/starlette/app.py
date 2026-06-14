@@ -115,6 +115,17 @@ nested_routes = [
     Mount('/v1', routes=v1_routes),
 ]
 
+# A variable-assigned route list that ALSO holds an *inline* Mount. The
+# list-range lookup used to short-circuit the inline mount stack, so
+# `/billing/invoices` lost its '/billing' prefix. Mounted under '/accounts'
+# below, both prefixes must compose: '/accounts' + '/billing'.
+account_routes = [
+    Route('/overview', internal_status),
+    Mount('/billing', routes=[
+        Route('/invoices', list_items),
+    ]),
+]
+
 internal_app = Starlette(routes=internal_routes)
 programmatic_app = Router()
 programmatic_app.add_route('/audit/{entry_id:int}', audit_entry, methods=['GET'])
@@ -135,6 +146,7 @@ app = Starlette(routes=[
         Route('/items/{id:int}', get_item),
     ]),
     Mount('/admin', routes=admin_routes),
+    Mount('/accounts', routes=account_routes),
     Mount('/internal', app=internal_app),
     Mount('/nested', routes=nested_routes),
     Mount('/programmatic', app=programmatic_app),
