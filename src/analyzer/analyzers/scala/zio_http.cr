@@ -39,14 +39,21 @@ module Analyzer::Scala
             endpoint.push_param(Param.new(name, "", "path"))
           end
 
-          block_info = extract_handler_block(lines, index)
-          if block_info
-            block_content, block_start = block_info
-            extract_params_from_block(endpoint, block_content)
-            if include_callee
-              callees = Noir::ScalaCalleeExtractor.callees_for_body(block_content, path, block_start)
-              attach_scala_callees(endpoint, callees)
+          if arrow_idx
+            block_info = extract_handler_block(lines, index)
+            if block_info
+              block_content, block_start = block_info
+              extract_params_from_block(endpoint, block_content)
+              if include_callee
+                callees = Noir::ScalaCalleeExtractor.callees_for_body(block_content, path, block_start)
+                attach_scala_callees(endpoint, callees)
+              end
             end
+          else
+            # Declarative `Endpoint(Method.X / …)` form: query/header/body come
+            # from the codec chain (`.query(HttpCodec.query[T]("n"))`, `.in[T]`)
+            # that follows on continuation lines, not from a handler block.
+            extract_declarative_params(endpoint, collect_declarative_chain(code_lines, index))
           end
 
           endpoints << endpoint
@@ -110,6 +117,12 @@ module Analyzer::Scala
               params << name
             end
           end
+        elsif ch == ')'
+          # A bare `)` (matchers consume their own parens) closes the enclosing
+          # `Endpoint(Method.GET / …)` — the path ends here. Without this the
+          # trailing builder, e.g. `.out[Int]`, gets mis-parsed (the `Int` in
+          # `[Int]` would register a phantom `{id2}` path param).
+          break
         else
           i += 1
         end
@@ -122,6 +135,37 @@ module Analyzer::Scala
     private def matcher_ident?(ident : String) : Bool
       base = ident.includes?('.') ? ident.split('.').last : ident
       MATCHER_IDENTS.includes?(base.downcase)
+    end
+
+    # The codec chain of a declarative endpoint: the route line plus the
+    # following `.`-prefixed continuation lines (`.query(...)`, `.header(...)`,
+    # `.out[...]`).
+    private def collect_declarative_chain(code_lines : Array(String), index : Int32) : String
+      parts = [code_lines[index]? || ""]
+      idx = index + 1
+      while idx < code_lines.size
+        line = code_lines[idx]? || ""
+        break unless line.lstrip.starts_with?(".")
+        parts << line
+        idx += 1
+      end
+      parts.join("\n")
+    end
+
+    private def extract_declarative_params(endpoint : Endpoint, chain : String)
+      chain.scan(/\bquery\s*\[[^\]]*\]\s*\(\s*"([^"]+)"\s*\)/) do |m|
+        name = m[1]
+        unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
+          endpoint.push_param(Param.new(name, "", "query"))
+        end
+      end
+
+      chain.scan(/\bheader\s*\[[^\]]*\]\s*\(\s*"([^"]+)"\s*\)/) do |m|
+        name = m[1]
+        unless endpoint.params.any? { |p| p.name == name && p.param_type == "header" }
+          endpoint.push_param(Param.new(name, "", "header"))
+        end
+      end
     end
 
     private def default_param_name(index : Int32) : String
@@ -168,8 +212,11 @@ module Analyzer::Scala
         end
       end
 
-      # Header objects: Header.Authorization, Header.ContentType — common typed-header lookups
-      block.scan(/Header\.([A-Z][A-Za-z0-9]+)/) do |match|
+      # Header objects read off the request: a bare reference like
+      # `req.header(Header.Authorization)`. Skip construction/builder forms —
+      # `Header.ContentType(MediaType…)` or `Header.ContentDisposition.attachment(…)`
+      # — which set RESPONSE headers, not request params (the `(?![\w(.])` guard).
+      block.scan(/Header\.([A-Z][A-Za-z0-9]+)(?![\w(.])/) do |match|
         typed_name = humanize_header(match[1])
         unless endpoint.params.any? { |p| p.name == typed_name && p.param_type == "header" }
           endpoint.push_param(Param.new(typed_name, "", "header"))
