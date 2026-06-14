@@ -53,6 +53,28 @@ Invoke-WebRequest -Method POST -Uri "https://www.example.com/query" -Headers @{"
 Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
 
+## ADB (Android)
+
+Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. `-f adb` does the inverse: it turns the Android deep links, intent components, and content providers Noir discovers into [Android Debug Bridge](https://developer.android.com/tools/adb) commands you can run against a connected device or emulator. HTTP endpoints are skipped (with a one-line warning to stderr), since `adb` can't express them — so the command list stays pipe-clean.
+
+```bash
+noir scan ./my-android-app -f adb
+```
+
+Example output:
+```bash
+# custom-scheme deep link / verified app link → am start with a VIEW intent
+adb shell am start -a 'android.intent.action.VIEW' -c 'android.intent.category.BROWSABLE' -d 'myapp://host/path' -p 'com.example.app'
+# explicit activity / service / receiver → am start / startservice / broadcast
+adb shell am start -n 'com.example.app/.ExportedActivity'
+adb shell am startservice -n 'com.example.app/.SyncService'
+adb shell am broadcast -n 'com.example.app/.BootReceiver'
+# exported ContentProvider → content query
+adb shell content query --uri 'content://com.example.app.provider'
+```
+
+The action, category, and package come from the manifest's intent-filter, so each launch matches the declared filter. Intent extras discovered in the handler are emitted as `--es` string extras (empty templates you can fill, or seed with `--pvalue`). See [Mobile Apps](../../supported/mobile/) for how these entry points are extracted.
+
 ## Filling Parameter Values
 
 By default Noir leaves parameter values empty (`x-api-key=`, `query=`, …) so the commands work as templates. Pre-populate values with `--pvalue`, handy when you want a script you can run as-is, or when you want to seed fuzzing input.

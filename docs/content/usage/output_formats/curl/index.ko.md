@@ -53,6 +53,28 @@ Invoke-WebRequest -Method POST -Uri "https://www.example.com/query" -Headers @{"
 Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
 
+## ADB (Android)
+
+모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트들은 이를 건너뜁니다. `-f adb` 는 그 반대로 동작합니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령어로 변환합니다. `adb` 로는 표현할 수 없는 HTTP 엔드포인트는 건너뛰며(한 줄 경고를 stderr로 출력), 덕분에 명령어 목록은 파이프로 넘기기 좋게 깔끔하게 유지됩니다.
+
+```bash
+noir scan ./my-android-app -f adb
+```
+
+출력 예시
+```bash
+# 커스텀 스킴 딥링크 / 검증된 앱 링크 → VIEW 인텐트로 am start
+adb shell am start -a 'android.intent.action.VIEW' -c 'android.intent.category.BROWSABLE' -d 'myapp://host/path' -p 'com.example.app'
+# 명시적 액티비티 / 서비스 / 리시버 → am start / startservice / broadcast
+adb shell am start -n 'com.example.app/.ExportedActivity'
+adb shell am startservice -n 'com.example.app/.SyncService'
+adb shell am broadcast -n 'com.example.app/.BootReceiver'
+# 익스포트된 ContentProvider → content query
+adb shell content query --uri 'content://com.example.app.provider'
+```
+
+액션, 카테고리, 패키지는 매니페스트의 intent-filter에서 가져오므로 각 실행 명령이 선언된 필터와 일치합니다. 핸들러에서 발견된 인텐트 extra는 `--es` 문자열 extra로 출력됩니다(빈 템플릿으로 두거나 `--pvalue` 로 값을 채울 수 있습니다). 이 진입점들이 어떻게 추출되는지는 [Mobile Apps](../../supported/mobile/) 문서를 참고하세요.
+
 ## 파라미터 값 채우기
 
 Noir는 기본적으로 파라미터 값을 비워두기 때문에(`x-api-key=`, `query=` …) 생성된 명령은 템플릿처럼 동작합니다. 그대로 실행하거나 퍼징 입력 시드를 만들고 싶다면 `--pvalue` 로 값을 미리 채울 수 있습니다.
