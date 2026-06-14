@@ -34,6 +34,11 @@ expected_endpoints = [
   Endpoint.new("/comments/:id", "GET", [Param.new("id", "", "path")]),
   Endpoint.new("/api/accounts/:id", "GET", [Param.new("include", "", "query"), Param.new("x-api-version", "", "header"), Param.new("id", "", "path")]),
   Endpoint.new("/api/page", "POST", [Param.new("q", "", "query"), Param.new("page", "", "form"), Param.new("limit", "", "form")]),
+  # Plug-style routes (the controller is a Plug, the 3rd arg is opts not an
+  # `:action` atom). The HTTP-client calls in api_client.ex must NOT add
+  # phantom endpoints.
+  Endpoint.new("/api/openapi", "GET"),
+  Endpoint.new("/api/swaggerui", "GET"),
   Endpoint.new("/api/hooks", "POST", [Param.new("q", "", "query"), Param.new("page", "", "form"), Param.new("limit", "", "form")]),
   Endpoint.new("/api/hooks", "PUT", [Param.new("q", "", "query"), Param.new("page", "", "form"), Param.new("limit", "", "form")]),
   Endpoint.new("/dev/dashboard", "GET"),

@@ -70,6 +70,13 @@ defmodule ElixirPhoenixWeb.Router do
 
     get "/accounts/:id", Api.UserController, :show
     post("/page", PageController, :home)
+
+    # Plug-style routes: the 2nd arg is a Plug module and the 3rd is plug
+    # opts (`[]` / keyword list), NOT an `:action` atom. Common for API
+    # docs, dashboards and SPA catch-alls; must still be detected.
+    get "/openapi", OpenApiSpex.Plug.RenderSpec, []
+    get "/swaggerui", OpenApiSpex.Plug.SwaggerUI, config: %{path: "/api/openapi"}
+
     match :post, "/hooks", PageController, :home
     match :put, "/hooks", PageController, :home
   end
