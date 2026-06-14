@@ -41,6 +41,21 @@ int main()
           conn.send_text(data);
       });
 
+    // Single-level blueprint: prefix "admin" → /admin/dashboard.
+    crow::Blueprint admin_bp("admin");
+    CROW_BP_ROUTE(admin_bp, "/dashboard")
+    ([]() { return crow::response(200); });
+    app.register_blueprint(admin_bp);
+
+    // Nested blueprint: v2_bp ("v2") registered under api_bp ("api") →
+    // the route resolves to /api/v2/status.
+    crow::Blueprint api_bp("api");
+    crow::Blueprint v2_bp("v2");
+    CROW_BP_ROUTE(v2_bp, "/status")
+    ([]() { return crow::response(200); });
+    api_bp.register_blueprint(v2_bp);
+    app.register_blueprint(api_bp);
+
     /* Commented-out route must be ignored:
     CROW_ROUTE(app, "/ghost")
     ([]() {
