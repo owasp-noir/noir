@@ -1,33 +1,72 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
-# Emits `adb` (Android Debug Bridge) commands that launch the mobile entry
+# Emits `adb` (Android Debug Bridge) commands that launch the Android entry
 # points Noir discovers — custom-scheme deep links, verified app links,
 # explicit intent components, and content providers — on a connected Android
 # device or emulator.
 #
-# It is the mobile counterpart to the curl/httpie/powershell builders: those
+# It is the Android counterpart to the curl/httpie/powershell builders: those
 # render HTTP requests and skip mobile endpoints, while this one renders
-# mobile launches and skips HTTP endpoints. Because `-f adb` can't express an
-# HTTP request, the dropped endpoints are reported once as a warning (to
-# STDERR, so the command list on STDOUT stays pipe-clean).
+# Android launches and skips everything `adb` can't express. `adb` is
+# Android-only, so iOS-originated entry points are skipped (launch those with
+# `xcrun simctl openurl` — a dedicated `-f simctl` format is a follow-up). The
+# dropped endpoints are reported once per category as a warning (to STDERR, so
+# the command list on STDOUT stays pipe-clean).
 class OutputBuilderAdb < OutputBuilder
   # Default action for a deep-link (scheme / app-link) launch when the
   # intent-filter recorded none — Android registers VIEW for browsable links.
   DEFAULT_ACTION = "android.intent.action.VIEW"
 
   def print(endpoints : Array(Endpoint))
-    skipped = 0
+    skipped_http = 0
+    skipped_ios = 0
+    skipped_unlaunchable = 0
+
     endpoints.each do |endpoint|
       unless endpoint.mobile?
-        skipped += 1
+        skipped_http += 1
+        next
+      end
+      if ios_originated?(endpoint)
+        skipped_ios += 1
+        next
+      end
+      # App Links domain associations are bare path patterns, not launchable.
+      unless launchable?(endpoint.url)
+        skipped_unlaunchable += 1
         next
       end
 
       ob_puts command_for(endpoint)
     end
 
-    warn_about_skipped(skipped)
+    warn_about_skipped(skipped_http, skipped_ios, skipped_unlaunchable)
+  end
+
+  # An iOS-originated mobile endpoint, which `adb` can't launch. The analyzer
+  # framework tags each endpoint with its detector tech: the Android manifest
+  # analyzer -> "android", the iOS analyzer -> "ios". The shared App Links
+  # analyzer ("well_known_applinks") emits both platforms, distinguished by
+  # the backing file — Android `assetlinks.json` vs Apple's
+  # apple-app-site-association.
+  private def ios_originated?(endpoint : Endpoint) : Bool
+    tech = endpoint.details.technology
+    return true if tech == "ios"
+    return false unless tech == "well_known_applinks"
+
+    # Apple App Site Association entry unless an Android Digital Asset Links
+    # file backs it.
+    endpoint.details.code_paths.none? { |pi| File.basename(pi.path) == "assetlinks.json" }
+  end
+
+  # App Links / Universal Links from `.well-known` files are bare path
+  # patterns (`/*`, `/buy/*`) bound to a domain that isn't in the URL, so they
+  # can't become a concrete `am start -d` launch. Every real launchable entry
+  # point carries a scheme (`myapp://`, `intent://`, `content://`, `https://`,
+  # `mailto:`), none of which start with `/`.
+  private def launchable?(url : String) : Bool
+    !url.starts_with?("/")
   end
 
   private def command_for(endpoint : Endpoint) : String
@@ -117,12 +156,24 @@ class OutputBuilderAdb < OutputBuilder
     end
   end
 
-  private def warn_about_skipped(skipped : Int32)
-    return if skipped.zero?
+  private def warn_about_skipped(http : Int32, ios : Int32, unlaunchable : Int32)
+    unless http.zero?
+      @logger.warning "-f adb: skipped #{http} HTTP endpoint#{plural(http)} — " \
+                      "adb launches apply only to Android entry points " \
+                      "(mobile-scheme / universal-link / android-intent / android-provider)."
+    end
+    unless ios.zero?
+      @logger.warning "-f adb: skipped #{ios} iOS entry point#{plural(ios)} — " \
+                      "adb is Android-only; launch iOS schemes with `xcrun simctl openurl`."
+    end
+    unless unlaunchable.zero?
+      @logger.warning "-f adb: skipped #{unlaunchable} App Links domain association#{plural(unlaunchable)} — " \
+                      "these declare a verified domain, not a concrete URL to launch."
+    end
+  end
 
-    @logger.warning "-f adb: skipped #{skipped} HTTP endpoint#{skipped == 1 ? "" : "s"} — " \
-                    "adb launches apply only to mobile entry points " \
-                    "(mobile-scheme / universal-link / android-intent / android-provider)."
+  private def plural(count : Int32) : String
+    count == 1 ? "" : "s"
   end
 
   private def shell_quote(str : String) : String

@@ -112,10 +112,11 @@ describe "OutputBuilderAdb" do
     out.should eq("adb shell am start -n 'com.example.app/.FooActivity' --es 'token' ''")
   end
 
-  it "skips HTTP endpoints and only emits mobile launches" do
+  it "skips HTTP endpoints and only emits Android launches" do
     http = Endpoint.new("/api/users", "GET")
     scheme = Endpoint.new("myapp://host/path", "GET")
     scheme.protocol = "mobile-scheme"
+    scheme.details.technology = "android"
 
     builder = build_adb_builder
     builder.print([http, scheme])
@@ -123,5 +124,53 @@ describe "OutputBuilderAdb" do
 
     out.should_not contain("/api/users")
     out.should contain("myapp://host/path")
+  end
+
+  it "skips iOS-originated schemes (adb is Android-only)" do
+    ios = Endpoint.new("myiosapp://open", "GET")
+    ios.protocol = "mobile-scheme"
+    ios.details.technology = "ios"
+    android = Endpoint.new("myapp://host/path", "GET")
+    android.protocol = "mobile-scheme"
+    android.details.technology = "android"
+
+    builder = build_adb_builder
+    builder.print([ios, android])
+    out = builder.io.to_s
+
+    out.should_not contain("myiosapp://open")
+    out.should contain("myapp://host/path")
+  end
+
+  it "treats an Android intent endpoint as Android regardless of technology" do
+    intent = Endpoint.new("intent://com.example.app/.FooActivity", "GET")
+    intent.protocol = "android-intent"
+    intent.details.technology = "android"
+
+    builder = build_adb_builder
+    builder.print([intent])
+    out = builder.io.to_s.strip
+
+    out.should eq("adb shell am start -n 'com.example.app/.FooActivity'")
+  end
+
+  it "classifies well_known App Links by their backing file and skips the bare path" do
+    # Android assetlinks.json association and an Apple AASA association both
+    # surface as `/*` universal links under the well_known_applinks tech.
+    android_link = Endpoint.new("/*", "GET", Details.new(PathInfo.new("app/.well-known/assetlinks.json")))
+    android_link.protocol = "universal-link"
+    android_link.details.technology = "well_known_applinks"
+
+    ios_link = Endpoint.new("/buy/*", "GET", Details.new(PathInfo.new("app/apple-app-site-association")))
+    ios_link.protocol = "universal-link"
+    ios_link.details.technology = "well_known_applinks"
+
+    builder = build_adb_builder
+    builder.print([android_link, ios_link])
+    out = builder.io.to_s
+
+    # Both are bare path patterns with no launchable scheme, so neither emits
+    # an adb command — but they are accounted for in different skip buckets.
+    out.strip.should be_empty
   end
 end
