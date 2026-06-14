@@ -117,6 +117,14 @@ module Noir
       "Use",
       # Goyave fluent-builder configuration methods (all return *Router).
       "SetMeta", "RemoveMeta", "Middleware", "GlobalMiddleware", "CORS",
+      # PocketBase's `*router.RouterGroup` middleware binders return the
+      # group unchanged, so `sub := rg.Group("/x").Bind(mw)` /
+      # `.Unbind(id)` must be peeled to reach the `.Group("/x")` prefix.
+      # Without this the group var goes unresolved and falls back to a
+      # cross-file binding of the same name — pocketbase reuses `subGroup`
+      # across handler files, so one file's `/health` leaked onto every
+      # other file's routes.
+      "Bind", "Unbind", "BindFunc", "UnbindFunc",
     }
 
     # Beego registers controllers with `web.Router("/path", &Ctrl{},

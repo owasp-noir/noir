@@ -235,6 +235,27 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "peels PocketBase .Bind(...)/.Unbind(...) chains off a group declaration" do
+    # `sub := rg.Group("/bars").Bind(mw).Unbind(id)` — PocketBase's
+    # RouterGroup middleware binders return the group, so the prefix must
+    # still resolve to `/bars` (otherwise the var falls back to a cross-file
+    # binding of the same name and contaminates the routes).
+    source = <<-GO
+      package main
+      func bind(rg *router.RouterGroup) {
+          sub := rg.Group("/bars").Bind(requireAuth()).Unbind("rateLimit")
+          sub.GET("", listBars)
+          sub.DELETE("/{id}", deleteBar)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"DELETE", "/bars/{id}"},
+      {"GET", "/bars/"},
+    ].sort)
+  end
+
   it "collects group assignments from var declarations and later assignments" do
     source = <<-GO
       package main
