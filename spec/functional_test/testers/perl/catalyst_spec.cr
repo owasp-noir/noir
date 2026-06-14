@@ -47,6 +47,10 @@ expected_endpoints = [
     Param.new("arg", "", "path"),
   ]),
   Endpoint.new("/preflight", "OPTIONS"),
+  # NB: lib/MyApp/Role/Crud.pm carries a `purge : Chained('object')` action
+  # whose parent is composed in at runtime. It must NOT surface as a phantom
+  # `/purge` route — the absence of any such endpoint here asserts that
+  # unresolvable chain fragments are dropped, not emitted at the root.
 ]
 
 FunctionalTester.new("fixtures/perl/catalyst/", {
