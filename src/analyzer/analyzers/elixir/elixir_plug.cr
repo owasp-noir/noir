@@ -212,13 +212,21 @@ module Analyzer::Elixir
       "forward" => "FORWARD",
     }
 
+    # Precompiled per-verb route regexes. `line_to_endpoint` runs once per
+    # line of every `.ex` file, and `Regex.new` rebuilt these 8 PCRE2
+    # patterns on every call — the same recompilation cost the Phoenix
+    # analyzer carried. Build them once.
+    PLUG_ROUTE_PATTERNS = PLUG_ROUTE_MACROS.keys.to_h do |verb|
+      {verb, Regex.new("(?:^|[^.\\w])#{verb}\\s+[\"']([^\"']+)[\"']")}
+    end
+
     def line_to_endpoint(line : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
 
       # Match Plug.Router style route definitions, e.g. `get "/path", do: …`
       PLUG_ROUTE_MACROS.each do |verb, method|
-        pattern = Regex.new("(?:^|[^.\\w])#{verb}\\s+[\"']([^\"']+)[\"']")
-        line.scan(pattern) do |match|
+        next unless line.includes?(verb)
+        line.scan(PLUG_ROUTE_PATTERNS[verb]) do |match|
           path = match[1]
           endpoints << Endpoint.new(path, method) if plug_route_path?(path)
         end
