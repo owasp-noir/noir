@@ -33,6 +33,7 @@ class OutputBuilderHtml < OutputBuilder
     template = template.gsub("<%= noir_endpoints %>", build_endpoints_section(endpoints))
     template = template.gsub("<%= noir_passive_scans %>", build_passive_results_section(passive_results))
     template = template.gsub("<%= noir_footer %>", build_footer)
+    template = template.gsub("<%= noir_scripts %>", build_scripts)
 
     template
   rescue
@@ -55,6 +56,7 @@ class OutputBuilderHtml < OutputBuilder
       html << build_passive_results_section(passive_results)
       html << "</main>\n"
       html << build_footer
+      html << build_scripts
       html << "</body>\n"
       html << "</html>\n"
     end
@@ -162,6 +164,25 @@ class OutputBuilderHtml < OutputBuilder
             color: var(--ink-3);
             text-align: right;
           }
+          .theme-toggle {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 40px; height: 40px;
+            padding: 0;
+            background: var(--surface);
+            color: var(--ink);
+            border: 1px solid var(--line-2);
+            cursor: pointer;
+            transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+          }
+          .theme-toggle:hover { background: var(--hover); border-color: var(--ink-3); }
+          .theme-toggle:active { transform: scale(0.95); }
+          .theme-toggle:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+          .theme-toggle svg { width: 17px; height: 17px; display: block; }
+          .theme-toggle .icon-sun { display: none; }
+          [data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+          [data-theme="dark"] .theme-toggle .icon-moon { display: none; }
 
           /* ===== Layout ================================================= */
           main.container { padding-top: 2.5rem; padding-bottom: 2.5rem; }
@@ -397,6 +418,19 @@ class OutputBuilderHtml < OutputBuilder
             .card { break-inside: avoid; }
           }
         </style>
+        <script>
+          /* Apply the saved/preferred theme before first paint to avoid a flash. */
+          (function () {
+            try {
+              var saved = localStorage.getItem("noir-theme");
+              if (saved === "dark" || saved === "light") {
+                document.documentElement.setAttribute("data-theme", saved);
+              } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+                document.documentElement.setAttribute("data-theme", "dark");
+              }
+            } catch (e) {}
+          })();
+        </script>
 
       HTML
   end
@@ -417,6 +451,15 @@ class OutputBuilderHtml < OutputBuilder
           </div>
           <div class="header-actions">
             <span class="header-tagline">Attack Surface Report</span>
+            <button type="button" class="theme-toggle" data-action="toggle-theme" aria-label="Toggle dark mode" title="Toggle theme">
+              <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+                <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>
+              </svg>
+              <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="square" aria-hidden="true">
+                <circle cx="12" cy="12" r="4.2"></circle>
+                <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"></path>
+              </svg>
+            </button>
           </div>
         </div>
       </header>
@@ -571,6 +614,26 @@ class OutputBuilderHtml < OutputBuilder
           <span>Hunt every Endpoint · Map the Attack Surface</span>
         </div>
       </footer>
+
+      HTML
+  end
+
+  private def build_scripts : String
+    <<-HTML
+      <script>
+        (function () {
+          var root = document.documentElement;
+
+          // Theme toggle with persistence (initial theme is set in <head>).
+          document.addEventListener("click", function (e) {
+            var btn = e.target.closest && e.target.closest('[data-action="toggle-theme"]');
+            if (!btn) return;
+            var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+            root.setAttribute("data-theme", next);
+            try { localStorage.setItem("noir-theme", next); } catch (err) {}
+          });
+        })();
+      </script>
 
       HTML
   end
