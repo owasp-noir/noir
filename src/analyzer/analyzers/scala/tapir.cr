@@ -13,6 +13,11 @@ module Analyzer::Scala
 
     BASE_ENDPOINT_RE = /(?<![.\w])(?:[A-Za-z_]\w*[Ee]ndpoint|endpoint|infallibleEndpoint)\b/
 
+    # Leading `val NAME [: TYPE] =` of a definition. Group 1 captures the name;
+    # `match.end` marks where the right-hand side (the actual endpoint chain)
+    # begins. `=(?![=>])` avoids stopping on `==`/`=>`.
+    VAL_DEF_RE = /^\s*(?:(?:private|protected|implicit|lazy|final|override)\s+)*val\s+(\w+)\s*(?::\s*[^=]+?\s*)?=(?![=>])\s*/
+
     # Type token allows one level of nested brackets (e.g. Option[String], List[User]).
     TYPE_PATTERN = "(?:[^\\[\\]]|\\[[^\\[\\]]*\\])+"
 
@@ -34,16 +39,26 @@ module Analyzer::Scala
 
     private def extract_routes_from_content(path : String, content : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = content.split('\n')
-      code_lines = scala_code_lines(content)
+      lexer = scala_lexer(content)
+      code_lines = lexer.code_lines
+      struct_lines = lexer.masked_lines
       consumed_until = -1
 
-      lines.each_with_index do |_, index|
+      code_lines.each_index do |index|
         next if index <= consumed_until
         code = code_lines[index]? || ""
-        next unless match = code.match(BASE_ENDPOINT_RE)
+
+        # Skip the `val NAME [: TYPE] =` prefix so a val whose name (or type
+        # annotation, e.g. `PublicEndpoint[...]`) ends in "Endpoint" doesn't
+        # get matched in place of the RHS base token.
+        search_offset = 0
+        if vm = code.match(VAL_DEF_RE)
+          search_offset = vm.end
+        end
+
+        next unless match = code.match(BASE_ENDPOINT_RE, search_offset)
         col = match.begin || 0
-        chain_text, last_line = collect_chain(lines, code_lines, index, col)
+        chain_text, last_line = collect_chain(code_lines, struct_lines, index, col)
         consumed_until = last_line
 
         endpoint = parse_chain(chain_text, path, index + 1)
@@ -53,21 +68,87 @@ module Analyzer::Scala
       endpoints
     end
 
-    private def collect_chain(lines : Array(String), code_lines : Array(String), start : Int32, col : Int32) : Tuple(String, Int32)
-      head = code_lines[start]? || ""
-      first = col < head.size ? head[col..] : ""
+    # Collect a Tapir endpoint chain spanning multiple lines. A line is part of
+    # the chain when it continues an open `(` (a multi-line `.in(...)` argument)
+    # OR begins with `.` (a chained combinator). Paren depth is counted on the
+    # structural view so parens inside string literals don't skew the balance.
+    private def collect_chain(code_lines : Array(String), struct_lines : Array(String), start : Int32, col : Int32) : Tuple(String, Int32)
+      head_code = code_lines[start]? || ""
+      head_struct = struct_lines[start]? || ""
+      first = col < head_code.size ? head_code[col..] : ""
+      first_struct = col < head_struct.size ? head_struct[col..] : ""
       parts = [first]
+      depth = paren_balance(first_struct)
       idx = start + 1
-      while idx < lines.size
+      while idx < code_lines.size
         code = code_lines[idx]? || ""
-        if code.lstrip.starts_with?(".")
+        masked = struct_lines[idx]? || ""
+        if depth > 0
           parts << code
+          depth += paren_balance(masked)
+          idx += 1
+        elsif code.lstrip.starts_with?(".")
+          parts << code
+          depth += paren_balance(masked)
           idx += 1
         else
           break
         end
       end
       {parts.join("\n"), idx - 1}
+    end
+
+    private def paren_balance(s : String) : Int32
+      s.count('(') - s.count(')')
+    end
+
+    # Number of open *call* parens just before each character, ignoring parens
+    # inside string literals. A `(` is a call paren when it directly follows an
+    # identifier / `]` (e.g. `example(`, `path[String](`); a `(` after an
+    # operator, whitespace or start is a grouping paren and does not count. This
+    # lets a literal inside `("a" / b)` stay a path segment while one inside
+    # `.example("a")` is rejected.
+    private def call_paren_depths(s : String) : Array(Int32)
+      depths = Array(Int32).new(s.size, 0)
+      call_depth = 0
+      stack = [] of Bool
+      in_str = false
+      prev_sig = '\0'
+      i = 0
+      while i < s.size
+        depths[i] = call_depth
+        c = s[i]
+        if in_str
+          if c == '\\'
+            depths[i + 1] = call_depth if i + 1 < s.size
+            i += 2
+            next
+          elsif c == '"'
+            in_str = false
+            prev_sig = '"'
+          end
+        else
+          case c
+          when '"'
+            in_str = true
+            prev_sig = '"'
+          when '('
+            is_call = prev_sig.ascii_alphanumeric? || prev_sig == '_' || prev_sig == ']'
+            stack << is_call
+            call_depth += 1 if is_call
+            prev_sig = '('
+          when ')'
+            if last = stack.pop?
+              call_depth -= 1 if last
+            end
+            prev_sig = ')'
+          else
+            prev_sig = c unless c.ascii_whitespace?
+          end
+        end
+        i += 1
+      end
+      depths
     end
 
     private def parse_chain(chain : String, path : String, line_no : Int32) : Endpoint?
@@ -134,8 +215,15 @@ module Analyzer::Scala
     end
 
     private def process_in_args(args : String, endpoint : Endpoint, segments : Array(String))
+      depths = call_paren_depths(args)
       args.scan(IN_TOKEN_RE) do |m|
         if literal = m["literal"]?
+          # A string is a path segment only when it is NOT an argument to a
+          # method call. `.example("...")` / `.description("...")` chained onto a
+          # combinator must not leak into the path, but grouping parens used for
+          # input composition — `("a" / path[..]).and(..)` — keep their literals.
+          pos = m.begin || 0
+          next unless (depths[pos]? || 0) == 0
           literal.split('/').reject(&.empty?).each { |seg| segments << seg }
         elsif m["path_type"]?
           name = m["path_name"]? || default_path_name(segments)
