@@ -11,7 +11,7 @@ docs.push_callee(Callee.new("DocsRootComponent"))
 
 FunctionalTester.new("fixtures/typescript/tanstack_router/", {
   :techs     => 1,
-  :endpoints => 11,
+  :endpoints => 14,
 }, [posts, shop, docs], {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
