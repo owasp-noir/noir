@@ -183,5 +183,29 @@ describe "DebugTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "does not tag a deep-link whose scheme bundle id has a `debug` build flavor (FP guard)" do
+      ["ShareMedia-app.futo.immich.debug.Widget://",
+       "ShareMedia-app.futo.immich.debug.ShareExtension://",
+       "com.example.app.debug://"].each do |url|
+        tagger = DebugTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(url, "GET")
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(0)
+      end
+    end
+
+    it "still tags a real debug deep-link target after the scheme" do
+      tagger = DebugTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("myapp://debug/console", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("debug")
+    end
   end
 end
