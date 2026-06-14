@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/url_path"
 
 module Analyzer::Javascript
   class Fastify < JavascriptEngine
@@ -9,12 +10,25 @@ module Analyzer::Javascript
       static_dirs = [] of Hash(String, String)
       include_callee = callees_needed?
 
+      # `@fastify/autoload` derives each route file's prefix from its
+      # directory path relative to the autoload `dir` — the standard
+      # Fastify project layout (`fastify-cli` scaffolds it, the official
+      # `fastify/demo` uses it). A route registered as `app.get('/:id')`
+      # inside `routes/api/tasks/index.ts` is actually served at
+      # `/api/tasks/:id`. Resolve those directory roots once up front so
+      # the per-file pass can prepend the convention-derived prefix.
+      autoload_roots = collect_autoload_roots
+
       parallel_file_scan do |path|
         begin
           content = read_file_content(path)
+          autoload_prefix = autoload_prefix_for(path, autoload_roots)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
+            unless autoload_prefix.empty?
+              endpoint.url = Noir::URLPath.join(autoload_prefix, endpoint.url)
+            end
             # Preserve the precise route line supplied by the shared extractor.
             # Falling back to path-only keeps older behavior if a parser result
             # somehow lacks location metadata.
@@ -43,7 +57,7 @@ module Analyzer::Javascript
           # never a real config — issue #1903).
           unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
                  Noir::JSRouteExtractor.minified_content?(content)
-            extract_route_configs(path, content, result, include_callee)
+            extract_route_configs(path, content, result, include_callee, autoload_prefix)
           end
 
           collect_static_paths(path, content, static_dirs, :fastify)
@@ -66,11 +80,66 @@ module Analyzer::Javascript
       process_js_static_dirs(static_dirs, result)
     end
 
+    # Markers that a file configures `@fastify/autoload`. Both the scoped
+    # package and the legacy bare name are matched so older projects work.
+    AUTOLOAD_MARKERS = ["@fastify/autoload", "fastify-autoload"]
+
+    # Discover the absolute directory roots that `@fastify/autoload`
+    # registers. Each `register(autoload, { dir: <expr> })` names a tree
+    # whose subdirectories become route prefixes. `dir` is conventionally
+    # `path.join(import.meta.dirname, 'routes')` / `join(__dirname, 'a',
+    # 'b')`, so the directory is the config file's own directory plus the
+    # string-literal segments of the `dir` expression. Returns the longest
+    # roots first so `autoload_prefix_for` can match the most specific.
+    private def collect_autoload_roots : Array(String)
+      roots = [] of String
+      all_files.each do |path|
+        next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+        content = read_file_content(path)
+        next unless AUTOLOAD_MARKERS.any? { |m| content.includes?(m) }
+        next unless content.includes?("dir")
+
+        base_dir = File.dirname(File.expand_path(path))
+        content.scan(/\bdir\s*:\s*/) do |m|
+          value_start = m.end(0) || 0
+          value_end = route_config_value_end(content, value_start)
+          value = content[value_start...value_end]
+          segments = [] of String
+          value.scan(/['"]([^'"]+)['"]/) { |sm| segments << sm[1] }
+          next if segments.empty?
+
+          root = File.expand_path(File.join([base_dir] + segments))
+          roots << root unless roots.includes?(root)
+        end
+      rescue
+        next
+      end
+      roots.sort_by! { |r| -r.size }
+      roots
+    end
+
+    # Compute the autoload-derived prefix for a file: the path of the
+    # file's directory relative to the most specific autoload root that
+    # contains it. `@fastify/autoload` ignores the filename (an `index.ts`
+    # and a sibling `tasks.ts` in `routes/api/` both mount at `/api`), so
+    # only the directory contributes. A file directly in a root yields ""
+    # (mounted at "/"), which leaves its routes untouched.
+    private def autoload_prefix_for(path : String, roots : Array(String)) : String
+      return "" if roots.empty?
+      file_dir = File.dirname(File.expand_path(path))
+      roots.each do |root|
+        next unless file_dir == root || file_dir.starts_with?("#{root}/")
+        relative = file_dir == root ? "" : file_dir[(root.size + 1)..]
+        return relative.empty? ? "" : "/#{relative}"
+      end
+      ""
+    end
+
     # Walks a file for `fastify.route({ ... })` registrations that the
     # shared parser misses: the config object may span multiple lines,
     # and `methods` may be an array. For each block, decode the method
     # (or methods) and the url/path and emit one endpoint per method.
-    private def extract_route_configs(path : String, content : String, result : Array(Endpoint), include_callee : Bool)
+    private def extract_route_configs(path : String, content : String, result : Array(Endpoint), include_callee : Bool, autoload_prefix : String = "")
       http_methods = %w[get post put delete patch options head]
 
       # Match the call site `instance.route(` and walk the balanced
@@ -115,6 +184,8 @@ module Analyzer::Javascript
         end
 
         next if methods.empty? || url.empty?
+
+        url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
 
         # Compute line number from the call site offset.
         line_no = content[0...call_start].count('\n') + 1

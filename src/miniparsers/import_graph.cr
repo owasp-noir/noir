@@ -195,6 +195,12 @@ module Noir
 
     JS_RESOLVE_EXTENSIONS = ["ts", "tsx", "js", "jsx", "mjs", "cjs"]
 
+    # TypeScript ESM (`moduleResolution: NodeNext`) imports a sibling `.ts`
+    # source through a `.js`-family specifier — `import x from './a.js'`
+    # where the file on disk is `a.ts`. Map each JS extension to the TS
+    # source extension(s) it can stand in for.
+    JS_TO_TS_EXT = {".js" => [".ts", ".tsx"], ".jsx" => [".tsx"], ".mjs" => [".mts"], ".cjs" => [".cts"]}
+
     def self.resolve_relative_import(from_file : String,
                                      import_specifier : String,
                                      extensions : Array(String) = JS_RESOLVE_EXTENSIONS,
@@ -214,7 +220,22 @@ module Noir
       # nothing. Mirrors Node's behaviour for fully-qualified
       # `./foo.ts` imports.
       if extensions.any? { |ext| import_specifier.ends_with?(".#{ext}") }
-        return File.exists?(combined) ? combined : nil
+        return combined if File.exists?(combined)
+
+        # TS ESM fallback: a `.js`-family specifier resolves to the
+        # sibling `.ts` source when the literal `.js` file is absent.
+        # Without this, cross-file route discovery in every modern TS
+        # project (which compiles to ESM and imports `./x.js`) silently
+        # fails to follow the import.
+        JS_TO_TS_EXT.each do |js_ext, ts_exts|
+          next unless import_specifier.ends_with?(js_ext)
+          base = combined[0...(combined.size - js_ext.size)]
+          ts_exts.each do |ts_ext|
+            candidate = "#{base}#{ts_ext}"
+            return candidate if File.exists?(candidate)
+          end
+        end
+        return
       end
 
       extensions.each do |ext|
