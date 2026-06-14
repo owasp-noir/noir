@@ -2,6 +2,7 @@ const std = @import("std");
 const zap = @import("zap");
 const UsersEndpoint = @import("users.zig");
 const HealthEndpoint = @import("health.zig");
+const Endpoints = @import("endpoints.zig");
 
 const Handlers = struct {
     pub fn stats(_: *Handlers, r: zap.Request) !void {
@@ -19,6 +20,11 @@ pub fn main() !void {
 
     var health: HealthEndpoint = .{};
     _ = &health;
+
+    // Namespaced struct literal — the `Comments` type is reached via the
+    // `Endpoints` re-export and bound to `/comments` here.
+    var comments = Endpoints.Comments{ .path = "/comments" };
+    _ = &comments;
 
     var router = zap.Router.init(std.heap.page_allocator, .{});
     defer router.deinit();

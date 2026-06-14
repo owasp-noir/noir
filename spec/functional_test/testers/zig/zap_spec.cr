@@ -14,6 +14,12 @@ expected_endpoints << zap_endpoint("/health", "GET", [Callee.new("r.sendBody")])
 expected_endpoints << zap_endpoint("/users", "GET", [Callee.new("listUsers")])
 expected_endpoints << zap_endpoint("/users", "POST", [Callee.new("createUser")])
 
+# `const Self = @This()` endpoint reached via the `Endpoints.Comments`
+# namespace re-export and bound to `/comments` at the instantiation site —
+# the binding overrides the dead `path = "/unused"` field default.
+expected_endpoints << zap_endpoint("/comments", "GET", [Callee.new("listComments")])
+expected_endpoints << zap_endpoint("/comments", "POST", [Callee.new("createComment")])
+
 # Router handle_func / handle_func_unbound routes.
 expected_endpoints << zap_endpoint("/stats", "GET", [Callee.new("r.sendJson")])
 expected_endpoints << zap_endpoint("/ping", "GET", [Callee.new("r.sendBody")])
