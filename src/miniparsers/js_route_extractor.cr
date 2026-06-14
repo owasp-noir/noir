@@ -672,11 +672,21 @@ module Noir
     #     lib (express, fastify, ...), keep it so legit test-server
     #     harnesses (e.g. mattermost's `webhook_serve.js`) keep
     #     their routes.
-    def self.test_stub_only?(file_path : String, content : String) : Bool
+    # `include_client_frameworks` controls whether a client-side UI
+    # framework import (Vue/React/...) counts as a skip signal. It must be
+    # ON for the verb-DSL extractor (a React/Vue file calling `api.get(...)`
+    # is an outbound client call, not a route), but OFF for analyzers whose
+    # OWN route definitions live in client-side files — TanStack Router
+    # (`createFileRoute`) and tRPC route modules routinely `import { ... }
+    # from 'react'`, and skipping them on that basis dropped every such
+    # route. The test-stub *library* markers (msw/supertest/...) and path/
+    # filename markers still apply in both modes.
+    def self.test_stub_only?(file_path : String, content : String,
+                             include_client_frameworks : Bool = true) : Bool
       return true if TEST_STUB_FILENAME_MARKERS.any? { |m| file_path.includes?(m) }
       return true if STRICT_TEST_PATH_MARKERS.any? { |m| file_path.includes?(m) }
       has_library = TEST_STUB_LIBRARY_MARKERS.any? { |m| content.includes?(m) } ||
-                    CLIENT_SIDE_FRAMEWORK_MARKERS.any? { |m| content.includes?(m) }
+                    (include_client_frameworks && CLIENT_SIDE_FRAMEWORK_MARKERS.any? { |m| content.includes?(m) })
       has_path_marker = TEST_STUB_PATH_MARKERS.any? { |m| file_path.includes?(m) }
       return false unless has_library || has_path_marker
       HTTP_SERVER_LIBRARY_MARKERS.none? { |m| content.includes?(m) }
