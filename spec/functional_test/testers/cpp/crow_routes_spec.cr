@@ -29,6 +29,9 @@ expected_endpoints = [
   ]),
   # Websocket upgrade endpoint.
   crow_routes_endpoint("/ws", "GET", "ws"),
+  # Blueprint prefix composition: single-level and nested.
+  crow_routes_endpoint("/admin/dashboard", "GET"),
+  crow_routes_endpoint("/api/v2/status", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/cpp/crow_routes/", {
@@ -49,5 +52,13 @@ describe "Crow route discovery edge cases" do
 
   it "ignores routes inside block comments" do
     tester.app.endpoints.any? { |e| e.url == "/ghost" }.should be_false
+  end
+
+  it "composes blueprint prefixes (and nesting) into the route URL" do
+    # The bare `/dashboard` / `/status` literals must not survive on their own.
+    tester.app.endpoints.any? { |e| e.url == "/dashboard" }.should be_false
+    tester.app.endpoints.any? { |e| e.url == "/status" }.should be_false
+    tester.app.endpoints.any? { |e| e.url == "/admin/dashboard" }.should be_true
+    tester.app.endpoints.any? { |e| e.url == "/api/v2/status" }.should be_true
   end
 end

@@ -7,7 +7,12 @@ module Analyzer::Cpp
     # CROW_ROUTE(app, "/path") — the app identifier and route literal.
     ROUTE_REGEX = /CROW_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/
     # CROW_BP_ROUTE(bp, "/path") — blueprint-scoped route registration.
-    BP_ROUTE_REGEX = /CROW_BP_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/
+    # Group 1 = blueprint identifier, group 2 = route literal.
+    BP_ROUTE_REGEX = /CROW_BP_ROUTE\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*,\s*"([^"]*)"\s*\)/
+    # crow::Blueprint name("prefix", ...) — first string arg is the URL prefix.
+    BLUEPRINT_DECL_REGEX = /(?:crow::)?Blueprint\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(\s*"([^"]*)"/
+    # parent.register_blueprint(child) — nests `child` under `parent`'s prefix.
+    BP_NEST_REGEX = /([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*register_blueprint\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)/
     # app.route_dynamic("/path") — runtime string route (no compile-time macro).
     ROUTE_DYNAMIC_REGEX = /\.\s*route_dynamic\s*\(\s*"([^"]*)"\s*\)/
     # CROW_WEBSOCKET_ROUTE(app, "/path") — websocket upgrade endpoint.
@@ -56,21 +61,28 @@ module Analyzer::Cpp
       source = Noir::CppCalleeExtractor.strip_comments(source)
       lines = source.split("\n")
       line_offsets = line_start_offsets(source)
+      bp_prefixes = source.includes?("CROW_BP_ROUTE") ? blueprint_prefixes(source) : nil
 
       lines.each_with_index do |line, index|
         next if line.lstrip.starts_with?("//")
 
         websocket = false
-        route_match = line.match(ROUTE_REGEX) || line.match(BP_ROUTE_REGEX) || line.match(ROUTE_DYNAMIC_REGEX)
-        unless route_match
-          if ws_match = line.match(WEBSOCKET_REGEX)
-            route_match = ws_match
-            websocket = true
-          end
+        if bp_match = line.match(BP_ROUTE_REGEX)
+          route_match = bp_match
+          # Blueprint routes are registered as `'/' + prefix + rule`, where the
+          # prefix walks up any `register_blueprint` nesting chain.
+          route_path = join_blueprint_prefix(bp_prefixes.try &.[bp_match[1]]?, bp_match[2])
+        elsif std_match = (line.match(ROUTE_REGEX) || line.match(ROUTE_DYNAMIC_REGEX))
+          route_match = std_match
+          route_path = std_match[1]
+        elsif ws_match = line.match(WEBSOCKET_REGEX)
+          route_match = ws_match
+          route_path = ws_match[1]
+          websocket = true
+        else
+          next
         end
-        next unless route_match
 
-        route_path = route_match[1]
         normalized_path, path_params = normalize_path(route_path)
         details = Details.new(PathInfo.new(path, index + 1))
         # line_offsets is byte-based; begin(0) is a char index within the line —
@@ -158,6 +170,44 @@ module Analyzer::Cpp
         index += 1
       end
       offsets
+    end
+
+    # Builds the effective URL prefix for every blueprint declared in `source`,
+    # resolving `register_blueprint` nesting. Crow prepends a parent blueprint's
+    # prefix to its children (`blueprint.prefix_ = prefix_ + '/' + blueprint.prefix_`).
+    private def blueprint_prefixes(source : String) : Hash(String, String)
+      own = {} of String => String
+      source.scan(BLUEPRINT_DECL_REGEX) { |m| own[m[1]] = m[2] }
+      return own if own.empty?
+
+      parent = {} of String => String
+      source.scan(BP_NEST_REGEX) do |m|
+        par, child = m[1], m[2]
+        # Only blueprint→blueprint nesting matters; `app.register_blueprint(bp)`
+        # attaches `bp` to the app root, which carries no prefix.
+        parent[child] = par if own.has_key?(par) && own.has_key?(child) && par != child
+      end
+
+      effective = {} of String => String
+      own.each_key { |name| effective[name] = resolve_blueprint_prefix(name, own, parent, Set(String).new) }
+      effective
+    end
+
+    private def resolve_blueprint_prefix(name : String, own : Hash(String, String), parent : Hash(String, String), seen : Set(String)) : String
+      base = own[name]? || ""
+      return base unless seen.add?(name) # cycle guard
+      if par = parent[name]?
+        parent_prefix = resolve_blueprint_prefix(par, own, parent, seen)
+        return parent_prefix.empty? ? base : "#{parent_prefix}/#{base}"
+      end
+      base
+    end
+
+    # Mirrors Crow's `'/' + prefix_ + rule` rule registration, collapsing any
+    # accidental double slash (e.g. an empty-prefix blueprint).
+    private def join_blueprint_prefix(prefix : String?, rule : String) : String
+      return rule if prefix.nil? || prefix.empty?
+      ("/" + prefix + rule).gsub(%r{/{2,}}, "/")
     end
 
     private def normalize_path(route_path : String) : Tuple(String, Array(Param))
