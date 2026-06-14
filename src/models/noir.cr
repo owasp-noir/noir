@@ -357,6 +357,9 @@ class NoirRunner
     when "adb"
       builder = OutputBuilderAdb.new @options
       builder.print @endpoints
+    when "simctl"
+      builder = OutputBuilderSimctl.new @options
+      builder.print @endpoints
     when "sarif"
       builder = OutputBuilderSarif.new @options
       builder.print @endpoints, @passive_results

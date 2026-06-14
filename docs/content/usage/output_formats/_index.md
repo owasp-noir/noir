@@ -16,7 +16,7 @@ Noir is built to be a versatile tool that can fit into any workflow. A key part 
 | CI/CD security reporting | [SARIF](sarif/) | `-f sarif` |
 | API documentation generation | [OpenAPI](openapi/) | `-f oas3` |
 | Quick endpoint testing | [cURL](curl/) / HTTPie / PowerShell | `-f curl` |
-| Launching mobile entry points | [ADB](curl/#adb-android) (Android) | `-f adb` |
+| Launching mobile entry points | [ADB](curl/#adb-android) (Android) / [simctl](curl/#simctl-ios) (iOS) | `-f adb` / `-f simctl` |
 | Human-readable review | [YAML](yaml/) | `-f yaml` |
 | Configuration-style output | [More](more/) (TOML) | `-f toml` |
 | Import into Postman | [More](more/) (Postman Collection) | `-f postman` |
@@ -26,7 +26,7 @@ Noir is built to be a versatile tool that can fit into any workflow. A key part 
 
 ## Available Formats
 
-*   **[HTTP Client Commands](curl/)**: Generate executable cURL, HTTPie, and PowerShell commands for testing endpoints — plus [ADB](curl/#adb-android) commands for launching Android deep links, intents, and content providers.
+*   **[HTTP Client Commands](curl/)**: Generate executable cURL, HTTPie, and PowerShell commands for testing endpoints — plus [ADB](curl/#adb-android) (Android) and [simctl](curl/#simctl-ios) (iOS) commands for launching mobile deep links, intents, and content providers.
 *   **[JSON and JSONL](json/)**: A widely used format that's perfect for integrating with other tools and scripts.
 *   **[YAML](yaml/)**: A human-readable format that's great for configuration files and manual inspection.
 *   **[OpenAPI Specification (OAS)](openapi/)**: Generate an OpenAPI document from your code to easily create API documentation or set up security testing.

@@ -20,6 +20,7 @@ module Noir::CliValidation
     httpie
     powershell
     adb
+    simctl
     oas2
     oas3
     postman
