@@ -353,6 +353,7 @@ describe "OutputBuilderHtml" do
 
     # Toggle control, persistence key, and pre-paint theme init.
     output.should contain("data-action=\"toggle-theme\"")
+    output.should contain("aria-pressed")
     output.should contain("noir-theme")
     output.should contain("prefers-color-scheme")
     output.should contain("[data-theme=\"dark\"]")
@@ -376,6 +377,8 @@ describe "OutputBuilderHtml" do
 
     output.should contain("data-action=\"toggle-card\"")
     output.should contain("aria-expanded")
+    output.should contain("aria-controls=\"ep-body-0\"")
+    output.should contain("id=\"ep-body-0\"")
     output.should contain("card-collapse")
     output.should contain("card-pane")
     output.should contain("chevron")

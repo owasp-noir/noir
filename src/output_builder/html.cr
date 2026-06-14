@@ -538,7 +538,7 @@ class OutputBuilderHtml < OutputBuilder
           </div>
           <div class="header-actions">
             <span class="header-tagline">Attack Surface Report</span>
-            <button type="button" class="theme-toggle" data-action="toggle-theme" aria-label="Toggle dark mode" title="Toggle theme">
+            <button type="button" class="theme-toggle" data-action="toggle-theme" aria-pressed="false" aria-label="Switch to dark theme" title="Toggle theme">
               <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
                 <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"></path>
               </svg>
@@ -594,8 +594,8 @@ class OutputBuilderHtml < OutputBuilder
         html << "<div class=\"empty-state\"><p>No endpoints discovered.</p></div>\n"
       else
         html << build_endpoint_controls(endpoints)
-        endpoints.each do |endpoint|
-          html << build_endpoint_card(endpoint)
+        endpoints.each_with_index do |endpoint, index|
+          html << build_endpoint_card(endpoint, index)
         end
         html << "<div class=\"empty-state no-results\" id=\"endpoint-no-results\">No endpoints match the current filter.</div>\n"
       end
@@ -626,17 +626,18 @@ class OutputBuilderHtml < OutputBuilder
     end
   end
 
-  private def build_endpoint_card(endpoint : Endpoint) : String
+  private def build_endpoint_card(endpoint : Endpoint, index : Int32) : String
     baked = bake_endpoint(endpoint.url, endpoint.params)
     method_class = get_method_class(endpoint.method)
     has_body = endpoint.params.size > 0 || !endpoint.details.code_paths.empty?
     search_text = endpoint_search_text(endpoint, baked[:url])
+    body_id = "ep-body-#{index}"
 
     String.build do |html|
       html << "<div class=\"card\" data-endpoint data-method=\"#{HTML.escape(endpoint.method.upcase)}\" data-text=\"#{HTML.escape(search_text)}\">\n"
 
       if has_body
-        html << "<button type=\"button\" class=\"card-header\" data-action=\"toggle-card\" aria-expanded=\"true\">\n"
+        html << "<button type=\"button\" class=\"card-header\" data-action=\"toggle-card\" aria-expanded=\"true\" aria-controls=\"#{body_id}\">\n"
         html << "<span class=\"chevron\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"square\"><path d=\"M6 9l6 6 6-6\"></path></svg></span>\n"
       else
         html << "<div class=\"card-header\">\n"
@@ -657,7 +658,7 @@ class OutputBuilderHtml < OutputBuilder
       html << (has_body ? "</button>\n" : "</div>\n")
 
       if has_body
-        html << "<div class=\"card-collapse\"><div class=\"card-pane\"><div class=\"card-body\">\n"
+        html << "<div class=\"card-collapse\" id=\"#{body_id}\"><div class=\"card-pane\"><div class=\"card-body\">\n"
 
         if endpoint.params.size > 0
           html << "<table class=\"params-table\">\n"
@@ -770,6 +771,18 @@ class OutputBuilderHtml < OutputBuilder
         (function () {
           var root = document.documentElement;
 
+          function toArray(nodes) { return Array.prototype.slice.call(nodes); }
+
+          // Reflect the active theme on the toggle control (a11y state).
+          function syncThemeButtons() {
+            var dark = root.getAttribute("data-theme") === "dark";
+            toArray(document.querySelectorAll('[data-action="toggle-theme"]')).forEach(function (b) {
+              b.setAttribute("aria-pressed", String(dark));
+              b.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+            });
+          }
+          syncThemeButtons();
+
           // Theme toggle with persistence (initial theme is set in <head>).
           document.addEventListener("click", function (e) {
             var btn = e.target.closest && e.target.closest('[data-action="toggle-theme"]');
@@ -777,6 +790,7 @@ class OutputBuilderHtml < OutputBuilder
             var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
             root.setAttribute("data-theme", next);
             try { localStorage.setItem("noir-theme", next); } catch (err) {}
+            syncThemeButtons();
           });
 
           // Collapse / expand an endpoint card.
@@ -788,8 +802,6 @@ class OutputBuilderHtml < OutputBuilder
             var collapsed = card.classList.toggle("collapsed");
             header.setAttribute("aria-expanded", String(!collapsed));
           });
-
-          function toArray(nodes) { return Array.prototype.slice.call(nodes); }
 
           // Endpoint search + HTTP-method chip filter (combined with AND).
           var search = document.getElementById("endpoint-search");
