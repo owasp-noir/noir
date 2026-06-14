@@ -18,9 +18,30 @@ module Analyzer::Typescript
       end
     end
 
+    # A procedure exported as a standalone `const` and referenced by name
+    # inside a router map — the modular layout large tRPC apps use
+    # (documenso: `export const createDocumentRoute = authenticatedProcedure
+    # .input(...).mutation(...)` per file, then `router({ createDocument:
+    # createDocumentRoute })`). `value` is the chain up to (and including)
+    # the terminal `.query/.mutation/.subscription(` so input params and
+    # callees resolve.
+    private struct Procedure
+      getter base_path : String
+      getter name : String
+      getter method : String
+      getter value : String
+      getter file : String
+      getter line : Int32
+
+      def initialize(@base_path, @name, @method, @value, @file, @line)
+      end
+    end
+
     def analyze
       result = [] of Endpoint
       routers = Hash(RouterKey, Router).new
+      procedures = Hash(RouterKey, Procedure).new
+      procedures_by_name = Hash(String, Procedure).new
       routers_mu = Mutex.new
       prefix_mu = Mutex.new
       url_prefixes = Hash(String, String).new
@@ -42,9 +63,14 @@ module Analyzer::Typescript
           literal_mask = string_literal_mask(content)
           base_path = configured_base_for(path)
           collected = collect_routers(content, path, base_path, literal_mask)
-          unless collected.empty?
+          collected_procs = collect_procedures(content, path, base_path, literal_mask)
+          unless collected.empty? && collected_procs.empty?
             routers_mu.synchronize do
               collected.each { |r| routers[router_key(r)] = r }
+              collected_procs.each do |p|
+                procedures[router_key(p.base_path, p.name)] = p
+                procedures_by_name[p.name] = p
+              end
             end
           end
           if found = extract_prefix(content, literal_mask)
@@ -75,7 +101,7 @@ module Analyzer::Typescript
 
       roots.each do |root|
         url_prefix = url_prefixes[root.base_path]? || DEFAULT_PREFIX
-        flatten_router(root, "", routers, url_prefix, result, Set(RouterKey).new)
+        flatten_router(root, "", routers, procedures, procedures_by_name, url_prefix, result, Set(RouterKey).new)
       end
 
       result
@@ -107,8 +133,30 @@ module Analyzer::Typescript
     private def trpc_candidate?(content : String) : Bool
       content.matches?(/endpoint\s*:/) ||
         PREFIX_HINTS.any? { |hint| content.includes?(hint) } ||
-        (ROUTER_HINTS.any? { |hint| content.includes?(hint) } &&
-          PROCEDURE_HINTS.any? { |hint| content.includes?(hint) })
+        content.includes?("initTRPC") ||
+        content.includes?("createTRPCRouter") ||
+        # A pure ROOT/sub-router composition file (`export const appRouter =
+        # router({ document: documentRouter, ... })`) has no inline
+        # procedure hint, so the old `router( && .query(` gate skipped it —
+        # and with the root uncollected every sub-router was flattened
+        # standalone, losing its dotted prefix. `router(` imported from a
+        # *trpc* module disambiguates it from express/react-router.
+        (content.includes?("router(") && trpc_router_import?(content)) ||
+        # A standalone procedure-definition file (no `router(...)`).
+        (procedure_builder?(content) && PROCEDURE_HINTS.any? { |hint| content.includes?(hint) })
+    end
+
+    # tRPC builders are conventionally named `*Procedure` (publicProcedure,
+    # protectedProcedure, authenticatedProcedure) or accessed as
+    # `t.procedure`.
+    private def procedure_builder?(content : String) : Bool
+      content.includes?("Procedure") || content.includes?(".procedure")
+    end
+
+    # `import { router } from '.../trpc'` — tRPC's `router` factory, as
+    # opposed to express's `Router()` or react-router's `router`.
+    private def trpc_router_import?(content : String) : Bool
+      content.matches?(/import\b[^;]*\brouter\b[^;]*from\s*['"][^'"]*trpc[^'"]*['"]/)
     end
 
     TEST_FIXTURE_PATH_MARKERS = [
@@ -213,6 +261,77 @@ module Analyzer::Typescript
       collected
     end
 
+    PROCEDURE_VERBS = {"query" => "GET", "mutation" => "POST", "subscription" => "SUBSCRIBE"}
+
+    # Collect standalone `export const NAME = <builder>.input(...).<verb>(...)`
+    # procedure definitions so a router that references NAME resolves it.
+    private def collect_procedures(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Procedure)
+      collected = [] of Procedure
+      content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/) do |match|
+        match_start = match.begin(0) || 0
+        next if literal_position?(literal_mask, match_start)
+
+        value_start = match.end(0) || 0
+        first = content[value_start]?
+        next unless first && (first.ascii_letter? || first == '_' || first == '$')
+
+        info = procedure_terminal(content, value_start)
+        next unless info
+        method, value = info
+        line = content[0, match_start].count('\n') + 1
+        collected << Procedure.new(base_path, match[1], method, value, path, line)
+      end
+      collected
+    end
+
+    # Walk the call chain from `start` (a procedure-builder identifier) and
+    # return {http_method, chain_text} once a TOP-LEVEL
+    # `.query/.mutation/.subscription(` terminal is found. Nested parens —
+    # the `.input(z.object({...}))` schema, refinement arrows, the resolver
+    # — sit at depth > 0, so only the procedure's own terminal verb matches.
+    private def procedure_terminal(content : String, start : Int32) : Tuple(String, String)?
+      i = start
+      depth = 0
+      limit = Math.min(content.size, start + 8000)
+      while i < limit
+        case content[i]
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1
+          return if depth < 0
+        when ';'
+          return if depth == 0
+        when '.'
+          if depth == 0
+            PROCEDURE_VERBS.each do |verb, method|
+              return {method, content[start...i]} if verb_call_at?(content, i + 1, verb)
+            end
+          end
+        else
+          # not interesting
+        end
+        i += 1
+      end
+      nil
+    end
+
+    private def verb_call_at?(content : String, pos : Int32, verb : String) : Bool
+      return false if pos + verb.size > content.size
+      verb.each_char_with_index do |ch, k|
+        return false unless content[pos + k] == ch
+      end
+      after = pos + verb.size
+      if nxt = content[after]?
+        return false if nxt.ascii_alphanumeric? || nxt == '_'
+      end
+      j = after
+      while j < content.size && content[j].whitespace?
+        j += 1
+      end
+      content[j]? == '('
+    end
+
     private def extract_object_assignment_body(content : String, identifier : String, literal_mask : Array(Bool)) : Tuple(String, Int32)?
       pattern = cached_regex("trpc:object_assign:#{identifier}") do
         /\b(?:export\s+)?(?:const|let|var)\s+#{Regex.escape(identifier)}(?:\s*:[^=]+)?\s*=\s*\{/
@@ -243,6 +362,12 @@ module Analyzer::Typescript
       # Explicit endpoint option in fetch/openapi handlers.
       content.scan(/endpoint\s*:\s*['"`]([^'"`]+)['"`]/) do |m|
         next if literal_position?(literal_mask, m.begin(0))
+        # Skip TS *type* annotations like `endpoint: `/${string}`` — a
+        # template literal carrying an interpolation is a type/computed
+        # value, not the concrete mount path (documenso's
+        # openapi-fetch-handler types `endpoint` this way; the real prefix
+        # `'/api/trpc'` lives in another file).
+        next if m[1].includes?("${")
         return m[1]
       end
 
@@ -394,39 +519,92 @@ module Analyzer::Typescript
       nil
     end
 
-    private def flatten_router(router : Router, prefix_dotted : String, routers : Hash(RouterKey, Router), url_prefix : String, result : Array(Endpoint), visited : Set(RouterKey))
+    private def flatten_router(router : Router, prefix_dotted : String, routers : Hash(RouterKey, Router), procedures : Hash(RouterKey, Procedure), procedures_by_name : Hash(String, Procedure), url_prefix : String, result : Array(Endpoint), visited : Set(RouterKey))
       current_key = router_key(router)
       return if visited.includes?(current_key)
       visited.add(current_key)
 
-      each_top_level_kv(router.body) do |key, value, value_line|
+      flatten_body(router.body, prefix_dotted, router.base_path, router.file, router.line,
+        routers, procedures, procedures_by_name, url_prefix, result, visited)
+
+      visited.delete(current_key)
+    end
+
+    # Walk one router-map body (the `{ ... }` content). Each value is a child
+    # router (named, inline `router({...})`, or a plain `{ ... }` nested map
+    # — tRPC v11), a named procedure, or an inline procedure.
+    private def flatten_body(body : String, prefix_dotted : String, base_path : String, file : String, base_line : Int32, routers : Hash(RouterKey, Router), procedures : Hash(RouterKey, Procedure), procedures_by_name : Hash(String, Procedure), url_prefix : String, result : Array(Endpoint), visited : Set(RouterKey))
+      base = url_prefix.empty? ? "/" : url_prefix.chomp('/')
+
+      each_top_level_kv(body) do |key, value, value_line|
         next if key.empty?
+        child_prefix = prefix_dotted.empty? ? key : "#{prefix_dotted}.#{key}"
+        line = base_line + value_line - 1
 
         if ident = extract_identifier(value)
-          if child = routers[router_key(router.base_path, ident)]?
-            child_prefix = prefix_dotted.empty? ? key : "#{prefix_dotted}.#{key}"
-            flatten_router(child, child_prefix, routers, url_prefix, result, visited)
+          if child = routers[router_key(base_path, ident)]?
+            flatten_router(child, child_prefix, routers, procedures, procedures_by_name, url_prefix, result, visited)
+            next
+          end
+
+          # Procedure referenced by name (modular layout: `createDocument:
+          # createDocumentRoute`). Resolve to its cross-file definition.
+          if proc = procedures[router_key(base_path, ident)]? || procedures_by_name[ident]?
+            emit_procedure(proc.value, proc.method, "#{base}/#{child_prefix}", proc.file, proc.line, result)
             next
           end
         end
 
+        # Inline nested router: `key: router({...})` / `t.router({...})`.
+        if inner = inline_router_body(value)
+          flatten_body(inner, child_prefix, base_path, file, line,
+            routers, procedures, procedures_by_name, url_prefix, result, visited)
+          next
+        end
+
+        # Plain-object nested router (tRPC v11): `key: { sub: proc, ... }`.
+        if value.lstrip.starts_with?("{") && (inner = brace_inner(value))
+          flatten_body(inner, child_prefix, base_path, file, line,
+            routers, procedures, procedures_by_name, url_prefix, result, visited)
+          next
+        end
+
+        # Inline procedure.
         method = procedure_method(value)
         next unless method
-
-        dotted = prefix_dotted.empty? ? key : "#{prefix_dotted}.#{key}"
-        base = url_prefix.empty? ? "/" : url_prefix.chomp('/')
-        url = "#{base}/#{dotted}"
-        procedure_line = router.line + value_line - 1
-        endpoint = Endpoint.new(url, method)
-        endpoint.details = Details.new(PathInfo.new(router.file, procedure_line))
-
-        attach_input_params(value, method, endpoint)
-        attach_procedure_callees(value, router.file, procedure_line, endpoint) if callees_needed?
-
-        result << endpoint
+        emit_procedure(value, method, "#{base}/#{child_prefix}", file, line, result)
       end
+    end
 
-      visited.delete(current_key)
+    private def emit_procedure(value : String, method : String, url : String, file : String, line : Int32, result : Array(Endpoint))
+      endpoint = Endpoint.new(url, method)
+      endpoint.details = Details.new(PathInfo.new(file, line))
+      attach_input_params(value, method, endpoint)
+      attach_procedure_callees(value, file, line, endpoint) if callees_needed?
+      result << endpoint
+    end
+
+    # `key: router({...})` / `key: t.router({...})` / `createTRPCRouter({...})`
+    # — return the inner map body, or nil when the value isn't an inline
+    # router call (anchored so a `router(` buried in a resolver body of an
+    # inline procedure never matches).
+    private def inline_router_body(value : String) : String?
+      stripped = value.lstrip
+      m = stripped.match(/\A(?:[\w$]+\s*\.\s*)?(?:router|createTRPCRouter)\s*\(\s*\{/)
+      return unless m
+      brace_open = (m.end(0) || 0) - 1
+      close = Noir::JSRouteExtractor.find_matching_brace(stripped, brace_open)
+      return unless close
+      stripped[(brace_open + 1)...close]
+    end
+
+    private def brace_inner(value : String) : String?
+      stripped = value.lstrip
+      open = stripped.index('{')
+      return unless open
+      close = Noir::JSRouteExtractor.find_matching_brace(stripped, open)
+      return unless close
+      stripped[(open + 1)...close]
     end
 
     private def procedure_method(value : String) : String?
