@@ -23,6 +23,10 @@ expected_endpoints = [
     Param.new("limit", "", "query"),
     Param.new("offset", "", "query"),
   ]),
+  Endpoint.new("/api/items", "GET", [
+    Param.new("tag", "", "query"),
+    Param.new("cursor", "", "query"),
+  ]),
   Endpoint.new("/api/guarded/info", "GET"),
   Endpoint.new("/api/admin/reports/:id", "PATCH", [
     Param.new("id", "", "path"),

@@ -503,17 +503,57 @@ module Analyzer::Clojure
     private def add_group_params(source : String, v_start : Int32, v_end : Int32,
                                  endpoint : Endpoint, ptype : String, path_param_set : Set(String))
       return if v_start >= v_end
-      return unless source.byte_at(v_start).unsafe_chr == '{'
 
-      map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
-      return unless map_end > v_start
+      names = case source.byte_at(v_start).unsafe_chr
+              when '{'
+                # Schema / map literal: `{:x int?, (s/optional-key :y) int?}`.
+                map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+                return unless map_end > v_start
+                extract_map_keys(source, v_start + 1, map_end)
+              when '['
+                # malli map schema vector: `[:map [:x int?] [:y {…} int?]]`.
+                vec_end = find_matching_delimiter(source, v_start, '[', ']', v_end)
+                return unless vec_end > v_start
+                extract_malli_map_keys(source, v_start + 1, vec_end)
+              else
+                return
+              end
 
-      extract_map_keys(source, v_start + 1, map_end).each do |name|
+      names.each do |name|
         next if name.empty?
         next if ptype == "path" && path_param_set.includes?(name)
         next if endpoint.params.any? { |p| p.name == name && p.param_type == ptype }
         endpoint.push_param(Param.new(name, "", ptype))
       end
+    end
+
+    # Extract the entry keys of a malli map schema vector
+    # `[:map [:x int?] [:y {:optional true} int?]]`. Only a `:map` head names
+    # request params; other malli schemas (`[:maybe …]`, `[:vector …]`) are
+    # positional and carry none. Each entry is a vector whose first keyword is
+    # the key name; an optional properties map after `:map` is skipped.
+    private def extract_malli_map_keys(source : String, start : Int32, limit : Int32) : Array(String)
+      i = skip_ws_and_comments(source, start, limit)
+      head, after_head = read_symbol(source, i, limit)
+      return [] of String unless head == ":map"
+
+      keys = [] of String
+      j = after_head
+      while j < limit
+        j = skip_ws_and_comments(source, j, limit)
+        break if j >= limit
+        if source.byte_at(j).unsafe_chr == '['
+          entry_end = find_matching_delimiter(source, j, '[', ']', limit)
+          break if entry_end <= j
+          if name = first_keyword_in(source, j + 1, entry_end)
+            keys << name
+          end
+          j = entry_end + 1
+        else
+          j = end_of_value(source, j, limit)
+        end
+      end
+      keys
     end
 
     # Extract first-level keyword keys (`:foo`, `:ns/foo`) from a map

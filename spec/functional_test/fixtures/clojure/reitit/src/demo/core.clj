@@ -42,6 +42,12 @@
                                 :offset int?}}
            :handler list-orders}}]
 
+   ; malli map-schema vector params — `[:map [:x …] [:y {…} …]]` names each
+   ; entry key (non-`:map` schemas like `[:maybe …]` carry no named params).
+   ["/items"
+    {:get {:parameters {:query [:map [:tag int?] [:cursor {:optional true} string?]]}
+           :handler list-items}}]
+
    ["/admin"
     ["/reports/:id"
      {:patch {:parameters {:path {:id int?}
