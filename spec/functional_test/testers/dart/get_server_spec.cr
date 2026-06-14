@@ -18,6 +18,9 @@ expected_endpoints = [
   get_server_endpoint("/socket", "GET", [] of Param, [Callee.new("SocketPage", line: 17)]),
   # Plain string-literal name.
   get_server_endpoint("/health", "GET", [] of Param, [Callee.new("HealthPage", line: 19)]),
+  # `Routes.ITEMS = '$API/items'` resolves the inter-constant
+  # interpolation to `/api/items`.
+  get_server_endpoint("/api/items", "GET", [] of Param, [Callee.new("ItemsPage", line: 21)]),
 ]
 
 # `name: Routes.USER` → `/user/:id` → `{id}`; no `method:` defaults to

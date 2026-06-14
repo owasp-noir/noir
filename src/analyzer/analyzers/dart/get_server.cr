@@ -82,7 +82,46 @@ module Analyzer::Dart
         logger.debug e
       end
 
+      # A path constant can interpolate another (`const TURN_OFF =
+      # '$TUYA/turn_off'`); resolve those references now that every
+      # constant has been collected project-wide.
+      resolve_const_interpolations(const_map)
+
       assemble(raw_pages, const_map, include_callee)
+    end
+
+    INTERP_BRACE = /\$\{([^}]+)\}/
+    INTERP_BARE  = /\$([A-Za-z_]\w*)/
+
+    # Substitute `$IDENT` / `${expr}` interpolations with the referenced
+    # path constant's value (by bare constant name). Unknown references are
+    # left untouched.
+    private def resolve_interpolation(value : String, const_map : Hash(String, String)) : String
+      result = value.gsub(INTERP_BRACE) do
+        key = $~[1].strip.split('.').last
+        const_map[key]? || $~[0]
+      end
+      result.gsub(INTERP_BARE) do
+        const_map[$~[1]]? || $~[0]
+      end
+    end
+
+    # Resolve constant-to-constant interpolation to a fixpoint (a few
+    # passes settle chains like `B = '$A/x'`, `C = '$B/y'`). Capped so an
+    # unresolved/cyclic reference can't loop forever.
+    private def resolve_const_interpolations(const_map : Hash(String, String))
+      5.times do
+        changed = false
+        const_map.each do |key, value|
+          next unless value.includes?('$')
+          resolved = resolve_interpolation(value, const_map)
+          if resolved != value
+            const_map[key] = resolved
+            changed = true
+          end
+        end
+        break unless changed
+      end
     end
 
     # `static const NAME = '/path'` (and plain `const NAME = '/path'`)
@@ -155,7 +194,9 @@ module Analyzer::Dart
     private def resolve_name(arg : String, const_map : Hash(String, String)) : String?
       stripped = arg.strip
       if literal = Helper.extract_string_literal(stripped)
-        return normalize_path(literal)
+        # `name: '$TUYA/turn_off'` — an interpolated literal resolves
+        # against the collected path constants.
+        return normalize_path(resolve_interpolation(literal, const_map))
       end
       # Reference to a path constant (`Routes.HOME` / `HOME`): resolve by
       # the bare constant name.

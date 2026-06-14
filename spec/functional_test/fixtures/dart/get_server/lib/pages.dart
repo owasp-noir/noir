@@ -9,3 +9,5 @@ class UploadPage extends Widget {}
 class SocketPage extends Widget {}
 
 class HealthPage extends Widget {}
+
+class ItemsPage extends Widget {}

@@ -17,6 +17,8 @@ void main() {
         GetPage(name: Routes.SOCKET, page: () => SocketPage(), method: Method.ws),
         // `name:` as a plain string literal.
         GetPage(name: '/health', page: () => HealthPage(), method: Method.get),
+        // Resolves the inter-constant interpolation `'$API/items'` → `/api/items`.
+        GetPage(name: Routes.ITEMS, page: () => ItemsPage(), method: Method.get),
       ],
       port: 8080,
     ),
