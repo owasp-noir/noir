@@ -47,6 +47,16 @@ expected_endpoints = [
   Endpoint.new("/api/admin/reports/{id}", "POST", [
     Param.new("id", "", "path"),
   ]),
+  # From StorefrontController multi-line #[Route] attributes whose verbs are
+  # `Request::METHOD_*` constants and whose `path:` sits after a newline.
+  Endpoint.new("/account/login", "GET"),
+  Endpoint.new("/account/login", "POST"),
+  Endpoint.new("/account/order/{id}", "GET", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/account/order/{id}", "POST", [
+    Param.new("id", "", "path"),
+  ]),
   # From routes.yaml
   Endpoint.new("/api/health", "GET"),
   Endpoint.new("/api/docs", "GET"),
@@ -70,5 +80,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/symfony/", {
   :techs     => 2,  # Detection still sees php_symfony and php_pure
-  :endpoints => 21, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 25, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests
