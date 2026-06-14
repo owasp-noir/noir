@@ -499,7 +499,7 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
         KT
 
       resources = Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(source)
-      resources.map(&.simple_name).sort.should eq(["VideoPage", "VideoStream"])
+      resources.map(&.simple_name).sort!.should eq(["VideoPage", "VideoStream"])
     end
 
     it "resolves resource<T> { } as a prefix wrapper for nested verbs and method/handle" do
@@ -525,7 +525,7 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
       resources = Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(source)
       paths = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(resources)
       routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, resource_paths: paths)
-      routes.map { |r| {r.verb, r.path} }.sort.should eq([
+      routes.map { |r| {r.verb, r.path} }.sort!.should eq([
         {"GET", "/login"},
         {"POST", "/login"},
       ])

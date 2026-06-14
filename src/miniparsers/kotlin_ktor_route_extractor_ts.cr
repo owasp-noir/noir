@@ -292,7 +292,7 @@ module Noir
     # annotation detached from the class that follows. Returns the path,
     # or nil for any other node.
     private def detached_resource_path(node : LibTreeSitter::TSNode, source : String) : String?
-      return nil unless Noir::TreeSitter.node_type(node) == "prefix_expression"
+      return unless Noir::TreeSitter.node_type(node) == "prefix_expression"
       ann : LibTreeSitter::TSNode? = nil
       paren : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_child(node) do |c|
@@ -303,7 +303,7 @@ module Noir
       end
       a = ann
       p = paren
-      return nil unless a && p
+      return unless a && p
 
       is_resource = false
       Noir::TreeSitter.each_named_child(a) do |c|
@@ -311,7 +311,7 @@ module Noir
           is_resource = simple_type_name(Noir::TreeSitter.node_text(c, source)) == "Resource"
         end
       end
-      return nil unless is_resource
+      return unless is_resource
 
       result : String? = nil
       Noir::TreeSitter.each_named_child(p) do |c|
