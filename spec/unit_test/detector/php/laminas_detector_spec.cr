@@ -41,4 +41,12 @@ describe "Detect Laminas" do
     instance.detect("index.php", "<?php echo 'Hello World';").should_not be_true
     instance.detect("composer.json", %({"require": {"slim/slim": "^4.12"}})).should_not be_true
   end
+
+  it "does not detect non-routing Laminas/Zend transitive deps" do
+    # PSR-7 / Swoole-adapter packages are pulled in transitively by countless
+    # Laravel/Symfony/Yii apps; they must NOT trip the Laminas routing analyzer.
+    instance.detect("composer.lock", %({"packages": [{"name": "zendframework/zend-diactoros"}]})).should_not be_true
+    instance.detect("composer.lock", %({"packages": [{"name": "laminas/laminas-diactoros"}]})).should_not be_true
+    instance.detect("composer.lock", %({"packages": [{"name": "mezzio/mezzio-swoole"}]})).should_not be_true
+  end
 end

@@ -14,8 +14,14 @@ module Detector::Php
 
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-        return true if LAMINAS_PACKAGES.any? { |package| file_contents.includes?(package) }
-        return true if file_contents.includes?("\"zendframework/")
+        # Match the package as a complete quoted name (`"mezzio/mezzio"`), not a
+        # bare substring. A loose `includes?("mezzio/mezzio")` matched the Swoole
+        # server adapter `mezzio/mezzio-swoole` (a transitive dep of many
+        # Laravel/Symfony/Yii apps), and the blanket `"zendframework/"` matched
+        # non-routing PSR-7 deps like `zendframework/zend-diactoros` — both fired
+        # the Laminas analyzer on apps that never use Laminas routing, surfacing
+        # HTTP-client `$x->get('https://…')` calls as phantom endpoints.
+        return true if LAMINAS_PACKAGES.any? { |package| file_contents.includes?(%("#{package}")) }
       end
 
       if filename.ends_with?(".php")
