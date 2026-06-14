@@ -55,7 +55,9 @@ Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client
 
 ## ADB (Android)
 
-모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트들은 이를 건너뜁니다. `-f adb` 는 그 반대로 동작합니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령어로 변환합니다. `adb` 로는 표현할 수 없는 HTTP 엔드포인트는 건너뛰며(한 줄 경고를 stderr로 출력), 덕분에 명령어 목록은 파이프로 넘기기 좋게 깔끔하게 유지됩니다.
+모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트들은 이를 건너뜁니다. `-f adb` 는 그 반대로 동작합니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령어로 변환합니다.
+
+`adb` 는 Android 전용이므로, Android 출처 진입점만 명령어로 만들고 실행할 수 없는 나머지(HTTP 엔드포인트, iOS 스킴, 도메인만 선언하는 App Links)는 건너뜁니다. 건너뛴 항목은 종류별로 한 줄씩 stderr 경고로 알려주며(덕분에 stdout 명령어 목록은 파이프로 넘기기 좋게 유지됨), iOS 스킴은 `xcrun simctl openurl booted "myapp://..."` 로 실행하면 됩니다.
 
 ```bash
 noir scan ./my-android-app -f adb

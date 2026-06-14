@@ -55,7 +55,9 @@ Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client
 
 ## ADB (Android)
 
-Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. `-f adb` does the inverse: it turns the Android deep links, intent components, and content providers Noir discovers into [Android Debug Bridge](https://developer.android.com/tools/adb) commands you can run against a connected device or emulator. HTTP endpoints are skipped (with a one-line warning to stderr), since `adb` can't express them — so the command list stays pipe-clean.
+Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. `-f adb` does the inverse: it turns the Android deep links, intent components, and content providers Noir discovers into [Android Debug Bridge](https://developer.android.com/tools/adb) commands you can run against a connected device or emulator.
+
+`adb` is Android-only, so the format emits commands for Android-originated entry points and skips everything it can't launch — HTTP endpoints, iOS schemes, and bare App Links domain associations — each reported as a one-line warning to stderr (the command list on stdout stays pipe-clean). To launch iOS schemes use `xcrun simctl openurl booted "myapp://..."`.
 
 ```bash
 noir scan ./my-android-app -f adb
