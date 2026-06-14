@@ -12,6 +12,24 @@ module Analyzer::Elixir
     @route_map : Hash(RouteMapKey, ControllerAction) = Hash(RouteMapKey, ControllerAction).new
     @route_macros : Hash(String, RouteMacro) = Hash(String, RouteMacro).new
 
+    # `get`/`post`/… → its precompiled route regex. `add_standard_route` runs
+    # once per verb per line of every `.ex` file; `Regex.new` there recompiled
+    # the same 7 PCRE2 patterns on every call (~3.4M recompiles on a 2400-file
+    # repo, the dominant scan cost). The pattern depends only on the fixed verb
+    # set, so build it once. See `add_standard_route` for the shape rationale.
+    STANDARD_ROUTE_METHODS = {
+      "get"     => "GET",
+      "post"    => "POST",
+      "patch"   => "PATCH",
+      "put"     => "PUT",
+      "delete"  => "DELETE",
+      "options" => "OPTIONS",
+      "head"    => "HEAD",
+    }
+    STANDARD_ROUTE_PATTERNS = STANDARD_ROUTE_METHODS.keys.to_h do |verb|
+      {verb, Regex.new("(?:^|[^.\\w])#{verb}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Z]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))(?=\\s*[,)]|\\s*$)(?:\\s*,\\s*:(\\w+[!?]?))?")}
+    end
+
     struct ControllerAction
       property controller : String
       property action : String
@@ -1046,7 +1064,12 @@ module Analyzer::Elixir
       # `(?=\\s*[,)]|\\s*$)` lookahead requires the module reference to be
       # followed by an arg separator / call close — a `(` or `!` (a call)
       # rejects it.
-      pattern = Regex.new("(?:^|[^.\\w])#{route_macro}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Z]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))(?=\\s*[,)]|\\s*$)(?:\\s*,\\s*:(\\w+[!?]?))?")
+      #
+      # Cheap substring gate first: the precompiled regex still has to scan
+      # the line, so skip it entirely for the (vast) majority of lines that
+      # don't even contain the verb keyword.
+      return unless line.includes?(route_macro)
+      pattern = STANDARD_ROUTE_PATTERNS[route_macro]
       line.scan(pattern) do |match|
         full_path = scoped_route_path(scope_prefix, match[1])
         endpoint = Endpoint.new(full_path, http_method)
