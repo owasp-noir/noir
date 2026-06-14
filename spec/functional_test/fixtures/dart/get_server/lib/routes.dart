@@ -6,4 +6,8 @@ class Routes {
   static const USER = '/user/:id';
   static const UPLOAD = '/upload';
   static const SOCKET = '/socket';
+
+  // One path constant interpolated into another resolves transitively.
+  static const API = '/api';
+  static const ITEMS = '$API/items';
 }
