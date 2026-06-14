@@ -55,6 +55,11 @@ expected_endpoints = [
   ]),
   # handlers.go: nested subrouter
   Endpoint.new("/v2/health", "GET"),
+  # server.go: idiomatic `http.MethodX` constant form must resolve to the
+  # verb instead of defaulting to GET.
+  Endpoint.new("/profile", "PUT"),
+  Endpoint.new("/profile", "GET"),
+  Endpoint.new("/profile", "HEAD"),
 ]
 
 FunctionalTester.new("fixtures/go/mux/", {

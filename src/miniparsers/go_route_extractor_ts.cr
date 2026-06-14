@@ -1121,7 +1121,7 @@ module Noir
         key_node, val_node = gozero_keyed_pair(kv)
         next if key_node.nil? || val_node.nil?
         case Noir::TreeSitter.node_text(key_node, source)
-        when "Method"  then method = gozero_method_value(val_node, source)
+        when "Method"  then method = decode_method_token(val_node, source)
         when "Path"    then rpath = gozero_string_value(val_node, source)
         when "Handler" then handler = Noir::TreeSitter.node_text(val_node, source)
         end
@@ -1222,9 +1222,10 @@ module Noir
       {gozero_unwrap(key), gozero_unwrap(val)}
     end
 
-    # `Method:` is either a string literal ("POST") or an `http.MethodX`
-    # selector; both collapse to the bare upper-cased verb.
-    private def gozero_method_value(node : LibTreeSitter::TSNode, source : String) : String
+    # An HTTP method written as a string literal ("POST") or an
+    # `http.MethodX` selector; both collapse to the bare upper-cased verb.
+    # Shared by go-zero's `Method:` struct field and mux's `.Methods(...)`.
+    private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
       case Noir::TreeSitter.node_type(node)
       when "interpreted_string_literal", "raw_string_literal"
         Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "").upcase
@@ -2484,6 +2485,13 @@ module Noir
               case Noir::TreeSitter.node_type(arg)
               when "interpreted_string_literal", "raw_string_literal"
                 verbs << decode_string_literal(arg, source).upcase
+              when "selector_expression"
+                # The idiomatic constant form `.Methods(http.MethodGet,
+                # http.MethodPut)` — `http.MethodPut` → "PUT". Without this
+                # every constant-verb route silently fell back to GET.
+                if verb = decode_method_token(arg, source)
+                  verbs << verb unless verb.empty?
+                end
               end
             end
           end
