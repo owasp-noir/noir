@@ -35,7 +35,15 @@ expected_endpoints = [
   Endpoint.new("/articles/{id}", "PUT", [Param.new("id", "", "path")]),
 ]
 
-FunctionalTester.new("fixtures/dart/dart_frog/", {
+tester = FunctionalTester.new("fixtures/dart/dart_frog/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
-}, expected_endpoints).perform_tests
+}, expected_endpoints)
+tester.perform_tests
+
+# `routes/dashboard_route.dart` is a Flutter UI widget (no `onRequest`
+# handler) that happens to live under `routes/`. It must not be reported
+# as an HTTP endpoint.
+it "ignores routes/ files without an onRequest handler" do
+  tester.app.endpoints.any? { |e| e.url == "/dashboard_route" }.should be_false
+end
