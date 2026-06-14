@@ -308,6 +308,31 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "resolves http.MethodX constants in gorilla mux .Methods(...)" do
+    # The idiomatic constant form (`.Methods(http.MethodPut)`) — used by
+    # portainer and most net/http apps — was unresolved, so every such
+    # route silently fell back to GET.
+    source = <<-GO
+      package main
+      func main() {
+          r := mux.NewRouter()
+          r.Handle("/settings", h.update).Methods(http.MethodPut)
+          r.Handle("/settings", h.inspect).Methods(http.MethodGet)
+          r.HandleFunc("/items", h.list).Methods(http.MethodGet, http.MethodPost)
+          r.HandleFunc("/items/{id}", h.del).Methods(http.MethodDelete)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handlefunc_methods: true)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"DELETE", "/items/{id}"},
+      {"GET", "/items"},
+      {"GET", "/settings"},
+      {"POST", "/items"},
+      {"PUT", "/settings"},
+    ].sort)
+  end
+
   it "extracts gorilla mux route builder chains" do
     source = <<-GO
       package main

@@ -78,5 +78,15 @@ func main() {
 		fmt.Fprintf(w, "builder query")
 	})
 
+	// Idiomatic http.MethodX constant form (portainer-style) — the
+	// constant must resolve to the verb instead of falling back to GET.
+	r.Handle("/profile", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "profile update")
+	})).Methods(http.MethodPut)
+
+	r.HandleFunc("/profile", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "profile view")
+	}).Methods(http.MethodGet, http.MethodHead)
+
 	http.ListenAndServe(":8080", r)
 }
