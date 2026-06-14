@@ -894,8 +894,13 @@ class EndpointOptimizer
   # and Express regex constraints `/:id(\\d+)` -> `id`). Path param names are
   # identifiers; anything after the leading identifier describes the segment,
   # not the parameter name.
+  #
+  # Hyphens are part of the identifier — kebab-case path params are idiomatic
+  # in Clojure (`/:artifact-id`, `/:group-id`) and legal in several other
+  # route DSLs. Excluding `-` truncated `artifact-id` to `artifact`, adding a
+  # phantom param that disagreed with the name the analyzer already recorded.
   private def leading_path_param(raw : String) : String?
-    match = raw.match(/\A([A-Za-z_][A-Za-z0-9_]*)/)
+    match = raw.match(/\A([A-Za-z_][A-Za-z0-9_-]*)/)
     match ? match[1] : nil
   end
 
