@@ -65,6 +65,17 @@ module Analyzer::Python
     VIEW_ASSIGN_RE      = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
     ADD_URL_RULE_RE     = /(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/m
 
+    # flask_restful / flask-restx register class-based `Resource`s with
+    # `api.add_resource(ResourceClass, "/url"[, "/url2"], endpoint=...)`.
+    # Each Resource exposes one endpoint per HTTP-verb method it defines.
+    # Hoisted for the common (alias-free) case so the per-file regex isn't
+    # recompiled; `ADD_RESOURCE_SUBSTRING` is the cheap per-line guard.
+    ADD_RESOURCE_RE         = /(#{PYTHON_VAR_NAME_REGEX})\s*\.\s*add_resource\s*\((.+)\)/m
+    ADD_RESOURCE_SUBSTRINGS = [".add_resource("]
+    # `def add_x(self, resource, ...)` head of an Api-subclass method that
+    # may wrap `add_resource` (e.g. redash's `add_org_resource`).
+    RESOURCE_REGISTRAR_DEF_RE = /^(\s*)(?:async\s+)?def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(\s*self\s*,\s*resource\b/
+
     @file_content_cache = Hash(::String, ::String).new
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
@@ -110,6 +121,20 @@ module Analyzer::Python
             path_api_instances[path] = api_instances
             view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
             import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
+
+            # add_resource registrars: the standard `add_resource` plus any
+            # Api-subclass wrapper methods defined in this file. Alias-free
+            # files (the overwhelming majority) reuse the hoisted constants
+            # so nothing is recompiled or allocated per file.
+            registrar_aliases = collect_resource_registrar_aliases(file_content)
+            if registrar_aliases.nil?
+              add_resource_re = ADD_RESOURCE_RE
+              registrar_substrings = ADD_RESOURCE_SUBSTRINGS
+            else
+              alt = (["add_resource"] + registrar_aliases).map { |r| Regex.escape(r) }.join("|")
+              add_resource_re = /(#{PYTHON_VAR_NAME_REGEX})\s*\.\s*(?:#{alt})\s*\((.+)\)/m
+              registrar_substrings = (["add_resource"] + registrar_aliases).map { |r| ".#{r}(" }
+            end
 
             # Tree-sitter pre-pass: parse the file once and pull out every
             # `@<router>.route(...)`/`@<router>.<method>(...)` decorator and
@@ -526,6 +551,36 @@ module Analyzer::Python
                   @class_views[router_name] << class_view_info
                 end
               end
+
+              # flask_restful / flask-restx `api.add_resource(Resource,
+              # "/url"[, "/url2"], endpoint=...)` (and Api-subclass wrapper
+              # methods collected above). Register each URL as a class-view
+              # against the api instance; the @class_views consumer below
+              # then resolves the Resource class (cross-file aware) and
+              # infers one endpoint per HTTP-verb method it defines.
+              if registrar_substrings.any? { |s| line.includes?(s) }
+                effective_add_resource = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+                if ar_match = effective_add_resource.match(add_resource_re)
+                  router_name = ar_match[1]
+                  arg_parts = split_python_call_args(ar_match[2])
+                  unless arg_parts.empty?
+                    resource_class = arg_parts[0].strip
+                    resource_class = resource_class.split(".").last if resource_class.includes?(".")
+                    if resource_class.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+                      arg_parts[1..].each do |raw_part|
+                        part = raw_part.strip
+                        break if part.matches?(/\A#{PYTHON_VAR_NAME_REGEX}\s*=/) # keyword args terminate the URL list
+                        url_match = part.match(/\A[rf]?['"]([^'"]*)['"]\z/)
+                        next unless url_match
+                        @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+                        @class_views[router_name] << Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+                          line_index, path, url_match[1], resource_class, "", [] of ::String
+                        )
+                      end
+                    end
+                  end
+                end
+              end
             end
           end
         end
@@ -660,7 +715,11 @@ module Analyzer::Python
         end
       end
 
-      # Process class-based views from add_url_rule() registrations
+      # Process class-based views from add_url_rule() / add_resource()
+      # registrations. The import-map fallback below resolves the same
+      # file repeatedly (e.g. redash registers 60+ resources from one
+      # module), so memoise the per-file import map.
+      import_map_by_path = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
       @class_views.each do |router_name, class_view_list|
         class_view_list.each do |class_view_info|
           _, path, route_path, class_name, _, methods = class_view_info
@@ -677,16 +736,19 @@ module Analyzer::Python
           end
 
           class_lines = fetch_file_content(class_file).lines
+          class_def_index = find_python_class_def(class_lines, class_name)
 
-          # Find class definition line
-          class_def_index = -1
-          class_lines.each_with_index do |line, idx|
-            stripped = line.lstrip
-            class_prefix = "class #{class_name}"
-            if stripped.starts_with?(class_prefix) &&
-               (stripped.size == class_prefix.size || stripped[class_prefix.size].in?('(', ':', ' ', '\t'))
-              class_def_index = idx
-              break
+          # Parser globals only track assignments (not `class`/`def`
+          # definitions), so an imported Resource/view class
+          # (`from app.resources import Foo`) is invisible to
+          # @global_variables and the assumed file is wrong. Resolve the
+          # defining module through the import map and re-scan there.
+          if class_def_index == -1
+            import_map = import_map_by_path[path] ||= find_imported_modules(base_path_for(path), path)
+            if (import_info = import_map[class_name]?) && !import_info[0].empty? && File.exists?(import_info[0])
+              class_file = import_info[0]
+              class_lines = fetch_file_content(class_file).lines
+              class_def_index = find_python_class_def(class_lines, class_name)
             end
           end
 
@@ -759,6 +821,41 @@ module Analyzer::Python
       result
     end
 
+    # Apps routinely wrap `add_resource` in an `Api` subclass method so the
+    # registration also applies an app-specific prefix transform — redash's
+    # `add_org_resource` is the canonical example. Collect those wrapper
+    # method names (defined in this file) so `<api>.add_org_resource(...)`
+    # is treated like `add_resource`. Returns nil for the common case (no
+    # such wrapper) so callers can reuse the hoisted alias-free constants.
+    private def collect_resource_registrar_aliases(source : ::String) : Array(::String)?
+      return unless source.includes?(".add_resource(")
+      aliases = nil
+      lines = source.lines
+      lines.each_with_index do |line, idx|
+        def_match = line.match(RESOURCE_REGISTRAR_DEF_RE)
+        next unless def_match
+        name = def_match[2]
+        next if name == "add_resource"
+        def_indent = def_match[1].size
+        # Scan the bounded method body for a delegating `.add_resource(`.
+        j = idx + 1
+        while j < lines.size && j < idx + 40
+          body_line = lines[j]
+          stripped = body_line.strip
+          unless stripped.empty?
+            indent = body_line.size - body_line.lstrip.size
+            break if indent <= def_indent # left the method body
+            if stripped.includes?(".add_resource(")
+              (aliases ||= [] of ::String) << name
+              break
+            end
+          end
+          j += 1
+        end
+      end
+      aliases
+    end
+
     private def extract_class_declared_methods(class_lines : Array(::String), class_def_index : Int32, class_indent : Int32) : Array(::String)
       methods = [] of ::String
       i = class_def_index + 1
@@ -827,6 +924,19 @@ module Analyzer::Python
       end
 
       depth
+    end
+
+    # Locate `class <name>(...):` in a file's lines (-1 when absent).
+    private def find_python_class_def(class_lines : Array(::String), class_name : ::String) : Int32
+      class_prefix = "class #{class_name}"
+      class_lines.each_with_index do |line, idx|
+        stripped = line.lstrip
+        if stripped.starts_with?(class_prefix) &&
+           (stripped.size == class_prefix.size || stripped[class_prefix.size].in?('(', ':', ' ', '\t'))
+          return idx
+        end
+      end
+      -1
     end
 
     private def find_class_method_def(class_lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
