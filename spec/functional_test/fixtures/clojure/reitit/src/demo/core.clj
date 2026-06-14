@@ -31,6 +31,23 @@
    ["/status"
     {:handler status-handler}]
 
+   ; Bare handler in the data position — `["/path" handler]` is reitit
+   ; shorthand for `{:handler handler}`; emit a GET endpoint.
+   ["/dashboard" dashboard-handler]
+
+   ; Schema map with a wrapped optional key — `(schema/optional-key :limit)`
+   ; names the `limit` query param just like the bare `:offset` key.
+   ["/orders"
+    {:get {:parameters {:query {(schema/optional-key :limit) int?
+                                :offset int?}}
+           :handler list-orders}}]
+
+   ; malli map-schema vector params — `[:map [:x …] [:y {…} …]]` names each
+   ; entry key (non-`:map` schemas like `[:maybe …]` carry no named params).
+   ["/items"
+    {:get {:parameters {:query [:map [:tag int?] [:cursor {:optional true} string?]]}
+           :handler list-items}}]
+
    ["/admin"
     ["/reports/:id"
      {:patch {:parameters {:path {:id int?}

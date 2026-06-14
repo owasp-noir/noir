@@ -177,7 +177,29 @@ module Analyzer::Clojure
 
       route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
       new_prefix = join_path(prefix, route_path)
+
+      # `["/path" handler]` — a bare handler (symbol / `#'var` / inline
+      # `(fn …)`) in the data position is reitit shorthand for
+      # `{:handler handler}` and responds to any method. Emit a GET endpoint so
+      # the route is not dropped; a map / child-vector in that position is left
+      # to walk_route_body.
+      token, _ = read_form_token(source, str_end + 1, vec_end)
+      if bare_route_handler?(token)
+        handler_start = skip_ws_and_comments(source, str_end + 1, vec_end)
+        handler_end = end_of_value(source, handler_start, vec_end)
+        emit_endpoint(source, handler_start, handler_start, handler_end, new_prefix, "GET", path, include_callee, function_callees, nil)
+      end
+
       walk_route_body(source, str_end + 1, vec_end, new_prefix, path, include_callee, function_callees)
+    end
+
+    # A bare route handler in the data position is an inline `(fn …)`/`(partial
+    # …)` form, a `#'var`/`'sym` reference, or a plain handler symbol. Maps,
+    # child-route vectors, strings and keywords are not handlers.
+    private def bare_route_handler?(token : String) : Bool
+      return false if token.empty?
+      return true if token.starts_with?('(')
+      !normalized_handler_symbol(token).nil?
     end
 
     private def walk_route_body(source : String,
@@ -481,17 +503,57 @@ module Analyzer::Clojure
     private def add_group_params(source : String, v_start : Int32, v_end : Int32,
                                  endpoint : Endpoint, ptype : String, path_param_set : Set(String))
       return if v_start >= v_end
-      return unless source.byte_at(v_start).unsafe_chr == '{'
 
-      map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
-      return unless map_end > v_start
+      names = case source.byte_at(v_start).unsafe_chr
+              when '{'
+                # Schema / map literal: `{:x int?, (s/optional-key :y) int?}`.
+                map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+                return unless map_end > v_start
+                extract_map_keys(source, v_start + 1, map_end)
+              when '['
+                # malli map schema vector: `[:map [:x int?] [:y {…} int?]]`.
+                vec_end = find_matching_delimiter(source, v_start, '[', ']', v_end)
+                return unless vec_end > v_start
+                extract_malli_map_keys(source, v_start + 1, vec_end)
+              else
+                return
+              end
 
-      extract_map_keys(source, v_start + 1, map_end).each do |name|
+      names.each do |name|
         next if name.empty?
         next if ptype == "path" && path_param_set.includes?(name)
         next if endpoint.params.any? { |p| p.name == name && p.param_type == ptype }
         endpoint.push_param(Param.new(name, "", ptype))
       end
+    end
+
+    # Extract the entry keys of a malli map schema vector
+    # `[:map [:x int?] [:y {:optional true} int?]]`. Only a `:map` head names
+    # request params; other malli schemas (`[:maybe …]`, `[:vector …]`) are
+    # positional and carry none. Each entry is a vector whose first keyword is
+    # the key name; an optional properties map after `:map` is skipped.
+    private def extract_malli_map_keys(source : String, start : Int32, limit : Int32) : Array(String)
+      i = skip_ws_and_comments(source, start, limit)
+      head, after_head = read_symbol(source, i, limit)
+      return [] of String unless head == ":map"
+
+      keys = [] of String
+      j = after_head
+      while j < limit
+        j = skip_ws_and_comments(source, j, limit)
+        break if j >= limit
+        if source.byte_at(j).unsafe_chr == '['
+          entry_end = find_matching_delimiter(source, j, '[', ']', limit)
+          break if entry_end <= j
+          if name = first_keyword_in(source, j + 1, entry_end)
+            keys << name
+          end
+          j = entry_end + 1
+        else
+          j = end_of_value(source, j, limit)
+        end
+      end
+      keys
     end
 
     # Extract first-level keyword keys (`:foo`, `:ns/foo`) from a map
@@ -516,9 +578,14 @@ module Analyzer::Clojure
             keys << name unless name.empty?
             i = after
           else
-            # Non-keyword key — skip it and the value pair.
-            i = end_of_value(source, i, limit)
-            i = skip_ws_and_comments(source, i, limit)
+            # A non-keyword key may still name a param when it's a schema /
+            # malli wrapper — `(s/optional-key :page)`, `[:page {:optional
+            # true}]`. Pull the first keyword inside the key form as the name.
+            key_end = end_of_value(source, i, limit)
+            if name = first_keyword_in(source, i, key_end)
+              keys << name
+            end
+            i = skip_ws_and_comments(source, key_end, limit)
             break if i >= limit
             i = end_of_value(source, i, limit)
             next
@@ -530,6 +597,26 @@ module Analyzer::Clojure
         end
       end
       keys
+    end
+
+    # Return the bind name of the first keyword inside a key form. Schema
+    # wraps optional/required keys (`(s/optional-key :page)`) and malli spells
+    # them as vectors (`[:page {:optional true}]`); in both the parameter name
+    # is the first keyword. Namespace-qualified keywords drop the namespace.
+    private def first_keyword_in(source : String, start : Int32, limit : Int32) : String?
+      i = start
+      while i < limit
+        if source.byte_at(i).unsafe_chr == ':'
+          sym, _ = read_symbol(source, i, limit)
+          name = sym.lstrip(':')
+          if slash_idx = name.rindex('/')
+            name = name[(slash_idx + 1)..]
+          end
+          return name unless name.empty?
+        end
+        i += 1
+      end
+      nil
     end
 
     private def extract_path_param_names(route_path : String) : Array(String)
