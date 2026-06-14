@@ -25,6 +25,8 @@ class ApiCtrl : public drogon::HttpController<ApiCtrl>
     // Regex with `?` metacharacters must be preserved verbatim (not treated
     // as a query-string separator).
     ADD_METHOD_VIA_REGEX(ApiCtrl::grouped, "/grp/(?:a|b)/(.*)?", Get);
+    // Brace-wrapped verb list `{Post, Options}` — a common real-world form.
+    METHOD_ADD(ApiCtrl::brace, "/brace", {Post, Options});
     METHOD_LIST_END
 
     void root(const HttpRequestPtr &req,
@@ -55,6 +57,12 @@ class ApiCtrl : public drogon::HttpController<ApiCtrl>
 
     void grouped(const HttpRequestPtr &req,
                  std::function<void(const HttpResponsePtr &)> &&callback)
+    {
+        callback(HttpResponse::newHttpResponse());
+    }
+
+    void brace(const HttpRequestPtr &req,
+               std::function<void(const HttpResponsePtr &)> &&callback)
     {
         callback(HttpResponse::newHttpResponse());
     }

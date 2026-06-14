@@ -537,7 +537,9 @@ module Analyzer::Cpp
     private def parse_methods(raw : String) : Array(String)
       methods = [] of String
       raw.split(",").each do |token|
-        name = token.strip
+        # Drogon accepts the verb list either as varargs (`Get, Post`) or wrapped
+        # in a brace init-list (`{Get, Post}`); strip braces so both forms parse.
+        name = token.delete("{}").strip
           .gsub(/^drogon::/, "")
           .gsub(/^HttpMethod::/, "")
           .gsub(/^Http/, "")
