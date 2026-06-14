@@ -202,7 +202,12 @@ module Analyzer::Swift
       offset = from
       while offset < line.size
         slice = line[offset..]
-        match = slice.match(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|patch|delete|head|on|ws|group)\s*\(/)
+        # `add` (i.e. `.add(middleware:)`) is a `Self`-returning builder step.
+        # A chain that *opens* with it — `group.add(middleware: auth).get(use:)
+        # .post("logout", use:)` — must be recognized so the trailing verb
+        # steps attach; otherwise those routes silently vanish. (`.add` mid-chain
+        # already works once some other step has opened the chain.)
+        match = slice.match(/(?<![.\w])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|patch|delete|head|on|ws|group|add)\s*\(/)
         break unless match
 
         receiver = match[1]

@@ -4,6 +4,7 @@ require "../../func_spec.cr"
 #   * `addRoutes(to: router.group("api/todos"))` + fluent builder chains
 #   * `RouteCollection` mounted via `addRoutes(_:atPath:)`
 #   * builder chains that resume across trailing closures
+#   * builder chains that *open* with `.add(middleware:)`
 #   * `.on(method:)`, HEAD and `.ws` verbs
 # The fixture also contains non-router `.get(...)`/`.delete(...)` calls
 # (environment.get, storage.get, repository.delete) that must NOT surface
@@ -22,6 +23,8 @@ expected_endpoints = [
   Endpoint.new("/api/todos", "POST"),
   Endpoint.new("/api/todos/:id", "PATCH"),
   Endpoint.new("/api/todos/:id", "DELETE"),
+  Endpoint.new("/api/todos/me", "GET"),
+  Endpoint.new("/api/todos/logout", "POST"),
 ]
 
 FunctionalTester.new("fixtures/swift/hummingbird_controllers/", {
