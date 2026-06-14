@@ -1,0 +1,6 @@
+name: angel3_example
+description: Fixture app exercising the Angel3 analyzer.
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  angel3_framework: ^8.0.0
