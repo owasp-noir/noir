@@ -240,7 +240,8 @@ def run_options_parser
         curl                 cURL commands
         httpie               HTTPie commands
         powershell           PowerShell Invoke-WebRequest commands
-        adb                  ADB commands for mobile entry points
+        adb                  ADB commands for Android entry points
+        simctl               simctl commands for iOS entry points
         oas2                 OpenAPI 2.0 (Swagger)
         oas3                 OpenAPI 3.0
         postman              Postman collection
