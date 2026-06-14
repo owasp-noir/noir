@@ -31,7 +31,14 @@ module Analyzer::Zig
       all_files.each do |path|
         next unless path.ends_with?(".zig")
         content = read_file_content(path)
-        next unless content.includes?("httpz")
+        # Route-bearing files don't always reference `httpz` literally — a
+        # common layout registers routes in a helper `fn group(router: *Foo)`
+        # whose file only imports an app-local `Router` alias (book-store's
+        # `api/category.zig`). Gate on a cheap routing signal (a `/…` string
+        # argument, or a `.group(` call) instead of the framework name so
+        # those files are still scanned. The analyzer only runs at all when
+        # the project is already detected as httpz.
+        next unless content.includes?("(\"/") || content.includes?(".group(")
         process_file(path, content, include_callee)
       end
 

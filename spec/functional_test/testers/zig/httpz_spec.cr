@@ -26,6 +26,12 @@ expected_endpoints << httpz_endpoint("/admin/stats", "GET", [] of Param, [Callee
 # Nested group prefix composition.
 expected_endpoints << httpz_endpoint("/admin/v1/ping", "GET", [] of Param, [Callee.new("res.write")])
 
+# Routes registered from a helper module that never names `httpz` — caught by
+# the routing-signal file gate, with the local group prefix composed.
+expected_endpoints << httpz_endpoint("/items/", "GET", [] of Param, [Callee.new("res.write")])
+expected_endpoints << httpz_endpoint("/items/:id", "GET", [Param.new("id", "", "path")], [Callee.new("lookupItem")])
+expected_endpoints << httpz_endpoint("/items/", "POST", [] of Param, [Callee.new("saveItem")])
+
 FunctionalTester.new("fixtures/zig/httpz/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

@@ -1,5 +1,6 @@
 const std = @import("std");
 const httpz = @import("httpz");
+const api = @import("api.zig");
 
 pub fn main() !void {
     var server = try httpz.Server().init(std.heap.page_allocator, .{ .port = 5882 }, .{});
@@ -21,6 +22,9 @@ pub fn main() !void {
     // Nested group inherits the parent prefix.
     var v1 = admin.group("/v1", .{});
     v1.get("/ping", v1Ping, .{});
+
+    // Routes registered from a helper module that doesn't import httpz.
+    api.items.registerItems(router);
 
     try server.listen();
 }
