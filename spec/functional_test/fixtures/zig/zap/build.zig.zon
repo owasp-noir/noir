@@ -1,0 +1,10 @@
+.{
+    .name = .zap_fixture,
+    .version = "0.0.0",
+    .dependencies = .{
+        .zap = .{
+            .url = "https://github.com/zigzap/zap",
+        },
+    },
+    .paths = .{""},
+}
