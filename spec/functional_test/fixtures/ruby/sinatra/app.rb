@@ -22,6 +22,20 @@ class HeaderShim
   end
 end
 
+# Regression guard: the verb words double as ordinary Ruby methods. A
+# Rails+Sinatra app runs these in migrations / service objects that the
+# Sinatra analyzer also scans. The string argument is not a rooted route
+# path, so none may surface as an endpoint (the old matcher turned the
+# raw SQL into a phantom `DELETE /DELETE FROM ...`, and a non-rooted
+# Rails route `get "release-notes"` leaked without its real scope).
+class Maintenance
+  def run
+    delete "DELETE FROM articles WHERE archived = true"
+    post "https://hooks.example.com/notify"
+    get "release-notes"
+  end
+end
+
 get '/' do
   puts param['query']
   puts cookies[:cookie1]
