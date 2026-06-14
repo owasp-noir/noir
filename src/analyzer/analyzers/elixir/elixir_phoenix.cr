@@ -1030,12 +1030,28 @@ module Analyzer::Elixir
                                    scope_module : String,
                                    base : String,
                                    string_bindings : Hash(String, String))
-      pattern = Regex.new("(?:^|[^.\\w])#{route_macro}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Za-z_]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))\\s*,\\s*:(\\w+[!?]?)")
+      # The `:action` atom is OPTIONAL: Phoenix's `get(path, plug, plug_opts
+      # \\ [], opts \\ [])` lets a plug-style route omit it
+      # (`get("/metrics", TelemetryUI.Web, [])`,
+      # `get("/", WebAppController, [])`). Requiring `, :action` dropped every
+      # such route (accent: 9 of ~48 missed). Capture the action when present
+      # for the controller/action param map, but emit the endpoint regardless.
+      #
+      # Once the action is optional the 2nd arg MUST be a real controller
+      # module — a capitalized name or `unquote(var)` that is NOT itself a
+      # function call. Otherwise HTTP-CLIENT wrappers (common in Elixir) slip
+      # through: `post("/api/v1/org/secrets", params, team)` (lowercase var,
+      # already excluded by `[A-Z]`) and `post("com.atproto...",
+      # Jason.encode!(params), [...])` (a `Module.fn(...)` call). The
+      # `(?=\\s*[,)]|\\s*$)` lookahead requires the module reference to be
+      # followed by an arg separator / call close — a `(` or `!` (a call)
+      # rejects it.
+      pattern = Regex.new("(?:^|[^.\\w])#{route_macro}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Z]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))(?=\\s*[,)]|\\s*$)(?:\\s*,\\s*:(\\w+[!?]?))?")
       line.scan(pattern) do |match|
         full_path = scoped_route_path(scope_prefix, match[1])
         endpoint = Endpoint.new(full_path, http_method)
-        if controller = resolve_unquoted_ref(match[2], string_bindings)
-          @route_map[route_map_key(base, http_method, full_path)] = ControllerAction.new(scoped_controller(scope_module, controller), match[3])
+        if (controller = resolve_unquoted_ref(match[2], string_bindings)) && (action = match[3]?)
+          @route_map[route_map_key(base, http_method, full_path)] = ControllerAction.new(scoped_controller(scope_module, controller), action)
         end
         endpoints << endpoint
       end
