@@ -112,6 +112,28 @@ object WebServer {
               }
             }
           }
+        },
+        pathPrefix("ip") {
+          (get & path(Segment)) { ip =>
+            complete(s"ip info $ip")
+          } ~
+          (post & entity(as[Item])) { item =>
+            complete(s"created ${item.name}")
+          }
+        },
+        path("things") {
+          pathEndOrSingleSlash {
+            get {
+              complete("things")
+            }
+          }
+        },
+        pathPrefix("widgets") {
+          (path(Segment) & pathEndOrSingleSlash) { widgetId =>
+            get {
+              complete(s"widget $widgetId")
+            }
+          }
         }
       )
 
