@@ -30,7 +30,9 @@ module Analyzer::Typescript
 
       raw = read_file_content(path)
       return unless tanstack_route_candidate?(raw)
-      return if Noir::JSRouteExtractor.test_stub_only?(path, raw)
+      # TanStack Router route files are React/Vue components — don't let the
+      # client-side-framework markers skip them (they all import `react`).
+      return if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
 
       # Comments can hold stale routes; drop them so a commented-out
       # `createFileRoute('/old')` doesn't get reported.

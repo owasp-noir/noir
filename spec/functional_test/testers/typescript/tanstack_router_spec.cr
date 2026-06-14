@@ -41,6 +41,10 @@ expected_endpoints = [
   # Empty file routes should emit the route without borrowing later
   # unrelated object literals as route config.
   Endpoint.new("/empty", "GET", [] of Param),
+  # A route file that imports `react` must still be scanned — the
+  # client-side-framework filter applies to the verb-DSL extractor, not
+  # to TanStack Router's own (React) route definitions.
+  Endpoint.new("/react-page", "GET", [] of Param),
 ]
 
 FunctionalTester.new("fixtures/typescript/tanstack_router/", {

@@ -31,7 +31,10 @@ module Analyzer::Typescript
 
           raw = read_file_content(path)
           next unless trpc_candidate?(raw)
-          next if Noir::JSRouteExtractor.test_stub_only?(path, raw)
+          # tRPC router modules may import `react` (RSC/client helpers); the
+          # `createTRPCRouter`/procedure shape already gates detection, so
+          # don't let the client-side-framework markers skip them.
+          next if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
 
           content = Noir::JSRouteExtractor.strip_js_comments(raw)
           next unless trpc_candidate?(content)
