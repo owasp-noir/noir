@@ -10,7 +10,14 @@ func routes(_ app: Application) throws {
     app.get("hello") { req -> String in
         return "Hello, world!"
     }
-    
+
+    // Multi-segment grouped base (`app.routes.grouped(...)`): the new group
+    // must register as router-like with the composed prefix.
+    let v2 = app.routes.grouped("v2")
+    v2.get("ping") { req -> String in
+        return "pong"                            // GET /v2/ping
+    }
+
     // POST route with body
     app.post("users") { req -> EventLoopFuture<User> in
         let user = try req.content.decode(User.self)
