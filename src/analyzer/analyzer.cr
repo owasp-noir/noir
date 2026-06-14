@@ -187,6 +187,10 @@ def initialize_analyzers(logger : NoirLogger)
     {"ts_nestjs", Typescript::Nestjs},
     {"ts_tanstack_router", Typescript::TanstackRouter},
     {"ts_trpc", Typescript::TRPC},
+    {"zig_jetzig", Zig::Jetzig},
+    {"zig_zap", Zig::Zap},
+    {"zig_httpz", Zig::Httpz},
+    {"zig_tokamak", Zig::Tokamak},
     {"ai", AI::Unified},
   ])
 
@@ -233,6 +237,16 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   # analyzer is unaffected — it owns the Phoenix.Router DSL.
   if filtered.includes?("elixir_bandit") && filtered.includes?("elixir_plug")
     filtered.reject!("elixir_plug")
+  end
+
+  # Jetzig and Tokamak are both built on top of http.zig (httpz), so a
+  # project that vendors either framework's source also carries the
+  # `@import("httpz")` / `.httpz` dependency markers the httpz detector
+  # keys on. When the more specific framework is present it owns the
+  # routing DSL; keep it and drop the redundant httpz entry so the httpz
+  # analyzer doesn't also scan the framework's internals.
+  if filtered.includes?("zig_httpz") && (filtered.includes?("zig_jetzig") || filtered.includes?("zig_tokamak"))
+    filtered.reject!("zig_httpz")
   end
 
   filtered

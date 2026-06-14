@@ -31,6 +31,7 @@ module NoirTechs
     "scala_akka", "scala_http4s", "scala_play", "scala_scalatra", "scala_tapir", "scala_zio_http",
     "swift_hummingbird", "swift_kitura", "swift_vapor",
     "ts_nestjs", "ts_tanstack_router", "ts_trpc",
+    "zig_jetzig", "zig_zap", "zig_httpz", "zig_tokamak",
   ]
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
@@ -1605,6 +1606,78 @@ module NoirTechs
         },
         :static_path => true,
         :websocket   => true,
+      },
+    },
+    :zig_jetzig => {
+      :framework => "Jetzig",
+      :language  => "Zig",
+      :similar   => ["jetzig", "zig-jetzig", "zig_jetzig"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :zig_zap => {
+      :framework => "Zap",
+      :language  => "Zig",
+      :similar   => ["zap", "zigzap", "zig-zap", "zig_zap"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :zig_httpz => {
+      :framework => "httpz",
+      :language  => "Zig",
+      :similar   => ["httpz", "http.zig", "http_zig", "zig-httpz", "zig_httpz"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :zig_tokamak => {
+      :framework => "Tokamak",
+      :language  => "Zig",
+      :similar   => ["tokamak", "zig-tokamak", "zig_tokamak"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
       },
     },
     :kotlin_http4k => {
