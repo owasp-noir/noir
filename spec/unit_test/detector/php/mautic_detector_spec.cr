@@ -18,12 +18,12 @@ describe "Detect Mautic" do
   end
 
   it "detects a Mautic bundle route config" do
-    php_content = <<-PHP
+    php_content = <<-'PHP'
       <?php
       return [
           'routes' => [
               'main' => [
-                  'mautic_x' => ['path' => '/x', 'controller' => 'Mautic\\CoreBundle\\Controller\\XController::indexAction'],
+                  'mautic_x' => ['path' => '/x', 'controller' => 'Mautic\CoreBundle\Controller\XController::indexAction'],
               ],
           ],
       ];
