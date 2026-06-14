@@ -265,10 +265,18 @@ module Analyzer::Perl
       base = ""
       chained_to = first_attr(action, "chained")
       unless chained_to.empty? || chained_to == "/"
-        if parent = resolve_chained_parent(action, chained_to, actions_by_name, actions_by_private)
-          parent_path = chained_path(parent, actions_by_name, actions_by_private, seen)
-          base = parent_path || ""
-        end
+        # A named `Chained('parent')` that resolves to nothing is an
+        # incomplete chain fragment, not a standalone route. This happens
+        # when CRUD actions live in a Moose role/base controller and chain
+        # to a `base`/`object` link defined in a *different* package (the
+        # role is composed into many controllers at runtime, so the link
+        # only exists after composition). Emitting it would invent a phantom
+        # top-level path (`/create`, `/delete`), so skip it instead.
+        parent = resolve_chained_parent(action, chained_to, actions_by_name, actions_by_private)
+        return unless parent
+        parent_path = chained_path(parent, actions_by_name, actions_by_private, seen)
+        return if parent_path.nil?
+        base = parent_path
       end
 
       part = if attr_present?(action, "pathpart")
