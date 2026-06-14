@@ -149,5 +149,42 @@ describe "AccountRecoveryTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "tags spelled-out multi-factor paths the bare 2fa/mfa words miss" do
+      ["/two-factor/authenticator", "/two_factor/yubikey",
+       "/twofactor", "/u/preferences/second-factor",
+       "/account/multi-factor/enroll"].each do |path|
+        tagger = AccountRecoveryTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(path, "POST")
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("account_recovery")
+      end
+    end
+
+    it "tags WebAuthn / passkey credential ceremonies" do
+      ["/accounts/webauthn/assertion-options", "/session/passkey/challenge",
+       "/u/create_passkey", "/passkeys"].each do |path|
+        tagger = AccountRecoveryTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(path, "POST")
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("account_recovery")
+      end
+    end
+
+    it "does not tag a path that merely contains the squished form as a substring" do
+      tagger = AccountRecoveryTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/twofactorial/results", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end
