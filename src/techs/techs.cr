@@ -3,7 +3,7 @@ require "json"
 module NoirTechs
   CALLEE_SUPPORTED_TECHS = [
     "android", "ios",
-    "cpp_crow", "cpp_drogon", "cpp_httplib",
+    "cpp_crow", "cpp_drogon", "cpp_httplib", "cpp_oatpp",
     "clojure_compojure", "clojure_reitit", "clojure_ring",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
     "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
@@ -121,6 +121,24 @@ module NoirTechs
       :framework => "cpp-httplib",
       :language  => "C++",
       :similar   => ["httplib", "cpp-httplib", "cpp_httplib", "c++-httplib", "c++_httplib", "yhirose-httplib"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :cpp_oatpp => {
+      :framework => "oat++",
+      :language  => "C++",
+      :similar   => ["oatpp", "oat++", "cpp-oatpp", "cpp_oatpp", "c++-oatpp", "c++_oatpp"],
       :supported => {
         :endpoint => true,
         :method   => true,
