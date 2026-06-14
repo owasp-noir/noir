@@ -666,4 +666,36 @@ describe Noir::TreeSitterGoRouteExtractor do
     calls = Noir::TreeSitterGoRouteExtractor.collect_router_builder_callsites(source, builders.keys.to_set)
     calls.should eq([{"addUserRoutes", "/v1"}])
   end
+
+  it "composes path-scoped Group closures that reuse the outer router (gitea web wrapper)" do
+    # Chi's own `Group` takes no path, but gitea's `code.gitea.io/gitea/
+    # modules/web` wrapper exposes `m.Group("/path", func(){...})` where the
+    # closure has NO router parameter and reuses the captured `m`. The
+    # prefix must still compose, recursively, onto the nested verb routes.
+    source = <<-GO
+      package routes
+      func RegisterRoutes(m *web.Router) {
+          m.Get("/", home)
+          m.Group("/{username}/{reponame}", func() {
+              m.Get("/issues", issues)
+              m.Group("/settings", func() {
+                  m.Get("/hooks", hooks)
+                  m.Post("/hooks/gitea/new", newHook)
+              })
+          })
+          m.Group(func() {
+              m.Get("/healthz", healthz)
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_chi_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/"},
+      {"GET", "/healthz"},
+      {"GET", "/{username}/{reponame}/issues"},
+      {"GET", "/{username}/{reponame}/settings/hooks"},
+      {"POST", "/{username}/{reponame}/settings/hooks/gitea/new"},
+    ].sort)
+  end
 end
