@@ -1,0 +1,7 @@
+[package]
+name = "axum_crossfile_nest_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
