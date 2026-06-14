@@ -109,8 +109,9 @@ module Analyzer::Scala
           search_offset = vm.end
         end
 
-        next unless match = code.match(BASE_ENDPOINT_RE, search_offset)
-        col = match.begin || 0
+        masked = struct_lines[index]? || ""
+        col = base_match_col(code, masked, search_offset)
+        next unless col
         chain_text, last_line = collect_chain(code_lines, struct_lines, index, col)
         consumed_until = last_line
         chains << Chain.new(name, chain_text, index + 1)
@@ -164,6 +165,23 @@ module Analyzer::Scala
     private def leading_ident(chain : String) : String?
       m = chain.match(/^\s*([A-Za-z_]\w*)/)
       m ? m[1] : nil
+    end
+
+    # Column of the first real base-endpoint token at/after `offset`, skipping
+    # matches that sit inside a `[...]` type-argument list (e.g. the type name in
+    # `List[ServerEndpoint[Any, F]](...)`). Such a match would otherwise start a
+    # chain whose head carries an unbalanced `(` from the enclosing call and
+    # swallow the following endpoint lines. `secureEndpoint[ApiKey].post` is kept
+    # because the identifier itself is at bracket depth 0.
+    private def base_match_col(code : String, masked : String, offset : Int32) : Int32?
+      while m = code.match(BASE_ENDPOINT_RE, offset)
+        col = m.begin || 0
+        prefix = col <= masked.size ? masked[0...col] : masked
+        bracket_depth = prefix.count('[') - prefix.count(']')
+        return col if bracket_depth <= 0
+        offset = col + m[0].size
+      end
+      nil
     end
 
     # Collect a Tapir endpoint chain spanning multiple lines. A line is part of
