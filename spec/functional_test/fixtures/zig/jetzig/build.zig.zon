@@ -1,0 +1,10 @@
+.{
+    .name = .jetzig_fixture,
+    .version = "0.0.0",
+    .dependencies = .{
+        .jetzig = .{
+            .url = "https://github.com/jetzig-framework/jetzig",
+        },
+    },
+    .paths = .{""},
+}

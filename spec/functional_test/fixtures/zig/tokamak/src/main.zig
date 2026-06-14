@@ -1,0 +1,47 @@
+const std = @import("std");
+const tk = @import("tokamak");
+const widgets = @import("api/widgets.zig");
+
+const routes: []const tk.Route = &.{
+    .get("/", hello),
+    .post("/users", createUser),
+    .group("/api", &.{
+        .get("/health", health),
+        // Controller mount — widgets routes compose the `/api` prefix.
+        .router(widgets),
+        .group("/v1", &.{
+            .get("/items/:id", getItem),
+            .delete("/items/:id", deleteItem),
+        }),
+    }),
+};
+
+fn hello() ![]const u8 {
+    return greet("world");
+}
+
+fn createUser(req: *tk.Request) !void {
+    try db.insert(req.body);
+    audit.log("create");
+    // Data-object `.put` with a non-rooted key — must NOT become a `PUT /name`
+    // route (the leading-slash guard rejects it).
+    try root.put("name", req.body);
+}
+
+fn health() ![]const u8 {
+    return "ok";
+}
+
+fn getItem() !void {
+    try store.fetch();
+}
+
+fn deleteItem() !void {
+    try store.remove();
+}
+
+pub fn main() !void {
+    var server = try tk.Server.init(std.heap.page_allocator, routes, .{ .listen = .{ .port = 8080 } });
+    defer server.deinit();
+    try server.start();
+}

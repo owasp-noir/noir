@@ -39,6 +39,10 @@ DETECTOR_IGNORED_DIR_NAMES = Set{
   "node_modules", "vendor", "__pycache__", ".venv", "venv",
   ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
   ".cargo", ".terraform",
+  # Zig build outputs / fetched-dependency cache. Vendored deps under
+  # `.zig-cache` carry their own `@import("httpz")` etc. and would
+  # otherwise make every Zig project look like it uses every framework.
+  ".zig-cache", "zig-cache", ".zig-out", "zig-out",
   # Common build / dist / cache outputs
   "dist", "build", "target", "out", "tmp", ".cache",
   ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
@@ -313,6 +317,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Typescript::Nestjs,
     Typescript::TanstackRouter,
     Typescript::TRPC,
+    Zig::Jetzig,
+    Zig::Zap,
+    Zig::Httpz,
+    Zig::Tokamak,
   ])
 
   # Handle --only-techs: filter detector_list to only specified techs
