@@ -37,22 +37,55 @@ module Analyzer::Scala
       extract_routes_from_content(path, content)
     end
 
+    # One collected endpoint chain. `name` is the `val` it was assigned to (if
+    # any) so other chains can reuse it as a base for prefix composition.
+    private record Chain, name : String?, text : String, line : Int32
+
     private def extract_routes_from_content(path : String, content : String) : Array(Endpoint)
-      endpoints = [] of Endpoint
       lexer = scala_lexer(content)
       code_lines = lexer.code_lines
       struct_lines = lexer.masked_lines
-      consumed_until = -1
 
+      chains = collect_chains(code_lines, struct_lines)
+
+      # Map every named chain so a later chain that starts from one of them
+      # (e.g. `val addBook = baseEndpoint.post...`) can inherit its path prefix.
+      defs = {} of String => String
+      chains.each { |c| (n = c.name) && (defs[n] = c.text) }
+
+      cache = {} of String => Tuple(Array(String), Array(Param))
+      endpoints = [] of Endpoint
+      chains.each do |chain|
+        method = detect_method(chain.text)
+        next unless method
+
+        endpoint = create_endpoint("/", method.upcase, path, chain.line)
+        seen = Set(String).new
+        (n = chain.name) && (seen << n)
+        segments, params = resolve_chain(chain.text, defs, cache, seen)
+        endpoint.url = segments.empty? ? "/" : "/" + segments.join("/")
+        params.each { |p| add_param(endpoint, p.name, p.value, p.param_type) }
+        endpoints << endpoint
+      end
+
+      endpoints
+    end
+
+    private def collect_chains(code_lines : Array(String), struct_lines : Array(String)) : Array(Chain)
+      chains = [] of Chain
+      consumed_until = -1
       code_lines.each_index do |index|
         next if index <= consumed_until
         code = code_lines[index]? || ""
 
         # Skip the `val NAME [: TYPE] =` prefix so a val whose name (or type
         # annotation, e.g. `PublicEndpoint[...]`) ends in "Endpoint" doesn't
-        # get matched in place of the RHS base token.
+        # get matched in place of the RHS base token. The captured name lets the
+        # chain be reused as a base for prefix composition.
+        name = nil
         search_offset = 0
         if vm = code.match(VAL_DEF_RE)
+          name = vm[1]
           search_offset = vm.end
         end
 
@@ -60,12 +93,40 @@ module Analyzer::Scala
         col = match.begin || 0
         chain_text, last_line = collect_chain(code_lines, struct_lines, index, col)
         consumed_until = last_line
+        chains << Chain.new(name, chain_text, index + 1)
+      end
+      chains
+    end
 
-        endpoint = parse_chain(chain_text, path, index + 1)
-        endpoints << endpoint if endpoint
+    # Resolve a chain's path segments and params, prepending those of the base
+    # endpoint it was derived from. `endpoint`/`infallibleEndpoint` are the
+    # terminal roots; any other leading identifier that names a known chain is a
+    # reusable base (`val base = endpoint.in("books")`). `seen` guards cycles.
+    private def resolve_chain(chain : String, defs : Hash(String, String),
+                              cache : Hash(String, Tuple(Array(String), Array(Param))),
+                              seen : Set(String)) : Tuple(Array(String), Array(Param))
+      own_segments = [] of String
+      own_params = [] of Param
+      extract_in_blocks(chain).each do |args|
+        process_in_args(args, own_params, own_segments)
       end
 
-      endpoints
+      head = leading_ident(chain)
+      if head && head != "endpoint" && head != "infallibleEndpoint" && !seen.includes?(head) && (base_chain = defs[head]?)
+        base_segs, base_params = cache[head]? || begin
+          resolved = resolve_chain(base_chain, defs, cache, seen | Set{head})
+          cache[head] = resolved
+          resolved
+        end
+        return {base_segs + own_segments, base_params + own_params}
+      end
+
+      {own_segments, own_params}
+    end
+
+    private def leading_ident(chain : String) : String?
+      m = chain.match(/^\s*([A-Za-z_]\w*)/)
+      m ? m[1] : nil
     end
 
     # Collect a Tapir endpoint chain spanning multiple lines. A line is part of
@@ -151,21 +212,6 @@ module Analyzer::Scala
       depths
     end
 
-    private def parse_chain(chain : String, path : String, line_no : Int32) : Endpoint?
-      method = detect_method(chain)
-      return unless method
-
-      endpoint = create_endpoint("/", method.upcase, path, line_no)
-      segments = [] of String
-
-      extract_in_blocks(chain).each do |args|
-        process_in_args(args, endpoint, segments)
-      end
-
-      endpoint.url = segments.empty? ? "/" : "/" + segments.join("/")
-      endpoint
-    end
-
     private def detect_method(chain : String) : String?
       METHOD_CALL_PATTERNS.each do |m, pattern|
         return m if chain.matches?(pattern)
@@ -214,7 +260,7 @@ module Analyzer::Scala
       nil
     end
 
-    private def process_in_args(args : String, endpoint : Endpoint, segments : Array(String))
+    private def process_in_args(args : String, params : Array(Param), segments : Array(String))
       depths = call_paren_depths(args)
       args.scan(IN_TOKEN_RE) do |m|
         if literal = m["literal"]?
@@ -228,17 +274,17 @@ module Analyzer::Scala
         elsif m["path_type"]?
           name = m["path_name"]? || default_path_name(segments)
           segments << "{#{name}}"
-          add_param(endpoint, name, "", "path")
+          collect_param(params, name, "", "path")
         elsif q = m["query_name"]?
-          add_param(endpoint, q, m["query_type"]? || "", "query")
+          collect_param(params, q, m["query_type"]? || "", "query")
         elsif q = m["queries_name"]?
-          add_param(endpoint, q, m["queries_type"]? || "", "query")
+          collect_param(params, q, m["queries_type"]? || "", "query")
         elsif h = m["header_name"]?
-          add_param(endpoint, h, m["header_type"]? || "", "header")
+          collect_param(params, h, m["header_type"]? || "", "header")
         elsif h = m["header_name2"]?
-          add_param(endpoint, h, "", "header")
+          collect_param(params, h, "", "header")
         elsif c = m["cookie_name"]?
-          add_param(endpoint, c, m["cookie_type"]? || "", "cookie")
+          collect_param(params, c, m["cookie_type"]? || "", "cookie")
         elsif body = m["body"]?
           inner = m["body_type"]? || ""
           param_type = case body
@@ -249,9 +295,14 @@ module Analyzer::Scala
                        else
                          "body"
                        end
-          add_param(endpoint, "body", inner, param_type)
+          collect_param(params, "body", inner, param_type)
         end
       end
+    end
+
+    private def collect_param(params : Array(Param), name : String, type_value : String, param_type : String)
+      return if params.any? { |p| p.name == name && p.param_type == param_type }
+      params << Param.new(name, type_value, param_type)
     end
 
     private def add_param(endpoint : Endpoint, name : String, type_value : String, param_type : String)
