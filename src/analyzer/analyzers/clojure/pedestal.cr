@@ -117,11 +117,19 @@ module Analyzer::Clojure
       base = base_symbol(symbol)
       if method = helper_method(symbol, base)
         route_path, route_literal_end = first_string_literal(source, after_symbol, list_end)
-        if route_path
+        # Pedestal route helpers take a literal path beginning with `/`
+        # (`(route/get "/health" [] handler)`). A namespaced verb whose first
+        # string is a full URL — `(client/post "http://host/api" ...)` from
+        # clj-http/http-kit — or a log message — `(log/trace "writing event")`
+        # — is not a route; let the walker descend over it instead of emitting
+        # a phantom endpoint (`join_path` would otherwise force a leading `/`).
+        if route_path && route_path.starts_with?("/")
           handler_range = helper_handler_range(source, route_literal_end + 1, list_end)
           emit_endpoint(source, list_start, join_path(prefix, route_path), method, path, seen, include_callee, function_callees, handler_range)
+          true
+        else
+          false
         end
-        true
       elsif base == "table-routes"
         process_table_routes_call(source, after_symbol, list_end, prefix, path, seen, include_callee, function_callees)
         true
