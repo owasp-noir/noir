@@ -125,7 +125,7 @@ module Analyzer::Javascript
     # `$slug` becomes `{slug}`; bare `$` is the catch-all sentinel;
     # `_index` collapses to the parent URL.
     private def url_for(name : String) : String
-      raw_segments = name.split(".")
+      raw_segments = split_flat_segments(name)
       segments = [] of String
       raw_segments.each do |seg|
         next if seg == "_index"       # blends with parent URL
@@ -133,24 +133,64 @@ module Analyzer::Javascript
         if seg == "$"
           segments << "{splat}"
         elsif seg.starts_with?("$")
-          segments << "{#{seg[1..]}}"
+          segments << "{#{normalize_segment(seg[1..])}}"
         elsif seg.starts_with?("(") && seg.ends_with?(")")
           # Optional segment — surface the inner literal / dynamic
           # so reviewers can still see the route, even though the
           # alternative-without is lossy.
           inner = seg[1..-2]
           if inner.starts_with?("$")
-            segments << "{#{inner[1..]}}"
+            segments << "{#{normalize_segment(inner[1..])}}"
           else
-            segments << inner
+            segments << normalize_segment(inner)
           end
         else
-          segments << seg
+          segments << normalize_segment(seg)
         end
       end
 
       url = "/" + segments.join("/")
       url == "/" ? "/" : url.sub(/\/+$/, "")
+    end
+
+    # Split a dot-flat Remix route name on segment separators, treating a
+    # `.` inside an escaped `[...]` group as a literal (e.g.
+    # `jokes[.]rss` is ONE segment whose URL is `/jokes.rss`, not two).
+    private def split_flat_segments(name : String) : Array(String)
+      segments = [] of String
+      current = String::Builder.new
+      depth = 0
+      name.each_char do |ch|
+        case ch
+        when '['
+          depth += 1
+          current << ch
+        when ']'
+          depth -= 1 if depth > 0
+          current << ch
+        when '.'
+          if depth == 0
+            segments << current.to_s
+            current = String::Builder.new
+          else
+            current << ch
+          end
+        else
+          current << ch
+        end
+      end
+      segments << current.to_s
+      segments
+    end
+
+    # Unescape `[...]` literals (the brackets are removed; their contents
+    # are taken verbatim) and drop a single trailing `_` — Remix's
+    # "opt out of parent layout" marker, which never affects the URL or a
+    # param name (`$contactId_` -> `contactId`, `sitemap[.]xml` ->
+    # `sitemap.xml`).
+    private def normalize_segment(seg : String) : String
+      unescaped = seg.delete('[').delete(']')
+      unescaped.ends_with?("_") ? unescaped[0...-1] : unescaped
     end
 
     # `verbs(is_page, has_loader, has_action)` — figure out which verbs the file
