@@ -1,0 +1,6 @@
+name: alfred_example
+description: Fixture app exercising the Alfred analyzer.
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  alfred: ^1.1.0

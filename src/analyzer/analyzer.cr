@@ -32,6 +32,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"crystal_kemal", Crystal::Kemal},
     {"crystal_lucky", Crystal::Lucky},
     {"crystal_marten", Crystal::Marten},
+    {"dart_alfred", Dart::Alfred},
     {"dart_frog", Dart::DartFrog},
     {"dart_serverpod", Dart::Serverpod},
     {"dart_shelf", Dart::Shelf},
