@@ -59,6 +59,31 @@ module Noir::ZigCalleeExtractor
     !VENDORED_FRAMEWORK_RE.match(path.gsub('\\', '/')).nil?
   end
 
+  # `test { … }` / `test "name" { … }` block opener. Route registrations inside
+  # a test block are unit-test fixtures — and, in a framework's own source
+  # vendored as a loose file (`modules/httpz.zig`, `modules/router.zig`), its
+  # self-tests — never runtime endpoints.
+  TEST_BLOCK_RE = /(?:^|[^A-Za-z0-9_.])test\s*(?:"(?:[^"\\]|\\.)*"\s*)?\{/
+
+  # Byte ranges of test blocks, brace-matched on the string-blanked source so a
+  # `{`/`}` inside a literal can't throw the matching off. `in_test_block?`
+  # then lets an analyzer drop a route whose registration sits inside one.
+  def test_block_ranges(stripped : String) : Array(Tuple(Int32, Int32))
+    chars = stripped.chars
+    ranges = [] of Tuple(Int32, Int32)
+    stripped.scan(TEST_BLOCK_RE) do |m|
+      brace = (m.end(0) || 0) - 1
+      close = find_matching(chars, brace, '{', '}')
+      next if close.nil?
+      ranges << {m.begin(0) || 0, close}
+    end
+    ranges
+  end
+
+  def in_test_block?(offset : Int32, ranges : Array(Tuple(Int32, Int32))) : Bool
+    ranges.any? { |r| offset > r[0] && offset < r[1] }
+  end
+
   # A call expression: an optional `@` (builtin) + identifier, then any number
   # of `.identifier` accessors, immediately followed by `(`. The lookbehind
   # stops the match from starting in the middle of an identifier or chain, so

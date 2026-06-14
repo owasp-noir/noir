@@ -92,7 +92,14 @@ module Analyzer::Zig
 
         next unless content.includes?(".path") || content.includes?(".init(")
 
+        # Path literals/bindings inside `test { … }` blocks are unit-test
+        # fixtures (the zap framework's own `test_auth.zig` binds `.path =
+        # "/test"`); excluding them keeps those phantom paths off real
+        # endpoint structs that happen to share a type name.
+        test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(Noir::ZigCalleeExtractor.strip_non_code(content))
+
         text.scan(INIT_RE) do |m|
+          next if Noir::ZigCalleeExtractor.in_test_block?(m.begin(0) || 0, test_blocks)
           type = m[1]
           if pm = m[2].match(/"(\/[^"]*)"/)
             add_binding(by_type, type, pm[1])
@@ -100,6 +107,7 @@ module Analyzer::Zig
         end
 
         text.scan(LITERAL_PATH_RE) do |m|
+          next if Noir::ZigCalleeExtractor.in_test_block?(m.begin(0) || 0, test_blocks)
           lit = m[1]
           next if lit.empty? || lit == "(undefined)"
           if type = nearest_type_before(text, m.begin(0) || 0)

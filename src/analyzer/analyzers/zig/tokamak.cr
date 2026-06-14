@@ -193,15 +193,19 @@ module Analyzer::Zig
       # Strings preserved in `text` for reading paths/handlers; brace matching
       # runs on the string-blanked (but offset-identical) char array so a `{`/`}`
       # inside a literal can't throw off group-scope tracking.
-      code_chars = Noir::ZigCalleeExtractor.strip_non_code(content).chars
+      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
+      code_chars = stripped.chars
       bodies = include_callee ? Noir::ZigCalleeExtractor.function_bodies(content, path) : {} of String => Noir::ZigCalleeExtractor::FunctionBody
+      # Routes declared inside `test { … }` blocks are unit-test fixtures (e.g.
+      # tokamak's own client tests register `.get("/ping", …)`), not endpoints.
+      test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(stripped)
 
-      emit_route_array(path, text, code_chars, bodies, include_callee)
-      emit_controller_routes(path, content, text, mounts, include_callee)
+      emit_route_array(path, text, code_chars, bodies, test_blocks, include_callee)
+      emit_controller_routes(path, content, text, mounts, test_blocks, include_callee)
     end
 
     # Inline `tk.Route` array routes (.get/.post/.group/…).
-    private def emit_route_array(path, text, code_chars, bodies, include_callee)
+    private def emit_route_array(path, text, code_chars, bodies, test_blocks, include_callee)
       events = collect_events(text, code_chars)
       stack = [] of GroupFrame
 
@@ -214,6 +218,7 @@ module Analyzer::Zig
           next
         end
 
+        next if Noir::ZigCalleeExtractor.in_test_block?(ev[:off], test_blocks)
         prefix = stack.reduce("") { |acc, frame| Noir::URLPath.join(acc, frame.prefix) }
         url = join_route(prefix, ev[:path])
         name = ev[:handler].includes?('.') ? ev[:handler].split('.').last : ev[:handler]
@@ -229,7 +234,7 @@ module Analyzer::Zig
     # mounted, or its mount chain crosses a route-value reference we don't
     # expand. `const` routes name a handler defined elsewhere, so they carry no
     # inline body and thus no callees.
-    private def emit_controller_routes(path, content, text, mounts, include_callee)
+    private def emit_controller_routes(path, content, text, mounts, test_blocks, include_callee)
       has_fn = content.includes?("pub fn @\"")
       has_const = content.includes?("pub const @\"")
       return unless has_fn || has_const
@@ -244,6 +249,7 @@ module Analyzer::Zig
           method = m[1]
           rel = m[2]
           offset = m.begin(0) || 0
+          next if Noir::ZigCalleeExtractor.in_test_block?(offset, test_blocks)
           callees = include_callee ? route_fn_callees(stripped_chars, m.end(0) || 0, path) : [] of Noir::ZigCalleeExtractor::Entry
           prefixes_for(file_mounts, enclosing_struct(regions, offset)).each do |pre|
             emit(path, text, offset, join_route(pre, rel), method, callees)
@@ -256,6 +262,7 @@ module Analyzer::Zig
           method = m[1]
           rel = m[2]
           offset = m.begin(0) || 0
+          next if Noir::ZigCalleeExtractor.in_test_block?(offset, test_blocks)
           prefixes_for(file_mounts, enclosing_struct(regions, offset)).each do |pre|
             emit(path, text, offset, join_route(pre, rel), method, [] of Noir::ZigCalleeExtractor::Entry)
           end
