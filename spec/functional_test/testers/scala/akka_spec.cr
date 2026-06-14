@@ -31,6 +31,13 @@ expected_endpoints = [
     Param.new("orderId", "", "path"),
     Param.new("currency", "", "query"),
   ]),
+  # Leaf method directly under a pathPrefix with no inner path()/pathEnd.
+  Endpoint.new("/ip/{ip}", "GET", [Param.new("ip", "", "path")]),
+  Endpoint.new("/ip", "POST", [Param.new("body", "Item", "json")]),
+  # `pathEnd*` redundant inside path()/on a path() line must not emit a
+  # prefix-only route (no bare `/things` GET / or `/widgets` GET).
+  Endpoint.new("/things", "GET"),
+  Endpoint.new("/widgets/{widgetId}", "GET", [Param.new("widgetId", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/scala/akka/", {

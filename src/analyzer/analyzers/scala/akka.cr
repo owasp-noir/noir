@@ -18,6 +18,10 @@ module Analyzer::Scala
     METHOD_SCOPE_PATTERNS = HTTP_METHODS.to_h do |method|
       {method, /(?<![.\w])#{Regex.escape(method)}(?![\w])/}
     end
+    # Any path-matching directive (path/pathPrefix/pathEnd/pathSingleSlash/…),
+    # used to keep a leaf-method emission from firing on a line that already
+    # carries its own path directive.
+    PATH_DIRECTIVE_RE = /(?<![.\w])path[A-Za-z]*/
 
     def analyze_file(path : String) : Array(Endpoint)
       content = File.read(path)
@@ -34,6 +38,12 @@ module Analyzer::Scala
       prefix_stack = [] of String
       brace_depth = 0
       prefix_depths = [] of Int32 # Track at which depth each prefix was added
+      # Line ranges already claimed by a `path(...)` block, and by any route
+      # block (path + pathEnd). A `pathEnd` redundant inside a `path(...)` must
+      # not re-emit at the bare prefix, and a leaf method must not double-emit a
+      # route already produced by an enclosing path/pathEnd block.
+      path_ranges = [] of Tuple(Int32, Int32)
+      route_ranges = [] of Tuple(Int32, Int32)
 
       lines.each_with_index do |_line, index|
         stripped_line = (code_lines[index]? || "").strip
@@ -60,6 +70,8 @@ module Analyzer::Scala
 
           block_content = block[0]
           block_end = block[2]
+          path_ranges << {index, block_end}
+          route_ranges << {index, block_end}
           route_scope = "#{stripped_line}\n#{block_content}"
 
           HTTP_METHODS.each do |method|
@@ -78,18 +90,51 @@ module Analyzer::Scala
           end
         end
 
-        if stripped_line.includes?("pathEnd") || stripped_line.includes?("pathEndOrSingleSlash") || stripped_line.includes?("pathSingleSlash")
+        if (stripped_line.includes?("pathEnd") || stripped_line.includes?("pathEndOrSingleSlash") || stripped_line.includes?("pathSingleSlash")) &&
+           !within_range?(path_ranges, index)
+          # `pathEnd*` matches the path accumulated so far. When it sits on (or
+          # inside) a `path(...)` line that path already carries the full route,
+          # so emitting at the bare prefix would be a wrong, prefix-only FP.
           full_path = prefix_stack.empty? ? "/" : prefix_stack.join("")
           block = extract_block_from_index(lines, index)
           next unless block
 
           block_content = block[0]
           block_end = block[2]
+          route_ranges << {index, block_end}
           route_scope = "#{stripped_line}\n#{block_content}"
 
           HTTP_METHODS.each do |method|
             method_param_scopes = extract_method_param_scopes(route_scope, method)
             unless method_param_scopes.empty?
+              endpoint = create_endpoint(full_path, method.upcase, path)
+              extract_path_params(endpoint, full_path)
+              extract_params_from_block(endpoint, method_param_scopes.join("\n"))
+              attach_method_callees(endpoint, lines, structural_lines, index, block_end, method, path) if include_callee
+              endpoints << endpoint
+            end
+          end
+        end
+
+        # Leaf method directive directly under a pathPrefix, with no inner
+        # `path(...)`/`pathEnd` of its own — e.g. `(post & entity(as[T])) { … }`
+        # under `pathPrefix("ip")` is `POST /ip`. Only when not already claimed
+        # by a path/pathEnd block and not itself a path/pathEnd line.
+        if !prefix_stack.empty? &&
+           !line_has_path_directive?(stripped_line) &&
+           !within_range?(route_ranges, index)
+          full_path = prefix_stack.join("")
+          block = extract_block_from_index(lines, index)
+          if block
+            block_content = block[0]
+            block_end = block[2]
+            route_scope = "#{stripped_line}\n#{block_content}"
+
+            HTTP_METHODS.each do |method|
+              method_param_scopes = extract_method_param_scopes(route_scope, method)
+              next if method_param_scopes.empty?
+
+              route_ranges << {index, block_end}
               endpoint = create_endpoint(full_path, method.upcase, path)
               extract_path_params(endpoint, full_path)
               extract_params_from_block(endpoint, method_param_scopes.join("\n"))
@@ -397,6 +442,14 @@ module Analyzer::Scala
       return [] of String unless match
 
       match[1].split(',').map(&.strip).reject(&.empty?)
+    end
+
+    private def within_range?(ranges : Array(Tuple(Int32, Int32)), index : Int32) : Bool
+      ranges.any? { |range| index >= range[0] && index <= range[1] }
+    end
+
+    private def line_has_path_directive?(line : String) : Bool
+      line.matches?(PATH_DIRECTIVE_RE)
     end
 
     private def join_paths(prefix_stack : Array(String), route_path : String) : String
