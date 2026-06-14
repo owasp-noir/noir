@@ -43,4 +43,23 @@ mount "/api/v1", api
 
 public_folder "custom_public"
 
+# A documentation string that embeds example routing inside a heredoc.
+# Heredoc bodies are string DATA, not executable routing DSL, so none of
+# the verbs below may surface as endpoints. The terminator must also stop
+# the masking so the real route declared afterwards is still detected.
+USAGE = <<-MD
+  ## Routing example
+
+      get "/ghost-in-heredoc" do
+        env.params.query["leak"]
+      end
+
+      post "/ghost-in-heredoc/submit" do
+      end
+  MD
+
+get "/after-heredoc" do
+  "still routed"
+end
+
 Kemal.run

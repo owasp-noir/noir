@@ -18,6 +18,7 @@ module Analyzer::Crystal
           lines << line
         end
       end
+      lines = mask_crystal_heredocs(lines)
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new

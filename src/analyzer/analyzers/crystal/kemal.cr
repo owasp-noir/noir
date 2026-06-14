@@ -30,7 +30,7 @@ module Analyzer::Crystal
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path)
+      lines = mask_crystal_heredocs(File.read_lines(path))
       file_base = configured_base_for(path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 

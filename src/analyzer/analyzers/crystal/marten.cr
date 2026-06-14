@@ -61,7 +61,7 @@ module Analyzer::Crystal
     end
 
     private def read_source_lines(path : String) : Array(String)
-      read_file_content(path).lines
+      mask_crystal_heredocs(read_file_content(path).lines)
     end
 
     private def collect_handler_callees : Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry))
