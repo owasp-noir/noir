@@ -16,6 +16,7 @@ module Analyzer::Crystal
           lines << line
         end
       end
+      lines = mask_crystal_heredocs(lines)
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       last_endpoint = Endpoint.new("", "")

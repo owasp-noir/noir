@@ -102,6 +102,59 @@ module Analyzer::Crystal
       first == '/' || first == '*' || first == '{'
     end
 
+    # Opening token of a Crystal heredoc: `<<-DELIM`, optionally quoted
+    # (`<<-'SQL'`). The delimiter must start with an uppercase letter or
+    # underscore — the universal Crystal convention (MD/HTML/SQL/EOF/…) —
+    # which keeps the matcher from firing on `arr << -value`. The negative
+    # lookbehind rejects a `<<-` that sits inside a string literal
+    # (`"<<-MD"`), so a stray quoted token can't open a phantom heredoc and
+    # blank the rest of the file.
+    HEREDOC_OPEN = /(?<!['"])<<-['"]?([A-Z_]\w*)/
+
+    # Crystal heredocs (`<<-DELIM … DELIM`) hold string data, never
+    # executable routing DSL. Real apps embed example code inside them —
+    # Lucky's own guide site documents routing with `get "/me" do … end`
+    # snippets inside `<<-MD … MD` markdown blocks, and noir was emitting
+    # every one of those as a live endpoint (70 of 90 endpoints on the
+    # Lucky website were heredoc examples). Blank out heredoc bodies before
+    # the per-line route/param scan, preserving line count so line numbers
+    # and the indentation-based namespace tracking stay accurate.
+    #
+    # A line that opens several heredocs at once (`foo(<<-A, <<-B)`) is
+    # handled with a FIFO of pending delimiters: A's body comes first, then
+    # B's, each closed by its own terminator.
+    protected def mask_crystal_heredocs(lines : Array(String)) : Array(String)
+      return lines unless lines.any?(&.includes?("<<-"))
+
+      pending = [] of String
+      lines.map do |line|
+        if pending.empty?
+          if line.includes?("<<-")
+            Noir::CrystalCalleeExtractor.strip_comment(line).scan(HEREDOC_OPEN) do |match|
+              pending << match[1]
+            end
+          end
+          line
+        elsif heredoc_terminator?(line.lstrip, pending.first)
+          pending.shift
+          line
+        else
+          ""
+        end
+      end
+    end
+
+    # A heredoc terminator is the delimiter alone on its (optionally
+    # indented) line, allowed a trailing method/operator chain
+    # (`MD.strip`, `SQL)`). Requiring the next char to be a non-identifier
+    # avoids closing on a body line that merely starts with the delimiter
+    # word (`ENDPOINT` does not terminate `<<-END`).
+    private def heredoc_terminator?(stripped : String, delim : String) : Bool
+      return false unless stripped.starts_with?(delim)
+      rest = stripped[delim.size..]
+      rest.empty? || !(rest[0].alphanumeric? || rest[0] == '_')
+    end
+
     protected def each_public_file(&block : String -> Nil) : Nil
       base_paths.each do |base|
         get_public_files(base).each do |file|
