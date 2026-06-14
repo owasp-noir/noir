@@ -80,6 +80,33 @@ describe "WebhookTagger" do
       endpoint.tags.size.should eq(0)
     end
 
+    it "does not tag an OAuth/OIDC authorization-code callback (FP guard)" do
+      ["/api/oauth/callback", "/oauth2/callback", "/openid/callback",
+       "/auth/google/callback", "/auth/:provider/callback",
+       "/users/auth/github/callback"].each do |path|
+        tagger = WebhookTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(path, "POST", [
+          Param.new("code", "", "query"),
+          Param.new("state", "", "query"),
+        ])
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(0)
+      end
+    end
+
+    it "still tags a webhook under an auth path via a strong signal" do
+      tagger = WebhookTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/auth/webhooks/provider", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("webhook")
+    end
+
     it "does not tag an unrelated endpoint" do
       tagger = WebhookTagger.new(default_tagger_options)
 
