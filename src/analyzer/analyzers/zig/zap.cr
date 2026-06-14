@@ -22,7 +22,6 @@ module Analyzer::Zig
 
     STRUCT_DECL_RE  = /(?:^|[^A-Za-z0-9_.])(?:pub\s+)?const\s+([A-Za-z_]\w*)\s*=\s*struct\s*\{/
     THIS_DECL_RE    = /(?:^|[^A-Za-z0-9_.])(?:pub\s+)?const\s+([A-Za-z_]\w*)\s*=\s*@This\(\)/
-    VERB_FN_RE      = /(?:^|[^A-Za-z0-9_.])pub\s+fn\s+(get|post|put|delete|patch|options|head)\s*\(/
     FIELD_PATH_RE   = /\bpath\s*:\s*\[\]const u8\s*=\s*"([^"]*)"/
     INIT_RE         = /(?<![A-Za-z0-9_.])([A-Za-z_]\w*)\.init\s*\(([^()]*)\)/
     LITERAL_PATH_RE = /\.path\s*=\s*"([^"]*)"/
@@ -92,15 +91,17 @@ module Analyzer::Zig
 
     private def process_file(path : String, content : String, bindings : Hash(String, Array(String)), include_callee : Bool)
       comment_stripped = Noir::ZigCalleeExtractor.strip_comments(content)
+      # Comments + all literals blanked once; reused for struct-region brace
+      # matching and the `@This()` file-struct scan.
+      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
       all_fns = Noir::ZigCalleeExtractor.function_table(content, path)
 
-      explicit = explicit_struct_regions(content)
-      emit_endpoint_structs(path, content, comment_stripped, bindings, explicit, all_fns, include_callee)
+      explicit = explicit_struct_regions(stripped)
+      emit_endpoint_structs(path, content, stripped, comment_stripped, bindings, explicit, all_fns, include_callee)
       emit_router_routes(path, content, comment_stripped, all_fns, include_callee)
     end
 
-    private def explicit_struct_regions(content : String) : Array(StructRegion)
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
+    private def explicit_struct_regions(stripped : String) : Array(StructRegion)
       chars = stripped.chars
       regions = [] of StructRegion
       stripped.scan(STRUCT_DECL_RE) do |m|
@@ -113,9 +114,7 @@ module Analyzer::Zig
       regions
     end
 
-    private def emit_endpoint_structs(path, content, comment_stripped, bindings, explicit, all_fns, include_callee)
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
-
+    private def emit_endpoint_structs(path, content, stripped, comment_stripped, bindings, explicit, all_fns, include_callee)
       # Explicit `const X = struct { … }` endpoints.
       explicit.each do |region|
         verbs = verb_methods_in(all_fns, region.start, region.stop) do |off|
