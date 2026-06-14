@@ -206,6 +206,12 @@ module Analyzer::Python
               # regex builds entirely unless the call is present (the
               # match itself requires the literal `Api(`).
               if api_line.includes?("Api(")
+                # flask_restful / flask-restx `Api(app, prefix="/api/v1")`
+                # prepends the prefix to every resource. The kwarg sits on
+                # the same (coalesced) Api(...) call; anchor on `(`/`,` so
+                # Blueprint's `url_prefix=` can't be mistaken for it.
+                api_kwarg_prefix = api_line.match(/[,(]prefix=[rf]?['"]([^'"]*)['"]/).try(&.[1]) || ""
+
                 # Api from flask instance
                 flask_instances.each do |key, _prefix|
                   next unless key[0] == current_base_path
@@ -213,7 +219,7 @@ module Analyzer::Python
                   api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}[,)]/
                   if api_match
                     api_instance_name = api_match[1]
-                    api_instances[api_instance_name] ||= _prefix
+                    api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
                   end
                 end
 
@@ -224,7 +230,7 @@ module Analyzer::Python
                   api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}[,)]/
                   if api_match
                     api_instance_name = api_match[1]
-                    api_instances[api_instance_name] ||= _prefix
+                    api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
                   end
                 end
               end
