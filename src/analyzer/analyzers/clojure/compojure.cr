@@ -429,8 +429,13 @@ module Analyzer::Clojure
       inner_clean = inner.gsub(/:(?:as|or)\s*\{[^{}]*\}/, " ")
 
       # Compojure's `:<<` applies a coercion fn to the preceding binding,
-      # e.g. `[id :<< as-int]`. The symbol after `:<<` is the coercion fn,
-      # not a request param — drop both the operator and its fn.
+      # e.g. `[id :<< as-int]` or `[x :<< #(Integer/parseInt %)]`. Neither the
+      # operator nor the coercion fn names a request param, so drop both. A fn
+      # written as an anonymous `#(...)` reader or a `(fn …)` form must be
+      # stripped *before* the bare-symbol rule, otherwise the loose word
+      # scanner would harvest the Java class/method names inside it
+      # (`Integer`, `parseInt`). Handles one level of nested parens.
+      inner_clean = inner_clean.gsub(/:<<\s*#?\([^()]*(?:\([^()]*\)[^()]*)*\)/, " ")
       inner_clean = inner_clean.gsub(/:<<\s+[^\s\[\]{}()]+/, " ")
 
       # Vector binding may carry inline destructuring sub-maps like

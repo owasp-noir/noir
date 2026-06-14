@@ -37,6 +37,12 @@
   (GET "/orders/:id{[0-9]+}" [id :<< as-int]
     {:id id})
 
+  ; An anonymous-fn coercion `#(Integer/parseInt %)` after `:<<` must be
+  ; dropped whole — the Java class/method symbols inside it (`Integer`,
+  ; `parseInt`) must NOT leak as query params. Only `n` is a path param.
+  (GET "/coerce/:n" [n :<< #(Integer/parseInt %)]
+    {:n n})
+
   (context "/api" []
     (POST "/users" request
       request)
