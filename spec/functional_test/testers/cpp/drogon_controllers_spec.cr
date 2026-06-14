@@ -28,6 +28,9 @@ expected_endpoints = [
   drogon_ctrl_endpoint("/legacy/(.*)", "GET"),
   # Regex `?` metacharacters preserved verbatim (not split as a query string).
   drogon_ctrl_endpoint("/grp/(?:a|b)/(.*)?", "GET"),
+  # Brace-wrapped verb list `{Post, Options}` → both verbs, not a GET fallback.
+  drogon_ctrl_endpoint("/app/v2/ApiCtrl/brace", "POST"),
+  drogon_ctrl_endpoint("/app/v2/ApiCtrl/brace", "OPTIONS"),
   # WS_PATH_ADD → websocket endpoint.
   drogon_ctrl_endpoint("/chat", "GET", "ws"),
   # Multi-line registerHandler whose query-string constraint becomes a param.
