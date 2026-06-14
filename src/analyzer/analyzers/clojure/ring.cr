@@ -91,6 +91,9 @@ module Analyzer::Clojure
             else
               walk_forms(source, after_symbol, form_end, path, seen, and_method)
             end
+          when "case", "condp"
+            extract_uri_case_dispatch(source, base, after_symbol, form_end, path, seen)
+            walk_forms(source, after_symbol, form_end, path, seen, and_method)
           else
             walk_forms(source, after_symbol, form_end, path, seen, and_method)
           end
@@ -99,6 +102,68 @@ module Analyzer::Clojure
         else
           i += 1
         end
+      end
+    end
+
+    # `(case (:uri request) "/a" h1 "/b" h2 default)` and
+    # `(condp = (:uri request) "/a" h1 "/b" h2 default)` dispatch directly on
+    # the request URI with bare string keys. Only fires when the dispatch value
+    # is a `(:uri ...)` accessor (and, for condp, the predicate is `=`), so a
+    # `case` on any other value never produces phantom routes. Each clause key
+    # in *key position* that is a `/`-rooted string literal — or a list of them
+    # `("/a" "/b")` for fall-through — becomes a GET endpoint.
+    private def extract_uri_case_dispatch(source : String, base : String, start : Int32, limit : Int32,
+                                          path : String, seen : Set(String))
+      i = skip_ws_and_comments(source, start, limit)
+
+      if base == "condp"
+        pred, after_pred = read_form_token(source, i, limit)
+        return unless pred == "="
+        i = after_pred
+      end
+
+      dispatch, after_dispatch = read_form_token(source, i, limit)
+      return unless uri_accessor?(dispatch)
+
+      emit_string_clause_keys(source, after_dispatch, limit, path, seen)
+    end
+
+    # Walk `key value key value … [default]` clauses, emitting an endpoint for
+    # every key-position `/`-rooted string. Values (handler forms) are skipped
+    # so a handler that happens to return a `/`-string is never a route.
+    private def emit_string_clause_keys(source : String, start : Int32, limit : Int32,
+                                        path : String, seen : Set(String))
+      i = skip_ws_and_comments(source, start, limit)
+      is_key = true
+      while i < limit
+        token, after = read_form_token(source, i, limit)
+        break if token.empty?
+
+        if is_key
+          if token.starts_with?('"')
+            route = decode_literal(token)
+            emit_endpoint(source, path, i, "GET", route, seen) if route.starts_with?('/')
+          elsif token.starts_with?('(')
+            # Fall-through list of keys: `("/a" "/b")` — each string is a route.
+            emit_list_string_keys(source, i + 1, find_matching_delimiter(source, i, '(', ')', limit), path, seen)
+          end
+        end
+
+        is_key = !is_key
+        i = after
+      end
+    end
+
+    private def emit_list_string_keys(source : String, start : Int32, limit : Int32, path : String, seen : Set(String))
+      i = skip_ws_and_comments(source, start, limit)
+      while i < limit
+        token, after = read_form_token(source, i, limit)
+        break if token.empty?
+        if token.starts_with?('"')
+          route = decode_literal(token)
+          emit_endpoint(source, path, i, "GET", route, seen) if route.starts_with?('/')
+        end
+        i = after
       end
     end
 
