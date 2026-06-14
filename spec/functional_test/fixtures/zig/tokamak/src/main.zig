@@ -21,6 +21,22 @@ const routes: []const tk.Route = &.{
         .router(resources.Public),
         .router(resources.Private),
     }),
+    // Value-form group: the body is a single route value (`.router(local)`),
+    // not a `&.{ … }` array, so the `/svc` prefix is scoped to the group call's
+    // own parentheses. `local` is a struct declared in this file.
+    .group("/svc", .router(local)),
+};
+
+// Local controller struct mounted by the value-form group above. Its root
+// handler (`@"GET /"`) collapses to `/svc` without a trailing slash.
+const local = struct {
+    pub fn @"GET /"() ![]const u8 {
+        return ping();
+    }
+
+    pub fn @"POST /sync"() !void {
+        try worker.run();
+    }
 };
 
 fn hello() ![]const u8 {

@@ -46,6 +46,11 @@ module Analyzer::Zig
     }
 
     GROUP_RE = /\.\s*group\s*\(\s*"([^"]*)"\s*,\s*&?\s*\.\s*\{/
+    # Value-form group whose body is a single route value rather than an
+    # `&.{ … }` array (`tk.group("/api", tk.router(api))`). The negative
+    # lookahead — which must absorb its own leading whitespace, so a
+    # backtracking `\s*` can't slip past it — keeps the array form to GROUP_RE.
+    GROUP_VALUE_RE = /\.\s*group\s*\(\s*"([^"]*)"\s*,(?!\s*&?\s*\.\s*\{)/
     # The path must be a rooted URL (`"/..."`). Tokamak handlers commonly build
     # a JSON response with `root.put("name", value)` / `data.get("key")`; those
     # data-object calls share the verb names but never take a `/`-rooted key,
@@ -111,13 +116,26 @@ module Analyzer::Zig
         # `strip_comments` keeps string contents, so `{`/`}` inside a literal
         # would corrupt brace matching. `strip_non_code` blanks strings at the
         # same offsets, so it is the right char array for `find_matching`.
-        code_chars = Noir::ZigCalleeExtractor.strip_non_code(content).chars
+        stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
+        code_chars = stripped.chars
+        local_structs = struct_regions(stripped).map(&.name)
 
         events = [] of NamedTuple(kind: Symbol, off: Int32, prefix: String, close: Int32?, target: String)
+        # Array-form group: `.group("/p", &.{ … })` — scoped by its body braces.
         text.scan(GROUP_RE) do |m|
           brace = (m.end(0) || 0) - 1
           close = Noir::ZigCalleeExtractor.find_matching(code_chars, brace, '{', '}')
           events << {kind: :group, off: m.begin(0) || 0, prefix: m[1], close: close, target: ""}
+        end
+        # Value-form group: `.group("/p", tk.router(x))` — the body is a single
+        # route value, not a `&.{ … }` array, so the scope is the group call's
+        # own parentheses.
+        text.scan(GROUP_VALUE_RE) do |m|
+          start = m.begin(0) || 0
+          paren = index_of(code_chars, start, '(')
+          next if paren.nil?
+          close = Noir::ZigCalleeExtractor.find_matching(code_chars, paren, '(', ')')
+          events << {kind: :group, off: start, prefix: m[1], close: close, target: ""}
         end
         text.scan(ROUTER_MOUNT_RE) do |m|
           events << {kind: :router, off: m.begin(0) || 0, prefix: "", close: nil, target: m[1]}
@@ -132,7 +150,7 @@ module Analyzer::Zig
             stack << GroupFrame.new(ev[:prefix], close) if close
             next
           end
-          resolved = resolve_router_target(ev[:target], alias_to_file)
+          resolved = resolve_router_target(ev[:target], alias_to_file, File.expand_path(path), local_structs)
           next if resolved.nil?
           target_file, scope = resolved
           prefix = stack.reduce("") { |acc, frame| Noir::URLPath.join(acc, frame.prefix) }
@@ -150,7 +168,9 @@ module Analyzer::Zig
     #     itself a `@import` alias → whole-file mount (scope nil).
     #   * `.router(api.Protected)` — `api` is the file alias, `Protected` a
     #     struct declared inside it → file-scoped to that struct.
-    private def resolve_router_target(target : String, alias_to_file : Hash(String, String)) : Tuple(String, String?)?
+    #   * `.router(api)` — `api` is a `const api = struct { … }` declared in the
+    #     current file → same-file mount scoped to that struct.
+    private def resolve_router_target(target : String, alias_to_file : Hash(String, String), current_file : String, local_structs : Array(String)) : Tuple(String, String?)?
       segments = target.split('.')
       if file = alias_to_file[segments.last]?
         return {file, nil}
@@ -159,6 +179,9 @@ module Analyzer::Zig
         if file = alias_to_file[segments.first]?
           return {file, segments[1]}
         end
+      end
+      if segments.size == 1 && local_structs.includes?(segments.first)
+        return {current_file, segments.first}
       end
       nil
     end
@@ -190,7 +213,7 @@ module Analyzer::Zig
         end
 
         prefix = stack.reduce("") { |acc, frame| Noir::URLPath.join(acc, frame.prefix) }
-        url = Noir::URLPath.join(prefix, ev[:path])
+        url = join_route(prefix, ev[:path])
         name = ev[:handler].includes?('.') ? ev[:handler].split('.').last : ev[:handler]
         callees = include_callee ? body_callees(bodies, name, path) : [] of Noir::ZigCalleeExtractor::Entry
         emit(path, text, ev[:off], url, ev[:method], callees)
@@ -221,7 +244,7 @@ module Analyzer::Zig
           offset = m.begin(0) || 0
           callees = include_callee ? route_fn_callees(stripped_chars, m.end(0) || 0, path) : [] of Noir::ZigCalleeExtractor::Entry
           prefixes_for(file_mounts, enclosing_struct(regions, offset)).each do |pre|
-            emit(path, text, offset, Noir::URLPath.join(pre, rel), method, callees)
+            emit(path, text, offset, join_route(pre, rel), method, callees)
           end
         end
       end
@@ -232,7 +255,7 @@ module Analyzer::Zig
           rel = m[2]
           offset = m.begin(0) || 0
           prefixes_for(file_mounts, enclosing_struct(regions, offset)).each do |pre|
-            emit(path, text, offset, Noir::URLPath.join(pre, rel), method, [] of Noir::ZigCalleeExtractor::Entry)
+            emit(path, text, offset, join_route(pre, rel), method, [] of Noir::ZigCalleeExtractor::Entry)
           end
         end
       end
@@ -351,6 +374,14 @@ module Analyzer::Zig
         params << Param.new(m[1], "", "path")
       end
       params
+    end
+
+    # Join a mount/group prefix with a route path. A bare-root route ("/")
+    # mounted under a non-empty prefix collapses to the prefix itself rather
+    # than picking up a trailing slash (`/api` + `/` => `/api`, not `/api/`).
+    private def join_route(prefix : String, route : String) : String
+      return prefix if route == "/" && !prefix.empty?
+      Noir::URLPath.join(prefix, route)
     end
   end
 end

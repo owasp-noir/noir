@@ -35,6 +35,11 @@ expected_endpoints << tokamak_endpoint("/admin/ping", "GET")
 expected_endpoints << tokamak_endpoint("/admin/login", "POST")
 expected_endpoints << tokamak_endpoint("/admin/sessions/:id", "DELETE", id_param)
 
+# Value-form group `.group("/svc", .router(local))` mounting a same-file struct.
+# The root handler collapses to `/svc` (no trailing slash).
+expected_endpoints << tokamak_endpoint("/svc", "GET", [] of Param, [Callee.new("ping")])
+expected_endpoints << tokamak_endpoint("/svc/sync", "POST", [] of Param, [Callee.new("worker.run")])
+
 FunctionalTester.new("fixtures/zig/tokamak/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
