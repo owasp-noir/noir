@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/import_graph"
 
 module Analyzer::Javascript
   class Nextjs < JavascriptEngine
@@ -9,9 +10,13 @@ module Analyzer::Javascript
 
     # Compiled once per verb — interpolated regex literals would otherwise
     # be rebuilt (full PCRE2 compile) for every method on every file.
-    EXPORT_VERB_FUNCTION_RES     = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
-    EXPORT_VERB_CONST_RES        = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=/} }.to_h
-    EXPORT_VERB_BRACE_RES        = HTTP_METHODS.map { |m| {m, /export\s+\{[^}]*\b#{m}\b[^}]*\}/} }.to_h
+    EXPORT_VERB_FUNCTION_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b/} }.to_h
+    EXPORT_VERB_CONST_RES    = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=/} }.to_h
+    EXPORT_VERB_BRACE_RES    = HTTP_METHODS.map { |m| {m, /export\s+\{[^}]*\b#{m}\b[^}]*\}/} }.to_h
+    # `export const { POST } = serve<Input>(...)` — handler(s) destructured
+    # from a factory call (e.g. @upstash/workflow/nextjs). The plain brace
+    # regex misses it because `const` sits between `export` and `{`.
+    EXPORT_VERB_CONST_BRACE_RES  = HTTP_METHODS.map { |m| {m, /export\s+const\s+\{[^}]*\b#{m}\b[^}]*\}\s*=/} }.to_h
     EXPORT_VERB_FUNCTION_SIG_RES = HTTP_METHODS.map { |m| {m, /export\s+(?:async\s+)?function\s+#{m}\b\s*\([^)]*\)/} }.to_h
     EXPORT_VERB_CONST_ARROW_RES  = HTTP_METHODS.map { |m| {m, /export\s+const\s+#{m}\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)(?:\s*:\s*[^=]+?)?\s*=>/} }.to_h
 
@@ -130,6 +135,7 @@ module Analyzer::Javascript
       sanitized = Noir::JSRouteExtractor.strip_js_comments(content)
 
       methods = extract_app_router_methods(sanitized)
+      methods = methods_from_reexport(path, sanitized) if methods.empty?
       return if methods.empty?
 
       methods.each do |method|
@@ -384,11 +390,40 @@ module Analyzer::Javascript
       HTTP_METHODS.each do |m|
         if content.match(EXPORT_VERB_FUNCTION_RES[m]) ||
            content.match(EXPORT_VERB_CONST_RES[m]) ||
-           content.match(EXPORT_VERB_BRACE_RES[m])
+           content.match(EXPORT_VERB_BRACE_RES[m]) ||
+           content.match(EXPORT_VERB_CONST_BRACE_RES[m])
           methods << m
         end
       end
       methods
+    end
+
+    # An app-router `route.ts` may re-export its verb handlers wholesale
+    # from another route via `export * from "<spec>"` (dub uses this for
+    # ~18 alias routes). The file itself carries no verb token, so resolve
+    # the target relative to this file, read it, and report ITS methods —
+    # emitted at the current file's URL by the caller. Bounded recursion
+    # follows a chain of re-exports.
+    private def methods_from_reexport(path : String, content : String, depth : Int32 = 0) : Array(String)
+      return [] of String if depth > 3
+      specs = [] of String
+      content.scan(/export\s+\*\s+from\s+['"]([^'"]+)['"]/) { |m| specs << m[1] }
+      return [] of String if specs.empty?
+
+      methods = [] of String
+      specs.each do |spec|
+        target = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: @base_path)
+        next unless target
+        begin
+          target_content = Noir::JSRouteExtractor.strip_js_comments(read_file_content(target))
+        rescue
+          next
+        end
+        found = extract_app_router_methods(target_content)
+        found = methods_from_reexport(target, target_content, depth + 1) if found.empty?
+        methods.concat(found)
+      end
+      methods.uniq
     end
 
     private def extract_pages_router_params(content : String, endpoint : Endpoint)
