@@ -13,6 +13,7 @@ module Analyzer::Rust
   class Axum < RustEngine
     alias UtoipaScopedKey = Tuple(String, String, String)
     alias UtoipaNestEdge = Tuple(UtoipaScopedKey, String)
+    alias NestScopedKey = Tuple(String, String, String)
     alias HandlerContext = NamedTuple(params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry))
 
     # Verbs accepted as the inner handler call (`get(...)`, `post(...)`,
@@ -38,12 +39,19 @@ module Analyzer::Rust
     # collectors); `analyze_file` then emits each `#[utoipa::path]` handler
     # at its composed URL.
     @utoipa_prefix : Hash(UtoipaScopedKey, Array(String))? = nil
+    # Cross-file `.nest("/p", router_var)` where `let router_var = mod::fn()`
+    # (or `.nest("/p", mod::fn())`) mounts a sub-router whose builder fn lives
+    # in another file. Keyed `{base, module, fn_leaf} => [prefix]`; resolved in
+    # `analyze` and consumed per-file so the mounted fn's own `.route()` calls
+    # pick up the prefix instead of emitting at the root.
+    @cross_nest_prefix : Hash(NestScopedKey, Array(String))? = nil
     @external_handler_context_cache = {} of String => HandlerContext
     @external_handler_miss_cache = Set(String).new
     @external_handler_context_cache_mutex = Mutex.new
 
     def analyze
       @utoipa_prefix = build_utoipa_prefix_index
+      @cross_nest_prefix = build_cross_nest_index
       @external_handler_context_cache_mutex.synchronize do
         @external_handler_context_cache.clear
         @external_handler_miss_cache.clear
@@ -77,6 +85,28 @@ module Analyzer::Rust
         mounted_router_names = collect_mounted_router_names(root, source, test_regions)
         nested_router_prefixes = collect_nested_router_prefixes(root, source, test_regions, "", mounted_router_names)
 
+        # Cross-file nest: a router-builder fn DEFINED in this file is mounted
+        # under a path prefix by a `.nest("/p", var=mod::fn())` in another
+        # file. Seed it into the same mount machinery (skip its root emission,
+        # queue it with the external prefix) so its `.route()` calls compose
+        # the prefix exactly like a same-file nested router. Skip ambiguous
+        # names: `mounted_router_names` / `router_functions` are bare-name
+        # keyed, so a leaf shared by two fns in this file (e.g. svix's
+        # top-level `router` and its inner `mod development { fn router }`)
+        # would suppress BOTH at the root while the queue re-emits only one —
+        # a net loss. Only relocate a fn whose name is unique in the file.
+        cross_nest = file_cross_nest_prefixes(path)
+        unless cross_nest.empty?
+          ambiguous = duplicate_function_names(root, source)
+          cross_nest.each do |fn_name, prefixes|
+            next unless router_functions.has_key?(fn_name)
+            next if ambiguous.includes?(fn_name)
+            mounted_router_names.add(fn_name)
+            bucket = (nested_router_prefixes[fn_name] ||= [] of String)
+            prefixes.each { |p| bucket << p unless bucket.includes?(p) }
+          end
+        end
+
         walk_router_builders(root, source, "", test_regions, mounted_router_names) do |node, prefix|
           route = extract_route(node, source)
           next unless route
@@ -109,7 +139,13 @@ module Analyzer::Rust
         end
 
         mount_index = 0
-        while mount_index < mount_queue.size
+        # Defensive bound: a router graph with a cycle (or a bare-name
+        # collision that resolves a nested mount back to its own builder)
+        # would otherwise grow the queue forever with an ever-deeper prefix.
+        # Real router trees are tiny; this cap only trips on pathological
+        # input and keeps the analyzer from hanging.
+        mount_limit = 5000
+        while mount_index < mount_queue.size && mount_index < mount_limit
           router_name, prefix = mount_queue[mount_index]
           mount_index += 1
 
@@ -142,6 +178,13 @@ module Analyzer::Rust
           end
 
           collect_nested_router_prefixes(router_function, source, test_regions, prefix, Set(String).new).each do |nested_name, prefixes|
+            # A router whose body nests another router resolved (by bare name)
+            # back to itself — e.g. `user_routes::create_routes` nesting
+            # `token_routes::create_routes`, both leaf `create_routes` — would
+            # re-queue itself at an ever-deeper prefix. Such a same-name
+            # self-mount can't be told apart from a true cycle, so skip it;
+            # the distinct sub-router is still covered by the utoipa index.
+            next if nested_name == router_name
             prefixes.each do |nested_prefix|
               nested_key = "#{nested_name}\0#{nested_prefix}"
               mount_queue << {nested_name, nested_prefix} unless processed_mounts.includes?(nested_key)
@@ -1071,6 +1114,152 @@ module Analyzer::Rust
         end
       end
       result
+    end
+
+    # Cross-file plain `.nest("/p", X)` resolution. `X` is either a direct
+    # router-builder call `mod::make_router()` or a `let`-bound variable whose
+    # initializer is that call. When the builder fn is defined in *another*
+    # file (so the existing same-file `mount_queue` can't reach it), record
+    # `{base, module, fn_leaf} => [prefix]`. Same-file nests and `nest_api_service`
+    # (svix's deep `.merge()` chain) are intentionally left to the existing
+    # machinery — this only relocates a sub-router whose own body holds the
+    # `.route()` calls (e.g. rqbit's `webui::make_webui_router`).
+    private def build_cross_nest_index : Hash(NestScopedKey, Array(String))
+      index = Hash(NestScopedKey, Array(String)).new
+      all_files.each do |fpath|
+        next if File.directory?(fpath)
+        next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
+        next if RustEngine.test_path?(fpath)
+        src = read_file_content(fpath)
+        next unless src.includes?(".nest(")
+        base = configured_base_for(fpath)
+        begin
+          test_regions = RustEngine.collect_cfg_test_regions(src)
+          Noir::TreeSitter.parse_rust(src) do |root|
+            local_fns = collect_local_function_names(root, src)
+            let_calls = build_let_call_index(root, src)
+            walk(root) do |node|
+              next unless Noir::TreeSitter.node_type(node) == "call_expression"
+              next if RustEngine.inside_test_region?(node, test_regions)
+              # Only the plain `.nest` shape — `nest_api_service` mounts the
+              # `.merge()`-chained ApiRouter whose routes live in further
+              # cross-file fns, which this single-hop relocation can't follow.
+              next unless field_call_name(node, src) == "nest"
+              args = named_arguments(node)
+              next unless args.size >= 2
+              prefix = string_literal_text(args[0], src)
+              next unless prefix
+              call = resolve_router_call(args[1], src, let_calls)
+              next unless call
+              mod, leaf = scoped_module_leaf(call, src)
+              next unless mod && leaf
+              next if local_fns.includes?(leaf) # same-file: existing mount_queue
+              key = {base, mod, leaf}
+              bucket = (index[key] ||= [] of String)
+              bucket << prefix unless bucket.includes?(prefix)
+            end
+          end
+        rescue e
+          logger.debug "axum cross-nest index error #{fpath}: #{e}"
+        end
+      end
+      index
+    end
+
+    # Cross-nest prefixes for fns DEFINED in `path` (keyed by leaf name),
+    # resolved from the project-wide index by this file's base + module.
+    private def file_cross_nest_prefixes(path : String) : Hash(String, Array(String))
+      result = Hash(String, Array(String)).new
+      idx = @cross_nest_prefix
+      return result if idx.nil? || idx.empty?
+      base = configured_base_for(path)
+      mod = primary_module(path)
+      idx.each do |key, prefixes|
+        kbase, kmod, kleaf = key
+        result[kleaf] = prefixes if kbase == base && kmod == mod
+      end
+      result
+    end
+
+    private def collect_local_function_names(root : LibTreeSitter::TSNode, source : String) : Set(String)
+      names = Set(String).new
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        if name = function_name(node, source)
+          names.add(name)
+        end
+      end
+      names
+    end
+
+    # Function names that appear more than once in a file (e.g. a top-level
+    # `fn router` plus a nested `mod x { fn router }`). Bare-name routing
+    # machinery can't tell them apart, so cross-nest relocation skips them.
+    private def duplicate_function_names(root : LibTreeSitter::TSNode, source : String) : Set(String)
+      seen = Set(String).new
+      dups = Set(String).new
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        if name = function_name(node, source)
+          dups.add(name) unless seen.add?(name)
+        end
+      end
+      dups
+    end
+
+    # Map `let VAR = <call>` bindings to their call node so a `.nest("/p", VAR)`
+    # can be resolved back to the router-builder fn it calls.
+    private def build_let_call_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "let_declaration"
+        pattern = Noir::TreeSitter.field(node, "pattern")
+        value = Noir::TreeSitter.field(node, "value")
+        next unless pattern && value
+        next unless Noir::TreeSitter.node_type(pattern) == "identifier"
+        next unless Noir::TreeSitter.node_type(value) == "call_expression"
+        name = Noir::TreeSitter.node_text(pattern, source)
+        index[name] = value unless index.has_key?(name)
+      end
+      index
+    end
+
+    # The router-builder call behind a `.nest` second argument: the arg itself
+    # when it's already a call, or the initializer of the `let` it names.
+    private def resolve_router_call(arg : LibTreeSitter::TSNode, source : String,
+                                    let_calls : Hash(String, LibTreeSitter::TSNode)) : LibTreeSitter::TSNode?
+      case Noir::TreeSitter.node_type(arg)
+      when "call_expression"
+        arg
+      when "identifier"
+        let_calls[Noir::TreeSitter.node_text(arg, source)]?
+      end
+    end
+
+    # `{module, leaf}` of a call's function path. `webui::make_webui_router` ->
+    # `{"webui", "make_webui_router"}`; a bare `make_router()` -> `{nil, "make_router"}`
+    # (no module to disambiguate the defining file, so the caller skips it).
+    private def scoped_module_leaf(call : LibTreeSitter::TSNode, source : String) : Tuple(String?, String?)
+      fn = Noir::TreeSitter.field(call, "function")
+      return {nil, nil} unless fn
+      case Noir::TreeSitter.node_type(fn)
+      when "scoped_identifier"
+        segs = Noir::TreeSitter.node_text(fn, source).split("::")
+        leaf = segs[-1]?
+        return {nil, nil} if leaf.nil? || leaf == "new"
+        {segs.size >= 2 ? segs[-2] : nil, leaf}
+      when "identifier"
+        {nil, Noir::TreeSitter.node_text(fn, source)}
+      when "generic_function"
+        inner = Noir::TreeSitter.field(fn, "function")
+        return {nil, nil} unless inner
+        segs = Noir::TreeSitter.node_text(inner, source).split("::")
+        leaf = segs[-1]?
+        return {nil, nil} if leaf.nil? || leaf == "new"
+        {segs.size >= 2 ? segs[-2] : nil, leaf}
+      else
+        {nil, nil}
+      end
     end
 
     # Build `{base_path, module, handler_leaf} => [nest prefix]` from the OpenApiRouter
