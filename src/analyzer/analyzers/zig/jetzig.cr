@@ -48,6 +48,7 @@ module Analyzer::Zig
 
       all_files.each do |path|
         next unless path.ends_with?(".zig")
+        next if Noir::ZigCalleeExtractor.vendored_framework_path?(path)
 
         content = read_file_content(path)
 

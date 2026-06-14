@@ -45,6 +45,20 @@ module Noir::ZigCalleeExtractor
   # every handler and drowns the meaningful callees.
   NOISE_ROOTS = Set{"std"}
 
+  # A `.zig` file that belongs to a *vendored copy of a framework* checked into
+  # the source tree (`zig-pkg/zap/…`, `src/deps/tokamak/…`) rather than to the
+  # application. Such trees ship the framework's own tests and examples
+  # (`zap/src/tests/test_auth.zig`'s `.path = "/test"`, `tokamak/example/`'s
+  # `@"GET /:name"`), whose route literals would otherwise surface as phantom
+  # app endpoints. The standard fetched-dependency cache (`.zig-cache`) is
+  # already pruned upstream; this matches the manual-vendoring layouts —
+  # a vendor directory immediately followed by a framework package directory.
+  VENDORED_FRAMEWORK_RE = %r{/(?:deps|dep|lib|libs|vendor|vendored|pkg|pkgs|zig-pkg|packages|third_party|third-party|modules|subprojects|external|\.deps)/(?:zap|httpz|http\.zig|tokamak|jetzig|zmpl|zmd)/}
+
+  def vendored_framework_path?(path : String) : Bool
+    !VENDORED_FRAMEWORK_RE.match(path.gsub('\\', '/')).nil?
+  end
+
   # A call expression: an optional `@` (builtin) + identifier, then any number
   # of `.identifier` accessors, immediately followed by `(`. The lookbehind
   # stops the match from starting in the middle of an identifier or chain, so

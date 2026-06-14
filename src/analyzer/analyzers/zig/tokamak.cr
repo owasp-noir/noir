@@ -71,7 +71,9 @@ module Analyzer::Zig
 
     def analyze
       include_callee = callees_needed?
-      zig_files = all_files.select(&.ends_with?(".zig"))
+      zig_files = all_files.select do |f|
+        f.ends_with?(".zig") && !Noir::ZigCalleeExtractor.vendored_framework_path?(f)
+      end
 
       alias_to_file = build_alias_map(zig_files)
       mounts = build_router_mounts(zig_files, alias_to_file)
