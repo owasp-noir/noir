@@ -72,6 +72,18 @@ MOBILE_DETECTOR_NAMES = Set{
   "well_known_applinks",
 }
 
+# Strong server-routing constructs. A `.kt` / `.java` file that sits
+# inside an Android app's source set is normally scoped to mobile
+# detectors only (an incidental `import ...SpringApplication` must not
+# flag the project as a server). But an Android app can legitimately
+# *embed* an on-device HTTP server — e.g. plain-app runs a local Ktor
+# web server whose routes live under `app/src/main/java/...`. When a
+# file carries one of these markers it is a real server, so the
+# Ktor / http4k / Spring detectors are allowed to run on it. Kept as a
+# single precompiled constant — recompiling it per file would recreate
+# the PCRE2 program on every read.
+ANDROID_EMBEDDED_SERVER_MARKER = /io\.ktor\.server\.|embeddedServer|\brouting\s*\{|\bfun\s+Route\.|org\.http4k\.routing|@RestController|@RequestMapping|@(?:Get|Post|Put|Delete|Patch)Mapping|\bRouterFunction\b/
+
 def detector_android_source_prefixes_for_manifest(manifest_path : String) : Array(String)
   prefixes = [] of String
   manifest_dir = File.dirname(manifest_path)
@@ -475,13 +487,22 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               detector_list.each_with_index do |detector, idx|
                 candidate_detector_indices << idx if detector.applicable?(full_path)
               end
-              if detector_android_source_file?(full_path, android_source_prefixes)
-                candidate_detector_indices.reject! do |idx|
-                  !detector_mobile_detector?(detector_list[idx].name)
-                end
+
+              # An Android source-set file is normally narrowed to the
+              # mobile detectors only (see ANDROID_EMBEDDED_SERVER_MARKER /
+              # the Android-source scope spec). The exception — a genuine
+              # embedded on-device server — can only be told apart from an
+              # incidental framework import by reading the file, so defer
+              # the narrowing until after the content read below.
+              android_source_file = detector_android_source_file?(full_path, android_source_prefixes)
+              if android_source_file && candidate_detector_indices.all? { |idx| detector_mobile_detector?(detector_list[idx].name) }
+                # No server detector is even applicable here, so the
+                # marker check cannot change the outcome — keep the
+                # content-free fast path.
+                android_source_file = false
               end
 
-              if candidate_detector_indices.empty? && active_passive_scans.empty?
+              if candidate_detector_indices.empty? && active_passive_scans.empty? && !android_source_file
                 # Keep the path visible to analyzers without paying to
                 # read/cache content that neither detection nor passive
                 # scan will inspect. Analyzer reads still fall back to
@@ -496,6 +517,23 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 logger.debug "Skipping #{full_path}: binary content (file is text-extension but bytes look binary)"
                 skipped_files += 1
                 next
+              end
+
+              # Apply the Android-source narrowing now that content is
+              # available: drop the server-framework detectors unless the
+              # file carries a real server-routing construct (an embedded
+              # on-device server).
+              if android_source_file && !content.matches?(ANDROID_EMBEDDED_SERVER_MARKER)
+                candidate_detector_indices.reject! do |idx|
+                  !detector_mobile_detector?(detector_list[idx].name)
+                end
+                if candidate_detector_indices.empty? && active_passive_scans.empty?
+                  # Nothing left to detect and no passive scan to run.
+                  # register_file already records the path in file_map and
+                  # caches the (already-read) content for the analyzers.
+                  locator.register_file(full_path, content)
+                  next
+                end
               end
 
               if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)

@@ -43,6 +43,66 @@ describe "Detector Android source scope" do
       cleanup_scope(root)
     end
   end
+
+  it "detects an embedded Ktor server living inside the Android source set" do
+    # An Android app can bundle an on-device HTTP server whose routes
+    # live under app/src/main/java/... — an incidental import would be
+    # scoped out, but a real `routing { }` / `io.ktor.server` construct
+    # must still surface (e.g. plain-app's local web server).
+    root = File.tempname("noir-android-embedded")
+
+    begin
+      src = File.join(root, "app", "src", "main", "java", "com", "example", "web")
+      FileUtils.mkdir_p(src)
+      File.write(File.join(root, "app", "src", "main", "AndroidManifest.xml"), %(<manifest package="com.example.app"/>))
+      File.write(
+        File.join(src, "HttpModule.kt"),
+        <<-KOTLIN
+        package com.example.web
+        import io.ktor.server.routing.routing
+        import io.ktor.server.routing.get
+        fun Application.httpModule() {
+          routing {
+            get("/health") { }
+          }
+        }
+        KOTLIN
+      )
+
+      techs = detect_scope(root)
+      techs.should contain("android")
+      techs.should contain("kotlin_ktor")
+    ensure
+      cleanup_scope(root)
+    end
+  end
+
+  it "does not treat an Android app's incidental Ktor client import as a server" do
+    # `io.ktor.client.*` with no routing construct is just an HTTP
+    # client — it must not flag the Android app as a Ktor server.
+    root = File.tempname("noir-android-ktor-client")
+
+    begin
+      src = File.join(root, "app", "src", "main", "java", "com", "example", "net")
+      FileUtils.mkdir_p(src)
+      File.write(File.join(root, "app", "src", "main", "AndroidManifest.xml"), %(<manifest package="com.example.app"/>))
+      File.write(
+        File.join(src, "ApiClient.kt"),
+        <<-KOTLIN
+        package com.example.net
+        import io.ktor.client.HttpClient
+        import io.ktor.client.request.get
+        suspend fun fetch(client: HttpClient) = client.get("https://example.com")
+        KOTLIN
+      )
+
+      techs = detect_scope(root)
+      techs.should contain("android")
+      techs.should_not contain("kotlin_ktor")
+    ensure
+      cleanup_scope(root)
+    end
+  end
 end
 
 private def detect_scope(root : String) : Array(String)
