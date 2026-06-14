@@ -54,3 +54,22 @@ routes = [
 ]
 
 application = tornado.web.Application(routes)
+
+
+def routing_examples():
+    """Documentation for Tornado routing (these are NOT real routes).
+
+    Tornado's own source documents routing with ``code-block`` examples
+    embedded in docstrings, which must not be mistaken for endpoints:
+
+    .. code-block:: python
+
+        app = tornado.web.Application([
+            (r"/docstring-phantom", MainHandler),
+        ])
+
+        other = tornado.web.Application(handlers=[
+            (r"/docstring-phantom-2", MainHandler),
+        ])
+    """
+    return None
