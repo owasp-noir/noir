@@ -129,6 +129,18 @@ module Analyzer::Javascript
       scan_config_array_mounts(content, main_file, locator,
         require_map, function_map, var_to_function, var_prefix, global_deferred_mounts)
 
+      # Hono sub-app mount `.route('/prefix', ChildApp)`. Unlike the
+      # `.use('/p', r)` scans above this needs no named caller — Hono
+      # commonly mounts on an anonymous fluent chain
+      # (`export default new Hono().use(...).route('/api', TodoAPI)`), so
+      # bind on the call itself. A two-argument `.route('/prefix', Ident)`
+      # is unambiguously a mount (Express's `.route('/path')` takes a
+      # single arg), and an imported `Ident` resolves to the child file
+      # whose routes inherit the prefix. Same-file local children
+      # (`const book = new Hono()`) aren't in require/function maps and are
+      # handled by the parser's first-pass `.route(...)` scan instead.
+      scan_hono_route_mounts(content, main_file, locator, require_map, function_map)
+
       # Store file context for second pass
       file_contexts[main_file] = {
         require_map:     require_map,
@@ -380,6 +392,33 @@ module Analyzer::Javascript
             end
           end
         end
+      end
+    end
+
+    # Hono `<chain>.route('/prefix', ChildApp)` mounts. Registers the
+    # prefix on the child's file when `ChildApp` is an imported router,
+    # regardless of (or in the absence of) a named caller.
+    HONO_ROUTE_MOUNT_RE = /\.route\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)\s*\)/
+
+    private def scan_hono_route_mounts(
+      content : String,
+      main_file : String,
+      locator : CodeLocator,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+    )
+      content.scan(HONO_ROUTE_MOUNT_RE) do |m|
+        next unless m.size >= 3
+        prefix = m[1]
+        child = m[2]
+        next unless mount_prefix?(prefix)
+
+        child_file = require_map[child]? || function_map[child]?
+        next unless child_file
+
+        key = ExpressConstants.file_key(child_file)
+        push_prefix_to_locator(locator, key, prefix,
+          "Mapped Hono .route mount: #{child_file} => #{prefix}")
       end
     end
 
