@@ -3,6 +3,7 @@ const zap = @import("zap");
 const UsersEndpoint = @import("users.zig");
 const HealthEndpoint = @import("health.zig");
 const Endpoints = @import("endpoints.zig");
+const ProjectsEndpoint = @import("projects.zig");
 
 const Handlers = struct {
     pub fn stats(_: *Handlers, r: zap.Request) !void {
@@ -25,6 +26,11 @@ pub fn main() !void {
     // `Endpoints` re-export and bound to `/comments` here.
     var comments = Endpoints.Comments{ .path = "/comments" };
     _ = &comments;
+
+    // Modern `zap.Endpoint.init(.{ .get = …, .post = … })` API — verbs from the
+    // init option fields, path from this `init("/projects")` binding.
+    var projects = ProjectsEndpoint.init("/projects");
+    _ = &projects;
 
     var router = zap.Router.init(std.heap.page_allocator, .{});
     defer router.deinit();
