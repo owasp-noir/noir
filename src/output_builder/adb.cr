@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "./mobile_launch"
 
 # Emits `adb` (Android Debug Bridge) commands that launch the Android entry
 # points Noir discovers — custom-scheme deep links, verified app links,
@@ -14,6 +15,8 @@ require "../models/endpoint"
 # dropped endpoints are reported once per category as a warning (to STDERR, so
 # the command list on STDOUT stays pipe-clean).
 class OutputBuilderAdb < OutputBuilder
+  include MobileLaunch
+
   # Default action for a deep-link (scheme / app-link) launch when the
   # intent-filter recorded none — Android registers VIEW for browsable links.
   DEFAULT_ACTION = "android.intent.action.VIEW"
@@ -28,7 +31,7 @@ class OutputBuilderAdb < OutputBuilder
         skipped_http += 1
         next
       end
-      if ios_originated?(endpoint)
+      if ios_origin?(endpoint)
         skipped_ios += 1
         next
       end
@@ -42,31 +45,6 @@ class OutputBuilderAdb < OutputBuilder
     end
 
     warn_about_skipped(skipped_http, skipped_ios, skipped_unlaunchable)
-  end
-
-  # An iOS-originated mobile endpoint, which `adb` can't launch. The analyzer
-  # framework tags each endpoint with its detector tech: the Android manifest
-  # analyzer -> "android", the iOS analyzer -> "ios". The shared App Links
-  # analyzer ("well_known_applinks") emits both platforms, distinguished by
-  # the backing file — Android `assetlinks.json` vs Apple's
-  # apple-app-site-association.
-  private def ios_originated?(endpoint : Endpoint) : Bool
-    tech = endpoint.details.technology
-    return true if tech == "ios"
-    return false unless tech == "well_known_applinks"
-
-    # Apple App Site Association entry unless an Android Digital Asset Links
-    # file backs it.
-    endpoint.details.code_paths.none? { |pi| File.basename(pi.path) == "assetlinks.json" }
-  end
-
-  # App Links / Universal Links from `.well-known` files are bare path
-  # patterns (`/*`, `/buy/*`) bound to a domain that isn't in the URL, so they
-  # can't become a concrete `am start -d` launch. Every real launchable entry
-  # point carries a scheme (`myapp://`, `intent://`, `content://`, `https://`,
-  # `mailto:`), none of which start with `/`.
-  private def launchable?(url : String) : Bool
-    !url.starts_with?("/")
   end
 
   private def command_for(endpoint : Endpoint) : String
@@ -170,13 +148,5 @@ class OutputBuilderAdb < OutputBuilder
       @logger.warning "-f adb: skipped #{unlaunchable} App Links domain association#{plural(unlaunchable)} — " \
                       "these declare a verified domain, not a concrete URL to launch."
     end
-  end
-
-  private def plural(count : Int32) : String
-    count == 1 ? "" : "s"
-  end
-
-  private def shell_quote(str : String) : String
-    "'#{str.gsub("'", "'\\''")}'"
   end
 end
