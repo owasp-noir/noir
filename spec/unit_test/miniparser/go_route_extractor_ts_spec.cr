@@ -698,4 +698,49 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"POST", "/{username}/{reponame}/settings/hooks/gitea/new"},
     ].sort)
   end
+
+  it "extracts go-restful WebService routes with Path prefix and declared params" do
+    source = <<-GO
+      package main
+      func register() {
+          ws := new(restful.WebService)
+          ws.Path("/users").Consumes(restful.MIME_JSON).Produces(restful.MIME_JSON)
+          ws.Route(ws.GET("/{user-id}").To(u.findUser).
+              Param(ws.PathParameter("user-id", "identifier of the user").DataType("integer")).
+              Param(ws.QueryParameter("verbose", "verbose output")).
+              Writes(User{}))
+          ws.Route(ws.POST("").To(u.createUser).Reads(User{}))
+          ws.Route(ws.DELETE("/{user-id}").To(u.removeUser).
+              Param(ws.PathParameter("user-id", "identifier of the user")))
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_go_restful_routes(source)
+    routes.map { |r| {r.verb, r.path, r.params} }.sort_by!(&.[1]).should eq([
+      {"POST", "/users", [{"body", "json"}]},
+      {"GET", "/users/{user-id}", [{"user-id", "path"}, {"verbose", "query"}]},
+      {"DELETE", "/users/{user-id}", [{"user-id", "path"}]},
+    ].sort_by!(&.[1]))
+  end
+
+  it "resolves go-restful prefixes per WebService variable" do
+    source = <<-GO
+      package main
+      func register() {
+          ws1 := new(restful.WebService)
+          ws1.Path("/api/v1")
+          ws1.Route(ws1.GET("/ping").To(ping))
+
+          ws2 := new(restful.WebService)
+          ws2.Path("/api/v2")
+          ws2.Route(ws2.POST("/echo").To(echo))
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_go_restful_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/v1/ping"},
+      {"POST", "/api/v2/echo"},
+    ].sort)
+  end
 end
