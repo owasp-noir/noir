@@ -11,6 +11,12 @@ struct TodoController<Context: RequestContext> {
             .post(use: self.create)           // POST   /api/todos
             .patch(":id", use: self.update)   // PATCH  /api/todos/:id
             .delete(":id", use: self.delete)  // DELETE /api/todos/:id
+
+        // A builder chain that *opens* with `.add(middleware:)`: the verb
+        // steps must still attach (regression for chain-start detection).
+        group.add(middleware: AuthMiddleware())
+            .get("me", use: self.current)     // GET    /api/todos/me
+            .post("logout", use: self.logout) // POST   /api/todos/logout
     }
 
     func list(_ request: Request, context: Context) async throws -> [Todo] { [] }
@@ -18,6 +24,8 @@ struct TodoController<Context: RequestContext> {
     func create(_ request: Request, context: Context) async throws -> Todo { Todo() }
     func update(_ request: Request, context: Context) async throws -> Todo { Todo() }
     func delete(_ request: Request, context: Context) async throws -> HTTPResponse.Status { .ok }
+    func current(_ request: Request, context: Context) async throws -> Todo { Todo() }
+    func logout(_ request: Request, context: Context) async throws -> HTTPResponse.Status { .ok }
 }
 
 // `RouteCollection` mounted via `addRoutes(_:atPath:)`; routes inherit the
