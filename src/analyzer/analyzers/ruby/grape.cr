@@ -21,6 +21,17 @@ module Analyzer::Ruby
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
+      # Real Grape apps almost always share config/helpers through a custom
+      # base class (`class Base < Grape::API`, then `class Users < API::Base`)
+      # and aggregate sub-APIs with `mount`, declaring the global `prefix`
+      # and path `version` only on the root aggregator. Gating each file on a
+      # literal `Grape::API` mention therefore skipped the vast majority of
+      # route files (GitLab: 148 of 157 `lib/api/*.rb` inherit from
+      # `::API::Base` and never name `Grape::API`), and the recovered routes
+      # would lack their `/api/v4` mount prefix. Build a cross-file index of
+      # Grape classes + the prefix each one inherits through the mount graph.
+      index = build_grape_index
+
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
         # Skip Minitest / RSpec test files — Grape's own
@@ -28,14 +39,172 @@ module Analyzer::Ruby
         # that exercise the DSL via `Grape::API.new`.
         next if RubyEngine.ruby_test_path?(path)
         content = read_file_content(path)
-        next unless content.includes?("Grape::API")
-        process_file(path, content, include_callee)
+        next unless grape_api_file?(content, index.classes)
+        mount_prefix = grape_file_mount_prefix(content, index)
+        process_file(path, content, include_callee, mount_prefix)
       end
 
       @result
     end
 
-    private def process_file(path : String, content : String, include_callee : Bool) : Nil
+    # Cross-file Grape index: the set of classes that are (transitively) a
+    # `Grape::API`, plus the prefix each class's routes inherit from the
+    # aggregator(s) that `mount` it.
+    record GrapeIndex,
+      classes : Set(String),
+      inherited : Hash(String, String)
+
+    # `class <Child> < <Super>` declaration matcher (single capture: Super).
+    GRAPE_CLASS_DEF = /^\s*class\s+[A-Z][\w:]*\s*<\s*([:\w][\w:]*)/
+    # Full form capturing both Child and Super for the inheritance graph.
+    GRAPE_CLASS_EDGE   = /^\s*class\s+([A-Z][\w:]*)\s*<\s*([:\w][\w:]*)/
+    GRAPE_PREFIX_DECL  = /^\s*prefix\s+['":]([\w\/]+)['"]?/
+    GRAPE_VERSION_DECL = /^\s*version\s+(.+)\busing:\s*:path\b/
+    GRAPE_MOUNT_DECL   = /^\s*mount\s+([:\w][\w:]*)/
+
+    # Build the transitive closure of Grape classes and the mount-inherited
+    # prefix per class. Names are reduced to their final `::` segment so
+    # `::API::Base`, `API::Base` and `Base` all match `class Base < Grape::API`.
+    private def build_grape_index : GrapeIndex
+      edges = {} of String => String         # child class -> super class
+      grape = Set(String).new                # classes that ARE a Grape::API
+      own_base = {} of String => String      # class -> its own prefix+version
+      mounts = {} of String => Array(String) # mounter class -> mounted classes
+      mounted = Set(String).new              # classes mounted by someone
+
+      all_files.each do |path|
+        next unless path.ends_with?(".rb")
+        next if RubyEngine.ruby_test_path?(path)
+        next if File.directory?(path)
+        content = read_file_content(path)
+        # Only base-class definitions (`Grape::API`) and aggregators
+        # (`mount`) feed the index; plain route files inherit from a custom
+        # base and are recognised by `grape_api_file?` re-checking their
+        # `< Base` against the resolved class set. Restricting the whole-tree
+        # pre-pass to these two markers keeps it off the thousands of
+        # unrelated `.rb` files in a large repo.
+        next unless content.includes?("Grape") || content.includes?("mount ")
+        next unless content.includes?("class ") && content.includes?("<")
+
+        # Edges are collected for every `class X < Y`, but the
+        # prefix/version/mount declarations are attributed to the file's
+        # PRIMARY (first) Grape class. Aggregators routinely nest unrelated
+        # helper classes (GitLab's `class MovedPermanentlyError <
+        # StandardError` inside `class API`), and those nested defs must not
+        # steal the `prefix :api` / `version 'v4'` / `mount` that belong to
+        # the enclosing API class.
+        primary : String? = nil
+        prefix = ""
+        version = ""
+        content.each_line do |raw_line|
+          # Cheap substring gates keep the per-line regex work off the
+          # (vast) majority of lines in non-trivial repos — without them the
+          # whole-tree pre-pass dominated Grape scan time on GitLab-scale
+          # codebases.
+          if raw_line.includes?("class ")
+            next unless m = raw_line.match(GRAPE_CLASS_EDGE)
+            child = grape_simple_class_name(m[1])
+            super_full = m[2]
+            if super_full.includes?("Grape::API")
+              grape << child
+            else
+              edges[child] = grape_simple_class_name(super_full)
+            end
+            primary = child if primary.nil?
+          elsif cls = primary
+            if raw_line.includes?("prefix") && (m = raw_line.match(GRAPE_PREFIX_DECL))
+              prefix = m[1]
+              own_base[cls] = grape_join_segments(prefix, version)
+            elsif raw_line.includes?("version") && (m = raw_line.match(GRAPE_VERSION_DECL))
+              version = parse_first_grape_version(m[1])
+              own_base[cls] = grape_join_segments(prefix, version)
+            elsif raw_line.includes?("mount") && (m = raw_line.match(GRAPE_MOUNT_DECL))
+              mounted_child = grape_simple_class_name(m[1])
+              (mounts[cls] ||= [] of String) << mounted_child
+              mounted << mounted_child
+              # A class reached only through `mount` (its own definition file
+              # may not be in the pre-pass set) is still a Grape API — record
+              # it so `grape_api_file?`/`grape_file_mount_prefix` recognise it.
+              grape << mounted_child
+            end
+          end
+        end
+      end
+
+      # Transitive Grape-ness through the inheritance chain.
+      loop do
+        changed = false
+        edges.each do |child, parent|
+          next if grape.includes?(child)
+          if grape.includes?(parent)
+            grape << child
+            changed = true
+          end
+        end
+        break unless changed
+      end
+
+      # Propagate prefixes down the mount graph from each root aggregator
+      # (a Grape class nobody mounts). A child mounted by P inherits P's
+      # full path = P's inherited prefix + P's own prefix/version.
+      inherited = Hash(String, String).new("")
+      roots = grape.select { |c| !mounted.includes?(c) }
+      visited = Set(String).new
+      queue = roots.map { |r| {r, ""} }
+      until queue.empty?
+        cls, prefix = queue.shift
+        next if visited.includes?(cls)
+        visited << cls
+        inherited[cls] = prefix
+        child_prefix = grape_join_segments(prefix, own_base[cls]? || "")
+        (mounts[cls]? || [] of String).each do |child|
+          queue << {child, child_prefix}
+        end
+      end
+
+      GrapeIndex.new(grape, inherited)
+    end
+
+    private def grape_api_file?(content : String, grape_classes : Set(String)) : Bool
+      return true if content.includes?("Grape::API")
+      return false unless content.includes?("class ") && content.includes?("<")
+      content.each_line do |raw_line|
+        next unless m = raw_line.match(GRAPE_CLASS_DEF)
+        return true if grape_classes.includes?(grape_simple_class_name(m[1]))
+      end
+      false
+    end
+
+    private def grape_simple_class_name(name : String) : String
+      name.lstrip(':').split("::").last
+    end
+
+    # The mount-inherited prefix for the Grape class(es) defined in this
+    # file — i.e. the path under which an aggregator `mount`s them. Empty
+    # when the file's class is a root aggregator or not mounted anywhere.
+    private def grape_file_mount_prefix(content : String, index : GrapeIndex) : String
+      content.each_line do |raw_line|
+        next unless m = raw_line.match(GRAPE_CLASS_EDGE)
+        cls = grape_simple_class_name(m[1])
+        if index.classes.includes?(cls) && (prefix = index.inherited[cls]?) && !prefix.empty?
+          return prefix
+        end
+      end
+      ""
+    end
+
+    private def grape_join_segments(*segments : String) : String
+      parts = [] of String
+      segments.each do |seg|
+        seg.split('/').each do |piece|
+          trimmed = piece.strip
+          parts << trimmed unless trimmed.empty?
+        end
+      end
+      parts.join("/")
+    end
+
+    private def process_file(path : String, content : String, include_callee : Bool, mount_prefix : String = "") : Nil
       prefix_segments = [] of String
       block_kinds = [] of Symbol
       class_prefix = ""
@@ -83,13 +252,13 @@ module Analyzer::Ruby
           next
         end
 
-        if m = stripped.match(/^(?:resource|resources|namespace|group|segment)\s+['":]([\w\/\-:]+)[\'""]?\s+do\b/)
+        if m = stripped.match(/^(?:resource|resources|namespace|group|segment)\s+['":]([\w\/\-:]+)[\'""]?(?:\s*,[^#]*?)?\s*do\b/)
           prefix_segments << m[1].to_s
           block_kinds << :prefix
           next
         end
 
-        if m = stripped.match(/^route_param\s+(?::(\w+)|['"]([^'"]+)['"])\s+do\b/)
+        if m = stripped.match(/^route_param\s+(?::(\w+)|['"]([^'"]+)['"])(?:\s*,[^#]*?)?\s*do\b/)
           name = (m[1]? || m[2]?).to_s
           unless name.empty?
             prefix_segments << "{#{name}}"
@@ -109,7 +278,7 @@ module Analyzer::Ruby
           if m = stripped.match(GRAPE_VERB_WITH_PATH[verb])
             raw_match = (m[1]? || "").to_s
             raw_path = grape_literal_or_param_path(raw_match)
-            ep_path = build_path(class_prefix, version_prefix, prefix_segments, raw_path)
+            ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, raw_path)
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
@@ -132,7 +301,7 @@ module Analyzer::Ruby
           end
 
           if m = stripped.match(GRAPE_VERB_BARE_DO[verb])
-            ep_path = build_path(class_prefix, version_prefix, prefix_segments, "")
+            ep_path = build_path(mount_prefix, class_prefix, version_prefix, prefix_segments, "")
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint = Endpoint.new(ep_path, verb.upcase, details)
 
@@ -230,8 +399,9 @@ module Analyzer::Ruby
       end
     end
 
-    private def build_path(class_prefix : String, version_prefix : String, prefix_segments : Array(String), raw : String) : String
+    private def build_path(mount_prefix : String, class_prefix : String, version_prefix : String, prefix_segments : Array(String), raw : String) : String
       parts = [] of String
+      parts << mount_prefix unless mount_prefix.empty?
       parts << class_prefix unless class_prefix.empty?
       parts << version_prefix unless version_prefix.empty?
       prefix_segments.each { |s| parts << s }
