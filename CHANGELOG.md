@@ -2,6 +2,49 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v1.1.0
+
+Noir v1.1.0 is a large coverage and accuracy release. It introduces mobile deep-link analysis, Zig support, and a broad set of new framework, tagger, and specification analyzers, alongside a codebase-wide accuracy sweep and significant performance work.
+
+### Added
+- **Mobile analyzer**: Android (manifest) and iOS (Info.plist/entitlements) deep-link entry points, linked to handler code with callees, input params, and AI context. Includes universal links (assetlinks.json / AASA), Jetpack Navigation graphs, exported components (explicit-intent surfaces), and ContentProviders (`content://` IPC).
+- **Zig support**: Jetzig, Zap, httpz, and Tokamak framework analyzers.
+- New framework analyzers:
+  - C++: oat++, cpp-httplib
+  - Go: go-restful
+  - Lua: lor (OpenResty)
+  - Dart: GetServer, Alfred, Angel3
+  - PHP: Mautic, Laminas, ThinkPHP
+  - Perl: Catalyst, Dancer2
+  - Clojure: Pedestal
+  - Java: Apache Wicket, Apache Struts 2
+  - C#: ASP.NET Core Minimal API
+- New specification analyzers: Kamal (`deploy.yml`), Apache httpd, nginx, and Kubernetes Ingress.
+- New endpoint taggers: `pii`, `admin`, `payment`, `webhook`, `crypto`, `debug`, `api_docs`, and `account_recovery`.
+- New framework security taggers for Rails, Spring, Go, and Rust (CSRF, CORS, rate-limit, security-headers, and more).
+- `-f adb` and `-f simctl` output formats to launch Android and iOS mobile entry points directly.
+- Structural miniparsers for PHP (`PhpLexer`), C# (`CSharpLexer`), and Scala (`ScalaLexer`) to cut false positives/negatives in code/string-aware scanning.
+- Added `claude-opus-4-8`, `claude-fable-5`, `claude-mythos-5`, and `grok-build-0.1` to the AI provider token map.
+
+### Changed
+- Redesigned the HTML report (`-f html`) as a self-contained monochrome theme with light/dark toggle, collapsible cards, and search/method/severity filters.
+- Refactored the AI-context augmentor monolith into focused modules.
+
+### Performance
+- Eliminated PCRE2/interpolated-regex recompilation across Python, JS/TS, JVM, Scala, C++, Ruby, Go, Elixir, and security-tagger analyzers, yielding large speedups on big projects (e.g. Elixir/Blockscout 32s → 1.7s).
+- Improved monorepo multi-base-path scanning (path-boundary scoping and cache-first reads).
+- Reduced per-file work in the PHP, Kotlin/Spring, and Python analyzers.
+
+### Analyzer Accuracy
+- Codebase-wide FP/FN, parameter, and callee accuracy sweep validated against real OSS applications across nearly every supported language: Java/Kotlin (Spring, Armeria, Play, Spark, JSP, Struts), JavaScript/TypeScript (Express, Hono, NestJS, Next.js, Koa, tRPC, TanStack Router, SvelteKit, Remix, and more), Python (Flask, FastAPI, Django, Tornado, Pyramid, Starlette, Sanic, Litestar), Ruby (Rails, Sinatra, Grape, Hanami, Roda), PHP (Laravel, CakePHP, Symfony, Laminas), Go (Gin, Echo, Chi, mux, GoFrame, go-zero, PocketBase), Rust (Actix, Axum, Warp, Salvo, Poem, Rocket, Loco, RWF, Gotham, Tide), Swift (Vapor, Hummingbird, Kitura), Scala (Play, Akka, http4s, tapir, ZIO HTTP, Scalatra), Dart, Crystal, Clojure, Lua, Perl, Haskell, F#, C++, and C#.
+- Standardized prefix composition (nested groups, scopes, mounts, and cross-file/cross-function route registration) across many frameworks.
+- Improved tagger precision/recall, including `oauth`, `webhook`, `account_recovery`, `api_docs`, and `debug`.
+
+### Fixed
+- Hardened source scanning against a crash and several O(n²) DoS hangs on large or adversarial inputs.
+- Fixed a wide class of byte-vs-char index bugs causing crashes, callee corruption, and wrong line numbers across the Rust, Java, Python, PHP, Go, C++, Dart, Clojure, Haskell, and Ruby analyzers.
+- Fixed header truncation, `.http` rewrite, fiber leak, config probe coercion, OpenRouter limit, and TOML/diff/Postman output edge cases.
+
 ## v1.0.0
 
 Noir v1.0.0 introduces a stable 1.x release line across all analyzers, taggers, and passive-scan features. The CLI transitions to a verb-centric command structure (`scan`, `list`, `cache`, `config`, `rules`, `completion`, `version`, `help`) while preserving complete backward compatibility with v0 flags and syntax (e.g., `noir -b ./app`). For details, see the [CLI commands reference](docs/content/usage/cli_commands/_index.md).
