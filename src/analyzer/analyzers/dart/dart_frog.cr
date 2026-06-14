@@ -34,6 +34,15 @@ module Analyzer::Dart
 
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
+    # Every Dart Frog route file exports an `onRequest` handler — either a
+    # function (`Response onRequest(...)`, `Future<Response> onRequest(...)`)
+    # or the assignment form (`Handler onRequest = ...`). A `.dart` file
+    # under a `routes/` directory that lacks it is not a server route. This
+    # matters for full-stack monorepos, where a Flutter client commonly
+    # keeps its UI navigation under `lib/.../routes/` — those widget files
+    # must not be reported as HTTP endpoints.
+    ON_REQUEST_HANDLER_REGEX = /\bonRequest\s*[(=]/
+
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile) — precompile the fixed verb probes once
     # at load time instead of per handler file.
@@ -71,6 +80,11 @@ module Analyzer::Dart
             logger.debug "Error reading #{path}: #{e.message}"
             next
           end
+
+          # Only files exporting an `onRequest` handler are Dart Frog
+          # routes; skip a Flutter client's `routes/` UI files and any
+          # other non-route `.dart` that happens to live under `routes/`.
+          next unless content.matches?(ON_REQUEST_HANDLER_REGEX)
 
           methods = detect_methods(content)
           callees = include_callee ? callees_for_on_request(content, path) : [] of Noir::DartCalleeExtractor::Entry
