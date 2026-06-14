@@ -160,7 +160,13 @@ module Analyzer::Php
     end
 
     private def extract_symfony_route_path(context : String) : String?
-      if path_match = context.match(/(?:^|[,(]\s*)path\s*[:=]\s*['"]([^'"]+)['"]/i)
+      # `path:` / `path =` as a standalone key. A multi-line `#[Route(\n  path:
+      # '/x',\n  …)]` puts `path` after a newline+indent, which the old
+      # `(?:^|[,(]\s*)` anchor missed — so every multi-line route attribute
+      # (Shopware's whole storefront) was dropped. A negative-lookbehind on a
+      # word char accepts any non-word boundary (start, comma, paren, newline,
+      # space) while still rejecting `subpath:` / `routePath:`.
+      if path_match = context.match(/(?<!\w)path\s*[:=]\s*['"]([^'"]+)['"]/i)
         return path_match[1]
       end
 
@@ -174,21 +180,28 @@ module Analyzer::Php
     private def extract_methods_from_symfony_context(context : String) : Array(String)
       methods = [] of String
 
-      if match = context.match(/methods\s*[:=]\s*\[([^\]]+)\]/)
-        methods_str = match[1]
-        methods_str.scan(/['"]([^'"]+)['"]/).each do |method_match|
-          methods << method_match[1].upcase
-        end
-      elsif match = context.match(/methods\s*=\s*\{([^}]+)\}/)
-        methods_str = match[1]
-        methods_str.scan(/["']([^"']+)["']/).each do |method_match|
-          methods << method_match[1].upcase
-        end
+      if match = context.match(/methods\s*[:=]\s*\[([^\]]+)\]/m)
+        methods.concat(extract_method_tokens(match[1]))
+      elsif match = context.match(/methods\s*=\s*\{([^}]+)\}/m)
+        methods.concat(extract_method_tokens(match[1]))
       elsif match = context.match(/methods\s*[:=]\s*['"]([^'"]+)['"]/)
+        methods << match[1].upcase
+      elsif match = context.match(/methods\s*[:=]\s*(?:[\w\\]+::)?METHOD_(\w+)/i)
         methods << match[1].upcase
       end
 
-      methods
+      methods.uniq
+    end
+
+    # Methods inside a `methods: [...]` / `={...}` list — either string
+    # literals (`'POST'`) or Symfony's `Request::METHOD_POST` constants (used
+    # heavily by Shopware), which the string scan alone would have missed and
+    # silently defaulted to GET.
+    private def extract_method_tokens(list : String) : Array(String)
+      tokens = [] of String
+      list.scan(/['"]([^'"]+)['"]/) { |m| tokens << m[1].upcase }
+      list.scan(/METHOD_(\w+)/i) { |m| tokens << m[1].upcase }
+      tokens
     end
 
     private def extract_methods_from_annotation_context(context : String) : Array(String)
