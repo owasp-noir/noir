@@ -140,5 +140,20 @@ describe "ApiDocsTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "tags OAuth/OIDC/SMART discovery documents" do
+      ["/.well-known/openid-configuration", "/openid-configuration",
+       "/.well-known/oauth-authorization-server", "/oauth-authorization-server",
+       "/.well-known/oauth-protected-resource",
+       "/.well-known/smart-configuration", "/smart-configuration"].each do |path|
+        tagger = ApiDocsTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(path, "GET")
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("api_docs")
+      end
+    end
   end
 end
