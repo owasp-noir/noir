@@ -12,12 +12,14 @@ module Detector::Java
                        file_contents.includes?("play.routing")
       end
 
-      # Check routes file only if there are Java indicators nearby
+      # Check routes file only with a Java-specific type marker. `Integer` is
+      # Java-only (Scala routes use `Int`); `Boolean`/`Long` are shared with
+      # Scala, so keying on them misclassifies a Scala Play app as Java and runs
+      # a second analyzer over the same routes — lila's `Boolean` action params
+      # produced a full set of duplicate, prefix-doubled `java_play` endpoints.
       if filename.ends_with?("routes") || filename.ends_with?("routes.conf")
-        # Check for Play-style route definitions with Java-style types
         if file_contents =~ /^\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+/m
-          # Look for Java-specific patterns in routes file (e.g., Integer instead of Int)
-          return true if file_contents.includes?("Integer") || file_contents.includes?("Boolean")
+          return true if file_contents.includes?("Integer")
         end
       end
 
