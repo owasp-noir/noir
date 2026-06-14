@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../specification/graphql_sdl_parser"
+require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # Apollo Server analyzer.
@@ -27,6 +28,10 @@ module Analyzer::Javascript
         begin
           content = read_file_content(path)
           next unless apollo_in_file?(content)
+          # A `gql\`type Query { ... }\`` schema inside a *.test/*.spec file
+          # (or a mock/e2e tree) is a test fixture, not a deployed GraphQL
+          # endpoint — skip it the same way the verb-DSL analyzers do.
+          next if Noir::JSRouteExtractor.test_stub_only?(path, content)
           process_file(path, content)
         rescue e
           @logger.debug "Apollo analyzer: failed to process #{path}: #{e.message}"

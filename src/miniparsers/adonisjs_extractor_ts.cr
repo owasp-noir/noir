@@ -80,6 +80,15 @@ module Noir
       "middleware", "as", "domain", "where", "namespace", "apiOnly",
     }
 
+    # The only identifiers AdonisJS registers routes on: `Route` (v5,
+    # `@ioc:Adonis/Core/Route`) and `router` (v6,
+    # `@adonisjs/core/services/router`). Gating the verb/group/resource
+    # dispatch on the call chain's ROOT receiver being one of these stops
+    # every other `.get`/`.delete`/... call shaped like a route from
+    # becoming a phantom endpoint — `env.get('STRIPE_SECRET_KEY')`,
+    # `session.get('plan')`, a Lucid `Model.query()...delete('*')`, etc.
+    ROUTER_RECEIVERS = Set{"router", "Route"}
+
     struct Route
       getter verb : String
       getter path : String
@@ -106,31 +115,43 @@ module Noir
       if Noir::TreeSitter.node_type(node) == "call_expression"
         method = chain_method_name(node, source)
 
-        case
-        when HTTP_VERB_METHODS.has_key?(method)
-          emit_verb(node, source, HTTP_VERB_METHODS[method], prefix, routes, include_callees)
-          return
-        when method == "any"
-          ANY_VERBS.each { |verb| emit_verb(node, source, verb, prefix, routes, include_callees) }
-          return
-        when method == GROUP_METHOD
-          walk_group(node, source, prefix, routes, depth, include_callees)
-          return
-        when method == "resource"
-          emit_resource(node, source, prefix, ANY_VERBS_ALL, routes, include_callees)
-          return
-        when method == "prefix"
-          handle_prefix(node, source, prefix, routes, depth, include_callees)
-          return
-        when method == "only"
-          handle_resource_filter(node, source, prefix, :only, routes, include_callees)
-          return
-        when method == "except"
-          handle_resource_filter(node, source, prefix, :except, routes, include_callees)
-          return
-        when TRANSPARENT_MODIFIERS.includes?(method)
-          handle_transparent(node, source, prefix, routes, depth, include_callees)
-          return
+        # Only dispatch a recognised registration/modifier when the chain
+        # is rooted on the AdonisJS router — otherwise fall through to the
+        # generic recursion so a non-router call (`env.get(...)`) is not
+        # mistaken for a route but nested router calls inside it are still
+        # discovered.
+        if dispatchable_method?(method) && router_rooted?(node, source)
+          case
+          when HTTP_VERB_METHODS.has_key?(method)
+            emit_verb(node, source, HTTP_VERB_METHODS[method], prefix, routes, include_callees)
+            return
+          when method == "any"
+            ANY_VERBS.each { |verb| emit_verb(node, source, verb, prefix, routes, include_callees) }
+            return
+          when method == "on"
+            # `router.on('/path').render('view')` / `.redirect(...)` —
+            # always a GET endpoint regardless of the terminator.
+            emit_on(node, source, prefix, routes)
+            return
+          when method == GROUP_METHOD
+            walk_group(node, source, prefix, routes, depth, include_callees)
+            return
+          when method == "resource"
+            emit_resource(node, source, prefix, ANY_VERBS_ALL, routes, include_callees)
+            return
+          when method == "prefix"
+            handle_prefix(node, source, prefix, routes, depth, include_callees)
+            return
+          when method == "only"
+            handle_resource_filter(node, source, prefix, :only, routes, include_callees)
+            return
+          when method == "except"
+            handle_resource_filter(node, source, prefix, :except, routes, include_callees)
+            return
+          when TRANSPARENT_MODIFIERS.includes?(method)
+            handle_transparent(node, source, prefix, routes, depth, include_callees)
+            return
+          end
         end
       end
 
@@ -259,6 +280,59 @@ module Noir
       return unless callee
       return unless Noir::TreeSitter.node_type(callee) == "member_expression"
       first_named_child(callee)
+    end
+
+    # True for a trailing method name the walker knows how to handle.
+    # Cheap predicate so `router_rooted?` (which descends the chain) only
+    # runs for calls that could be a registration.
+    private def dispatchable_method?(method : String) : Bool
+      return true if HTTP_VERB_METHODS.has_key?(method)
+      return true if TRANSPARENT_MODIFIERS.includes?(method)
+      case method
+      when "any", "on", GROUP_METHOD, "resource", "prefix", "only", "except"
+        true
+      else
+        false
+      end
+    end
+
+    # Walk the call chain down to its leftmost identifier and report
+    # whether it is the AdonisJS router (`router`/`Route`). Descends
+    # through member_expression receivers and chained call_expressions:
+    #   router.group(cb).prefix('/x')  -> root `router`
+    #   env.get('KEY')                 -> root `env`  (rejected)
+    private def router_rooted?(call : LibTreeSitter::TSNode, source : String) : Bool
+      root = chain_root_identifier(call)
+      return false unless root
+      ROUTER_RECEIVERS.includes?(Noir::TreeSitter.node_text(root, source))
+    end
+
+    private def chain_root_identifier(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      current = node
+      64.times do
+        case Noir::TreeSitter.node_type(current)
+        when "identifier"
+          return current
+        when "call_expression", "member_expression"
+          child = first_named_child(current)
+          return unless child
+          current = child
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    # `router.on('/path')...` always registers a GET endpoint (the
+    # `.render`/`.redirect`/`.redirectToPath` terminator only decides
+    # what it serves).
+    private def emit_on(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
+      path = first_string_argument(call, source)
+      return unless path
+      full = join_paths(prefix, path)
+      line = Noir::TreeSitter.node_start_row(call)
+      routes << Route.new("GET", full, line)
     end
 
     private def arguments_node(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?

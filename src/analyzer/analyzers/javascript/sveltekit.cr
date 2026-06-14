@@ -58,6 +58,8 @@ module Analyzer::Javascript
 
         if page_file?(leaf)
           analyze_page(path, relative, result, mutex)
+        elsif page_server_file?(leaf)
+          analyze_page_server(path, relative, result, mutex)
         elsif server_file?(leaf)
           analyze_api_route(path, relative, result, mutex, include_callee)
         end
@@ -83,10 +85,51 @@ module Analyzer::Javascript
       API_EXTENSIONS.any? { |ext| leaf.ends_with?(ext) }
     end
 
+    private def page_server_file?(leaf : String) : Bool
+      return false unless leaf.starts_with?("+page.server")
+      API_EXTENSIONS.any? { |ext| leaf.ends_with?(ext) }
+    end
+
     private def analyze_page(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
       url = url_for(relative)
       endpoint = build_endpoint(url, "GET", path)
       mutex.synchronize { result << endpoint }
+    end
+
+    # `+page.server.{js,ts}` may export `actions` — SvelteKit form
+    # actions, which are inbound POST handlers at the page's own URL
+    # (the default action posts to the page, named actions to `?/name`).
+    # These are the primary write surface of a SvelteKit app and are
+    # distinct from the page's GET (emitted by the `+page.svelte`
+    # sibling), so emit a POST. `load`-only `+page.server` files add no
+    # endpoint of their own.
+    private def analyze_page_server(path : String, relative : String, result : Array(Endpoint), mutex : Mutex)
+      content = begin
+        read_file_content(path)
+      rescue e
+        logger.debug "Error reading #{path}: #{e.message}"
+        return
+      end
+      return unless form_actions?(content)
+
+      url = url_for(relative)
+      line = form_actions_line(content) || 1
+      endpoint = build_endpoint(url, "POST", path, line)
+      mutex.synchronize { result << endpoint }
+    end
+
+    private def form_actions?(content : String) : Bool
+      content.matches?(FORM_ACTIONS_DECL_RE) ||
+        content.matches?(/export\s+\{\s*[^}]*\bactions\b[^}]*\}/)
+    end
+
+    FORM_ACTIONS_DECL_RE = /export\s+(?:const|let|var|(?:async\s+)?function)\s+actions\b/
+
+    private def form_actions_line(content : String) : Int32?
+      if match = content.match(FORM_ACTIONS_DECL_RE)
+        return line_for_match(content, match)
+      end
+      nil
     end
 
     private def analyze_api_route(path : String, relative : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
@@ -136,16 +179,14 @@ module Analyzer::Javascript
       seg.starts_with?("(") && seg.ends_with?(")")
     end
 
+    # SvelteKit param group inside a route segment. Replaced in place so
+    # one segment can hold static text around it (`foo-[id]`, `@[user]`)
+    # and so every form normalizes to `{name}`:
+    #   [id]  [id=int]  [...rest]  [[opt]]  [[opt=int]]  [[...rest]]
+    PARAM_GROUP_RE = /\[+(?:\.{3})?(\w+)(?:=\w+)?\]+/
+
     private def convert_segment(seg : String) : String
-      # Optional + rest segments (`[[...slug]]` / `[...slug]`).
-      if m = seg.match(/^\[+\.{3}(\w+)\]+$/)
-        return "{#{m[1]}}"
-      end
-      # Dynamic `[id]` (and `[id=matcher]` — strip the matcher).
-      if m = seg.match(/^\[(\w+)(?:=\w+)?\]$/)
-        return "{#{m[1]}}"
-      end
-      seg
+      seg.gsub(PARAM_GROUP_RE) { "{#{$1}}" }
     end
 
     # Compiled once per verb — interpolated regex literals would otherwise

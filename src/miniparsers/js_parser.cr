@@ -869,10 +869,12 @@ module Noir
             path = @tokens[path_idx + 1].value
             @position = path_idx + 2
           elsif @tokens[path_idx + 1].type == :lbrace
-            # Look for path property in object
+            # Look for the path property in the object. Restify accepts
+            # both `{ path: '/x' }` and `{ url: '/x', name: '...' }` —
+            # treat `url` as an alias for `path`.
             obj_idx = path_idx + 1
             while obj_idx < @tokens.size && @tokens[obj_idx].type != :rbrace
-              if @tokens[obj_idx].value == "path" &&
+              if (@tokens[obj_idx].value == "path" || @tokens[obj_idx].value == "url") &&
                  obj_idx + 1 < @tokens.size &&
                  @tokens[obj_idx + 1].type == :colon &&
                  obj_idx + 2 < @tokens.size &&

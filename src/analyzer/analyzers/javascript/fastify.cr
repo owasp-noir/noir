@@ -22,7 +22,7 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         begin
           content = read_file_content(path)
-          autoload_prefix = autoload_prefix_for(path, autoload_roots)
+          autoload_prefix = autoload_prefix_for(path, autoload_roots, content)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
@@ -84,15 +84,28 @@ module Analyzer::Javascript
     # package and the legacy bare name are matched so older projects work.
     AUTOLOAD_MARKERS = ["@fastify/autoload", "fastify-autoload"]
 
-    # Discover the absolute directory roots that `@fastify/autoload`
-    # registers. Each `register(autoload, { dir: <expr> })` names a tree
-    # whose subdirectories become route prefixes. `dir` is conventionally
+    # A directory `@fastify/autoload` registers. `dir_prefix` records the
+    # config's `dirNameRoutePrefix` — when it is `false`, subdirectories
+    # do NOT contribute a route prefix (a file's own `autoPrefix` export
+    # provides the prefix instead).
+    record AutoloadRoot, path : String, dir_prefix : Bool
+
+    # `export const autoPrefix = '/x'` (or CJS `module.exports.autoPrefix
+    # = '/x'`) lets a route file declare its own autoload prefix. The
+    # `\bautoPrefix\s*=\s*<string>` shape matches the assignment but not a
+    # read like `reply.redirect(autoPrefix)`.
+    AUTO_PREFIX_RE = /\bautoPrefix\s*=\s*['"]([^'"]+)['"]/
+
+    # Discover the directory roots that `@fastify/autoload` registers.
+    # Each `register(autoload, { dir: <expr>, dirNameRoutePrefix?: bool })`
+    # names a tree whose subdirectories become route prefixes (unless
+    # `dirNameRoutePrefix: false`). `dir` is conventionally
     # `path.join(import.meta.dirname, 'routes')` / `join(__dirname, 'a',
     # 'b')`, so the directory is the config file's own directory plus the
     # string-literal segments of the `dir` expression. Returns the longest
     # roots first so `autoload_prefix_for` can match the most specific.
-    private def collect_autoload_roots : Array(String)
-      roots = [] of String
+    private def collect_autoload_roots : Array(AutoloadRoot)
+      roots = [] of AutoloadRoot
       all_files.each do |path|
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
@@ -100,39 +113,64 @@ module Analyzer::Javascript
         next unless content.includes?("dir")
 
         base_dir = File.dirname(File.expand_path(path))
-        content.scan(/\bdir\s*:\s*/) do |m|
-          value_start = m.end(0) || 0
-          value_end = route_config_value_end(content, value_start)
-          value = content[value_start...value_end]
+        # Scan each `register(...)` call's argument list as a unit so the
+        # `dirNameRoutePrefix` flag is associated with the right `dir:`
+        # (a file may register several autoload trees).
+        content.scan(/\bregister\s*\(/) do |m|
+          paren_open = content.index("(", m.begin(0) || 0)
+          next unless paren_open
+          paren_close = Noir::JSRouteExtractor.find_matching_paren(content, paren_open)
+          next unless paren_close && paren_close > paren_open
+          args = content[(paren_open + 1)...paren_close]
+
+          dir_match = args.match(/\bdir\s*:\s*/)
+          next unless dir_match
+          value_start = dir_match.end(0) || 0
+          value_end = route_config_value_end(args, value_start)
+          value = args[value_start...value_end]
           segments = [] of String
           value.scan(/['"]([^'"]+)['"]/) { |sm| segments << sm[1] }
           next if segments.empty?
 
           root = File.expand_path(File.join([base_dir] + segments))
-          roots << root unless roots.includes?(root)
+          dir_prefix = !args.matches?(/dirNameRoutePrefix\s*:\s*false/)
+          roots << AutoloadRoot.new(root, dir_prefix) unless roots.any? { |r| r.path == root }
         end
       rescue
         next
       end
-      roots.sort_by! { |r| -r.size }
+      roots.sort_by! { |r| -r.path.size }
       roots
     end
 
-    # Compute the autoload-derived prefix for a file: the path of the
-    # file's directory relative to the most specific autoload root that
-    # contains it. `@fastify/autoload` ignores the filename (an `index.ts`
-    # and a sibling `tasks.ts` in `routes/api/` both mount at `/api`), so
-    # only the directory contributes. A file directly in a root yields ""
-    # (mounted at "/"), which leaves its routes untouched.
-    private def autoload_prefix_for(path : String, roots : Array(String)) : String
-      return "" if roots.empty?
-      file_dir = File.dirname(File.expand_path(path))
-      roots.each do |root|
-        next unless file_dir == root || file_dir.starts_with?("#{root}/")
-        relative = file_dir == root ? "" : file_dir[(root.size + 1)..]
-        return relative.empty? ? "" : "/#{relative}"
+    # Compute the autoload-derived prefix for a file. Two contributions
+    # compose (directory first, then the file's own `autoPrefix`):
+    #   * the file's directory path relative to the most specific autoload
+    #     root that contains it (skipped when that root set
+    #     `dirNameRoutePrefix: false`). `@fastify/autoload` ignores the
+    #     filename — an `index.ts` and a sibling `tasks.ts` in `routes/api/`
+    #     both mount at `/api`.
+    #   * an `export const autoPrefix = '/x'` declared in the file.
+    # A file directly in a root with no autoPrefix yields "" (mounted at
+    # "/"), which leaves its routes untouched.
+    private def autoload_prefix_for(path : String, roots : Array(AutoloadRoot), content : String) : String
+      auto_prefix = content.includes?("autoPrefix") && (m = content.match(AUTO_PREFIX_RE)) ? m[1] : ""
+
+      dir_prefix = ""
+      unless roots.empty?
+        file_dir = File.dirname(File.expand_path(path))
+        roots.each do |root|
+          next unless file_dir == root.path || file_dir.starts_with?("#{root.path}/")
+          if root.dir_prefix && file_dir != root.path
+            dir_prefix = "/#{file_dir[(root.path.size + 1)..]}"
+          end
+          break
+        end
       end
-      ""
+
+      return dir_prefix if auto_prefix.empty?
+      return auto_prefix if dir_prefix.empty?
+      Noir::URLPath.join(dir_prefix, auto_prefix)
     end
 
     # Walks a file for `fastify.route({ ... })` registrations that the
