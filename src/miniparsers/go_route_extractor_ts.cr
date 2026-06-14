@@ -1303,11 +1303,21 @@ module Noir
       end
 
       if (mw = config.middleware_method) && name == mw
-        # (closure only) -> middleware group that doesn't change prefix.
-        # Excludes Gin-style `.Group("/x")` which is handled by
-        # `extract_routes`, not this walker.
-        if chi_closure_arg(call) && !chi_first_string_arg(call, source, string_values)
-          return ChiCall::Group
+        if chi_closure_arg(call)
+          if chi_first_string_arg(call, source, string_values)
+            # (string, closure) -> push prefix. Chi's own `Group` takes no
+            # path, but wrappers like gitea's `code.gitea.io/gitea/modules/web`
+            # expose `m.Group("/path", func(){...})` — a path-scoped group.
+            # Treat that form like `Route` so the prefix composes onto the
+            # routes nested inside (gitea/gogs/forgejo register the bulk of
+            # their tree this way).
+            return ChiCall::Route
+          else
+            # (closure only) -> middleware group that doesn't change prefix.
+            # Excludes Gin-style `.Group("/x")` (no closure) which is handled
+            # by `extract_routes`, not this walker.
+            return ChiCall::Group
+          end
         end
       end
 
