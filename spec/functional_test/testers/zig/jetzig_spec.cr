@@ -40,6 +40,20 @@ expected_endpoints << jetzig_endpoint("/posts/:id", "DELETE", id_param, [
 expected_endpoints << jetzig_endpoint("/admin/users", "GET")
 expected_endpoints << jetzig_endpoint("/admin/users/:id", "GET", id_param)
 
+# Explicit `app.route(...)` custom routes in main.zig. The view module under
+# `app/api/` is resolved cross-file for callees; the commented `.DELETE`
+# registration is excluded.
+expected_endpoints << jetzig_endpoint("/api/products", "GET", [] of Param, [
+  Callee.new("Product.findAll"),
+  Callee.new("request.render"),
+])
+expected_endpoints << jetzig_endpoint("/api/products/:id", "GET", id_param, [
+  Callee.new("Product.find"),
+])
+expected_endpoints << jetzig_endpoint("/api/products", "POST", [] of Param, [
+  Callee.new("Product.create"),
+])
+
 FunctionalTester.new("fixtures/zig/jetzig/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
