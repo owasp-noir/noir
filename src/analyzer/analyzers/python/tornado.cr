@@ -56,7 +56,17 @@ module Analyzer::Python
             api_instances = Hash(::String, ::String).new
             path_api_instances[path] = api_instances
 
+            # Tornado's own source documents routing with
+            # `.. code-block:: python` examples inside module/class
+            # docstrings — routing.py literally shows
+            # `Application([(r"/app1/handler", Handler)])`. Those are not
+            # real routes. Flag every line that begins inside a
+            # triple-quoted string so the route-detection entry points
+            # below skip them.
+            docstring_line = compute_docstring_line_flags(lines)
+
             lines.each_with_index do |line, line_index|
+              next if docstring_line[line_index]
               line = line.gsub(" ", "") # remove spaces for easier regex matching
 
               # Identify Tornado Application instance assignments
@@ -116,6 +126,52 @@ module Analyzer::Python
       end
 
       result
+    end
+
+    # For each line, whether its first character sits inside a
+    # triple-quoted string (i.e. a docstring opened on an earlier line).
+    # A single linear scan tracks the open/close `"""`/`'''` delimiters at
+    # file scope; single-line strings and `#` comments are skipped so a
+    # stray `"""` inside them doesn't flip the state.
+    private def compute_docstring_line_flags(lines : Array(::String)) : Array(Bool)
+      flags = Array(Bool).new(lines.size, false)
+      in_triple = false
+      triple_char = '\0'
+      lines.each_with_index do |line, idx|
+        flags[idx] = in_triple
+        i = 0
+        size = line.size
+        while i < size
+          c = line[i]
+          if in_triple
+            if c == triple_char && i + 2 < size && line[i + 1] == triple_char && line[i + 2] == triple_char
+              in_triple = false
+              i += 3
+              next
+            end
+            i += 1
+          elsif c == '#'
+            break # comment runs to end of line
+          elsif c == '"' || c == '\''
+            if i + 2 < size && line[i + 1] == c && line[i + 2] == c
+              in_triple = true
+              triple_char = c
+              i += 3
+              next
+            end
+            # Single-line string: skip to its (unescaped) closing quote.
+            i += 1
+            while i < size
+              break if line[i] == c && line[i - 1] != '\\'
+              i += 1
+            end
+            i += 1
+          else
+            i += 1
+          end
+        end
+      end
+      flags
     end
 
     private def join_multiline_call(lines : Array(::String), start_index : Int32) : ::String
