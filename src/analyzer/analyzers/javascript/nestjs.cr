@@ -24,8 +24,39 @@ module Analyzer::Javascript
       end
     end
 
+    # Project-wide `EnumName.Member` / `Object.prop` -> value map, used to
+    # resolve `@Controller(...)` prefix constants imported from another
+    # file. nil until `analyze_with_extensions` seeds it.
+    @nest_global_literals : Hash(String, Array(String))? = nil
+
+    # Extensions worth scanning for cross-file enum/object constants —
+    # the enum may live in a `.ts` file even when the route-scan pass only
+    # walks `.js`, so cast a wide net here.
+    GLOBAL_LITERAL_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]
+
     def analyze
       analyze_with_extensions([".js", ".jsx"])
+    end
+
+    # Scan every JS/TS source for `enum Foo { Bar = 'x' }` / `const Obj =
+    # { k: 'v' } as const` definitions and keep only the DOTTED keys
+    # (`Foo.Bar`, `Obj.k`) — those are the shape used cross-file as a
+    # `@Controller`/`@Get` prefix. Bare-identifier consts are file-local
+    # and collision-prone, so they stay per-file. Gated on the cheap
+    # `enum `/`as const` substrings so most files are skipped outright.
+    private def collect_global_literal_values : Hash(String, Array(String))
+      acc = Hash(String, Array(String)).new
+      all_files.each do |path|
+        next unless GLOBAL_LITERAL_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+        content = read_file_content(path)
+        next unless content.includes?("enum ") || content.includes?("as const")
+        extract_literal_values(content).each do |key, value|
+          acc[key] = value if key.includes?(".") && !acc.has_key?(key)
+        end
+      rescue
+        next
+      end
+      acc
     end
 
     protected def analyze_with_extensions(extensions : Array(String)) : Array(Endpoint)
@@ -34,6 +65,13 @@ module Analyzer::Javascript
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       global_prefix_holder = [] of GlobalPrefixConfig
       global_prefix_mutex = Mutex.new
+
+      # Resolve enum/object constants used cross-file as `@Controller(...)`
+      # prefixes before the parallel scan so each file's per-file literal
+      # table can fall back to them (immich mounts every asset/user/...
+      # controller via `@Controller(RouteKey.User)` where `RouteKey` lives
+      # in `src/enum.ts`). Built once, single-fiber, then read-only.
+      @nest_global_literals = collect_global_literal_values
 
       parallel_file_scan(extensions) do |path|
         next if ignored_nest_path?(path)
@@ -248,6 +286,11 @@ module Analyzer::Javascript
     private def analyze_nestjs_controllers(content : String, path : String, result : Array(Endpoint), include_callee : Bool)
       # Split content by controllers and process each separately
       literal_values = extract_literal_values(content)
+      # Back-fill cross-file enum/object constants (per-file definitions
+      # already in `literal_values` win — they are the more specific source).
+      if global = @nest_global_literals
+        global.each { |key, value| literal_values[key] = value unless literal_values.has_key?(key) }
+      end
       controllers = extract_controllers(content, literal_values)
 
       controllers.each do |controller_info|
