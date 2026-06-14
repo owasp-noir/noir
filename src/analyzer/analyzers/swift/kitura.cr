@@ -14,16 +14,26 @@ module Analyzer::Swift
     ROUTE_BODY_LOOKAHEAD_LIMIT = LOOKAHEAD_LIMIT
     FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
+    # `let router = Router()` / `func boot(router: Router)` — the receivers a
+    # Kitura route is registered on. Tracking them makes detection
+    # receiver-aware, so look-alike `.get`/`.delete`/... calls on models or
+    # services (`Grade.delete(id:)`, `cache.get(...)`) stop becoming phantom
+    # endpoints.
+    ROUTER_ASSIGN_PATTERN = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*Router\s*[(<]/
+    ROUTER_PARAM_PATTERN  = /([A-Za-z_]\w*)\s*:\s*Router\b/
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = named_handler_bodies(lines)
+      router_receivers = collect_router_receivers(lines)
 
       lines.each_with_index do |line, index|
         next unless route_definition_line?(line)
         match = line.match(ROUTE_PATTERN)
         next unless match
+        next unless router_receivers.includes?(match[1])
 
         begin
           # Note: 'all' matches all HTTP methods, defaulting to GET for representation
@@ -121,6 +131,23 @@ module Analyzer::Swift
       route_definition?(line) &&
         !line.includes?("request.parameters") &&
         !line.includes?("request.queryParameters")
+    end
+
+    # The set of router-like receiver names: every `Router()` binding, every
+    # `Router`-typed parameter, plus the conventional `router` whenever a
+    # `.router` property (`app.router`, `self.router`) is accessed — that
+    # access is exactly the receiver `ROUTE_PATTERN` captures for
+    # `app.router.get(...)`.
+    private def collect_router_receivers(lines : Array(String)) : Set(String)
+      receivers = Set(String).new
+      lines.each do |line|
+        if match = line.match(ROUTER_ASSIGN_PATTERN)
+          receivers << match[1]
+        end
+        line.scan(ROUTER_PARAM_PATTERN) { |m| receivers << m[1] }
+        receivers << "router" if line.matches?(/\.router\b/)
+      end
+      receivers
     end
 
     private def attach_route_callees(lines : Array(String),
