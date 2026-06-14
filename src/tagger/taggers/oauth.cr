@@ -39,24 +39,19 @@ class OAuthTagger < Tagger
       # OAuth authorization endpoints commonly use response_type +
       # client_id + redirect_uri, while token endpoints can rely on
       # HTTP Basic auth and expose only grant_type + code/verifier.
-      check = # A whole `/oauth|/oauth2|/openid|/oidc` path segment is an
-              # unambiguous OAuth surface on its own — the host is already
-              # stripped, so this can't fire on `oauth.example.com`. Catches
-              # the param-less endpoints real OAuth servers expose (the
-              # `/oauth2/auth` authorize redirect, `/oauth2/device/verify`,
-              # `/oauth2/sessions/logout`, a GET on `/oauth2/register/{id}`).
-              strong_oauth_segment?(endpoint.url) ||
-              strong_oauth_params?(param_names) ||
-              # Under an unambiguous /oauth|/openid path, a single OAuth
-              # parameter is enough (device-flow `device_code`, an
-              # authorize page's `client_id`, a callback's `code`).
-              (strong_url && !intersection.empty?) ||
-              (weak_url && intersection.size >= 3) ||
-              (weak_url && oauth_authorization_params?(param_names)) ||
-              (weak_url && oauth_token_params?(param_names)) ||
-              # The authorization-code redirect handler — `/callback` (or
-              # `/auth/<provider>/callback`) receiving `code` + `state`.
-              oauth_callback?(parts, param_names)
+      check = # A whole `/oauth|/oauth2|/openid|/oidc` path segment is an # unambiguous OAuth surface on its own — the host is already # stripped, so this can't fire on `oauth.example.com`. Catches # the param-less endpoints real OAuth servers expose (the # `/oauth2/auth` authorize redirect, `/oauth2/device/verify`, # `/oauth2/sessions/logout`, a GET on `/oauth2/register/{id}`).
+        strong_oauth_segment?(endpoint.url) ||
+          strong_oauth_params?(param_names) ||
+          # Under an unambiguous /oauth|/openid path, a single OAuth
+          # parameter is enough (device-flow `device_code`, an
+          # authorize page's `client_id`, a callback's `code`).
+          (strong_url && !intersection.empty?) ||
+          (weak_url && intersection.size >= 3) ||
+          (weak_url && oauth_authorization_params?(param_names)) ||
+          (weak_url && oauth_token_params?(param_names)) ||
+          # The authorization-code redirect handler — `/callback` (or
+          # `/auth/<provider>/callback`) receiving `code` + `state`.
+          oauth_callback?(parts, param_names)
 
       if check
         tag = Tag.new("oauth", "Suspected OAuth endpoint for granting 3rd party access.", "Oauth")
