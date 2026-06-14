@@ -11,9 +11,57 @@ module Analyzer::Scala
       {method, /(?<![.\w])#{method}\s*\(\s*"([^"]+)"/}
     end
 
+    # Servlet/filter class name -> mount prefix, harvested from
+    # `context.mount(new XController, "/prefix")` in ScalatraBootstrap.
+    @mount_prefixes = {} of String => String
+
+    def analyze
+      @mount_prefixes = build_mount_prefixes
+      parallel_file_scan do |path|
+        result.concat(analyze_file(path))
+      end
+      result
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
+      return [] of Endpoint if scalatra_test_path?(path)
       content = File.read(path)
       extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
+    end
+
+    # Scalatra (like a servlet container) mounts each servlet/filter at a base
+    # path in ScalatraBootstrap; without it every route is reported relative to
+    # its servlet (`/:id`) instead of the served path (`/hackers-api/:id`).
+    private def build_mount_prefixes : Hash(String, String)
+      map = {} of String => String
+      all_files.each do |path|
+        next if File.directory?(path)
+        next unless File.exists?(path) && File.extname(path) == ".scala"
+        next if scalatra_test_path?(path)
+        begin
+          content = File.read(path)
+        rescue
+          next
+        end
+        next unless content.includes?("mount")
+
+        scala_code_lines(content).each do |line|
+          next unless line.includes?("mount")
+          line.scan(/\bmount\s*\(\s*(?:new\s+)?([A-Za-z_][\w.]*).*?"(\/[^"]*)"/) do |m|
+            cls = m[1].split('.').last
+            map[cls] ||= normalize_mount_prefix(m[2])
+          end
+        end
+      end
+      map
+    end
+
+    private def normalize_mount_prefix(prefix : String) : String
+      prefix.rstrip("/*")
+    end
+
+    private def scalatra_test_path?(path : String) : Bool
+      path.includes?("/src/test/") || path.includes?("/src/sbt-test/")
     end
 
     # Extract routes from Scalatra DSL
@@ -21,6 +69,7 @@ module Analyzer::Scala
       endpoints = [] of Endpoint
       lines = content.split('\n')
       code_lines = scala_code_lines(content)
+      mount_prefix = single_mount_prefix(code_lines)
 
       lines.each_with_index do |_line, index|
         stripped_line = (code_lines[index]? || "").strip
@@ -35,7 +84,8 @@ module Analyzer::Scala
             # Only process if it looks like a URL path (starts with /)
             next unless route_path.starts_with?("/")
 
-            endpoint = create_endpoint(route_path, method.upcase, path, index + 1)
+            full_path = apply_mount_prefix(mount_prefix, route_path)
+            endpoint = create_endpoint(full_path, method.upcase, path, index + 1)
 
             # Extract path parameters from the route
             extract_path_params(endpoint, route_path)
@@ -130,6 +180,32 @@ module Analyzer::Scala
           endpoint.push_param(Param.new(param_name, "", "cookie"))
         end
       end
+    end
+
+    # A controller file usually declares one servlet; if exactly one class/object
+    # in it has a mount prefix, every route in the file is served under it. When
+    # the file holds several mounted classes the mapping is ambiguous, so fall
+    # back to no prefix rather than risk a wrong one.
+    private def single_mount_prefix(code_lines : Array(String)) : String
+      return "" if @mount_prefixes.empty?
+
+      prefixes = Set(String).new
+      code_lines.each do |line|
+        next unless line.includes?("class") || line.includes?("object") || line.includes?("trait")
+        line.scan(/(?<![.\w])(?:class|object|trait)\s+(\w+)/) do |m|
+          if pfx = @mount_prefixes[m[1]]?
+            prefixes << pfx
+          end
+        end
+      end
+
+      prefixes.size == 1 ? prefixes.first : ""
+    end
+
+    private def apply_mount_prefix(prefix : String, route : String) : String
+      return route if prefix.empty?
+      return prefix if route == "/" || route.empty?
+      "#{prefix}/#{route.lstrip('/')}"
     end
 
     # Create an endpoint with the given path and method
