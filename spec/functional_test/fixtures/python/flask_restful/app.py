@@ -36,3 +36,14 @@ api.add_scoped_resource(
     "/items/all",
     endpoint="items",
 )
+
+# `Api(prefix=...)` prepends the prefix to every resource registered on it.
+prefixed_api = Api(app, prefix="/api/v2")
+
+
+class Health(Resource):
+    def get(self):
+        return {"ok": True}
+
+
+prefixed_api.add_resource(Health, "/health")

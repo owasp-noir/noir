@@ -16,6 +16,7 @@ expected_endpoints = [
   Endpoint.new("/items", "POST"),
   Endpoint.new("/items/all", "GET"),
   Endpoint.new("/items/all", "POST"),
+  Endpoint.new("/api/v2/health", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/flask_restful/", {
