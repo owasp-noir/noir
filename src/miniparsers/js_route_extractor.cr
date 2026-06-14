@@ -496,6 +496,38 @@ module Noir
       "require(\"@apollo/datasource-rest\")", "require('@apollo/datasource-rest')",
     ]
 
+    # Client-side UI framework imports. A file that imports a browser
+    # UI framework (Vue, React, Angular, Svelte, Solid, Preact) and its
+    # satellite libs (pinia, vue-router, @vueuse, react-router, ...) is
+    # SPA/frontend code, not an HTTP server. Its route-shaped calls are
+    # outbound API-client requests against a configured client — e.g.
+    # directus's admin app does `api.get(`/users/${userId}`)` where `api`
+    # is a wrapped axios instance imported from `@/api`. The existing
+    # axios/got/ky markers miss these because the wrapper hides the raw
+    # client behind a local module, but the UI-framework import is an
+    # unambiguous "this is browser code" signal. directus's admin SPA
+    # alone parks ~61 phantom Express endpoints across
+    # `app/src/{stores,composables,layouts,...}` this way. Like the
+    # test-stub markers, this is gated by the HTTP-server-import
+    # exemption below: an SSR entrypoint that imports BOTH vue and
+    # express keeps its routes.
+    CLIENT_SIDE_FRAMEWORK_MARKERS = [
+      "from \"vue\"", "from 'vue'",
+      "from \"@vue/", "from '@vue/",
+      "from \"vue-router\"", "from 'vue-router'",
+      "from \"@vueuse/", "from '@vueuse/",
+      "from \"pinia\"", "from 'pinia'",
+      "from \"react\"", "from 'react'",
+      "from \"react-dom", "from 'react-dom",
+      "from \"react-router", "from 'react-router",
+      "from \"@angular/", "from '@angular/",
+      "from \"svelte\"", "from 'svelte'",
+      "from \"svelte/", "from 'svelte/",
+      "from \"solid-js", "from 'solid-js",
+      "from \"preact\"", "from 'preact'",
+      "from \"preact/", "from 'preact/",
+    ]
+
     # Real HTTP-server library imports. When any of these is present
     # alongside a test-stub marker, the file is doing legitimate
     # server work (e.g., spinning up a test instance of an Express
@@ -635,7 +667,8 @@ module Noir
     def self.test_stub_only?(file_path : String, content : String) : Bool
       return true if TEST_STUB_FILENAME_MARKERS.any? { |m| file_path.includes?(m) }
       return true if STRICT_TEST_PATH_MARKERS.any? { |m| file_path.includes?(m) }
-      has_library = TEST_STUB_LIBRARY_MARKERS.any? { |m| content.includes?(m) }
+      has_library = TEST_STUB_LIBRARY_MARKERS.any? { |m| content.includes?(m) } ||
+                    CLIENT_SIDE_FRAMEWORK_MARKERS.any? { |m| content.includes?(m) }
       has_path_marker = TEST_STUB_PATH_MARKERS.any? { |m| file_path.includes?(m) }
       return false unless has_library || has_path_marker
       HTTP_SERVER_LIBRARY_MARKERS.none? { |m| content.includes?(m) }

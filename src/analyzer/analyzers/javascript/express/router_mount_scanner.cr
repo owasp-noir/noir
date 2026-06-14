@@ -23,6 +23,12 @@ module Analyzer::Javascript
     MOUNT_IDENT_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*(\w+)\s*,\s*/} }.to_h
     MOUNT_ARRAY_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*\[([^\]]+)\]\s*,\s*/m} }.to_h
 
+    # TypeScript ESM (`moduleResolution: NodeNext`) imports a sibling `.ts`
+    # source through a `.js`-family specifier. Map each JS extension to the
+    # TS source extension(s) it can stand in for, so `resolve_require_path`
+    # can fall back to the real on-disk file when the literal path is absent.
+    JS_TO_TS_EXT = {".js" => [".ts", ".tsx"], ".jsx" => [".tsx"], ".mjs" => [".mts"], ".cjs" => [".cts"]}
+
     # Type alias for file context used in two-pass processing
     alias FileContext = NamedTuple(
       require_map: Hash(String, String),
@@ -1086,6 +1092,25 @@ module Analyzer::Javascript
         [".js", ".ts", ".jsx", ".tsx"].each do |ext|
           with_ext = "#{resolved}#{ext}"
           return with_ext if File.file?(with_ext)
+        end
+      end
+
+      # Case 2b: TypeScript ESM extension rewrite. With tsconfig
+      # `moduleResolution: NodeNext`, TS source imports its OWN sibling
+      # `.ts` modules through a `.js` (or `.mjs`/`.cjs`/`.jsx`) specifier:
+      #   import usersRouter from './controllers/users.js'  // file is users.ts
+      # The literal `.js` path doesn't exist on disk, so Case 1 misses and
+      # Case 2 is skipped (the specifier already ends in a known ext).
+      # Without this, every cross-file router mount in a modern TS project
+      # (directus mounts ~40 controllers this way) fails to resolve and the
+      # sub-routes lose their mount prefix (`/me` instead of `/users/me`).
+      # Swap the JS extension for its TS counterpart before giving up.
+      JS_TO_TS_EXT.each do |js_ext, ts_exts|
+        next unless require_path.ends_with?(js_ext)
+        base = resolved[0...(resolved.size - js_ext.size)]
+        ts_exts.each do |ts_ext|
+          candidate = "#{base}#{ts_ext}"
+          return candidate if File.file?(candidate)
         end
       end
 

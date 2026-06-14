@@ -214,8 +214,24 @@ module Noir
       # "/Object" and sneak past `valid_route_path?`'s "/" check.
       routes.select! { |r| valid_route_path?(r.path) }
 
-      # Ensure all routes have leading slash for consistency
+      # Strip Express param regex constraints (`:id(\d+)`, `:pk(${UUID_REGEX})`)
+      # down to the bare param, then ensure a leading slash. The constraint
+      # group is path-to-regexp syntax that narrows a param's match; it is
+      # noise for the endpoint surface and, when it carries an interpolated
+      # constant like `${UUID_REGEX}`, leaves an ugly literal `({UUID_REGEX})`
+      # plus a phantom `UUID_REGEX` path param. Done once here so every
+      # emission path (fast_scan, express, chained, array) is covered.
       routes.each do |route_item|
+        stripped = strip_param_regex_constraints(route_item.path)
+        if stripped != route_item.path
+          route_item.path = stripped
+          # Drop path params that only existed inside the removed constraint.
+          route_item.params.reject! do |p|
+            p.param_type == "path" &&
+              !stripped.includes?(":#{p.name}") &&
+              !stripped.includes?("{#{p.name}}")
+          end
+        end
         route_item.path = "/#{route_item.path}" unless route_item.path.starts_with?("/")
       end
 
@@ -1309,6 +1325,45 @@ module Noir
       #   - starts with ":" (bare param routes like `app.get(":id", …)`).
       return false unless path.includes?("/") || path == "*" || path.starts_with?(":")
       true
+    end
+
+    # Remove path-to-regexp constraint groups that directly follow an
+    # Express `:param` — `:id(\d+)` → `:id`, `:pk(${UUID_REGEX})` → `:pk`.
+    # Only a `(` immediately after a `:identifier` is treated as a
+    # constraint, so standalone groups like `/(?:a|b)/` are left intact.
+    private def strip_param_regex_constraints(path : String) : String
+      return path unless path.includes?(":") && path.includes?("(")
+
+      result = String::Builder.new(path.bytesize)
+      i = 0
+      len = path.size
+      while i < len
+        ch = path[i]
+        result << ch
+        i += 1
+        next unless ch == ':'
+
+        name_start = i
+        while i < len && (path[i].alphanumeric? || path[i] == '_')
+          result << path[i]
+          i += 1
+        end
+
+        # A `(` right after the param name opens a constraint group —
+        # drop it and its balanced contents without emitting anything.
+        if i > name_start && i < len && path[i] == '('
+          depth = 0
+          while i < len
+            c = path[i]
+            depth += 1 if c == '('
+            depth -= 1 if c == ')'
+            i += 1
+            break if depth == 0
+          end
+        end
+      end
+
+      result.to_s
     end
 
     private def extract_path_params(path : String) : Array(Param)
