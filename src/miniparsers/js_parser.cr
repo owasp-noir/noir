@@ -357,13 +357,45 @@ module Noir
         if @tokens[idx].type == :identifier &&
            idx + 4 < @tokens.size &&
            @tokens[idx + 1].type == :dot &&
-           @tokens[idx + 2].value == "prefix" &&
+           # Koa/@koa-router `router.prefix('/api')` and Hono
+           # `app.basePath('/api')` both attach a prefix to an existing
+           # instance.
+           (@tokens[idx + 2].value == "prefix" || @tokens[idx + 2].value == "basePath") &&
            @tokens[idx + 3].type == :lparen
           router_var = @tokens[idx].value
           route_path_entries_from_args(idx + 4).each do |prefix_entry|
             prefix = prefix_entry.path
             router_prefixes[router_var] << prefix unless router_prefixes[router_var].includes?(prefix)
             router_variables.add(router_var)
+          end
+        end
+        idx += 1
+      end
+
+      # Hono attaches its prefix via a `.basePath('/api')` chained directly
+      # onto construction: `const app = new Hono().basePath('/api')`. The
+      # `.basePath` receiver is the `new Hono()` expression (a `)` token),
+      # so the post-construction scan above misses it — walk forward from
+      # an `ident = new ...` assignment to the chained `.basePath(...)`
+      # within the same statement.
+      idx = 0
+      while idx < @tokens.size - 3
+        if @tokens[idx].type == :identifier &&
+           @tokens[idx + 1].value == "=" &&
+           @tokens[idx + 2].value == "new"
+          router_var = @tokens[idx].value
+          j = idx + 3
+          while j + 1 < @tokens.size && @tokens[j].value != ";" && (j - idx) <= 16
+            break if j > idx + 3 && @tokens[j].value == "=" # next statement (no semicolon)
+            if @tokens[j].value == "basePath" && @tokens[j + 1].type == :lparen
+              route_path_entries_from_args(j + 2).each do |prefix_entry|
+                prefix = prefix_entry.path
+                router_prefixes[router_var] << prefix unless router_prefixes[router_var].includes?(prefix)
+                router_variables.add(router_var)
+              end
+              break
+            end
+            j += 1
           end
         end
         idx += 1
