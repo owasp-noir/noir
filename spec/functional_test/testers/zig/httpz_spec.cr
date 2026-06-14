@@ -35,6 +35,10 @@ expected_endpoints << httpz_endpoint("/items/", "GET", [] of Param, [Callee.new(
 expected_endpoints << httpz_endpoint("/items/:id", "GET", [Param.new("id", "", "path")], [Callee.new("lookupItem")])
 expected_endpoints << httpz_endpoint("/items/", "POST", [] of Param, [Callee.new("saveItem")])
 
+# `deps/httpz/src/tests/test_router.zig` is a vendored copy of the framework
+# checked into the tree; its `/vendored-phantom` route must be skipped, so the
+# endpoint total stays exactly the list above.
+
 FunctionalTester.new("fixtures/zig/httpz/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
