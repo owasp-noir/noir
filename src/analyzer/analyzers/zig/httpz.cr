@@ -21,9 +21,13 @@ module Analyzer::Zig
       "options" => "OPTIONS", "connect" => "CONNECT", "all" => "GET",
     }
 
-    GROUP_RE  = /(?:var|const)\s+(\w+)\s*=\s*(\w+)\s*\.\s*group\s*\(\s*"([^"]*)"/
-    ROUTE_RE  = /(\w+)\s*\.\s*(get|post|put|delete|head|patch|trace|options|connect|all)\s*\(\s*"(\/[^"]*)"\s*,\s*([A-Za-z_][\w.]*)/
-    METHOD_RE = /(\w+)\s*\.\s*method\s*\(\s*"([^"]*)"\s*,\s*"(\/[^"]*)"\s*,\s*([A-Za-z_][\w.]*)/
+    GROUP_RE = /(?:var|const)\s+(\w+)\s*=\s*(\w+)\s*\.\s*group\s*\(\s*"([^"]*)"/
+    # The handler is the 2nd argument. It can be a plain/qualified identifier
+    # (`getUser`, `Users.list`) or a `@"…"` quoted identifier — Zig spells a
+    # reserved word used as a name that way, so `router.get("/error", @"error")`
+    # is idiomatic. The `@"…"` alternative keeps that form from being dropped.
+    ROUTE_RE  = /(\w+)\s*\.\s*(get|post|put|delete|head|patch|trace|options|connect|all)\s*\(\s*"(\/[^"]*)"\s*,\s*(@"[^"]*"|[A-Za-z_][\w.]*)/
+    METHOD_RE = /(\w+)\s*\.\s*method\s*\(\s*"([^"]*)"\s*,\s*"(\/[^"]*)"\s*,\s*(@"[^"]*"|[A-Za-z_][\w.]*)/
 
     def analyze
       include_callee = callees_needed?

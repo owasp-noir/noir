@@ -14,6 +14,9 @@ pub fn main() !void {
     router.delete("/users/:id", deleteUser, .{});
     router.all("/health", health, .{});
     router.method("QUERY", "/cache/:key", purgeCache, .{});
+    // Handler named with a `@"…"` quoted identifier (a Zig reserved word). The
+    // route must still be captured even though the name isn't a plain ident.
+    router.get("/error", @"error", .{});
 
     // Prefixed route group.
     var admin = router.group("/admin", .{});
@@ -52,6 +55,10 @@ fn health(_: *httpz.Request, res: *httpz.Response) !void {
 
 fn purgeCache(_: *httpz.Request, res: *httpz.Response) !void {
     try cache.purge();
+}
+
+fn @"error"(_: *httpz.Request, res: *httpz.Response) !void {
+    try res.status(500);
 }
 
 fn adminStats(_: *httpz.Request, res: *httpz.Response) !void {
