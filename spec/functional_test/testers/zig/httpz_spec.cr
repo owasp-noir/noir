@@ -21,6 +21,9 @@ expected_endpoints << httpz_endpoint("/users/:id", "DELETE", id_param, [Callee.n
 expected_endpoints << httpz_endpoint("/health", "GET", [] of Param, [Callee.new("res.write")])
 # `router.method("QUERY", ...)` keeps the custom verb.
 expected_endpoints << httpz_endpoint("/cache/:key", "QUERY", [Param.new("key", "", "path")], [Callee.new("cache.purge")])
+# `@"…"` quoted-identifier handler (a reserved word) — the route is captured
+# even though the `@"…"` name isn't indexed for body/callee lookup.
+expected_endpoints << httpz_endpoint("/error", "GET")
 # Group prefix composition.
 expected_endpoints << httpz_endpoint("/admin/stats", "GET", [] of Param, [Callee.new("res.json")])
 # Nested group prefix composition.
