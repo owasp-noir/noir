@@ -4,10 +4,9 @@ require "../../../models/code_locator"
 module Detector::Mobile
   class Ios < Detector
     def detect(filename : String, file_contents : String) : Bool
-      basename = File.basename(filename)
       locator = CodeLocator.instance
 
-      if basename == "Info.plist" && file_contents.includes?("CFBundleURLTypes")
+      if filename.ends_with?(".plist") && file_contents.includes?("CFBundleURLTypes")
         locator.push("ios-info-plist", filename)
         return true
       end
@@ -21,7 +20,7 @@ module Detector::Mobile
     end
 
     def applicable?(filename : String) : Bool
-      File.basename(filename) == "Info.plist" || filename.ends_with?(".entitlements")
+      filename.ends_with?(".plist") || filename.ends_with?(".entitlements")
     end
 
     def set_name

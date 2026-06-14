@@ -16,8 +16,8 @@ Noir는 모바일 앱이 외부에 노출하는 진입점 — 딥링크와 expor
 | Android | `res/values/strings.xml` | 스킴·호스트·경로에 쓰인 `@string/` 참조 해석 |
 | Android | `build.gradle` / `build.gradle.kts` | 패키지·컴포넌트 이름·스킴·호스트에 쓰인 `${applicationId}`와 커스텀 `manifestPlaceholders` 해석. 매니페스트에 `package` 속성이 없으면 패키지도 여기서 가져옵니다 |
 | Android | `res/navigation/*.xml` | Jetpack Navigation `<deepLink app:uri="...">` 딥링크 — 소속 destination이 처리 컴포넌트가 됩니다 |
-| iOS | `Info.plist` | `CFBundleURLTypes` 커스텀 URL 스킴 |
-| iOS | `*.entitlements` | `associated-domains`의 `applinks:` 유니버설 링크 |
+| iOS | `Info.plist` (`CFBundleURLTypes`를 선언한 모든 `*.plist`) | 커스텀 URL 스킴 — `.xcconfig` / `project.pbxproj`의 `$(VAR)` / `${VAR}` 플레이스홀더도 해석 |
+| iOS | `*.entitlements` | `associated-domains`의 `applinks:` 유니버설 링크와 `appclips:` App Clip 실행 URL |
 | Android | `/.well-known/assetlinks.json` | 서버 측 App Links 연결 선언(Digital Asset Links) |
 | iOS | `apple-app-site-association` | 서버 측 유니버설 링크 `paths` / `components` 패턴 |
 
