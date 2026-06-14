@@ -147,6 +147,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   define_detectors([
     Cpp::Drogon,
     Cpp::Crow,
+    Cpp::Httplib,
     Clojure::Compojure,
     Clojure::Pedestal,
     Clojure::Reitit,
