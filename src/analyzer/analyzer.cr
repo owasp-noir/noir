@@ -19,6 +19,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"cpp_drogon", Cpp::Drogon},
     {"cpp_crow", Cpp::Crow},
     {"cpp_httplib", Cpp::Httplib},
+    {"cpp_oatpp", Cpp::Oatpp},
     {"clojure_compojure", Clojure::Compojure},
     {"clojure_pedestal", Clojure::Pedestal},
     {"clojure_reitit", Clojure::Reitit},
