@@ -56,6 +56,15 @@ module Analyzer::Ruby
 
         if m = leading.match(verb_pattern)
           path = normalize_ruby_interpolation(m[1])
+          # Sinatra/Hanami route patterns are always rooted at `/` (or an
+          # interpolated `{prefix}` segment). The verb words double as
+          # ordinary Ruby methods — ActiveRecord migrations run
+          # `delete "DELETE FROM articles WHERE ..."`, HTTP clients call
+          # `post "https://..."`, etc. — so a string argument that isn't a
+          # rooted path is not a route. Without this guard the Sinatra
+          # analyzer (which scans every `.rb` file) turned raw SQL into
+          # phantom `DELETE /DELETE FROM ...` endpoints.
+          next unless path.starts_with?('/') || path.starts_with?('{')
           if details
             return Endpoint.new(path, verb.upcase, details)
           else
