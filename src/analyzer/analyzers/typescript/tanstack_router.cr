@@ -17,9 +17,17 @@ module Analyzer::Typescript
 
     def analyze
       result = [] of Endpoint
+      mutex = Mutex.new
 
       parallel_file_scan([".ts", ".tsx"]) do |path|
-        analyze_tanstack_file(path, result)
+        # Collect into a per-file buffer, then merge under the mutex —
+        # `parallel_file_scan` can run concurrently, so appending straight
+        # to the shared `result` risks a lost/duplicated endpoint.
+        file_endpoints = [] of Endpoint
+        analyze_tanstack_file(path, file_endpoints)
+        unless file_endpoints.empty?
+          mutex.synchronize { result.concat(file_endpoints) }
+        end
       end
 
       result
@@ -83,7 +91,9 @@ module Analyzer::Typescript
     private def analyze_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))
       # Pattern for createFileRoute('/path')
       # Example: export const Route = createFileRoute('/posts/$postId')()
-      file_route_pattern = /createFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/
+      # A trailing comma is tolerated so a formatter-wrapped multi-line call
+      # (`createFileRoute(\n  '/path',\n)`) is still matched.
+      file_route_pattern = /createFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*,?\s*\)/
 
       content.scan(file_route_pattern) do |match|
         next if literal_position?(literal_mask, match.begin(0))
@@ -107,7 +117,7 @@ module Analyzer::Typescript
     private def analyze_lazy_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))
       # Pattern for createLazyFileRoute('/path')
       # Example: export const Route = createLazyFileRoute('/posts/$postId')()
-      lazy_file_route_pattern = /createLazyFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/
+      lazy_file_route_pattern = /createLazyFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*,?\s*\)/
 
       content.scan(lazy_file_route_pattern) do |match|
         next if literal_position?(literal_mask, match.begin(0))
@@ -284,7 +294,12 @@ module Analyzer::Typescript
 
     private def pathless_segment?(path : String) : Bool
       stripped = path.strip.lstrip('/').rstrip('/')
-      stripped.starts_with?("_") && !stripped.empty?
+      return false if stripped.empty?
+      # Organizational-only segments that never contribute to the URL:
+      # `_layout` pathless layouts (leading underscore) and `(group)`
+      # route groups (`app/routes/(marketing)/about` serves `/about`).
+      stripped.starts_with?("_") ||
+        (stripped.starts_with?("(") && stripped.ends_with?(")"))
     end
 
     private def pathless_only_route?(path : String) : Bool

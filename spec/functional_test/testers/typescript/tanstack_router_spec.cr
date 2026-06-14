@@ -45,6 +45,10 @@ expected_endpoints = [
   # client-side-framework filter applies to the verb-DSL extractor, not
   # to TanStack Router's own (React) route definitions.
   Endpoint.new("/react-page", "GET", [] of Param),
+  # `(group)` route-group segments are stripped from the URL.
+  Endpoint.new("/pricing", "GET", [] of Param),
+  # A formatter-wrapped multi-line createFileRoute (trailing comma) is matched.
+  Endpoint.new("/wrapped", "GET", [] of Param),
 ]
 
 FunctionalTester.new("fixtures/typescript/tanstack_router/", {
