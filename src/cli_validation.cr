@@ -19,6 +19,7 @@ module Noir::CliValidation
     curl
     httpie
     powershell
+    adb
     oas2
     oas3
     postman

@@ -9,7 +9,7 @@
 # `noir` for backward compatibility with users who haven't switched to
 # the verb form).
 
-private FORMATS = "plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid"
+private FORMATS = "plain yaml json jsonl toml markdown-table sarif html curl httpie powershell adb oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid"
 
 private SCAN_FLAGS = %w[
   -b --base-path
@@ -353,7 +353,7 @@ def generate_fish_completion_script
     # Scan-time flags (also valid under bare `noir` for v0 compat)
     complete -c noir -s b -l base-path             -d 'Set base path' -r -F
     complete -c noir -s u -l url                   -d 'Set base URL' -r
-    complete -c noir -s f -l format                -d 'Output format' -r -a 'plain yaml json jsonl toml markdown-table sarif html curl httpie powershell oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid'
+    complete -c noir -s f -l format                -d 'Output format' -r -a 'plain yaml json jsonl toml markdown-table sarif html curl httpie powershell adb oas2 oas3 postman only-url only-param only-header only-cookie only-tag mermaid'
     complete -c noir -s o -l output                -d 'Write result to file' -r -F
     complete -c noir      -l pvalue                -d 'Set param value TYPE=VAL' -r
     complete -c noir      -l set-pvalue            -d 'Set pvalue (any)'    -r

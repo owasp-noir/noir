@@ -354,6 +354,9 @@ class NoirRunner
     when "powershell"
       builder = OutputBuilderPowershell.new @options
       builder.print @endpoints
+    when "adb"
+      builder = OutputBuilderAdb.new @options
+      builder.print @endpoints
     when "sarif"
       builder = OutputBuilderSarif.new @options
       builder.print @endpoints, @passive_results
