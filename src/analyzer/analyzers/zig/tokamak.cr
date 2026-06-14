@@ -85,12 +85,15 @@ module Analyzer::Zig
         content = read_file_content(path)
         next unless content.includes?(".router(")
         text = Noir::ZigCalleeExtractor.strip_comments(content)
-        chars = text.chars
+        # `strip_comments` keeps string contents, so `{`/`}` inside a literal
+        # would corrupt brace matching. `strip_non_code` blanks strings at the
+        # same offsets, so it is the right char array for `find_matching`.
+        code_chars = Noir::ZigCalleeExtractor.strip_non_code(content).chars
 
         events = [] of NamedTuple(kind: Symbol, off: Int32, prefix: String, close: Int32?, target: String)
         text.scan(GROUP_RE) do |m|
           brace = (m.end(0) || 0) - 1
-          close = Noir::ZigCalleeExtractor.find_matching(chars, brace, '{', '}')
+          close = Noir::ZigCalleeExtractor.find_matching(code_chars, brace, '{', '}')
           events << {kind: :group, off: m.begin(0) || 0, prefix: m[1], close: close, target: ""}
         end
         text.scan(ROUTER_MOUNT_RE) do |m|
@@ -118,16 +121,19 @@ module Analyzer::Zig
 
     private def process_file(path : String, content : String, mounts : Hash(String, Array(String)), include_callee : Bool)
       text = Noir::ZigCalleeExtractor.strip_comments(content)
-      chars = text.chars
+      # Strings preserved in `text` for reading paths/handlers; brace matching
+      # runs on the string-blanked (but offset-identical) char array so a `{`/`}`
+      # inside a literal can't throw off group-scope tracking.
+      code_chars = Noir::ZigCalleeExtractor.strip_non_code(content).chars
       bodies = include_callee ? Noir::ZigCalleeExtractor.function_bodies(content, path) : {} of String => Noir::ZigCalleeExtractor::FunctionBody
 
-      emit_route_array(path, text, chars, bodies, include_callee)
+      emit_route_array(path, text, code_chars, bodies, include_callee)
       emit_controller_routes(path, content, text, mounts, include_callee)
     end
 
     # Inline `tk.Route` array routes (.get/.post/.group/…).
-    private def emit_route_array(path, text, chars, bodies, include_callee)
-      events = collect_events(text, chars)
+    private def emit_route_array(path, text, code_chars, bodies, include_callee)
+      events = collect_events(text, code_chars)
       stack = [] of GroupFrame
 
       events.each do |ev|
@@ -171,12 +177,12 @@ module Analyzer::Zig
 
     # Group-open and route events, ordered by source offset, so a single pass
     # with a brace-keyed stack reconstructs the prefix in scope for each route.
-    private def collect_events(text : String, chars : Array(Char))
+    private def collect_events(text : String, code_chars : Array(Char))
       events = [] of NamedTuple(kind: Symbol, off: Int32, prefix: String, close: Int32?, path: String, method: String, handler: String)
 
       text.scan(GROUP_RE) do |m|
         brace_open = (m.end(0) || 0) - 1
-        close = Noir::ZigCalleeExtractor.find_matching(chars, brace_open, '{', '}')
+        close = Noir::ZigCalleeExtractor.find_matching(code_chars, brace_open, '{', '}')
         events << {kind: :group, off: m.begin(0) || 0, prefix: m[1], close: close, path: "", method: "", handler: ""}
       end
 

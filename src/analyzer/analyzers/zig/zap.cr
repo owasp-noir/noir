@@ -235,10 +235,14 @@ module Analyzer::Zig
 
     # `router.handle_func("/p", …)` / `handle_func_unbound("/p", handler)`.
     private def emit_router_routes(path, content, comment_stripped, all_fns, include_callee)
-      chars = comment_stripped.chars
+      # Paths are read from `comment_stripped` (string contents kept), but the
+      # `(`/`)` matching must run on the string-blanked char array — a paren
+      # inside a string argument would otherwise corrupt the argument span.
+      # Both strips share offsets, so `close` indexes `comment_stripped` too.
+      code_chars = Noir::ZigCalleeExtractor.strip_non_code(content).chars
       comment_stripped.scan(HANDLE_FUNC_RE) do |m|
         open_paren = (m.end(0) || 0) - 1
-        close = Noir::ZigCalleeExtractor.find_matching(chars, open_paren, '(', ')')
+        close = Noir::ZigCalleeExtractor.find_matching(code_chars, open_paren, '(', ')')
         next if close.nil?
         args = comment_stripped[(open_paren + 1)...close]
         url_match = args.match(/\s*"([^"]*)"/)
@@ -246,7 +250,7 @@ module Analyzer::Zig
         url = url_match[1]
         next if url.empty?
 
-        line = Noir::ZigCalleeExtractor.line_at(chars, m.begin(0) || 0)
+        line = Noir::ZigCalleeExtractor.line_at(code_chars, m.begin(0) || 0)
         details = Details.new(PathInfo.new(path, line))
         endpoint = Endpoint.new(url, "GET", [] of Param, details)
 
