@@ -21,6 +21,15 @@ expected_endpoints = [
     Param.new("X-API-Key", "", "header"),
   ]),
   Endpoint.new("/search", "POST", [Param.new("q", "", "query")]),
+  # Declarative Endpoint(...) DSL: trailing `.out[Int]` must not add a phantom
+  # path param; query comes from the `.query(...)` codec chain.
+  Endpoint.new("/v2/users/{userId}", "GET", [Param.new("userId", "", "path")]),
+  Endpoint.new("/v2/users/{userId}/posts", "GET", [
+    Param.new("userId", "", "path"),
+    Param.new("name", "", "query"),
+  ]),
+  # Response headers (`Headers(Header.ContentType(...))`) are not request params.
+  Endpoint.new("/v2/download", "GET"),
 ]
 
 FunctionalTester.new("fixtures/scala/zio_http/", {
