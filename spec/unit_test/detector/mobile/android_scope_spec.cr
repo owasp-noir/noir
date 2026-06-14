@@ -58,15 +58,15 @@ describe "Detector Android source scope" do
       File.write(
         File.join(src, "HttpModule.kt"),
         <<-KOTLIN
-        package com.example.web
-        import io.ktor.server.routing.routing
-        import io.ktor.server.routing.get
-        fun Application.httpModule() {
-          routing {
-            get("/health") { }
+          package com.example.web
+          import io.ktor.server.routing.routing
+          import io.ktor.server.routing.get
+          fun Application.httpModule() {
+            routing {
+              get("/health") { }
+            }
           }
-        }
-        KOTLIN
+          KOTLIN
       )
 
       techs = detect_scope(root)
@@ -89,11 +89,11 @@ describe "Detector Android source scope" do
       File.write(
         File.join(src, "ApiClient.kt"),
         <<-KOTLIN
-        package com.example.net
-        import io.ktor.client.HttpClient
-        import io.ktor.client.request.get
-        suspend fun fetch(client: HttpClient) = client.get("https://example.com")
-        KOTLIN
+          package com.example.net
+          import io.ktor.client.HttpClient
+          import io.ktor.client.request.get
+          suspend fun fetch(client: HttpClient) = client.get("https://example.com")
+          KOTLIN
       )
 
       techs = detect_scope(root)
