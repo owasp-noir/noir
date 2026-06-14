@@ -212,7 +212,61 @@ class OutputBuilderHtml < OutputBuilder
             font-weight: 500;
             color: var(--ink-3);
             letter-spacing: 0.08em;
+            font-variant-numeric: tabular-nums;
           }
+
+          /* ===== Controls — search + filter chips ====================== */
+          .controls {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            padding: 0.7rem 0;
+            margin-bottom: 1.25rem;
+            background: var(--bg);
+            border-bottom: 1px solid var(--line);
+          }
+          .search { position: relative; flex: 1 1 260px; display: flex; align-items: center; }
+          .search svg {
+            position: absolute; left: 0.65rem;
+            width: 15px; height: 15px;
+            color: var(--ink-3);
+            pointer-events: none;
+          }
+          .search input {
+            width: 100%;
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+            color: var(--ink);
+            background: var(--surface);
+            border: 1px solid var(--line-2);
+            padding: 0.5rem 0.6rem 0.5rem 1.95rem;
+          }
+          .search input::placeholder { color: var(--ink-3); }
+          .search input:focus { outline: none; border-color: var(--ink); }
+          .search input::-webkit-search-cancel-button { -webkit-appearance: none; }
+          .chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+          .chip {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            padding: 0.4rem 0.65rem;
+            color: var(--ink-2);
+            background: var(--surface);
+            border: 1px solid var(--line-2);
+            cursor: pointer;
+            transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+          }
+          .chip:hover { border-color: var(--ink-3); color: var(--ink); }
+          .chip[aria-pressed="true"] { background: var(--fill); color: var(--on-fill); border-color: var(--fill); }
+          .chip:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+          .no-results { display: none; }
+          .no-results.show { display: block; }
 
           /* ===== Summary stat strip ===================================== */
           .summary {
@@ -448,7 +502,7 @@ class OutputBuilderHtml < OutputBuilder
             .report-header, footer { border-color: #ccc; }
             .card { break-inside: avoid; }
             .card.collapsed .card-collapse { grid-template-rows: 1fr; }
-            .chevron, .theme-toggle { display: none; }
+            .chevron, .theme-toggle, .controls { display: none; }
           }
         </style>
         <script>
@@ -530,17 +584,45 @@ class OutputBuilderHtml < OutputBuilder
   private def build_endpoints_section(endpoints : Array(Endpoint)) : String
     String.build do |html|
       html << "<section class=\"section\">\n"
-      html << "<h2 class=\"section-title\">Discovered Endpoints</h2>\n"
+      html << "<h2 class=\"section-title\">Discovered Endpoints"
+      unless endpoints.empty?
+        html << " <span class=\"section-count\" id=\"endpoint-count\">#{endpoints.size}</span>"
+      end
+      html << "</h2>\n"
 
       if endpoints.empty?
         html << "<div class=\"empty-state\"><p>No endpoints discovered.</p></div>\n"
       else
+        html << build_endpoint_controls(endpoints)
         endpoints.each do |endpoint|
           html << build_endpoint_card(endpoint)
         end
+        html << "<div class=\"empty-state no-results\" id=\"endpoint-no-results\">No endpoints match the current filter.</div>\n"
       end
 
       html << "</section>\n"
+    end
+  end
+
+  private def build_endpoint_controls(endpoints : Array(Endpoint)) : String
+    methods = present_methods(endpoints)
+
+    String.build do |html|
+      html << "<div class=\"controls\">\n"
+      html << "<div class=\"search\">\n"
+      html << "<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"square\" aria-hidden=\"true\"><circle cx=\"11\" cy=\"11\" r=\"7\"></circle><path d=\"M21 21l-4.3-4.3\"></path></svg>\n"
+      html << "<input type=\"search\" id=\"endpoint-search\" placeholder=\"Filter by path, method, parameter, or tag…\" aria-label=\"Filter endpoints\" autocomplete=\"off\" spellcheck=\"false\">\n"
+      html << "</div>\n"
+
+      if methods.size > 1
+        html << "<div class=\"chips\" role=\"group\" aria-label=\"Filter by HTTP method\">\n"
+        methods.each do |method|
+          html << "<button type=\"button\" class=\"chip\" data-filter-method=\"#{HTML.escape(method)}\" aria-pressed=\"false\">#{HTML.escape(method)}</button>\n"
+        end
+        html << "</div>\n"
+      end
+
+      html << "</div>\n"
     end
   end
 
@@ -548,9 +630,10 @@ class OutputBuilderHtml < OutputBuilder
     baked = bake_endpoint(endpoint.url, endpoint.params)
     method_class = get_method_class(endpoint.method)
     has_body = endpoint.params.size > 0 || !endpoint.details.code_paths.empty?
+    search_text = endpoint_search_text(endpoint, baked[:url])
 
     String.build do |html|
-      html << "<div class=\"card\">\n"
+      html << "<div class=\"card\" data-endpoint data-method=\"#{HTML.escape(endpoint.method.upcase)}\" data-text=\"#{HTML.escape(search_text)}\">\n"
 
       if has_body
         html << "<button type=\"button\" class=\"card-header\" data-action=\"toggle-card\" aria-expanded=\"true\">\n"
@@ -616,17 +699,38 @@ class OutputBuilderHtml < OutputBuilder
   private def build_passive_results_section(passive_results : Array(PassiveScanResult)) : String
     String.build do |html|
       html << "<section class=\"section\">\n"
-      html << "<h2 class=\"section-title\">Passive Scan Results</h2>\n"
+      html << "<h2 class=\"section-title\">Passive Scan Results"
+      unless passive_results.empty?
+        html << " <span class=\"section-count\" id=\"passive-count\">#{passive_results.size}</span>"
+      end
+      html << "</h2>\n"
 
       if passive_results.empty?
         html << "<div class=\"empty-state\"><p>No passive scan findings.</p></div>\n"
       else
+        html << build_passive_controls(passive_results)
         passive_results.each do |result|
           html << build_passive_result_card(result)
         end
+        html << "<div class=\"empty-state no-results\" id=\"passive-no-results\">No findings match the current filter.</div>\n"
       end
 
       html << "</section>\n"
+    end
+  end
+
+  private def build_passive_controls(passive_results : Array(PassiveScanResult)) : String
+    severities = present_severities(passive_results)
+    return "" if severities.size <= 1
+
+    String.build do |html|
+      html << "<div class=\"controls\">\n"
+      html << "<div class=\"chips\" role=\"group\" aria-label=\"Filter by severity\">\n"
+      severities.each do |severity|
+        html << "<button type=\"button\" class=\"chip\" data-filter-severity=\"#{HTML.escape(severity)}\" aria-pressed=\"false\">#{HTML.escape(severity)}</button>\n"
+      end
+      html << "</div>\n"
+      html << "</div>\n"
     end
   end
 
@@ -634,7 +738,7 @@ class OutputBuilderHtml < OutputBuilder
     severity_class = get_severity_class(result.info.severity)
 
     String.build do |html|
-      html << "<div class=\"card passive-card\">\n"
+      html << "<div class=\"card passive-card\" data-passive data-severity=\"#{HTML.escape(result.info.severity.downcase)}\">\n"
       html << "<div class=\"card-header\">\n"
       html << "<span class=\"method-badge #{severity_class}\">#{HTML.escape(result.info.severity.upcase)}</span>\n"
       html << "<span>#{HTML.escape(result.info.name)}</span>\n"
@@ -684,10 +788,99 @@ class OutputBuilderHtml < OutputBuilder
             var collapsed = card.classList.toggle("collapsed");
             header.setAttribute("aria-expanded", String(!collapsed));
           });
+
+          function toArray(nodes) { return Array.prototype.slice.call(nodes); }
+
+          // Endpoint search + HTTP-method chip filter (combined with AND).
+          var search = document.getElementById("endpoint-search");
+          var methodChips = toArray(document.querySelectorAll("[data-filter-method]"));
+          var endpointCards = toArray(document.querySelectorAll("[data-endpoint]"));
+          var endpointCount = document.getElementById("endpoint-count");
+          var endpointEmpty = document.getElementById("endpoint-no-results");
+
+          function applyEndpointFilter() {
+            var q = (search ? search.value : "").trim().toLowerCase();
+            var active = methodChips
+              .filter(function (c) { return c.getAttribute("aria-pressed") === "true"; })
+              .map(function (c) { return c.getAttribute("data-filter-method"); });
+            var shown = 0;
+            endpointCards.forEach(function (card) {
+              var okText = !q || (card.getAttribute("data-text") || "").indexOf(q) !== -1;
+              var okMethod = active.length === 0 || active.indexOf(card.getAttribute("data-method")) !== -1;
+              var visible = okText && okMethod;
+              card.hidden = !visible;
+              if (visible) shown++;
+            });
+            if (endpointCount) {
+              endpointCount.textContent = shown === endpointCards.length ? String(shown) : shown + " / " + endpointCards.length;
+            }
+            if (endpointEmpty) endpointEmpty.classList.toggle("show", shown === 0);
+          }
+
+          if (search) search.addEventListener("input", applyEndpointFilter);
+          methodChips.forEach(function (chip) {
+            chip.addEventListener("click", function () {
+              chip.setAttribute("aria-pressed", chip.getAttribute("aria-pressed") === "true" ? "false" : "true");
+              applyEndpointFilter();
+            });
+          });
+
+          // Passive-finding severity chip filter.
+          var sevChips = toArray(document.querySelectorAll("[data-filter-severity]"));
+          var passiveCards = toArray(document.querySelectorAll("[data-passive]"));
+          var passiveCount = document.getElementById("passive-count");
+          var passiveEmpty = document.getElementById("passive-no-results");
+
+          function applyPassiveFilter() {
+            var active = sevChips
+              .filter(function (c) { return c.getAttribute("aria-pressed") === "true"; })
+              .map(function (c) { return c.getAttribute("data-filter-severity"); });
+            var shown = 0;
+            passiveCards.forEach(function (card) {
+              var visible = active.length === 0 || active.indexOf(card.getAttribute("data-severity")) !== -1;
+              card.hidden = !visible;
+              if (visible) shown++;
+            });
+            if (passiveCount) {
+              passiveCount.textContent = shown === passiveCards.length ? String(shown) : shown + " / " + passiveCards.length;
+            }
+            if (passiveEmpty) passiveEmpty.classList.toggle("show", shown === 0);
+          }
+
+          sevChips.forEach(function (chip) {
+            chip.addEventListener("click", function () {
+              chip.setAttribute("aria-pressed", chip.getAttribute("aria-pressed") === "true" ? "false" : "true");
+              applyPassiveFilter();
+            });
+          });
         })();
       </script>
 
       HTML
+  end
+
+  # Lowercased haystack used by the client-side endpoint filter.
+  private def endpoint_search_text(endpoint : Endpoint, url : String) : String
+    String.build do |s|
+      s << endpoint.method.downcase << ' ' << url.downcase
+      endpoint.params.each { |p| s << ' ' << p.name.downcase << ' ' << p.param_type.downcase }
+      endpoint.tags.each { |t| s << ' ' << t.name.downcase }
+      s << ' ' << endpoint.protocol.downcase unless endpoint.protocol == "http"
+    end
+  end
+
+  # Distinct HTTP methods present, ordered by a canonical verb priority.
+  private def present_methods(endpoints : Array(Endpoint)) : Array(String)
+    order = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    methods = endpoints.map(&.method.upcase).uniq!
+    methods.sort_by! { |m| {order.index(m) || order.size, m} }
+  end
+
+  # Distinct severities present, ordered from most to least severe.
+  private def present_severities(passive_results : Array(PassiveScanResult)) : Array(String)
+    order = ["critical", "high", "medium", "low", "info"]
+    severities = passive_results.map(&.info.severity.downcase).uniq!
+    severities.sort_by! { |s| {order.index(s) || order.size, s} }
   end
 
   private def get_method_class(method : String) : String
