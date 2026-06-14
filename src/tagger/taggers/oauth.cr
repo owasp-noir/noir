@@ -39,7 +39,14 @@ class OAuthTagger < Tagger
       # OAuth authorization endpoints commonly use response_type +
       # client_id + redirect_uri, while token endpoints can rely on
       # HTTP Basic auth and expose only grant_type + code/verifier.
-      check = strong_oauth_params?(param_names) ||
+      check = # A whole `/oauth|/oauth2|/openid|/oidc` path segment is an
+              # unambiguous OAuth surface on its own — the host is already
+              # stripped, so this can't fire on `oauth.example.com`. Catches
+              # the param-less endpoints real OAuth servers expose (the
+              # `/oauth2/auth` authorize redirect, `/oauth2/device/verify`,
+              # `/oauth2/sessions/logout`, a GET on `/oauth2/register/{id}`).
+              strong_oauth_segment?(endpoint.url) ||
+              strong_oauth_params?(param_names) ||
               # Under an unambiguous /oauth|/openid path, a single OAuth
               # parameter is enough (device-flow `device_code`, an
               # authorize page's `client_id`, a callback's `code`).
@@ -62,9 +69,8 @@ class OAuthTagger < Tagger
     name.downcase.tr("-", "_")
   end
 
-  # Split the URL's path (scheme/host/query/fragment stripped) into the
-  # tokens used for whole-segment matching.
-  private def path_parts(url : String) : Array(String)
+  # The URL's path with scheme/host/query/fragment stripped and lowercased.
+  private def path_only(url : String) : String
     path = url.strip
 
     if scheme_index = path.index("://")
@@ -78,7 +84,22 @@ class OAuthTagger < Tagger
 
     path = path.split("?", 2)[0]
     path = path.split("#", 2)[0]
-    path.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
+    path.downcase
+  end
+
+  # Split the path into `/`-`-`-`_`-`.`-delimited tokens (the loose form used
+  # for the param-corroborated checks).
+  private def path_parts(url : String) : Array(String)
+    path_only(url).split(/[\/\-_\.]+/).reject(&.empty?)
+  end
+
+  # True when a whole `/`-delimited path segment is itself a strong OAuth
+  # marker. Unlike `path_parts`, this does NOT split on `-`/`_`/`.`, so the
+  # OIDC discovery document `/.well-known/openid-configuration` (segment
+  # `openid-configuration`, not `openid`) stays untagged while a param-less
+  # `/oauth2/auth` is caught.
+  private def strong_oauth_segment?(url : String) : Bool
+    path_only(url).split("/").any? { |seg| STRONG_URL_PARTS.includes?(seg) }
   end
 
   private def oauth_callback?(parts : Array(String), param_names : Set(String)) : Bool
