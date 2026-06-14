@@ -31,6 +31,13 @@ module Analyzer::Zig
     LITERAL_PATH_RE = /\.path\s*=\s*"([^"]*)"/
     HANDLE_FUNC_RE  = /\.\s*handle_func(_unbound)?\s*\(/
     IMPORT_RE       = /(?:pub\s+)?(?:const|var)\s+([A-Za-z_]\w*)\s*=\s*@import\(\s*"([^"]+\.zig)"\s*\)/
+    # Modern `zap.Endpoint.init(.{ .path = …, .get = handler, … })` API: the
+    # supported HTTP methods are declared as option *fields* bound to handler
+    # functions, instead of as `pub fn get`/… verb methods on the struct. The
+    # path field is usually a parameter resolved at the `T.init("/p", …)` call
+    # site, so it is reused through the same `bindings` machinery.
+    ENDPOINT_INIT_RE = /(?:zap\s*\.\s*)?Endpoint\s*\.\s*init\s*\(\s*\.\s*\{/
+    INIT_VERB_RE     = /\.\s*(get|post|put|delete|patch|options|head)\s*=\s*&?\s*([A-Za-z_][\w.]*)/
 
     private record StructRegion, name : String, start : Int32, stop : Int32
 
@@ -145,26 +152,77 @@ module Analyzer::Zig
     end
 
     private def emit_endpoint_structs(path, content, stripped, comment_stripped, bindings, explicit, all_fns, include_callee)
+      code_chars = stripped.chars
+
       # Explicit `const X = struct { … }` endpoints.
       explicit.each do |region|
         verbs = verb_methods_in(all_fns, region.start, region.stop) do |off|
           innermost_region(explicit, off) == region
         end
-        next if verbs.empty?
+        api_verbs = endpoint_api_verbs(comment_stripped, code_chars) do |off|
+          off > region.start && off < region.stop && innermost_region(explicit, off) == region
+        end
+        next if verbs.empty? && api_verbs.empty?
         paths = resolve_paths(region.name, path, comment_stripped, region.start, region.stop, bindings)
-        emit_struct_endpoints(path, region.name, paths, verbs, include_callee)
+        emit_struct_endpoints(path, region.name, paths, verbs, include_callee) unless verbs.empty?
+        emit_endpoint_api(path, paths, api_verbs, all_fns, code_chars, include_callee) unless api_verbs.empty?
       end
 
       # File-as-struct (`pub const X = @This();`) endpoints: every verb method
-      # not already claimed by an explicit nested struct belongs to it.
+      # (or `Endpoint.init` verb field) not already claimed by an explicit
+      # nested struct belongs to it.
       if m = stripped.match(THIS_DECL_RE)
         name = m[1]
         verbs = all_fns.select do |f|
           VERBS.includes?(f[:name]) && innermost_region(explicit, f[:open]).nil?
         end
-        unless verbs.empty?
+        api_verbs = endpoint_api_verbs(comment_stripped, code_chars) do |off|
+          innermost_region(explicit, off).nil?
+        end
+        unless verbs.empty? && api_verbs.empty?
           paths = resolve_paths(name, path, comment_stripped, 0, content.size, bindings)
-          emit_struct_endpoints(path, name, paths, verbs, include_callee)
+          emit_struct_endpoints(path, name, paths, verbs, include_callee) unless verbs.empty?
+          emit_endpoint_api(path, paths, api_verbs, all_fns, code_chars, include_callee) unless api_verbs.empty?
+        end
+      end
+    end
+
+    private record ApiVerb, verb : String, handler : String, off : Int32
+
+    # Verb fields of `zap.Endpoint.init(.{ .get = h, .post = h, … })` blocks
+    # whose opening offset satisfies the given scope predicate. Each yields the
+    # HTTP verb plus the handler function it is bound to.
+    private def endpoint_api_verbs(comment_stripped : String, code_chars : Array(Char), & : Int32 -> Bool) : Array(ApiVerb)
+      result = [] of ApiVerb
+      comment_stripped.scan(ENDPOINT_INIT_RE) do |m|
+        off = m.begin(0) || 0
+        next unless yield off
+        brace = (m.end(0) || 0) - 1
+        close = Noir::ZigCalleeExtractor.find_matching(code_chars, brace, '{', '}')
+        next if close.nil?
+        block = comment_stripped[(brace + 1)...close]? || ""
+        block.scan(INIT_VERB_RE) do |vm|
+          entry = ApiVerb.new(vm[1], vm[2], off)
+          result << entry unless result.includes?(entry)
+        end
+      end
+      result
+    end
+
+    private def emit_endpoint_api(path, paths, api_verbs : Array(ApiVerb), all_fns, code_chars : Array(Char), include_callee)
+      return if paths.empty?
+      paths.each do |url|
+        api_verbs.each do |entry|
+          method = VERB_METHOD[entry.verb]
+          name = entry.handler.includes?('.') ? entry.handler.split('.').last : entry.handler
+          fn = all_fns.find { |f| f[:name] == name }
+          line = fn ? fn[:start_line] : Noir::ZigCalleeExtractor.line_at(code_chars, entry.off)
+          endpoint = Endpoint.new(url, method, [] of Param, Details.new(PathInfo.new(path, line)))
+          if include_callee && fn
+            callees = Noir::ZigCalleeExtractor.callees_for_body(fn[:body], path, fn[:start_line])
+            Noir::ZigCalleeExtractor.attach_to(endpoint, callees) unless callees.empty?
+          end
+          @result << endpoint
         end
       end
     end
