@@ -473,5 +473,62 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
         {"PUT", "/users/{id}", "UpdateUser"},
       ])
     end
+
+    it "recovers a @Resource class whose annotation tree-sitter detached behind comments" do
+      # tree-sitter-kotlin mis-parses the first `@Resource` class when it
+      # follows a block comment + KDoc that get absorbed into the
+      # package_header: the annotation becomes a standalone
+      # `prefix_expression` and the class loses its `modifiers`. The
+      # collector must pair the orphaned path with the bare class so the
+      # resource still resolves (youkube's VideoStream / MainCss).
+      source = <<-KT
+        package io.ktor.samples.youkube
+
+        /*
+         * Typed routes using the [Resources] plugin: https://ktor.io/docs/type-safe-routing.html
+         */
+
+        /**
+         * A resource for a specific video stream by [id].
+         */
+        @Resource("/video/{id}")
+        class VideoStream(val id: Long)
+
+        @Resource("/video/page/{id}")
+        class VideoPage(val id: Long)
+        KT
+
+      resources = Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(source)
+      resources.map(&.simple_name).sort.should eq(["VideoPage", "VideoStream"])
+    end
+
+    it "resolves resource<T> { } as a prefix wrapper for nested verbs and method/handle" do
+      # `resource<Login> { authenticate { post { } }; method(Get) { handle<Login> { } } }`
+      # — the typed analogue of `route("/login") { ... }`: nested verbs and
+      # the path-less `method(...) { handle { } }` selector bind /login.
+      source = <<-KT
+        @Resource("/login")
+        class Login(val userName: String = "")
+
+        fun Route.login() {
+            resource<Login> {
+                authenticate("auth") {
+                    post { }
+                }
+                method(HttpMethod.Get) {
+                    handle<Login> { }
+                }
+            }
+        }
+        KT
+
+      resources = Noir::TreeSitterKotlinKtorRouteExtractor.extract_resource_classes(source)
+      paths = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(resources)
+      routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, resource_paths: paths)
+      routes.map { |r| {r.verb, r.path} }.sort.should eq([
+        {"GET", "/login"},
+        {"POST", "/login"},
+      ])
+    end
   end
 end
