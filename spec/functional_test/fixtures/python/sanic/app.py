@@ -136,6 +136,27 @@ app.static('/assets', './static')
 reports_bp.static('/files', './report_files')
 app.blueprint(reports_bp, url_prefix="/api/v1")
 
+# Blueprint.group shares its url_prefix + version with each member, so
+# routes resolve to /v2/admin-api/<bp_prefix>/<route>; a route-level
+# version= overrides just that route.
+admin_bp = Blueprint("admin", url_prefix="/admin")
+metrics_bp = Blueprint("metrics", url_prefix="/metrics")
+
+@admin_bp.get("/users")
+async def admin_users(request: Request):
+    return response.json([])
+
+@metrics_bp.get("/health")
+async def metrics_health(request: Request):
+    return response.json({})
+
+@metrics_bp.get("/ping", version=3)
+async def metrics_ping(request: Request):
+    return response.json({})
+
+api_group = Blueprint.group(admin_bp, metrics_bp, url_prefix="/admin-api", version=2)
+app.blueprint(api_group)
+
 if __name__ == "__main__":
     port = 80
     if len(sys.argv) > 1:

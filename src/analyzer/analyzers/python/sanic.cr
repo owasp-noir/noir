@@ -63,6 +63,11 @@ module Analyzer::Python
       blueprint_prefixes = Hash(::String, ::String).new
       blueprint_registration_prefixes = Hash(ScopedNameKey, Array(::String)).new
       path_api_instances = Hash(::String, Hash(::String, ::String)).new
+      # `Blueprint.group(bp1, bp2, url_prefix="/api")` prepends the group
+      # url_prefix to each member, and `version=`/`Blueprint(version=)`
+      # prepends `/v<n>` outermost (`/v1/sentient/robot/ultron/name`).
+      blueprint_group_prefixes = Hash(::String, ::String).new # member bp -> group url_prefix
+      blueprint_versions = Hash(::String, ::String).new       # bp -> version
 
       # Iterate through all Python files in all base paths. Pulls from
       # the detector-built file_map so subtree pruning and --exclude-path
@@ -92,6 +97,7 @@ module Analyzer::Python
               api_instances[bp.name] ||= bp.prefix
             end
             collect_blueprint_registrations(file_content, blueprint_registration_prefixes, current_base_path)
+            collect_blueprint_groups_and_versions(file_content, blueprint_group_prefixes, blueprint_versions)
             Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: {"websocket" => "GET"}).each do |decoration|
               methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
               extra_params = "methods=[#{methods_literal}]"
@@ -154,6 +160,10 @@ module Analyzer::Python
           source = fetch_file_content(path)
           lines = source.lines
           definition_base_path = python_base_path_for(path)
+          # Route-level `@bp.get("/x", version=2)` overrides the blueprint's
+          # version for just this route.
+          decorator_stmt = python_paren_delta(lines[line_index]? || "") > 0 ? join_until_python_call_closes(lines, line_index, lines[line_index]) : (lines[line_index]? || "")
+          route_version = decorator_stmt.match(/\bversion\s*=\s*['"]?(\w+)['"]?/).try(&.[1])
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
           api_instances = path_api_instances[path]
           if api_instances.has_key?(router_name)
@@ -225,7 +235,7 @@ module Analyzer::Python
             # Get the HTTP method from the function name when it is not specified in the route decorator
             method = HTTP_METHODS.find { |http_method| _function_name.downcase == http_method.downcase } || "GET"
             registration_prefixes.each do |registration_prefix|
-              full_prefix = join_paths(registration_prefix, prefix)
+              full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions, route_version)
               get_endpoints(method, route_path, extra_params, codeblock_lines, full_prefix, route_attr).each do |endpoint|
                 details = Details.new(PathInfo.new(path, line_index + 1))
                 endpoint.details = details
@@ -285,7 +295,7 @@ module Analyzer::Python
           )
 
           registration_prefixes.each do |registration_prefix|
-            full_prefix = join_paths(registration_prefix, prefix)
+            full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions)
             get_endpoints("GET", route_path, extra_params, codeblock_lines, full_prefix).each do |endpoint|
               endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
               handler_callees.each { |c| endpoint.push_callee(c) }
@@ -336,7 +346,7 @@ module Analyzer::Python
           )
 
           registration_prefixes.each do |registration_prefix|
-            full_prefix = join_paths(registration_prefix, prefix)
+            full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions)
             get_endpoints("GET", route_path, extra_params, codeblock_lines, full_prefix, "websocket").each do |endpoint|
               endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
               handler_callees.each { |c| endpoint.push_callee(c) }
@@ -380,7 +390,7 @@ module Analyzer::Python
 
             route_extra_params = "methods=['#{http_method.upcase}']"
             registration_prefixes.each do |registration_prefix|
-              full_prefix = join_paths(registration_prefix, prefix)
+              full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions)
               get_endpoints(http_method, route_path, route_extra_params, codeblock_lines, full_prefix).each do |endpoint|
                 endpoint.details = Details.new(PathInfo.new(path, line_index + 1))
                 handler_callees.each { |c| endpoint.push_callee(c) }
@@ -400,7 +410,7 @@ module Analyzer::Python
           registration_prefixes = blueprint_registration_prefixes[{definition_base_path, router_name}]? || [""]
 
           registration_prefixes.each do |registration_prefix|
-            full_prefix = join_paths(registration_prefix, prefix)
+            full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions)
             endpoint_path = static_route_path(join_paths(full_prefix, static_path))
             result << Endpoint.new(endpoint_path, "GET", Details.new(PathInfo.new(path, line_index + 1)))
           end
@@ -766,6 +776,51 @@ module Analyzer::Python
         registrations[key] ||= [] of ::String
         registrations[key] << prefix unless registrations[key].includes?(prefix)
       end
+    end
+
+    BLUEPRINT_GROUP_RE = /(?:#{PYTHON_VAR_NAME_REGEX}\s*=\s*)?Blueprint\s*\.\s*group\s*\((.*?)\)/m
+    BLUEPRINT_CTOR_RE  = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*(?:sanic\.)?Blueprint\s*\((.*?)\)/m
+
+    # `Blueprint.group(bp1, bp2, url_prefix="/api", version=1)` shares its
+    # url_prefix and version with each member blueprint; `Blueprint(name,
+    # version=2)` versions a single blueprint. Collect both so the route
+    # emitter can prepend the group prefix and the `/v<n>` version segment.
+    private def collect_blueprint_groups_and_versions(source : ::String,
+                                                      group_prefixes : Hash(::String, ::String),
+                                                      versions : Hash(::String, ::String))
+      source.scan(BLUEPRINT_GROUP_RE) do |match|
+        args = match[1]
+        group_prefix = args.match(/url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/).try(&.[1]) || ""
+        group_version = args.match(/\bversion\s*=\s*['"]?(\w+)['"]?/).try(&.[1])
+        # Positional bare-identifier args before the first keyword are members.
+        args.split(',').each do |arg|
+          name = arg.strip
+          break if name.includes?("=") # reached keyword args
+          next unless name.matches?(/\A#{PYTHON_VAR_NAME_REGEX}\z/)
+          group_prefixes[name] = group_prefix unless group_prefix.empty?
+          versions[name] ||= group_version if group_version
+        end
+      end
+
+      source.scan(BLUEPRINT_CTOR_RE) do |match|
+        name = match[1]
+        if v = match[2].match(/\bversion\s*=\s*['"]?(\w+)['"]?/)
+          versions[name] ||= v[1]
+        end
+      end
+    end
+
+    # Compose a route's full prefix: `/v<version>` (outermost) + group
+    # url_prefix + registration prefix + the blueprint's own url_prefix.
+    private def compose_sanic_prefix(router_name : ::String,
+                                     registration_prefix : ::String,
+                                     prefix : ::String,
+                                     group_prefixes : Hash(::String, ::String),
+                                     versions : Hash(::String, ::String),
+                                     route_version : ::String? = nil) : ::String
+      base = join_paths(group_prefixes[router_name]? || "", join_paths(registration_prefix, prefix))
+      version = route_version || versions[router_name]?
+      version && !version.empty? ? join_paths("/v#{version}", base) : base
     end
 
     private def fetch_file_content(path : ::String) : ::String

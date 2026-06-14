@@ -40,6 +40,12 @@ expected_endpoints = [
   ]),
   Endpoint.new("/assets/*", "GET"),
   Endpoint.new("/api/v1/reports/files/*", "GET"),
+  # Blueprint.group(url_prefix="/admin-api", version=2): /v<version> is
+  # outermost, then the group prefix, then each blueprint's url_prefix. A
+  # route-level version= (the /ping route) overrides just that route.
+  Endpoint.new("/v2/admin-api/admin/users", "GET"),
+  Endpoint.new("/v2/admin-api/metrics/health", "GET"),
+  Endpoint.new("/v3/admin-api/metrics/ping", "GET"),
   Endpoint.new("/programmatic-feed/{channel}", "GET", [
     Param.new("channel", "", "path"),
     Param.new("token", "", "query"),
