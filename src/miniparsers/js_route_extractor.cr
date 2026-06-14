@@ -526,6 +526,14 @@ module Noir
       "from \"solid-js", "from 'solid-js",
       "from \"preact\"", "from 'preact'",
       "from \"preact/", "from 'preact/",
+      # Single-File-Component imports (`import Foo from './Foo.vue'`). A
+      # file that pulls in a `.vue`/`.svelte` component is frontend by
+      # construction — a route/module definition file that wires up
+      # components and happens to call a wrapped API client. directus's
+      # `app/src/modules/**/index.ts` is the canonical case: it imports
+      # dozens of `.vue` routes and also fires `api.patch(...)`.
+      ".vue\"", ".vue'",
+      ".svelte\"", ".svelte'",
     ]
 
     # Real HTTP-server library imports. When any of these is present
