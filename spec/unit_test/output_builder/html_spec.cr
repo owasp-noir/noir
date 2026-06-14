@@ -336,4 +336,160 @@ describe "OutputBuilderHtml" do
       ENV.delete("NOIR_HOME")
     end
   end
+
+  it "renders the theme toggle and a persistence script" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/test", "GET")])
+    output = builder.io.to_s
+
+    # Toggle control, persistence key, and pre-paint theme init.
+    output.should contain("data-action=\"toggle-theme\"")
+    output.should contain("aria-pressed")
+    output.should contain("noir-theme")
+    output.should contain("prefers-color-scheme")
+    output.should contain("[data-theme=\"dark\"]")
+  end
+
+  it "renders collapsible endpoint cards with a body" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/users", "GET")
+    endpoint.push_param(Param.new("id", "1", "query"))
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("data-action=\"toggle-card\"")
+    output.should contain("aria-expanded")
+    output.should contain("aria-controls=\"ep-body-0\"")
+    output.should contain("id=\"ep-body-0\"")
+    output.should contain("card-collapse")
+    output.should contain("card-pane")
+    output.should contain("chevron")
+  end
+
+  it "renders search and HTTP-method filter chips" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoints = [
+      Endpoint.new("/users", "GET"),
+      Endpoint.new("/users", "POST"),
+    ]
+    builder.print(endpoints)
+    output = builder.io.to_s
+
+    # Controls and per-card filter metadata.
+    output.should contain("id=\"endpoint-search\"")
+    output.should contain("data-filter-method=\"GET\"")
+    output.should contain("data-filter-method=\"POST\"")
+    output.should contain("data-endpoint")
+    output.should contain("data-method=\"GET\"")
+    output.should contain("data-text=")
+    output.should contain("section-count")
+    output.should contain("endpoint-no-results")
+  end
+
+  it "omits method chips when only one method is present" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/a", "GET"), Endpoint.new("/b", "GET")])
+    output = builder.io.to_s
+
+    # Search stays, but a single-verb report needs no method chips.
+    # (The filter script always references the selector, so assert on the
+    # rendered chip attribute form instead.)
+    output.should contain("id=\"endpoint-search\"")
+    output.should_not contain("data-filter-method=\"")
+  end
+
+  it "renders severity filter chips and metadata for passive findings" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    high = YAML.parse <<-YAML
+      id: high-rule
+      info:
+        name: "High Rule"
+        author: ["a"]
+        severity: "high"
+        description: "d"
+        reference: ["https://example.com"]
+      matchers-condition: "or"
+      matchers:
+        - type: "regex"
+          patterns: ["x"]
+          condition: "or"
+      category: "secret"
+      techs: ["*"]
+      YAML
+    medium = YAML.parse <<-YAML
+      id: medium-rule
+      info:
+        name: "Medium Rule"
+        author: ["a"]
+        severity: "medium"
+        description: "d"
+        reference: ["https://example.com"]
+      matchers-condition: "or"
+      matchers:
+        - type: "regex"
+          patterns: ["x"]
+          condition: "or"
+      category: "misconfig"
+      techs: ["*"]
+      YAML
+
+    results = [
+      PassiveScanResult.new(PassiveScan.new(high), "a.cr", 1, "x"),
+      PassiveScanResult.new(PassiveScan.new(medium), "b.cr", 2, "y"),
+    ]
+
+    builder.print([Endpoint.new("/test", "GET")], results)
+    output = builder.io.to_s
+
+    output.should contain("data-passive")
+    output.should contain("data-severity=\"high\"")
+    output.should contain("data-severity=\"medium\"")
+    output.should contain("data-filter-severity=\"high\"")
+    output.should contain("data-filter-severity=\"medium\"")
+  end
 end
