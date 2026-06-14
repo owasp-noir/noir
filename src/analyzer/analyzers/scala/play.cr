@@ -424,7 +424,7 @@ module Analyzer::Scala
         # Example: GET /users/:id controllers.Users.show(id: Long)
         if route_match = stripped_line.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)\s+(.+)/)
           method = route_match[1]
-          route_path = join_paths(prefix, route_match[2])
+          route_path = join_included_route(prefix, route_match[2])
           action = route_match[3]
 
           endpoint = create_endpoint(route_path, method, path, index + 1)
@@ -520,6 +520,25 @@ module Analyzer::Scala
       return suffix if prefix.empty?
       return prefix.rstrip('/') if suffix.empty?
       "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
+    end
+
+    # Join a mount prefix onto a route defined in an included routes file, but
+    # don't double the prefix when the included file already carries it.
+    # Standard Play sub-routes are relative (`-> /appeal appeal.Routes` over
+    # `GET /landing` → `/appeal/landing`), but large apps such as lila write the
+    # full path in the sub-file (`GET /appeal/landing`), where prepending again
+    # would yield `/appeal/appeal/landing`. The boundary check (exact match or
+    # `prefix/…`) keeps a coincidental relative path like `/appeals` prefixed.
+    private def join_included_route(prefix : String, suffix : String) : String
+      return join_paths(prefix, suffix) if prefix.empty?
+
+      normalized_prefix = prefix.rstrip('/')
+      normalized_suffix = suffix.starts_with?('/') ? suffix : "/#{suffix}"
+      if normalized_suffix == normalized_prefix || normalized_suffix.starts_with?("#{normalized_prefix}/")
+        return normalized_suffix
+      end
+
+      join_paths(prefix, suffix)
     end
 
     # Extract path parameters from route pattern
