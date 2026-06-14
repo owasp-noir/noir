@@ -68,3 +68,19 @@ pub fn main() !void {
     defer server.deinit();
     try server.start();
 }
+
+test "routes" {
+    // Inline routes and a controller handler declared inside a `test { … }`
+    // block are unit-test fixtures — neither may be emitted as an endpoint.
+    const test_routes: []const tk.Route = &.{
+        .get("/test-only", hello),
+    };
+    _ = test_routes;
+}
+
+test "controller route fixture" {
+    const Fixture = struct {
+        pub fn @"GET /test-only/fn"() !void {}
+    };
+    _ = Fixture;
+}

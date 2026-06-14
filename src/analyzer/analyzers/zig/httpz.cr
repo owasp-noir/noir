@@ -53,27 +53,35 @@ module Analyzer::Zig
     private def process_file(path : String, content : String, include_callee : Bool)
       text = Noir::ZigCalleeExtractor.strip_comments(content)
       bodies = include_callee ? Noir::ZigCalleeExtractor.function_bodies(content, path) : {} of String => Noir::ZigCalleeExtractor::FunctionBody
+      # Routes registered inside `test { … }` blocks are test fixtures (and, in
+      # an httpz framework source vendored as a loose file, its own self-tests),
+      # not runtime endpoints.
+      test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(Noir::ZigCalleeExtractor.strip_non_code(content))
 
       group_prefixes = resolve_group_prefixes(text)
 
       text.scan(ROUTE_RE) do |m|
+        offset = m.begin(0) || 0
+        next if Noir::ZigCalleeExtractor.in_test_block?(offset, test_blocks)
         receiver = m[1]
         verb = m[2]
         route = m[3]
         handler = m[4]
         prefix = group_prefixes[receiver]? || ""
         url = Noir::URLPath.join(prefix, route)
-        emit(path, text, m.begin(0) || 0, url, VERB_METHOD[verb], handler, bodies, include_callee)
+        emit(path, text, offset, url, VERB_METHOD[verb], handler, bodies, include_callee)
       end
 
       text.scan(METHOD_RE) do |m|
+        offset = m.begin(0) || 0
+        next if Noir::ZigCalleeExtractor.in_test_block?(offset, test_blocks)
         receiver = m[1]
         method = m[2].upcase
         route = m[3]
         handler = m[4]
         prefix = group_prefixes[receiver]? || ""
         url = Noir::URLPath.join(prefix, route)
-        emit(path, text, m.begin(0) || 0, url, method, handler, bodies, include_callee)
+        emit(path, text, offset, url, method, handler, bodies, include_callee)
       end
     end
 

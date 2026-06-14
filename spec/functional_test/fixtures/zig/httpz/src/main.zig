@@ -32,6 +32,16 @@ pub fn main() !void {
     try server.listen();
 }
 
+test "router registers routes" {
+    // A route registered inside a `test { … }` block is a unit-test fixture,
+    // not a runtime endpoint — it must NOT be emitted.
+    var server = try httpz.Server().init(std.testing.allocator, .{}, .{});
+    defer server.deinit();
+    var router = try server.router(.{});
+    router.get("/test-only", index, .{});
+    router.post("/test-only", createUser, .{});
+}
+
 fn index(_: *httpz.Request, res: *httpz.Response) !void {
     try res.write("home");
 }
