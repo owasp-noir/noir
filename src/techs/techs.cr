@@ -20,7 +20,7 @@ module NoirTechs
     "js_fresh", "js_hapi", "js_hono", "js_koa", "js_nestjs", "js_nextjs",
     "js_nitro", "js_nuxtjs", "js_remix", "js_restify", "js_sveltekit",
     "kotlin_http4k", "kotlin_ktor", "kotlin_spring",
-    "lua_lapis",
+    "lua_lapis", "lua_lor",
     "perl_catalyst", "perl_dancer2", "perl_mojolicious",
     "php_cakephp", "php_codeigniter", "php_hyperf", "php_laminas", "php_laravel", "php_lumen", "php_pure", "php_slim", "php_symfony", "php_thinkphp", "php_yii",
     "python_aiohttp", "python_bottle", "python_django", "python_falcon", "python_fastapi",
@@ -1232,6 +1232,24 @@ module NoirTechs
       :framework => "Lapis",
       :language  => "Lua",
       :similar   => ["lapis", "lua-lapis", "lua_lapis"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :lua_lor => {
+      :framework => "lor",
+      :language  => "Lua",
+      :similar   => ["lor", "lua-lor", "lua_lor"],
       :supported => {
         :endpoint => true,
         :method   => true,

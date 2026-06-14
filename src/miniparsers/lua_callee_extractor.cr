@@ -302,6 +302,49 @@ module Noir::LuaCalleeExtractor
     stripped.to_s
   end
 
+  # Blank out comments and long-bracket (`[[ ]]`/`[=[ ]=]`) string bodies but
+  # PRESERVE short-string contents verbatim. Route analyzers need the path
+  # literals (`app:get("/login", …)`) intact while still suppressing `--`
+  # comments and here-strings that would otherwise leak phantom routes.
+  # Newlines are kept so line-anchored scans and line numbering stay aligned.
+  def strip_comments(source : String) : String
+    strip_comments(source.chars)
+  end
+
+  def strip_comments(chars : Array(Char)) : String
+    stripped = String::Builder.new
+    index = 0
+
+    while index < chars.size
+      char = chars[index]
+      if comment_start?(chars, index)
+        finish = skip_comment(chars, index, chars.size)
+        append_blanks(stripped, chars, index, finish)
+        index = finish
+        next
+      elsif long_bracket_start?(chars, index)
+        finish = skip_long_bracket(chars, index, chars.size)
+        append_blanks(stripped, chars, index, finish)
+        index = finish
+        next
+      elsif char == '"' || char == '\''
+        finish = skip_short_string(chars, index, chars.size)
+        cursor = index
+        while cursor < finish && cursor < chars.size
+          stripped << chars[cursor]
+          cursor += 1
+        end
+        index = finish
+        next
+      end
+
+      stripped << char
+      index += 1
+    end
+
+    stripped.to_s
+  end
+
   private def add_function_body(bodies : Hash(String, FunctionBody),
                                 name : String,
                                 body : Tuple(String, Int32),

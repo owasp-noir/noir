@@ -84,6 +84,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"java_spring", Java::Spring},
     {"java_struts2", Java::Struts2},
     {"lua_lapis", Lua::Lapis},
+    {"lua_lor", Lua::Lor},
     {"android", Mobile::Android},
     {"ios", Mobile::Ios},
     {"well_known_applinks", Mobile::WellKnown},
