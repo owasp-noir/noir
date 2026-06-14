@@ -16,8 +16,8 @@ Noir extracts mobile app entry points — the deep links and exported components
 | Android | `res/values/strings.xml` | resolves `@string/` references used in schemes / hosts / paths |
 | Android | `build.gradle` / `build.gradle.kts` | resolves `${applicationId}` and custom `manifestPlaceholders` used in package / component names / schemes / hosts; supplies the package when the manifest has no `package` attribute |
 | Android | `res/navigation/*.xml` | Jetpack Navigation `<deepLink app:uri="...">` deep links — the owning destination becomes the handling component |
-| iOS | `Info.plist` | `CFBundleURLTypes` custom URL schemes |
-| iOS | `*.entitlements` | `associated-domains` `applinks:` universal links |
+| iOS | `Info.plist` (any `*.plist` declaring `CFBundleURLTypes`) | custom URL schemes — also resolves `$(VAR)` / `${VAR}` placeholders from `.xcconfig` / `project.pbxproj` |
+| iOS | `*.entitlements` | `associated-domains` `applinks:` universal links and `appclips:` App Clip launch URLs |
 | Android | `/.well-known/assetlinks.json` | server-side App Links association (Digital Asset Links) |
 | iOS | `apple-app-site-association` | server-side universal-link `paths` / `components` patterns |
 
