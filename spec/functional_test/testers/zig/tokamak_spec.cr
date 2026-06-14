@@ -27,6 +27,14 @@ expected_endpoints << tokamak_endpoint("/api/widgets", "GET", [] of Param, [Call
 expected_endpoints << tokamak_endpoint("/api/widgets", "POST", [] of Param, [Callee.new("createWidget")])
 expected_endpoints << tokamak_endpoint("/api/widgets/:id", "GET", id_param, [Callee.new("findWidget")])
 
+# Qualified struct mounts (`.router(resources.Public/.Private)`): the
+# `pub const @"METHOD /path"` route bindings inherit only the `/admin` prefix
+# of the mount selecting their enclosing struct. Handlers are defined
+# elsewhere, so these carry no callees.
+expected_endpoints << tokamak_endpoint("/admin/ping", "GET")
+expected_endpoints << tokamak_endpoint("/admin/login", "POST")
+expected_endpoints << tokamak_endpoint("/admin/sessions/:id", "DELETE", id_param)
+
 FunctionalTester.new("fixtures/zig/tokamak/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

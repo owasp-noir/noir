@@ -1,6 +1,7 @@
 const std = @import("std");
 const tk = @import("tokamak");
 const widgets = @import("api/widgets.zig");
+const resources = @import("api/resources.zig");
 
 const routes: []const tk.Route = &.{
     .get("/", hello),
@@ -13,6 +14,12 @@ const routes: []const tk.Route = &.{
             .get("/items/:id", getItem),
             .delete("/items/:id", deleteItem),
         }),
+    }),
+    // Qualified struct mounts — each struct's `pub const @"…"` routes compose
+    // the `/admin` prefix, partitioned by struct.
+    .group("/admin", &.{
+        .router(resources.Public),
+        .router(resources.Private),
     }),
 };
 
