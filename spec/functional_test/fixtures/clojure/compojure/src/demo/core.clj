@@ -43,6 +43,13 @@
   (GET "/coerce/:n" [n :<< #(Integer/parseInt %)]
     {:n n})
 
+  ; Vector path form with an inline regex constraint: the route path is the
+  ; vector's first string. The `:item-id #"[0-9]+"` constraint pair is routing
+  ; metadata, not a param. The kebab-case `item-id` must stay intact (the
+  ; optimizer must not truncate it to a phantom `item` path param).
+  (GET ["/items/:item-id" :item-id #"[0-9]+"] [item-id]
+    {:item-id item-id})
+
   (context "/api" []
     (POST "/users" request
       request)

@@ -33,6 +33,9 @@ expected_endpoints = [
   Endpoint.new("/coerce/:n", "GET", [
     Param.new("n", "", "path"),
   ]),
+  Endpoint.new("/items/:item-id", "GET", [
+    Param.new("item-id", "", "path"),
+  ]),
   Endpoint.new("/api/users", "POST"),
   Endpoint.new("/api/admin/users/:id", "DELETE", [
     Param.new("id", "", "path"),

@@ -81,7 +81,7 @@ module Analyzer::Clojure
 
           case base
           when "context"
-            context_path, _ = first_string_literal(source, after_symbol, form_end)
+            context_path, _ = route_path_literal(source, after_symbol, form_end)
             context_path = normalize_route_path(context_path) if context_path
             next_prefix = context_path ? join_path(prefix, context_path) : prefix
             scan_forms(source, after_symbol, form_end, next_prefix, path, include_callee)
@@ -112,7 +112,7 @@ module Analyzer::Clojure
 
     private def add_route(source : String, form_start : Int32, args_start : Int32, form_end : Int32,
                           prefix : String, path : String, method : String, include_callee : Bool)
-      raw_route_path, path_end = first_string_literal(source, args_start, form_end)
+      raw_route_path, path_end = route_path_literal(source, args_start, form_end)
       return unless raw_route_path
       route_path = normalize_route_path(raw_route_path)
 
@@ -528,6 +528,23 @@ module Analyzer::Clojure
         token, _ = read_symbol(source, i, limit)
         token.empty? ? nil : token
       end
+    end
+
+    # The path argument of a route / `context` macro can be a plain string
+    # (`"/foo"`) or a vector carrying inline regex constraints
+    # (`["/foo/:id" :id #"[0-9]+"]`). For the vector form the path is its first
+    # string literal; return the index of the closing `]` so binding/body
+    # parsing resumes after the whole vector rather than inside it.
+    private def route_path_literal(source : String, index : Int32, limit : Int32) : Tuple(String?, Int32)
+      i = skip_ws_and_comments(source, index, limit)
+      if i < limit && source.byte_at(i).unsafe_chr == '['
+        vec_end = find_matching_delimiter(source, i, '[', ']', limit)
+        return {nil, index} if vec_end <= i
+        route_path, _ = first_string_literal(source, i + 1, vec_end)
+        return {route_path, vec_end}
+      end
+
+      first_string_literal(source, index, limit)
     end
 
     private def first_string_literal(source : String, index : Int32, limit : Int32) : Tuple(String?, Int32)
