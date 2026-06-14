@@ -81,14 +81,29 @@ class DebugTagger < Tagger
   end
 
   private def url_parts(url : String) : Array(String)
-    url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
+    strip_scheme(url).downcase.split(/[\/\-_\.]+/).reject(&.empty?)
   end
 
   # Slash/dot-delimited segments only (hyphens and underscores kept
   # inside a segment), so `internal` matches as its own path component
   # but not as part of a compound word.
   private def internal_segment?(url : String) : Bool
-    url.downcase.split(/[\/.]+/).reject(&.empty?).any? { |seg| INTERNAL_SEGMENTS.includes?(seg) }
+    strip_scheme(url).downcase.split(/[\/.]+/).reject(&.empty?).any? { |seg| INTERNAL_SEGMENTS.includes?(seg) }
+  end
+
+  # Drop a leading URI scheme (`scheme://`) before tokenizing. Mobile
+  # deep-link entry points arrive as custom-scheme URLs whose scheme is the
+  # app's reverse-domain bundle id — e.g.
+  # `ShareMedia-app.futo.immich.debug.Widget://`, where `debug` is the build
+  # *flavor*, not a debug endpoint. Tokenizing the scheme produced a false
+  # `debug` match; the authority/path after `://` (the real deep-link
+  # target, e.g. `myapp://debug-console`) is kept and still matched.
+  private def strip_scheme(url : String) : String
+    if idx = url.index("://")
+      url[(idx + 3)..]
+    else
+      url
+    end
   end
 
   private def normalize_param_name(name : String) : String
