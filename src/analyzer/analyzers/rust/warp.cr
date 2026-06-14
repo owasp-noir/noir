@@ -47,6 +47,12 @@ module Analyzer::Rust
       Noir::TreeSitter.parse_rust(source) do |root|
         function_index = build_function_index(root, source)
         seen = Set(Int32).new
+        # A composition root like `warp::path("api").and(backend(config))`
+        # mounts a sibling filter-returning fn under a path prefix. Collect
+        # those `{fn => prefix}` edges (and the fns that bear routes) so the
+        # mounted fn's own routes pick up the prefix instead of emitting at
+        # the root, and the prefix-only stub isn't emitted as a bare route.
+        mounts = collect_warp_mounts(root, source)
 
         walk(root) do |node|
           # Two route-bearing positions: a `let route = warp::path(...)`
@@ -66,6 +72,12 @@ module Analyzer::Rust
           next if seen.includes?(byte)
           seen.add(byte)
 
+          # `warp::path("api").and(backend(config)).or(frontend())` is a
+          # mount/combinator, not a leaf — its real routes live in the
+          # mounted fns (emitted with the composed prefix). Skip it so we
+          # don't surface a phantom `/api`.
+          next if composition_root?(value, source, mounts[:route_fns])
+
           endpoint = build_endpoint(value, source, path, Noir::TreeSitter.node_start_row(value) + 1)
           next unless endpoint
 
@@ -80,11 +92,163 @@ module Analyzer::Rust
             end
           end
 
-          endpoints << endpoint
+          prefixes = enclosing_mount_prefixes(value, mounts[:mount_prefix], mounts[:fn_ranges])
+          if prefixes.empty?
+            endpoints << endpoint
+          else
+            base_url = endpoint.url
+            prefixes.each do |pfx|
+              ep = endpoint
+              ep.url = join_paths(pfx, base_url)
+              endpoints << ep
+            end
+          end
         end
       end
 
       endpoints
+    end
+
+    # A warp app composes a parent prefix onto a helper filter via
+    # `warp::path("api").and(backend(config))`: the receiver carries the
+    # `/api` prefix, the `.and(...)` argument is a call to a local
+    # route-bearing fn (`backend`). Build `{fn => [prefix]}` (mount_prefix)
+    # plus the set of route-bearing fns and every fn's byte range so the
+    # emit pass can prepend the prefix to the mounted fn's own routes.
+    private def collect_warp_mounts(root : LibTreeSitter::TSNode, source : String)
+      fn_ranges = [] of Tuple(String, Int32, Int32)
+      route_fns = Set(String).new
+      mount_prefix = Hash(String, Array(String)).new
+
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        s = LibTreeSitter.ts_node_start_byte(node).to_i
+        e = LibTreeSitter.ts_node_end_byte(node).to_i
+        fn_ranges << {name, s, e}
+        body = Noir::TreeSitter.field(node, "body")
+        # "route-bearing" = the fn body defines a *named* path segment
+        # (`warp::path("x")` / `warp::path!(..)`). A bare value-extractor
+        # helper (`warp::header(..)`, `warp::path::param()`, `with_db(..)`)
+        # carries no segment and must NOT be mistaken for a mountable
+        # sub-router — otherwise `.and(extractor())` would suppress a real
+        # leaf. `warp::path::param`/`::end` don't match `warp::path(`.
+        if body
+          btext = Noir::TreeSitter.node_text(body, source)
+          route_fns << name if btext.includes?("warp::path(") || btext.includes?("warp::path!")
+        end
+      end
+
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        next unless warp_field_name(node, source) == "and"
+        arg_fn = warp_mount_arg_fn(node, source)
+        next unless arg_fn && route_fns.includes?(arg_fn)
+        recv = warp_receiver(node)
+        next unless recv
+        prefix = extract_prefix_path(recv, source)
+        next if prefix.empty?
+        bucket = (mount_prefix[arg_fn] ||= [] of String)
+        bucket << prefix unless bucket.includes?(prefix)
+      end
+
+      {route_fns: route_fns, mount_prefix: mount_prefix, fn_ranges: fn_ranges}
+    end
+
+    # True when `value` combines a local route-bearing fn via `.and(fn())`
+    # / `.or(fn())` — i.e. it's a router composition, not a leaf endpoint.
+    private def composition_root?(value : LibTreeSitter::TSNode, source : String, route_fns : Set(String)) : Bool
+      found = false
+      walk(value) do |node|
+        next if found
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        name = warp_field_name(node, source)
+        next unless name == "and" || name == "or"
+        arg_fn = warp_mount_arg_fn(node, source)
+        found = true if arg_fn && route_fns.includes?(arg_fn)
+      end
+      found
+    end
+
+    # The mount prefix(es) for the smallest enclosing fn of `value`, if that
+    # fn is mounted under a parent path elsewhere; `[]` otherwise.
+    private def enclosing_mount_prefixes(value : LibTreeSitter::TSNode,
+                                         mount_prefix : Hash(String, Array(String)),
+                                         fn_ranges : Array(Tuple(String, Int32, Int32))) : Array(String)
+      return [] of String if mount_prefix.empty?
+      vb = LibTreeSitter.ts_node_start_byte(value).to_i
+      best : String? = nil
+      best_size = Int32::MAX
+      fn_ranges.each do |name, s, e|
+        next unless mount_prefix.has_key?(name)
+        next unless vb >= s && vb < e
+        size = e - s
+        if size < best_size
+          best_size = size
+          best = name
+        end
+      end
+      best ? mount_prefix[best] : [] of String
+    end
+
+    private def warp_field_name(call : LibTreeSitter::TSNode, source : String) : String?
+      fn = Noir::TreeSitter.field(call, "function")
+      return unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+      field = Noir::TreeSitter.field(fn, "field")
+      field ? Noir::TreeSitter.node_text(field, source) : nil
+    end
+
+    private def warp_receiver(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      fn = Noir::TreeSitter.field(call, "function")
+      return unless fn && Noir::TreeSitter.node_type(fn) == "field_expression"
+      Noir::TreeSitter.field(fn, "value")
+    end
+
+    # First positional argument of a `.and(...)` call when it is a plain
+    # local fn call (`backend(config)`), returning the fn name. Scoped
+    # filters (`warp::ws()`) and method calls (`state.clone()`) are not
+    # local fns and return `nil`.
+    private def warp_mount_arg_fn(call : LibTreeSitter::TSNode, source : String) : String?
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      result : String? = nil
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        next if result
+        next unless Noir::TreeSitter.node_type(arg) == "call_expression"
+        f = Noir::TreeSitter.field(arg, "function")
+        if f && Noir::TreeSitter.node_type(f) == "identifier"
+          result = Noir::TreeSitter.node_text(f, source)
+        end
+      end
+      result
+    end
+
+    # Collect the leading path segments of a filter chain (a `.and(fn())`
+    # receiver) into a `/a/b` prefix. Only `warp::path(..)` / `path!(..)`
+    # contribute; verbs and value extractors are ignored.
+    private def extract_prefix_path(node : LibTreeSitter::TSNode, source : String) : String
+      parts = [] of String
+      discard = [] of Param
+      walk(node) do |n|
+        case Noir::TreeSitter.node_type(n)
+        when "macro_invocation"
+          parse_path_macro(n, source, parts, discard) if path_macro?(n, source)
+        when "call_expression"
+          if call_function_text(n, source) == "warp::path"
+            text = first_string_literal_text(Noir::TreeSitter.field(n, "arguments"), source)
+            parts << text if text
+          end
+        end
+      end
+      parts.empty? ? "" : "/" + parts.join("/")
+    end
+
+    private def join_paths(prefix : String, route : String) : String
+      return route if prefix.empty?
+      return prefix if route.empty? || route == "/"
+      "#{prefix.rstrip('/')}/#{route.lstrip('/')}"
     end
 
     private def warp_chain?(value : LibTreeSitter::TSNode, source : String) : Bool
@@ -245,7 +409,7 @@ module Analyzer::Rust
       type_total = 0
       Noir::TreeSitter.each_named_child(token_tree) do |child|
         case Noir::TreeSitter.node_type(child)
-        when "primitive_type", "type_identifier", "scoped_type_identifier", "generic_type"
+        when "primitive_type", "type_identifier", "scoped_type_identifier", "generic_type", "identifier"
           type_total += 1
         end
       end
@@ -260,7 +424,13 @@ module Analyzer::Rust
             path_parts << seg
             count += 1
           end
-        when "primitive_type", "type_identifier", "scoped_type_identifier", "generic_type"
+        when "primitive_type", "type_identifier", "scoped_type_identifier", "generic_type", "identifier"
+          # `warp::path!("socket" / String)` — inside a macro `token_tree`
+          # the grammar has no type context, so a non-primitive type like
+          # `String` / `Uuid` / a custom id type parses as a bare
+          # `identifier` rather than `type_identifier`. warp's `path!`
+          # only accepts string-literal segments and type params, so any
+          # top-level identifier here is a path param (`/{param}`).
           type_idx += 1
           name = type_total > 1 ? "param#{type_idx}" : "param"
           path_parts << ":#{name}"
