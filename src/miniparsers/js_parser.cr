@@ -115,7 +115,7 @@ module Noir
         # Pattern: identifier.use('/prefix', ...)
         if (@tokens[idx].type == :identifier) &&
            (idx + 1 < @tokens.size) && (@tokens[idx + 1].type == :dot) &&
-           (idx + 2 < @tokens.size) && (@tokens[idx + 2].value == "use" || @tokens[idx + 2].value == "register") &&
+           (idx + 2 < @tokens.size) && (@tokens[idx + 2].value == "use" || @tokens[idx + 2].value == "register" || @tokens[idx + 2].value == "route") &&
            (idx + 3 < @tokens.size) && (@tokens[idx + 3].type == :lparen) &&
            (idx + 4 < @tokens.size) &&
            (@tokens[idx + 4].type == :string ||
@@ -723,6 +723,19 @@ module Noir
            @tokens[idx + 1].type == :dot &&
            @tokens[idx + 2].value == "route" &&
            @tokens[idx + 3].type == :lparen
+          # Skip Hono sub-app mounts `app.route('/prefix', child)`: a
+          # string/template path immediately followed by a comma carries a
+          # second (router) argument, so this is a mount, not a chainable
+          # route-builder. Without this guard the chain scanner below walks
+          # past the call — across ASI statement boundaries — and
+          # mis-attributes later verb calls to `/prefix`. The mount's prefix
+          # is applied to the child via the first-pass `.route(...)` scan.
+          if idx + 5 < @tokens.size &&
+             (@tokens[idx + 4].type == :string || @tokens[idx + 4].type == :template_literal) &&
+             @tokens[idx + 5].type == :comma
+            idx += 1
+            next
+          end
           router_var = @tokens[idx].value
           # resolve path at idx+4
           paths = [] of PathEntry
@@ -1064,7 +1077,14 @@ module Noir
          idx + 3 < @tokens.size &&
          @tokens[idx + 3].type == :lparen &&
          idx + 4 < @tokens.size &&
-         @tokens[idx + 4].type == :string
+         @tokens[idx + 4].type == :string &&
+         # Only an Express route-builder `app.route('/path').get()...` — the
+         # string must be the SOLE argument (immediately followed by `)`).
+         # `app.route('/prefix', child)` is a Hono sub-app mount (two args),
+         # not a chainable route; treating it as one made the chain scanner
+         # walk forward and mis-attribute later verb calls to `/prefix`.
+         idx + 5 < @tokens.size &&
+         @tokens[idx + 5].type == :rparen
         base_path = @tokens[idx + 4].value
         router_var = @tokens[idx].value
         raw_path = base_path
