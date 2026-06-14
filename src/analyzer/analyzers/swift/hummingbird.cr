@@ -58,6 +58,10 @@ module Analyzer::Swift
       base = configured_base_for(path)
 
       hits = collect_route_hits(stripped_lines, lines, base)
+      # `HummingbirdRouter`'s declarative result-builder DSL (`RouterBuilder`,
+      # `RouteGroup`, capitalized `Get`/`Post`/... primitives) is invisible to
+      # the receiver-based chain scanner, so discover it in a second pass.
+      hits.concat(collect_dsl_route_hits(stripped_lines, lines))
 
       hits.each do |hit|
         begin
@@ -403,10 +407,11 @@ module Analyzer::Swift
     end
 
     # The named handler referenced via `use:` (e.g. `use: self.create`
-    # yields "create"). Closures return nil so the caller knows to read
-    # the inline body instead.
+    # yields "create"). The closure API labels it `use:`, the result-builder
+    # DSL labels it `handler:` (`Post("signup", handler: self.signup)`).
+    # Closures return nil so the caller knows to read the inline body instead.
     private def handler_from_args(args_str : String) : String?
-      if match = args_str.match(/\buse:\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
+      if match = args_str.match(/\b(?:use|handler):\s*(?:self\.)?([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)/)
         return match[1].split('.').last
       end
       nil
@@ -414,6 +419,194 @@ module Analyzer::Swift
 
     private def router_like?(receiver : String, prefix_by_receiver : Hash(String, String)) : Bool
       receiver.split('.').any? { |part| prefix_by_receiver.has_key?(part) }
+    end
+
+    # ------------------------------------------------------------------
+    # HummingbirdRouter result-builder DSL discovery
+    # ------------------------------------------------------------------
+
+    # The capitalized result-builder primitives exposed by the
+    # `HummingbirdRouter` module. Unlike the receiver-based closure API
+    # (`router.get("x") { ... }`), routes are declared structurally:
+    #
+    #     let router = RouterBuilder(context: Context.self) {
+    #         Get("/health") { _, _ in .ok }   // GET /health
+    #         UserController(...)               // splices its `body` here
+    #         RouteGroup("api") {
+    #             Post("login", handler: self.login) // POST /api/login
+    #         }
+    #     }
+    #
+    #     struct UserController: RouterController {
+    #         var body: some RouterMiddleware<Context> {
+    #             RouteGroup("user") {
+    #                 Put(handler: self.create)          // PUT  /user
+    #                 Post("signup", handler: self.signup) // POST /user/signup
+    #             }
+    #         }
+    #     }
+    #
+    # A route primitive is only honored when it sits *directly* inside a
+    # route-emitting scope — a `RouterBuilder { }` block, a `RouteGroup { }`
+    # block, or a `var/func ... some RouterMiddleware { }` controller body —
+    # never inside a handler closure. That gating keeps look-alike PascalCase
+    # constructors (a `Post(title:)` model, a `Get`-named type) out of the
+    # endpoint list.
+    DSL_VERB_RE    = /(?<![.\w])(Get|Post|Put|Patch|Delete|Head)\s*\(/
+    DSL_GROUP_RE   = /(?<![.\w])RouteGroup\s*\(/
+    DSL_BUILDER_RE = /(?<![.\w])RouterBuilder\s*[(<]/
+    # `var body: some RouterMiddleware<Context>` / `func routes() -> some
+    # RouterMiddleware<Context>` — the controller body that hosts the DSL.
+    DSL_BODY_RE = /\bsome\s+RouterMiddleware\b/
+
+    # One nesting level of the DSL. `:builder`/`:group` scopes emit routes;
+    # `:handler` (a route's trailing closure) and `:other` (struct/func/etc.
+    # bodies) do not.
+    record DslScope, kind : Symbol, prefix : String
+
+    private record DslMarker,
+      col : Int32,
+      kind : Symbol,
+      verb : String,
+      paren_col : Int32,
+      end_col : Int32
+
+    private def collect_dsl_route_hits(stripped_lines : Array(String), original_lines : Array(String)) : Array(RouteHit)
+      hits = [] of RouteHit
+      return hits unless stripped_lines.any? do |l|
+                           l.includes?("RouterBuilder") || l.includes?("RouterMiddleware") || l.includes?("RouteGroup")
+                         end
+
+      stack = [] of DslScope
+      pending : DslScope? = nil
+
+      stripped_lines.each_with_index do |line, index|
+        original = original_lines[index]
+        cursor = 0
+
+        while cursor < line.size
+          brace_open = line.index('{', cursor)
+          brace_close = line.index('}', cursor)
+          marker = next_dsl_marker(line, cursor)
+
+          # Earliest of the three events on this line wins (a marker and a
+          # brace never share a column, so ties cannot occur).
+          candidates = [] of Tuple(Int32, Symbol)
+          candidates << {brace_open, :open} if brace_open
+          candidates << {brace_close, :close} if brace_close
+          candidates << {marker.col, :marker} if marker
+          break if candidates.empty?
+
+          event_col, event = candidates.min_by(&.[0])
+
+          case event
+          when :open
+            stack << (pending || default_dsl_scope(stack))
+            pending = nil
+            cursor = event_col + 1
+          when :close
+            stack.pop?
+            pending = nil
+            cursor = event_col + 1
+          when :marker
+            if m = marker
+              pending, cursor = handle_dsl_marker(m, line, original, index, stack, hits)
+            end
+          end
+        end
+      end
+
+      hits
+    end
+
+    # Process one DSL marker. Returns the scope the *next* `{` should adopt
+    # (or nil) and the column to resume scanning from.
+    private def handle_dsl_marker(m : DslMarker,
+                                  line : String,
+                                  original : String,
+                                  index : Int32,
+                                  stack : Array(DslScope),
+                                  hits : Array(RouteHit)) : Tuple(DslScope?, Int32)
+      case m.kind
+      when :verb
+        args = call_arguments(original, m.paren_col + 1)
+        args_str = args ? args[0] : ""
+        if dsl_emitting?(stack)
+          path = join_paths(current_dsl_prefix(stack), parse_route_path(args_str))
+          hits << RouteHit.new(m.verb.upcase, path, index, handler_from_args(args_str))
+        end
+        # A trailing closure on this verb is its handler body, not a group.
+        {DslScope.new(:handler, current_dsl_prefix(stack)), args ? args[1] + 1 : m.end_col}
+      when :group
+        args = call_arguments(original, m.paren_col + 1)
+        args_str = args ? args[0] : ""
+        prefix = join_paths(current_dsl_prefix(stack), parse_route_path(args_str))
+        {DslScope.new(:group, prefix), args ? args[1] + 1 : m.end_col}
+      else
+        # :builder / :body — a route-emitting root rooted at "".
+        {DslScope.new(:builder, ""), m.end_col}
+      end
+    end
+
+    # The earliest DSL marker at or after `cursor`, or nil.
+    private def next_dsl_marker(line : String, cursor : Int32) : DslMarker?
+      slice = line[cursor..]
+      best : DslMarker? = nil
+
+      if m = slice.match(DSL_VERB_RE)
+        best = pick_marker(best, DslMarker.new(
+          cursor + (m.begin(0) || 0), :verb, m[1],
+          cursor + (m.end(0) || 0) - 1, cursor + (m.end(0) || 0)))
+      end
+      if m = slice.match(DSL_GROUP_RE)
+        best = pick_marker(best, DslMarker.new(
+          cursor + (m.begin(0) || 0), :group, "",
+          cursor + (m.end(0) || 0) - 1, cursor + (m.end(0) || 0)))
+      end
+      if m = slice.match(DSL_BUILDER_RE)
+        best = pick_marker(best, DslMarker.new(
+          cursor + (m.begin(0) || 0), :builder, "",
+          cursor + (m.end(0) || 0) - 1, cursor + (m.end(0) || 0)))
+      end
+      if m = slice.match(DSL_BODY_RE)
+        best = pick_marker(best, DslMarker.new(
+          cursor + (m.begin(0) || 0), :body, "", -1, cursor + (m.end(0) || 0)))
+      end
+
+      best
+    end
+
+    private def pick_marker(current : DslMarker?, candidate : DslMarker) : DslMarker
+      return candidate unless current
+      candidate.col < current.col ? candidate : current
+    end
+
+    # True when the innermost scope emits routes (a builder or group block,
+    # not a handler closure or an unrelated `{ }`).
+    private def dsl_emitting?(stack : Array(DslScope)) : Bool
+      if top = stack.last?
+        top.kind == :builder || top.kind == :group
+      else
+        false
+      end
+    end
+
+    private def current_dsl_prefix(stack : Array(DslScope)) : String
+      stack.reverse_each do |scope|
+        return scope.prefix if scope.kind == :builder || scope.kind == :group
+      end
+      ""
+    end
+
+    # A `{` with no preceding marker. Inside a route-emitting scope it is a
+    # transparent control-flow block (`if`/`for` in the result builder) and
+    # stays emitting at the same prefix; otherwise it is an opaque body.
+    private def default_dsl_scope(stack : Array(DslScope)) : DslScope
+      if dsl_emitting?(stack)
+        DslScope.new(:group, current_dsl_prefix(stack))
+      else
+        DslScope.new(:other, "")
+      end
     end
 
     # ------------------------------------------------------------------
