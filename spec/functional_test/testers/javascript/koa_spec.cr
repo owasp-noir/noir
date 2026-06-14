@@ -6,9 +6,12 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "GET", [
     Param.new("id", "", "path"),
   ]),
-  Endpoint.new("/info", "GET"),
+  # Cross-file koa-router `.routes()` mounts carry their app.js prefix:
+  #   app.use('/app_prefix', appRouter.routes())  -> /app_prefix/info
+  #   app.use('/api/v1', apiV1Routes.routes())    -> /api/v1/status
+  Endpoint.new("/app_prefix/info", "GET"),
   Endpoint.new("/admin/settings", "GET"),
-  Endpoint.new("/status", "GET"),
+  Endpoint.new("/api/v1/status", "GET"),
   Endpoint.new("/simple", "GET"),
   Endpoint.new("/items/:itemId", "DELETE", [
     Param.new("itemId", "", "path"),

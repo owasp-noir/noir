@@ -266,7 +266,13 @@ module Noir
     # attacker-controlled checkout and pre-existing symlinks on the
     # scanner's disk pointing at sensitive paths.
     private def self.under_boundary?(combined : String, boundary : String) : Bool
-      boundary_abs = File.expand_path(boundary)
+      # `File.expand_path` does NOT strip a trailing separator in Crystal, so
+      # a caller passing `-b project/` would yield `boundary_abs` ending in
+      # `/`, making the `boundary_abs + SEPARATOR` prefix a `//` that no real
+      # path starts with — every import would be (wrongly) rejected as
+      # out-of-boundary. Chomp the trailing separator so the check is robust
+      # to both `project` and `project/` forms.
+      boundary_abs = File.expand_path(boundary).chomp(File::SEPARATOR)
       combined == boundary_abs || combined.starts_with?(boundary_abs + File::SEPARATOR)
     end
   end

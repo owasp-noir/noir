@@ -1,5 +1,8 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_route_extractor"
+require "../../../miniparsers/import_graph"
+require "../../../models/code_locator"
+require "../../../utils/url_path"
 
 module Analyzer::Javascript
   class Koa < JavascriptEngine
@@ -7,6 +10,16 @@ module Analyzer::Javascript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
       include_callee = callees_needed?
+
+      # koa-router mounts sub-routers through a `.routes()` middleware
+      # chain that the Express-oriented mount scanner can't model:
+      #   const api = new Router()
+      #   api.use(usersRouter)                 // usersRouter = require('./users-router')
+      #   router.use('/api', api.routes())     // api aggregated under /api
+      # Resolve those chains up front and seed each imported child file's
+      # prefix into CodeLocator so the per-file pass emits `/api/users`
+      # instead of a bare `/users`.
+      resolve_koa_mount_prefixes
 
       parallel_file_scan([".js", ".ts", ".mjs"]) do |path|
         begin
@@ -49,6 +62,108 @@ module Analyzer::Javascript
       process_static_dirs(static_dirs, result)
 
       result
+    end
+
+    # Resolve koa-router cross-file mount prefixes and seed them into
+    # CodeLocator under each imported child router's file key. Each file
+    # that does the mounting is resolved independently — the common layout
+    # has one aggregator file (`routes/index.js`) wiring every sub-router.
+    private def resolve_koa_mount_prefixes
+      locator = CodeLocator.instance
+      boundary = @base_path
+
+      all_files.each do |path|
+        next unless [".js", ".ts", ".mjs", ".cjs"].any? { |ext| path.ends_with?(ext) }
+        content = read_file_content(path)
+        # Cheap gate: the mount chain always pairs `.use(` with `.routes(`.
+        next unless content.includes?(".use(") && content.includes?(".routes(")
+        next if Noir::JSRouteExtractor.minified_content?(content)
+
+        # Map local identifiers to the router file they import.
+        imports = Hash(String, String).new
+        record_import = ->(var : String, spec : String) do
+          resolved = Noir::ImportGraph.resolve_relative_import(path, spec, boundary: boundary)
+          imports[var] = resolved if resolved
+        end
+        content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*require\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
+          record_import.call(m[1], m[2]) if m.size >= 3
+        end
+        content.scan(/import\s+(\w+)\s+from\s+['"]([^'"]+)['"]/) do |m|
+          record_import.call(m[1], m[2]) if m.size >= 3
+        end
+
+        # Collect mount edges: parent.use('/prefix', child[.routes()]) and
+        # the no-prefix parent.use(child[.routes()]). A bare `child` or a
+        # `child.routes()` wrapper is a router; a `factory()` call (e.g.
+        # `bodyParser()`) is middleware and never matches these shapes.
+        edges = [] of Tuple(String, String, String)
+        content.scan(/(\w+)\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*(\w+)(?:\.routes\s*\(\s*\))?\s*\)/) do |m|
+          edges << {m[1], m[2], m[3]} if m.size >= 4
+        end
+        content.scan(/(\w+)\.use\s*\(\s*(\w+)(?:\.routes\s*\(\s*\))?\s*\)/) do |m|
+          edges << {m[1], "", m[2]} if m.size >= 3
+        end
+        next if edges.empty?
+
+        prefixes = resolve_mount_edge_prefixes(edges)
+
+        prefixes.each do |router_var, router_prefixes|
+          file = imports[router_var]?
+          next unless file
+          key = Analyzer::Javascript::ExpressConstants.file_key(File.expand_path(file))
+          router_prefixes.each do |prefix|
+            next if prefix.empty?
+            locator.push(key, prefix) unless locator.all(key).includes?(prefix)
+          end
+        end
+      rescue e
+        logger.debug "koa mount prefix resolution failed for #{path}: #{e.message}"
+      end
+    end
+
+    # Resolve every router variable's mount prefix(es) from the edge list.
+    # A variable that is never mounted into another (a root aggregator like
+    # the exported `router`) carries the empty prefix; children inherit the
+    # parent's prefix joined with the edge's own prefix. Iterated to a
+    # fixpoint so a two-level chain (root -> api -> child) fully resolves.
+    private def resolve_mount_edge_prefixes(edges : Array(Tuple(String, String, String))) : Hash(String, Array(String))
+      children = edges.map { |_, _, child| child }.to_set
+      prefixes = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
+
+      # Seed roots (never a mount target) with the empty prefix.
+      edges.each do |parent, _, _|
+        prefixes[parent] << "" if !children.includes?(parent) && prefixes[parent].empty?
+      end
+
+      max_iterations = 16
+      iterations = 0
+      changed = true
+      while changed && iterations < max_iterations
+        changed = false
+        iterations += 1
+        edges.each do |parent, prefix, child|
+          # Propagate only from a resolved parent (a seeded root or an
+          # already-resolved child). Defaulting an unresolved parent to ""
+          # would leak a wrong prefix (`/sub` instead of `/api/sub`).
+          parent_prefixes = prefixes[parent]?
+          next if parent_prefixes.nil? || parent_prefixes.empty?
+          parent_prefixes.each do |pp|
+            combined = if pp.empty?
+                         prefix
+                       elsif prefix.empty?
+                         pp
+                       else
+                         Noir::URLPath.join(pp, prefix)
+                       end
+            unless prefixes[child].includes?(combined)
+              prefixes[child] << combined
+              changed = true
+            end
+          end
+        end
+      end
+
+      prefixes
     end
 
     # Match Strapi's declarative route entries: object literals
