@@ -17,6 +17,9 @@ expected_endpoints = [
   Endpoint.new("/api/ping", "HEAD"),
   Endpoint.new("/api/bulk", "POST", [Param.new("body", "CreateUser", "json")]),
   Endpoint.new("/v1/health", "GET"),
+  # AuthedRoutes mounted at /auth; the trailing `as user` must not become a path.
+  Endpoint.new("/auth/profile", "GET"),
+  Endpoint.new("/auth/account", "POST", [Param.new("body", "UpdateItem", "json")]),
 ]
 
 FunctionalTester.new("fixtures/scala/http4s/", {

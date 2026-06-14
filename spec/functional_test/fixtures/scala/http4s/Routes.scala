@@ -48,8 +48,18 @@ object Routes {
       Ok("ok")
   }
 
+  // AuthedRoutes wrapped in a middleware; the user is bound with `as`.
+  val secureRoutes: HttpRoutes[IO] = authMiddleware(AuthedRoutes.of[String, IO] {
+    case GET -> Root / "profile" as user =>
+      Ok(s"profile for $user")
+
+    case req @ POST -> Root / "account" as user =>
+      req.as[UpdateItem].flatMap(_ => Ok(s"updated by $user"))
+  })
+
   val httpApp = Router(
     "/api" -> userRoutes,
-    "/v1" -> healthRoutes
+    "/v1" -> healthRoutes,
+    "/auth" -> secureRoutes
   ).orNotFound
 }

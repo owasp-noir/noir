@@ -19,18 +19,26 @@ module Analyzer::Scala
       lines = content.split('\n')
       code_lines = scala_code_lines(content)
 
-      routes_names = collect_routes_bindings(content)
+      routes_names = collect_routes_bindings(code_lines)
       mount_prefixes = collect_mount_prefixes(code_lines, routes_names)
 
       current_routes_name : String? = nil
+      pending_def_name : String? = nil
 
       i = 0
       while i < lines.size
         stripped = code_lines[i]? || ""
         trimmed = stripped.strip
 
-        if m = stripped.match(/\b(?:val|def|lazy\s+val)\s+(\w+)\s*(?::[^=]*?)?=\s*HttpRoutes\.of\b/)
-          current_routes_name = m[1]
+        # The routes value/def header and the `HttpRoutes.of`/`AuthedRoutes.of`
+        # builder may sit on different lines (and the builder may be wrapped, as
+        # in `def authRoutes = basicAuth(AuthedRoutes.of { … })`), so remember
+        # the most recent binding name and attach it when the builder appears.
+        if dm = stripped.match(/(?<![.\w])(?:val|def|lazy\s+val)\s+(\w+)\b/)
+          pending_def_name = dm[1]
+        end
+        if pending_def_name && stripped.matches?(/(?:HttpRoutes|AuthedRoutes)\.of\b/)
+          current_routes_name = pending_def_name
         end
 
         if case_line?(trimmed)
@@ -134,6 +142,9 @@ module Analyzer::Scala
       return if methods.empty?
 
       remainder = body[method_match[0].size..].strip
+      # AuthedRoutes patterns end with `as <user>` — drop it so the trailing
+      # binding isn't mistaken for a path segment.
+      remainder = remainder.sub(/\s+as\s+\w+\s*$/, "")
 
       path_part = remainder
       query_part = ""
@@ -199,10 +210,16 @@ module Analyzer::Scala
       route_path
     end
 
-    private def collect_routes_bindings(content : String) : Set(String)
+    private def collect_routes_bindings(code_lines : Array(String)) : Set(String)
       names = Set(String).new
-      content.scan(/\b(?:val|def|lazy\s+val)\s+(\w+)\s*(?::[^=]*?)?=\s*HttpRoutes\.of\b/) do |m|
-        names << m[1]
+      pending : String? = nil
+      code_lines.each do |line|
+        if dm = line.match(/(?<![.\w])(?:val|def|lazy\s+val)\s+(\w+)\b/)
+          pending = dm[1]
+        end
+        if pending && line.matches?(/(?:HttpRoutes|AuthedRoutes)\.of\b/)
+          names << pending
+        end
       end
       names
     end
