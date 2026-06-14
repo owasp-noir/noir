@@ -16,10 +16,13 @@ module Analyzer::Perl
     }
 
     private struct ControllerConfig
-      property namespace_override, path_override
+      property namespace_override, path_override, roles, parents, action_pathparts
 
       def initialize(@namespace_override : String? = nil,
-                     @path_override : String? = nil)
+                     @path_override : String? = nil,
+                     @roles : Array(String) = [] of String,
+                     @parents : Array(String) = [] of String,
+                     @action_pathparts : Hash(String, String) = {} of String => String)
       end
     end
 
@@ -40,15 +43,21 @@ module Analyzer::Perl
 
     def analyze
       actions = [] of RouteAction
+      configs = {} of String => ControllerConfig
       actions_mutex = Mutex.new
       parallel_file_scan do |path|
         next unless catalyst_source_file?(path)
 
-        file_actions = collect_actions(read_file_content(path), path)
-        actions_mutex.synchronize { actions.concat(file_actions) }
+        content = read_file_content(path)
+        file_actions = collect_actions(content, path)
+        file_configs = collect_controller_configs(sanitize_perl_lines(content.lines))
+        actions_mutex.synchronize do
+          actions.concat(file_actions)
+          file_configs.each { |pkg, cfg| configs[pkg] = cfg }
+        end
       end
 
-      @result.concat(analyze_actions(actions))
+      @result.concat(analyze_actions(compose_actions(actions, configs)))
       @result
     end
 
@@ -61,7 +70,8 @@ module Analyzer::Perl
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       actions = collect_actions(content, file_path)
-      analyze_actions(actions)
+      configs = collect_controller_configs(sanitize_perl_lines(content.lines))
+      analyze_actions(compose_actions(actions, configs))
     end
 
     private def analyze_actions(actions : Array(RouteAction)) : Array(Endpoint)
@@ -100,6 +110,108 @@ module Analyzer::Perl
       end
 
       endpoints
+    end
+
+    # Flatten Moose role / base-class composition into each controller.
+    #
+    # Catalyst apps build CRUD/URIStructure chains by defining the terminal
+    # actions in one role and the `base`/`object`/`setup` chain links in
+    # sibling roles, then composing them all into a controller with
+    # `with`/`extends`. At runtime the actions live in the controller's
+    # namespace, so the chain resolves; statically each piece sits in its own
+    # package and the chain dead-ends (handled conservatively by skipping the
+    # fragment in `chained_path`).
+    #
+    # Here we recreate the runtime view: every action reachable through a
+    # controller's transitive `with`/`extends` graph is copied into that
+    # controller (re-keyed to its package, with any
+    # `config(action => { name => { PathPart => ... } })` override applied), so
+    # the relative chains now resolve within one package and produce the real
+    # paths (`/building/create`, `/<repo>/tree`). The originals stay in their
+    # role packages and remain skipped, so this only adds resolved routes.
+    private def compose_actions(actions : Array(RouteAction),
+                                configs : Hash(String, ControllerConfig)) : Array(RouteAction)
+      return actions if configs.empty?
+
+      actions_by_package = Hash(String, Array(RouteAction)).new
+      actions.each { |action| (actions_by_package[action.package_name] ||= [] of RouteAction) << action }
+
+      extras = [] of RouteAction
+      configs.each do |pkg, config|
+        next unless controller_package?(pkg)
+        next if config.roles.empty? && config.parents.empty?
+        own = actions_by_package[pkg]? || [] of RouteAction
+
+        # Re-keyed actions need the controller's routing context. Take it from
+        # one of the controller's own actions when present; otherwise (a pure
+        # composition controller with no methods of its own) derive it from
+        # the package name and config.
+        if first = own.first?
+          template_base = first.base_path
+          template_namespace = first.namespace
+          template_prefix = first.path_prefix
+        else
+          template_namespace = controller_namespace(pkg, config)
+          template_base = ""
+          template_prefix = path_prefix(template_namespace, config)
+        end
+
+        seen = Set(String).new
+        own.each { |action| seen << action.name }
+
+        composition_sources(pkg, configs).each do |source_pkg|
+          (actions_by_package[source_pkg]? || [] of RouteAction).each do |action|
+            # Only chained actions compose: a relative chain (`Chained('base')`)
+            # resolves within the controller once re-keyed. Path/Local/Global
+            # actions dispatch off the *defining* namespace, so a subclass that
+            # `extends` a concrete controller must not re-home them under its
+            # own namespace (that invents `/transactions/stripe/cash/credit`).
+            next unless action.attrs.has_key?("chained")
+            next unless seen.add?(action.name)
+            attrs = action.attrs.dup
+            if pathpart = config.action_pathparts[action.name]?
+              attrs["pathpart"] = [pathpart]
+            end
+            extras << RouteAction.new(
+              template_base, action.name, pkg, template_namespace,
+              template_prefix, attrs, action.body, action.file_path, action.line
+            )
+          end
+        end
+      end
+
+      extras.empty? ? actions : actions + extras
+    end
+
+    # Packages a chained role action is composed *into* — Catalyst dispatches
+    # only `::Controller::` classes; `::ControllerRole::`/`::ControllerBase::`
+    # and `::URIStructure::` are role/base sources, never controllers.
+    private def controller_package?(package_name : String) : Bool
+      package_name.includes?("::Controller::")
+    end
+
+    # Transitive `with` roles + `extends` parents of a package (in-repo only;
+    # external bases like `Catalyst::Controller` simply have no config entry).
+    private def composition_sources(pkg : String, configs : Hash(String, ControllerConfig)) : Array(String)
+      sources = [] of String
+      visited = Set(String).new
+      visited << pkg
+      queue = Deque(String).new
+      if config = configs[pkg]?
+        config.roles.each { |role| queue << role }
+        config.parents.each { |parent| queue << parent }
+      end
+
+      while node = queue.shift?
+        next unless visited.add?(node)
+        sources << node
+        if config = configs[node]?
+          config.roles.each { |role| queue << role }
+          config.parents.each { |parent| queue << parent }
+        end
+      end
+
+      sources
     end
 
     private def collect_actions(content : String, file_path : String) : Array(RouteAction)
@@ -172,7 +284,11 @@ module Analyzer::Perl
     end
 
     private def collect_controller_configs(lines : Array(String)) : Hash(String, ControllerConfig)
-      configs = {} of String => ControllerConfig
+      namespaces = {} of String => String
+      paths = {} of String => String
+      roles = Hash(String, Array(String)).new
+      parents = Hash(String, Array(String)).new
+      pathparts = Hash(String, Hash(String, String)).new
       package_name = ""
       index = 0
 
@@ -182,27 +298,87 @@ module Analyzer::Perl
           package_name = package_match[1]
         end
 
+        stripped = line.lstrip
+        # `with 'Role'` / `with ('A', 'B')` / multi-line `with\n  'A',\n  'B';`
+        # — Moose role application. Roles are composition sources whose
+        # chained actions belong to the consuming controller.
+        if stripped.matches?(/^with\b/)
+          statement, index = accumulate_statement(lines, index)
+          (roles[package_name] ||= [] of String).concat(extract_quoted_packages(statement))
+          next
+        end
+
+        # `extends 'Base'` / `BEGIN { extends 'Base' }` — base-class
+        # inheritance, another composition source.
+        if stripped.includes?("extends")
+          (parents[package_name] ||= [] of String).concat(extract_extends_packages(line))
+        end
+
         unless line.includes?("__PACKAGE__->config")
           index += 1
           next
         end
 
-        statement = line
-        while !statement.includes?(";") && index + 1 < lines.size
-          index += 1
-          statement += " " + lines[index].strip
+        statement, index = accumulate_statement(lines, index)
+        if namespace_override = config_value(statement, "namespace")
+          namespaces[package_name] ||= namespace_override
         end
-
-        namespace_override = config_value(statement, "namespace")
-        path_override = config_value(statement, "path")
-        if namespace_override || path_override
-          configs[package_name] = ControllerConfig.new(namespace_override, path_override)
+        if path_override = config_value(statement, "path")
+          paths[package_name] ||= path_override
         end
-
-        index += 1
+        extract_action_pathparts(statement).each do |action, pathpart|
+          (pathparts[package_name] ||= {} of String => String)[action] ||= pathpart
+        end
+        next
       end
 
+      configs = {} of String => ControllerConfig
+      keys = (namespaces.keys + paths.keys + roles.keys + parents.keys + pathparts.keys).uniq
+      keys.each do |pkg|
+        next if pkg.empty?
+        configs[pkg] = ControllerConfig.new(
+          namespaces[pkg]?,
+          paths[pkg]?,
+          roles[pkg]? || [] of String,
+          parents[pkg]? || [] of String,
+          pathparts[pkg]? || {} of String => String,
+        )
+      end
       configs
+    end
+
+    # Join a statement that may wrap across lines into one string, returning
+    # it together with the index of its final physical line.
+    private def accumulate_statement(lines : Array(String), start : Int32) : Tuple(String, Int32)
+      statement = lines[start]
+      index = start
+      while !statement.includes?(";") && index + 1 < lines.size && (index - start) < 64
+        index += 1
+        statement += " " + lines[index].strip
+      end
+      {statement, index + 1}
+    end
+
+    private def extract_quoted_packages(statement : String) : Array(String)
+      packages = [] of String
+      statement.scan(/['"]([A-Za-z_][A-Za-z0-9_:]+)['"]/) { |m| packages << m[1] }
+      packages
+    end
+
+    private def extract_extends_packages(line : String) : Array(String)
+      tail = line.sub(/^.*?extends/, "")
+      extract_quoted_packages(tail)
+    end
+
+    # Per-action `PathPart` overrides from `config(action => { name => {
+    # PathPart => 'x' } })`. `PathPart` only ever appears inside an action
+    # block, so matching `name => { PathPart => '...' }` directly is precise.
+    private def extract_action_pathparts(statement : String) : Hash(String, String)
+      overrides = {} of String => String
+      statement.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=>\s*\{\s*PathPart\s*=>\s*(['"])([^'"]*)\2/) do |m|
+        overrides[m[1]] = m[3]
+      end
+      overrides
     end
 
     private def config_value(statement : String, key : String) : String?

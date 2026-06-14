@@ -47,10 +47,17 @@ expected_endpoints = [
     Param.new("arg", "", "path"),
   ]),
   Endpoint.new("/preflight", "OPTIONS"),
+  # Moose-role composition: Controller::Widget composes Role::Resource (which
+  # itself composes Role::Chain for the setup/base/object skeleton) and sets
+  # `setup`'s PathPart to `widgets` via config. The role-carried CRUD actions
+  # resolve to their real paths once flattened into the controller.
+  Endpoint.new("/widgets", "GET"),
+  Endpoint.new("/widgets/:object_capture/delete", "GET", [
+    Param.new("object_capture", "", "path"),
+  ]),
   # NB: lib/MyApp/Role/Crud.pm carries a `purge : Chained('object')` action
-  # whose parent is composed in at runtime. It must NOT surface as a phantom
-  # `/purge` route — the absence of any such endpoint here asserts that
-  # unresolvable chain fragments are dropped, not emitted at the root.
+  # that NO controller composes, so it must NOT surface as a phantom `/purge`
+  # route — asserting unresolvable fragments are still dropped, not emitted.
 ]
 
 FunctionalTester.new("fixtures/perl/catalyst/", {
