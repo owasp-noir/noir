@@ -2000,6 +2000,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :php_mautic => {
+      :framework => "Mautic",
+      :language  => "PHP",
+      :similar   => ["mautic", "php-mautic", "php_mautic", "mautic/core-lib"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :php_laminas => {
       :framework => "Laminas",
       :language  => "PHP",
