@@ -17,6 +17,14 @@ class ApiDocsTagger < Tagger
     "openapi", "openapi3", "redoc", "graphiql", "rapidoc",
     "wsdl", "wadl", "api-docs", "api-doc",
     "asyncapi", "api-json", "api-yaml", "apispec", "apispec_1",
+    # OAuth/OIDC/SMART discovery documents — machine-readable service
+    # descriptions in the same class as WSDL/OpenAPI. They enumerate the
+    # auth surface (every endpoint, supported scopes/grants, jwks_uri) and
+    # are almost always unauthenticated, so they are a first-stop recon
+    # target. Served both at `/.well-known/<name>` and bare `/<name>`; the
+    # names are specific enough to carry no benign collision.
+    "openid-configuration", "oauth-authorization-server",
+    "oauth-protected-resource", "smart-configuration",
   }
 
   # Separator-insensitive lookup so `/swagger_ui`, `/swaggerui`,
