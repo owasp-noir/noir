@@ -8,6 +8,13 @@ expected_endpoints = [
   Endpoint.new("/metrics", "GET"),
   Endpoint.new("/sessions", "DELETE"),
   Endpoint.new("/version", "GET"),
+  Endpoint.new("/about", "GET"),
+  Endpoint.new("/contact/:id", "GET", [
+    Param.new("id", "", "path"),
+  ]),
+  Endpoint.new("/status", "GET"),
+  Endpoint.new("/up", "GET"),
+  Endpoint.new("/readiness", "GET"),
 ]
 
 FunctionalTester.new("fixtures/clojure/ring/", {
