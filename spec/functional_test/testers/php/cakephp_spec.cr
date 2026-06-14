@@ -19,11 +19,15 @@ expected_endpoints = [
   Endpoint.new("/sessions/{id}", "DELETE", [Param.new("id", "", "path")]),
   # prefix() opens a prefixed scope like scope()
   Endpoint.new("/groups/{id}", "GET", [Param.new("id", "", "path")]),
+  # prefix() with ['path' => '/v1.0'] mounts under the path option, not /v10.
+  # (The sibling `config/routes.php.twig` Bake template's `{{ plugin }}` routes
+  # are ignored entirely — a `.twig` file is not a routes file.)
+  Endpoint.new("/v1.0/status", "GET"),
   # Static Router facade form
   Endpoint.new("/legacy/ping", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/cakephp/", {
   :techs     => 2,  # Detection still sees php_cakephp and php_pure
-  :endpoints => 17, # Analysis suppresses redundant php_pure file endpoints
+  :endpoints => 18, # Analysis suppresses redundant php_pure file endpoints
 }, expected_endpoints).perform_tests

@@ -37,6 +37,12 @@ return static function (RouteBuilder $routes) {
             ->setMethods(['GET']);
     });
 
+    // prefix() with an explicit ['path' => ...] option mounts under that path,
+    // not the dasherized prefix name (so this is /v1.0/status, not /v10/status).
+    $routes->prefix('v10', ['path' => '/v1.0'], function (RouteBuilder $builder) {
+        $builder->get('/status', ['controller' => 'Api', 'action' => 'status']);
+    });
+
     // Static Router facade form used by older apps and plugin route files.
     Router::scope('/legacy', function (RouteBuilder $routes) {
         $routes->get('/ping', ['controller' => 'Legacy', 'action' => 'ping']);

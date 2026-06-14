@@ -7,8 +7,11 @@ module Analyzer::Php
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      # Analyze CakePHP routes file
-      if path.includes?("config/routes.php")
+      # Analyze CakePHP routes file. Require a real `.php` extension so a Bake
+      # code-generation template (`.../config/routes.php.twig`) — whose body is
+      # full of unrendered `{{ plugin }}` placeholders — isn't mistaken for a
+      # routes file by the `config/routes.php` substring match.
+      if path.includes?("config/routes.php") && path.ends_with?(".php")
         endpoints.concat(analyze_routes_file(path))
       end
 
@@ -187,6 +190,16 @@ module Analyzer::Php
         end
         name = prelude.match(/['"]([^'"]+)['"]/)
         return name ? "/#{name[1].downcase}" : ""
+      end
+
+      # `prefix('v10', ['path' => '/v1.0'], ...)` mounts under the explicit
+      # `path` option, NOT the dasherized prefix name — honour it like `plugin`
+      # does (`scope('/api', ...)` has no such option, so it falls through to
+      # its first string arg, the path itself).
+      if method == "prefix"
+        if path = prelude.match(/['"]path['"]\s*=>\s*['"]([^'"]*)['"]/i)
+          return path[1]
+        end
       end
 
       first = prelude.match(/['"]([^'"]*)['"]/)
