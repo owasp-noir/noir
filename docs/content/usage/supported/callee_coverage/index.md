@@ -46,6 +46,7 @@ This matrix lists frameworks with functional test coverage for callee extraction
 | Scala | Akka HTTP, http4s, Scalatra, ZIO HTTP |
 | Swift | Hummingbird, Kitura, Vapor |
 | TypeScript | NestJS |
+| Zig | Jetzig, Zap, httpz, Tokamak |
 
 ## Completeness Notes
 

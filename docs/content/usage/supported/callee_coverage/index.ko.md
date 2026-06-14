@@ -46,6 +46,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | Scala | Akka HTTP, http4s, Scalatra, ZIO HTTP |
 | Swift | Hummingbird, Kitura, Vapor |
 | TypeScript | NestJS |
+| Zig | Jetzig, Zap, httpz, Tokamak |
 
 ## 완성도 참고사항
 
