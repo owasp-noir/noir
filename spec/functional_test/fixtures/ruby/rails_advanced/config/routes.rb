@@ -8,6 +8,11 @@ Rails.application.routes.draw do
   get "#{base_c_route}/:message_id" => "chat#respond"
   post "#{base_c_route}/messages" => "chat#create"
 
+  # Regression guard: a `#{...}` interpolation that embeds its own quotes
+  # (an ENV lookup with a default) must not truncate the path at the inner
+  # quote — the old matcher surfaced a malformed `/#{ENV.fetch('` route.
+  get "/#{ENV.fetch('URL_COMPONENT', 'bb')}/:area" => "billboards#show"
+
   namespace :admin do
     resources :reports
     resources :refunds do

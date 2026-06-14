@@ -513,9 +513,13 @@ module Analyzer::Ruby
 
           # `get "path"` / `get "path" => "..."` / `get "path", to: "..."`.
           # The path literal may be empty (`get "" => "admin#index"` maps a
-          # namespace to its bare prefix), so accept `*` not `+`.
-          if sm = rest.match(/^\s*['"]([^'"]*)['"]/)
-            path = normalize_ruby_interpolation(strip_optional_route_segments(sm[1]))
+          # namespace to its bare prefix), so accept `*` not `+`. A `#{...}`
+          # interpolation can embed its own quotes (`get
+          # "/#{ENV.fetch('X', 'bb')}/:area"`), so consume those blocks
+          # wholesale instead of stopping at the first inner quote — that
+          # truncation surfaced a malformed `/#{ENV.fetch('` route.
+          if sm = rest.match(/^\s*(['"])((?:\#\{[^}]*\}|(?!\1).)*)\1/)
+            path = normalize_ruby_interpolation(strip_optional_route_segments(sm[2]))
             prefix = current_path_prefix_for_route(stack, route_scope)
             path_part = path.starts_with?("/") ? path : "/#{path}"
             url = prefix.empty? ? path_part : "/#{prefix}#{path_part}"

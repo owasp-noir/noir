@@ -17,6 +17,10 @@ expected_endpoints = [
   Endpoint.new("/c/:channel_title/:channel_id/:message_id", "GET"),
   Endpoint.new("/c/:channel_title/:channel_id/messages", "POST"),
 
+  # `#{ENV.fetch('URL_COMPONENT', 'bb')}` interpolation embeds quotes; the
+  # path must be captured whole (placeholdered), not truncated mid-quote.
+  Endpoint.new("/{ENV.fetch}/:area", "GET"),
+
   # namespace :admin do resources :reports end
   Endpoint.new("/admin/reports", "GET"),
   Endpoint.new("/admin/reports/1", "GET"),
@@ -193,6 +197,7 @@ expected_endpoints = [
 # /scans/1) and devise_for emits its full route set.
 total_endpoints = 1 +  # root
                   2 +  # `#{base_c_route}` interpolation resolved to 2 routes
+                  1 +  # `#{ENV.fetch(...)}` nested-quote interpolation placeholder
                   6 +  # admin/reports
                   4 +  # admin/refunds member (change_status, purge, update_metadata) + collection (new_list)
                   1 +  # admin/monitor/heartbeat (namespaced `to:`)
