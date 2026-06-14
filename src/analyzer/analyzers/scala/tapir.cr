@@ -18,6 +18,25 @@ module Analyzer::Scala
     # begins. `=(?![=>])` avoids stopping on `==`/`=>`.
     VAL_DEF_RE = /^\s*(?:(?:private|protected|implicit|lazy|final|override)\s+)*val\s+(\w+)\s*(?::\s*[^=]+?\s*)?=(?![=>])\s*/
 
+    MODIFIERS = "(?:(?:private|protected|implicit|lazy|final|override)\\s+)*"
+
+    # `val UserPath = "user"` (optionally `/`-joined literals). The captured
+    # value is already in literal form, so substituting it back into a `.in(...)`
+    # block lets the normal path-literal scan pick up the segments.
+    PATH_CONST_RE = Regex.new(
+      "^\\s*#{MODIFIERS}val\\s+(\\w+)\\s*(?::\\s*String\\s*)?=\\s*" \
+      "(\"(?:[^\"\\\\]|\\\\.)*\"(?:\\s*/\\s*\"(?:[^\"\\\\]|\\\\.)*\")*)\\s*$"
+    )
+
+    # `val limitParameter = query[Option[Int]]("limit")...` — a reusable input
+    # combinator bound to a val. Only the combinator core is captured so any
+    # trailing `.description(...)` is dropped.
+    PARAM_CONST_RE = Regex.new(
+      "^\\s*#{MODIFIERS}val\\s+(\\w+)\\s*=\\s*" \
+      "((?:query|queries|header|cookie|path)\\[#{TYPE_PATTERN}\\]\\s*\\(\\s*\"[^\"]+\"\\s*\\)" \
+      "|header\\s*\\(\\s*\"[^\"]+\"\\s*\\))"
+    )
+
     # Type token allows one level of nested brackets (e.g. Option[String], List[User]).
     TYPE_PATTERN = "(?:[^\\[\\]]|\\[[^\\[\\]]*\\])+"
 
@@ -53,6 +72,7 @@ module Analyzer::Scala
       defs = {} of String => String
       chains.each { |c| (n = c.name) && (defs[n] = c.text) }
 
+      consts = build_consts(code_lines)
       cache = {} of String => Tuple(Array(String), Array(Param))
       endpoints = [] of Endpoint
       chains.each do |chain|
@@ -62,7 +82,7 @@ module Analyzer::Scala
         endpoint = create_endpoint("/", method.upcase, path, chain.line)
         seen = Set(String).new
         (n = chain.name) && (seen << n)
-        segments, params = resolve_chain(chain.text, defs, cache, seen)
+        segments, params = resolve_chain(chain.text, defs, consts, cache, seen)
         endpoint.url = segments.empty? ? "/" : "/" + segments.join("/")
         params.each { |p| add_param(endpoint, p.name, p.value, p.param_type) }
         endpoints << endpoint
@@ -103,18 +123,19 @@ module Analyzer::Scala
     # terminal roots; any other leading identifier that names a known chain is a
     # reusable base (`val base = endpoint.in("books")`). `seen` guards cycles.
     private def resolve_chain(chain : String, defs : Hash(String, String),
+                              consts : Hash(String, String),
                               cache : Hash(String, Tuple(Array(String), Array(Param))),
                               seen : Set(String)) : Tuple(Array(String), Array(Param))
       own_segments = [] of String
       own_params = [] of Param
       extract_in_blocks(chain).each do |args|
-        process_in_args(args, own_params, own_segments)
+        process_in_args(args, own_params, own_segments, consts)
       end
 
       head = leading_ident(chain)
       if head && head != "endpoint" && head != "infallibleEndpoint" && !seen.includes?(head) && (base_chain = defs[head]?)
         base_segs, base_params = cache[head]? || begin
-          resolved = resolve_chain(base_chain, defs, cache, seen | Set{head})
+          resolved = resolve_chain(base_chain, defs, consts, cache, seen | Set{head})
           cache[head] = resolved
           resolved
         end
@@ -122,6 +143,22 @@ module Analyzer::Scala
       end
 
       {own_segments, own_params}
+    end
+
+    # Collect `val NAME = "literal"` path constants and `val NAME = query[..](..)`
+    # input-combinator constants so a `.in(NAME / ...)` reference resolves to the
+    # real path/param instead of being dropped.
+    private def build_consts(code_lines : Array(String)) : Hash(String, String)
+      consts = {} of String => String
+      code_lines.each do |line|
+        next if line.empty?
+        if m = line.match(PATH_CONST_RE)
+          consts[m[1]] = m[2]
+        elsif m = line.match(PARAM_CONST_RE)
+          consts[m[1]] = m[2]
+        end
+      end
+      consts
     end
 
     private def leading_ident(chain : String) : String?
@@ -260,7 +297,8 @@ module Analyzer::Scala
       nil
     end
 
-    private def process_in_args(args : String, params : Array(Param), segments : Array(String))
+    private def process_in_args(args : String, params : Array(Param), segments : Array(String), consts : Hash(String, String))
+      args = substitute_consts(args, consts) unless consts.empty?
       depths = call_paren_depths(args)
       args.scan(IN_TOKEN_RE) do |m|
         if literal = m["literal"]?
@@ -303,6 +341,94 @@ module Analyzer::Scala
     private def collect_param(params : Array(Param), name : String, type_value : String, param_type : String)
       return if params.any? { |p| p.name == name && p.param_type == param_type }
       params << Param.new(name, type_value, param_type)
+    end
+
+    # Replace top-level identifier references to known path/param constants with
+    # their literal/combinator form before tokenizing. Only substitutes outside
+    # any call parens or `[...]` type args, and never a `.member`/`call(` — so a
+    # const name reused as a type or modifier argument is left untouched.
+    private def substitute_consts(args : String, consts : Hash(String, String)) : String
+      io = String::Builder.new
+      i = 0
+      size = args.size
+      call_depth = 0
+      bracket_depth = 0
+      stack = [] of Bool
+      in_str = false
+      prev_sig = '\0'
+      while i < size
+        c = args[i]
+        if in_str
+          io << c
+          if c == '\\' && i + 1 < size
+            io << args[i + 1]
+            i += 2
+            next
+          elsif c == '"'
+            in_str = false
+            prev_sig = '"'
+          end
+          i += 1
+          next
+        end
+
+        case c
+        when '"'
+          in_str = true
+          io << c
+          prev_sig = '"'
+          i += 1
+        when '['
+          bracket_depth += 1
+          io << c
+          prev_sig = '['
+          i += 1
+        when ']'
+          bracket_depth -= 1
+          io << c
+          prev_sig = ']'
+          i += 1
+        when '('
+          is_call = prev_sig.ascii_alphanumeric? || prev_sig == '_' || prev_sig == ']'
+          stack << is_call
+          call_depth += 1 if is_call
+          io << c
+          prev_sig = '('
+          i += 1
+        when ')'
+          if last = stack.pop?
+            call_depth -= 1 if last
+          end
+          io << c
+          prev_sig = ')'
+          i += 1
+        else
+          if c.ascii_letter? || c == '_'
+            start = i
+            while i < size && (args[i].ascii_alphanumeric? || args[i] == '_')
+              i += 1
+            end
+            ident = args[start...i]
+            j = i
+            while j < size && args[j].ascii_whitespace?
+              j += 1
+            end
+            following = j < size ? args[j] : '\0'
+            if call_depth == 0 && bracket_depth == 0 && prev_sig != '.' &&
+               following != '(' && following != '.' && (sub = consts[ident]?)
+              io << sub
+            else
+              io << ident
+            end
+            prev_sig = ident[-1]
+          else
+            io << c
+            prev_sig = c unless c.ascii_whitespace?
+            i += 1
+          end
+        end
+      end
+      io.to_s
     end
 
     private def add_param(endpoint : Endpoint, name : String, type_value : String, param_type : String)
