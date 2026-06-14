@@ -85,12 +85,18 @@ module Analyzer::Lua
       result
     end
 
-    # Skip Busted spec files (`*_spec.lua`) and `spec*/` directories — the lor
-    # framework (vendored under `lib/lor` in several apps) ships ~dozens of
-    # phantom routes in `spec/cases/*_spec.lua` against inline test apps.
+    # Skip the lor framework's own test suite, which apps vendor under
+    # `lib/lor`, `resty/thirdparty/lor`, etc. and which defines dozens of
+    # phantom routes against inline test apps. lor uses the Busted `*_spec.lua`
+    # convention AND a `*.test.lua` convention (e.g. `test/stack.test.lua`,
+    # `test/path_pattern_2.test.lua`), both under `spec*/` or `test*/`
+    # directories. Without this, Mio surfaced 20 phantom routes
+    # (`/user/123/create`, `/test/foo/bar`, …) from its vendored
+    # `resty/thirdparty/lor/test/*.test.lua` and only 1 real route.
     private def lor_test_path?(path : String) : Bool
       base = File.basename(path)
       return true if base.ends_with?("_spec.lua") || base.ends_with?("_spec.moon")
+      return true if base.ends_with?(".test.lua") || base.ends_with?(".test.moon")
       expanded_path = File.expand_path(path)
 
       base_paths.any? do |root|
@@ -99,7 +105,9 @@ module Analyzer::Lua
         expanded_root = File.expand_path(root)
         expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
         tail = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
-        tail.split(File::SEPARATOR).any? { |seg| seg == "spec" || seg.starts_with?("spec_") }
+        tail.split(File::SEPARATOR).any? do |seg|
+          seg == "spec" || seg.starts_with?("spec_") || seg == "test" || seg == "tests"
+        end
       end
     end
 
