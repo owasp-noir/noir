@@ -21,6 +21,20 @@ module Analyzer::Zig
   #      mount and the controller usually live in different files, so the
   #      mount prefixes are resolved project-wide and keyed by controller file.
   #
+  # A controller's routes can also be declared as `const` bindings rather than
+  # functions — the handler lives in another file and the route is just a name:
+  #
+  #   pub const Protected = struct {
+  #       pub const @"GET /projects" = getAllProjects;
+  #       pub const @"PUT /projects/:id" = updateProject;
+  #   };
+  #
+  # Such structs are mounted by *qualified* name (`.router(api.Protected)`,
+  # where `api = @import("api.zig")` and `Protected` is a struct inside it), so
+  # the route set of one file is partitioned across several mounts. Each route
+  # therefore carries the prefix of every mount that targets its enclosing
+  # struct (or any whole-file mount).
+  #
   # Not yet resolved: a `.group(prefix, RouteConst)` whose body is a reference
   # to a `tk.Route` const (rather than an inline `&.{ … }` array) — those
   # controllers' routes are emitted without the referenced-group prefix.
@@ -32,6 +46,11 @@ module Analyzer::Zig
     }
 
     GROUP_RE = /\.\s*group\s*\(\s*"([^"]*)"\s*,\s*&?\s*\.\s*\{/
+    # Value-form group whose body is a single route value rather than an
+    # `&.{ … }` array (`tk.group("/api", tk.router(api))`). The negative
+    # lookahead — which must absorb its own leading whitespace, so a
+    # backtracking `\s*` can't slip past it — keeps the array form to GROUP_RE.
+    GROUP_VALUE_RE = /\.\s*group\s*\(\s*"([^"]*)"\s*,(?!\s*&?\s*\.\s*\{)/
     # The path must be a rooted URL (`"/..."`). Tokamak handlers commonly build
     # a JSON response with `root.put("name", value)` / `data.get("key")`; those
     # data-object calls share the verb names but never take a `/`-rooted key,
@@ -39,9 +58,16 @@ module Analyzer::Zig
     ROUTE_RE        = /\.\s*(get|post0|post|put0|put|patch0|patch|delete|head|options)\s*\(\s*"(\/[^"]*)"\s*,\s*([A-Za-z_][\w.]*)/
     ROUTER_MOUNT_RE = /\.\s*router\s*\(\s*([A-Za-z_][\w.]*)\s*\)/
     ROUTE_FN_RE     = /pub\s+fn\s+@"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[^"]*)"/
+    ROUTE_CONST_RE  = /pub\s+const\s+@"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[^"]*)"/
+    STRUCT_DECL_RE  = /(?:^|[^A-Za-z0-9_.])(?:pub\s+)?const\s+([A-Za-z_]\w*)\s*=\s*struct\s*\{/
     IMPORT_RE       = /(?:pub\s+)?(?:const|var)\s+([A-Za-z_]\w*)\s*=\s*@import\(\s*"([^"]+\.zig)"\s*\)/
 
     private record GroupFrame, prefix : String, close : Int32
+    # A `.router(...)` mount targeting a controller file. `scope` is the struct
+    # name within that file the mount selects (`.router(api.Protected)`), or nil
+    # for a whole-file mount (`.router(chat)`).
+    private record RouterMount, scope : String?, prefix : String
+    private record StructRegion, name : String, start : Int32, stop : Int32
 
     def analyze
       include_callee = callees_needed?
@@ -61,7 +87,8 @@ module Analyzer::Zig
 
     private def route_file?(content : String) : Bool
       content.includes?("tk.Route") || content.includes?(".group(") ||
-        content.includes?(".router(") || content.includes?("pub fn @\"")
+        content.includes?(".router(") || content.includes?("pub fn @\"") ||
+        content.includes?("pub const @\"")
     end
 
     # alias identifier => absolute file it `@import`s.
@@ -78,9 +105,10 @@ module Analyzer::Zig
       map
     end
 
-    # controller file => the URL prefixes it is `.router(...)`-mounted at.
-    private def build_router_mounts(files : Array(String), alias_to_file : Hash(String, String)) : Hash(String, Array(String))
-      mounts = Hash(String, Array(String)).new
+    # controller file => the `.router(...)` mounts that target it (prefix +
+    # optional struct scope).
+    private def build_router_mounts(files : Array(String), alias_to_file : Hash(String, String)) : Hash(String, Array(RouterMount))
+      mounts = Hash(String, Array(RouterMount)).new
       files.each do |path|
         content = read_file_content(path)
         next unless content.includes?(".router(")
@@ -88,13 +116,26 @@ module Analyzer::Zig
         # `strip_comments` keeps string contents, so `{`/`}` inside a literal
         # would corrupt brace matching. `strip_non_code` blanks strings at the
         # same offsets, so it is the right char array for `find_matching`.
-        code_chars = Noir::ZigCalleeExtractor.strip_non_code(content).chars
+        stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
+        code_chars = stripped.chars
+        local_structs = struct_regions(stripped).map(&.name)
 
         events = [] of NamedTuple(kind: Symbol, off: Int32, prefix: String, close: Int32?, target: String)
+        # Array-form group: `.group("/p", &.{ … })` — scoped by its body braces.
         text.scan(GROUP_RE) do |m|
           brace = (m.end(0) || 0) - 1
           close = Noir::ZigCalleeExtractor.find_matching(code_chars, brace, '{', '}')
           events << {kind: :group, off: m.begin(0) || 0, prefix: m[1], close: close, target: ""}
+        end
+        # Value-form group: `.group("/p", tk.router(x))` — the body is a single
+        # route value, not a `&.{ … }` array, so the scope is the group call's
+        # own parentheses.
+        text.scan(GROUP_VALUE_RE) do |m|
+          start = m.begin(0) || 0
+          paren = index_of(code_chars, start, '(')
+          next if paren.nil?
+          close = Noir::ZigCalleeExtractor.find_matching(code_chars, paren, '(', ')')
+          events << {kind: :group, off: start, prefix: m[1], close: close, target: ""}
         end
         text.scan(ROUTER_MOUNT_RE) do |m|
           events << {kind: :router, off: m.begin(0) || 0, prefix: "", close: nil, target: m[1]}
@@ -109,17 +150,43 @@ module Analyzer::Zig
             stack << GroupFrame.new(ev[:prefix], close) if close
             next
           end
-          target_file = alias_to_file[ev[:target].split('.').last]?
-          next if target_file.nil?
+          resolved = resolve_router_target(ev[:target], alias_to_file, File.expand_path(path), local_structs)
+          next if resolved.nil?
+          target_file, scope = resolved
           prefix = stack.reduce("") { |acc, frame| Noir::URLPath.join(acc, frame.prefix) }
-          list = mounts[target_file] ||= [] of String
-          list << prefix unless list.includes?(prefix)
+          list = mounts[target_file] ||= [] of RouterMount
+          mount = RouterMount.new(scope, prefix)
+          list << mount unless list.includes?(mount)
         end
       end
       mounts
     end
 
-    private def process_file(path : String, content : String, mounts : Hash(String, Array(String)), include_callee : Bool)
+    # A `.router(target)` argument resolves to a controller file (+ optional
+    # struct scope inside it):
+    #   * `.router(chat)` / `.router(api.push)` — the simple/last identifier is
+    #     itself a `@import` alias → whole-file mount (scope nil).
+    #   * `.router(api.Protected)` — `api` is the file alias, `Protected` a
+    #     struct declared inside it → file-scoped to that struct.
+    #   * `.router(api)` — `api` is a `const api = struct { … }` declared in the
+    #     current file → same-file mount scoped to that struct.
+    private def resolve_router_target(target : String, alias_to_file : Hash(String, String), current_file : String, local_structs : Array(String)) : Tuple(String, String?)?
+      segments = target.split('.')
+      if file = alias_to_file[segments.last]?
+        return {file, nil}
+      end
+      if segments.size > 1
+        if file = alias_to_file[segments.first]?
+          return {file, segments[1]}
+        end
+      end
+      if segments.size == 1 && local_structs.includes?(segments.first)
+        return {current_file, segments.first}
+      end
+      nil
+    end
+
+    private def process_file(path : String, content : String, mounts : Hash(String, Array(RouterMount)), include_callee : Bool)
       text = Noir::ZigCalleeExtractor.strip_comments(content)
       # Strings preserved in `text` for reading paths/handlers; brace matching
       # runs on the string-blanked (but offset-identical) char array so a `{`/`}`
@@ -146,33 +213,90 @@ module Analyzer::Zig
         end
 
         prefix = stack.reduce("") { |acc, frame| Noir::URLPath.join(acc, frame.prefix) }
-        url = Noir::URLPath.join(prefix, ev[:path])
+        url = join_route(prefix, ev[:path])
         name = ev[:handler].includes?('.') ? ev[:handler].split('.').last : ev[:handler]
         callees = include_callee ? body_callees(bodies, name, path) : [] of Noir::ZigCalleeExtractor::Entry
         emit(path, text, ev[:off], url, ev[:method], callees)
       end
     end
 
-    # `pub fn @"METHOD /path"` controller handlers, prefixed by every
-    # `.router(...)` mount point that targets this file (or bare when the file
-    # isn't mounted, or its mount chain crosses a route-value reference we
-    # don't expand).
+    # `pub fn @"METHOD /path"` / `pub const @"METHOD /path"` controller routes,
+    # prefixed by every `.router(...)` mount that targets this file (whole-file
+    # mounts apply to top-level routes; struct-scoped mounts apply to routes
+    # inside the matching struct). Falls back to bare when the file isn't
+    # mounted, or its mount chain crosses a route-value reference we don't
+    # expand. `const` routes name a handler defined elsewhere, so they carry no
+    # inline body and thus no callees.
     private def emit_controller_routes(path, content, text, mounts, include_callee)
-      return unless content.includes?("pub fn @\"")
+      has_fn = content.includes?("pub fn @\"")
+      has_const = content.includes?("pub const @\"")
+      return unless has_fn || has_const
+
       stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
       stripped_chars = stripped.chars
-      prefixes = mounts[File.expand_path(path)]?
-      prefixes = [""] if prefixes.nil? || prefixes.empty?
+      file_mounts = mounts[File.expand_path(path)]?
+      regions = struct_regions(stripped)
 
-      text.scan(ROUTE_FN_RE) do |m|
-        method = m[1]
-        rel = m[2]
-        offset = m.begin(0) || 0
-        callees = include_callee ? route_fn_callees(stripped_chars, m.end(0) || 0, path) : [] of Noir::ZigCalleeExtractor::Entry
-        prefixes.each do |pre|
-          emit(path, text, offset, Noir::URLPath.join(pre, rel), method, callees)
+      if has_fn
+        text.scan(ROUTE_FN_RE) do |m|
+          method = m[1]
+          rel = m[2]
+          offset = m.begin(0) || 0
+          callees = include_callee ? route_fn_callees(stripped_chars, m.end(0) || 0, path) : [] of Noir::ZigCalleeExtractor::Entry
+          prefixes_for(file_mounts, enclosing_struct(regions, offset)).each do |pre|
+            emit(path, text, offset, join_route(pre, rel), method, callees)
+          end
         end
       end
+
+      if has_const
+        text.scan(ROUTE_CONST_RE) do |m|
+          method = m[1]
+          rel = m[2]
+          offset = m.begin(0) || 0
+          prefixes_for(file_mounts, enclosing_struct(regions, offset)).each do |pre|
+            emit(path, text, offset, join_route(pre, rel), method, [] of Noir::ZigCalleeExtractor::Entry)
+          end
+        end
+      end
+    end
+
+    # Struct declaration regions (`const X = struct { … }`), brace-matched on
+    # the string-blanked char array, so a `@"…"` route name can be attributed
+    # to its enclosing struct.
+    private def struct_regions(stripped : String) : Array(StructRegion)
+      chars = stripped.chars
+      regions = [] of StructRegion
+      stripped.scan(STRUCT_DECL_RE) do |m|
+        name = m[1]
+        brace = (m.end(0) || 0) - 1
+        close = Noir::ZigCalleeExtractor.find_matching(chars, brace, '{', '}')
+        next if close.nil?
+        regions << StructRegion.new(name, brace, close)
+      end
+      regions
+    end
+
+    # The name of the innermost struct region containing `offset`, or nil for a
+    # top-level (file-scope) declaration.
+    private def enclosing_struct(regions : Array(StructRegion), offset : Int32) : String?
+      best : StructRegion? = nil
+      regions.each do |r|
+        next unless offset > r.start && offset < r.stop
+        best = r if best.nil? || (r.stop - r.start) < (best.stop - best.start)
+      end
+      best.try(&.name)
+    end
+
+    # Prefixes a route at `scope` (its enclosing struct name, or nil) inherits:
+    # every whole-file mount plus every mount selecting this struct. Bare when
+    # the file has no resolvable mounts.
+    private def prefixes_for(file_mounts : Array(RouterMount)?, scope : String?) : Array(String)
+      return [""] if file_mounts.nil? || file_mounts.empty?
+      whole = file_mounts.select(&.scope.nil?).map(&.prefix)
+      scoped = scope ? file_mounts.select { |m| m.scope == scope }.map(&.prefix) : [] of String
+      result = (whole + scoped).uniq
+      result.empty? ? [""] : result
     end
 
     # Group-open and route events, ordered by source offset, so a single pass
@@ -250,6 +374,14 @@ module Analyzer::Zig
         params << Param.new(m[1], "", "path")
       end
       params
+    end
+
+    # Join a mount/group prefix with a route path. A bare-root route ("/")
+    # mounted under a non-empty prefix collapses to the prefix itself rather
+    # than picking up a trailing slash (`/api` + `/` => `/api`, not `/api/`).
+    private def join_route(prefix : String, route : String) : String
+      return prefix if route == "/" && !prefix.empty?
+      Noir::URLPath.join(prefix, route)
     end
   end
 end

@@ -1,6 +1,7 @@
 const std = @import("std");
 const tk = @import("tokamak");
 const widgets = @import("api/widgets.zig");
+const resources = @import("api/resources.zig");
 
 const routes: []const tk.Route = &.{
     .get("/", hello),
@@ -14,6 +15,28 @@ const routes: []const tk.Route = &.{
             .delete("/items/:id", deleteItem),
         }),
     }),
+    // Qualified struct mounts — each struct's `pub const @"…"` routes compose
+    // the `/admin` prefix, partitioned by struct.
+    .group("/admin", &.{
+        .router(resources.Public),
+        .router(resources.Private),
+    }),
+    // Value-form group: the body is a single route value (`.router(local)`),
+    // not a `&.{ … }` array, so the `/svc` prefix is scoped to the group call's
+    // own parentheses. `local` is a struct declared in this file.
+    .group("/svc", .router(local)),
+};
+
+// Local controller struct mounted by the value-form group above. Its root
+// handler (`@"GET /"`) collapses to `/svc` without a trailing slash.
+const local = struct {
+    pub fn @"GET /"() ![]const u8 {
+        return ping();
+    }
+
+    pub fn @"POST /sync"() !void {
+        try worker.run();
+    }
 };
 
 fn hello() ![]const u8 {
