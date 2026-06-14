@@ -216,6 +216,30 @@ describe "OAuthTagger" do
       endpoint.tags[0].name.should eq("oauth")
     end
 
+    it "tags param-less endpoints under a strong /oauth2 path segment" do
+      ["/oauth2/auth", "/oauth2/device/auth", "/oauth2/device/verify",
+       "/oauth2/sessions/logout", "/oauth/authorize",
+       "/openid/userinfo", "/oidc/token"].each do |path|
+        tagger = OAuthTagger.new(default_tagger_options)
+        endpoint = Endpoint.new(path, "GET")
+
+        tagger.perform([endpoint])
+
+        endpoint.tags.size.should eq(1)
+        endpoint.tags[0].name.should eq("oauth")
+      end
+    end
+
+    it "does not tag a path that merely contains 'openid' as a sub-token" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/.well-known/openid-configuration", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
     it "does not tag a generic callback receiving only a code" do
       tagger = OAuthTagger.new(default_tagger_options)
 
