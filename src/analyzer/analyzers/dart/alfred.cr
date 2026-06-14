@@ -75,24 +75,38 @@ module Analyzer::Dart
       result
     end
 
+    # A file participates in Alfred routing if it imports the package,
+    # instantiates `Alfred()`, or references the `Alfred` type (route
+    # registration often happens in a controller that receives the
+    # instance as a constructor field — these files import a barrel that
+    # re-exports `package:alfred/`, not the package directly). The real
+    # gate is `router_prefixes`: nothing is emitted without an `Alfred`
+    # instance/typed variable and a verb call.
     private def alfred_file?(content : String) : Bool
-      content.includes?("package:alfred/") || content.includes?("Alfred(")
+      content.includes?("package:alfred/") || content.matches?(/\bAlfred\b/)
     end
 
-    # Discover variables that hold an `Alfred` instance, then collect the
-    # verb calls (cascade or direct) attached to each. Operates on a
-    # comment-stripped copy so offsets in the original line up byte-for-byte.
+    # Discover variables that hold an `Alfred` instance (or a `route()`
+    # child), then collect the verb calls (direct or cascade) attached to
+    # each. Operates on a comment-stripped copy so offsets in the original
+    # line up byte-for-byte.
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
       cleaned = Helper.strip_comments(content)
-      router_vars = alfred_router_vars(cleaned)
-      return [] of Endpoint if router_vars.empty?
+      prefixes = router_prefixes(cleaned)
+      return [] of Endpoint if prefixes.empty?
 
       endpoints = [] of Endpoint
       seen = Set({String, String}).new # (verb, path) within this file
 
-      router_vars.each do |var_name|
-        scan_calls(cleaned, var_name, content, path, include_callee, endpoints, seen)
+      # Direct verb calls on a router variable (`app.get('/x', h)`); the
+      # variable's prefix is empty for the top-level `Alfred` instance and
+      # the composed base for a `route()`-assigned child router.
+      prefixes.each do |var_name, prefix|
+        scan_calls(cleaned, var_name, prefix, content, path, include_callee, endpoints, seen)
       end
+
+      # Cascade-nested routes: `app.route('/base')..get('sub', h)..post(...)`.
+      scan_route_cascades(cleaned, prefixes, content, path, include_callee, endpoints, seen)
 
       endpoints
     end
@@ -101,28 +115,57 @@ module Analyzer::Dart
     # declared type is `Alfred` (so `void configure(Alfred app)` route
     # registration is picked up too).
     ALFRED_ASSIGN_REGEX = /(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:Alfred\s+)?([A-Za-z_]\w*)\s*=\s*Alfred\s*\(/
-    ALFRED_TYPED_REGEX  = /(?:^|[;{}(,])\s*Alfred\s+([A-Za-z_]\w*)/
+    # An `Alfred`-typed parameter (`void f(Alfred app)`) or field
+    # (`final Alfred app;`), so route registration that reaches `Alfred`
+    # through a constructor/parameter is picked up.
+    ALFRED_TYPED_REGEX = /(?:[;{}(,]\s*|\b(?:final|late|const|var|required)\s+)Alfred\s+([A-Za-z_]\w*)\b/
+    # `final r = app.route('/base', ...)` — a NestedRoute child bound to a
+    # variable. Capture 1 is the new variable, capture 2 its receiver.
+    ROUTE_ASSIGN_REGEX = /(?:^|[;{}=(,\s])(?:final|var|const|late)\s+(?:[A-Za-z_][\w<>,\s?]*\s+)?([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*\.\s*route\s*\(/
 
-    private def alfred_router_vars(cleaned : String) : Array(String)
-      vars = Set(String).new
+    # Router variable → raw base prefix. Top-level `Alfred` instances and
+    # `Alfred`-typed parameters map to "" (root); a `route()`-assigned child
+    # maps to its composed base path.
+    private def router_prefixes(cleaned : String) : Hash(String, String)
+      prefixes = {} of String => String
       cleaned.scan(ALFRED_ASSIGN_REGEX) do |m|
-        name = m[1]
-        vars << name unless name.empty?
+        prefixes[m[1]] = "" unless m[1].empty?
       end
       cleaned.scan(ALFRED_TYPED_REGEX) do |m|
-        name = m[1]
-        vars << name unless name.empty?
+        prefixes[m[1]] = "" unless m[1].empty?
       end
-      vars.to_a
+
+      # Resolve `var r = <router>.route('/base')` assignments. A few passes
+      # settle chained assignments (`r2 = r.route('/x')`).
+      3.times do
+        added = false
+        cleaned.scan(ROUTE_ASSIGN_REGEX) do |m|
+          name = m[1]
+          recv = m[2]
+          next if prefixes.has_key?(name)
+          base = prefixes[recv]?
+          next unless base
+          open_paren = (m.end(0) || 0) - 1
+          close_paren = find_matching_paren(cleaned, open_paren)
+          next unless close_paren
+          args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+          next if args.empty?
+          sub = Helper.extract_string_literal(args[0])
+          next unless sub
+          prefixes[name] = alfred_compose(base, sub)
+          added = true
+        end
+        break unless added
+      end
+
+      prefixes
     end
 
-    # Both cascade (`..get(`) and direct (`app.get(`) calls reference the
-    # router variable. A single regex over the cleaned source matches
-    # `app.get(` and `..get(` (the optional `.` before the receiver lets
-    # the same scan catch cascades); `mount`/`route` and other non-verb
-    # members are filtered by `relevant_method?`.
+    # Direct `app.get('/x', h)` verb calls on the router variable. `route`
+    # and other non-verb members are filtered by `relevant_method?`.
     private def scan_calls(cleaned : String,
                            var_name : String,
+                           prefix : String,
                            content : String,
                            path : String,
                            include_callee : Bool,
@@ -137,7 +180,95 @@ module Analyzer::Dart
         open_paren = match_end - 1
         close_paren = find_matching_paren(cleaned, open_paren)
         next unless close_paren
-        handle_call(method, cleaned, open_paren, close_paren, content, path, include_callee, endpoints, seen)
+        handle_call(method, cleaned, open_paren, close_paren, prefix, content, path, include_callee, endpoints, seen)
+      end
+    end
+
+    # A `route()` call whose result a cascade/chain of verb calls is
+    # attached to: `app.route('/base')..get('sub', h)..post('sub2', h)`.
+    ROUTE_CALL_REGEX = /(?<![\w$.])([A-Za-z_]\w*)\s*\.\s*route\s*\(/
+
+    private def scan_route_cascades(cleaned : String,
+                                    prefixes : Hash(String, String),
+                                    content : String,
+                                    path : String,
+                                    include_callee : Bool,
+                                    endpoints : Array(Endpoint),
+                                    seen : Set({String, String}))
+      cleaned.scan(ROUTE_CALL_REGEX) do |m|
+        rvar = m[1]
+        base = prefixes[rvar]?
+        next unless base
+        open_paren = (m.end(0) || 0) - 1
+        close_paren = find_matching_paren(cleaned, open_paren)
+        next unless close_paren
+        args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        next if args.empty?
+        sub = Helper.extract_string_literal(args[0])
+        next unless sub
+
+        base_prefix = alfred_compose(base, sub)
+        scan_chain(cleaned, close_paren + 1, base_prefix, content, path, include_callee, endpoints, seen)
+      end
+    end
+
+    # Walk the cascade/chain of calls following a `route()` result,
+    # structurally skipping each call's handler body. A `..verb('sub', h)`
+    # registers `compose(base, sub)`; a single-dot `.route('/x')` chains a
+    # deeper base, while a cascade `..route('/x')` is discarded (its result
+    # isn't the chain's value). The walk stops at the statement terminator.
+    private def scan_chain(cleaned : String,
+                           start : Int32,
+                           base_prefix : String,
+                           content : String,
+                           path : String,
+                           include_callee : Bool,
+                           endpoints : Array(Endpoint),
+                           seen : Set({String, String}))
+      stmt_end = find_statement_end(cleaned, start)
+      prefix = base_prefix
+      i = start
+
+      while i < stmt_end
+        while i < stmt_end && cleaned[i].whitespace?
+          i += 1
+        end
+        break unless i < stmt_end && cleaned[i] == '.'
+        i += 1
+        cascade = false
+        if i < stmt_end && cleaned[i] == '.'
+          cascade = true
+          i += 1
+        end
+        while i < stmt_end && cleaned[i].whitespace?
+          i += 1
+        end
+
+        name_start = i
+        while i < stmt_end && (cleaned[i].alphanumeric? || cleaned[i] == '_')
+          i += 1
+        end
+        name = cleaned[name_start...i]
+        while i < stmt_end && cleaned[i].whitespace?
+          i += 1
+        end
+        break unless i < stmt_end && cleaned[i] == '('
+
+        open_paren = i
+        close_paren = find_matching_paren(cleaned, open_paren)
+        break unless close_paren && close_paren <= stmt_end
+
+        if relevant_method?(name)
+          handle_call(name, cleaned, open_paren, close_paren, prefix, content, path, include_callee, endpoints, seen)
+        elsif name == "route" && !cascade
+          # `.route('/x')` (chained, not a cascade) deepens the base.
+          inner = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+          if sub = (inner.empty? ? nil : Helper.extract_string_literal(inner[0]))
+            prefix = alfred_compose(prefix, sub)
+          end
+        end
+
+        i = close_paren + 1
       end
     end
 
@@ -149,6 +280,7 @@ module Analyzer::Dart
                             source : String,
                             open_paren : Int32,
                             close_paren : Int32,
+                            prefix : String,
                             content : String,
                             path : String,
                             include_callee : Bool,
@@ -163,7 +295,7 @@ module Analyzer::Dart
       literal = Helper.extract_string_literal(args[0])
       return unless literal
 
-      url = normalize_path(literal)
+      url = prefix.empty? ? normalize_path(literal) : normalize_path(alfred_compose(prefix, literal))
       line = line_for_offset(content, open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
@@ -223,6 +355,18 @@ module Analyzer::Dart
       base.gsub(/:([A-Za-z_]\w*)(?::[A-Za-z_]\w*)?/) { "{#{$~[1]}}" }
     end
 
+    # Join a `route()` base with a sub-path exactly as Alfred's
+    # `NestedRoute._composePath` does, so composed URLs match the framework.
+    private def alfred_compose(first : String, second : String) : String
+      if first.ends_with?('/') && second.starts_with?('/')
+        first + second[1..]
+      elsif !first.ends_with?('/') && !second.starts_with?('/')
+        "#{first}/#{second}"
+      else
+        first + second
+      end
+    end
+
     private def build_endpoint(url : String,
                                verb : String,
                                path : String,
@@ -276,6 +420,45 @@ module Analyzer::Dart
       end
 
       nil
+    end
+
+    # Char index just past the end of the statement beginning at `start`:
+    # the first `;` at bracket depth zero (or end of source). Used to bound
+    # a `route()` cascade/chain walk so it can't run into the next statement.
+    private def find_statement_end(text : String, start : Int32) : Int32
+      depth = 0
+      i = start
+      in_string = false
+      string_quote = '\0'
+
+      while i < text.size
+        c = text[i]
+        if in_string
+          if c == '\\' && i + 1 < text.size
+            i += 2
+            next
+          end
+          in_string = false if c == string_quote
+          i += 1
+          next
+        end
+
+        case c
+        when '"', '\''
+          in_string = true
+          string_quote = c
+        when '(', '{', '['
+          depth += 1
+        when ')', '}', ']'
+          depth -= 1 if depth > 0
+        when ';'
+          return i if depth == 0
+        else
+          # ignore
+        end
+        i += 1
+      end
+      text.size
     end
 
     # Char index of the first comma at paren/brace/bracket depth zero
