@@ -52,9 +52,11 @@ router.get("/profile") { request, response, next in
     next()
 }
 
-// DELETE route
+// DELETE route. The Fluent-style `Grade.delete(id:)` call inside the handler
+// has a non-router receiver and must NOT be reported as an endpoint.
 router.delete("/users/:id") { request, response, next in
     let id = request.parameters["id"]
+    Grade.delete(id: id, completion)
     response.status(.OK)
     next()
 }
