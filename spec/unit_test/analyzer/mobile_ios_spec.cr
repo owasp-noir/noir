@@ -58,4 +58,16 @@ describe "Analyzer::Mobile::Ios" do
     # only myapp.example.com endpoint is the applinks one.
     endpoints.count { |e| e.url == "https://myapp.example.com/" }.should eq(1)
   end
+
+  it "maps appclips: associated domains to universal links" do
+    # An App Clip is launched by a tapped https:// URL just like a universal
+    # link; App Clip targets often list domains the full app does not.
+    find.call("https://clip.example.com/").not_nil!.protocol.should eq("universal-link")
+  end
+
+  it "collapses an appclips domain that overlaps an applinks domain" do
+    # appclips:myapp.example.com + applinks:myapp.example.com are the same
+    # https:// surface — one endpoint, not two.
+    endpoints.count { |e| e.url == "https://myapp.example.com/" }.should eq(1)
+  end
 end

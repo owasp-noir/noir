@@ -214,6 +214,19 @@ module Analyzer::Mobile
       value.includes?("$(") || value.includes?("${")
     end
 
+    # Associated-domain service prefixes that designate a URL entry point.
+    #   * applinks   — a tapped https:// URL opens the full app (universal link)
+    #   * appclips   — a tapped https:// URL launches the App Clip; same URL
+    #                  mechanism, but a distinct (often less-trusted, friction-
+    #                  reduced) surface that the App Clip target handles via
+    #                  NSUserActivity. App Clip targets ship their own
+    #                  *.entitlements that frequently list domains the main app
+    #                  does NOT (e.g. pocket-casts `appclips:pocketcasts.net`),
+    #                  so skipping them dropped a real entry point.
+    # webcredentials / activitycontinuation are autofill/handoff plumbing, not
+    # URL entry points, and stay ignored.
+    URL_DOMAIN_SERVICES = {"applinks:", "appclips:"}
+
     private def parse_entitlements(doc : XML::Node, path : String)
       root = plist_root_dict(doc)
       return unless root
@@ -223,13 +236,17 @@ module Analyzer::Mobile
 
       seen = Set(String).new
       each_array_string(domains) do |entry|
-        # Entries look like "applinks:example.com", "applinks:example.com?mode=developer",
-        # "webcredentials:example.com". Only applinks open the app from a URL.
-        next unless entry.starts_with?("applinks:")
-        domain = entry.lchop("applinks:")
+        # Entries look like "applinks:example.com", "appclips:example.com",
+        # "applinks:example.com?mode=developer", "webcredentials:example.com".
+        prefix = URL_DOMAIN_SERVICES.find { |p| entry.starts_with?(p) }
+        next unless prefix
+        domain = entry.lchop(prefix)
         domain = domain.split('?', 2).first.strip
         next if domain.empty?
 
+        # An App Clip domain that the full app also serves as a universal link
+        # is the same https:// surface; deduping on the URL collapses the two
+        # while still surfacing App-Clip-only domains.
         url = "https://#{domain}/"
         next unless seen.add?(url)
 

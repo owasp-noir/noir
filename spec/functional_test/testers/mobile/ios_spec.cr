@@ -36,6 +36,11 @@ expected_endpoints = [
   # from LegacyAppDelegate.m `application:continueUserActivity:`.
   build.call("https://myapp.example.com/", "universal-link", no_params, ["routeUniversalLink", "routeObjcUniversalLink"]),
   build.call("https://www.example.com/", "universal-link", no_params, ["routeUniversalLink"]),
+  # App Clip domain (appclips: in App.entitlements). Same https:// URL
+  # mechanism as a universal link, so it shares the protocol and handler
+  # linkage. `appclips:myapp.example.com` overlaps the applinks entry above and
+  # collapses on the URL, so only this App-Clip-only domain is a new endpoint.
+  build.call("https://clip.example.com/", "universal-link", no_params, ["routeUniversalLink"]),
 ]
 
 FunctionalTester.new("fixtures/mobile/ios/", {

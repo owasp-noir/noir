@@ -7,6 +7,8 @@
 		<string>applinks:myapp.example.com</string>
 		<string>applinks:www.example.com?mode=developer</string>
 		<string>webcredentials:myapp.example.com</string>
+		<string>appclips:clip.example.com</string>
+		<string>appclips:myapp.example.com</string>
 	</array>
 </dict>
 </plist>
