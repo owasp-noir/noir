@@ -3,16 +3,30 @@ require "../../../miniparsers/perl_callee_extractor"
 
 module Analyzer::Perl
   class Mojolicious < PerlEngine
-    HTTP_VERBS         = %w[get post put delete patch options head]
-    LITE_VERB_RE       = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
-    LITE_ANY_RE        = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/
-    FULL_VERB_RE       = /->\s*(get|post|put|patch|delete|del|options|head|websocket)\s*\(\s*['"]([^'"]+)['"]/
-    FULL_ANY_RE        = /->\s*any\s*\(\s*(?:\[([^\]]+)\]\s*,?\s*=?>?\s*)?['"]([^'"]+)['"]/
-    FULL_ROUTE_RE      = /->\s*route\s*\(\s*['"]([^'"]+)['"]\s*\)(?:\s*->\s*via\s*\(\s*([^)]+)\))?/
-    PREFIX_SEGMENT_RE  = /->\s*(?:under|any|route)\s*\(\s*(?:\[[^\]]+\]\s*,?\s*=?>?\s*)?['"]([^'"]+)['"]/
+    HTTP_VERBS   = %w[get post put delete patch options head]
+    LITE_VERB_RE = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
+    LITE_ANY_RE  = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/
+    # Leaf path may be empty (`$r->get('')`) — a Mojolicious idiom for a
+    # route that *is* its receiver's prefix (e.g. `$auth->get('')`), so the
+    # capture is `[^'"]*` rather than `+`. A bare `$x->get(` with no string
+    # argument (a data accessor like `$backend->get($id)`) still never
+    # matches because the leading quote is required.
+    FULL_VERB_RE  = /->\s*(get|post|put|patch|delete|del|options|head|websocket)\s*\(\s*['"]([^'"]*)['"]/
+    FULL_ANY_RE   = /->\s*any\s*\(\s*(?:\[([^\]]+)\]\s*,?\s*=?>?\s*)?['"]([^'"]*)['"]/
+    FULL_ROUTE_RE = /->\s*route\s*\(\s*['"]([^'"]*)['"]\s*\)(?:\s*->\s*via\s*\(\s*([^)]+)\))?/
+    # A prefix-building segment (`->under`/`->any`/`->route`) whose argument
+    # is either a quoted literal or a `$var` resolved against `path_vars`
+    # (a scalar holding a path string, e.g. `my $p = '/tests/<id:num>'`).
+    PREFIX_SEGMENT_RE  = /->\s*(?:under|any|route)\s*\(\s*(?:\[[^\]]+\]\s*,?\s*=?>?\s*)?(?:(['"])([^'"]*)\1|\$([A-Za-z_]\w*))/
+    PATH_VAR_RE        = /^\s*(?:my|our|local)?\s*\$([A-Za-z_]\w*)\s*=\s*(['"])(\/[^'"]*)\2\s*;?\s*$/
     ASSIGNMENT_HEAD_RE = /^\s*(?:my|our|local)?\s*\$([A-Za-z_]\w*)\s*=\s*(.+)$/
     CHAIN_RECEIVER_RE  = /\$([A-Za-z_]\w*)\s*->/
     PRELUDE_VAR_RE     = /\$([A-Za-z_]\w*)/
+    # Mojolicious angle-bracket placeholders: `<id>`, `<:id>`, `<#id>`,
+    # `<*id>`, and the type-constrained `<id:num>` / `<id:[^/]+>`. Normalize
+    # them to the sigil form (`:id`, `#id`, `*id`) so URLs read consistently
+    # and the path-param scanner picks them up.
+    ANGLE_PLACEHOLDER_RE = /<([:#*]?)([A-Za-z_]\w*)(?::[^<>]*)?>/
     alias ControllerActionKey = Tuple(String, String)
     alias ControllerCalleeIndex = Hash(ControllerActionKey, Array(Noir::PerlCalleeExtractor::Entry))
 
@@ -66,15 +80,16 @@ module Analyzer::Perl
       sanitized_lines = sanitize_perl_lines(raw_lines)
       offsets = line_offsets(content)
       last_endpoint : Endpoint? = nil
-      var_prefix = {} of String => String
+      # Resolve route-prefix variables (`my $api = $r->any('/api')`) up front,
+      # joining multi-line `my $x\n  = ...;` assignments so the prefix is known
+      # before the route lines that consume it are visited.
+      var_prefix, path_vars = build_prefix_maps(sanitized_lines)
 
       sanitized_lines.each_with_index do |line, index|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?('#')
 
-        update_var_prefix(line, var_prefix)
-
-        line_endpoints = line_to_endpoints(line, var_prefix)
+        line_endpoints = line_to_endpoints(line, var_prefix, path_vars)
         line_endpoints.each do |endpoint|
           endpoint.details = Details.new(PathInfo.new(file_path, index + 1))
           extract_path_params(endpoint).each { |p| push_unique_param(endpoint, p) }
@@ -155,10 +170,16 @@ module Analyzer::Perl
     end
 
     def line_to_endpoints(line : String) : Array(Endpoint)
-      line_to_endpoints(line, {} of String => String)
+      line_to_endpoints(line, {} of String => String, {} of String => String)
     end
 
     def line_to_endpoints(line : String, var_prefix : Hash(String, String)) : Array(Endpoint)
+      line_to_endpoints(line, var_prefix, {} of String => String)
+    end
+
+    def line_to_endpoints(line : String,
+                          var_prefix : Hash(String, String),
+                          path_vars : Hash(String, String)) : Array(Endpoint)
       result = [] of Endpoint
 
       # Mojolicious::Lite: `get '/path' => ...`
@@ -172,8 +193,9 @@ module Analyzer::Perl
         url = m[2]
         unless disallowed_route_url?(url)
           methods_str = m[1]?
+          full = normalize_placeholders(url)
           methods_for_any(methods_str).each do |verb|
-            result << Endpoint.new(url, verb)
+            result << Endpoint.new(full, verb)
           end
         end
       end
@@ -182,8 +204,12 @@ module Analyzer::Perl
       if m = line.match(FULL_VERB_RE)
         leaf = m[2]
         unless disallowed_route_url?(leaf)
-          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix)
-          result << build_endpoint(join_url(prefix, leaf), m[1])
+          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix, path_vars)
+          full = join_url(prefix, leaf)
+          # An empty leaf with no resolved prefix (`$self->route->get('')`,
+          # where `$self->route` is a bare method chain) carries no path —
+          # skip it rather than emit a phantom `/`.
+          result << build_endpoint(full, m[1]) unless full.empty?
         end
       end
 
@@ -192,11 +218,11 @@ module Analyzer::Perl
         leaf = m[2]
         unless disallowed_route_url?(leaf)
           methods_str = m[1]?
-          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix)
-          full = join_url(prefix, leaf)
+          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix, path_vars)
+          full = normalize_placeholders(join_url(prefix, leaf))
           methods_for_any(methods_str).each do |verb|
             result << Endpoint.new(full, verb)
-          end
+          end unless full.empty?
         end
       end
 
@@ -205,15 +231,17 @@ module Analyzer::Perl
         leaf = m[1]
         unless disallowed_route_url?(leaf)
           via_str = m[2]?
-          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix)
-          full = join_url(prefix, leaf)
-          if via_str
-            methods_from_via(via_str).each do |verb|
-              result << Endpoint.new(full, verb)
+          prefix = compute_chain_prefix(line, m.begin(0) || 0, var_prefix, path_vars)
+          full = normalize_placeholders(join_url(prefix, leaf))
+          unless full.empty?
+            if via_str
+              methods_from_via(via_str).each do |verb|
+                result << Endpoint.new(full, verb)
+              end
+            else
+              # `route` without `via` defaults to any method; treat as GET
+              result << Endpoint.new(full, "GET")
             end
-          else
-            # `route` without `via` defaults to any method; treat as GET
-            result << Endpoint.new(full, "GET")
           end
         end
       end
@@ -225,8 +253,26 @@ module Analyzer::Perl
     # client call, not a route — and `Mojolicious::Lite`'s `get '/foo'`
     # never names a fully-qualified URL with a scheme. Skip any route
     # whose declared path contains `://` to suppress these UA-call FPs.
+    #
+    # A `$` marks Perl scalar interpolation (`$cache->get("$method:$path")`,
+    # a `Mojo::Cache` lookup) — Mojolicious route paths use `:name`/`*name`
+    # placeholders, never interpolated scalars, so a `$` in the path means
+    # the call is not a route declaration.
     private def disallowed_route_url?(url : String) : Bool
-      url.includes?("://")
+      url.includes?("://") || url.includes?('$') || host_like_leaf?(url)
+    end
+
+    # A scheme-less `Mojo::UserAgent` target like `->get('example.com/v1')`
+    # or `->put('[::1]:3000')` is an HTTP-client call, not a route. Real
+    # Mojolicious leaves either start with `/` or are a relative path segment
+    # (`test_suites`, `register`) — never a host, which is recognizable by a
+    # dot, a `:port`, or an IPv6 `[...]` in the first segment.
+    private def host_like_leaf?(leaf : String) : Bool
+      return false if leaf.empty? || leaf.starts_with?('/')
+      first_segment = leaf.split('/', 2)[0]
+      return true if first_segment.starts_with?('[')
+      return true if first_segment.includes?('.')
+      !!first_segment.matches?(/:\d/)
     end
 
     # Record `my $V = ANYTHING->{under,any,route}('/PREFIX' ...)` so
@@ -235,15 +281,53 @@ module Analyzer::Perl
     # `Mojolicious::Plugin::Minion::Admin`) lean heavily on this
     # pattern — without it the admin endpoints all look like
     # top-level `/stats`, `/jobs`, etc. instead of `/minion/stats`.
-    private def update_var_prefix(line : String, var_prefix : Hash(String, String))
+    # Single forward pass that records every route-prefix variable and path
+    # string scalar. `my $var` assignments split across lines are stitched
+    # back together (up to a small line cap) so chains like
+    # `my $api_auth_admin\n  = $api_public->under('/')->...` resolve.
+    private def build_prefix_maps(lines : Array(String)) : Tuple(Hash(String, String), Hash(String, String))
+      var_prefix = {} of String => String
+      path_vars = {} of String => String
+
+      index = 0
+      while index < lines.size
+        stripped = lines[index].strip
+        if stripped.empty? || stripped.starts_with?('#') ||
+           !stripped.matches?(/^(?:my|our|local)\s+\$[A-Za-z_]\w*/)
+          index += 1
+          next
+        end
+
+        statement = lines[index]
+        last = index
+        while !statement.includes?(';') && last + 1 < lines.size && (last - index) < 8
+          last += 1
+          statement += " " + lines[last].strip
+        end
+
+        update_var_prefix(statement, var_prefix, path_vars)
+        index = last + 1
+      end
+
+      {var_prefix, path_vars}
+    end
+
+    private def update_var_prefix(line : String,
+                                  var_prefix : Hash(String, String),
+                                  path_vars : Hash(String, String))
+      # `my $p = '/tests/<id:num>';` — a scalar holding a path string that a
+      # later `$r->any($p)` uses as a route prefix. Record it so the prefix
+      # resolves instead of collapsing to the top level.
+      if pm = line.match(PATH_VAR_RE)
+        path_vars[pm[1]] = pm[3]
+      end
+
       return unless m = line.match(ASSIGNMENT_HEAD_RE)
       var = m[1]
       rhs = m[2]
 
       segments = [] of String
-      rhs.scan(PREFIX_SEGMENT_RE) do |seg_match|
-        segments << seg_match[1]
-      end
+      each_prefix_segment(rhs, path_vars) { |seg| segments << seg }
       return if segments.empty?
 
       receiver_prefix = ""
@@ -257,13 +341,30 @@ module Analyzer::Perl
       var_prefix[var] = combined unless combined.empty?
     end
 
+    # Yield each `->under/any/route(...)` prefix segment in `text`, resolving
+    # a `$var` argument against `path_vars` (skipped when unknown).
+    private def each_prefix_segment(text : String, path_vars : Hash(String, String), &)
+      text.scan(PREFIX_SEGMENT_RE) do |m|
+        if literal = m[2]?
+          yield literal
+        elsif var = m[3]?
+          if value = path_vars[var]?
+            yield value
+          end
+        end
+      end
+    end
+
     # Compute the URL prefix to prepend to a leaf route appearing at
     # `leaf_start` on `line`. Considers two sources:
     #   * Inline chains — `$r->under('/a')->get('/leaf')` → `/a` prefix
     #     even when nothing is assigned to a variable.
     #   * Variable receiver — `$V->get('/leaf')` where `$V` was
     #     previously assigned a tracked prefix.
-    private def compute_chain_prefix(line : String, leaf_start : Int32, var_prefix : Hash(String, String)) : String
+    private def compute_chain_prefix(line : String,
+                                     leaf_start : Int32,
+                                     var_prefix : Hash(String, String),
+                                     path_vars : Hash(String, String)) : String
       prelude = leaf_start > 0 ? line[0, leaf_start] : ""
       prefix = ""
 
@@ -280,9 +381,7 @@ module Analyzer::Perl
         end
       end
 
-      prelude.scan(PREFIX_SEGMENT_RE) do |seg_match|
-        prefix = join_url(prefix, seg_match[1])
-      end
+      each_prefix_segment(prelude, path_vars) { |seg| prefix = join_url(prefix, seg) }
 
       prefix
     end
@@ -298,6 +397,7 @@ module Analyzer::Perl
     end
 
     private def build_endpoint(path : String, verb : String) : Endpoint
+      path = normalize_placeholders(path)
       v = verb.downcase
       if v == "websocket"
         endpoint = Endpoint.new(path, "GET")
@@ -306,6 +406,18 @@ module Analyzer::Perl
       else
         v = "delete" if v == "del"
         Endpoint.new(path, v.upcase)
+      end
+    end
+
+    # Rewrite Mojolicious angle-bracket placeholders to the equivalent sigil
+    # form so URLs stay consistent with `:id`/`#id`/`*id` routes and the
+    # path-param scanner (which keys off those sigils) sees them.
+    private def normalize_placeholders(path : String) : String
+      return path unless path.includes?('<')
+      path.gsub(ANGLE_PLACEHOLDER_RE) do
+        sigil = $~[1]
+        sigil = ":" if sigil.empty?
+        "#{sigil}#{$~[2]}"
       end
     end
 

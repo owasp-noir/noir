@@ -46,6 +46,17 @@ expected_endpoints = [
   # Inline `$r->under('/v2')->get('/health')` — no named var, prefix
   # comes from the chain.
   Endpoint.new("/v2/health", "GET"),
+  # lib/MyApp/Routes.pm — prefix held in a scalar (`my $p = '/tests/<id:num>'`)
+  # then consumed by `$r->any($p)`; angle placeholders normalized to `:name`;
+  # an empty leaf (`get('')`) resolves to the prefix itself.
+  Endpoint.new("/tests/:testid", "GET", [Param.new("testid", "", "path")]),
+  Endpoint.new("/tests/:testid/status", "GET", [Param.new("testid", "", "path")]),
+  Endpoint.new("/tests/:testid/modules/:name", "GET",
+    [Param.new("testid", "", "path"), Param.new("name", "", "path")]),
+  # Multi-line `my $api_admin\n  = $api->under('/')->...` keeps the `/api/v1`
+  # prefix; relative leaves (`jobs`) join onto it.
+  Endpoint.new("/api/v1/jobs", "POST"),
+  Endpoint.new("/api/v1/jobs/:jobid", "DELETE", [Param.new("jobid", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/perl/mojolicious/", {
