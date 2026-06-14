@@ -112,6 +112,45 @@ describe "Analyzer::Mobile::Android" do
     find.call("intent://com.example.myapp/.DisabledActivity").should be_nil
   end
 
+  it "emits a content:// surface for an exported ContentProvider" do
+    ep = find.call("content://com.example.myapp.provider").not_nil!
+    ep.protocol.should eq("android-provider")
+    md = ep.metadata.not_nil!
+    md["component_type"].should eq("provider")
+    md["exported"].should eq("true")
+    md["package"].should eq("com.example.myapp")
+    # The provider class is the handler, surfaced as `via` for the linker.
+    md["via"].should eq(".ExportedProvider")
+    # No permission declared, so no permission keys.
+    md.has_key?("permission").should be_false
+    md.has_key?("read_permission").should be_false
+  end
+
+  it "records read/write permissions, uri grants, and path-permission flags for a provider" do
+    md = find.call("content://com.example.myapp.secret").not_nil!.metadata.not_nil!
+    md["read_permission"].should eq("com.example.permission.READ_SECRET")
+    md["write_permission"].should eq("com.example.permission.WRITE_SECRET")
+    # <grant-uri-permission> child grants ad-hoc URI access.
+    md["grant_uri_permissions"].should eq("true")
+    # <path-permission> child declares granular per-path rules.
+    md["path_permissions"].should eq("true")
+  end
+
+  it "emits one provider endpoint per semicolon-separated authority" do
+    first = find.call("content://com.example.myapp.first").not_nil!
+    second = find.call("content://com.example.myapp.second").not_nil!
+    first.protocol.should eq("android-provider")
+    second.protocol.should eq("android-provider")
+    # grantUriPermissions via the attribute form.
+    first.metadata.not_nil!["grant_uri_permissions"].should eq("true")
+    second.metadata.not_nil!["grant_uri_permissions"].should eq("true")
+  end
+
+  it "does not report a provider that is not exported or default (not-exported)" do
+    find.call("content://com.example.myapp.internal").should be_nil
+    find.call("content://com.example.myapp.default").should be_nil
+  end
+
   it "does not emit anything for a MAIN/LAUNCHER component" do
     find.call("intent://com.example.myapp/.MainActivity").should be_nil
   end

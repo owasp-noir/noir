@@ -12,7 +12,7 @@ Noir extracts mobile app entry points — the deep links and exported components
 
 | Platform | Source file | What it yields |
 |---|---|---|
-| Android | `AndroidManifest.xml` | custom URL-scheme deep links, exported intent components, verified App Links |
+| Android | `AndroidManifest.xml` | custom URL-scheme deep links, exported intent components, exported ContentProviders, verified App Links |
 | Android | `res/values/strings.xml` | resolves `@string/` references used in schemes / hosts / paths |
 | Android | `build.gradle` / `build.gradle.kts` | resolves `${applicationId}` and custom `manifestPlaceholders` used in package / component names / schemes / hosts; supplies the package when the manifest has no `package` attribute |
 | Android | `res/navigation/*.xml` | Jetpack Navigation `<deepLink app:uri="...">` deep links — the owning destination becomes the handling component |
@@ -31,9 +31,10 @@ Mobile entry points are endpoints with `method = "GET"`; their nature is carried
 |---|---|---|
 | `mobile-scheme` | custom URL-scheme deep link | `myapp://complex/:id` |
 | `android-intent` | exported intent component reachable by intent — a data-less action filter, or no intent-filter at all (explicit-intent only) | `intent://com.example.app/.SyncService` |
+| `android-provider` | exported ContentProvider reachable by another app through a `content://authority` URI | `content://com.example.app.provider` |
 | `universal-link` | verified Android App Link / iOS universal link, or a server-side `assetlinks.json` / `apple-app-site-association` pattern | `https://app.example.com/complex/:id`, `/buy/*` |
 
-In plain output they render under a `SCHEME` / `INTENT` / `UNIVERSAL` prefix. The handling component, intent action and category, host, and package are stored in a per-endpoint metadata map (serialized in JSON / YAML; omitted entirely for ordinary HTTP endpoints):
+In plain output they render under a `SCHEME` / `INTENT` / `PROVIDER` / `UNIVERSAL` prefix. The handling component, intent action and category, host, and package are stored in a per-endpoint metadata map (serialized in JSON / YAML; omitted entirely for ordinary HTTP endpoints):
 
 ```
 SCHEME myapp://complex/:id
@@ -63,5 +64,6 @@ Mobile endpoints stay in the structured inventory — JSON, JSONL, YAML, SARIF, 
 * gradle placeholder resolution reads the nearest `build.gradle(.kts)` above the manifest; when the same placeholder is declared more than once (e.g. a `buildTypes` override), the first declaration — by convention `defaultConfig` — wins. Variant-specific values are not modeled. A placeholder with no gradle value stays verbatim in the URL and the endpoint is tagged `unresolved`.
 * Scheme-less Jetpack Navigation URIs (which match both http and https at runtime) are emitted once under `https`. `{arg}` segments become `:arg` path params, `?key={arg}` query placeholders become `query` params, and a trailing `.*` wildcard keeps the literal prefix.
 * An `android:exported="true"` component with no intent-filter is reported as an explicit-intent surface (`android-intent`, with `explicit`/`exported`/`component_type` in metadata): an explicit intent naming the component still reaches it even with no action, category, or data URI. A filter-less component that is not exported, or is `android:enabled="false"`, is not reported. A guarding `android:permission` is recorded in metadata but does not suppress the surface — `normal`/`dangerous` permissions remain obtainable by another app.
+* An exported `<provider>` (ContentProvider) is reported as an `android-provider` surface — one `content://authority` endpoint per `android:authorities` entry. The provider class links as the handler (`via`), so its `query` / `insert` / `openFile` methods contribute callees (a raw SQL / file sink surfaces in AI context). `android:readPermission` / `android:writePermission` / `android:permission`, `android:grantUriPermissions` (or a `<grant-uri-permission>` child), and the presence of `<path-permission>` overrides ride in metadata — all recorded, never suppressed. Only an explicitly exported provider is reported (a provider defaults to not-exported on modern SDKs); the effective per-path permission of a `<path-permission>` is flagged but not resolved.
 * `assetlinks.json` only declares the package association (no paths), so it yields a single `/*` endpoint per app. `apple-app-site-association` paths (`/buy/*`, `NOT /private/*`) and `components` are emitted individually; AASA exclusions are tagged `excluded`.
 * Only the plain-JSON form of `apple-app-site-association` is parsed; CMS-signed AASA files (older apps) are skipped.

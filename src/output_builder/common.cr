@@ -5,17 +5,22 @@ class OutputBuilderCommon < OutputBuilder
   # Mobile entry points keep method = "GET" internally; the protocol
   # carries the real semantics and drives the display prefix.
   MOBILE_PROTOCOL_LABELS = {
-    "mobile-scheme"  => "SCHEME",
-    "android-intent" => "INTENT",
-    "universal-link" => "UNIVERSAL",
+    "mobile-scheme"    => "SCHEME",
+    "android-intent"   => "INTENT",
+    "universal-link"   => "UNIVERSAL",
+    "android-provider" => "PROVIDER",
   }
 
   # Fixed order so plain output is deterministic. The protocol drives the
   # prefix and "path" comes from path params, so neither is repeated here.
-  # component_type/exported/explicit/permission only appear on explicit-intent
-  # (filter-less exported) components; absent keys are skipped per endpoint.
+  # component_type/exported/explicit appear on explicit-intent (filter-less
+  # exported) and provider surfaces; the *_permission / grant_uri_permissions /
+  # path_permissions keys only on providers. Absent keys are skipped per
+  # endpoint.
   MOBILE_METADATA_KEYS = ["via", "query", "action", "category", "host", "package",
-                          "component_type", "exported", "explicit", "permission", "extras"]
+                          "component_type", "exported", "explicit", "permission",
+                          "read_permission", "write_permission", "grant_uri_permissions",
+                          "path_permissions", "extras"]
 
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|

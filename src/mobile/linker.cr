@@ -29,6 +29,17 @@ module NoirMobileLinker
     handleIntent handleDeepLink onReceive onBind onCreateView onViewCreated
   ]
 
+  # ContentProvider entry points. A provider is reached via ContentResolver,
+  # so its inbound data (the `uri`, `selection`, `selectionArgs`, projection)
+  # arrives through these methods rather than an Intent — `query` / `openFile`
+  # are the classic SQL-injection / path-traversal sinks. Kept separate from
+  # HANDLER_METHODS so these generic verbs are only scanned for provider
+  # components, not grafted onto every activity that happens to have an
+  # `update()`.
+  PROVIDER_HANDLER_METHODS = %w[
+    onCreate query insert update delete bulkInsert openFile openAssetFile call getType applyBatch
+  ]
+
   # Inputs the handler reads from the inbound deep link. `getQueryParameter`
   # reads a real URI query parameter (surfaced as a "query" param, baked
   # into the URL like any other); the `get*Extra` family reads Intent extras
@@ -59,9 +70,11 @@ module NoirMobileLinker
       next unless resolved
 
       begin
-        cache_key = "#{resolved[:lang]}:#{resolved[:path]}:#{cls[:simple]}"
+        is_provider = provider_endpoint?(endpoint)
+        methods = is_provider ? PROVIDER_HANDLER_METHODS : HANDLER_METHODS
+        cache_key = "#{resolved[:lang]}:#{resolved[:path]}:#{cls[:simple]}:#{is_provider}"
         info = handler_cache[cache_key]? || begin
-          fresh = android_handler_info(cls[:simple], resolved[:path], resolved[:lang])
+          fresh = android_handler_info(cls[:simple], resolved[:path], resolved[:lang], methods)
           handler_cache[cache_key] = fresh
           fresh
         end
@@ -126,12 +139,16 @@ module NoirMobileLinker
   end
 
   # An endpoint we can resolve to an Android component: a mobile protocol
-  # with either a `via` class (scheme / universal-link) or an intent://
-  # component URL (android-intent). iOS schemes carry neither.
+  # with either a `via` class (scheme / universal-link / provider) or an
+  # intent:// component URL (android-intent). iOS schemes carry neither.
   private def self.android_handler_target?(endpoint : Endpoint) : Bool
     return false unless endpoint.mobile?
     return true if endpoint.url.starts_with?("intent://")
     !!(endpoint.metadata.try &.has_key?("via"))
+  end
+
+  private def self.provider_endpoint?(endpoint : Endpoint) : Bool
+    endpoint.protocol == "android-provider"
   end
 
   # Returns the handler class as {simple, package}. `via` is like
@@ -172,14 +189,15 @@ module NoirMobileLinker
     File.read(path, encoding: "utf-8", invalid: :skip)
   end
 
-  private def self.android_handler_info(simple : String, path : String, lang : Symbol) : HandlerInfo
+  private def self.android_handler_info(simple : String, path : String, lang : Symbol,
+                                        handler_methods : Array(String) = HANDLER_METHODS) : HandlerInfo
     info = HandlerInfo.new
     content = read_content(path) || ""
 
     callees = [] of Callee
     if lang == :kotlin
       Noir::TreeSitter.parse_kotlin(content) do |root|
-        HANDLER_METHODS.each do |method|
+        handler_methods.each do |method|
           Noir::KotlinCalleeExtractor.callees_in_method(root, content, path, simple, method).each do |name, fpath, line|
             append_android_callee(callees, name, fpath, line)
           end
@@ -193,7 +211,7 @@ module NoirMobileLinker
       end
     else
       Noir::TreeSitter.parse_java(content) do |root|
-        HANDLER_METHODS.each do |method|
+        handler_methods.each do |method|
           Noir::JavaCalleeExtractor.callees_in_method(root, content, path, simple, method).each do |name, fpath, line|
             append_android_callee(callees, name, fpath, line)
           end
@@ -208,7 +226,7 @@ module NoirMobileLinker
     end
 
     callees = prioritize_android_callees(callees)
-    anchor_line = handler_anchor_line(content, simple)
+    anchor_line = handler_anchor_line(content, simple, handler_methods)
     info.code_paths << PathInfo.new(path, anchor_line)
     extract_input_params(callees, content).each { |param| info.params << param }
     callees.first(Callee::MAX_PER_ENDPOINT).each do |callee|
@@ -284,7 +302,10 @@ module NoirMobileLinker
   end
 
   private def self.android_mobile_sink_callee?(name : String) : Bool
-    name.matches?(/(?:^|\.)(?:loadUrl|loadData|loadDataWithBaseURL|evaluateJavascript|startActivity|startActivityForResult|sendBroadcast|startService|bindService)\b/)
+    # WebView / intent-forwarding sinks, plus the ContentProvider data sinks
+    # (raw SQL and file descriptors) reachable from an exported provider's
+    # query/openFile handlers.
+    name.matches?(/(?:^|\.)(?:loadUrl|loadData|loadDataWithBaseURL|evaluateJavascript|startActivity|startActivityForResult|sendBroadcast|startService|bindService|rawQuery|execSQL|compileStatement|openOrCreateDatabase|ParcelFileDescriptor)\b/)
   end
 
   private def self.android_delegate_callee?(callee : Callee) : Bool
@@ -338,8 +359,9 @@ module NoirMobileLinker
   # Best-effort source line for the handler so the AI-context snippet window
   # covers the intent-reading code: prefer the first handler-method
   # declaration, fall back to the class declaration.
-  private def self.handler_anchor_line(content : String, simple : String) : Int32?
-    method_re = /\b(?:fun|void|public|protected|private|override)\b.*\b(?:#{HANDLER_METHODS.join("|")})\s*\(/
+  private def self.handler_anchor_line(content : String, simple : String,
+                                       handler_methods : Array(String) = HANDLER_METHODS) : Int32?
+    method_re = /\b(?:fun|void|public|protected|private|override)\b.*\b(?:#{handler_methods.join("|")})\s*\(/
     class_re = /\b(?:class|object)\s+#{Regex.escape(simple)}\b/
     class_line : Int32? = nil
 
