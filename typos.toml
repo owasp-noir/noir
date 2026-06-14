@@ -5,6 +5,13 @@ extend-ignore-re = [
   '\\u\{[0-9a-fA-F]+\}',
   # words including a number are likely some kind of identifier
   "[a-zA-Z]+[0-9]+",
+  # Support common inline spellchecker disable directives (see crate-ci/typos docs)
+  # Ignore lines ending with `# spellchecker:disable-line` or `// spellchecker:disable-line`
+  "(?Rm)^.*(#|//)\\s*spellchecker:disable-line$",
+  # Ignore the line following a `# spellchecker:ignore-next-line` / `// ...`
+  "(#|//)\\s*spellchecker:ignore-next-line\\n.*",
+  # Ignore blocks between `# spellchecker:off` ... `# spellchecker:on`
+  "(?s)(#|//)\\s*spellchecker:off.*?\\n\\s*(#|//)\\s*spellchecker:on",
 ]
 
 [default.extend-words]

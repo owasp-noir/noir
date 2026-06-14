@@ -73,7 +73,7 @@ defmodule ElixirPhoenixWeb.Router do
 
     # Plug-style routes: the 2nd arg is a Plug module and the 3rd is plug
     # opts (`[]` / keyword list), NOT an `:action` atom. Common for API
-    # docs, dashboards and SPA catch-alls; must still be detected.
+    # docs, dashboards and SPA catch-alls; must still be detected. # spellchecker:disable-line
     get "/openapi", OpenApiSpex.Plug.RenderSpec, []
     get "/swaggerui", OpenApiSpex.Plug.SwaggerUI, config: %{path: "/api/openapi"}
 
