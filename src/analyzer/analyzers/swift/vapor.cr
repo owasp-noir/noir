@@ -12,7 +12,7 @@ module Analyzer::Swift
     # routes.get("path", ":param") { ... }
     ROUTE_PATTERN              = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.(get|post|put|delete|patch)\s*\(/
     ON_ROUTE_PATTERN           = /([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\.on\s*\(/
-    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\.grouped\s*\(/
+    GROUP_ASSIGN_PATTERN       = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:([A-Za-z_]\w*)\.)?grouped\s*\(/
     GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
     FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
@@ -25,6 +25,10 @@ module Analyzer::Swift
     # phantom endpoints.
     ROUTER_PARAM_PATTERN   = /(?:_\s+)?([A-Za-z_]\w*)\s*:\s*(?:some\s+|any\s+|inout\s+)*(?:RoutesBuilder|Router|Application)\b/
     ROUTER_BINDING_PATTERN = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:try\s+|await\s+)*Application\b/
+    # `extension RoutesBuilder { ... self.get(...) ... }` — inside such an
+    # extension `self` (and bare `grouped(...)`, handled by GROUP_ASSIGN_PATTERN)
+    # is router-like.
+    ROUTER_EXTENSION_PATTERN = /\bextension\s+(?:RoutesBuilder|Router)\b/
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
@@ -256,7 +260,11 @@ module Analyzer::Swift
     end
 
     # File-wide pre-pass: register every router-typed parameter/binding so the
-    # main scan can gate route detection on a router-like receiver.
+    # main scan can gate route detection on a router-like receiver. Covers
+    # `Router`/`RoutesBuilder`/`Application` parameters, `Application` bindings,
+    # and `self` inside a `RoutesBuilder`/`Router` extension. (`.grouped(...)`
+    # variables — qualified or implicit-`self` — are tracked separately by
+    # `register_group_assignment`.)
     private def register_router_params(lines : Array(String), prefix_by_receiver : Hash(String, String))
       lines.each do |line|
         stripped = code_line(line)
@@ -266,6 +274,7 @@ module Analyzer::Swift
         if binding = stripped.match(ROUTER_BINDING_PATTERN)
           prefix_by_receiver[binding[1]] ||= ""
         end
+        prefix_by_receiver["self"] ||= "" if stripped.matches?(ROUTER_EXTENSION_PATTERN)
       end
     end
 
@@ -274,12 +283,14 @@ module Analyzer::Swift
       return unless match
 
       variable = match[1]
-      base = match[2]
+      # `base` is absent for an implicit-`self` `grouped(...)` (a RoutesBuilder
+      # extension): the new group then inherits the empty root prefix.
+      base_prefix = (base = match[2]?) ? prefix_for_receiver(base, prefix_by_receiver) : ""
       args = call_arguments(line, match.end(0) || 0)
       return unless args
 
       prefix = parse_route_path(args[0])
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), prefix)
+      prefix_by_receiver[variable] = join_paths(base_prefix, prefix)
     end
 
     private def register_group_closure(line : String,

@@ -11,6 +11,9 @@ expected_endpoints = [
   Endpoint.new("/users/:id", "DELETE"),
   Endpoint.new("/articles/:articleID", "PATCH"),
   Endpoint.new("/status", "GET"),
+  # RoutesBuilder extension: bare `grouped(...)` + `self.<verb>` (AdminRoutes).
+  Endpoint.new("/admin/dashboard", "GET"),
+  Endpoint.new("/purge", "POST"),
 ]
 
 FunctionalTester.new("fixtures/swift/vapor/", {
