@@ -1,6 +1,11 @@
 import Vapor
 
 func routes(_ app: Application) throws {
+    // Non-router look-alikes: a static type method and an env lookup whose
+    // receivers are not router-like — must NOT be reported as endpoints.
+    _ = Environment.get("DATABASE_URL")
+    _ = Environment.get("LOG_LEVEL")
+
     // Basic GET route
     app.get("hello") { req -> String in
         return "Hello, world!"
@@ -45,10 +50,15 @@ func routes(_ app: Application) throws {
         return "Session: \(sessionID ?? "none")"
     }
     
-    // DELETE route
+    // DELETE route. The Fluent `.delete(on:)` and HTTP-client `.get(...)`
+    // calls inside the handler use non-router receivers and must NOT be
+    // reported as endpoints.
     app.delete("users", ":id") { req -> EventLoopFuture<HTTPStatus> in
         let id = req.parameters.get("id")
-        return deleteUser(id, on: req.db)
+        _ = req.client.get("http://example.com/health")
+        return User.find(id, on: req.db).flatMap { user in
+            user!.delete(on: req.db)
+        }
     }
     
     // PATCH route

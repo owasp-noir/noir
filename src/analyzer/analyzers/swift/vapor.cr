@@ -16,6 +16,16 @@ module Analyzer::Swift
     GROUP_CLOSURE_PATTERN      = /([A-Za-z_]\w*)\.group(?:ed)?\s*\(/
     FUNCTION_SIGNATURE_PATTERN = /\bfunc\s+([A-Za-z_]\w*)\s*\(/
 
+    # A function parameter (or binding) typed as a Vapor router:
+    # `func routes(_ app: Application)`, `func boot(routes: RoutesBuilder)`,
+    # `func boot(router: Router)` (Vapor 3), `let app = Application(...)`.
+    # Tracking these makes route detection receiver-aware, so that non-router
+    # `.get`/`.delete`/... calls — `Environment.get("DATABASE_URL")`,
+    # `model.delete(on: req.db)`, `req.client.get(url)` — stop surfacing as
+    # phantom endpoints.
+    ROUTER_PARAM_PATTERN   = /(?:_\s+)?([A-Za-z_]\w*)\s*:\s*(?:some\s+|any\s+|inout\s+)*(?:RoutesBuilder|Router|Application)\b/
+    ROUTER_BINDING_PATTERN = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:try\s+|await\s+)*Application\b/
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
@@ -25,12 +35,15 @@ module Analyzer::Swift
       group_prefix_stack = [] of Tuple(String, Int32)
       brace_depth = 0
 
+      # Seed the router-receiver set so route detection is receiver-aware.
+      register_router_params(lines, prefix_by_receiver)
+
       lines.each_with_index do |line, index|
         stripped_line = code_line(line)
         register_group_assignment(stripped_line, prefix_by_receiver)
         register_group_closure(stripped_line, prefix_by_receiver, group_prefix_stack, brace_depth)
 
-        route = route_parts(stripped_line)
+        route = route_parts(stripped_line, prefix_by_receiver)
         unless route
           brace_depth = update_group_depth(stripped_line, brace_depth, group_prefix_stack, prefix_by_receiver)
           next
@@ -207,10 +220,12 @@ module Analyzer::Swift
       {body_lines.join("\n"), route_index + 1}
     end
 
-    private def route_parts(line : String) : Tuple(String, String, String)?
+    private def route_parts(line : String, prefix_by_receiver : Hash(String, String)) : Tuple(String, String, String)?
       return unless route_definition_line?(line)
 
       if match = line.match(ON_ROUTE_PATTERN)
+        return unless router_like?(match[1], prefix_by_receiver)
+
         args = call_arguments(line, match.end(0) || 0)
         return unless args
 
@@ -222,6 +237,8 @@ module Analyzer::Swift
       end
 
       if match = line.match(ROUTE_PATTERN)
+        return unless router_like?(match[1], prefix_by_receiver)
+
         args = call_arguments(line, match.end(0) || 0)
         return unless args
 
@@ -229,6 +246,27 @@ module Analyzer::Swift
       end
 
       nil
+    end
+
+    # A `.get`/`.post`/... call counts as a route only when its receiver is a
+    # known router: a tracked `.grouped(...)` variable, a closure-group var,
+    # or a `RoutesBuilder`/`Router`/`Application`-typed parameter/binding.
+    private def router_like?(receiver : String, prefix_by_receiver : Hash(String, String)) : Bool
+      receiver.split('.').any? { |part| prefix_by_receiver.has_key?(part) }
+    end
+
+    # File-wide pre-pass: register every router-typed parameter/binding so the
+    # main scan can gate route detection on a router-like receiver.
+    private def register_router_params(lines : Array(String), prefix_by_receiver : Hash(String, String))
+      lines.each do |line|
+        stripped = code_line(line)
+        stripped.scan(ROUTER_PARAM_PATTERN) do |match|
+          prefix_by_receiver[match[1]] ||= ""
+        end
+        if binding = stripped.match(ROUTER_BINDING_PATTERN)
+          prefix_by_receiver[binding[1]] ||= ""
+        end
+      end
     end
 
     private def register_group_assignment(line : String, prefix_by_receiver : Hash(String, String))
