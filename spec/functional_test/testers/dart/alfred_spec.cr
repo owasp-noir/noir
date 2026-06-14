@@ -30,10 +30,19 @@ expected_endpoints = [
   # Routes registered from another file via an `Alfred`-typed parameter.
   alfred_endpoint("/auth/login", "POST", [] of Param, [Callee.new("authService.login", line: 8)]),
   alfred_endpoint("/auth/profile", "GET", [] of Param, [Callee.new("getProfile", line: 11)]),
+  # Nested routes: `app.route('/admin/')..get('', dashboard)..post('users', ...)`.
+  # The base path composes with each cascade sub-path.
+  alfred_endpoint("/admin/", "GET", [] of Param, [Callee.new("dashboard", line: 15)]),
+  alfred_endpoint("/admin/users", "POST", [] of Param, [Callee.new("createAdminUser", line: 16)]),
+  alfred_endpoint("/admin/users/{id}", "DELETE", [Param.new("id", "", "path")], [
+    Callee.new("deleteAdminUser", line: 17),
+  ]),
 ]
 
 all_verbs.each do |verb|
   expected_endpoints << alfred_endpoint("/health", verb, [] of Param, health_callees)
+  # `..all('*', ...)` catch-all on the `/admin/` nested route.
+  expected_endpoints << alfred_endpoint("/admin/*", verb, [] of Param)
 end
 
 tester = FunctionalTester.new("fixtures/dart/alfred/", {
@@ -61,4 +70,11 @@ it "skips the handler's trailing middleware argument when scanning callees" do
   endpoint.try do |actual|
     actual.callees.map(&.name).should eq(["deleteUser"])
   end
+end
+
+it "composes Alfred nested route() base paths with cascade sub-paths" do
+  urls = tester.app.endpoints.map(&.url).to_set
+  urls.should contain("/admin/")
+  urls.should contain("/admin/users")
+  urls.should contain("/admin/users/{id}")
 end
