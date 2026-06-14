@@ -7,7 +7,7 @@ module NoirTechs
     "clojure_compojure", "clojure_reitit", "clojure_ring",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
     "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
-    "dart_alfred", "dart_angel3", "dart_frog", "dart_serverpod", "dart_shelf",
+    "dart_alfred", "dart_angel3", "dart_get_server", "dart_frog", "dart_serverpod", "dart_shelf",
     "elixir_bandit", "elixir_phoenix", "elixir_plug",
     "fs_giraffe",
     "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gf", "go_gin",
@@ -427,6 +427,24 @@ module NoirTechs
       :framework => "Angel3",
       :language  => "Dart",
       :similar   => ["angel", "angel3", "dart_angel3", "dart-angel3", "angel_framework", "angel3_framework"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :dart_get_server => {
+      :framework => "GetServer",
+      :language  => "Dart",
+      :similar   => ["get_server", "getserver", "dart_get_server", "dart-get-server"],
       :supported => {
         :endpoint => true,
         :method   => true,

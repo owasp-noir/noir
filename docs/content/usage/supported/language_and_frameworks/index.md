@@ -552,6 +552,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
     </div>
   </article>
   <article class="tech-card">
+    <h3 class="tech-card-title">GetServer</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
     <h3 class="tech-card-title">Serverpod</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
@@ -2245,6 +2272,33 @@ Each card below lists a framework's supported features. **Route** covers endpoin
 <div class="tech-grid">
   <article class="tech-card">
     <h3 class="tech-card-title">Lapis</h3>
+    <div class="tech-card-row">
+      <span class="tech-card-label">Route</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip on">endpoint</span>
+        <span class="tech-chip on">method</span>
+        <span class="tech-chip off">query</span>
+        <span class="tech-chip on">path</span>
+        <span class="tech-chip off">body</span>
+        <span class="tech-chip off">header</span>
+        <span class="tech-chip off">cookie</span>
+        <span class="tech-chip off">static</span>
+        <span class="tech-chip off">websocket</span>
+        <span class="tech-chip on">callee</span>
+      </div>
+    </div>
+    <div class="tech-card-row">
+      <span class="tech-card-label">AI Context</span>
+      <div class="tech-card-chips">
+        <span class="tech-chip off">guards</span>
+        <span class="tech-chip on">sinks</span>
+        <span class="tech-chip on">validators</span>
+        <span class="tech-chip on">signals</span>
+      </div>
+    </div>
+  </article>
+  <article class="tech-card">
+    <h3 class="tech-card-title">lor</h3>
     <div class="tech-card-row">
       <span class="tech-card-label">Route</span>
       <div class="tech-card-chips">

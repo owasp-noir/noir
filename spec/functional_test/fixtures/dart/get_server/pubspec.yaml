@@ -1,0 +1,6 @@
+name: get_server_example
+description: Fixture app exercising the GetServer analyzer.
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+dependencies:
+  get_server: ^0.4.0
