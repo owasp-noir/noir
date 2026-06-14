@@ -57,7 +57,7 @@ Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client
 
 Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. `-f adb` does the inverse: it turns the Android deep links, intent components, and content providers Noir discovers into [Android Debug Bridge](https://developer.android.com/tools/adb) commands you can run against a connected device or emulator.
 
-`adb` is Android-only, so the format emits commands for Android-originated entry points and skips everything it can't launch — HTTP endpoints, iOS schemes, and bare App Links domain associations — each reported as a one-line warning to stderr (the command list on stdout stays pipe-clean). To launch iOS schemes use `xcrun simctl openurl booted "myapp://..."`.
+`adb` is Android-only, so the format emits commands for Android-originated entry points and skips everything it can't launch — HTTP endpoints, iOS schemes (use [`-f simctl`](#simctl-ios)), and bare App Links domain associations — each reported as a one-line warning to stderr (the command list on stdout stays pipe-clean).
 
 ```bash
 noir scan ./my-android-app -f adb
@@ -76,6 +76,22 @@ adb shell content query --uri 'content://com.example.app.provider'
 ```
 
 The action, category, and package come from the manifest's intent-filter, so each launch matches the declared filter. Intent extras discovered in the handler are emitted as `--es` string extras (empty templates you can fill, or seed with `--pvalue`). See [Mobile Apps](../../supported/mobile/) for how these entry points are extracted.
+
+## simctl (iOS)
+
+`-f simctl` is the iOS counterpart to `-f adb`: it turns the iOS custom-scheme deep links and universal links Noir discovers into [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/simulator) commands that open them on a booted iOS Simulator. iOS has no intent or content-provider analog, so every command is a single `openurl`.
+
+```bash
+noir scan ./my-ios-app -f simctl
+```
+
+Example output:
+```bash
+xcrun simctl openurl booted 'myapp://host/path?token='
+xcrun simctl openurl booted 'https://app.example.com/buy'
+```
+
+Like `-f adb`, `simctl` is platform-specific: it emits commands for iOS-originated entry points and skips what it can't open — HTTP endpoints, Android entry points (use `-f adb`), and bare App Links domain associations — each reported as a one-line warning to stderr.
 
 ## Filling Parameter Values
 
