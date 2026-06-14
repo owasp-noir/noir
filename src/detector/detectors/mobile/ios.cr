@@ -6,7 +6,7 @@ module Detector::Mobile
     def detect(filename : String, file_contents : String) : Bool
       locator = CodeLocator.instance
 
-      if info_plist?(filename) && file_contents.includes?("CFBundleURLTypes")
+      if filename.ends_with?(".plist") && file_contents.includes?("CFBundleURLTypes")
         locator.push("ios-info-plist", filename)
         return true
       end
@@ -20,18 +20,7 @@ module Detector::Mobile
     end
 
     def applicable?(filename : String) : Bool
-      info_plist?(filename) || filename.ends_with?(".entitlements")
-    end
-
-    # Xcode's default target plist is `Info.plist`, but the older (and still
-    # very common in real apps) build convention names it `<Target>-Info.plist`
-    # — e.g. `Wikipedia-Info.plist`, `podcasts-Info.plist`, plus per-flavor
-    # variants like `Local-Info.plist`/`Staging-Info.plist`. Matching only the
-    # exact `Info.plist` basename silently dropped every custom URL scheme in
-    # those apps. The `CFBundleURLTypes` content gate in `detect` keeps
-    # unrelated `*-Info.plist` files (e.g. `GoogleService-Info.plist`) out.
-    private def info_plist?(filename : String) : Bool
-      File.basename(filename).ends_with?("Info.plist")
+      filename.ends_with?(".plist") || filename.ends_with?(".entitlements")
     end
 
     def set_name

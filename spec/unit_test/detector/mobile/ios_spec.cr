@@ -17,13 +17,20 @@ describe "Detect Mobile iOS" do
     instance.detect("podcasts/podcasts-Info.plist", "<key>CFBundleURLTypes</key>").should be_true
   end
 
-  it "ignores an Info.plist without URL types" do
-    instance.detect("App/Info.plist", "<key>CFBundleShortVersionString</key>").should be_false
+  it "detects a fully custom-named info plist (white-label branding)" do
+    # nextcloud-ios points INFOPLIST_FILE at `Brand/iOSClient.plist`; the only
+    # reliable signal is the CFBundleURLTypes content, not the filename.
+    instance.detect("Brand/iOSClient.plist", "<key>CFBundleURLTypes</key>").should be_true
   end
 
-  it "ignores an unrelated *-Info.plist (no URL types)" do
-    # `GoogleService-Info.plist` ends with `Info.plist` but declares no
-    # CFBundleURLTypes; the content gate keeps it out.
+  it "ignores a plist without URL types" do
+    instance.detect("App/Info.plist", "<key>CFBundleShortVersionString</key>").should be_false
+    instance.detect("App/Settings.bundle/Root.plist", "<key>PreferenceSpecifiers</key>").should be_false
+  end
+
+  it "ignores an unrelated plist that happens to end in Info.plist" do
+    # `GoogleService-Info.plist` declares no CFBundleURLTypes; the content
+    # gate keeps it out.
     instance.detect("App/GoogleService-Info.plist", "<key>CLIENT_ID</key>").should be_false
   end
 
@@ -32,6 +39,7 @@ describe "Detect Mobile iOS" do
   end
 
   it "is applicable to plist and entitlements paths" do
+    instance.applicable?("Brand/iOSClient.plist").should be_true
     instance.applicable?("App/Wikipedia-Info.plist").should be_true
     instance.applicable?("App/App.entitlements").should be_true
     instance.applicable?("App/Main.swift").should be_false
