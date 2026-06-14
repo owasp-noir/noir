@@ -177,7 +177,29 @@ module Analyzer::Clojure
 
       route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
       new_prefix = join_path(prefix, route_path)
+
+      # `["/path" handler]` — a bare handler (symbol / `#'var` / inline
+      # `(fn …)`) in the data position is reitit shorthand for
+      # `{:handler handler}` and responds to any method. Emit a GET endpoint so
+      # the route is not dropped; a map / child-vector in that position is left
+      # to walk_route_body.
+      token, _ = read_form_token(source, str_end + 1, vec_end)
+      if bare_route_handler?(token)
+        handler_start = skip_ws_and_comments(source, str_end + 1, vec_end)
+        handler_end = end_of_value(source, handler_start, vec_end)
+        emit_endpoint(source, handler_start, handler_start, handler_end, new_prefix, "GET", path, include_callee, function_callees, nil)
+      end
+
       walk_route_body(source, str_end + 1, vec_end, new_prefix, path, include_callee, function_callees)
+    end
+
+    # A bare route handler in the data position is an inline `(fn …)`/`(partial
+    # …)` form, a `#'var`/`'sym` reference, or a plain handler symbol. Maps,
+    # child-route vectors, strings and keywords are not handlers.
+    private def bare_route_handler?(token : String) : Bool
+      return false if token.empty?
+      return true if token.starts_with?('(')
+      !normalized_handler_symbol(token).nil?
     end
 
     private def walk_route_body(source : String,
@@ -516,9 +538,14 @@ module Analyzer::Clojure
             keys << name unless name.empty?
             i = after
           else
-            # Non-keyword key — skip it and the value pair.
-            i = end_of_value(source, i, limit)
-            i = skip_ws_and_comments(source, i, limit)
+            # A non-keyword key may still name a param when it's a schema /
+            # malli wrapper — `(s/optional-key :page)`, `[:page {:optional
+            # true}]`. Pull the first keyword inside the key form as the name.
+            key_end = end_of_value(source, i, limit)
+            if name = first_keyword_in(source, i, key_end)
+              keys << name
+            end
+            i = skip_ws_and_comments(source, key_end, limit)
             break if i >= limit
             i = end_of_value(source, i, limit)
             next
@@ -530,6 +557,26 @@ module Analyzer::Clojure
         end
       end
       keys
+    end
+
+    # Return the bind name of the first keyword inside a key form. Schema
+    # wraps optional/required keys (`(s/optional-key :page)`) and malli spells
+    # them as vectors (`[:page {:optional true}]`); in both the parameter name
+    # is the first keyword. Namespace-qualified keywords drop the namespace.
+    private def first_keyword_in(source : String, start : Int32, limit : Int32) : String?
+      i = start
+      while i < limit
+        if source.byte_at(i).unsafe_chr == ':'
+          sym, _ = read_symbol(source, i, limit)
+          name = sym.lstrip(':')
+          if slash_idx = name.rindex('/')
+            name = name[(slash_idx + 1)..]
+          end
+          return name unless name.empty?
+        end
+        i += 1
+      end
+      nil
     end
 
     private def extract_path_param_names(route_path : String) : Array(String)

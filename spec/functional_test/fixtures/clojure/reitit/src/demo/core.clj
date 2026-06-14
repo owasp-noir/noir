@@ -31,6 +31,17 @@
    ["/status"
     {:handler status-handler}]
 
+   ; Bare handler in the data position — `["/path" handler]` is reitit
+   ; shorthand for `{:handler handler}`; emit a GET endpoint.
+   ["/dashboard" dashboard-handler]
+
+   ; Schema map with a wrapped optional key — `(schema/optional-key :limit)`
+   ; names the `limit` query param just like the bare `:offset` key.
+   ["/orders"
+    {:get {:parameters {:query {(schema/optional-key :limit) int?
+                                :offset int?}}
+           :handler list-orders}}]
+
    ["/admin"
     ["/reports/:id"
      {:patch {:parameters {:path {:id int?}
