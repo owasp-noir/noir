@@ -6,6 +6,9 @@ expected_endpoints = [
     Param.new("password", "", "query"),
   ]),
   Endpoint.new("/el.jsp", "GET", [Param.new("username", "", "query")]),
+  # A JSP under `src/main/webapp/` is served relative to that root — the
+  # build prefix is stripped (`/reports/summary.jsp`, not the repo path).
+  Endpoint.new("/reports/summary.jsp", "GET", [Param.new("range", "", "query")]),
   Endpoint.new("/attribute.jsp", "GET", [Param.new("userId", "", "query")]),
   Endpoint.new("/header.jsp", "GET", [Param.new("X-API-Key", "", "header")]),
   Endpoint.new("/cookie.jsp", "GET", [Param.new("", "", "cookie")]),
