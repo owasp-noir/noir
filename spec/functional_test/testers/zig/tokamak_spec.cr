@@ -21,6 +21,12 @@ expected_endpoints << tokamak_endpoint("/api/health", "GET")
 expected_endpoints << tokamak_endpoint("/api/v1/items/:id", "GET", id_param, [Callee.new("store.fetch")])
 expected_endpoints << tokamak_endpoint("/api/v1/items/:id", "DELETE", id_param, [Callee.new("store.remove")])
 
+# `.router(widgets)` controller mount — the `@"METHOD /path"` handlers compose
+# the enclosing `/api` group prefix.
+expected_endpoints << tokamak_endpoint("/api/widgets", "GET", [] of Param, [Callee.new("listWidgets")])
+expected_endpoints << tokamak_endpoint("/api/widgets", "POST", [] of Param, [Callee.new("createWidget")])
+expected_endpoints << tokamak_endpoint("/api/widgets/:id", "GET", id_param, [Callee.new("findWidget")])
+
 FunctionalTester.new("fixtures/zig/tokamak/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,

@@ -1,11 +1,14 @@
 const std = @import("std");
 const tk = @import("tokamak");
+const widgets = @import("api/widgets.zig");
 
 const routes: []const tk.Route = &.{
     .get("/", hello),
     .post("/users", createUser),
     .group("/api", &.{
         .get("/health", health),
+        // Controller mount — widgets routes compose the `/api` prefix.
+        .router(widgets),
         .group("/v1", &.{
             .get("/items/:id", getItem),
             .delete("/items/:id", deleteItem),
@@ -20,6 +23,9 @@ fn hello() ![]const u8 {
 fn createUser(req: *tk.Request) !void {
     try db.insert(req.body);
     audit.log("create");
+    // Data-object `.put` with a non-rooted key — must NOT become a `PUT /name`
+    // route (the leading-slash guard rejects it).
+    try root.put("name", req.body);
 }
 
 fn health() ![]const u8 {
