@@ -2,7 +2,17 @@
   (:require [io.pedestal.http :as http]
             [io.pedestal.http.route :as route]
             [io.pedestal.http.route.definition :refer [defroutes]]
-            [io.pedestal.http.route.definition.table :as table]))
+            [io.pedestal.http.route.definition.table :as table]
+            [clj-http.client :as client]
+            [clojure.tools.logging :as log]))
+
+;; Regression guard: a namespaced verb whose first string is a full URL or a
+;; log message is an HTTP-client / logging call, NOT a route helper — it must
+;; not emit a phantom endpoint.
+(defn call-upstream [_request]
+  (log/trace "writing event to stream")
+  (client/post "http://localhost:8888/api" {:body "x"})
+  (client/get "https://example.com/health" {}))
 
 (defn home-page [_request] {:status 200 :body "home"})
 (defn list-users [_request] {:status 200 :body "users"})
