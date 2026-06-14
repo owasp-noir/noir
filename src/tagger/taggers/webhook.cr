@@ -28,6 +28,19 @@ class WebhookTagger < Tagger
   # several analyzers emit for catch-all routes.
   READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS"}
 
+  # OAuth / OIDC / SSO authorization-code callbacks (`/oauth/callback`,
+  # `/auth/<provider>/callback`) are browser-redirect handlers, not
+  # inbound webhooks — but they share the generic `callback` path word and
+  # can arrive as a POST, so they were being mis-tagged. When `callback`
+  # is the *only* webhook signal and one of these auth segments is present
+  # in the path, suppress it. A genuine payment IPN at `/payments/callback`
+  # carries no auth segment and still tags.
+  AUTH_CALLBACK_SEGMENTS = Set{
+    "oauth", "oauth2", "openid", "oidc", "auth", "authentication",
+    "sso", "saml", "login", "signin",
+  }
+  CALLBACK_PARTS = Set{"callback", "callbacks"}
+
   # Provider-specific signature/event headers. Any one is a strong
   # webhook indicator on its own.
   SIGNATURE_HEADERS = Set{
@@ -84,7 +97,15 @@ class WebhookTagger < Tagger
   end
 
   private def medium_webhook_url?(url : String) : Bool
-    url_parts(url).any? { |part| MEDIUM_PATH_PARTS.includes?(part) }
+    parts = url_parts(url)
+    matched = parts.select { |part| MEDIUM_PATH_PARTS.includes?(part) }
+    return false if matched.empty?
+
+    # A non-callback medium word (hook/hooks/notify) is a webhook signal on
+    # its own. Bare callback(s) under an OAuth/SSO segment is an auth
+    # redirect handler, not a webhook — drop that lone signal.
+    return true if matched.any? { |part| !CALLBACK_PARTS.includes?(part) }
+    parts.none? { |part| AUTH_CALLBACK_SEGMENTS.includes?(part) }
   end
 
   private def url_parts(url : String) : Array(String)
