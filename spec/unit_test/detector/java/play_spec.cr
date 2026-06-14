@@ -9,8 +9,12 @@ describe "Detect Java Play" do
     instance.detect("routes", "GET /users controllers.Users.list(page: Integer)").should be_true
   end
 
-  it "routes.conf file with Java-style route definitions (Boolean type)" do
-    instance.detect("routes.conf", "POST /users/:id controllers.Users.update(id: Long, active: Boolean)").should be_true
+  it "routes.conf file with Java-style Integer type alongside other params" do
+    instance.detect("routes.conf", "GET /users controllers.Users.list(page: Integer, active: Boolean)").should be_true
+  end
+
+  it "does not treat a Boolean-only routes file as Java (Boolean is also a Scala type)" do
+    instance.detect("routes.conf", "POST /users/:id controllers.Users.update(id: Long, active: Boolean)").should be_false
   end
 
   it "java file with play.mvc.Controller import" do

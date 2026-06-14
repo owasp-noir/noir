@@ -49,6 +49,11 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("body", "", "json"),
   ]),
+  # Included sub-routes file written with absolute paths (lila convention):
+  # the `-> /appeal` prefix must not be doubled into /appeal/appeal/...
+  Endpoint.new("/appeal", "GET"),
+  Endpoint.new("/appeal/landing", "GET", [Param.new("q", "", "query")]),
+  Endpoint.new("/appeal/:username", "POST", [Param.new("username", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/scala/play/", {

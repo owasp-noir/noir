@@ -1,0 +1,5 @@
+# Sub-routes file written with absolute paths that already include the mount
+# prefix (lila convention). The `-> /appeal` include must not prepend again.
+GET  /appeal           controllers.Appeal.home
+GET  /appeal/landing   controllers.Appeal.landing(q: Option[String] ?= None)
+POST /appeal/:username controllers.Appeal.reply(username: String)

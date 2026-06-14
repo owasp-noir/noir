@@ -23,3 +23,7 @@ POST /xml controllers.MissingController.xml
 POST /whitespace controllers.MissingController.whitespace
 
 -> /admin admin.Routes
+
+# lila-style include: the sub-routes file already carries the mount prefix,
+# so it must NOT be doubled into /appeal/appeal/...
+-> /appeal appeal.Routes
