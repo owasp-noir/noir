@@ -174,8 +174,13 @@ module Analyzer::CSharp
       lines = content.lines
       masked_lines = Noir::CSharpLexer.new(content).masked_lines
 
-      http_method = "GET"
-      action_route = ""
+      # Accumulate every `[Http<Verb>(...)]` on the pending action so a method
+      # carrying more than one (`[HttpGet(...)]` + `[HttpHead(...)]` for image/
+      # file serving, GET+POST, …) emits an endpoint per verb instead of only
+      # the last attribute. `route_attr` holds a verb-less `[Route(...)]` base
+      # that a bare `[HttpGet]` (no path of its own) inherits.
+      verb_routes = [] of Tuple(String, String)
+      route_attr = ""
       explicit_endpoint_attribute = false
       non_action_attribute = false
       in_class = false
@@ -190,13 +195,14 @@ module Analyzer::CSharp
           # Order = 1\n)]` attribute before running the
           # single-line matcher. The `[Http*]` opener arrives without
           # a closing paren on the same line, the path literal lives
-          # on a subsequent line; `update_http_context` per-line only
+          # on a subsequent line; the per-line matcher only
           # saw `[HttpPost(` and recorded POST with an empty path.
           attr_line, advance = stitch_multiline_attribute(lines, i)
           line = attr_line if advance > 0
 
-          http_method, action_route, found_attribute = update_http_context(line, http_method, action_route)
+          verb, verb_route, route_attr, found_attribute = collect_verb_route(line, route_attr)
           explicit_endpoint_attribute ||= found_attribute
+          verb_routes << {verb, verb_route} if verb
           non_action_attribute = true if line.includes?("[NonAction")
 
           # Skip the continuation lines we just consumed; they're
@@ -209,37 +215,47 @@ module Analyzer::CSharp
           if !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
-              parameters = extract_parameters(signature, http_method)
               body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, end_index)
               body_params = extract_params_from_block(body_block)
-              parameters = merge_params(parameters, body_params, http_method)
-              effective_action_route = action_route
-              if !controller_route.empty? && controller_route == effective_action_route
-                effective_action_route = ""
-              end
-              routes = resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns)
 
-              routes.each do |route|
-                details = Details.new(PathInfo.new(file, i + 1))
-                endpoint = Endpoint.new(route, http_method, details)
-
-                align_params_with_route(parameters, route).each do |param|
-                  endpoint.params << param
+              # No `[Http*]` attribute → convention-based (verb GET, route from
+              # any `[Route]` base or the controller convention).
+              emit_pairs = verb_routes.empty? ? [{"GET", route_attr}] : verb_routes
+              emit_pairs.each do |emit_verb, emit_route|
+                # A bare `[HttpGet]` whose `[Route("x")]` base arrived on a
+                # later line collected an empty route — fall back to the base
+                # so verb-then-`[Route]` ordering matches `[Route]`-then-verb.
+                emit_route = route_attr if emit_route.empty? && !route_attr.empty?
+                parameters = extract_parameters(signature, emit_verb)
+                parameters = merge_params(parameters, body_params, emit_verb)
+                effective_action_route = emit_route
+                if !controller_route.empty? && controller_route == effective_action_route
+                  effective_action_route = ""
                 end
+                routes = resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns)
 
-                attach_csharp_callees(endpoint, body_block, file, body_line + 1, include_callee, skip_first_line: skip_first)
-                @result << endpoint
+                routes.each do |route|
+                  details = Details.new(PathInfo.new(file, i + 1))
+                  endpoint = Endpoint.new(route, emit_verb, details)
+
+                  align_params_with_route(parameters, route).each do |param|
+                    endpoint.params << param
+                  end
+
+                  attach_csharp_callees(endpoint, body_block, file, body_line + 1, include_callee, skip_first_line: skip_first)
+                  @result << endpoint
+                end
               end
 
-              http_method = "GET"
-              action_route = ""
+              verb_routes = [] of Tuple(String, String)
+              route_attr = ""
               explicit_endpoint_attribute = false
               non_action_attribute = false
             end
           end
           if non_action_attribute
-            http_method = "GET"
-            action_route = ""
+            verb_routes = [] of Tuple(String, String)
+            route_attr = ""
             explicit_endpoint_attribute = false
           end
           non_action_attribute = false
@@ -286,45 +302,35 @@ module Analyzer::CSharp
       {joined, idx - start}
     end
 
-    private def update_http_context(line : String, current_method : String, action_route : String) : Tuple(String, String, Bool)
-      http_method = current_method
-      route = action_route
-      found_attribute = false
+    # Attribute name carrying each verb, for `extract_attribute_route`.
+    VERB_ATTRIBUTES = {
+      "[HttpPost"    => {"POST", "HttpPost"},
+      "[HttpGet"     => {"GET", "HttpGet"},
+      "[HttpPut"     => {"PUT", "HttpPut"},
+      "[HttpDelete"  => {"DELETE", "HttpDelete"},
+      "[HttpPatch"   => {"PATCH", "HttpPatch"},
+      "[HttpHead"    => {"HEAD", "HttpHead"},
+      "[HttpOptions" => {"OPTIONS", "HttpOptions"},
+    }
 
-      if line.includes?("[HttpPost")
-        http_method = "POST"
-        route = extract_attribute_route(line, "HttpPost", route)
-        found_attribute = true
-      elsif line.includes?("[HttpGet")
-        http_method = "GET"
-        route = extract_attribute_route(line, "HttpGet", route)
-        found_attribute = true
-      elsif line.includes?("[HttpPut")
-        http_method = "PUT"
-        route = extract_attribute_route(line, "HttpPut", route)
-        found_attribute = true
-      elsif line.includes?("[HttpDelete")
-        http_method = "DELETE"
-        route = extract_attribute_route(line, "HttpDelete", route)
-        found_attribute = true
-      elsif line.includes?("[HttpPatch")
-        http_method = "PATCH"
-        route = extract_attribute_route(line, "HttpPatch", route)
-        found_attribute = true
-      elsif line.includes?("[HttpHead")
-        http_method = "HEAD"
-        route = extract_attribute_route(line, "HttpHead", route)
-        found_attribute = true
-      elsif line.includes?("[HttpOptions")
-        http_method = "OPTIONS"
-        route = extract_attribute_route(line, "HttpOptions", route)
-        found_attribute = true
-      elsif line.includes?("[Route")
-        route = extract_attribute_route(line, "Route", route)
-        found_attribute = true
+    # Classify one attribute line. Returns `{verb, verb_route, route_attr, found}`:
+    # for an `[Http<Verb>(...)]` the verb + its route (falling back to the
+    # `[Route]` base for a path-less attribute), with `route_attr` left
+    # unchanged; for a verb-less `[Route("x")]` the new base in `route_attr`
+    # (verb `nil`); for any other line, no change and `found = false`. Keeping
+    # the verb separate lets the caller accumulate several verbs on one method.
+    private def collect_verb_route(line : String, route_attr : String) : Tuple(String?, String, String, Bool)
+      VERB_ATTRIBUTES.each do |marker, pair|
+        next unless line.includes?(marker)
+        verb, attr = pair
+        return {verb, extract_attribute_route(line, attr, route_attr), route_attr, true}
       end
 
-      {http_method, route, found_attribute}
+      if line.includes?("[Route")
+        return {nil, route_attr, extract_attribute_route(line, "Route", route_attr), true}
+      end
+
+      {nil, route_attr, route_attr, false}
     end
 
     private def potential_action_signature?(line : String) : Bool

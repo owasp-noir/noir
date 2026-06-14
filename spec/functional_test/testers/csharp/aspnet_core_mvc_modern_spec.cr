@@ -24,12 +24,23 @@ users_login = Endpoint.new("/users/login", "POST", [
   Param.new("command", "", "json"),
 ])
 
+# A single action carrying several [Http*] attributes emits one endpoint per
+# verb (GET+HEAD file serving, GET+POST search), not only the last attribute.
+file_download_get = Endpoint.new("/Files/{id}/Download", "GET", [Param.new("id", "", "path")])
+file_download_head = Endpoint.new("/Files/{id}/Download", "HEAD", [Param.new("id", "", "path")])
+file_search_get = Endpoint.new("/Files/Search", "GET", [Param.new("q", "", "query")])
+file_search_post = Endpoint.new("/Files/Search", "POST", [Param.new("q", "", "query")])
+
 expected_endpoints = [
   articles_list,
   article_get,
   article_create,
   users_create,
   users_login,
+  file_download_get,
+  file_download_head,
+  file_search_get,
+  file_search_post,
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_modern/", {
