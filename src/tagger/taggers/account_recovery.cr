@@ -16,7 +16,18 @@ class AccountRecoveryTagger < Tagger
   # does not).
   STRONG_PATH_PARTS = Set{
     "password", "passwd", "forgot", "mfa", "2fa", "totp", "otp",
+    # WebAuthn / FIDO2 passkey ceremonies are credential registration and
+    # step-up authentication — squarely credential-management. These
+    # survive the separator split as whole segments.
+    "webauthn", "passkey", "passkeys",
   }
+
+  # Spelled-out multi-factor path words. The generic separator split turns
+  # `two-factor` into the harmless tokens `[two, factor]`, so the `mfa`/`2fa`
+  # forms above never match these. Checked against separator-stripped slash
+  # segments instead, so `two-factor`, `two_factor`, and `twofactor` (and
+  # the `second-`/`multi-` spellings) all match.
+  STRONG_SQUISHED_SEGMENTS = Set{"twofactor", "multifactor", "secondfactor"}
 
   # Parameter names that mark a credential change or a recovery/step-up
   # code regardless of the route.
@@ -49,7 +60,8 @@ class AccountRecoveryTagger < Tagger
       url_segments = url_parts(endpoint.url)
 
       has_strong = !(STRONG_PARAM_NAMES & param_names).empty? ||
-                   url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) }
+                   url_segments.any? { |part| STRONG_PATH_PARTS.includes?(part) } ||
+                   mfa_squished_segment?(endpoint.url)
 
       weak_tokens = Set(String).new
       url_segments.each do |part|
@@ -71,6 +83,18 @@ class AccountRecoveryTagger < Tagger
 
   private def url_parts(url : String) : Array(String)
     url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
+  end
+
+  # Match `two-factor` / `second-factor` / `multi-factor` (and their `_` or
+  # no-separator spellings) as whole slash segments, without the generic
+  # separator split fragmenting them into benign tokens. Exact membership
+  # after stripping in-segment punctuation, so `/twofactorsomething` does
+  # not match.
+  private def mfa_squished_segment?(url : String) : Bool
+    path = url.split("?", 2)[0].split("#", 2)[0]
+    path.downcase.split("/").any? do |segment|
+      STRONG_SQUISHED_SEGMENTS.includes?(segment.gsub(/[^a-z0-9]/, ""))
+    end
   end
 
   private def normalize_param_name(name : String) : String
