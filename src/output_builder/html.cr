@@ -258,6 +258,37 @@ class OutputBuilderHtml < OutputBuilder
             gap: 0.7rem;
             flex-wrap: wrap;
           }
+          button.card-header {
+            width: 100%;
+            font: inherit;
+            color: inherit;
+            text-align: left;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.12s ease;
+          }
+          button.card-header:hover { background: var(--hover); }
+          button.card-header:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+          .chevron {
+            width: 16px; height: 16px;
+            flex-shrink: 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--ink-3);
+            transition: transform 0.2s ease;
+          }
+          .chevron svg { width: 12px; height: 12px; display: block; }
+          .chevron-spacer { width: 16px; flex-shrink: 0; }
+          .card.collapsed .chevron { transform: rotate(-90deg); }
+          .card-collapse {
+            display: grid;
+            grid-template-rows: 1fr;
+            transition: grid-template-rows 0.22s ease;
+          }
+          .card.collapsed .card-collapse { grid-template-rows: 0fr; }
+          .card-collapse > .card-pane { overflow: hidden; min-height: 0; }
           .url {
             font-family: var(--font-mono);
             font-size: 0.88rem;
@@ -416,6 +447,8 @@ class OutputBuilderHtml < OutputBuilder
             body { background: #fff; color: #000; }
             .report-header, footer { border-color: #ccc; }
             .card { break-inside: avoid; }
+            .card.collapsed .card-collapse { grid-template-rows: 1fr; }
+            .chevron, .theme-toggle { display: none; }
           }
         </style>
         <script>
@@ -514,10 +547,19 @@ class OutputBuilderHtml < OutputBuilder
   private def build_endpoint_card(endpoint : Endpoint) : String
     baked = bake_endpoint(endpoint.url, endpoint.params)
     method_class = get_method_class(endpoint.method)
+    has_body = endpoint.params.size > 0 || !endpoint.details.code_paths.empty?
 
     String.build do |html|
       html << "<div class=\"card\">\n"
-      html << "<div class=\"card-header collapsible\">\n"
+
+      if has_body
+        html << "<button type=\"button\" class=\"card-header\" data-action=\"toggle-card\" aria-expanded=\"true\">\n"
+        html << "<span class=\"chevron\" aria-hidden=\"true\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.2\" stroke-linecap=\"square\"><path d=\"M6 9l6 6 6-6\"></path></svg></span>\n"
+      else
+        html << "<div class=\"card-header\">\n"
+        html << "<span class=\"chevron-spacer\" aria-hidden=\"true\"></span>\n"
+      end
+
       html << "<span class=\"method-badge #{method_class}\">#{HTML.escape(endpoint.method)}</span>\n"
       html << "<span class=\"url\">#{HTML.escape(baked[:url])}</span>\n"
 
@@ -529,10 +571,10 @@ class OutputBuilderHtml < OutputBuilder
         html << "<span class=\"tag-badge\">#{HTML.escape(tag.name)}</span>\n"
       end
 
-      html << "</div>\n"
+      html << (has_body ? "</button>\n" : "</div>\n")
 
-      if endpoint.params.size > 0 || !endpoint.details.code_paths.empty?
-        html << "<div class=\"card-body\">\n"
+      if has_body
+        html << "<div class=\"card-collapse\"><div class=\"card-pane\"><div class=\"card-body\">\n"
 
         if endpoint.params.size > 0
           html << "<table class=\"params-table\">\n"
@@ -564,7 +606,7 @@ class OutputBuilderHtml < OutputBuilder
           html << "</div>\n"
         end
 
-        html << "</div>\n"
+        html << "</div></div></div>\n"
       end
 
       html << "</div>\n"
@@ -631,6 +673,16 @@ class OutputBuilderHtml < OutputBuilder
             var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
             root.setAttribute("data-theme", next);
             try { localStorage.setItem("noir-theme", next); } catch (err) {}
+          });
+
+          // Collapse / expand an endpoint card.
+          document.addEventListener("click", function (e) {
+            var header = e.target.closest && e.target.closest('[data-action="toggle-card"]');
+            if (!header) return;
+            var card = header.closest(".card");
+            if (!card) return;
+            var collapsed = card.classList.toggle("collapsed");
+            header.setAttribute("aria-expanded", String(!collapsed));
           });
         })();
       </script>
