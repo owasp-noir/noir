@@ -1,0 +1,14 @@
+<?php
+// CakePHP "Bake" code-generation template — NOT a real routes file. Its
+// `{{ plugin }}` placeholders are unrendered Twig, so it must never be parsed
+// (the `config/routes.php` substring used to match `config/routes.php.twig`).
+use Cake\Routing\RouteBuilder;
+use Cake\Routing\Router;
+
+Router::plugin('{{ plugin }}', ['path' => '/'], function (RouteBuilder $route) {
+    $route->prefix('api', function (RouteBuilder $route) {
+        $route->prefix('v10', ['path' => '/v1.0'], function (RouteBuilder $route) {
+            $route->resources('{{ plugin }}');
+        });
+    });
+});
