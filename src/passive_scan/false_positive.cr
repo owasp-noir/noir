@@ -38,19 +38,30 @@ module NoirPassiveScan
       "Sys.getenv",
     ]
 
-    # Captures the value to the right of the first `=` or `:` separator,
-    # trimming surrounding whitespace. Lines with no assignment separator
-    # (e.g. a bare `-----BEGIN RSA PRIVATE KEY-----`) never match, so PEM
-    # blocks and similar literals fall through untouched.
-    ASSIGNMENT_VALUE = /[:=]\s*(.+?)\s*$/
+    # Captures the value to the right of the first assignment separator
+    # (`:`, `=`, or the PHP/Ruby hash arrow `=>`), trimming surrounding
+    # whitespace. Lines with no assignment separator (e.g. a bare
+    # `-----BEGIN RSA PRIVATE KEY-----`) never match, so PEM blocks and
+    # similar literals fall through untouched.
+    ASSIGNMENT_VALUE = /(?::|=>?)\s*(.+?)\s*$/
+
+    # Same separators as ASSIGNMENT_VALUE but with an *empty* value —
+    # `AWS_ACCESS_KEY_ID=` / `password:` in a `.env.example` or config
+    # template. An empty value cannot carry a secret, so a keyword match
+    # on such a line is always a false positive.
+    EMPTY_ASSIGNMENT = /(?::|=>?)\s*$/
 
     # Whole-value forms that are references or placeholders, never
     # literals: shell/template variable substitutions (`$VAR`, `${VAR}`,
-    # `${{ … }}`, `$(…)`, `%VAR%`, `{{ … }}`) and angle-bracket
-    # placeholders (`<your-token>`). Anchored so it only fires when the
-    # *entire* value is a reference — a real secret that merely contains
-    # a `$` (e.g. `P$ssw0rd…`) is not matched.
-    PURE_REFERENCE = /\A(?:\$\{?\{?[A-Za-z_][\w.\- ]*\}?\}?|\$\(.+\)|%[A-Za-z_]\w*%|\{\{.+\}\}|<[^>]+>)\z/
+    # `${{ … }}`, `$(…)`, `%VAR%`, `{{ … }}`), angle-bracket placeholders
+    # (`<your-token>`), and single-argument env-helper calls
+    # (`env('AWS_ACCESS_KEY_ID')`, common in Laravel/Symfony/Rails config).
+    # Anchored so it only fires when the *entire* value is a reference — a
+    # real secret that merely contains a `$` (e.g. `P$ssw0rd…`) is not
+    # matched. The env-call form is deliberately single-argument: a
+    # two-argument `env('K', 'default')` could hide a literal default, so
+    # it is left to fall through.
+    PURE_REFERENCE = /\A(?:\$\{?\{?[A-Za-z_][\w.\- ]*\}?\}?|\$\(.+\)|%[A-Za-z_]\w*%|\{\{.+\}\}|<[^>]+>|env\(\s*['"][^'",]+['"]\s*\))\z/
 
     # True when `line` exposes its secret-bearing value only through an
     # indirection (env read / templating) or a placeholder — i.e. there
@@ -62,6 +73,9 @@ module NoirPassiveScan
 
       # Runtime environment-variable accessors.
       return true if ENV_ACCESSOR_MARKERS.any? { |marker| line.includes?(marker) }
+
+      # Empty assignment value — `.env.example` / config template stub.
+      return true if line.matches?(EMPTY_ASSIGNMENT)
 
       # Value position is itself a reference / placeholder.
       if match = line.match(ASSIGNMENT_VALUE)
