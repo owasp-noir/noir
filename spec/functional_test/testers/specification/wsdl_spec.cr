@@ -40,3 +40,18 @@ FunctionalTester.new("fixtures/specification/wsdl_rpc/", {
   :techs     => 1,
   :endpoints => rpc_endpoints.size,
 }, rpc_endpoints).perform_tests
+
+# WSDL split across files: service.wsdl holds the binding/service and
+# imports interface.wsdl for the portType/message/types. The operation
+# resolves only when the import is followed.
+import_endpoints = [
+  Endpoint.new("/services/AccountService/GetBalance", "POST", [
+    Param.new("SOAPAction", "http://example.com/account/GetBalance", "header"),
+    Param.new("accountId", "", "json"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/wsdl_import/", {
+  :techs     => 1,
+  :endpoints => import_endpoints.size,
+}, import_endpoints).perform_tests

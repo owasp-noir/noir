@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+                  xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+                  xmlns:ns="http://example.com/account"
+                  xmlns:tns="http://example.com/account-service"
+                  targetNamespace="http://example.com/account-service">
+
+  <!-- portType and messages live in the imported interface.wsdl -->
+  <wsdl:import namespace="http://example.com/account" location="interface.wsdl"/>
+
+  <wsdl:binding name="AccountBinding" type="ns:AccountPortType">
+    <soap:binding transport="http://schemas.xmlsoap.org/soap/http" style="document"/>
+    <wsdl:operation name="GetBalance">
+      <soap:operation soapAction="http://example.com/account/GetBalance"/>
+      <wsdl:input><soap:body use="literal"/></wsdl:input>
+    </wsdl:operation>
+  </wsdl:binding>
+
+  <wsdl:service name="AccountService">
+    <wsdl:port name="AccountPort" binding="tns:AccountBinding">
+      <soap:address location="http://example.com/services/AccountService"/>
+    </wsdl:port>
+  </wsdl:service>
+</wsdl:definitions>
