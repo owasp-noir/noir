@@ -182,5 +182,22 @@ describe NoirPassiveScan::FalsePositive do
     it "keeps a populated value that uses the => hash-arrow separator" do
       NoirPassiveScan::FalsePositive.secret_reference?(%('key' => 'AKIAIOSFODNN7REALKEYX')).should be_false
     end
+
+    it "suppresses documentation placeholder values" do
+      NoirPassiveScan::FalsePositive.secret_reference?("AWS_ACCESS_KEY_ID=your-access-key-id").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("AWS_SECRET_ACCESS_KEY=your-secret-access-key").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("API_KEY=your_api_key").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("GITHUB_TOKEN=<token> pnpm changeset version").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("SECRET=changeme").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?(%(    with_env DATABASE_URL: nil, RAILS_ENV: "development" do)).should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("TOKEN=xxxxxxxx").should be_true
+    end
+
+    it "keeps real values that merely begin with similar letters" do
+      # Must not over-match: a real-looking value is not a placeholder.
+      NoirPassiveScan::FalsePositive.secret_reference?("DATABASE_URL=postgres://user:pass@host/db").should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?(%(GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwx)).should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?("PROJECT=changelog-service").should be_false
+    end
   end
 end
