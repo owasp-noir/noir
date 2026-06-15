@@ -126,3 +126,17 @@ FunctionalTester.new("fixtures/specification/raml_library/", {
   :techs     => 1,
   :endpoints => library_endpoints.size,
 }, library_endpoints).perform_tests
+
+# An Overlay/Extension fragment is applied onto its master API, not served
+# standalone. Only the root `api.raml` should yield endpoints; the
+# `#%RAML 1.0 Extension` file must not emit a phantom `/products`.
+extension_endpoints = [
+  Endpoint.new("/v2/products", "GET", [
+    Param.new("q", "", "query"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/raml_extension/", {
+  :techs     => 1,
+  :endpoints => extension_endpoints.size,
+}, extension_endpoints).perform_tests
