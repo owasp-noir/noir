@@ -98,7 +98,7 @@ describe "Insomnia Analyzer" do
       }
       JSON
 
-    endpoints.map(&.url).sort.should eq ["/notes", "/users"]
+    endpoints.map(&.url).sort!.should eq ["/notes", "/users"]
     users = endpoints.find!(&.url.==("/users"))
     users.params.map { |p| {p.name, p.param_type} }.should contain({"foo", "json"})
 
