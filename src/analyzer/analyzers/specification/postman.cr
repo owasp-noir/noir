@@ -325,7 +325,10 @@ module Analyzer::Specification
       stripped = strip_query_and_fragment(path.strip)
       return "" if stripped.empty?
 
-      normalized = stripped.gsub(/\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}/) do
+      # The optional `$` covers Postman dynamic variables such as `{{$guid}}`
+      # or `{{$randomInt}}`, which are runtime-generated path segments and
+      # should be treated as path parameters rather than left literal.
+      normalized = stripped.gsub(/\{\{\s*\$?([A-Za-z0-9_.-]+)\s*\}\}/) do
         ":#{$1.split(".").last}"
       end
       normalized = normalized.gsub(/\{([A-Za-z_][A-Za-z0-9_.-]*)\}/) { ":#{$1}" }
