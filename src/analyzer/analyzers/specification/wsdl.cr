@@ -9,6 +9,10 @@ module Analyzer::Specification
 
     alias FieldList = Array(String)
     alias BindingInfo = NamedTuple(port_type: String, soap_version: String, actions: Hash(String, String))
+    # A `wsdl:part` carries either a document-style `element` reference or
+    # an RPC-style `type` reference. `name` is the part's own name, which
+    # becomes the parameter for RPC parts whose type is a built-in scalar.
+    alias PartRef = NamedTuple(name: String, ref: String, is_element: Bool)
 
     def analyze
       locator = CodeLocator.instance
@@ -101,21 +105,26 @@ module Analyzer::Specification
       end
     end
 
-    # `message name="..."` → local name of the element (or type) carried by
-    # its first `part`. The element's name is what we later look up in
-    # `element_fields` to expand body params.
-    private def collect_messages(definitions : XML::Node) : Hash(String, String)
-      messages = {} of String => String
+    # `message name="..."` → every `part` it carries. A message can declare
+    # multiple parts (each an independent RPC argument), so all are kept —
+    # reading only the first dropped the rest. Each part records whether it
+    # points at an `element` (document style) or a `type` (RPC style); the
+    # distinction drives how params are expanded at emit time.
+    private def collect_messages(definitions : XML::Node) : Hash(String, Array(PartRef))
+      messages = {} of String => Array(PartRef)
       each_child(definitions, "message") do |msg|
         name = msg["name"]?
         next unless name
-        part = find_child(msg, "part")
-        next unless part
-        if elem_ref = part["element"]?
-          messages[name] = strip_prefix(elem_ref)
-        elsif type_ref = part["type"]?
-          messages[name] = strip_prefix(type_ref)
+        parts = [] of PartRef
+        each_child(msg, "part") do |part|
+          part_name = part["name"]? || ""
+          if elem_ref = part["element"]?
+            parts << {name: part_name, ref: strip_prefix(elem_ref), is_element: true}
+          elsif type_ref = part["type"]?
+            parts << {name: part_name, ref: strip_prefix(type_ref), is_element: false}
+          end
         end
+        messages[name] = parts
       end
       messages
     end
@@ -196,10 +205,15 @@ module Analyzer::Specification
             params = soap_headers(soap_action, binding_info[:soap_version])
 
             if message_name = port_ops[op_name]?
-              if element_name = messages[message_name]?
-                if fields = element_fields[element_name]?
-                  fields.each do |fname|
-                    params << Param.new(fname, "", "json")
+              if parts = messages[message_name]?
+                parts.each do |part|
+                  if fields = element_fields[part[:ref]]?
+                    # Known element/complexType: expand its top-level fields.
+                    fields.each { |fname| add_body_param(params, fname) }
+                  elsif !part[:is_element] && !part[:name].empty?
+                    # RPC part typed as a built-in scalar (`xsd:string`,
+                    # `xsd:int`, …): the part name is itself the parameter.
+                    add_body_param(params, part[:name])
                   end
                 end
               end
@@ -258,6 +272,13 @@ module Analyzer::Specification
         Param.new("SOAPAction", soap_action, "header"),
         Param.new("Content-Type", content_type, "header"),
       ]
+    end
+
+    # Multi-part messages and shared field names can produce the same
+    # body param twice; keep the SOAP body param list unique.
+    private def add_body_param(params : Array(Param), name : String)
+      param = Param.new(name, "", "json")
+      params << param unless params.includes?(param)
     end
 
     private def strip_prefix(qname : String) : String
