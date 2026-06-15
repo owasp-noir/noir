@@ -21,7 +21,7 @@ module Detector::Specification
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         begin
-          data = YAML.parse(file_contents)
+          data = parse_yaml(file_contents)
           if data["openapi"].as_s.includes? "3."
             check = true
             locator = CodeLocator.instance

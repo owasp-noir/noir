@@ -89,6 +89,19 @@ FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
   ]),
 ]).perform_tests
 
+FunctionalTester.new("fixtures/specification/oas3/tab_in_block_scalar/", {
+  :techs     => 1,
+  :endpoints => 2,
+}, [
+  Endpoint.new("/widgets", "GET", [
+    Param.new("state", "", "query"),
+  ]),
+  Endpoint.new("/widgets", "POST", [
+    Param.new("name", "", "json"),
+    Param.new("color", "", "json"),
+  ]),
+]).perform_tests
+
 edge_case_endpoints = [
   Endpoint.new("/api/v2/orders", "GET", [
     Param.new("X-Tenant", "", "header"),
