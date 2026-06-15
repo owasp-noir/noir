@@ -16,7 +16,7 @@ module Analyzer::Specification
             begin
               # Process items (requests) in the collection
               if json_obj["item"]?
-                process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?))
+                process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?), "", json_obj["auth"]?)
               end
             rescue e
               @logger.debug "Exception processing #{postman_file}"
@@ -29,7 +29,7 @@ module Analyzer::Specification
       @result
     end
 
-    private def process_items(items, source_path : String, variables : Hash(String, String), folder_path = "")
+    private def process_items(items, source_path : String, variables : Hash(String, String), folder_path = "", inherited_auth : JSON::Any? = nil)
       item_array = items.as_a?
       return unless item_array
 
@@ -39,13 +39,15 @@ module Analyzer::Specification
 
           # Check if it's a folder (has nested items) or a request
           if item["item"]?
-            # It's a folder, recurse into it
+            # It's a folder, recurse into it. A folder may declare its own auth,
+            # which overrides the collection/parent auth for everything beneath it.
             folder_name = item["name"]?.try(&.to_s) || ""
             new_path = folder_path.empty? ? folder_name : "#{folder_path}/#{folder_name}"
-            process_items(item["item"], source_path, item_variables, new_path)
+            folder_auth = item["auth"]? || inherited_auth
+            process_items(item["item"], source_path, item_variables, new_path, folder_auth)
           elsif item["request"]?
             # It's a request, process it
-            process_request(item, source_path, item_variables)
+            process_request(item, source_path, item_variables, inherited_auth)
           end
         rescue e
           @logger.debug "Exception processing item"
@@ -54,7 +56,7 @@ module Analyzer::Specification
       end
     end
 
-    private def process_request(item, source_path : String, variables : Hash(String, String))
+    private def process_request(item, source_path : String, variables : Hash(String, String), inherited_auth : JSON::Any? = nil)
       request = item["request"]
 
       if request_url = request.as_s?
@@ -63,6 +65,7 @@ module Analyzer::Specification
         url_path = extract_path_from_url(resolved_url)
         extract_query_params(resolved_url).each { |param| add_param(params, param) }
         extract_path_vars(url_path).each { |name| add_param(params, Param.new(name, "", "path")) }
+        apply_auth(inherited_auth, params)
         @result << Endpoint.new(url_path, "GET", params, Details.new(PathInfo.new(source_path))) unless url_path.empty?
         return
       end
@@ -162,6 +165,10 @@ module Analyzer::Specification
           end
         end
       end
+
+      # Authentication. A request-level `auth` block overrides any auth
+      # inherited from the enclosing folder/collection.
+      apply_auth(request["auth"]? || inherited_auth, params)
 
       # Create endpoint
       if !url_path.empty?
@@ -345,6 +352,59 @@ module Analyzer::Specification
 
     private def unresolved_variable_segment?(segment : String) : Bool
       segment.matches?(/\A\{\{\s*[^}]+\s*\}\}\z/)
+    end
+
+    # Surfaces authentication as request parameters so that auth-bearing
+    # endpoints are not under-reported. Mirrors the Insomnia analyzer:
+    # api keys become header/query params, token-based schemes become an
+    # `Authorization` header. `noauth` explicitly clears inherited auth.
+    private def apply_auth(auth : JSON::Any?, params : Array(Param))
+      return unless auth
+      return unless auth.as_h?
+
+      type = (auth["type"]?.try(&.as_s?) || "").downcase
+      return if type.empty? || type == "noauth"
+
+      fields = postman_auth_fields(auth, type)
+      case type
+      when "apikey"
+        name = fields["key"]? || ""
+        value = fields["value"]? || ""
+        location = (fields["in"]? || "header").downcase == "query" ? "query" : "header"
+        add_param(params, Param.new(name, value, location))
+      when "bearer"
+        token = fields["token"]? || ""
+        auth_value = token.empty? ? "" : "Bearer #{token}"
+        add_param(params, Param.new("Authorization", auth_value, "header"))
+      when "basic", "digest", "oauth1", "oauth2", "hawk", "ntlm", "awsv4", "edgegrid", "jwt", "akamai"
+        add_param(params, Param.new("Authorization", "", "header"))
+      end
+    end
+
+    # Postman serializes the auth parameters either as an array of
+    # `{key, value}` entries (v2.1) or as a plain object (v2.0). Normalize
+    # both into a flat string map.
+    private def postman_auth_fields(auth : JSON::Any, type : String) : Hash(String, String)
+      fields = {} of String => String
+      node = auth[type]?
+      return fields unless node
+
+      if entries = node.as_a?
+        entries.each do |entry|
+          next unless key = entry["key"]?.try(&.as_s?)
+          if value = scalar_to_s(entry["value"]?)
+            fields[key] = value
+          end
+        end
+      elsif hash = node.as_h?
+        hash.each do |key, value|
+          if str = scalar_to_s(value)
+            fields[key] = str
+          end
+        end
+      end
+
+      fields
     end
 
     private def collect_variables(node : JSON::Any?) : Hash(String, String)
