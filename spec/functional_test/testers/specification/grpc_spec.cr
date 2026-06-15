@@ -70,6 +70,32 @@ expected_endpoints = [
     Param.new("note_id", "", "json"),
     Param.new("body", "", "json"),
   ]),
+  # Colon-form additional_bindings: primary + secondary binding.
+  Endpoint.new("/v1/items/{item_id}", "GET", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "query"),
+  ]),
+  Endpoint.new("/v1/items/by-name/{name}", "GET", [
+    Param.new("name", "", "path"),
+    Param.new("item_id", "", "query"),
+  ]),
+  # Array-form additional_bindings: primary PUT + two PATCH bindings.
+  Endpoint.new("/v1/items/{item_id}", "PUT", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  Endpoint.new("/v1/items/{item_id}", "PATCH", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  Endpoint.new("/v2/items/{item_id}", "PATCH", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  # custom: { kind, path } maps to a non-standard HTTP method (HEAD).
+  Endpoint.new("/v1/items/{item_id}/watch", "HEAD", [
+    Param.new("item_id", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/grpc/", {

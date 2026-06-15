@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package gw.v1;
+
+import "google/api/annotations.proto";
+
+message ItemRequest {
+  string item_id = 1;
+  string name = 2;
+}
+
+message ItemResponse {
+  string item_id = 1;
+}
+
+service ItemService {
+  // Colon-form additional_bindings with a second binding on a different path.
+  rpc GetItem(ItemRequest) returns (ItemResponse) {
+    option (google.api.http) = {
+      get: "/v1/items/{item_id}"
+      additional_bindings: {
+        get: "/v1/items/by-name/{name}"
+      }
+    };
+  }
+
+  // Array-form additional_bindings: [ { ... }, { ... } ].
+  rpc UpdateItem(ItemRequest) returns (ItemResponse) {
+    option (google.api.http) = {
+      put: "/v1/items/{item_id}"
+      body: "*"
+      additional_bindings: [
+        {
+          patch: "/v1/items/{item_id}"
+          body: "*"
+        },
+        {
+          patch: "/v2/items/{item_id}"
+          body: "*"
+        }
+      ]
+    };
+  }
+
+  // custom: { kind, path } binding maps to a non-standard HTTP method.
+  rpc WatchItem(ItemRequest) returns (ItemResponse) {
+    option (google.api.http) = {
+      custom: {
+        kind: "HEAD"
+        path: "/v1/items/{item_id}/watch"
+      }
+    };
+  }
+}
