@@ -4,7 +4,7 @@ module NoirTechs
   CALLEE_SUPPORTED_TECHS = [
     "android", "ios",
     "cpp_crow", "cpp_drogon", "cpp_httplib", "cpp_oatpp",
-    "clojure_compojure", "clojure_reitit", "clojure_ring",
+    "clojure_compojure", "clojure_pedestal", "clojure_reitit",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
     "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
     "dart_alfred", "dart_angel3", "dart_get_server", "dart_frog", "dart_serverpod", "dart_shelf",

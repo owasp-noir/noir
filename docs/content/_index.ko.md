@@ -7,7 +7,7 @@ template = "landing"
   <div class="hero-inner">
     <div class="hero-intro">
       <div class="hero-eyebrow">
-        <span class="hero-badge">v1.0.0</span>
+        <span class="hero-badge">v1.1.0</span>
         <span class="hero-badge hero-badge-owasp">OWASP Project</span>
       </div>
       <h1 class="hero-title">
