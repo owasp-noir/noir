@@ -2,6 +2,18 @@ require "../../../models/detector"
 
 module Detector::Typescript
   class TRPC < Detector
+    # Single precompiled alternation — one PCRE2 scan instead of eight.
+    SIGNAL = Regex.union(
+      /import[^'"`]+from\s+['"`]@trpc\/server(?:\/[^'"`]*)?['"`]/,
+      /require\(\s*['"`]@trpc\/server(?:\/[^'"`]*)?['"`]\s*\)/,
+      /import[^'"`]+from\s+['"`]@trpc\/next['"`]/,
+      /initTRPC\b/,
+      /createTRPCRouter\s*\(/,
+      /fetchRequestHandler\s*\(/,
+      /createNextApiHandler\s*\(/,
+      /trpcExpress\.createExpressMiddleware\s*\(/,
+    )
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
                           filename.ends_with?(".cts") || filename.ends_with?(".mts") ||
@@ -13,14 +25,7 @@ module Detector::Typescript
         return file_contents.includes?("\"@trpc/server\"") || file_contents.includes?("\"@trpc/next\"")
       end
 
-      if file_contents.match(/import[^'"`]+from\s+['"`]@trpc\/server(?:\/[^'"`]*)?['"`]/) ||
-         file_contents.match(/require\(\s*['"`]@trpc\/server(?:\/[^'"`]*)?['"`]\s*\)/) ||
-         file_contents.match(/import[^'"`]+from\s+['"`]@trpc\/next['"`]/) ||
-         file_contents.match(/initTRPC\b/) ||
-         file_contents.match(/createTRPCRouter\s*\(/) ||
-         file_contents.match(/fetchRequestHandler\s*\(/) ||
-         file_contents.match(/createNextApiHandler\s*\(/) ||
-         file_contents.match(/trpcExpress\.createExpressMiddleware\s*\(/)
+      if file_contents.matches?(SIGNAL)
         return true
       end
 

@@ -15,9 +15,13 @@ module Detector::Javascript
       /\bcreateYoga\s*\(/,
     ]
 
+    # Single precompiled alternation of SIGNALS — one PCRE2 scan instead
+    # of one per signal.
+    SIGNAL = Regex.union(SIGNALS)
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      SIGNALS.any? { |re| file_contents.match(re) }
+      file_contents.matches?(SIGNAL)
     end
 
     def applicable?(filename : String) : Bool
