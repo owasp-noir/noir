@@ -256,6 +256,31 @@ describe "Postman Analyzer" do
     public_ep.params.any? { |p| p.name == "Authorization" }.should be_false
   end
 
+  it "normalizes Postman dynamic variables in the path to path params" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {
+          "name": "Dynamic Var Collection",
+          "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [
+          {
+            "name": "Anything",
+            "request": {
+              "method": "GET",
+              "url": "https://api.example.com/anything/{{$guid}}"
+            }
+          }
+        ]
+      }
+      JSON
+
+    endpoints.size.should eq 1
+    endpoint = endpoints.first
+    endpoint.url.should eq "/anything/:guid"
+    param_tuples(endpoint).should contain({"guid", "", "path"})
+  end
+
   it "does not share details between requests in one collection" do
     endpoints = analyze_postman <<-JSON
       {
