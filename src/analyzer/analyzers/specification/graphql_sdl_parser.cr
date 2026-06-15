@@ -119,9 +119,15 @@ module Analyzer::Specification
         args = [] of NamedTuple(name: String, type: String)
         if cursor < body.size && body[cursor] == '('
           args_block = extract_paren_block(body, cursor)
-          if args_block
+          close = matching_close_index(body, cursor, '(', ')')
+          if args_block && close
             args = parse_arguments(args_block)
-            cursor = (body.index(')', cursor) || cursor) + 1
+            # Jump past the *matching* close paren, not the first ')': an
+            # argument's directive (`@length(min: 1)`, `@deprecated(...)`)
+            # carries its own parentheses, and stopping at the first ')'
+            # left the cursor mid-arguments — dropping the field and
+            # misreading later argument names as fields.
+            cursor = close + 1
           else
             cursor = advance_to_next_field(body, cursor)
             pos = cursor
@@ -356,6 +362,27 @@ module Analyzer::Specification
       nil
     end
 
+    # Index of the close char that matches the opener at `open_pos` (nested
+    # pairs counted), or nil when unbalanced. Unlike `String#index(close_ch)`
+    # it skips over inner pairs — needed so a field/directive argument list
+    # is not cut short at the first `)` belonging to a nested directive.
+    private def matching_close_index(content : String, open_pos : Int32,
+                                     open_ch : Char, close_ch : Char) : Int32?
+      depth = 0
+      pos = open_pos
+      while pos < content.size
+        ch = content[pos]
+        if ch == open_ch
+          depth += 1
+        elsif ch == close_ch
+          depth -= 1
+          return pos if depth == 0
+        end
+        pos += 1
+      end
+      nil
+    end
+
     private def skip_ws(content : String, pos : Int32) : Int32
       while pos < content.size && content[pos].ascii_whitespace?
         pos += 1
@@ -477,7 +504,7 @@ module Analyzer::Specification
           args_block = extract_paren_block(content, scan_pos)
           if args_block
             args_repr = "(#{args_block.strip})"
-            close = content.index(')', scan_pos)
+            close = matching_close_index(content, scan_pos, '(', ')')
             scan_pos = close ? close + 1 : scan_pos + 1
           end
         end
