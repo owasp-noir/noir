@@ -234,7 +234,9 @@ module Analyzer::Specification
       if props_node = h[YAML::Any.new("properties")]?
         if props = props_node.as_h?
           props.each do |name, _|
-            add_param(params, Param.new(name.to_s, "", param_type))
+            if normalized = normalize_param_name(name.to_s)
+              add_param(params, Param.new(normalized, "", param_type))
+            end
           end
           return
         end
@@ -285,9 +287,24 @@ module Analyzer::Specification
       return unless h = node.as_h?
 
       h.each do |name, _|
-        next if name.to_s.includes?("<<")
-        add_param(params, Param.new(name.to_s, "", param_type))
+        if normalized = normalize_param_name(name.to_s)
+          add_param(params, Param.new(normalized, "", param_type))
+        end
       end
+    end
+
+    # RAML marks an optional property/parameter with a trailing `?` and
+    # lets map-typed properties be keyed on a `/regex/` pattern. Neither
+    # the `?` nor a pattern key is a real wire parameter name, so strip
+    # the former and drop the latter (along with `<<...>>` resource-type
+    # / trait template expressions). Returns `nil` when the key should
+    # not surface as a parameter at all.
+    private def normalize_param_name(raw : String) : String?
+      return if raw.includes?("<<")
+      return if raw.size > 1 && raw.starts_with?("/") && raw.ends_with?("/")
+
+      name = raw.ends_with?("?") ? raw[0...-1] : raw
+      name.empty? ? nil : name
     end
 
     private def add_param(params : Array(Param), param : Param)
