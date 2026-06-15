@@ -1,0 +1,13 @@
+# Client operation document shipped as a .gql file.
+query GetUser {
+  user(id: "1") {
+    id
+    name
+  }
+}
+
+mutation CreateUser {
+  createUser(name: "Neo") {
+    id
+  }
+}

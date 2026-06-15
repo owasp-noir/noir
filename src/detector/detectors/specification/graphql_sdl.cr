@@ -45,16 +45,23 @@ module Detector::Specification
 
     # Returns the "visible" code portion of the line (strings and comments excised)
     # and the updated string states for the *next* line.
+    #
+    # The line is materialized into an `Array(Char)` first: indexing a
+    # `String` by char position is O(n) on multi-byte input, so a single
+    # long unicode-bearing line (e.g. a one-line block-string description
+    # with an emoji) would otherwise make this scan quadratic.
     private def detection_line(line : String, in_block_string : Bool, in_string : Bool) : Tuple(String, Bool, Bool)
+      chars = line.chars
+      size = chars.size
       visible = String::Builder.new
       i = 0
       curr_block = in_block_string
       curr_str = in_string
 
-      while i < line.size
+      while i < size
         if curr_block
           # inside block string: skip until we see closing """
-          if i + 2 < line.size && line[i] == '"' && line[i + 1] == '"' && line[i + 2] == '"'
+          if i + 2 < size && chars[i] == '"' && chars[i + 1] == '"' && chars[i + 2] == '"'
             curr_block = false
             i += 3
             next
@@ -65,8 +72,8 @@ module Detector::Specification
 
         if curr_str
           # inside regular "string": skip until unescaped closing "
-          ch = line[i]
-          if ch == '\\' && i + 1 < line.size
+          ch = chars[i]
+          if ch == '\\' && i + 1 < size
             i += 2
             next
           end
@@ -80,9 +87,9 @@ module Detector::Specification
         end
 
         # not inside any string
-        ch = line[i]
+        ch = chars[i]
         if ch == '"'
-          if i + 2 < line.size && line[i + 1] == '"' && line[i + 2] == '"'
+          if i + 2 < size && chars[i + 1] == '"' && chars[i + 2] == '"'
             curr_block = true
             i += 3
             next

@@ -174,8 +174,9 @@ module InternalGraphqlParser
 end
 
 FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
-  # Only process .graphql files
-  return [] of Endpoint unless path.ends_with?(".graphql")
+  # Operation documents ship with either extension; `.graphqls` is
+  # SDL-only by convention and is left to the graphql_sdl analyzer.
+  return [] of Endpoint unless path.ends_with?(".graphql") || path.ends_with?(".gql")
 
   begin
     file_content = File.read(path, encoding: "utf-8", invalid: :skip)
