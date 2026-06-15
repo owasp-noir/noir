@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"
+                  xmlns:xs="http://www.w3.org/2001/XMLSchema"
+                  xmlns:tns="http://example.com/account"
+                  targetNamespace="http://example.com/account">
+
+  <wsdl:types>
+    <xs:schema targetNamespace="http://example.com/account">
+      <xs:element name="GetBalanceRequest">
+        <xs:complexType>
+          <xs:sequence>
+            <xs:element name="accountId" type="xs:string"/>
+          </xs:sequence>
+        </xs:complexType>
+      </xs:element>
+    </xs:schema>
+  </wsdl:types>
+
+  <wsdl:message name="GetBalanceRequestMessage">
+    <wsdl:part name="parameters" element="tns:GetBalanceRequest"/>
+  </wsdl:message>
+
+  <wsdl:portType name="AccountPortType">
+    <wsdl:operation name="GetBalance">
+      <wsdl:input message="tns:GetBalanceRequestMessage"/>
+    </wsdl:operation>
+  </wsdl:portType>
+</wsdl:definitions>
