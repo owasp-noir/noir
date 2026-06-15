@@ -1,0 +1,38 @@
+openapi: 3.0.0
+info:
+  title: Tab Edge Case API
+  version: 1.0.0
+servers:
+  - url: 'https://api.example.com/v1'
+paths:
+  /widgets:
+    get:
+      summary: List widgets
+      description: |-
+	
+        A leading tab on the blank line above is rejected by libyaml but
+        accepted by most other YAML parsers. noir must still recover the spec.
+      parameters:
+        - in: query
+          name: state
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
+    post:
+      summary: Create widget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                color:
+                  type: string
+      responses:
+        '201':
+          description: created

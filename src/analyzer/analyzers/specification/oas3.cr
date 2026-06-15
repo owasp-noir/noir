@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../utils/yaml"
 require "uri"
 
 module Analyzer::Specification
@@ -332,7 +333,7 @@ module Analyzer::Specification
           if File.exists?(oas3_yaml)
             details = Details.new(PathInfo.new(oas3_yaml))
             content = File.read(oas3_yaml, encoding: "utf-8", invalid: :skip)
-            yaml_obj = YAML.parse(content)
+            yaml_obj = parse_yaml(content)
 
             base_path = @url
             begin

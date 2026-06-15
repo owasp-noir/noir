@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../utils/yaml"
 
 module Analyzer::Specification
   class Oas2 < Analyzer
@@ -305,7 +306,7 @@ module Analyzer::Specification
       return unless File.exists?(swagger_yaml)
       details = Details.new(PathInfo.new(swagger_yaml))
       content = File.read(swagger_yaml, encoding: "utf-8", invalid: :skip)
-      yaml_obj = YAML.parse(content)
+      yaml_obj = parse_yaml(content)
       base_path = ""
       begin
         unless yaml_obj["basePath"].to_s.empty?
