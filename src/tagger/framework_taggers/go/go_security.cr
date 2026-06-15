@@ -179,6 +179,16 @@ class GoSecurityTagger < FrameworkTagger
 
     @middleware_scopes.each do |scope|
       next unless prefix_covers?(scope[:prefix], endpoint.url)
+
+      # A broad root/global ("/") scope sweeps in static-asset routes (the
+      # SPA shell, `/static/*`, favicon, `*.js`/`*.css`) that are either
+      # served outside the middleware chain (e.g. registered before a global
+      # `g.Use(cors.New(...))`, as in gotify) or simply aren't a meaningful
+      # CORS/CSRF/headers review target. Skip them — inline route middleware
+      # and specific-prefix scopes are unaffected, so a genuinely guarded
+      # asset route keeps its tag.
+      next if scope[:prefix] == "/" && static_asset_route?(endpoint.url)
+
       endpoint.add_tag(Tag.new(scope[:tag], scope[:description], "go_security"))
     end
   end

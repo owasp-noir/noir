@@ -42,19 +42,6 @@ class GoAuthTagger < FrameworkTagger
     /\bGF[Aa]uth\b/,
   ]
 
-  # Static-asset file extensions. A route ending in one of these serves a
-  # static file off the engine, not a guarded API route.
-  STATIC_ASSET_EXTENSIONS = %w[
-    .html .htm .js .mjs .cjs .css .map .ico .png .jpg .jpeg .gif .svg .webp
-    .avif .bmp .woff .woff2 .ttf .otf .eot .wasm
-  ]
-
-  # Well-known public files served at the web root.
-  STATIC_PUBLIC_FILES = Set{
-    "favicon.ico", "robots.txt", "manifest.json", "asset-manifest.json",
-    "sitemap.xml", "service-worker.js", "sw.js", "browserconfig.xml",
-  }
-
   def initialize(options : Hash(String, YAML::Any))
     super
     @name = "go_auth"
@@ -232,26 +219,6 @@ class GoAuthTagger < FrameworkTagger
     end
 
     nil
-  end
-
-  # A static-file / SPA-shell route, recognized conservatively: the SPA
-  # root, a gin catch-all wildcard mount (`/static/*filepath`, `/*any`), a
-  # well-known public file, or a static-asset extension. Used only to exempt
-  # these from a broad root-*group* auth scope, never from an inline,
-  # specific-prefix, or truly global (`engine.Use`) auth signal.
-  private def static_asset_route?(url : String) : Bool
-    path = url.split("?", 2)[0].split("#", 2)[0].downcase
-    return true if path == "/" || path.empty?
-
-    segments = path.split("/").reject(&.empty?)
-    # gin catch-all wildcard — the shape of a static-file server / SPA
-    # fallback (`r.Static`, `r.StaticFS`, a NoRoute SPA handler), not a
-    # REST route.
-    return true if segments.any?(&.starts_with?("*"))
-
-    last = segments[-1]? || ""
-    return true if STATIC_PUBLIC_FILES.includes?(last)
-    STATIC_ASSET_EXTENSIONS.any? { |ext| last.ends_with?(ext) }
   end
 
   # Segment-aware prefix match so "/api" guards "/api/x" but not "/apiv2".

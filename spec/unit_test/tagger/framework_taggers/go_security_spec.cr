@@ -226,4 +226,47 @@ describe "GoSecurityTagger" do
 
     FileUtils.rm_rf(tmpdir)
   end
+
+  it "exempts static-asset routes from a global root cors scope" do
+    # Models gotify: a global `r.Use(cors.New(...))` plus static routes
+    # served off the engine (the SPA shell / `/static/*`). CORS is global,
+    # so API routes are tagged, but the static assets — registered outside
+    # the middleware chain — must not be.
+    #  1 package main
+    #  2 func main() {
+    #  3   r := gin.New()
+    #  4   r.GET("/index.html", indexHandler)
+    #  5   r.GET("/static/*filepath", staticHandler)
+    #  6   r.Use(cors.New(corsConfig))
+    #  7   r.GET("/api/data", dataHandler)
+    #  8 }
+    tmpdir = File.tempname("go_sec_static")
+    Dir.mkdir_p(tmpdir)
+    file = File.join(tmpdir, "main.go")
+    File.write(file, [
+      "package main",
+      "func main() {",
+      "    r := gin.New()",
+      "    r.GET(\"/index.html\", indexHandler)",
+      "    r.GET(\"/static/*filepath\", staticHandler)",
+      "    r.Use(cors.New(corsConfig))",
+      "    r.GET(\"/api/data\", dataHandler)",
+      "}",
+    ].join("\n"))
+
+    opts = create_test_options
+    opts["base"] = YAML::Any.new(tmpdir)
+    seed_file_map(tmpdir)
+
+    index = go_endpoint(file, 4, "/index.html", "GET", "go_gin")
+    static = go_endpoint(file, 5, "/static/*filepath", "GET", "go_gin")
+    api = go_endpoint(file, 7, "/api/data", "GET", "go_gin")
+    GoSecurityTagger.new(opts).perform([index, static, api])
+
+    tag_named(index, "cors").should be_nil
+    tag_named(static, "cors").should be_nil
+    tag_named(api, "cors").should_not be_nil
+
+    FileUtils.rm_rf(tmpdir)
+  end
 end
