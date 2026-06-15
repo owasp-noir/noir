@@ -4,8 +4,9 @@ require "../../../models/analyzer"
 
 module Analyzer::Specification
   class WSDL < Analyzer
-    SOAP11_NS = "http://schemas.xmlsoap.org/wsdl/soap/"
-    SOAP12_NS = "http://schemas.xmlsoap.org/wsdl/soap12/"
+    SOAP11_NS        = "http://schemas.xmlsoap.org/wsdl/soap/"
+    SOAP12_NS        = "http://schemas.xmlsoap.org/wsdl/soap12/"
+    MAX_IMPORT_DEPTH = 8
 
     alias FieldList = Array(String)
     alias BindingInfo = NamedTuple(port_type: String, soap_version: String, actions: Hash(String, String))
@@ -38,12 +39,60 @@ module Analyzer::Specification
       definitions = find_child(doc, "definitions")
       return unless definitions
 
-      element_fields = collect_element_fields(definitions)
-      messages = collect_messages(definitions)
-      port_types = collect_port_types(definitions)
-      bindings = collect_bindings(definitions)
+      # WSDL is commonly split across files: the `service`/`binding` live in
+      # one document and the `portType`/`message`/`types` in another, wired
+      # together by `<wsdl:import>`. Without resolving those imports a
+      # binding can't find its portType and every operation is dropped
+      # (false negative). Merge the definitions of all reachable imports.
+      docs = [doc] # keep parsed documents alive while their nodes are read
+      all_defs = [definitions]
+      load_imports(definitions, File.dirname(source), all_defs, docs, Set(String).new, 0)
 
+      element_fields = {} of String => FieldList
+      messages = {} of String => Array(PartRef)
+      port_types = {} of String => Hash(String, String)
+      bindings = {} of String => BindingInfo
+      all_defs.each do |defs|
+        element_fields.merge!(collect_element_fields(defs))
+        messages.merge!(collect_messages(defs))
+        port_types.merge!(collect_port_types(defs))
+        bindings.merge!(collect_bindings(defs))
+      end
+
+      # Emit only from the services declared in this document; an imported
+      # file that also declares a service is analyzed on its own pass.
       emit_endpoints(definitions, source, bindings, port_types, messages, element_fields)
+    end
+
+    # Recursively loads every `<wsdl:import location="...">` reachable from
+    # `definitions`, appending each imported `<definitions>` node to
+    # `all_defs` (and its document to `docs`, which must outlive the nodes).
+    # Remote and already-visited locations are skipped, and a depth cap
+    # guards against pathological or cyclic import graphs.
+    private def load_imports(definitions : XML::Node, base_dir : String, all_defs : Array(XML::Node), docs : Array(XML::Node), visited : Set(String), depth : Int32)
+      return if depth >= MAX_IMPORT_DEPTH
+
+      each_child(definitions, "import") do |imp|
+        loc = imp["location"]?
+        next unless loc
+        next if loc.empty? || loc.starts_with?("http://") || loc.starts_with?("https://")
+
+        path = File.expand_path(loc, base_dir)
+        next if visited.includes?(path)
+        visited << path
+        next unless File.exists?(path)
+
+        begin
+          sub_doc = XML.parse(read_file_content(path))
+          sub_def = find_child(sub_doc, "definitions")
+          next unless sub_def
+          docs << sub_doc
+          all_defs << sub_def
+          load_imports(sub_def, File.dirname(path), all_defs, docs, visited, depth + 1)
+        rescue e
+          @logger.debug "Failed to load WSDL import #{path}: #{e.message}"
+        end
+      end
     end
 
     # Walks `wsdl:types` and indexes every named `xs:element` and
