@@ -72,6 +72,40 @@ describe "Insomnia Analyzer" do
     graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
   end
 
+  it "does not drop requests whose body is a raw string (legacy exports)" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {
+        "_type": "export",
+        "__export_format": 4,
+        "resources": [
+          {
+            "_id": "req_1",
+            "_type": "request",
+            "name": "Create User",
+            "method": "POST",
+            "url": "https://api.example.com/users",
+            "body": "{\\"foo\\": \\"bar\\"}"
+          },
+          {
+            "_id": "req_2",
+            "_type": "request",
+            "name": "Plain Body",
+            "method": "POST",
+            "url": "https://api.example.com/notes",
+            "body": "Hello World!"
+          }
+        ]
+      }
+      JSON
+
+    endpoints.map(&.url).sort!.should eq ["/notes", "/users"]
+    users = endpoints.find!(&.url.==("/users"))
+    users.params.map { |p| {p.name, p.param_type} }.should contain({"foo", "json"})
+
+    notes = endpoints.find!(&.url.==("/notes"))
+    notes.params.should be_empty
+  end
+
   it "does not share details between v5 requests in one collection" do
     endpoints = analyze_insomnia_yaml <<-YAML
       type: collection.insomnia.rest/5.0

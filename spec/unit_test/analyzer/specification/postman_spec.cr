@@ -174,6 +174,88 @@ describe "Postman Analyzer" do
     graphql_params.should contain({"id", "123", "json"})
   end
 
+  it "extracts request-level auth as parameters" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {
+          "name": "Auth Collection",
+          "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "item": [
+          {
+            "name": "Bearer",
+            "request": {
+              "method": "GET",
+              "url": "https://api.example.com/bearer",
+              "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "abc" } ] }
+            }
+          },
+          {
+            "name": "ApiKeyQuery",
+            "request": {
+              "method": "GET",
+              "url": "https://api.example.com/apikey",
+              "auth": { "type": "apikey", "apikey": [
+                { "key": "key", "value": "X-Api-Key" },
+                { "key": "value", "value": "secret" },
+                { "key": "in", "value": "query" }
+              ] }
+            }
+          },
+          {
+            "name": "Basic v2.0 object form",
+            "request": {
+              "method": "GET",
+              "url": "https://api.example.com/basic",
+              "auth": { "type": "basic", "basic": { "username": "u", "password": "p" } }
+            }
+          }
+        ]
+      }
+      JSON
+
+    bearer = endpoints.find!(&.url.==("/bearer"))
+    param_tuples(bearer).should contain({"Authorization", "Bearer abc", "header"})
+
+    apikey = endpoints.find!(&.url.==("/apikey"))
+    param_tuples(apikey).should contain({"X-Api-Key", "secret", "query"})
+
+    basic = endpoints.find!(&.url.==("/basic"))
+    param_tuples(basic).should contain({"Authorization", "", "header"})
+  end
+
+  it "inherits collection-level auth and lets requests override with noauth" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": {
+          "name": "Inherited Auth Collection",
+          "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+        },
+        "auth": { "type": "bearer", "bearer": [ { "key": "token", "value": "root" } ] },
+        "item": [
+          {
+            "name": "Inherits",
+            "request": { "method": "GET", "url": "https://api.example.com/inherits" }
+          },
+          {
+            "name": "Opts out",
+            "request": {
+              "method": "GET",
+              "url": "https://api.example.com/public",
+              "auth": { "type": "noauth" }
+            }
+          }
+        ]
+      }
+      JSON
+
+    inherits = endpoints.find!(&.url.==("/inherits"))
+    param_tuples(inherits).should contain({"Authorization", "Bearer root", "header"})
+
+    public_ep = endpoints.find!(&.url.==("/public"))
+    public_ep.params.any? { |p| p.name == "Authorization" }.should be_false
+  end
+
   it "does not share details between requests in one collection" do
     endpoints = analyze_postman <<-JSON
       {
