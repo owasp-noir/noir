@@ -140,7 +140,7 @@ describe "GraphQL SDL Analyzer" do
     # `oldArg` / `newArg` are arguments, not fields — they must not leak as endpoints.
     endpoints.map(&.url).any?(&.includes?("newArg")).should be_false
 
-    with_args = endpoints.find! { |e| e.url.ends_with?("withDeprecatedArg") }
+    with_args = endpoints.find!(&.url.ends_with?("withDeprecatedArg"))
     with_args.params.reject(&.name.starts_with?("graphql_")).map(&.name).should eq ["oldArg", "newArg"]
   end
 
