@@ -1,6 +1,7 @@
 require "../models/passive_scan"
 require "../models/logger"
 require "./severity"
+require "./false_positive"
 require "yaml"
 
 module NoirPassiveScan
@@ -38,11 +39,16 @@ module NoirPassiveScan
         index = 0
         file_content.each_line do |line|
           if matchers.all? { |matcher| match_content?(line, matcher) }
-            unless detected_logged
-              logger.sub "└── Detected: #{rule.info.name}"
-              detected_logged = true
+            # Drop runtime indirections / placeholders that cannot carry
+            # a checked-in secret (env reads, `${{ … }}`, `<your-token>`).
+            # See NoirPassiveScan::FalsePositive for the invariant.
+            unless FalsePositive.suppress?(rule.category, line)
+              unless detected_logged
+                logger.sub "└── Detected: #{rule.info.name}"
+                detected_logged = true
+              end
+              results << PassiveScanResult.new(rule, file_path, index + 1, line)
             end
-            results << PassiveScanResult.new(rule, file_path, index + 1, line)
           end
           index += 1
         end
@@ -63,6 +69,10 @@ module NoirPassiveScan
           # satisfy both matchers, even though it's the same finding.
           active_matchers.each do |matcher|
             if match_content?(line, matcher)
+              # Drop runtime indirections / placeholders that cannot
+              # carry a checked-in secret (env reads, `${{ … }}`,
+              # `<your-token>`). See NoirPassiveScan::FalsePositive.
+              break if FalsePositive.suppress?(rule.category, line)
               unless detected_logged
                 logger.sub "└── Detected: #{rule.info.name}"
                 detected_logged = true
