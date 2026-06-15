@@ -3,13 +3,16 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Grpc < Detector
+    # A gRPC service is defined by a `service Name { ... }` block. Matching that
+    # structural marker — rather than the bare substrings "service"/"rpc", which
+    # also occur in ordinary field names like `service_url` or `rpc_timeout` —
+    # keeps message-only and config `.proto` files from being mislabeled as gRPC.
+    SERVICE_BLOCK = /\bservice\s+\w+\s*\{/
+
     def detect(filename : String, file_contents : String) : Bool
-      if filename.ends_with?(".proto")
-        if file_contents.includes?("service") || file_contents.includes?("rpc")
-          locator = CodeLocator.instance
-          locator.push("grpc-proto", filename)
-          return true
-        end
+      if filename.ends_with?(".proto") && file_contents.matches?(SERVICE_BLOCK)
+        CodeLocator.instance.push("grpc-proto", filename)
+        return true
       end
 
       false
