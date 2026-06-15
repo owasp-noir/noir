@@ -32,6 +32,9 @@ nin = "nin"
 # the *incorrect* plural forms (contrasted with the y->ies rule).
 directorys = "directorys"
 directoryes = "directoryes"
+# `look-alikes` (plural of look-alike) in a vapor fixture comment; typos
+# mis-flags the hyphen-split `alikes` token as `alike`/`likes`.
+alikes = "alikes"
 
 [files]
 extend-exclude = [
