@@ -92,4 +92,37 @@ class FrameworkTagger < Tagger
     @logger.debug "FrameworkTagger: Failed to read file #{path}: #{ex.message}"
     nil
   end
+
+  # Static-asset file extensions. A route ending in one of these serves a
+  # static file off the web server, not a guarded API route.
+  STATIC_ASSET_EXTENSIONS = %w[
+    .html .htm .js .mjs .cjs .css .map .ico .png .jpg .jpeg .gif .svg .webp
+    .avif .bmp .woff .woff2 .ttf .otf .eot .wasm
+  ]
+
+  # Well-known public files served at the web root.
+  STATIC_PUBLIC_FILES = Set{
+    "favicon.ico", "robots.txt", "manifest.json", "asset-manifest.json",
+    "sitemap.xml", "service-worker.js", "sw.js", "browserconfig.xml",
+  }
+
+  # A static-file / SPA-shell route, recognized conservatively: the SPA
+  # root, a catch-all wildcard mount (`/static/*filepath`, `/*any`), a
+  # well-known public file, or a static-asset extension. Taggers use this to
+  # exempt such routes from broad root/global middleware scopes, where the
+  # signal is noise (or a false positive for assets registered outside the
+  # middleware chain) rather than a meaningful per-endpoint review target.
+  def static_asset_route?(url : String) : Bool
+    path = url.split("?", 2)[0].split("#", 2)[0].downcase
+    return true if path == "/" || path.empty?
+
+    segments = path.split("/").reject(&.empty?)
+    # Catch-all wildcard — the shape of a static-file server / SPA fallback
+    # (`r.Static`, `r.StaticFS`, a NoRoute SPA handler), not a REST route.
+    return true if segments.any?(&.starts_with?("*"))
+
+    last = segments[-1]? || ""
+    return true if STATIC_PUBLIC_FILES.includes?(last)
+    STATIC_ASSET_EXTENSIONS.any? { |ext| last.ends_with?(ext) }
+  end
 end
