@@ -1,7 +1,112 @@
 require "../../spec_helper"
 require "../../../src/passive_scan/false_positive.cr"
 
+# A github-token-shaped rule: a `word` matcher on variable names plus a
+# `regex` matcher on the value shape, joined by `or` — mirrors the
+# bundled secret rules.
+private def github_rule
+  PassiveScan.new(YAML.parse(<<-YAML))
+    id: github-token
+    info:
+      name: Detect GITHUB_TOKEN
+      author: [test]
+      severity: critical
+      description: ...
+      reference: []
+    matchers-condition: or
+    matchers:
+      - type: word
+        patterns: [GITHUB_TOKEN, GH_TOKEN]
+        condition: or
+      - type: regex
+        patterns: ['ghp_[A-Za-z0-9]{36}']
+        condition: or
+    category: secret
+    techs: ['*']
+    YAML
+end
+
+# A database-connection-string-shaped rule whose word matcher fires on
+# the bare variable name `DATABASE_URL`.
+private def database_rule
+  PassiveScan.new(YAML.parse(<<-YAML))
+    id: database-connection-string
+    info:
+      name: Detect DATABASE_CONNECTION_STRING
+      author: [test]
+      severity: high
+      description: ...
+      reference: []
+    matchers-condition: or
+    matchers:
+      - type: word
+        patterns: [DATABASE_URL, DB_CONNECTION_STRING]
+        condition: or
+      - type: regex
+        patterns: ['mysql://[a-z]+:[a-z]+@[a-z.]+:[0-9]+/[a-z]+']
+        condition: or
+    category: secret
+    techs: ['*']
+    YAML
+end
+
 describe NoirPassiveScan::FalsePositive do
+  describe ".suppress?(rule, line)" do
+    it "keeps a line whose value-shape regex matches (real literal)" do
+      NoirPassiveScan::FalsePositive.suppress?(github_rule, "GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwx").should be_false
+    end
+
+    it "suppresses a variable name mentioned in a comment" do
+      NoirPassiveScan::FalsePositive.suppress?(github_rule, "# A token other than the default GITHUB_TOKEN is needed").should be_true
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, "    # ensure it's using the DATABASE_URL").should be_true
+      NoirPassiveScan::FalsePositive.suppress?(github_rule, "#   - GITHUB_TOKEN").should be_true
+    end
+
+    it "suppresses a variable name used as a bare string literal / reference" do
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, %(    name: 'DATABASE_URL',)).should be_true
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, %(dependencies: ['DATABASE_URL'],)).should be_true
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, %(@previous = ENV.delete("DATABASE_URL"))).should be_true
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, "$ echo $DATABASE_URL").should be_true
+      NoirPassiveScan::FalsePositive.suppress?(github_rule, %(github_token: Annotated[str, typer.Option(envvar="GITHUB_TOKEN")],)).should be_true
+    end
+
+    it "keeps a genuine value assignment to a variable name" do
+      # A populated connection-string assignment is a real finding even
+      # though the strict mysql-only regex doesn't match it.
+      NoirPassiveScan::FalsePositive.suppress?(database_rule, "DATABASE_URL: postgres://user:pass@db.example.com:5432/app").should be_false
+    end
+
+    it "keeps a PEM marker (literal secret, not a variable name)" do
+      pem = PassiveScan.new(YAML.parse(<<-YAML))
+        id: private-key
+        info: { name: Detect PRIVATE_KEY, author: [t], severity: critical, description: ., reference: [] }
+        matchers-condition: or
+        matchers:
+          - type: word
+            patterns: ['PRIVATE_KEY', '-----BEGIN PRIVATE KEY-----']
+            condition: or
+        category: secret
+        techs: ['*']
+        YAML
+      NoirPassiveScan::FalsePositive.suppress?(pem, "-----BEGIN PRIVATE KEY-----").should be_false
+    end
+
+    it "never suppresses non-secret categories" do
+      info_rule = PassiveScan.new(YAML.parse(<<-YAML))
+        id: ci-ref
+        info: { name: x, author: [t], severity: high, description: ., reference: [] }
+        matchers-condition: or
+        matchers:
+          - type: word
+            patterns: [DATABASE_URL]
+            condition: or
+        category: security
+        techs: ['*']
+        YAML
+      NoirPassiveScan::FalsePositive.suppress?(info_rule, "# mentions DATABASE_URL").should be_false
+    end
+  end
+
   describe ".suppress?" do
     it "only applies to secret-category findings" do
       line = "GH_TOKEN: ${{ github.token }}"

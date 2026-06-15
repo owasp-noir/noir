@@ -39,10 +39,10 @@ module NoirPassiveScan
         index = 0
         file_content.each_line do |line|
           if matchers.all? { |matcher| match_content?(line, matcher) }
-            # Drop runtime indirections / placeholders that cannot carry
-            # a checked-in secret (env reads, `${{ … }}`, `<your-token>`).
-            # See NoirPassiveScan::FalsePositive for the invariant.
-            unless FalsePositive.suppress?(rule.category, line)
+            # Drop runtime indirections / placeholders and bare
+            # variable-name mentions that cannot carry a checked-in
+            # secret. See NoirPassiveScan::FalsePositive for the invariant.
+            unless FalsePositive.suppress?(rule, line)
               unless detected_logged
                 logger.sub "└── Detected: #{rule.info.name}"
                 detected_logged = true
@@ -69,10 +69,10 @@ module NoirPassiveScan
           # satisfy both matchers, even though it's the same finding.
           active_matchers.each do |matcher|
             if match_content?(line, matcher)
-              # Drop runtime indirections / placeholders that cannot
-              # carry a checked-in secret (env reads, `${{ … }}`,
-              # `<your-token>`). See NoirPassiveScan::FalsePositive.
-              break if FalsePositive.suppress?(rule.category, line)
+              # Drop runtime indirections / placeholders and bare
+              # variable-name mentions that cannot carry a checked-in
+              # secret. See NoirPassiveScan::FalsePositive.
+              break if FalsePositive.suppress?(rule, line)
               unless detected_logged
                 logger.sub "└── Detected: #{rule.info.name}"
                 detected_logged = true

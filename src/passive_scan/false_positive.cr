@@ -1,3 +1,5 @@
+require "../models/passive_scan"
+
 module NoirPassiveScan
   # Heuristics that drop passive-scan results which trip a keyword/regex
   # matcher but are demonstrably *not* hard-coded secrets — chiefly
@@ -51,6 +53,28 @@ module NoirPassiveScan
     # on such a line is always a false positive.
     EMPTY_ASSIGNMENT = /(?::|=>?)\s*$/
 
+    # A secret *variable name*. The bundled secret rules carry two kinds
+    # of `word` pattern: environment-variable names (`GITHUB_TOKEN`,
+    # `DATABASE_URL`, `AWS_ACCESS_KEY_ID`) and literal secret markers
+    # (`-----BEGIN PRIVATE KEY-----`). Only the former are eligible for
+    # the "merely mentioned" suppression below — a PEM marker is itself
+    # the secret and must never be dropped on a mention basis.
+    #
+    # Names are required to look like an env var: an identifier carrying
+    # at least one uppercase letter or underscore (`DATABASE_URL`,
+    # `github_pat_`). This deliberately excludes bare lowercase words
+    # (`token`, `secret`) so a rule keyword that doubles as ordinary
+    # prose is never suppressed on a mention basis — keeping the change
+    # firmly on the false-positive-only side.
+    SECRET_NAME = /\A(?=[A-Za-z0-9_]*[A-Z_])[A-Za-z_][A-Za-z0-9_]*\z/
+
+    # Whole-line comment markers across the common languages noir scans
+    # (shell/Python/Ruby/YAML `#`, C-family `//` `/*` `*`, HTML/XML/MD
+    # `<!--`). A variable name *mentioned* in a comment is never a leaked
+    # secret; a real literal in a comment is still caught by the
+    # value-shape regex gate, so this can only drop false positives.
+    COMMENT_PREFIXES = ["#", "//", "/*", "*", "<!--"]
+
     # Whole-value forms that are references or placeholders, never
     # literals: shell/template variable substitutions (`$VAR`, `${VAR}`,
     # `${{ … }}`, `$(…)`, `%VAR%`, `{{ … }}`), angle-bracket placeholders
@@ -88,10 +112,91 @@ module NoirPassiveScan
 
     # Decide whether a result on `line` for a rule of `category` should be
     # dropped as a false positive. Only `secret` findings are eligible;
-    # everything else passes through unchanged.
+    # everything else passes through unchanged. This category-only form is
+    # the reference/placeholder check; the rule-aware overload below adds
+    # matcher-type gating and the "merely mentioned" heuristic.
     def self.suppress?(category : String, line : String) : Bool
       return false unless category == "secret"
       secret_reference?(line)
+    end
+
+    # Rule-aware suppression. In addition to the reference/placeholder
+    # check it gates on *which* matcher fired:
+    #
+    # - If a value-shape `regex` matcher hits the line, a real secret
+    #   literal is present (`ghp_…`, `AKIA…`, a credentialed URL) — high
+    #   confidence, never suppressed.
+    # - Otherwise the finding is backed only by a `word` matcher on a
+    #   variable *name*. When that name is merely *mentioned* — in a
+    #   comment, a string literal, prose, a dependency list — rather than
+    #   assigned a literal value, it is not a leaked secret.
+    def self.suppress?(rule : PassiveScan, line : String) : Bool
+      return false unless rule.category == "secret"
+
+      # A value-shape regex match is the strongest signal — keep it.
+      return false if regex_value_hit?(rule, line)
+
+      # Runtime indirections / placeholders (env reads, `${{ }}`, empty
+      # stubs, `env('NAME')`, `<placeholder>`).
+      return true if secret_reference?(line)
+
+      # Variable-name word match with no real assignment on the line.
+      if name = matched_secret_name(rule, line)
+        return true if comment_line?(line)
+        return true unless assigns_literal?(line, name)
+      end
+
+      false
+    end
+
+    # True when any value-shape (`regex`) matcher of `rule` matches the
+    # line — mirrors detect.cr's matching so the gate above agrees with
+    # what actually fired.
+    def self.regex_value_hit?(rule : PassiveScan, line : String) : Bool
+      rule.matchers.each do |matcher|
+        next unless matcher.type == "regex"
+        next if matcher.regex_compile_failed?
+
+        case matcher.condition
+        when "or"
+          if regex = matcher.compiled_regex
+            return true if line.matches?(regex)
+          end
+        when "and"
+          if regexes = matcher.compiled_regexes
+            return true if !regexes.empty? && regexes.all? { |regex| line.matches?(regex) }
+          end
+        end
+      end
+      false
+    end
+
+    # The first env-var-name-shaped `word` pattern of `rule` that occurs
+    # on the line, or nil. Literal markers like `-----BEGIN …-----` and
+    # bare lowercase words are not env-var-shaped and are excluded.
+    def self.matched_secret_name(rule : PassiveScan, line : String) : String?
+      rule.matchers.each do |matcher|
+        next unless matcher.type == "word"
+        matcher.string_patterns.each do |pattern|
+          next unless pattern.matches?(SECRET_NAME)
+          return pattern if line.includes?(pattern)
+        end
+      end
+      nil
+    end
+
+    # True when `line`'s leading non-space content is a comment marker.
+    def self.comment_line?(line : String) : Bool
+      stripped = line.lstrip
+      COMMENT_PREFIXES.any? { |prefix| stripped.starts_with?(prefix) }
+    end
+
+    # True when `name` is assigned a (non-empty) value on the line —
+    # `NAME=…`, `NAME: …`, `"NAME": …`, `NAME => …`. A bare mention
+    # (`"DATABASE_URL"`, `env.delete("DATABASE_URL")`, prose) does not
+    # match, so it is treated as a non-secret reference.
+    def self.assigns_literal?(line : String, name : String) : Bool
+      !!line.match(/#{Regex.escape(name)}['"]?\s*(?::|=>?)\s*\S/)
     end
 
     # Strip a single layer of matching wrapping quotes (and a trailing
