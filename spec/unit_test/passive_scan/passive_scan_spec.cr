@@ -545,6 +545,83 @@ describe NoirPassiveScan do
     end
   end
 
+  # End-to-end suppression of secret-rule false positives. The bundled
+  # secret rules pair a `word` matcher on a variable *name*
+  # (GITHUB_TOKEN, AWS_ACCESS_KEY_ID, …) with a `regex` matcher on the
+  # value shape, joined by `or`. The word matcher fires on any line that
+  # merely *references* the variable — CI templating (`${{ … }}`), env
+  # reads (`os.getenv`), placeholders — which are not leaked secrets.
+  describe "secret false-positive suppression" do
+    github_token_rule = <<-YAML
+      id: github-token
+      info:
+        name: Detect GITHUB_TOKEN
+        author: [test]
+        severity: critical
+        description: ...
+        reference: []
+      matchers-condition: or
+      matchers:
+        - type: word
+          patterns: [GITHUB_TOKEN, GH_TOKEN]
+          condition: or
+        - type: regex
+          patterns: ['ghp_[A-Za-z0-9]{36}']
+          condition: or
+      category: secret
+      techs: ['*']
+      YAML
+
+    it "suppresses a GitHub Actions templating reference" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [PassiveScan.new(YAML.parse(github_token_rule))]
+      content = "jobs:\n  build:\n    env:\n      GH_TOKEN: ${{ github.token }}"
+      results = NoirPassiveScan.detect("ci.yml", content, rules, logger)
+      results.size.should eq(0)
+    end
+
+    it "suppresses an env-var accessor reference" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [PassiveScan.new(YAML.parse(github_token_rule))]
+      content = %(const token = process.env.GITHUB_TOKEN)
+      results = NoirPassiveScan.detect("app.js", content, rules, logger)
+      results.size.should eq(0)
+    end
+
+    it "still reports a hard-coded literal token" do
+      logger = NoirLogger.new(false, false, false, true)
+      rules = [PassiveScan.new(YAML.parse(github_token_rule))]
+      content = "GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwx"
+      results = NoirPassiveScan.detect(".env", content, rules, logger)
+      results.size.should eq(1)
+      results[0].line_number.should eq(1)
+    end
+
+    it "does not suppress non-secret categories sharing the same shape" do
+      logger = NoirLogger.new(false, false, false, true)
+      rule = <<-YAML
+        id: ci-ref
+        info:
+          name: CI token reference
+          author: [test]
+          severity: high
+          description: ...
+          reference: []
+        matchers-condition: or
+        matchers:
+          - type: word
+            patterns: [GITHUB_TOKEN]
+            condition: or
+        category: security
+        techs: ['*']
+        YAML
+      rules = [PassiveScan.new(YAML.parse(rule))]
+      content = "GH ref: ${{ secrets.GITHUB_TOKEN }}"
+      results = NoirPassiveScan.detect("ci.yml", content, rules, logger)
+      results.size.should eq(1)
+    end
+  end
+
   describe "edge cases" do
     it "returns no results when the rule has empty patterns" do
       logger = NoirLogger.new(false, false, false, true)
