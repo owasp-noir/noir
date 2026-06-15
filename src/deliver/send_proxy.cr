@@ -14,10 +14,10 @@ class SendWithProxy < Deliver
       wg.add(1)
       spawn do
         begin
-          if endpoint.params.size > 0
+          unless endpoint.params.empty?
             endpoint_hash = endpoint.params_to_hash
             is_json = false
-            body = if endpoint_hash["json"].size > 0
+            body = if !endpoint_hash["json"].empty?
                      is_json = true
                      endpoint_hash["json"]
                    else
