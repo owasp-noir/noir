@@ -29,9 +29,17 @@ class FileUploadTagger < Tagger
   UPLOAD_METHODS     = Set{"POST", "PUT", "PATCH"}
   UPLOAD_PATH_PARTS  = Set{
     "upload", "uploads", "attach", "attachment", "attachments",
-    "import", "imports", "avatar", "photo", "photos", "media",
+    "import", "imports", "avatar", "photo", "photos",
     "file", "files", "image", "images", "picture", "pictures",
   }
+
+  # `media` is matched only as a whole `/media` path segment, never as a
+  # loose sub-token. As a loose token (split on `-`/`_`) it fired on
+  # config/feature routes that merely contain the word but upload nothing:
+  # `/settings/media-path` (a media-directory setting, e.g. koel),
+  # `/social-media`, `/media-library`. A standalone `/media` collection
+  # (`POST /media`) still tags.
+  SEGMENT_ONLY_PATH_PARTS = Set{"media"}
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -80,7 +88,16 @@ class FileUploadTagger < Tagger
 
   private def upload_url?(url : String) : Bool
     parts = url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-    parts.any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
+    return true if parts.any? { |part| UPLOAD_PATH_PARTS.includes?(part) }
+    segment_only_upload?(url)
+  end
+
+  # Whole-segment-only path words: matched against `/`-delimited segments
+  # (after dropping the query/fragment) so they don't fire as a sub-token
+  # of a compound like `media-path`.
+  private def segment_only_upload?(url : String) : Bool
+    path = url.split("?", 2)[0].split("#", 2)[0]
+    path.downcase.split("/").any? { |seg| SEGMENT_ONLY_PATH_PARTS.includes?(seg) }
   end
 
   private def normalize_param_name(name : String) : String
