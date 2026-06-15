@@ -8,11 +8,18 @@ module Analyzer::Specification
     def analyze
       locator = CodeLocator.instance
       proto_files = locator.all("grpc-proto")
+      return @result if proto_files.empty?
+
+      # Request/response messages are frequently defined in a separate
+      # (imported) `.proto`, so resolving params from the service file alone
+      # drops them. Build one registry from every `.proto` in scope, keyed by
+      # both simple and package-qualified name, and resolve against it.
+      registry = build_message_registry
 
       proto_files.each do |proto_file|
         begin
-          content = File.read(proto_file, encoding: "utf-8", invalid: :skip)
-          parse_proto(content, proto_file)
+          content = read_file_content(proto_file)
+          parse_proto(content, proto_file, registry)
         rescue File::NotFoundError
           @logger.debug "Proto file not found during analysis, skipping: #{proto_file}"
         end
@@ -21,15 +28,59 @@ module Analyzer::Specification
       @result
     end
 
-    private def parse_proto(content : String, file_path : String)
+    # Parses messages from every `.proto` file the detector registered (not
+    # just service files), so imported message types resolve. Each message is
+    # stored under its simple name and its `package.Name` qualified form.
+    private def build_message_registry : Hash(String, MessageFields)
+      registry = {} of String => MessageFields
+      CodeLocator.instance.files_by_extension(".proto").each do |proto_file|
+        begin
+          content = read_file_content(proto_file)
+        rescue File::NotFoundError
+          next
+        end
+        clean = strip_comments(content)
+        package = parse_package(clean)
+        parse_messages(clean).each do |name, fields|
+          registry[name] = fields
+          registry["#{package}.#{name}"] = fields unless package.empty?
+        end
+      end
+      registry
+    end
+
+    private def parse_proto(content : String, file_path : String, registry : Hash(String, MessageFields))
       # Strip comments before any structural parsing so a commented-out
       # `service` / `rpc` / `message` declaration is never mistaken for a
       # live definition (a false-positive source). Newlines are preserved,
       # so reported line numbers stay accurate.
       clean = strip_comments(content)
       package = parse_package(clean)
-      messages = parse_messages(clean)
-      parse_services(clean, file_path, package, messages)
+      parse_services(clean, file_path, package, registry)
+    end
+
+    # Resolves an rpc request type to its fields, tolerating leading dots,
+    # fully-qualified names, same-package relative names, and imported simple
+    # names. Same-package matches win over a bare simple-name match so two
+    # messages that share a simple name across packages don't cross over.
+    private def resolve_message(type_name : String, package : String, registry : Hash(String, MessageFields)) : MessageFields?
+      name = type_name.lstrip('.')
+      if name.includes?(".")
+        if fields = registry[name]?
+          return fields
+        end
+      else
+        unless package.empty?
+          if fields = registry["#{package}.#{name}"]?
+            return fields
+          end
+        end
+        if fields = registry[name]?
+          return fields
+        end
+      end
+      simple = name.includes?(".") ? name.rpartition(".")[2] : name
+      registry[simple]?
     end
 
     # Replaces `//` line comments and `/* */` block comments with spaces
@@ -128,7 +179,7 @@ module Analyzer::Specification
       messages
     end
 
-    private def parse_services(content : String, file_path : String, package : String, messages : Hash(String, MessageFields))
+    private def parse_services(content : String, file_path : String, package : String, registry : Hash(String, MessageFields))
       # Find service blocks using brace matching
       content.scan(/\bservice\s+(\w+)\s*\{/m) do |service_match|
         service_name = service_match[1]
@@ -138,7 +189,7 @@ module Analyzer::Specification
         service_body = extract_brace_block(content, brace_pos)
         next if service_body.nil?
 
-        parse_rpc_methods(service_body, file_path, package, service_name, messages, content)
+        parse_rpc_methods(service_body, file_path, package, service_name, registry, content)
       end
     end
 
@@ -193,7 +244,7 @@ module Analyzer::Specification
       nil
     end
 
-    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, messages : Hash(String, MessageFields), full_content : String)
+    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, registry : Hash(String, MessageFields), full_content : String)
       # Find each rpc definition and its associated options block
       service_body.scan(/\brpc\s+(\w+)\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)\s*returns\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)/m) do |rpc_match|
         method_name = rpc_match[1]
@@ -216,9 +267,9 @@ module Analyzer::Specification
         line_number = find_line_number(full_content, method_name)
         details = Details.new(PathInfo.new(file_path, line_number))
 
-        # Extract params from request message
+        # Extract params from request message (resolved across imported files)
         params = [] of Param
-        if msg_fields = messages[request_type]?
+        if msg_fields = resolve_message(request_type, package, registry)
           params = msg_fields.dup
         end
 

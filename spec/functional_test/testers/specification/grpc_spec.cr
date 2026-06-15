@@ -96,6 +96,12 @@ expected_endpoints = [
   Endpoint.new("/v1/items/{item_id}/watch", "HEAD", [
     Param.new("item_id", "", "path"),
   ]),
+  # Request message imported from another .proto and referenced by its
+  # fully-qualified name: `city` resolves to a query param across files.
+  Endpoint.new("/v1/addresses/{street}", "GET", [
+    Param.new("street", "", "path"),
+    Param.new("city", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/grpc/", {
