@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions name="CalculatorService"
+             targetNamespace="http://example.com/calc"
+             xmlns="http://schemas.xmlsoap.org/wsdl/"
+             xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/"
+             xmlns:tns="http://example.com/calc"
+             xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+
+  <!-- RPC message with multiple built-in scalar parts: each part name is
+       a parameter. -->
+  <message name="AddRequest">
+    <part name="a" type="xsd:int"/>
+    <part name="b" type="xsd:int"/>
+  </message>
+  <message name="AddResponse">
+    <part name="result" type="xsd:int"/>
+  </message>
+
+  <!-- Single built-in scalar part. -->
+  <message name="SquareRequest">
+    <part name="value" type="xsd:double"/>
+  </message>
+  <message name="SquareResponse">
+    <part name="result" type="xsd:double"/>
+  </message>
+
+  <portType name="CalculatorPortType">
+    <operation name="Add">
+      <input message="tns:AddRequest"/>
+      <output message="tns:AddResponse"/>
+    </operation>
+    <operation name="Square">
+      <input message="tns:SquareRequest"/>
+      <output message="tns:SquareResponse"/>
+    </operation>
+  </portType>
+
+  <binding name="CalculatorBinding" type="tns:CalculatorPortType">
+    <soap:binding style="rpc" transport="http://schemas.xmlsoap.org/soap/http"/>
+    <operation name="Add">
+      <soap:operation soapAction="http://example.com/calc/Add"/>
+      <input><soap:body use="encoded"/></input>
+      <output><soap:body use="encoded"/></output>
+    </operation>
+    <operation name="Square">
+      <soap:operation soapAction="http://example.com/calc/Square"/>
+      <input><soap:body use="encoded"/></input>
+      <output><soap:body use="encoded"/></output>
+    </operation>
+  </binding>
+
+  <service name="CalculatorService">
+    <port name="CalculatorPort" binding="tns:CalculatorBinding">
+      <soap:address location="http://example.com/services/Calculator"/>
+    </port>
+  </service>
+</definitions>

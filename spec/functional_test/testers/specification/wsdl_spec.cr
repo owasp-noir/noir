@@ -20,3 +20,23 @@ FunctionalTester.new("fixtures/specification/wsdl/", {
   :techs     => 1,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
+
+# RPC-style messages declare each argument as its own `part` typed with a
+# built-in scalar; the part name is the parameter. Both these (and the
+# second part of a multi-part message) used to be dropped.
+rpc_endpoints = [
+  Endpoint.new("/services/Calculator/Add", "POST", [
+    Param.new("SOAPAction", "http://example.com/calc/Add", "header"),
+    Param.new("a", "", "json"),
+    Param.new("b", "", "json"),
+  ]),
+  Endpoint.new("/services/Calculator/Square", "POST", [
+    Param.new("SOAPAction", "http://example.com/calc/Square", "header"),
+    Param.new("value", "", "json"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/wsdl_rpc/", {
+  :techs     => 1,
+  :endpoints => rpc_endpoints.size,
+}, rpc_endpoints).perform_tests
