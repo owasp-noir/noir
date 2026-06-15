@@ -2,18 +2,19 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Koa < Detector
+    # Single precompiled alternation — one PCRE2 scan instead of six.
+    SIGNAL = Regex.union(
+      /require\(['"]koa['"]\)/,
+      /import Koa from ['"]koa['"]/,
+      /import Router from ['"]koa-router['"]/,
+      /require\(['"]koa-router['"]\)/,
+      /require\(['"]koa-[a-zA-Z0-9-]+['"]\)/,
+      /new Koa\(\)/,
+    )
+
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")) &&
-         (file_contents.match(/require\(['"]koa['"]\)/) ||
-         file_contents.match(/import Koa from ['"]koa['"]/) ||
-         file_contents.match(/import Router from ['"]koa-router['"]/) ||
-         file_contents.match(/require\(['"]koa-router['"]\)/) ||
-         file_contents.match(/require\(['"]koa-[a-zA-Z0-9-]+['"]\)/) ||
-         file_contents.match(/new Koa\(\)/))
-        true
-      else
-        false
-      end
+      return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")
+      file_contents.matches?(SIGNAL)
     end
 
     def applicable?(filename : String) : Bool

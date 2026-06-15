@@ -2,16 +2,19 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Express < Detector
+    # Single precompiled alternation — one PCRE2 scan over the file
+    # instead of up to four separate `.match` passes. Regex.union wraps
+    # each branch verbatim, so the boolean result is identical.
+    SIGNAL = Regex.union(
+      /require\(['"]express['"]\)/,
+      /from ['"]express['"]/,
+      /app\.use\(express\.json\(\)\)/,
+      /app\.use\(express\.urlencoded\(\{ extended: true \}\)\)/,
+    )
+
     def detect(filename : String, file_contents : String) : Bool
-      if (filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") || filename.ends_with?(".cjs")) &&
-         (file_contents.match(/require\(['"]express['"]\)/) ||
-         file_contents.match(/from ['"]express['"]/) ||
-         file_contents.match(/app\.use\(express\.json\(\)\)/) ||
-         file_contents.match(/app\.use\(express\.urlencoded\(\{ extended: true \}\)\)/))
-        true
-      else
-        false
-      end
+      return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") || filename.ends_with?(".cjs")
+      file_contents.matches?(SIGNAL)
     end
 
     def applicable?(filename : String) : Bool

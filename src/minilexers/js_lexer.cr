@@ -15,13 +15,21 @@ module Noir
 
   # JSLexer is a simple JavaScript lexer for route detection
   class JSLexer
-    @source : String
+    @chars : Array(Char)
+    @size : Int32
     @position : Int32 = 0
     @current_char : Char = '\0'
     @tokens : Array(JSToken) = [] of JSToken
 
-    def initialize(@source : String)
-      @current_char = @source[@position]? || '\0'
+    def initialize(source : String)
+      # Index an Array(Char) rather than the String directly: `String#[]`
+      # resolves a char index to a byte offset (O(index) on non-ASCII
+      # content), so the cursor walk was O(n²) per file. Converting once
+      # up front makes every `@chars[@position]` O(1). Mirrors the
+      # PhpLexer / CSharpLexer approach.
+      @chars = source.chars
+      @size = @chars.size
+      @current_char = @position < @size ? @chars[@position] : '\0'
     end
 
     def tokenize : Array(JSToken)
@@ -101,11 +109,11 @@ module Noir
 
     private def advance
       @position += 1
-      @current_char = @source[@position]? || '\0'
+      @current_char = @position < @size ? @chars[@position] : '\0'
     end
 
     private def peek
-      @source[@position + 1]? || '\0'
+      @position + 1 < @size ? @chars[@position + 1] : '\0'
     end
 
     private def skip_whitespace

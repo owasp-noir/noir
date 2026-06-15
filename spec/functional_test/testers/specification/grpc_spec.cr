@@ -65,6 +65,43 @@ expected_endpoints = [
     Param.new("name", "", "path"),
     Param.new("user_id", "", "query"),
   ]),
+  # Commented-out services/methods must be ignored; only the real rpc remains.
+  Endpoint.new("/comments.v1.NoteService/CreateNote", "POST", [
+    Param.new("note_id", "", "json"),
+    Param.new("body", "", "json"),
+  ]),
+  # Colon-form additional_bindings: primary + secondary binding.
+  Endpoint.new("/v1/items/{item_id}", "GET", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "query"),
+  ]),
+  Endpoint.new("/v1/items/by-name/{name}", "GET", [
+    Param.new("name", "", "path"),
+    Param.new("item_id", "", "query"),
+  ]),
+  # Array-form additional_bindings: primary PUT + two PATCH bindings.
+  Endpoint.new("/v1/items/{item_id}", "PUT", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  Endpoint.new("/v1/items/{item_id}", "PATCH", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  Endpoint.new("/v2/items/{item_id}", "PATCH", [
+    Param.new("item_id", "", "path"),
+    Param.new("name", "", "json"),
+  ]),
+  # custom: { kind, path } maps to a non-standard HTTP method (HEAD).
+  Endpoint.new("/v1/items/{item_id}/watch", "HEAD", [
+    Param.new("item_id", "", "path"),
+  ]),
+  # Request message imported from another .proto and referenced by its
+  # fully-qualified name: `city` resolves to a query param across files.
+  Endpoint.new("/v1/addresses/{street}", "GET", [
+    Param.new("street", "", "path"),
+    Param.new("city", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/grpc/", {

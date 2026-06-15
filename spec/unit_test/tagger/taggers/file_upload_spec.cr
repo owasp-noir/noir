@@ -227,5 +227,36 @@ describe "FileUploadTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "does not tag a JSON image-reference field as a file upload" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      # RealWorld `PUT /api/user` carries `image` as a profile-image URL
+      # string in the JSON body, not an uploaded file. A media word in a
+      # JSON/body payload on a non-upload URL must not trip the tagger.
+      endpoint = Endpoint.new("/api/user", "PUT", [
+        Param.new("username", "", "json"),
+        Param.new("image", "", "json"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "still tags a multipart form image field as a file upload" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      # When the media word is carried as a multipart `form` field it is a
+      # real upload even without an upload-ish URL.
+      endpoint = Endpoint.new("/api/profile", "POST", [
+        Param.new("image", "", "form"),
+      ])
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("file_upload")
+    end
   end
 end

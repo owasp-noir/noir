@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package shared.v1;
+
+import "imported_address_common.proto";
+import "google/api/annotations.proto";
+
+service AddressService {
+  // Request type lives in imported_address_common.proto and is referenced by
+  // its fully-qualified name; `city` must still surface as a query param.
+  rpc GetAddress(shared.v1.AddressRequest) returns (shared.v1.AddressResponse) {
+    option (google.api.http) = {
+      get: "/v1/addresses/{street}"
+    };
+  }
+}

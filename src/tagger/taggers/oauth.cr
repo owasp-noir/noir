@@ -18,6 +18,24 @@ class OAuthTagger < Tagger
   # parameters before flagging.
   WEAK_URL_PARTS = Set{"authorize", "authorization", "token", "callback"}
 
+  # Auth/SSO context segments that mark a `/callback`, `/authorize`, or
+  # `/redirect` handler as part of an OAuth/OIDC sign-in flow rather than a
+  # payment IPN or a post-action redirect. This mirrors the set the webhook
+  # tagger uses to *exclude* these same callbacks from being tagged as
+  # webhooks — keeping the two taggers consistent about what
+  # `/auth/<provider>/callback` is.
+  OAUTH_FLOW_CONTEXT_SEGMENTS = Set{
+    "oauth", "oauth2", "oauth20", "openid", "oidc",
+    "auth", "authentication", "sso",
+  }
+
+  # OAuth-flow verbs: the redirect out to the IdP (`/redirect`,
+  # `/authorize`) and the authorization-code handler coming back
+  # (`/callback`). Many social-login handlers expose no statically
+  # extractable params (the `code`/`state` arrive at runtime), so the
+  # param-corroborated checks below miss them.
+  OAUTH_FLOW_VERB_SEGMENTS = Set{"callback", "authorize", "authorization", "redirect"}
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @name = "oauth"
@@ -51,7 +69,12 @@ class OAuthTagger < Tagger
           (weak_url && oauth_token_params?(param_names)) ||
           # The authorization-code redirect handler — `/callback` (or
           # `/auth/<provider>/callback`) receiving `code` + `state`.
-          oauth_callback?(parts, param_names)
+          oauth_callback?(parts, param_names) ||
+          # A param-less social-login flow handler under an auth/SSO
+          # context — `/auth/google/callback`, `/auth/google/redirect`,
+          # `/sso/callback`. The `code`/`state` params arrive at runtime,
+          # so the param checks above can't see them.
+          oauth_flow_path?(parts)
 
       if check
         tag = Tag.new("oauth", "Suspected OAuth endpoint for granting 3rd party access.", "Oauth")
@@ -100,6 +123,17 @@ class OAuthTagger < Tagger
   private def oauth_callback?(parts : Array(String), param_names : Set(String)) : Bool
     return false unless parts.includes?("callback")
     param_names.includes?("code") && param_names.includes?("state")
+  end
+
+  # An OAuth/OIDC sign-in flow handler identified by path alone: an
+  # auth/SSO context segment (`auth`, `sso`, `openid`, ...) together with a
+  # flow verb (`callback`, `authorize`, `redirect`). A bare `/callback` or
+  # `/payments/callback` lacks the context segment and is left to the
+  # param-corroborated checks (and the webhook tagger), so this only fires
+  # on unambiguous sign-in flows like `/auth/<provider>/callback`.
+  private def oauth_flow_path?(parts : Array(String)) : Bool
+    return false unless parts.any? { |part| OAUTH_FLOW_VERB_SEGMENTS.includes?(part) }
+    parts.any? { |part| OAUTH_FLOW_CONTEXT_SEGMENTS.includes?(part) }
   end
 
   private def oauth_authorization_params?(param_names : Set(String)) : Bool

@@ -2,11 +2,16 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Hono < Detector
+    # Single precompiled alternation — one PCRE2 scan instead of three.
+    SIGNAL = Regex.union(
+      /require\(['"]hono['"]\)/,
+      /from ['"]hono['"]/,
+      /new\s+Hono\s*\(/,
+    )
+
     def detect(filename : String, file_contents : String) : Bool
       [".js", ".mjs", ".ts", ".jsx", ".tsx", ".cjs"].any? { |ext| filename.ends_with?(ext) } &&
-        !!(file_contents.match(/require\(['"]hono['"]\)/) ||
-          file_contents.match(/from ['"]hono['"]/) ||
-          file_contents.match(/new\s+Hono\s*\(/))
+        file_contents.matches?(SIGNAL)
     end
 
     def applicable?(filename : String) : Bool
