@@ -1,0 +1,59 @@
+swagger: "2.0"
+info:
+  title: Security Definitions API
+  version: 1.0.0
+basePath: /v1
+securityDefinitions:
+  ApiKeyHeader:
+    type: apiKey
+    in: header
+    name: X-API-Key
+  ApiKeyQuery:
+    type: apiKey
+    in: query
+    name: api_key
+  BasicAuth:
+    type: basic
+security:
+  - ApiKeyHeader: []
+paths:
+  /items:
+    get:
+      summary: Inherits the global API key header
+      responses:
+        '200':
+          description: ok
+    post:
+      summary: Overrides with basic auth
+      security:
+        - BasicAuth: []
+      parameters:
+        - in: body
+          name: body
+          schema:
+            type: object
+            properties:
+              name:
+                type: string
+      responses:
+        '201':
+          description: created
+  /public:
+    get:
+      summary: Opts out of security entirely
+      security: []
+      responses:
+        '200':
+          description: ok
+  /search:
+    get:
+      summary: Overrides with the query API key
+      security:
+        - ApiKeyQuery: []
+      parameters:
+        - in: query
+          name: q
+          type: string
+      responses:
+        '200':
+          description: ok

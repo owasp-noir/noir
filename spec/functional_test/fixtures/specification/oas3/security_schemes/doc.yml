@@ -1,0 +1,68 @@
+openapi: 3.0.0
+info:
+  title: Security Schemes API
+  version: 1.0.0
+servers:
+  - url: https://api.example.com
+components:
+  securitySchemes:
+    ApiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    ApiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: SESSIONID
+    BearerAuth:
+      type: http
+      scheme: bearer
+security:
+  - ApiKeyHeader: []
+paths:
+  /items:
+    get:
+      summary: List items, inherits the global API key header
+      responses:
+        '200':
+          description: ok
+    post:
+      summary: Create item, overrides with bearer auth
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: created
+  /public:
+    get:
+      summary: Public, opts out of security entirely
+      security: []
+      responses:
+        '200':
+          description: ok
+  /search:
+    get:
+      summary: Search, overrides with query and cookie API keys
+      security:
+        - ApiKeyQuery: []
+        - SessionCookie: []
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+      responses:
+        '200':
+          description: ok
