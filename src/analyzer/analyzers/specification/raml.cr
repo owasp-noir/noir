@@ -59,7 +59,7 @@ module Analyzer::Specification
     # RAML `baseUri` may be a full URL; we keep just the path so endpoints
     # render in Noir's relative form, mirroring how OAS3 `servers` is handled.
     private def base_path_from(yaml_obj : YAML::Any) : String
-      base_uri = yaml_obj[YAML::Any.new("baseUri")]?.try(&.to_s) || ""
+      base_uri = base_uri_value(yaml_obj[YAML::Any.new("baseUri")]?)
       return "" if base_uri.empty?
       if base_uri.starts_with?("http")
         begin
@@ -70,6 +70,24 @@ module Analyzer::Specification
         end
       end
       base_uri.rstrip('/')
+    end
+
+    # `baseUri` is normally a scalar URL, but RAML lets you annotate it,
+    # in which case it becomes a map carrying the URL under `value:`
+    # (alongside annotation keys like `(redirectable)`). Pull the string
+    # out of either shape; rendering the map with `to_s` leaks a Crystal
+    # hash literal into every endpoint path.
+    private def base_uri_value(node : YAML::Any?) : String
+      return "" unless node
+      if s = node.as_s?
+        return s
+      end
+      if h = node.as_h?
+        if value = h[YAML::Any.new("value")]?
+          return value.as_s? || ""
+        end
+      end
+      ""
     end
 
     # Resources nest under each other in RAML. Each `/segment` key under a
