@@ -18,8 +18,17 @@ module Analyzer::Specification
       if raml_specs.is_a?(Array(String))
         raml_specs.each do |raml_spec|
           next unless File.exists?(raml_spec)
-          details = Details.new(PathInfo.new(raml_spec))
           content = File.read(raml_spec, encoding: "utf-8", invalid: :skip)
+
+          # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe
+          # endpoints. Fragments — Library, Trait, ResourceType, DataType,
+          # and especially Overlay / Extension — are applied onto a master
+          # API, not served on their own. Analyzing an Extension standalone
+          # emits phantom endpoints (its resources without the master's
+          # baseUri or context), so skip every non-root fragment.
+          next unless raml_root_api?(content)
+
+          details = Details.new(PathInfo.new(raml_spec))
           yaml_obj = YAML.parse(content)
           source_dir = File.dirname(raml_spec)
 
@@ -60,6 +69,23 @@ module Analyzer::Specification
       end
 
       @result
+    end
+
+    # True when the `#%RAML` header denotes a root API rather than a
+    # fragment. A root header carries only the version (`#%RAML 1.0`);
+    # fragments append a type (`#%RAML 1.0 Library`, `... Extension`, …).
+    # Files without a recognizable header are treated leniently as roots.
+    private def raml_root_api?(content : String) : Bool
+      first_line = content.each_line.first?
+      return true unless first_line
+
+      stripped = first_line.strip
+      return true unless stripped.starts_with?("#%RAML")
+
+      rest = stripped["#%RAML".size..].strip
+      # rest is "<version>" for a root API, "<version> <FragmentType>" for
+      # a fragment. More than the version token means it is a fragment.
+      rest.split(/\s+/, remove_empty: true).size <= 1
     end
 
     # RAML `baseUri` may be a full URL; we keep just the path so endpoints
