@@ -6,6 +6,11 @@ module Analyzer::Specification
     INCLUDE_EXTENSIONS = {".raml", ".yaml", ".yml", ".json"}
     alias ResolvedNode = NamedTuple(node: YAML::Any, source_dir: String)
 
+    # Libraries imported by the current spec via `uses:`, keyed by the
+    # namespace each was bound to. Reset per spec; the analyze loop is
+    # sequential so a single shared map is safe.
+    @libraries = {} of String => ResolvedNode
+
     def analyze
       locator = CodeLocator.instance
       raml_specs = locator.all("raml-spec")
@@ -23,6 +28,7 @@ module Analyzer::Specification
           # rescue, aborts every other RAML spec. Skip it cleanly instead.
           next unless yaml_obj.as_h?
 
+          @libraries = collect_libraries(yaml_obj, source_dir)
           base_path = base_path_from(yaml_obj)
           default_media = media_types_from(yaml_obj[YAML::Any.new("mediaType")]?)
           types = yaml_obj[YAML::Any.new("types")]? || YAML::Any.new(nil)
@@ -379,7 +385,7 @@ module Analyzer::Specification
       name = named_ref_name(trait_ref)
       return if name.empty?
 
-      lookup_named_node(traits, name, source_dir)
+      lookup_in_library(name, "traits") || lookup_named_node(traits, name, source_dir)
     end
 
     private def resource_type_node(resource_h : Hash(YAML::Any, YAML::Any), resource_types : YAML::Any, source_dir : String) : ResolvedNode?
@@ -389,8 +395,47 @@ module Analyzer::Specification
       name = named_ref_name(type_ref)
       return if name.empty?
 
-      node = lookup_named_node(resource_types, name, source_dir)
-      node
+      lookup_in_library(name, "resourceTypes") || lookup_named_node(resource_types, name, source_dir)
+    end
+
+    # Loads every `uses:` library the root spec imports, keyed by the
+    # namespace it was bound to. A trait/type/resourceType referenced as
+    # `namespace.Name` is otherwise dropped — `lookup_named_node` keeps
+    # only the last dotted segment and searches the local collection,
+    # which doesn't contain library members — so every parameter behind a
+    # library reference was a false negative.
+    private def collect_libraries(yaml_obj : YAML::Any, source_dir : String) : Hash(String, ResolvedNode)
+      libs = {} of String => ResolvedNode
+      uses_node = yaml_obj[YAML::Any.new("uses")]?
+      return libs unless uses_node
+      return libs unless h = uses_node.as_h?
+
+      h.each do |ns, path_node|
+        resolved = resolve_include(path_node, source_dir)
+        next unless resolved[:node].as_h?
+        libs[ns.to_s] = resolved
+      end
+      libs
+    end
+
+    # Resolves a `namespace.Name` reference against an imported library,
+    # searching the library's `collection_key` section (`traits`, `types`,
+    # `schemas`, `resourceTypes`). Returns nil for unqualified names or
+    # unknown namespaces so callers fall back to local collections.
+    private def lookup_in_library(name : String, collection_key : String) : ResolvedNode?
+      dot = name.index('.')
+      return unless dot
+      namespace = name[0...dot]
+      local = name[(dot + 1)..]
+      return if local.empty?
+
+      library = @libraries[namespace]?
+      return unless library
+      return unless lib_h = library[:node].as_h?
+
+      collection = lib_h[YAML::Any.new(collection_key)]?
+      return unless collection
+      lookup_schema_in_collection(collection, local, library[:source_dir])
     end
 
     private def named_ref_name(node : YAML::Any) : String
@@ -433,7 +478,10 @@ module Analyzer::Specification
       return if clean_name.empty? || seen.includes?(clean_name)
 
       seen << clean_name
-      lookup_schema_in_collection(types, clean_name, source_dir) || lookup_schema_in_collection(schemas, clean_name, source_dir)
+      lookup_in_library(clean_name, "types") ||
+        lookup_in_library(clean_name, "schemas") ||
+        lookup_schema_in_collection(types, clean_name, source_dir) ||
+        lookup_schema_in_collection(schemas, clean_name, source_dir)
     end
 
     private def lookup_schema_in_collection(collection : YAML::Any, name : String, source_dir : String) : ResolvedNode?

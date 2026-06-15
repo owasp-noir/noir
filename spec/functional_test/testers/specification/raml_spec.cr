@@ -107,3 +107,22 @@ FunctionalTester.new("fixtures/specification/raml_optional/", {
   :techs     => 1,
   :endpoints => optional_endpoints.size,
 }, optional_endpoints).perform_tests
+
+# Traits, types and resourceTypes imported through `uses:` are referenced
+# as `namespace.Name`. These used to resolve to nothing, dropping every
+# parameter behind a library reference.
+library_endpoints = [
+  Endpoint.new("/items", "GET", [
+    Param.new("offset", "", "query"),
+    Param.new("count", "", "query"),
+  ]),
+  Endpoint.new("/items", "POST", [
+    Param.new("sku", "", "json"),
+    Param.new("label", "", "json"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/raml_library/", {
+  :techs     => 1,
+  :endpoints => library_endpoints.size,
+}, library_endpoints).perform_tests

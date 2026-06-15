@@ -1,0 +1,14 @@
+#%RAML 1.0
+title: Library Consumer
+baseUri: https://api.example.com
+mediaType: application/json
+
+uses:
+  common: libraries/common.lib.raml
+
+/items:
+  get:
+    is: [common.paged]
+  post:
+    body:
+      type: common.Item

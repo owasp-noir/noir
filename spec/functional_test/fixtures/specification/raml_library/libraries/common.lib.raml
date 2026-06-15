@@ -1,0 +1,15 @@
+#%RAML 1.0 Library
+
+traits:
+  paged:
+    queryParameters:
+      offset:
+        type: integer
+      count:
+        type: integer
+
+types:
+  Item:
+    properties:
+      sku: string
+      label: string
