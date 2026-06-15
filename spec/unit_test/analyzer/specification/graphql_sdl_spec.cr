@@ -119,6 +119,31 @@ describe "GraphQL SDL Analyzer" do
     ])
   end
 
+  it "parses fields whose arguments carry directives with parentheses" do
+    # Regression: the cursor was advanced to the first `)` after the argument
+    # list opened, but an argument's own directive (`@length(min: 1)`,
+    # `@deprecated(reason: ...)`) closes a paren first. That dropped the field
+    # (FN) and misread following argument names as fields (FP, e.g. `newArg`).
+    endpoints = analyze_sdl <<-SDL
+      type Query {
+        directiveArg(arg: String! @length(min: 1, max: 255, message: "x")): String
+        withDeprecatedArg(oldArg: Int @deprecated(reason: "old"), newArg: Int): String
+        plain: String
+      }
+      SDL
+
+    endpoints.map(&.url).should eq [
+      "/graphql#Query.directiveArg",
+      "/graphql#Query.withDeprecatedArg",
+      "/graphql#Query.plain",
+    ]
+    # `oldArg` / `newArg` are arguments, not fields — they must not leak as endpoints.
+    endpoints.map(&.url).any?(&.includes?("newArg")).should be_false
+
+    with_args = endpoints.find! { |e| e.url.ends_with?("withDeprecatedArg") }
+    with_args.params.reject(&.name.starts_with?("graphql_")).map(&.name).should eq ["oldArg", "newArg"]
+  end
+
   it "preserves trailing non-null marker on list types" do
     endpoints = analyze_sdl <<-SDL
       type Query {
