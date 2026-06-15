@@ -258,5 +258,29 @@ describe "FileUploadTagger" do
       endpoint.tags.size.should eq(1)
       endpoint.tags[0].name.should eq("file_upload")
     end
+
+    it "does not tag a media-* config route as an upload" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      # koel `PUT /api/settings/media-path` sets the media-library
+      # directory — `media` here is a sub-token of `media-path`, not a
+      # `/media` upload collection.
+      endpoint = Endpoint.new("/api/settings/media-path", "PUT")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
+
+    it "still tags a standalone /media collection upload" do
+      tagger = FileUploadTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/api/media", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("file_upload")
+    end
   end
 end
