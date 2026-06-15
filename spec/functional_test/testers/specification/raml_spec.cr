@@ -87,3 +87,23 @@ FunctionalTester.new("fixtures/specification/raml_advanced/", {
   :techs     => 1,
   :endpoints => advanced_endpoints.size,
 }, advanced_endpoints).perform_tests
+
+# Optional (`name?`) markers and `/regex/` pattern keys are not real
+# parameter names, and an annotated `baseUri` carries the URL under a
+# `value:` key. Each of these used to leak into the output.
+optional_endpoints = [
+  Endpoint.new("/v1/search", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("page", "", "query"),
+    Param.new("If-None-Match", "", "header"),
+  ]),
+  Endpoint.new("/v1/search", "POST", [
+    Param.new("name", "", "json"),
+    Param.new("nickname", "", "json"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/specification/raml_optional/", {
+  :techs     => 1,
+  :endpoints => optional_endpoints.size,
+}, optional_endpoints).perform_tests

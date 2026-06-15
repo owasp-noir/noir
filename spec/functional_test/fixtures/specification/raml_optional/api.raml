@@ -1,0 +1,23 @@
+#%RAML 1.0
+title: Optional and Pattern API
+version: v1
+baseUri:
+  value: https://api.example.com/v1
+  (redirectable): true
+mediaType: application/json
+
+/search:
+  get:
+    queryParameters:
+      q?: string
+      page?: integer
+      # Pattern properties are not real parameter names.
+      /^filter\[[a-z]+\]$/: string
+    headers:
+      If-None-Match?: string
+  post:
+    body:
+      application/json:
+        properties:
+          name: string
+          nickname?: string
