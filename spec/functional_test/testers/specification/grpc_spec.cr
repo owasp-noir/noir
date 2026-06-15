@@ -65,6 +65,11 @@ expected_endpoints = [
     Param.new("name", "", "path"),
     Param.new("user_id", "", "query"),
   ]),
+  # Commented-out services/methods must be ignored; only the real rpc remains.
+  Endpoint.new("/comments.v1.NoteService/CreateNote", "POST", [
+    Param.new("note_id", "", "json"),
+    Param.new("body", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/specification/grpc/", {
