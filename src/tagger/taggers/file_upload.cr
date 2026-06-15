@@ -2,11 +2,28 @@ require "../../models/tagger"
 require "../../models/endpoint"
 
 class FileUploadTagger < Tagger
+  # Param names that denote an actual uploaded file regardless of how the
+  # value is carried — a `filename`, an `attachment`, a `multipart`
+  # boundary. Safe to flag on any writable param type.
   WORDS = Set{
     "file", "files", "upload", "attachment", "attachments", "document", "documents",
-    "image", "images", "photo", "photos", "avatar", "media", "multipart",
-    "content_type", "filename", "content_disposition",
+    "multipart", "content_type", "filename", "content_disposition",
   }
+
+  # Media words that frequently name a *reference* — a profile-image URL,
+  # an avatar link — inside a JSON/body payload rather than an uploaded
+  # file. Treated as an upload only when carried as multipart form data
+  # (a `file`/`form` param) or corroborated by an upload-ish URL, so a
+  # JSON `{"image": "https://..."}` field (e.g. RealWorld's
+  # `PUT /user`) is not mis-tagged as a file upload.
+  MEDIA_WORDS = Set{
+    "image", "images", "photo", "photos", "avatar", "media",
+  }
+
+  # Form-style carriage: a genuine browser file upload arrives as a
+  # `file` param or a multipart `form` field. JSON/body media fields are
+  # almost always a URL/reference string.
+  MEDIA_UPLOAD_PARAM_TYPES = Set{"file", "form"}
 
   UPLOAD_PARAM_TYPES = Set{"file", "form", "body", "json"}
   UPLOAD_METHODS     = Set{"POST", "PUT", "PATCH"}
@@ -46,7 +63,12 @@ class FileUploadTagger < Tagger
     return true if param.param_type == "file"
 
     name = normalize_param_name(param.name)
-    WORDS.includes?(name) || name.ends_with?("_file") || name.ends_with?("_files")
+    return true if WORDS.includes?(name) || name.ends_with?("_file") || name.ends_with?("_files")
+
+    # Media words count as an upload only via multipart carriage. In a
+    # JSON/body payload they are almost always a URL/reference string, so
+    # `upload_url?`/`multipart_header?` must corroborate them instead.
+    MEDIA_WORDS.includes?(name) && MEDIA_UPLOAD_PARAM_TYPES.includes?(param.param_type)
   end
 
   private def multipart_header?(param : Param) : Bool
