@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package shared.v1;
+
+// Message-only proto (no service): its types are imported by other files.
+message AddressRequest {
+  string street = 1;
+  string city = 2;
+}
+
+message AddressResponse {
+  string formatted = 1;
+}
