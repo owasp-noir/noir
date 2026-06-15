@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package comments.v1;
+
+message NoteRequest {
+  string note_id = 1;
+  string body = 2;
+}
+
+message NoteResponse {
+  string note_id = 1;
+}
+
+// A commented-out service block must not be detected as a live service.
+// service GhostService {
+//   rpc GhostMethod(NoteRequest) returns (NoteResponse) {}
+// }
+
+/*
+service BlockGhostService {
+  rpc BlockGhostMethod(NoteRequest) returns (NoteResponse) {}
+}
+*/
+
+service NoteService {
+  // rpc CommentedOut(NoteRequest) returns (NoteResponse) {}
+  /* rpc BlockCommentedOut(NoteRequest) returns (NoteResponse) {} */
+
+  // The only real method in this file.
+  rpc CreateNote(NoteRequest) returns (NoteResponse) {}
+}

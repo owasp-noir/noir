@@ -22,9 +22,69 @@ module Analyzer::Specification
     end
 
     private def parse_proto(content : String, file_path : String)
-      package = parse_package(content)
-      messages = parse_messages(content)
-      parse_services(content, file_path, package, messages)
+      # Strip comments before any structural parsing so a commented-out
+      # `service` / `rpc` / `message` declaration is never mistaken for a
+      # live definition (a false-positive source). Newlines are preserved,
+      # so reported line numbers stay accurate.
+      clean = strip_comments(content)
+      package = parse_package(clean)
+      messages = parse_messages(clean)
+      parse_services(clean, file_path, package, messages)
+    end
+
+    # Replaces `//` line comments and `/* */` block comments with spaces
+    # while preserving string literals, the total length, and every newline
+    # (so positions/line numbers in the cleaned copy match the original).
+    private def strip_comments(content : String) : String
+      chars = content.chars
+      size = chars.size
+      String.build(content.bytesize) do |io|
+        pos = 0
+        in_string = false
+        while pos < size
+          ch = chars[pos]
+          if in_string
+            io << ch
+            if ch == '"'
+              # A quote closes the string only when preceded by an EVEN
+              # number of backslashes (`\\"` toggles, `\"` does not).
+              bs = 0
+              bp = pos - 1
+              while bp >= 0 && chars[bp] == '\\'
+                bs += 1
+                bp -= 1
+              end
+              in_string = false if bs.even?
+            end
+            pos += 1
+          elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '/'
+            # Line comment: blank to EOL, leaving the newline for the next loop.
+            while pos < size && chars[pos] != '\n'
+              io << ' '
+              pos += 1
+            end
+          elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '*'
+            # Block comment: blank through the closing `*/`, keeping newlines.
+            io << ' ' << ' '
+            pos += 2
+            while pos < size && !(chars[pos] == '*' && pos + 1 < size && chars[pos + 1] == '/')
+              io << (chars[pos] == '\n' ? '\n' : ' ')
+              pos += 1
+            end
+            if pos < size
+              io << ' ' << ' '
+              pos += 2
+            end
+          elsif ch == '"'
+            in_string = true
+            io << ch
+            pos += 1
+          else
+            io << ch
+            pos += 1
+          end
+        end
+      end
     end
 
     private def parse_package(content : String) : String
@@ -39,7 +99,7 @@ module Analyzer::Specification
       messages = {} of String => MessageFields
 
       # Find message blocks using brace matching (supports nested messages/enums)
-      content.scan(/message\s+(\w+)\s*\{/m) do |match|
+      content.scan(/\bmessage\s+(\w+)\s*\{/m) do |match|
         msg_name = match[1]
         start_pos = match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
@@ -70,7 +130,7 @@ module Analyzer::Specification
 
     private def parse_services(content : String, file_path : String, package : String, messages : Hash(String, MessageFields))
       # Find service blocks using brace matching
-      content.scan(/service\s+(\w+)\s*\{/m) do |service_match|
+      content.scan(/\bservice\s+(\w+)\s*\{/m) do |service_match|
         service_name = service_match[1]
         start_pos = service_match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
@@ -125,7 +185,7 @@ module Analyzer::Specification
 
     private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, messages : Hash(String, MessageFields), full_content : String)
       # Find each rpc definition and its associated options block
-      service_body.scan(/rpc\s+(\w+)\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)\s*returns\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)/m) do |rpc_match|
+      service_body.scan(/\brpc\s+(\w+)\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)\s*returns\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)/m) do |rpc_match|
         method_name = rpc_match[1]
         request_streaming = !rpc_match[2]?.nil?
         request_type = rpc_match[3]
