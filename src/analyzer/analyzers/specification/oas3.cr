@@ -248,6 +248,118 @@ module Analyzer::Specification
       end
     end
 
+    # Builds `scheme name => Param` from `components.securitySchemes`. An
+    # `apiKey` scheme is a concrete request parameter (header/query/cookie);
+    # token schemes (`http` bearer/basic, `oauth2`, `openIdConnect`) ride on the
+    # `Authorization` header. This mirrors how the Insomnia analyzer turns auth
+    # config into params, so a documented requirement isn't a false negative.
+    private def security_schemes_json(root : JSON::Any) : Hash(String, Param)
+      result = {} of String => Param
+      return result unless components = root["components"]?.try(&.as_h?)
+      return result unless schemes = components["securitySchemes"]?.try(&.as_h?)
+      schemes.each do |name, obj|
+        if param = security_scheme_param_json(root, obj)
+          result[name.to_s] = param
+        end
+      end
+      result
+    end
+
+    private def security_scheme_param_json(root : JSON::Any, obj : JSON::Any, seen : Set(String) = Set(String).new) : Param?
+      return unless obj_h = obj.as_h?
+      if ref = obj_h["$ref"]?.try(&.as_s?)
+        return if seen.includes?(ref)
+        seen << ref
+        if resolved = resolve_ref_json(root, ref)
+          return security_scheme_param_json(root, resolved, seen)
+        end
+        return
+      end
+
+      case obj_h["type"]?.try(&.as_s?).try(&.downcase)
+      when "apikey"
+        name = obj_h["name"]?.try(&.as_s?) || ""
+        return if name.empty?
+        case obj_h["in"]?.try(&.as_s?)
+        when "header" then Param.new(name, "", "header")
+        when "query"  then Param.new(name, "", "query")
+        when "cookie" then Param.new(name, "", "cookie")
+        end
+      when "http", "oauth2", "openidconnect"
+        Param.new("Authorization", "", "header")
+      end
+    end
+
+    # Adds params for the effective security requirement. Per the OAS spec an
+    # operation-level `security` (including an empty `[]` that opts out) wins
+    # over the global default; otherwise the global default applies.
+    private def apply_security_json(effective : JSON::Any?, schemes : Hash(String, Param), params : Array(Param))
+      return if schemes.empty?
+      return unless effective
+      return unless requirements = effective.as_a?
+      requirements.each do |requirement|
+        next unless requirement_h = requirement.as_h?
+        requirement_h.each_key do |scheme_name|
+          if param = schemes[scheme_name.to_s]?
+            params << param unless params.includes?(param)
+          end
+        end
+      end
+    end
+
+    private def security_schemes_yaml(root : YAML::Any) : Hash(String, Param)
+      result = {} of String => Param
+      return result unless components = root[YAML::Any.new("components")]?.try(&.as_h?)
+      return result unless schemes = components[YAML::Any.new("securitySchemes")]?.try(&.as_h?)
+      schemes.each do |name, obj|
+        if param = security_scheme_param_yaml(root, obj)
+          result[name.to_s] = param
+        end
+      end
+      result
+    end
+
+    private def security_scheme_param_yaml(root : YAML::Any, obj : YAML::Any, seen : Set(String) = Set(String).new) : Param?
+      return unless obj_h = obj.as_h?
+      if ref_node = obj_h[YAML::Any.new("$ref")]?
+        if ref = ref_node.as_s?
+          return if seen.includes?(ref)
+          seen << ref
+          if resolved = resolve_ref_yaml(root, ref)
+            return security_scheme_param_yaml(root, resolved, seen)
+          end
+        end
+        return
+      end
+
+      case obj_h[YAML::Any.new("type")]?.try(&.as_s?).try(&.downcase)
+      when "apikey"
+        name = obj_h[YAML::Any.new("name")]?.try(&.as_s?) || ""
+        return if name.empty?
+        case obj_h[YAML::Any.new("in")]?.try(&.as_s?)
+        when "header" then Param.new(name, "", "header")
+        when "query"  then Param.new(name, "", "query")
+        when "cookie" then Param.new(name, "", "cookie")
+        end
+      when "http", "oauth2", "openidconnect"
+        Param.new("Authorization", "", "header")
+      end
+    end
+
+    private def apply_security_yaml(effective : YAML::Any?, schemes : Hash(String, Param), params : Array(Param))
+      return if schemes.empty?
+      return unless effective
+      return unless requirements = effective.as_a?
+      requirements.each do |requirement|
+        next unless requirement_h = requirement.as_h?
+        requirement_h.each_key do |scheme_name|
+          if param = schemes[scheme_name.to_s]?
+            params << param unless params.includes?(param)
+          end
+        end
+      end
+    end
+
     private def resolve_path_item_json(root : JSON::Any, path_obj : JSON::Any, seen : Set(String) = Set(String).new) : JSON::Any
       return path_obj unless path_obj_h = path_obj.as_h?
       return path_obj unless ref = path_obj_h["$ref"]?.try(&.as_s?)
@@ -352,6 +464,8 @@ module Analyzer::Specification
     end
 
     private def process_paths_json(json_obj : JSON::Any, base_path : String, details : Details, source : String)
+      schemes = security_schemes_json(json_obj)
+      global_security = json_obj["security"]?
       paths = json_obj["paths"].as_h
       paths.each do |path, path_obj|
         path_item = resolve_path_item_json(json_obj, path_obj)
@@ -367,6 +481,7 @@ module Analyzer::Specification
         path_item.as_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
+          effective_security = global_security
 
           begin
             if method_obj_h = method_obj.as_h?
@@ -379,11 +494,15 @@ module Analyzer::Specification
               if request_body = method_obj_h["requestBody"]?
                 extract_request_body_json(json_obj, request_body, params)
               end
+
+              effective_security = method_obj_h["security"] if method_obj_h.has_key?("security")
             end
           rescue e
             @logger.debug "Exception of #{source}/paths/method/parameters"
             @logger.debug_sub e
           end
+
+          apply_security_json(effective_security, schemes, params)
 
           if params.size > 0
             @result << Endpoint.new(base_path + path, method.upcase, params, details)
@@ -401,6 +520,8 @@ module Analyzer::Specification
     end
 
     private def process_paths_yaml(yaml_obj : YAML::Any, base_path : String, details : Details, source : String)
+      schemes = security_schemes_yaml(yaml_obj)
+      global_security = yaml_obj[YAML::Any.new("security")]?
       paths = yaml_obj["paths"].as_h
       paths.each do |path, path_obj|
         path_item = resolve_path_item_yaml(yaml_obj, path_obj)
@@ -418,6 +539,7 @@ module Analyzer::Specification
         path_item.as_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
+          effective_security = global_security
 
           begin
             if method_obj_h = method_obj.as_h?
@@ -432,11 +554,15 @@ module Analyzer::Specification
               if request_body = method_obj_h[YAML::Any.new("requestBody")]?
                 extract_request_body_yaml(yaml_obj, request_body, params)
               end
+
+              effective_security = method_obj_h[YAML::Any.new("security")] if method_obj_h.has_key?(YAML::Any.new("security"))
             end
           rescue e
             @logger.debug "Exception of #{source}/paths/method/parameters"
             @logger.debug_sub e
           end
+
+          apply_security_yaml(effective_security, schemes, params)
 
           if params.size > 0
             @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, details)

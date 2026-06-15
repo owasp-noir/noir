@@ -89,6 +89,25 @@ FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
   ]),
 ]).perform_tests
 
+FunctionalTester.new("fixtures/specification/oas3/security_schemes/", {
+  :techs     => 1,
+  :endpoints => 4,
+}, [
+  Endpoint.new("/items", "GET", [
+    Param.new("X-API-Key", "", "header"),
+  ]),
+  Endpoint.new("/items", "POST", [
+    Param.new("name", "", "json"),
+    Param.new("Authorization", "", "header"),
+  ]),
+  Endpoint.new("/public", "GET"),
+  Endpoint.new("/search", "GET", [
+    Param.new("q", "", "query"),
+    Param.new("api_key", "", "query"),
+    Param.new("SESSIONID", "", "cookie"),
+  ]),
+]).perform_tests
+
 FunctionalTester.new("fixtures/specification/oas3/tab_in_block_scalar/", {
   :techs     => 1,
   :endpoints => 2,
