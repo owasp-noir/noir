@@ -2,6 +2,16 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Nuxtjs < Detector
+    # Single precompiled alternation — one PCRE2 scan instead of six.
+    SIGNAL = Regex.union(
+      /require\(['"]nuxt['"]\)/,
+      /import.*from ['"]nuxt['"]/,
+      /defineNuxtConfig\s*\(/,
+      /defineEventHandler\s*\(/,
+      /from ['"]#app['"]/,
+      /from ['"]@nuxt\//,
+    )
+
     def detect(filename : String, file_contents : String) : Bool
       # Check for Nuxt config files
       if filename.ends_with?("nuxt.config.js") || filename.ends_with?("nuxt.config.ts")
@@ -10,12 +20,7 @@ module Detector::Javascript
 
       # Check for Nuxt imports and patterns in JS/TS files
       if (filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")) &&
-         (file_contents.match(/require\(['"]nuxt['"]\)/) ||
-         file_contents.match(/import.*from ['"]nuxt['"]/) ||
-         file_contents.match(/defineNuxtConfig\s*\(/) ||
-         file_contents.match(/defineEventHandler\s*\(/) ||
-         file_contents.match(/from ['"]#app['"]/) ||
-         file_contents.match(/from ['"]@nuxt\//))
+         file_contents.matches?(SIGNAL)
         return true
       end
 
