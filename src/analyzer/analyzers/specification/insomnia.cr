@@ -312,10 +312,20 @@ module Analyzer::Specification
     # parser can still strip them out.
     private def resolve_vars(input : String, env : Hash(String, String)) : String
       return input if input.empty? || env.empty?
-      input.gsub(/\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/) do |match|
-        name = $1
-        env.fetch(name, match)
+      # Iterate so composite variables expand fully. Insomnia commonly defines
+      # a base URL as `{{scheme}}://{{host}}{{base_path}}`, so a single pass
+      # would leave `{{host}}`/`{{base_path}}` behind and turn them into bogus
+      # path segments (e.g. `/:host:base_path/...`).
+      resolved = input
+      3.times do
+        previous = resolved
+        resolved = resolved.gsub(/\{\{\s*(?:_\.)?([A-Za-z0-9_.-]+)\s*\}\}/) do |match|
+          name = $1
+          env.fetch(name, match)
+        end
+        break if resolved == previous
       end
+      resolved
     end
 
     private def extract_path_from_url(url_string : String) : String

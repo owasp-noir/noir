@@ -106,6 +106,43 @@ describe "Insomnia Analyzer" do
     notes.params.should be_empty
   end
 
+  it "fully expands composite environment variables in URLs" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {
+        "_type": "export",
+        "__export_format": 4,
+        "resources": [
+          {
+            "_id": "env_base",
+            "_type": "environment",
+            "name": "Base",
+            "data": { "base_url": "{{ scheme }}://{{ host }}{{ base_path }}" }
+          },
+          {
+            "_id": "env_values",
+            "_type": "environment",
+            "name": "Values",
+            "data": { "scheme": "https", "host": "api.example.com", "base_path": "/v2" }
+          },
+          {
+            "_id": "req_1",
+            "_type": "request",
+            "name": "Pet",
+            "method": "GET",
+            "url": "{{ base_url }}/pet/{{ petId }}"
+          }
+        ]
+      }
+      JSON
+
+    endpoints.size.should eq 1
+    endpoint = endpoints.first
+    endpoint.url.should eq "/v2/pet/:petId"
+    endpoint.params.map(&.name).should contain("petId")
+    endpoint.params.map(&.name).should_not contain("host")
+    endpoint.params.map(&.name).should_not contain("base_path")
+  end
+
   it "does not share details between v5 requests in one collection" do
     endpoints = analyze_insomnia_yaml <<-YAML
       type: collection.insomnia.rest/5.0
