@@ -42,10 +42,23 @@ class GoAuthTagger < FrameworkTagger
     /\bGF[Aa]uth\b/,
   ]
 
+  # Static-asset file extensions. A route ending in one of these serves a
+  # static file off the engine, not a guarded API route.
+  STATIC_ASSET_EXTENSIONS = %w[
+    .html .htm .js .mjs .cjs .css .map .ico .png .jpg .jpeg .gif .svg .webp
+    .avif .bmp .woff .woff2 .ttf .otf .eot .wasm
+  ]
+
+  # Well-known public files served at the web root.
+  STATIC_PUBLIC_FILES = Set{
+    "favicon.ico", "robots.txt", "manifest.json", "asset-manifest.json",
+    "sitemap.xml", "service-worker.js", "sw.js", "browserconfig.xml",
+  }
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @name = "go_auth"
-    @middleware_scopes = [] of {prefix: String, middleware: String, description: String}
+    @middleware_scopes = [] of {prefix: String, middleware: String, description: String, root_group: Bool}
   end
 
   def self.target_techs : Array(String)
@@ -105,28 +118,16 @@ class GoAuthTagger < FrameworkTagger
         match = stripped.match(pattern)
         if match
           middleware_name = match[1]
-          prefix = normalize_prefix(group_stack)
-          prefix = "/" if prefix.empty?
-          @middleware_scopes << {
-            prefix:      prefix,
-            middleware:  middleware_name,
-            description: "Protected by Go middleware #{middleware_name}",
-          }
+          add_middleware_scope(group_stack, middleware_name, "Protected by Go middleware #{middleware_name}")
         end
       end
 
       # Check for JWT library middleware
       JWT_PATTERNS.each do |pattern|
         if stripped.matches?(pattern) && stripped.includes?(".Use")
-          prefix = normalize_prefix(group_stack)
-          prefix = "/" if prefix.empty?
           jwt_match = stripped.match(pattern)
           jwt_name = jwt_match ? jwt_match[0] : "JWT"
-          @middleware_scopes << {
-            prefix:      prefix,
-            middleware:  jwt_name,
-            description: "Protected by Go JWT middleware (#{jwt_name})",
-          }
+          add_middleware_scope(group_stack, jwt_name, "Protected by Go JWT middleware (#{jwt_name})")
         end
       end
     end
@@ -195,16 +196,62 @@ class GoAuthTagger < FrameworkTagger
     end
   end
 
+  # Record a group-level middleware scope. `prefix == "/"` arises two ways:
+  # a bare engine-level `.Use(...)` (empty group stack → truly global, every
+  # subsequently registered route is guarded) or an explicit root/empty
+  # *group* `g.Group("")` / `g.Group("/")` with a chained `.Use(...)`. Only
+  # the latter is a sub-group whose middleware does not reach engine-level
+  # static routes, so flag it to scope the coverage refinement below.
+  private def add_middleware_scope(group_stack : Array(String), middleware : String, description : String)
+    prefix = normalize_prefix(group_stack)
+    root_group = !group_stack.empty? && prefix == "/"
+    @middleware_scopes << {
+      prefix:      prefix,
+      middleware:  middleware,
+      description: description,
+      root_group:  root_group,
+    }
+  end
+
   private def check_middleware_scopes(endpoint : Endpoint) : String?
     url = endpoint.url
 
     @middleware_scopes.each do |scope|
-      if prefix_covers?(scope[:prefix], url)
-        return scope[:description]
-      end
+      next unless prefix_covers?(scope[:prefix], url)
+
+      # A `.Use` on an explicit root/empty *group* (`g.Group("")` /
+      # `g.Group("/")`) creates a sub-group; in gin it does not reach
+      # engine-level static-asset routes (the SPA shell, `/static/*`,
+      # favicon, web-app manifest) registered directly on the engine. Those
+      # are public, so a broad root-group auth scope must not tag them —
+      # the main source of go_auth false positives (e.g. gotify tagging
+      # `/`, `/index.html`, `/static/*any`, `/manifest.json` as auth).
+      next if scope[:root_group] && static_asset_route?(url)
+
+      return scope[:description]
     end
 
     nil
+  end
+
+  # A static-file / SPA-shell route, recognized conservatively: the SPA
+  # root, a gin catch-all wildcard mount (`/static/*filepath`, `/*any`), a
+  # well-known public file, or a static-asset extension. Used only to exempt
+  # these from a broad root-*group* auth scope, never from an inline,
+  # specific-prefix, or truly global (`engine.Use`) auth signal.
+  private def static_asset_route?(url : String) : Bool
+    path = url.split("?", 2)[0].split("#", 2)[0].downcase
+    return true if path == "/" || path.empty?
+
+    segments = path.split("/").reject(&.empty?)
+    # gin catch-all wildcard — the shape of a static-file server / SPA
+    # fallback (`r.Static`, `r.StaticFS`, a NoRoute SPA handler), not a
+    # REST route.
+    return true if segments.any?(&.starts_with?("*"))
+
+    last = segments[-1]? || ""
+    return true if STATIC_PUBLIC_FILES.includes?(last)
+    STATIC_ASSET_EXTENSIONS.any? { |ext| last.ends_with?(ext) }
   end
 
   # Segment-aware prefix match so "/api" guards "/api/x" but not "/apiv2".

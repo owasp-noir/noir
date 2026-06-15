@@ -2,6 +2,35 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+# Write `fixture_lines` to a temp Go file, run GoAuthTagger against a single
+# endpoint at `url`/`method` whose route is recorded at `line`, and return
+# the (now possibly tagged) endpoint.
+def run_go_auth(fixture_lines : Array(String), url : String, method : String, line : Int32) : Endpoint
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("go_rootgroup")
+  Dir.mkdir_p(tmpdir)
+  file = File.join(tmpdir, "main.go")
+  File.write(file, fixture_lines.join("\n"))
+
+  # The group-middleware pre-scan enumerates `.go` files via the file map,
+  # so register the fixture there (mirrors the other GoAuthTagger specs).
+  locator = CodeLocator.instance
+  Dir.glob("#{tmpdir}/**/*").each do |f|
+    next if File.directory?(f)
+    locator.push("file_map", f)
+  end
+
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  details = Details.new(PathInfo.new(file, line))
+  details.technology = "go_gin"
+  endpoint = Endpoint.new(url, method, [] of Param, details)
+
+  GoAuthTagger.new(noir_options).perform([endpoint])
+  FileUtils.rm_rf(tmpdir)
+  endpoint
+end
+
 describe "GoAuthTagger" do
   fixture_base = "#{__DIR__}/../../../functional_test/fixtures/go/gin_auth"
   main_path = "#{fixture_base}/main.go"
@@ -173,5 +202,67 @@ describe "GoAuthTagger (expanded targets)" do
     endpoint.tags[0].description.should contain("AuthMiddleware")
 
     FileUtils.rm_rf(tmpdir)
+  end
+end
+
+# A root/empty group (`g.Group("")` / `g.Group("/")`) with a chained
+# `.Use(auth)` is recorded with prefix "/", which `prefix_covers?` matches
+# against every endpoint. In gin that middleware only guards the group's
+# own routes, NOT engine-level static-asset routes — so the broad scope
+# must not tag the SPA shell / `/static/*` / favicon (the gotify FP).
+describe "GoAuthTagger (root-group static-asset exemption)" do
+  # Models the gotify shape: public static routes registered on the engine,
+  # then a root/empty group that applies auth middleware to its own routes.
+  #  1 package main
+  #  2 func main() {
+  #  3   g := gin.New()
+  #  4   g.GET("/index.html", indexHandler)
+  #  5   g.GET("/static/*filepath", staticHandler)
+  #  6   g.GET("/favicon.ico", iconHandler)
+  #  7   clientAuth := g.Group("")
+  #  8   clientAuth.Use(AuthMiddleware())
+  #  9   clientAuth.GET("/data", dataHandler)
+  # 10 }
+  root_group_fixture = [
+    "package main",
+    "func main() {",
+    "  g := gin.New()",
+    "  g.GET(\"/index.html\", indexHandler)",
+    "  g.GET(\"/static/*filepath\", staticHandler)",
+    "  g.GET(\"/favicon.ico\", iconHandler)",
+    "  clientAuth := g.Group(\"\")",
+    "  clientAuth.Use(AuthMiddleware())",
+    "  clientAuth.GET(\"/data\", dataHandler)",
+    "}",
+  ]
+
+  {"/index.html" => 4, "/static/*filepath" => 5, "/favicon.ico" => 6}.each do |url, line|
+    it "does not tag static-asset route #{url} under a root-group .Use" do
+      endpoint = run_go_auth(root_group_fixture, url, "GET", line)
+      endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+    end
+  end
+
+  it "still tags a non-static route covered only by the root-group scope" do
+    # `/data` lives far from the `.Use` line (no inline match), so it is
+    # tagged purely via the group scope — proving the exemption is narrow
+    # and does not drop genuinely protected routes.
+    endpoint = run_go_auth(root_group_fixture, "/data", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "still tags a static route under a truly global engine .Use(auth)" do
+    # `r.Use(auth)` (no enclosing group) is a real global middleware: every
+    # subsequently registered route, static or not, is guarded. The
+    # exemption is scoped to root *groups*, so global coverage is unchanged.
+    global = [
+      "package main",
+      "func main() {",
+      "  r := gin.New()",
+      "  r.Use(AuthMiddleware())",
+      "}",
+    ]
+    endpoint = run_go_auth(global, "/index.html", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_true
   end
 end
