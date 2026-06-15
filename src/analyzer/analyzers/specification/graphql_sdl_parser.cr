@@ -266,48 +266,62 @@ module Analyzer::Specification
 
     # ---------- low-level parsers ----------
 
+    # Replaces every comment and string literal with position-preserving
+    # whitespace so the downstream grammar never has to reason about them.
+    #
+    # The input is first materialized into an `Array(Char)` so positional
+    # access is O(1). Indexing a `String` directly (`content[i]`) is O(n)
+    # whenever the document is not single-byte-optimizable — a single
+    # multi-byte char (e.g. an emoji in a `"""description"""`) turns the
+    # whole scan quadratic, which on real schemas like GitHub's 360 KB SDL
+    # meant ~100 s instead of ~20 ms. The returned string is ASCII-only
+    # (any stray non-ASCII char — which GraphQL only ever permits inside
+    # strings/comments anyway — is mapped to a space), so every subsequent
+    # positional pass over `sanitized` stays single-byte-optimizable too.
     private def strip_comments(content : String) : String
-      String.build(content.size) do |io|
+      chars = content.chars
+      size = chars.size
+      String.build(content.bytesize) do |io|
         i = 0
-        while i < content.size
-          ch = content[i]
+        while i < size
+          ch = chars[i]
           case ch
           when '#'
-            while i < content.size && content[i] != '\n'
+            while i < size && chars[i] != '\n'
               io << ' '
               i += 1
             end
           when '"'
-            if i + 2 < content.size && content[i + 1] == '"' && content[i + 2] == '"'
+            if i + 2 < size && chars[i + 1] == '"' && chars[i + 2] == '"'
               io << "   "
               i += 3
-              while i + 2 < content.size && !(content[i] == '"' && content[i + 1] == '"' && content[i + 2] == '"')
-                io << (content[i] == '\n' ? '\n' : ' ')
+              while i + 2 < size && !(chars[i] == '"' && chars[i + 1] == '"' && chars[i + 2] == '"')
+                io << (chars[i] == '\n' ? '\n' : ' ')
                 i += 1
               end
-              if i + 2 < content.size
+              if i + 2 < size
                 io << "   "
                 i += 3
               end
             else
               io << ' '
               i += 1
-              while i < content.size && content[i] != '"'
-                if content[i] == '\\' && i + 1 < content.size
+              while i < size && chars[i] != '"'
+                if chars[i] == '\\' && i + 1 < size
                   io << "  "
                   i += 2
                 else
-                  io << (content[i] == '\n' ? '\n' : ' ')
+                  io << (chars[i] == '\n' ? '\n' : ' ')
                   i += 1
                 end
               end
-              if i < content.size
+              if i < size
                 io << ' '
                 i += 1
               end
             end
           else
-            io << ch
+            io << (ch.ascii? ? ch : ' ')
             i += 1
           end
         end
