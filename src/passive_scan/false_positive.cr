@@ -87,6 +87,19 @@ module NoirPassiveScan
     # it is left to fall through.
     PURE_REFERENCE = /\A(?:\$\{?\{?[A-Za-z_][\w.\- ]*\}?\}?|\$\(.+\)|%[A-Za-z_]\w*%|\{\{.+\}\}|<[^>]+>|env\(\s*['"][^'",]+['"]\s*\))\z/
 
+    # Documentation/template placeholder *values* — what a reader is told
+    # to replace, never a real secret. Matched at the *start* of the value
+    # so a `KEY=<token> …` or `KEY=your-access-key-id` example is caught
+    # even with trailing text:
+    #   - angle-bracket stubs (`<token>`, `<your-key>`)
+    #   - `your-…` / `your_…` (`your-access-key-id`, `your_api_key`)
+    #   - explicit "replace this" / "insert your" prose
+    #   - bare null / dummy tokens (`nil`, `null`, `none`, `changeme`,
+    #     `placeholder`, `redacted`, `xxxx…`, `****`)
+    # All are forms a genuine high-entropy literal can never take, so this
+    # only removes false positives.
+    PLACEHOLDER_VALUE = /\A(?:<[^>]*>|your[-_ ]|insert[-_ ]your|replace[-_ ](?:me|this|with)|(?:changeme|change[-_]me|replaceme|replace[-_]me|placeholder|redacted|dummy|todo|fixme|none|null|nil|undefined|x{4,}|\*{4,})\b)/i
+
     # True when `line` exposes its secret-bearing value only through an
     # indirection (env read / templating) or a placeholder — i.e. there
     # is no literal secret on the line to leak.
@@ -105,6 +118,7 @@ module NoirPassiveScan
       if match = line.match(ASSIGNMENT_VALUE)
         value = strip_wrapping_quotes(match[1])
         return true if value.matches?(PURE_REFERENCE)
+        return true if value.matches?(PLACEHOLDER_VALUE)
       end
 
       false
