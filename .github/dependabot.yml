@@ -1,5 +1,30 @@
+# Dependabot configuration for OWASP Noir.
+#
+# Noir itself is a Crystal (shards) project, and Dependabot does not support the
+# shards ecosystem, so there are no updates for the application's own
+# dependencies. We only track the supporting infrastructure that Dependabot
+# *can* update at the repository root:
+#   - GitHub Actions referenced by our workflows
+#   - the base image in the root Dockerfile
+#
+# Everything under spec/ is test fixtures: throwaway sample apps in many
+# languages whose dependencies are intentionally pinned for reproducible
+# functional tests. We do NOT want version or security update PRs for any of
+# them, so every non-Crystal ecosystem that appears under spec/ is listed below
+# with pull requests disabled and all dependencies ignored.
+#
+# NOTE: `open-pull-requests-limit: 0` + `ignore` only suppress Dependabot
+# *pull requests* (both version and security updates). They do NOT suppress
+# Dependabot *alerts* in the Security tab, which are produced from the
+# dependency graph and cannot be scoped per-path from this file. To silence
+# alerts for the fixtures, use repository
+# Settings > Code security > Dependabot > auto-triage rules.
 version: 2
+
 updates:
+  # ---------------------------------------------------------------------------
+  # Infrastructure we DO want updated (repository root only).
+  # ---------------------------------------------------------------------------
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -10,34 +35,115 @@ updates:
     schedule:
       interval: weekly
 
-  - package-ecosystem: bundler
-    directory: /
-    schedule:
-      interval: weekly
+  # ---------------------------------------------------------------------------
+  # Test fixtures under spec/: suppress version AND security update PRs for
+  # every non-Crystal ecosystem present there.
+  # ---------------------------------------------------------------------------
 
-  # Test fixtures under spec/ are intentionally pinned for reproducible
-  # functional tests. Suppress both version and security updates for them.
+  # Ruby (Gemfile)
   - package-ecosystem: bundler
     directories:
-      - "/spec/functional_test/fixtures/**"
+      - "/spec/**"
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
     ignore:
       - dependency-name: "*"
 
-  - package-ecosystem: pip
-    directories:
-      - "/spec/functional_test/fixtures/python/**"
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 0
-    ignore:
-      - dependency-name: "*"
-
+  # JavaScript / TypeScript (package.json)
   - package-ecosystem: npm
     directories:
-      - "/spec/functional_test/fixtures/javascript/**"
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # Python (requirements.txt)
+  - package-ecosystem: pip
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # Go (go.mod)
+  - package-ecosystem: gomod
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # PHP (composer.json)
+  - package-ecosystem: composer
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # Rust (Cargo.toml)
+  - package-ecosystem: cargo
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # Java (pom.xml)
+  - package-ecosystem: maven
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # Java / Kotlin / Groovy / Android (build.gradle)
+  - package-ecosystem: gradle
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # Elixir (mix.exs)
+  - package-ecosystem: mix
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # Dart (pubspec.yaml)
+  - package-ecosystem: pub
+    directories:
+      - "/spec/**"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
+
+  # C# (*.csproj, packages.config)
+  - package-ecosystem: nuget
+    directories:
+      - "/spec/**"
     schedule:
       interval: weekly
     open-pull-requests-limit: 0
