@@ -1,0 +1,8 @@
+#%RAML 1.0 Extension
+extends: api.raml
+
+# An Extension augments the master API; analyzed on its own it would emit
+# a phantom `/products` endpoint with no baseUri. It must be skipped.
+/products:
+  get:
+    description: adds hypermedia links to the catalog listing

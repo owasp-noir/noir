@@ -1,0 +1,10 @@
+#%RAML 1.0
+title: Catalog API
+baseUri: https://api.example.com/v2
+mediaType: application/json
+
+/products:
+  get:
+    queryParameters:
+      q:
+        type: string
