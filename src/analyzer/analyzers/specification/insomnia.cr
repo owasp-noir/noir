@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../utils/http_symbols"
+require "uri"
 
 module Analyzer::Specification
   class Insomnia < Analyzer
@@ -127,6 +128,15 @@ module Analyzer::Specification
     end
 
     private def process_v4_body(body : JSON::Any, params : Array(Param))
+      # Older Insomnia exports (formats 2/3) store the request body as a raw
+      # string instead of an object. Attempt to parse it as JSON so that body
+      # params are still surfaced, and bail out gracefully otherwise.
+      if text = body.as_s?
+        process_json_body_text(text, params)
+        return
+      end
+      return unless body.as_h?
+
       mime = (body["mimeType"]?.try(&.as_s?) || "").downcase
       case
       when mime.includes?("application/json")
@@ -268,6 +278,13 @@ module Analyzer::Specification
     end
 
     private def process_v5_body(body : YAML::Any, params : Array(Param))
+      # Guard against bodies serialized as scalars rather than mappings.
+      if text = body.as_s?
+        process_json_body_text(text, params)
+        return
+      end
+      return unless body.as_h?
+
       mime = (body["mimeType"]?.try(&.as_s?) || "").downcase
       case
       when mime.includes?("application/json")
