@@ -56,5 +56,26 @@ describe NoirPassiveScan::FalsePositive do
       # whole-value reference rule.
       NoirPassiveScan::FalsePositive.secret_reference?(%(password = "P$ssw0rd-Real-Value-123")).should be_false
     end
+
+    it "suppresses empty assignment values (.env.example / config stubs)" do
+      NoirPassiveScan::FalsePositive.secret_reference?("AWS_ACCESS_KEY_ID=").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("AWS_SECRET_ACCESS_KEY=  ").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("GITHUB_TOKEN:").should be_true
+    end
+
+    it "suppresses single-argument env() helper calls (Laravel/Symfony/Rails)" do
+      NoirPassiveScan::FalsePositive.secret_reference?(%(            'key' => env('AWS_ACCESS_KEY_ID'),)).should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?(%(    'secret' => env("AWS_SECRET_ACCESS_KEY"),)).should be_true
+    end
+
+    it "keeps a two-argument env() call whose default could be a literal" do
+      # `env('KEY', 'maybe-a-real-default')` must not be suppressed — the
+      # second argument can hold a hard-coded fallback secret.
+      NoirPassiveScan::FalsePositive.secret_reference?(%('key' => env('AWS_ACCESS_KEY_ID', 'AKIAREALFALLBACKKEY1'))).should be_false
+    end
+
+    it "keeps a populated value that uses the => hash-arrow separator" do
+      NoirPassiveScan::FalsePositive.secret_reference?(%('key' => 'AKIAIOSFODNN7REALKEYX')).should be_false
+    end
   end
 end
