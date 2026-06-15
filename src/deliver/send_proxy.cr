@@ -14,7 +14,7 @@ class SendWithProxy < Deliver
       wg.add(1)
       spawn do
         begin
-          unless endpoint.params.empty?
+          if !endpoint.params.empty?
             endpoint_hash = endpoint.params_to_hash
             is_json = false
             body = if !endpoint_hash["json"].empty?
