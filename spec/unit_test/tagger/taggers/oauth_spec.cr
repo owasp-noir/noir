@@ -273,5 +273,53 @@ describe "OAuthTagger" do
 
       endpoint.tags.size.should eq(0)
     end
+
+    it "tags a param-less social-login callback under an auth context" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      # Laravel Socialite style (e.g. koel): the `code`/`state` params
+      # arrive at runtime and aren't statically extracted, but
+      # `/auth/<provider>/callback` is unambiguously an OAuth flow.
+      endpoint = Endpoint.new("/auth/google/callback", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "tags a param-less social-login redirect under an auth context" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/auth/google/redirect", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "tags an SSO callback handler with no extracted params" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      endpoint = Endpoint.new("/sso/callback", "GET")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(1)
+      endpoint.tags[0].name.should eq("oauth")
+    end
+
+    it "does not tag a callback without an auth/SSO context segment" do
+      tagger = OAuthTagger.new(default_tagger_options)
+
+      # No auth/SSO context word in the path and no OAuth params — this is
+      # a payment IPN, not an OAuth sign-in flow.
+      endpoint = Endpoint.new("/payments/stripe/callback", "POST")
+
+      tagger.perform([endpoint])
+
+      endpoint.tags.size.should eq(0)
+    end
   end
 end
