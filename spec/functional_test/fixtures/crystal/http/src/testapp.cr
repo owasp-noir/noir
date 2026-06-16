@@ -32,5 +32,14 @@ server = HTTP::Server.new do |context|
   sess = context.request.cookies["session"]?
 end
 
+# Unrelated case (e.g. status/enum handling) that happens to contain a path-like literal.
+# The analyzer's indent-tracked `case ...request.path` scope must ignore `when` here
+# so we don't emit a false-positive endpoint for "/not-a-real-route".
+status = "200"
+case status
+when "/not-a-real-route"
+  puts "this must not become an endpoint"
+end
+
 address = server.bind_tcp(8080)
 server.listen

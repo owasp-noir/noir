@@ -5,7 +5,7 @@ module NoirTechs
     "android", "ios",
     "cpp_crow", "cpp_drogon", "cpp_httplib", "cpp_oatpp",
     "clojure_compojure", "clojure_pedestal", "clojure_reitit",
-    "crystal_amber", "crystal_grip", "crystal_http", "crystal_kemal", "crystal_lucky", "crystal_marten",
+    "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
     "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
     "dart_alfred", "dart_angel3", "dart_get_server", "dart_frog", "dart_serverpod", "dart_shelf",
     "elixir_bandit", "elixir_phoenix", "elixir_plug",
@@ -36,7 +36,7 @@ module NoirTechs
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
     "android", "ios",
-    "crystal_amber", "crystal_grip", "crystal_http", "crystal_kemal", "crystal_lucky", "crystal_marten",
+    "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
     "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
     "elixir_bandit", "elixir_phoenix", "elixir_plug",
     "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gf", "go_gin", "go_gozero", "go_goyave", "go_hertz", "go_iris", "go_mux", "go_restful",
