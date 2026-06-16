@@ -410,7 +410,8 @@ module Analyzer::AI
       action = parsed["action"].as_s
       args = parsed["args"]? || JSON.parse("{}")
       {action: action, args: args}
-    rescue
+    rescue e : Exception
+      logger.debug "Failed to parse agent action from LLM response: #{e.message}"
       nil
     end
 
@@ -763,7 +764,8 @@ module Analyzer::AI
       path = default_path if path.empty?
       line = safe_json_int_or_nil(ep, "line")
       PathInfo.new(path, line)
-    rescue
+    rescue e : Exception
+      logger.debug "Failed to build path info from LLM response: #{e.message}"
       PathInfo.new(default_path)
     end
 
@@ -797,7 +799,8 @@ module Analyzer::AI
       value = data[key]?
       return default if value.nil?
       value.as_s
-    rescue
+    rescue e : Exception
+      logger.debug "Failed to cast JSON value to String: #{e.message}"
       default
     end
 
@@ -805,7 +808,8 @@ module Analyzer::AI
       value = data[key]?
       return default if value.nil?
       value.as_i
-    rescue
+    rescue e : Exception
+      logger.debug "Failed to cast JSON value to Int32: #{e.message}"
       default
     end
 
@@ -813,7 +817,8 @@ module Analyzer::AI
       value = data[key]?
       return if value.nil?
       value.as_i
-    rescue
+    rescue e : Exception
+      logger.debug "Failed to cast JSON value to Int32: #{e.message}"
       nil
     end
 
