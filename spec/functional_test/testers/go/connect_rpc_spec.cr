@@ -20,10 +20,11 @@ expected_endpoints = [
 ]
 
 # The .proto file in the fixture also fires the gRPC spec detector, so
-# both `grpc` and `go_connect_rpc` techs are expected. After endpoint
-# optimization the four pure-gRPC paths emitted by both analyzers are
-# deduplicated by (method, url), leaving exactly four endpoints.
+# both `grpc` and `go_connect_rpc` techs are expected. The main server
+# also uses bare net/http (http.NewServeMux) so `go_http` is detected too
+# (legitimate). After endpoint optimization the pure-GRPC paths are
+# deduplicated, leaving exactly the expected endpoints.
 FunctionalTester.new("fixtures/go/connect_rpc/", {
-  :techs     => 2,
+  :techs     => 3,
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests

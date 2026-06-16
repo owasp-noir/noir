@@ -60,6 +60,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"go_gozero", Go::GoZero},
     {"go_goyave", Go::Goyave},
     {"go_gf", Go::Gf},
+    {"go_http", Go::Http},
     {"go_httprouter", Go::Httprouter},
     {"go_huma", Go::Huma},
     {"go_mux", Go::Mux},
