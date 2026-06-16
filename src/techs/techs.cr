@@ -333,6 +333,24 @@ module NoirTechs
         :websocket   => true,
       },
     },
+    :crystal_http => {
+      :framework => "HTTP::Server",
+      :language  => "Crystal",
+      :similar   => ["http", "http_server", "crystal-http", "crystal_http", "http/server", "std/http"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :cpp_crow => {
       :framework => "Crow",
       :language  => "C++",
