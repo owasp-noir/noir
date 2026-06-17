@@ -24,7 +24,7 @@ module NoirTechs
     "perl_catalyst", "perl_dancer2", "perl_mojolicious",
     "php_cakephp", "php_codeigniter", "php_hyperf", "php_laminas", "php_laravel", "php_lumen", "php_pure", "php_slim", "php_symfony", "php_thinkphp", "php_yii",
     "python_aiohttp", "python_bottle", "python_django", "python_falcon", "python_fastapi",
-    "python_flask", "python_litestar", "python_pyramid", "python_quart", "python_robyn", "python_sanic", "python_starlette", "python_tornado",
+    "python_flask", "python_litestar", "python_pyramid", "python_quart", "python_robyn", "python_sanic", "python_starlette", "python_tornado", "python_http_server",
     "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra",
     "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_poem",
     "rust_rocket", "rust_rwf", "rust_salvo", "rust_tide", "rust_warp",
@@ -2609,6 +2609,24 @@ module NoirTechs
         },
         :static_path => false,
         :websocket   => true,
+      },
+    },
+    :python_http_server => {
+      :framework => "http.server",
+      :language  => "Python",
+      :similar   => ["http.server", "python-http-server", "python_http_server", "http_server", "BaseHTTPRequestHandler", "HTTPServer", "SimpleHTTPRequestHandler", "wsgiref.simple_server"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
       },
     },
     :insomnia => {
