@@ -127,26 +127,29 @@ module Analyzer::Python
     # Quote-aware single-line comment strip. Sufficient for path/parameter lines that
     # contain literal strings for routes or keys (we control the fixture and real-world
     # route guards rarely put the path literal inside a comment on the same line).
+    #
+    # Uses Char::Reader + byte positions to ensure UTF-8 safety (String slicing with
+    # char indices from each_char_with_index would be byte-unsafe on non-ASCII input).
     private def strip_comment(line : ::String) : ::String
       in_double = false
       in_single = false
       escaped = false
-      line.each_char_with_index do |ch, idx|
+      reader = Char::Reader.new(line)
+      while reader.has_next?
+        ch = reader.current_char
+        pos = reader.pos
         if escaped
           escaped = false
-          next
-        end
-        if ch == '\\' && (in_double || in_single)
+        elsif ch == '\\' && (in_double || in_single)
           escaped = true
-          next
-        end
-        if ch == '"' && !in_single
+        elsif ch == '"' && !in_single
           in_double = !in_double
         elsif ch == '\'' && !in_double
           in_single = !in_single
         elsif ch == '#' && !in_double && !in_single
-          return line[0...idx]
+          return line.byte_slice(0, pos)
         end
+        reader.next_char
       end
       line
     end
@@ -182,7 +185,7 @@ module Analyzer::Python
         line = strip_comment(raw)
         next if line.strip.empty?
 
-        has_path_ref = line.includes?("self.path") || line.includes?("urlparse(self.path)") || line.includes?(".path")
+        has_path_ref = line.includes?("self.path") || line.includes?("urlparse(self.path)")
 
         # self.path == "..." or != or in [ ... ]
         if m = line.match(/self\.path\s*(?:==|!=)\s*[rf]?['"]([^'"]+?)['"]/)
@@ -331,9 +334,9 @@ module Analyzer::Python
           end
         end
 
-        # json: var = json.loads(...) then var['k'] / var.get('k')
+        # json: var = json.loads(...) / orjson.loads(...) / ujson.loads(...) then var['k'] / var.get('k')
         json_vars = [] of ::String
-        body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:json\.loads?|orjson|ujson)\s*\(/) do |m|
+        body.scan(/([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:json|orjson|ujson)\.loads?\s*\(/) do |m|
           json_vars << m[1] unless json_vars.includes?(m[1])
         end
         json_vars.each do |var|
@@ -344,11 +347,11 @@ module Analyzer::Python
             record.call(mm[1], "json")
           end
         end
-        # direct json.loads(...)['k'] (rare but possible)
-        body.scan(/json\.loads?\s*\([^)]*\)\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
+        # direct json.loads(...) / orjson / ujson ['k'] / .get(...) (rare but possible)
+        body.scan(/(?:json|orjson|ujson)\.loads?\s*\([^)]*\)\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |m|
           record.call(m[1], "json")
         end
-        body.scan(/json\.loads?\s*\([^)]*\)\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
+        body.scan(/(?:json|orjson|ujson)\.loads?\s*\([^)]*\)\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |m|
           record.call(m[1], "json")
         end
       end

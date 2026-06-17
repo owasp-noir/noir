@@ -2614,7 +2614,7 @@ module NoirTechs
     :python_http_server => {
       :framework => "http.server",
       :language  => "Python",
-      :similar   => ["http.server", "python-http-server", "python_http_server", "http_server", "BaseHTTPRequestHandler", "HTTPServer", "SimpleHTTPRequestHandler", "wsgiref.simple_server"],
+      :similar   => ["http.server", "python-http-server", "python_http_server", "BaseHTTPRequestHandler", "HTTPServer", "SimpleHTTPRequestHandler", "wsgiref.simple_server"],
       :supported => {
         :endpoint => true,
         :method   => true,
