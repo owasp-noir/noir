@@ -175,6 +175,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"ruby_rails", Ruby::Rails},
     {"ruby_roda", Ruby::Roda},
     {"ruby_sinatra", Ruby::Sinatra},
+    {"ruby_webrick", Ruby::Webrick},
     {"rust_axum", Rust::Axum},
     {"rust_rocket", Rust::Rocket},
     {"rust_actix_web", Rust::ActixWeb},
