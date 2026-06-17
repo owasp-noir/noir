@@ -789,4 +789,99 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"POST", "/api/v2/echo"},
     ].sort)
   end
+
+  # -------------------------------------------------------------------
+  # net/http (stdlib) dedicated extractor tests
+  # -------------------------------------------------------------------
+
+  it "extracts net/http HandleFunc on default package name and on ServeMux variable" do
+    source = <<-GO
+      package main
+
+      import "net/http"
+
+      func main() {
+          http.HandleFunc("/hello", helloHandler)
+          m := http.NewServeMux()
+          m.HandleFunc("/api/users", usersHandler)
+          m.Handle("/api/old", oldHandler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/api/old"},
+      {"ANY", "/api/users"},
+      {"ANY", "/hello"},
+    ].sort)
+  end
+
+  it "supports import alias for net/http" do
+    source = <<-GO
+      package main
+      import h "net/http"
+      func main() {
+          h.HandleFunc("/aliased", h)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/aliased"}])
+  end
+
+  it "supports Go 1.22+ method-in-pattern registrations (verb known at registration)" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          http.HandleFunc("POST /items", createItem)
+          m := http.NewServeMux()
+          m.HandleFunc("GET /items/{id}", getItem)
+          m.HandleFunc("/legacy", legacy) // still ANY
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/legacy"},
+      {"GET", "/items/{id}"},
+      {"POST", "/items"},
+    ].sort)
+  end
+
+  it "ignores HandleFunc on non-http / non-tracked receivers (e.g. chi router in same file)" do
+    source = <<-GO
+      package main
+      import (
+          "net/http"
+          "github.com/go-chi/chi/v5"
+      )
+      func main() {
+          r := chi.NewRouter()
+          r.HandleFunc("/chi-one", chiH)   // chi's — must be ignored by net/http extractor
+          http.HandleFunc("/real-http", h)
+          m := http.NewServeMux()
+          m.HandleFunc("/also-real", h2)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"ANY", "/also-real"},
+      {"ANY", "/real-http"},
+    ].sort)
+  end
+
+  it "extracts http.Handle (not just HandleFunc) identically" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          http.Handle("/handle", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/handle"}])
+  end
 end

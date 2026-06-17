@@ -2976,5 +2976,272 @@ module Noir
       end
       result
     end
+
+    # ---------------------------------------------------------------------
+    # net/http (stdlib) support — dedicated, isolated from chi/mux/etc.
+    # ---------------------------------------------------------------------
+
+    # Local collection of net/http import aliases (supports default "http",
+    # aliased `h "net/http"`, etc). Mirrors the logic in GoCalleeExtractor
+    # but kept private here to avoid widening any public surface and to stay
+    # isolated from other miniparsers.
+    private def collect_http_aliases(source : String) : Set(String)
+      aliases = Set(String).new
+      Noir::TreeSitter.parse_go(source) do |root|
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "import_spec"
+
+          alias_name : String? = nil
+          import_path : String? = nil
+          Noir::TreeSitter.each_named_child(node) do |child|
+            case Noir::TreeSitter.node_type(child)
+            when "package_identifier"
+              alias_name = Noir::TreeSitter.node_text(child, source)
+            when "interpreted_string_literal", "raw_string_literal"
+              txt = Noir::TreeSitter.node_text(child, source)
+              import_path = unquote_like(txt)
+            end
+          end
+
+          next unless path = import_path
+          next unless path == "net/http"
+          name = alias_name || "http"
+          next if name.empty? || name == "_" || name == "."
+          aliases << name
+        end
+      end
+      if aliases.empty? && source.includes?("net/http")
+        aliases << "http"
+      end
+      aliases
+    end
+
+    private def unquote_like(text : String) : String
+      return text[1...-1] if text.size >= 2 && ((text.starts_with?("\"") && text.ends_with?("\"")) || (text.starts_with?("`") && text.ends_with?("`")))
+      text
+    end
+
+    # Extracts routes registered directly against the Go standard library
+    # `net/http` package (and its ServeMux). This covers the very common
+    # bare-server pattern used in tutorials, internal tools and minimal
+    # services:
+    #
+    #   http.HandleFunc("/hello", handler)
+    #   http.Handle("/api", h)
+    #
+    #   mux := http.NewServeMux()
+    #   mux.HandleFunc("/users", uh)
+    #   mux.Handle("/old", oh)
+    #
+    #   // Go 1.22+ method-in-pattern form (verb is known at registration)
+    #   mux.HandleFunc("POST /items", ih)
+    #
+    # The extractor ONLY returns registrations performed on:
+    #   * the net/http package identifier (or alias: `import h "net/http"; h.HandleFunc`)
+    #   * variables proven (via same-file assignment) to have originated from
+    #     `http.NewServeMux()`, `&http.ServeMux{}`, or `http.ServeMux{}`
+    #
+    # This guarantees zero collision with chi's HandleFunc/Handle (which are
+    # handled exclusively by the chi walker and would otherwise be mis-attributed
+    # if we reused the generic mux handlefunc chain decoder).
+    #
+    # Routes are emitted with verb "ANY" (classic registrations match whatever
+    # the handler decides at runtime) or the concrete verb when the modern
+    # "METHOD /path" pattern form is used. Callers (the go_http analyzer) are
+    # responsible for fanning ANY via `fan_out_verbs`.
+    def extract_net_http_routes(source : String,
+                                external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
+      routes = [] of Route
+      http_aliases = collect_http_aliases(source)
+      return routes if http_aliases.empty?
+
+      Noir::TreeSitter.parse_go(source) do |root|
+        string_values = collect_string_values(root, source)
+        external_string_values.each { |k, v| string_values[k] ||= v }
+
+        serve_mux_vars = collect_serve_mux_vars(root, source, http_aliases)
+
+        walk(root) do |node|
+          next unless Noir::TreeSitter.node_type(node) == "call_expression"
+          if route = decode_net_http_registration(node, source, http_aliases, serve_mux_vars, string_values)
+            routes << route
+          end
+        end
+      end
+      routes
+    end
+
+    # Collects names of local variables that are assigned a *http.ServeMux
+    # (via NewServeMux or composite literal) inside this file. Only same-file
+    # tracking is performed — cross-file ServeMux instances are out of scope
+    # for the first cut (identical limitation to many other Go patterns).
+    private def collect_serve_mux_vars(root : LibTreeSitter::TSNode,
+                                       source : String,
+                                       http_aliases : Set(String)) : Set(String)
+      vars = Set(String).new
+      walk(root) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "short_var_declaration", "assignment_statement", "var_spec"
+          collect_serve_mux_assignment(node, source, http_aliases, vars)
+        end
+      end
+      vars
+    end
+
+    private def collect_serve_mux_assignment(node : LibTreeSitter::TSNode,
+                                             source : String,
+                                             http_aliases : Set(String),
+                                             vars : Set(String))
+      left = Noir::TreeSitter.field(node, "left")
+      right = Noir::TreeSitter.field(node, "right")
+      if Noir::TreeSitter.node_type(node) == "var_spec"
+        left = Noir::TreeSitter.field(node, "name")
+        right = Noir::TreeSitter.field(node, "value")
+      end
+      return unless left && right
+
+      name_nodes = [] of LibTreeSitter::TSNode
+      if Noir::TreeSitter.node_type(left) == "identifier"
+        name_nodes << left
+      else
+        Noir::TreeSitter.each_named_child(left) do |c|
+          name_nodes << c if Noir::TreeSitter.node_type(c) == "identifier"
+        end
+      end
+      return if name_nodes.empty?
+
+      actual_rhs = right
+      if Noir::TreeSitter.node_type(right) == "expression_list"
+        actual_rhs = first_named_child(right) || right
+      end
+      if serve_mux_rhs?(actual_rhs, source, http_aliases)
+        name_nodes.each do |n|
+          vars << Noir::TreeSitter.node_text(n, source)
+        end
+      end
+    end
+
+    private def serve_mux_rhs?(node : LibTreeSitter::TSNode,
+                               source : String,
+                               http_aliases : Set(String)) : Bool
+      actual = node
+      if Noir::TreeSitter.node_type(node) == "expression_list"
+        actual = first_named_child(node) || node
+      end
+
+      # http.NewServeMux() or alias.NewServeMux()
+      if Noir::TreeSitter.node_type(actual) == "call_expression"
+        if fn = Noir::TreeSitter.field(actual, "function")
+          if Noir::TreeSitter.node_type(fn) == "selector_expression"
+            operand = Noir::TreeSitter.field(fn, "operand")
+            field = Noir::TreeSitter.field(fn, "field")
+            if operand && field &&
+               Noir::TreeSitter.node_type(operand) == "identifier" &&
+               http_aliases.includes?(Noir::TreeSitter.node_text(operand, source)) &&
+               Noir::TreeSitter.node_text(field, source) == "NewServeMux"
+              return true
+            end
+          end
+        end
+      end
+
+      # &http.ServeMux{}  or http.ServeMux{}  (or alias)
+      txt = Noir::TreeSitter.node_text(actual, source)
+      return true if http_aliases.any? { |a| txt.includes?("#{a}.ServeMux") }
+
+      false
+    end
+
+    # Decodes a call that looks like `<recv>.HandleFunc("/p", h)` or
+    # `<recv>.Handle("/p", h)` when recv is either a net/http alias or a
+    # tracked serve-mux variable. Also peels one level of `NewServeMux().HandleFunc`
+    # for the inline-creation pattern.
+    private def decode_net_http_registration(call : LibTreeSitter::TSNode,
+                                             source : String,
+                                             http_aliases : Set(String),
+                                             serve_mux_vars : Set(String),
+                                             string_values : Hash(String, String)) : Route?
+      function = Noir::TreeSitter.field(call, "function")
+      return unless function
+      return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+
+      operand = Noir::TreeSitter.field(function, "operand")
+      field = Noir::TreeSitter.field(function, "field")
+      return unless operand && field
+
+      method_name = Noir::TreeSitter.node_text(field, source)
+      return unless method_name == "HandleFunc" || method_name == "Handle"
+
+      router_name : String? = nil
+      case Noir::TreeSitter.node_type(operand)
+      when "identifier"
+        name = Noir::TreeSitter.node_text(operand, source)
+        if http_aliases.includes?(name)
+          router_name = name
+        elsif serve_mux_vars.includes?(name)
+          router_name = name
+        else
+          return
+        end
+      when "call_expression"
+        # http.NewServeMux().HandleFunc — the operand of the Handle* selector
+        # is the NewServeMux() call itself. Accept only when the New call is on
+        # a known http alias.
+        if fn2 = Noir::TreeSitter.field(operand, "function")
+          if Noir::TreeSitter.node_type(fn2) == "selector_expression"
+            op2 = Noir::TreeSitter.field(fn2, "operand")
+            fld2 = Noir::TreeSitter.field(fn2, "field")
+            if op2 && fld2 &&
+               Noir::TreeSitter.node_type(op2) == "identifier" &&
+               http_aliases.includes?(Noir::TreeSitter.node_text(op2, source)) &&
+               Noir::TreeSitter.node_text(fld2, source) == "NewServeMux"
+              router_name = Noir::TreeSitter.node_text(op2, source)
+            end
+          end
+        end
+        return unless router_name
+      else
+        return
+      end
+
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+
+      raw_path : String? = nil
+      handler_text = ""
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        if raw_path.nil?
+          if s = string_expr_text(arg, source, string_values)
+            raw_path = s
+          elsif Noir::TreeSitter.node_type(arg) == "interpreted_string_literal" || Noir::TreeSitter.node_type(arg) == "raw_string_literal"
+            raw_path = decode_string_literal(arg, source)
+          end
+        elsif handler_text.empty?
+          handler_text = Noir::TreeSitter.node_text(arg, source)
+        end
+      end
+
+      return unless raw_path
+      return if handler_text.empty?
+
+      # Support Go 1.22+ "METHOD /path" registration pattern.
+      # When present the verb is known statically; otherwise we emit ANY
+      # (the analyzer fans it out to all methods, matching runtime behaviour).
+      verb = "ANY"
+      path = raw_path
+      if m = raw_path.match(/^([A-Z]+)\s+(.*)$/i)
+        candidate_verb = m[1].upcase
+        candidate_path = m[2]
+        if HTTP_VERB_METHODS.includes?(candidate_verb) || candidate_verb == "ANY" || candidate_verb == "ALL"
+          verb = candidate_verb
+          path = candidate_path
+        end
+      end
+
+      return unless path.starts_with?("/")
+      path = "/#{path}" unless path.starts_with?("/")
+
+      Route.new(router_name, verb, path, raw_path, handler_text, Noir::TreeSitter.node_start_row(call))
+    end
   end
 end
