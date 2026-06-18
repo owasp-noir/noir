@@ -329,6 +329,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Typescript::TRPC,
     Zig::Jetzig,
     Zig::Zap,
+    Zig::Http,
     Zig::Httpz,
     Zig::Tokamak,
   ])

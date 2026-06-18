@@ -31,7 +31,7 @@ module NoirTechs
     "scala_akka", "scala_http4s", "scala_play", "scala_scalatra", "scala_tapir", "scala_zio_http",
     "swift_hummingbird", "swift_kitura", "swift_vapor",
     "ts_nestjs", "ts_tanstack_router", "ts_trpc",
-    "zig_jetzig", "zig_zap", "zig_httpz", "zig_tokamak",
+    "zig_jetzig", "zig_zap", "zig_http", "zig_httpz", "zig_tokamak",
   ]
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
@@ -1796,6 +1796,24 @@ module NoirTechs
         :params   => {
           :query  => false,
           :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :zig_http => {
+      :framework => "std.http.Server",
+      :language  => "Zig",
+      :similar   => ["zig-http", "zig_http", "std-http-server", "std.http.server", "std.http.Server"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
           :body   => false,
           :header => false,
           :cookie => false,
