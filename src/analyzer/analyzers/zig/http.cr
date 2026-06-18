@@ -6,7 +6,7 @@ module Analyzer::Zig
   # branch on `request.head.target` and `request.head.method` after
   # `receiveHead()`, then call `request.respond(...)` or a handler function.
   class Http < Analyzer
-    TARGET_ASSIGN_RE = /(?:const|var)\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*;/
+    TARGET_ASSIGN_RE = /(?:const|var)\s+([A-Za-z_]\w*)\s*(?::\s*[^=;]+)?=\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*;/
 
     TARGET_EQL_RE      = /std\s*\.\s*mem\s*\.\s*eql\s*\(\s*u8\s*,\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)/
     PATH_EQL_RE        = /std\s*\.\s*mem\s*\.\s*eql\s*\(\s*u8\s*,\s*"((?:[^"\\]|\\.)*)"\s*,\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*\)/
@@ -16,11 +16,13 @@ module Analyzer::Zig
     METHOD_REVERSED_RE = /\.([A-Za-z_]\w*)\s*==\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)/
     SWITCH_RE          = /switch\s*\(\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*\)\s*\{/
     SWITCH_PRONG_RE    = /\.([A-Za-z_]\w*)\s*=>\s*\{/
+    TARGET_PRONG_RE    = /"((?:[^"\\]|\\.)*)"\s*=>/
     IF_RE              = /(?:^|[^A-Za-z0-9_])if\s*\(/
 
     alias IfBlock = NamedTuple(cond_start: Int32, cond_end: Int32, body_open: Int32, body_close: Int32)
     alias MethodContext = NamedTuple(method: String, body_open: Int32, body_close: Int32)
     alias RouteHit = NamedTuple(url: String, offset: Int32)
+    alias RouteBlock = NamedTuple(url: String, offset: Int32, body_start: Int32, body_end: Int32)
 
     def analyze
       include_callee = callees_needed?
@@ -69,7 +71,33 @@ module Analyzer::Zig
         next if seen.includes?(key)
         seen << key
 
-        emit(path, text, chars, branch, hit[:url], method, include_callee)
+        emit_range(path, text, chars, hit[:offset], hit[:url], method, branch[:body_open] + 1, branch[:body_close], include_callee)
+      end
+
+      collect_target_switch_routes(text, stripped, chars, target_vars).each do |route|
+        offset = route[:offset]
+        next if Noir::ZigCalleeExtractor.in_test_block?(offset, test_blocks)
+        route_method_contexts = method_contexts.select do |context|
+          context[:body_open] >= route[:body_start] && context[:body_close] <= route[:body_end]
+        end
+
+        if route_method_contexts.empty?
+          method = method_from_context(offset, method_contexts) || "GET"
+          key = "#{method} #{route[:url]}"
+          next if seen.includes?(key)
+          seen << key
+
+          emit_range(path, text, chars, offset, route[:url], method, route[:body_start], route[:body_end], include_callee)
+        else
+          route_method_contexts.each do |context|
+            method = context[:method]
+            key = "#{method} #{route[:url]}"
+            next if seen.includes?(key)
+            seen << key
+
+            emit_range(path, text, chars, offset, route[:url], method, context[:body_open] + 1, context[:body_close], include_callee)
+          end
+        end
       end
     end
 
@@ -116,6 +144,39 @@ module Analyzer::Zig
       end
 
       hits
+    end
+
+    private def collect_target_switch_routes(text : String, stripped : String, chars : Array(Char), target_vars : Set(String)) : Array(RouteBlock)
+      routes = [] of RouteBlock
+
+      stripped.scan(SWITCH_RE) do |m|
+        expr = m[1]
+        next unless target_expr?(expr, target_vars)
+        switch_open = (m.end(0) || 0) - 1
+        switch_close = Noir::ZigCalleeExtractor.find_matching(chars, switch_open, '{', '}')
+        next if switch_close.nil?
+
+        switch_body = slice(text.chars, switch_open + 1, switch_close)
+        switch_body.scan(TARGET_PRONG_RE) do |pm|
+          url = unescape_string(pm[1])
+          next unless url.starts_with?("/")
+
+          literal_offset = switch_open + 1 + (pm.begin(1) || 0) - 1
+          expr_start = next_non_space(chars, switch_open + 1 + (pm.end(0) || 0))
+          next if expr_start.nil?
+
+          if chars[expr_start] == '{'
+            body_close = Noir::ZigCalleeExtractor.find_matching(chars, expr_start, '{', '}')
+            next if body_close.nil?
+            routes << {url: url, offset: literal_offset, body_start: expr_start + 1, body_end: body_close}
+          else
+            body_end = switch_prong_expression_end(chars, expr_start, switch_close)
+            routes << {url: url, offset: literal_offset, body_start: expr_start, body_end: body_end}
+          end
+        end
+      end
+
+      routes
     end
 
     private def add_route_hit(hits : Array(RouteHit), raw_url : String, offset : Int32)
@@ -207,13 +268,13 @@ module Analyzer::Zig
       end
     end
 
-    private def emit(path : String, text : String, chars : Array(Char), branch : IfBlock, url : String, method : String, include_callee : Bool)
-      line = Noir::ZigCalleeExtractor.line_at(text.chars, branch[:cond_start])
+    private def emit_range(path : String, text : String, chars : Array(Char), offset : Int32, url : String, method : String, body_start : Int32, body_end : Int32, include_callee : Bool)
+      line = Noir::ZigCalleeExtractor.line_at(text.chars, offset)
       endpoint = Endpoint.new(url, method, extract_path_params(url), Details.new(PathInfo.new(path, line)))
 
       if include_callee
-        body = slice(chars, branch[:body_open] + 1, branch[:body_close])
-        body_line = Noir::ZigCalleeExtractor.line_at(chars, branch[:body_open])
+        body = slice(chars, body_start, body_end)
+        body_line = Noir::ZigCalleeExtractor.line_at(chars, body_start)
         callees = Noir::ZigCalleeExtractor.callees_for_body(body, path, body_line)
         Noir::ZigCalleeExtractor.attach_to(endpoint, callees) unless callees.empty?
       end
@@ -251,6 +312,47 @@ module Analyzer::Zig
       end
 
       nil
+    end
+
+    private def next_non_space(chars : Array(Char), from : Int32) : Int32?
+      i = from
+      n = chars.size
+
+      while i < n
+        return i unless chars[i].whitespace?
+        i += 1
+      end
+
+      nil
+    end
+
+    private def switch_prong_expression_end(chars : Array(Char), from : Int32, switch_close : Int32) : Int32
+      paren_depth = 0
+      bracket_depth = 0
+      brace_depth = 0
+      i = from
+
+      while i < switch_close
+        case chars[i]
+        when '('
+          paren_depth += 1
+        when ')'
+          paren_depth -= 1 if paren_depth > 0
+        when '['
+          bracket_depth += 1
+        when ']'
+          bracket_depth -= 1 if bracket_depth > 0
+        when '{'
+          brace_depth += 1
+        when '}'
+          brace_depth -= 1 if brace_depth > 0
+        when ','
+          return i if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
+        end
+        i += 1
+      end
+
+      switch_close
     end
 
     private def extract_path_params(url : String) : Array(Param)

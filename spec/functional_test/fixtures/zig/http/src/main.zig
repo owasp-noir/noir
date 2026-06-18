@@ -34,7 +34,7 @@ fn route(request: *std.http.Server.Request) !void {
             }
         },
         .PATCH => {
-            const target = request.head.target;
+            const target: []const u8 = request.head.target;
             if (std.mem.eql(u8, target, "/users/:id")) {
                 try updateUser(request);
             }
@@ -45,6 +45,18 @@ fn route(request: *std.http.Server.Request) !void {
     const path = request.head.target;
     if (std.mem.eql(u8, path, "/health")) {
         try health(request);
+    }
+
+    const method: std.http.Method = request.head.method;
+    if (method == .OPTIONS and std.mem.eql(u8, request.head.target, "/options")) {
+        try options(request);
+    }
+
+    switch (request.head.target) {
+        "/switch-health" => {
+            try switchHealth(request);
+        },
+        else => {},
     }
 }
 
@@ -65,6 +77,14 @@ fn updateUser(request: *std.http.Server.Request) !void {
 }
 
 fn health(request: *std.http.Server.Request) !void {
+    try request.respond("ok", .{});
+}
+
+fn options(request: *std.http.Server.Request) !void {
+    try request.respond("ok", .{});
+}
+
+fn switchHealth(request: *std.http.Server.Request) !void {
     try request.respond("ok", .{});
 }
 
