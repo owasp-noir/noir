@@ -30,6 +30,21 @@ Future<void> main() async {
       }
     }
 
+    if (request.method == 'POST') {
+      final uploadBody = await utf8.decoder.bind(request).join();
+      if (request.uri.path == '/uploads') {
+        _writeText(request, uploadBody);
+      }
+    }
+
+    switch (request.method) {
+      case 'PUT':
+        if (request.uri.path == '/switch-users') {
+          _writeText(request, 'updated');
+        }
+        break;
+    }
+
     switch (request.uri.path) {
       case '/status':
         _writeText(request, 'ok');

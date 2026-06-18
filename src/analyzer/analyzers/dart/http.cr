@@ -17,15 +17,18 @@ module Analyzer::Dart
     REVERSE_PATH_RE     = /r?["']([^"']+?)["']\s*==\s*\b([A-Za-z_]\w*)\s*\.\s*uri\s*\.\s*path/
     PATH_STARTS_WITH_RE = /\b([A-Za-z_]\w*)\s*\.\s*uri\s*\.\s*path\s*\.\s*startsWith\s*\(\s*r?["']([^"']+?)["']/
     PATH_CASE_RE        = /(?:^|[^\w.])case\s+r?["']([^"']+?)["']\s*:/
+    METHOD_CASE_RE      = /(?:^|[^\w.])case\s+r?["'](#{HTTP_METHODS})["']\s*:/
     SWITCH_PATH_RE      = /\bswitch\s*\([^\)]*\.\s*uri\s*\.\s*path\s*\)/
+    SWITCH_METHOD_RE    = /\bswitch\s*\([^\)]*\.\s*method\s*\)/
     QUERY_PARAM_RE      = /\.uri\s*\.\s*queryParameters(?:All)?\s*\[\s*r?["']([^"']+?)["']\s*\]/
     HEADER_VALUE_RE     = /\.headers\s*\.\s*value\s*\(\s*r?["']([^"']+?)["']/
     HEADER_INDEX_RE     = /\.headers\s*\[\s*r?["']([^"']+?)["']\s*\]/
     COOKIE_NAME_RE      = /\.cookies\b.*?\.name\s*==\s*r?["']([^"']+?)["']/
     BODY_READ_RE        = /utf8\s*\.\s*decoder\s*\.\s*bind\s*\([^\)]*\)|\.transform\s*\(\s*utf8\s*\.\s*decoder\s*\)|jsonDecode\s*\(/
 
-    alias MethodContext = NamedTuple(method: String, depth: Int32)
-    alias PathContext = NamedTuple(path: String, depth: Int32)
+    alias MethodContext = NamedTuple(method: String, depth: Int32, params: Array(Param), switch_case: Bool)
+    alias PathContext = NamedTuple(path: String, depth: Int32, params: Array(Param), switch_case: Bool)
+    alias RouteContext = NamedTuple(endpoints: Array(Endpoint), depth: Int32)
     alias SwitchContext = NamedTuple(depth: Int32)
 
     def analyze
@@ -73,9 +76,10 @@ module Analyzer::Dart
       seen = Set(String).new
       method_contexts = [] of MethodContext
       path_contexts = [] of PathContext
+      route_contexts = [] of RouteContext
+      method_switches = [] of SwitchContext
       path_switches = [] of SwitchContext
       brace_depth = 0
-      last_endpoint : Endpoint? = nil
 
       lines.each_with_index do |line, index|
         scan_depth = brace_depth - leading_closing_braces(line)
@@ -83,9 +87,18 @@ module Analyzer::Dart
 
         pop_contexts(method_contexts, scan_depth)
         pop_contexts(path_contexts, scan_depth)
+        pop_route_contexts(route_contexts, scan_depth)
+        pop_switches(method_switches, scan_depth)
         pop_switches(path_switches, scan_depth)
 
-        line_method = method_from_line(line)
+        guard_method = method_from_line(line)
+        case_method = method_case_from_line(line, !method_switches.empty?)
+        replace_method_switch_context(method_contexts, method_switches.last[:depth], case_method) if case_method && !method_switches.empty?
+
+        case_paths = path_cases_from_line(line, !path_switches.empty?)
+        replace_path_switch_context(path_contexts, path_switches.last[:depth], case_paths) if !case_paths.empty? && !path_switches.empty?
+
+        line_method = guard_method || case_method
         current_method = line_method || method_contexts.last?.try &.[:method]
         current_path = path_contexts.last?.try &.[:path]
         paths = paths_from_line(line, !path_switches.empty?)
@@ -107,6 +120,7 @@ module Analyzer::Dart
           end
         end
 
+        new_endpoints = [] of Endpoint
         routes.each do |route_path, method|
           normalized = normalize_path(route_path)
           next unless valid_route_path?(normalized)
@@ -116,22 +130,27 @@ module Analyzer::Dart
           seen.add(key)
 
           callees = include_callee ? callees_for_line(content, offsets[index]? || 0, path) : [] of Noir::DartCalleeExtractor::Entry
-          endpoint = build_endpoint(normalized, method, path, index + 1, callees)
+          endpoint = build_endpoint(normalized, method, path, index + 1, inherited_params(method_contexts, path_contexts), callees)
           endpoints << endpoint
-          last_endpoint = endpoint
+          new_endpoints << endpoint
         end
 
-        if last_endpoint
-          extract_params(line, last_endpoint)
-        end
+        line_params = params_from_line(line)
+        attach_or_defer_params(line_params, new_endpoints, route_contexts, method_contexts, path_contexts)
 
         if opens_scope?(line, scan_depth, next_depth)
-          if line_method
-            method_contexts << {method: line_method, depth: next_depth}
+          if guard_method
+            method_contexts << {method: guard_method, depth: next_depth, params: [] of Param, switch_case: false}
           end
           paths.each do |route_path|
             normalized = normalize_path(route_path)
-            path_contexts << {path: normalized, depth: next_depth} if valid_route_path?(normalized)
+            path_contexts << {path: normalized, depth: next_depth, params: [] of Param, switch_case: false} if valid_route_path?(normalized)
+          end
+          if !new_endpoints.empty?
+            route_contexts << {endpoints: new_endpoints, depth: next_depth}
+          end
+          if line.matches?(SWITCH_METHOD_RE)
+            method_switches << {depth: next_depth}
           end
           if line.matches?(SWITCH_PATH_RE)
             path_switches << {depth: next_depth}
@@ -149,6 +168,14 @@ module Analyzer::Dart
         return match[2]
       end
       if match = line.match(REVERSE_METHOD_RE)
+        return match[1]
+      end
+      nil
+    end
+
+    private def method_case_from_line(line : String, in_method_switch : Bool) : String?
+      return unless in_method_switch
+      if match = line.match(METHOD_CASE_RE)
         return match[1]
       end
       nil
@@ -175,6 +202,17 @@ module Analyzer::Dart
       paths.uniq
     end
 
+    private def path_cases_from_line(line : String, in_path_switch : Bool) : Array(String)
+      paths = [] of String
+      return paths unless in_path_switch
+
+      line.scan(PATH_CASE_RE) do |match|
+        paths << match[1]
+      end
+
+      paths.uniq
+    end
+
     private def block_contains_method?(lines : Array(String), start_index : Int32, context_depth : Int32) : Bool
       depth = context_depth
       index = start_index + 1
@@ -184,7 +222,7 @@ module Analyzer::Dart
         scan_depth = depth - leading_closing_braces(line)
         scan_depth = 0 if scan_depth < 0
         return false if scan_depth < context_depth
-        return true if method_from_line(line)
+        return true if method_from_line(line) || line.matches?(SWITCH_METHOD_RE) || line.matches?(METHOD_CASE_RE)
 
         depth += brace_delta(line)
         depth = 0 if depth < 0
@@ -194,31 +232,82 @@ module Analyzer::Dart
       false
     end
 
-    private def extract_params(line : String, endpoint : Endpoint)
+    private def params_from_line(line : String) : Array(Param)
+      params = [] of Param
       line.scan(QUERY_PARAM_RE) do |match|
-        endpoint.push_param(Param.new(match[1], "", "query"))
+        append_param(params, Param.new(match[1], "", "query"))
       end
       line.scan(HEADER_VALUE_RE) do |match|
-        endpoint.push_param(Param.new(match[1], "", "header"))
+        append_param(params, Param.new(match[1], "", "header"))
       end
       line.scan(HEADER_INDEX_RE) do |match|
-        endpoint.push_param(Param.new(match[1], "", "header"))
+        append_param(params, Param.new(match[1], "", "header"))
       end
       line.scan(COOKIE_NAME_RE) do |match|
-        endpoint.push_param(Param.new(match[1], "", "cookie"))
+        append_param(params, Param.new(match[1], "", "cookie"))
       end
       if line.matches?(BODY_READ_RE)
-        endpoint.push_param(Param.new("body", "", "json"))
+        append_param(params, Param.new("body", "", "json"))
       end
+
+      params
+    end
+
+    private def append_param(params : Array(Param), param : Param)
+      return if params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+      params << param
+    end
+
+    private def attach_or_defer_params(params : Array(Param),
+                                       new_endpoints : Array(Endpoint),
+                                       route_contexts : Array(RouteContext),
+                                       method_contexts : Array(MethodContext),
+                                       path_contexts : Array(PathContext))
+      return if params.empty?
+
+      if !new_endpoints.empty?
+        attach_params(new_endpoints, params)
+      elsif route_context = route_contexts.last?
+        attach_params(route_context[:endpoints], params)
+      elsif method_context = method_contexts.last?
+        append_params(method_context[:params], params)
+      elsif path_context = path_contexts.last?
+        append_params(path_context[:params], params)
+      end
+    end
+
+    private def attach_params(endpoints : Array(Endpoint), params : Array(Param))
+      endpoints.each do |endpoint|
+        params.each do |param|
+          endpoint.push_param(param)
+        end
+      end
+    end
+
+    private def append_params(target : Array(Param), params : Array(Param))
+      params.each do |param|
+        append_param(target, param)
+      end
+    end
+
+    private def inherited_params(method_contexts : Array(MethodContext), path_contexts : Array(PathContext)) : Array(Param)
+      params = [] of Param
+      method_contexts.each { |context| append_params(params, context[:params]) }
+      path_contexts.each { |context| append_params(params, context[:params]) }
+      params
     end
 
     private def build_endpoint(url : String,
                                method : String,
                                path : String,
                                line : Int32,
+                               inherited_params : Array(Param),
                                callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
       endpoint = Endpoint.new(url, method)
       endpoint.details = Details.new(PathInfo.new(path, line))
+      inherited_params.each do |param|
+        endpoint.push_param(param)
+      end
       url.scan(/\{(\w+)\}/) do |match|
         endpoint.push_param(Param.new(match[1], "", "path"))
       end
@@ -272,8 +361,25 @@ module Analyzer::Dart
       contexts.reject! { |context| context[:depth] > depth }
     end
 
+    private def pop_route_contexts(contexts : Array(RouteContext), depth : Int32)
+      contexts.reject! { |context| context[:depth] > depth }
+    end
+
     private def pop_switches(contexts : Array(SwitchContext), depth : Int32)
       contexts.reject! { |context| context[:depth] > depth }
+    end
+
+    private def replace_method_switch_context(contexts : Array(MethodContext), depth : Int32, method : String)
+      contexts.reject! { |context| context[:switch_case] && context[:depth] == depth }
+      contexts << {method: method, depth: depth, params: [] of Param, switch_case: true}
+    end
+
+    private def replace_path_switch_context(contexts : Array(PathContext), depth : Int32, paths : Array(String))
+      contexts.reject! { |context| context[:switch_case] && context[:depth] == depth }
+      paths.each do |route_path|
+        normalized = normalize_path(route_path)
+        contexts << {path: normalized, depth: depth, params: [] of Param, switch_case: true} if valid_route_path?(normalized)
+      end
     end
 
     private def opens_scope?(line : String, current_depth : Int32, next_depth : Int32) : Bool
