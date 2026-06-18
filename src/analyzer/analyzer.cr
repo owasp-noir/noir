@@ -201,6 +201,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"ts_trpc", Typescript::TRPC},
     {"zig_jetzig", Zig::Jetzig},
     {"zig_zap", Zig::Zap},
+    {"zig_http", Zig::Http},
     {"zig_httpz", Zig::Httpz},
     {"zig_tokamak", Zig::Tokamak},
     {"ai", AI::Unified},

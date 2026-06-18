@@ -1,0 +1,4 @@
+.{
+    .name = .std_http_fixture,
+    .version = "0.1.0",
+}
