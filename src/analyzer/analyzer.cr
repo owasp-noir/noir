@@ -81,6 +81,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"har", Specification::Har},
     {"java_armeria", Java::Armeria},
     {"java_dropwizard", Java::Dropwizard},
+    {"java_httpserver", Java::HttpServer},
     {"java_javalin", Java::Javalin},
     {"java_jaxrs", Java::JaxRs},
     {"java_jsp", Java::Jsp},
