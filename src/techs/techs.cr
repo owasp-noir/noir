@@ -531,6 +531,24 @@ module NoirTechs
         :websocket   => true,
       },
     },
+    :dart_http => {
+      :framework => "dart:io HttpServer",
+      :language  => "Dart",
+      :similar   => ["dart_http", "dart-http", "dart:io", "dart io", "dart_httpserver", "httpserver"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :dart_serverpod => {
       :framework => "Serverpod",
       :language  => "Dart",

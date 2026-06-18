@@ -39,6 +39,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"dart_angel3", Dart::Angel3},
     {"dart_get_server", Dart::GetServer},
     {"dart_frog", Dart::DartFrog},
+    {"dart_http", Dart::Http},
     {"dart_serverpod", Dart::Serverpod},
     {"dart_shelf", Dart::Shelf},
     {"elixir_bandit", Elixir::Bandit},
