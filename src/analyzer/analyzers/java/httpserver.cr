@@ -38,8 +38,12 @@ module Analyzer::Java
     RE_EQUALS_GRM     = /"([A-Za-z]+)"\s*\.\s*equals(?:IgnoreCase)?\s*\(\s*[A-Za-z0-9_.\s]*getRequestMethod\s*\(\s*\)\s*\)/
     RE_EQ_GRM         = /"([A-Za-z]+)"\s*==\s*[A-Za-z0-9_.\s]*getRequestMethod\s*\(\s*\)/
     RE_GRM_VAR_ASSIGN = /\b([A-Za-z_]\w*)\s*=\s*[^;=][^;]*getRequestMethod\s*\(\s*\)/
-    RE_GRM_SWITCH     = /switch\s*\(\s*[A-Za-z0-9_.\s]*getRequestMethod\s*\(\s*\)\s*\)/
-    RE_CASE_LABEL     = /case\s+"([A-Za-z]+)"\s*:/
+    # A `case` label group: one or more verb literals (Java allows
+    # `case "GET", "HEAD":`) terminated by a colon or an arrow (Java 14+
+    # `case "GET" -> ...`).
+    RE_CASE_GROUP   = /\bcase\s+("[A-Za-z]+"(?:\s*,\s*"[A-Za-z]+")*)\s*(?:->|:)/
+    RE_VERB_LITERAL = /"([A-Za-z]+)"/
+    SWITCH_KEYWORD  = "switch"
 
     RE_HEADER = /getRequestHeaders\s*\(\s*\)\s*\.\s*(?:getFirst|get)\s*\(\s*"([^"]+)"/
     RE_BODY   = /getRequestBody\s*\(\s*\)/
@@ -105,6 +109,9 @@ module Analyzer::Java
 
       route_path = resolve_string(path_arg, content, constants)
       return unless route_path
+      # `createContext("")` is rejected by the JDK at runtime — don't let an
+      # empty literal normalize into a phantom `/` route.
+      return if route_path.strip.empty?
       route_path = normalize_path(route_path)
       return unless valid_path?(route_path)
 
@@ -225,11 +232,55 @@ module Analyzer::Java
         scan_into(text, /"([A-Za-z]+)"\s*==\s*#{escaped}/, verbs)
       end
 
-      switch_on_method = text.matches?(RE_GRM_SWITCH) ||
-                         method_vars.any? { |var| text.matches?(/switch\s*\(\s*#{Regex.escape(var)}\s*\)/) }
-      scan_into(text, RE_CASE_LABEL, verbs) if switch_on_method
+      collect_switch_verbs(text, method_vars, verbs)
 
       verbs.map(&.upcase).select { |verb| HTTP_METHODS.includes?(verb) }.uniq!
+    end
+
+    # Collect verb literals from the case labels of `switch` statements that
+    # dispatch on the request method — `switch (exchange.getRequestMethod())`
+    # or `switch (method)` for a variable bound to it (`.toUpperCase()` and
+    # other chained calls in the selector are tolerated). Scanning is scoped
+    # to each matching switch block (located with a string/comment-aware
+    # delimiter matcher) so case labels from an unrelated string `switch` in
+    # the same handler aren't mistaken for verbs.
+    private def collect_switch_verbs(text : String, method_vars : Array(String), verbs : Array(String))
+      return unless text.includes?(SWITCH_KEYWORD)
+
+      chars = text.chars
+      size = chars.size
+      index = 0
+      while index < size
+        unless keyword_at?(chars, index, SWITCH_KEYWORD)
+          index += 1
+          next
+        end
+
+        selector_open = skip_whitespace(chars, index + SWITCH_KEYWORD.size)
+        if selector_open < size && chars[selector_open] == '('
+          selector_close = matching_delimiter(chars, selector_open)
+          if selector_close
+            selector = slice_chars(chars, selector_open + 1, selector_close)
+            block_open = skip_whitespace(chars, selector_close + 1)
+            if method_switch_selector?(selector, method_vars) &&
+               block_open < size && chars[block_open] == '{'
+              block_close = matching_delimiter(chars, block_open) || size
+              block = slice_chars(chars, block_open + 1, block_close)
+              block.scan(RE_CASE_GROUP) do |group|
+                group[1].scan(RE_VERB_LITERAL) { |literal| verbs << literal[1] }
+              end
+            end
+            index = selector_close + 1
+            next
+          end
+        end
+        index += 1
+      end
+    end
+
+    private def method_switch_selector?(selector : String, method_vars : Array(String)) : Bool
+      return true if selector.includes?("getRequestMethod")
+      method_vars.includes?(selector.strip)
     end
 
     private def detect_headers(text : String) : Array(String)
@@ -242,6 +293,101 @@ module Analyzer::Java
 
     private def scan_into(text : String, regex : Regex, sink : Array(String))
       text.scan(regex) { |m| sink << m[1] }
+    end
+
+    # ---- text scanning helpers ---------------------------------------
+
+    # True when `keyword` sits at `index` as a standalone word (not part of
+    # a longer identifier).
+    private def keyword_at?(chars : Array(Char), index : Int32, keyword : String) : Bool
+      return false if index + keyword.size > chars.size
+      keyword.each_char_with_index { |ch, offset| return false unless chars[index + offset] == ch }
+      before = index.zero? ? ' ' : chars[index - 1]
+      after_index = index + keyword.size
+      after = after_index < chars.size ? chars[after_index] : ' '
+      !identifier_char?(before) && !identifier_char?(after)
+    end
+
+    private def identifier_char?(ch : Char) : Bool
+      ch.ascii_alphanumeric? || ch == '_'
+    end
+
+    private def skip_whitespace(chars : Array(Char), index : Int32) : Int32
+      i = index
+      while i < chars.size && chars[i].ascii_whitespace?
+        i += 1
+      end
+      i
+    end
+
+    private def slice_chars(chars : Array(Char), from : Int32, to : Int32) : String
+      String.build { |io| (from...to).each { |i| io << chars[i] } }
+    end
+
+    # Index of the delimiter matching the opener at `open_index` (`(`→`)`
+    # or `{`→`}`), skipping string/char literals and comments. nil when the
+    # source is unbalanced. Single O(n) forward pass over the char array.
+    private def matching_delimiter(chars : Array(Char), open_index : Int32) : Int32?
+      opener = chars[open_index]
+      closer = opener == '(' ? ')' : '}'
+      depth = 0
+      i = open_index
+      size = chars.size
+      in_string = in_char = escape = in_line_comment = in_block_comment = false
+
+      while i < size
+        ch = chars[i]
+        nxt = i + 1 < size ? chars[i + 1] : '\0'
+
+        if in_line_comment
+          in_line_comment = false if ch == '\n'
+        elsif in_block_comment
+          if ch == '*' && nxt == '/'
+            in_block_comment = false
+            i += 2
+            next
+          end
+        elsif in_string
+          if escape
+            escape = false
+          elsif ch == '\\'
+            escape = true
+          elsif ch == '"'
+            in_string = false
+          end
+        elsif in_char
+          if escape
+            escape = false
+          elsif ch == '\\'
+            escape = true
+          elsif ch == '\''
+            in_char = false
+          end
+        else
+          case ch
+          when '/'
+            if nxt == '/'
+              in_line_comment = true
+              i += 2
+              next
+            elsif nxt == '*'
+              in_block_comment = true
+              i += 2
+              next
+            end
+          when '"'    then in_string = true
+          when '\''   then in_char = true
+          when opener then depth += 1
+          when closer
+            depth -= 1
+            return i if depth.zero?
+          end
+        end
+
+        i += 1
+      end
+
+      nil
     end
 
     # ---- AST helpers -------------------------------------------------
