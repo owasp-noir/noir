@@ -1522,6 +1522,10 @@ module Noir
         if kind == :keyword
           next unless key == "value" || key == "path"
           collect_string_values(value_node, source, keyword, string_constants, local_string_constants)
+        elsif kind == :bare_identifier
+          if value = local_string_constants[key]?
+            positional << value unless value.empty?
+          end
         else
           collect_string_values(value_node, source, positional, string_constants, local_string_constants)
         end
@@ -1530,23 +1534,35 @@ module Noir
       keyword.empty? ? positional : keyword
     end
 
-    # Return `{:keyword | :positional, key_or_nil, value_node}`.
+    # Return `{:keyword | :positional | :bare_identifier, key_or_nil, value_node}`.
     private def classify_value_argument(arg : LibTreeSitter::TSNode, source : String) : Tuple(Symbol, String, LibTreeSitter::TSNode?)
+      children = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(arg) do |child|
+        children << child
+      end
+      if children.size <= 1
+        child = children.first?
+        if child && Noir::TreeSitter.node_type(child) == "simple_identifier"
+          return {:bare_identifier, Noir::TreeSitter.node_text(child, source), child}
+        end
+        return {:positional, "", child}
+      end
+
       key = ""
       value : LibTreeSitter::TSNode? = nil
       named = false
-      Noir::TreeSitter.each_named_child(arg) do |child|
-        case Noir::TreeSitter.node_type(child)
+      children.each do |entry|
+        case Noir::TreeSitter.node_type(entry)
         when "simple_identifier"
           if named
             # second identifier is actually the value expression
-            value = child
+            value = entry
           else
-            key = Noir::TreeSitter.node_text(child, source)
+            key = Noir::TreeSitter.node_text(entry, source)
             named = true
           end
         else
-          value = child if value.nil?
+          value = entry if value.nil?
         end
       end
       {named ? :keyword : :positional, key, value}
