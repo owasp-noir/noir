@@ -9,20 +9,22 @@ module Analyzer::Kotlin
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       file_list = all_files()
+      kotlin_files = file_list.select do |path|
+        File.exists?(path) &&
+          path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+          !KotlinEngine.test_path?(path)
+      end
+      file_contents = Hash(String, String).new
       string_constants_by_base = Hash(String, Hash(String, String)).new do |hash, key|
         hash[key] = Hash(String, String).new
       end
       raw_resources_by_base = Hash(String, Array(Noir::TreeSitterKotlinKtorRouteExtractor::RawResource)).new do |hash, key|
         hash[key] = [] of Noir::TreeSitterKotlinKtorRouteExtractor::RawResource
       end
-      file_list.each do |path|
-        next unless File.exists?(path)
-        next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
-
+      kotlin_files.each do |path|
         base = configured_base_for(path)
         string_constants = string_constants_by_base[base]
-        content = read_file_content(path)
+        content = file_contents[path] = read_file_content(path)
         Noir::TreeSitterKotlinKtorRouteExtractor.extract_string_constants(content).each do |name, value|
           next unless fully_qualified_constant?(name)
 
@@ -42,12 +44,8 @@ module Analyzer::Kotlin
         resource_paths_by_base[base] = Noir::TreeSitterKotlinKtorRouteExtractor.compose_resource_paths(raw_resources)
       end
 
-      file_list.each do |path|
-        next unless File.exists?(path)
-        next unless path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
-
-        content = read_file_content(path)
+      kotlin_files.each do |path|
+        content = file_contents[path]
         next unless potential_ktor_route_file?(content)
 
         base = configured_base_for(path)

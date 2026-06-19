@@ -70,15 +70,35 @@ module Noir
                      @query_params, @header_params, @form_params,
                      @callees)
       end
+
+      def with_path(path : String) : Route
+        Route.new(@verb, path, @line, @has_body, @query_params, @header_params, @form_params, @callees)
+      end
     end
 
-    def extract_routes(source : String, string_constants = Hash(String, String).new, *, include_callees : Bool = false) : Array(Route)
+    def extract_routes(source : String,
+                       string_constants = Hash(String, String).new,
+                       *,
+                       include_callees : Bool = false,
+                       contract_routes = Hash(String, Array(Route)).new) : Array(Route)
       routes = [] of Route
       local_string_constants = extract_string_constants(source)
       Noir::TreeSitter.parse_kotlin(source) do |root|
-        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false)
+        walk(root, source, "", routes, string_constants, local_string_constants, 0, include_callees, false, contract_routes)
       end
       routes
+    end
+
+    def extract_contract_route_functions(source : String,
+                                         string_constants = Hash(String, String).new,
+                                         *,
+                                         include_callees : Bool = false) : Hash(String, Array(Route))
+      routes_by_function = Hash(String, Array(Route)).new
+      local_string_constants = extract_string_constants(source)
+      Noir::TreeSitter.parse_kotlin(source) do |root|
+        collect_contract_route_functions(root, source, routes_by_function, string_constants, local_string_constants, include_callees, 0)
+      end
+      routes_by_function
     end
 
     def extract_string_constants(source : String) : Hash(String, String)
@@ -132,12 +152,13 @@ module Noir
                      local_string_constants : Hash(String, String),
                      depth : Int32,
                      include_callees : Bool,
-                     in_routes : Bool)
+                     in_routes : Bool,
+                     contract_routes : Hash(String, Array(Route)))
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
 
       ty = Noir::TreeSitter.node_type(node)
 
-      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, in_routes)
+      if ty == "infix_expression" && handle_bind(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, in_routes, contract_routes)
         return
       end
 
@@ -145,12 +166,16 @@ module Noir
         # Arguments of a `routes(...)` call are inside the routing
         # block — a bare `VERB to handler` arg there is a real route
         # bound to the current prefix (the verbs-under-path idiom).
-        walk_routes_args(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, true)
+        walk_routes_args(node, source, prefix, routes, string_constants, local_string_constants, depth, include_callees, true, contract_routes)
         return
       end
 
+      if ty == "call_expression" && call_function_name(node, source) == "contract"
+        emit_contract_routes(node, source, prefix, routes, contract_routes)
+      end
+
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes)
+        walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes, contract_routes)
       end
     end
 
@@ -169,7 +194,8 @@ module Noir
                             local_string_constants : Hash(String, String),
                             depth : Int32,
                             include_callees : Bool,
-                            in_routes : Bool) : Bool
+                            in_routes : Bool,
+                            contract_routes : Hash(String, Array(Route))) : Bool
       lhs, op, rhs = infix_parts(node, source)
       return false unless lhs && rhs
 
@@ -221,11 +247,46 @@ module Noir
         path_text = resolve_string_value(lhs, source, string_constants, local_string_constants)
         return false unless path_text
         new_prefix = join_paths(prefix, path_text)
-        walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true)
+        walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, contract_routes)
         true
       else
         false
       end
+    end
+
+    private def emit_contract_routes(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     prefix : String,
+                                     routes : Array(Route),
+                                     contract_routes : Hash(String, Array(Route)))
+      line = Noir::TreeSitter.node_start_row(node)
+      contract_description_paths(node, source).each do |path|
+        routes << Route.new("GET", join_paths(prefix, path), line, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
+      end
+
+      contract_route_references(node, source).each do |name|
+        next unless helper_routes = contract_routes[name]?
+
+        helper_routes.each do |route|
+          routes << route.with_path(join_paths(prefix, route.path))
+        end
+      end
+    end
+
+    private def contract_description_paths(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      paths = [] of String
+      Noir::TreeSitter.node_text(node, source).scan(/\bdescriptionPath\s*=\s*"([^"]+)"/) do |match|
+        paths << match[1]
+      end
+      paths
+    end
+
+    private def contract_route_references(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      refs = [] of String
+      Noir::TreeSitter.node_text(node, source).scan(/\broutes\s*\+=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(/) do |match|
+        refs << match[1]
+      end
+      refs
     end
 
     # Build and append a Route from a verb, full path, and handler
@@ -296,16 +357,48 @@ module Noir
                                  local_string_constants : Hash(String, String),
                                  depth : Int32,
                                  include_callees : Bool,
-                                 in_routes : Bool)
+                                 in_routes : Bool,
+                                 contract_routes : Hash(String, Array(Route)))
       return if depth > Noir::TreeSitter::MAX_AST_DEPTH
       args = call_value_arguments(call)
       return unless args
       Noir::TreeSitter.each_named_child(args) do |arg|
         next unless Noir::TreeSitter.node_type(arg) == "value_argument"
         Noir::TreeSitter.each_named_child(arg) do |child|
-          walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes)
+          walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, in_routes, contract_routes)
         end
       end
+    end
+
+    private def collect_contract_route_functions(node : LibTreeSitter::TSNode,
+                                                 source : String,
+                                                 routes_by_function : Hash(String, Array(Route)),
+                                                 string_constants : Hash(String, String),
+                                                 local_string_constants : Hash(String, String),
+                                                 include_callees : Bool,
+                                                 depth : Int32)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
+      if Noir::TreeSitter.node_type(node) == "function_declaration"
+        name = function_name(node, source)
+        if !name.empty? && Noir::TreeSitter.node_text(node, source).includes?("bindContract")
+          routes = [] of Route
+          walk(node, source, "", routes, string_constants, local_string_constants, 0, include_callees, true, Hash(String, Array(Route)).new)
+          routes_by_function[name] = routes unless routes.empty?
+        end
+        return
+      end
+
+      Noir::TreeSitter.each_named_child(node) do |child|
+        collect_contract_route_functions(child, source, routes_by_function, string_constants, local_string_constants, include_callees, depth + 1)
+      end
+    end
+
+    private def function_name(func : LibTreeSitter::TSNode, source : String) : String
+      Noir::TreeSitter.each_named_child(func) do |child|
+        return Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "simple_identifier"
+      end
+      ""
     end
 
     # ---- handler-body scan ------------------------------------------

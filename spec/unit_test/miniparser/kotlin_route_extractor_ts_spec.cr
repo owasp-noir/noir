@@ -156,6 +156,31 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     routes.map(&.path).should eq(["/api/users"])
   end
 
+  it "treats a bare path identifier argument as a positional constant" do
+    source = <<-KT
+      package com.example
+
+      import com.example.MovieController.Companion.path
+
+      @RestController
+      @RequestMapping(path)
+      class MovieController {
+          @GetMapping
+          fun list(): String = ""
+
+          companion object {
+              const val path = "/api/movies"
+          }
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, constants)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/movies"},
+    ])
+  end
+
   it "collapses an empty method path onto the class prefix" do
     # Kotlin Spring controllers routinely do
     # `@RequestMapping("/api/article")` on the class and `@GetMapping`

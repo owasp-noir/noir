@@ -110,4 +110,42 @@ describe Noir::TreeSitterHttp4kExtractor do
     ping = routes.find! { |r| r.path == "/ping" }
     ping.has_body?.should be_false
   end
+
+  it "mounts contract routes added inside a prefixed contract block" do
+    helper = <<-KT
+      import org.http4k.contract.ContractRoute
+      import org.http4k.contract.meta
+      import org.http4k.core.Method.POST
+
+      fun KnockKnock(): ContractRoute {
+          return "/knock" meta {
+              summary = "User enters"
+          } bindContract POST to userEntry
+      }
+      KT
+
+    mount = <<-KT
+      import org.http4k.contract.contract
+      import org.http4k.core.Method.GET
+      import org.http4k.routing.bind
+      import org.http4k.routing.routes
+
+      val api = "/api" bind routes(
+          "/oauth/callback" bind GET to callback,
+          contract {
+              descriptionPath = "/api-docs"
+              routes += KnockKnock()
+          }
+      )
+      KT
+
+    contract_routes = Noir::TreeSitterHttp4kExtractor.extract_contract_route_functions(helper)
+    routes = Noir::TreeSitterHttp4kExtractor.extract_routes(mount, contract_routes: contract_routes)
+
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/oauth/callback"},
+      {"GET", "/api/api-docs"},
+      {"POST", "/api/knock"},
+    ])
+  end
 end
