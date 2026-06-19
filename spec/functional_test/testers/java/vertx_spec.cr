@@ -20,6 +20,7 @@ expected_endpoints = [
   Endpoint.new("/api/tasks/:taskId", "GET", [Param.new("taskId", "", "path")]),
   Endpoint.new("/jobs/:jobId", "POST", [Param.new("jobId", "", "path")]),
   Endpoint.new("/api/any/:anyId", "ANY", [Param.new("anyId", "", "path")]),
+  Endpoint.new("/eventbus/*", "ANY"),
   Endpoint.new("/static/*", "GET"),
   Endpoint.new("/api/v1/items", "GET"),
   Endpoint.new("/api/v1/items", "POST"),

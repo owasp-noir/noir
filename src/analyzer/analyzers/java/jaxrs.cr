@@ -36,24 +36,29 @@ module Analyzer::Java
         # both `java_jaxrs` and `java_quarkus` endpoints.
         next if claimed_by_derivative?(content)
 
-        package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
-        next if package_name.empty?
+        Noir::TreeSitter.parse_java(content) do |root|
+          package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
+          next if package_name.empty?
 
-        dto_index = dto_builder.build_for(path, content)
-        bean_index = bean_index_for(path, content, package_name, bean_cache)
-        subresource_sources = subresource_sources_for(path, content, package_name, source_cache)
-        application_base_path = application_base_path_for(path, package_name, application_base_paths)
+          imports = Noir::TreeSitterJavaParameterExtractor.extract_imports_from(root, content)
+          dto_index = dto_builder.build_for_with_root(path, content, root)
+          bean_index = bean_index_for(path, content, package_name, bean_cache, imports,
+            Noir::TreeSitterJaxRsExtractor.extract_bean_fields_from(root, content))
+          subresource_sources = subresource_sources_for(path, content, package_name, source_cache, imports,
+            Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content))
+          application_base_path = application_base_path_for(path, package_name, application_base_paths)
 
-        Noir::TreeSitterJaxRsExtractor.extract_routes(content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
-          line = route.line + 1
-          details = Details.new(PathInfo.new(route.file_path || path, line))
-          endpoint_path = route.protocol == "ws" ? route.path : join_paths(application_base_path, route.path)
-          endpoint = Endpoint.new(endpoint_path, route.verb, route.params, details)
-          endpoint.protocol = route.protocol
-          route.callees.each do |name, callee_line|
-            endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
+          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
+            line = route.line + 1
+            details = Details.new(PathInfo.new(route.file_path || path, line))
+            endpoint_path = route.protocol == "ws" ? route.path : join_paths(application_base_path, route.path)
+            endpoint = Endpoint.new(endpoint_path, route.verb, route.params, details)
+            endpoint.protocol = route.protocol
+            route.callees.each do |name, callee_line|
+              endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
+            end
+            @result << endpoint
           end
-          @result << endpoint
         end
       end
 
@@ -75,17 +80,19 @@ module Analyzer::Java
         next unless content.includes?("jakarta.ws.rs") || content.includes?("javax.ws.rs")
         next if claimed_by_derivative?(content)
 
-        package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name(content)
-        next if package_name.empty?
-        project_root = project_root_for(path)
-        key = {project_root, package_name}
-        next if base_paths.has_key?(key)
+        Noir::TreeSitter.parse_java(content) do |root|
+          package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
+          next if package_name.empty?
+          project_root = project_root_for(path)
+          key = {project_root, package_name}
+          next if base_paths.has_key?(key)
 
-        if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path(content)
-          base_paths[key] = base_path
-          java_class_names(content).each do |class_name|
-            add_application_package(application_packages, class_name, key)
-            add_application_package(application_packages, "#{package_name}.#{class_name}", key)
+          if base_path = Noir::TreeSitterJaxRsExtractor.extract_application_path_from(root, content)
+            base_paths[key] = base_path
+            Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content).each do |class_name|
+              add_application_package(application_packages, class_name, key)
+              add_application_package(application_packages, "#{package_name}.#{class_name}", key)
+            end
           end
         end
       end
@@ -305,14 +312,6 @@ module Analyzer::Java
       cleaned.starts_with?("/") ? cleaned : "/#{cleaned}"
     end
 
-    private def java_class_names(content : String) : Array(String)
-      names = [] of String
-      content.scan(/\b(?:class|interface)\s+([A-Za-z_][A-Za-z0-9_]*)/) do |match|
-        names << match[1]
-      end
-      names.uniq
-    end
-
     private def xml_child_text(node : XML::Node, local_name : String) : String
       find_xml_child(node, local_name).try(&.content.strip) || ""
     end
@@ -346,14 +345,20 @@ module Analyzer::Java
     private def bean_index_for(path : String,
                                content : String,
                                package_name : String,
-                               cache : Hash(String, Hash(String, Array(Param)))) : Hash(String, Array(Param))
+                               cache : Hash(String, Hash(String, Array(Param))),
+                               imports : Array(Noir::ImportGraph::ImportRef)? = nil,
+                               current_file_beans : Hash(String, Array(Param))? = nil) : Hash(String, Array(Param))
       result = Hash(String, Array(Param)).new
-      imports = Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
+      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
 
-      Noir::ImportGraph.related_files(path, package_name, imports, JAVA_EXTENSION) do |file|
+      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
         beans = cache[file] ||= begin
-          body = file == path ? content : read_file_content(file)
-          Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
+          if file == path && current_file_beans
+            current_file_beans
+          else
+            body = file == path ? content : read_file_content(file)
+            Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
+          end
         rescue File::NotFoundError
           {} of String => Array(Param)
         end
@@ -367,11 +372,13 @@ module Analyzer::Java
     private def subresource_sources_for(path : String,
                                         content : String,
                                         package_name : String,
-                                        cache : Hash(String, String)) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
+                                        cache : Hash(String, String),
+                                        imports : Array(Noir::ImportGraph::ImportRef)? = nil,
+                                        current_file_class_names : Array(String)? = nil) : Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry)
       result = Hash(String, Noir::TreeSitterJaxRsExtractor::SourceEntry).new
-      imports = Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
+      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
 
-      Noir::ImportGraph.related_files(path, package_name, imports, JAVA_EXTENSION) do |file|
+      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
         body = cache[file] ||= begin
           file == path ? content : read_file_content(file)
         rescue File::NotFoundError
@@ -380,7 +387,8 @@ module Analyzer::Java
         next if body.empty?
         next unless body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
 
-        Noir::TreeSitterJaxRsExtractor.extract_class_names(body).each do |name|
+        class_names = file == path && current_file_class_names ? current_file_class_names : Noir::TreeSitterJaxRsExtractor.extract_class_names(body)
+        class_names.each do |name|
           result[name] ||= {file, body}
         end
       end

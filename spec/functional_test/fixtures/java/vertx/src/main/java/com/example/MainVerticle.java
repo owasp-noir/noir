@@ -55,6 +55,9 @@ public class MainVerticle {
     Router adminRouter = Router.router(vertx);
     adminRouter.get("/metrics/:metricId").handler(this::getMetric);
     router.mountSubRouter(ADMIN_PREFIX, adminRouter);
+
+    Router eventBusBridge = Router.router(vertx);
+    router.route("/eventbus/*").subRouter(eventBusBridge);
     
     // Static resources
     router.route("/static/*").handler(StaticHandler.create());
