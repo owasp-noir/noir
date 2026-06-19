@@ -13,6 +13,7 @@ module Analyzer::Java
     REGEX_ROUTER_ROUTE_HANDLER = /router\.(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
     REGEX_ROUTE_METHOD_HANDLER = /\.route\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*this::([\w$]+)\s*\)/i
     REGEX_ROUTE_ANY_HANDLER    = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
+    REGEX_ROUTE_SUB_ROUTER     = /(\w+)\.route\s*\(([^)]*)\)\s*\.subRouter\s*\(/i
     REGEX_ROUTER_INSTANCE      = /Router\s+(\w+)\s*=\s*Router\.router\(\s*[^)]*\s*\)/
     REGEX_MOUNTSUBPATH         = /(\w+)\.mountSubRouter\s*\(([^)]*)\)/i
     REGEX_STATIC_HANDLER_ROUTE = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\([^;]*StaticHandler\.create\s*\(/im
@@ -158,6 +159,22 @@ module Analyzer::Java
       # handlers here to avoid promoting common middleware routes such as
       # BodyHandler into standalone endpoints.
       content.scan(REGEX_ROUTE_ANY_HANDLER) do |match|
+        next if match.size < 3
+        router_name = match[1]
+        args = split_top_level_args(match[2])
+        next unless args.size == 1
+
+        endpoint = resolve_route_path_arg(args[0], constants)
+        next if endpoint.nil? || endpoint.empty?
+
+        candidates << RouteCandidate.new(router_name, "ANY", endpoint)
+      end
+
+      # `router.route("/prefix/*").subRouter(child)` exposes the child
+      # router under that path without constraining the HTTP method.
+      # Treat it like the explicit `mountSubRouter` form; unlike generic
+      # middleware handlers, this is a concrete mounted route surface.
+      content.scan(REGEX_ROUTE_SUB_ROUTER) do |match|
         next if match.size < 3
         router_name = match[1]
         args = split_top_level_args(match[2])

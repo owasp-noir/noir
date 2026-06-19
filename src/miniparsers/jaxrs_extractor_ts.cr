@@ -169,11 +169,14 @@ module Noir
     end
 
     def extract_class_names(source : String) : Array(String)
-      names = [] of String
       Noir::TreeSitter.parse_java(source) do |root|
-        names = collect_classes(root, source).keys
+        return extract_class_names_from(root, source)
       end
-      names
+      [] of String
+    end
+
+    def extract_class_names_from(root : LibTreeSitter::TSNode, source : String) : Array(String)
+      collect_classes(root, source).keys
     end
 
     def extract_application_path(source : String) : String?
@@ -199,15 +202,20 @@ module Noir
     # ...) from every class in the file as `{class_name => Params}`.
     # Used to power `@BeanParam` expansion across files.
     def extract_bean_fields(source : String) : Hash(String, Array(Param))
-      results = Hash(String, Array(Param)).new
       Noir::TreeSitter.parse_java(source) do |root|
-        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
-        walk_classes(root) do |decl|
-          name = type_identifier_text(decl, source)
-          next if name.empty?
-          params = collect_bean_params(decl, source, constants, name)
-          results[name] = params unless params.empty?
-        end
+        return extract_bean_fields_from(root, source)
+      end
+      Hash(String, Array(Param)).new
+    end
+
+    def extract_bean_fields_from(root : LibTreeSitter::TSNode, source : String) : Hash(String, Array(Param))
+      results = Hash(String, Array(Param)).new
+      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      walk_classes(root) do |decl|
+        name = type_identifier_text(decl, source)
+        next if name.empty?
+        params = collect_bean_params(decl, source, constants, name)
+        results[name] = params unless params.empty?
       end
       results
     end
