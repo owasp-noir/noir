@@ -38,6 +38,48 @@ module Analyzer::Ruby
       false
     end
 
+    RUBY_NON_PRODUCTION_DIRS = Set{
+      "spec", "test", "tests", "features",
+      "benchmark", "benchmarks", "examples",
+      "coverage", "tmp",
+    }
+
+    # Whole-tree Ruby analyzers (Sinatra/Grape/Roda/WEBrick) otherwise see
+    # Rack test helpers, benchmark apps, and framework examples as live
+    # services. Match these directories only relative to the configured scan
+    # root so noir's own fixture tree under `spec/functional_test/fixtures`
+    # is not accidentally skipped when the fixture directory itself is the
+    # base path.
+    protected def ruby_non_production_path?(path : String) : Bool
+      return true if RubyEngine.ruby_test_path?(path)
+
+      relative = ruby_relative_path(path).gsub('\\', '/')
+      RUBY_NON_PRODUCTION_DIRS.any? do |dir|
+        relative == dir || relative.starts_with?("#{dir}/") || relative.includes?("/#{dir}/")
+      end
+    end
+
+    private def ruby_relative_path(path : String) : String
+      normalized = normalized_configured_base_for(path)
+      return File.basename(path) unless normalized
+
+      expanded = CodeLocator.instance.expanded_path_for(path)
+      return File.basename(path) unless Noir::PathScope.under_normalized_root?(expanded, normalized)
+
+      relative = expanded[normalized.size..].lchop(File::SEPARATOR)
+      relative.empty? ? File.basename(path) : relative
+    end
+
+    private def normalized_configured_base_for(path : String) : String?
+      return @normalized_base_paths.first?.try(&.[1]) if @normalized_base_paths.size <= 1
+
+      base = configured_base_for(path)
+      @normalized_base_paths.each do |candidate, normalized|
+        return normalized if candidate == base
+      end
+      nil
+    end
+
     # Match the `<verb> "<path>"` idiom on a single line and return the first
     # endpoint found, or an empty endpoint if none match. Shared by Hanami
     # and Sinatra (Rails uses a different per-line-multi-match shape).
