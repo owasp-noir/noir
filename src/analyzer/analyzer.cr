@@ -108,6 +108,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"js_graphql_yoga", Javascript::GraphqlYoga},
     {"js_hapi", Javascript::Hapi},
     {"js_hono", Javascript::Hono},
+    {"js_http", Javascript::Http},
     {"js_koa", Javascript::Koa},
     {"js_nestjs", Javascript::Nestjs},
     {"js_nextjs", Javascript::Nextjs},
