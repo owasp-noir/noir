@@ -4,6 +4,8 @@ use tower_http::services::ServeDir;
 
 #[tokio::main]
 async fn main() {
+    let internal_routes = Router::new().route("/health", get(handler));
+
     let app = Router::new()
         .route("/", get(handler))
         .route("/foo", get(handler))
@@ -29,6 +31,10 @@ async fn main() {
                 .route("/users", get(handler))
                 .route("/admin", post(handler)),
         )
+        // Real applications often build a sub-router in a local binding before
+        // mounting it. The route must inherit the nest prefix and must not also
+        // appear at `/health`.
+        .nest("/internal", internal_routes)
         // Real applications often keep a Router-returning function
         // per module and mount it under a prefix.
         .nest("/v1", v1_routes())

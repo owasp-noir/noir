@@ -26,6 +26,7 @@ expected_endpoints = [
   ]),
   Endpoint.new("/api/users", "GET"),
   Endpoint.new("/api/admin", "POST"),
+  Endpoint.new("/internal/health", "GET"),
   Endpoint.new("/v1/projects", "GET"),
   Endpoint.new("/v1/projects/{id}", "GET", [
     Param.new("id", "", "path"),
