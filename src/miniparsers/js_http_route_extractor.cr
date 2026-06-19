@@ -515,8 +515,12 @@ module Noir
         end
 
         case_hits.each_with_index do |(values, case_start), idx|
+          # A case spans [case_start, next_case_start). Region membership in
+          # `values_for_offset` is inclusive on both ends, so make the end
+          # exclusive (next case start - 1) — otherwise the next case label is
+          # treated as still inside this case and mis-scopes nested switches.
           case_end = if next_hit = case_hits[idx + 1]?
-                       next_hit[1]
+                       next_hit[1] - 1
                      else
                        close_brace
                      end
