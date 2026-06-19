@@ -1,5 +1,6 @@
 require "spec"
 require "../../../src/miniparsers/go_route_extractor_ts"
+require "../../../src/miniparsers/go_request_param_extractor"
 
 describe Noir::TreeSitterGoRouteExtractor do
   it "extracts every verb route in the Gin fixture with resolved group prefixes" do
@@ -846,6 +847,81 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"ANY", "/legacy"},
       {"GET", "/items/{id}"},
       {"POST", "/items"},
+    ].sort)
+  end
+
+  it "normalizes Go 1.22 ServeMux end-of-path wildcard patterns" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("GET /{$}", showRoot)
+          mux.HandleFunc("GET /admin/{$}", showAdminRoot)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/"},
+      {"GET", "/admin/"},
+    ].sort)
+  end
+
+  it "extracts request params from resolved net/http handler and helper bodies" do
+    route_source = <<-GO
+      package api
+      import "net/http"
+      func Routes() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("GET /v1/entries", handler.getEntriesHandler)
+      }
+      GO
+
+    handler_source = <<-GO
+      package api
+      import "net/http"
+      type handler struct{}
+      func (h *handler) getEntriesHandler(w http.ResponseWriter, r *http.Request) {
+          h.findEntries(w, r)
+      }
+      func (h *handler) findEntries(w http.ResponseWriter, r *http.Request) {
+          status := request.QueryStringParamList(r, "status")
+          _ = status
+          _ = r.URL.Query().Get("starred")
+          _ = r.PathValue("entryID")
+          _ = r.Header.Get("X-Auth-Token")
+          configureFilters(r)
+      }
+      func configureFilters(r *http.Request) {
+          _ = request.HasQueryParam(r, "before")
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(route_source)
+    route_rows = Set(Int32).new
+    route_methods = Hash(Int32, String).new
+    routes.each do |route|
+      route_rows << route.line
+      route_methods[route.line] = route.verb
+    end
+    external_methods = Noir::GoCalleeExtractor.collect_method_bodies(handler_source, "handler.go")
+    external_functions = Noir::GoCalleeExtractor.collect_function_bodies(handler_source, "handler.go")
+
+    params = Noir::GoRequestParamExtractor.params_for_routes(
+      route_source,
+      route_rows,
+      route_methods,
+      external_functions,
+      external_methods
+    )
+
+    params[routes.first.line].map { |p| {p.name, p.param_type} }.sort!.should eq([
+      {"X-Auth-Token", "header"},
+      {"before", "query"},
+      {"entryID", "path"},
+      {"starred", "query"},
+      {"status", "query"},
     ].sort)
   end
 
