@@ -12,8 +12,9 @@ module Analyzer::Go
 
     def analyze
       public_dirs = [] of Hash(String, String)
-      package_groups, file_contents = collect_package_groups_ts
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
       package_function_bodies = collect_package_function_bodies(file_contents)
+      framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         WaitGroup.wait do |wg|
@@ -33,9 +34,10 @@ module Analyzer::Go
                   next if GoEngine.go_test_file?(path)
                   if File.exists?(path)
                     content = file_contents[path]? || read_file_content(path)
-                    next unless content.includes?(IMPORT_MARKER)
+                    dir = File.dirname(path)
+                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, [] of String)
 
-                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+                    cross_file_groups = ts_groups_for_directory(package_groups, dir)
                     ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups)
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
@@ -45,7 +47,7 @@ module Analyzer::Go
 
                     route_rows = Set(Int32).new
                     routes_by_line.each_key { |row| route_rows << row }
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+                    external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
                     callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
                     lines = content.lines

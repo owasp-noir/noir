@@ -3240,8 +3240,18 @@ module Noir
 
       return unless path.starts_with?("/")
       path = "/#{path}" unless path.starts_with?("/")
+      path = normalize_net_http_pattern_path(path)
 
       Route.new(router_name, verb, path, raw_path, handler_text, Noir::TreeSitter.node_start_row(call))
+    end
+
+    # Go 1.22 ServeMux uses `{$}` as a special end-of-path wildcard.
+    # `GET /{$}` matches exactly `/`, not a literal `/{ $ }` endpoint.
+    private def normalize_net_http_pattern_path(path : String) : String
+      return path unless path.ends_with?("{$}")
+
+      normalized = path[0, path.size - "{$}".size]
+      normalized.empty? ? "/" : normalized
     end
   end
 end

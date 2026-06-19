@@ -13,6 +13,7 @@ expected_endpoints = [
   Endpoint.new("/bars/", "GET"),
   Endpoint.new("/bars/", "POST"),
   Endpoint.new("/bars/{id}", "DELETE", [Param.new("id", "", "path")]),
+  Endpoint.new("/_/extensions.js", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go/pocketbase/", {

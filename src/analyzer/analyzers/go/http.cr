@@ -1,4 +1,5 @@
 require "../../engines/go_engine"
+require "../../../miniparsers/go_request_param_extractor"
 
 module Analyzer::Go
   class Http < GoEngine
@@ -12,6 +13,15 @@ module Analyzer::Go
       package_function_bodies = collect_package_function_bodies(file_contents)
       package_method_bodies = collect_package_controller_method_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      route_dirs = Set(String).new
+      file_contents.each do |path, content|
+        dir = File.dirname(path)
+        if framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
+          route_dirs << dir
+        end
+      end
+      request_function_bodies = Noir::GoRequestParamExtractor.package_function_bodies_for_dirs(file_contents, route_dirs)
+      request_method_bodies = Noir::GoRequestParamExtractor.package_method_bodies_for_dirs(file_contents, route_dirs)
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       begin
         WaitGroup.wait do |wg|
@@ -45,10 +55,17 @@ module Analyzer::Go
 
                     # Resolve 1-hop callees for every route (see Gin/Mux).
                     route_rows = Set(Int32).new
-                    routes_by_line.each_key { |row| route_rows << row }
+                    route_methods_by_row = Hash(Int32, String).new
+                    routes_by_line.each do |row, routes|
+                      route_rows << row
+                      route_methods_by_row[row] = routes.first.verb
+                    end
                     external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
                     external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
                     callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+                    request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_function_bodies, dir)
+                    request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_method_bodies, dir)
+                    params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods)
 
                     lines.each_with_index do |line, index|
                       details = Details.new(PathInfo.new(path, index + 1))
@@ -67,6 +84,9 @@ module Analyzer::Go
                                 name, callee_path, callee_line = entry
                                 new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                               end
+                            end
+                            if params = params_by_route[route.line]?
+                              params.each { |param| add_param_to_endpoint(param, new_endpoint) }
                             end
                             result << new_endpoint
                             last_endpoint = new_endpoint
