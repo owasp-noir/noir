@@ -97,7 +97,7 @@ module Analyzer::Ruby
     @known_files = Set(String).new
 
     def analyze
-      files = all_files
+      files = all_files.reject { |file| ruby_non_production_path?(file) }
       @known_files = Set(String).new(files)
       @engine_mount_prefixes = build_engine_mount_map(files)
 

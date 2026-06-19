@@ -17,7 +17,7 @@ module Analyzer::Ruby
     # - Extracts params only from the handler body (query/header/cookie + form/json on body for mutating verbs).
     # - Skips FileHandler mounts (static).
     # - Supports req/request, res/response naming.
-    # - Reuses RubyEngine helpers (parallel_file_scan, ruby_test_path?, extract_ruby_do_block, attach, normalize).
+    # - Reuses RubyEngine helpers (parallel_file_scan, ruby_non_production_path?, extract_ruby_do_block, attach, normalize).
     # - Does not chase runtime req.path branches inside handlers for sub-paths (keeps v1 conservative + matches issue examples).
 
     SERVLET_METHODS = {
@@ -39,7 +39,7 @@ module Analyzer::Ruby
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
-        next if RubyEngine.ruby_test_path?(path)
+        next if ruby_non_production_path?(path)
         content = read_file_content(path)
         # Gate early on webrick signals (avoid unnecessary work + comment-only noise)
         next unless content.includes?("webrick") || content.includes?("WEBrick") || content.includes?("mount_proc")
@@ -54,7 +54,7 @@ module Analyzer::Ruby
 
       all_files.each do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
-        next if RubyEngine.ruby_test_path?(path)
+        next if ruby_non_production_path?(path)
         next if File.directory?(path)
         next unless File.exists?(path)
 

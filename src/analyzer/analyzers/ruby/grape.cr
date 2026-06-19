@@ -34,10 +34,7 @@ module Analyzer::Ruby
 
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb")
-        # Skip Minitest / RSpec test files — Grape's own
-        # `spec/grape/**/*_spec.rb` defines ~117 phantom routes
-        # that exercise the DSL via `Grape::API.new`.
-        next if RubyEngine.ruby_test_path?(path)
+        next if ruby_non_production_path?(path)
         content = read_file_content(path)
         next unless grape_api_file?(content, index.classes)
         mount_prefix = grape_file_mount_prefix(content, index)
@@ -74,7 +71,7 @@ module Analyzer::Ruby
 
       all_files.each do |path|
         next unless path.ends_with?(".rb")
-        next if RubyEngine.ruby_test_path?(path)
+        next if ruby_non_production_path?(path)
         next if File.directory?(path)
         content = read_file_content(path)
         # Only base-class definitions (`Grape::API`) and aggregators
