@@ -1660,6 +1660,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :js_http => {
+      :framework => "Node.js http/https",
+      :language  => "JavaScript",
+      :similar   => ["js-http", "js_http", "node-http", "node-https", "nodejs-http", "nodejs-https", "node:http", "node:https"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :js_koa => {
       :framework => "Koa",
       :language  => "JavaScript",
