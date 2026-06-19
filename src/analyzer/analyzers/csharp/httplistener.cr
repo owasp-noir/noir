@@ -62,9 +62,14 @@ module Analyzer::CSharp
     end
 
     private def analyze_file(file : String, content : String, include_callee : Bool)
-      clean_source = strip_comments_preserving_strings(content)
+      # Lex once: `tokens` locates comment spans (to strip comments while keeping
+      # string literals for text extraction) and `masked_lines` blanks
+      # strings/comments/chars for structural brace counting. Both views come
+      # from the same scan, so we avoid lexing the source twice.
+      lexer = Noir::CSharpLexer.new(content)
+      clean_source = strip_comments_preserving_strings(content, lexer)
       clean_lines = clean_source.lines
-      masked_lines = Noir::CSharpLexer.new(clean_source).masked_lines
+      masked_lines = lexer.masked_lines
       method_vars, path_vars = extract_request_aliases(clean_lines)
 
       branch_stack = [] of BranchContext
@@ -175,9 +180,9 @@ module Analyzer::CSharp
       logger.debug "csharp httplistener: failed to analyze #{file}: #{e.message}"
     end
 
-    private def strip_comments_preserving_strings(source : String) : String
+    private def strip_comments_preserving_strings(source : String, lexer : Noir::CSharpLexer) : String
       chars = source.chars
-      Noir::CSharpLexer.new(source).tokens.each do |token|
+      lexer.tokens.each do |token|
         next unless token.kind == :comment
 
         (token.start...token.end).each do |idx|
