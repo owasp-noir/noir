@@ -368,6 +368,13 @@ module Analyzer::Typescript
     private def v9_router_chain_body(expression : String, content : String, expression_start : Int32, assignment_line : Int32) : String
       entries = [] of Tuple(Int32, Int32, String, String)
 
+      # Precompute newline offsets once so per-entry line lookups stay O(log n)
+      # instead of re-slicing `content[0, ...].count('\n')` for every chained
+      # `.query`/`.merge` (which is O(n²) on long single-expression chains).
+      base_newlines = expression_start == 0 ? 0 : content[0, expression_start].count('\n')
+      expr_newlines = [] of Int32
+      expression.each_char_with_index { |char, index| expr_newlines << index if char == '\n' }
+
       expression.scan(/\.\s*(query|mutation|subscription)\s*\(\s*(['"`])([^'"`]+)\2\s*,/m) do |match|
         match_start = match.begin(0) || 0
         open_paren = expression.index('(', match_start)
@@ -376,7 +383,7 @@ module Analyzer::Typescript
         close_paren = Noir::JSRouteExtractor.find_matching_paren(expression, open_paren)
         next unless close_paren
 
-        line = content[0, expression_start + match_start].count('\n') + 1
+        line = base_newlines + newline_count_before(expr_newlines, match_start) + 1
         entries << {line, match_start, match[3], expression[match_start..close_paren]}
       end
 
@@ -405,7 +412,7 @@ module Analyzer::Typescript
         key = normalize_v9_merge_prefix(prefix, child)
         next if key.empty?
 
-        line = content[0, expression_start + match_start].count('\n') + 1
+        line = base_newlines + newline_count_before(expr_newlines, match_start) + 1
         entries << {line, match_start, key, child}
       end
 
@@ -419,6 +426,12 @@ module Analyzer::Typescript
       end
 
       builder.to_s
+    end
+
+    # Count newlines occurring strictly before `pos` using the precomputed,
+    # ascending list of newline offsets (binary search keeps it O(log n)).
+    private def newline_count_before(newline_positions : Array(Int32), pos : Int32) : Int32
+      newline_positions.bsearch_index { |offset| offset >= pos } || newline_positions.size
     end
 
     private def append_router_body_entry(builder : String::Builder, current_line : Int32, target_line : Int32, key : String, value : String) : Int32
