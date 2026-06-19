@@ -1300,17 +1300,6 @@ module Analyzer::Rust
       result
     end
 
-    private def collect_local_function_names(root : LibTreeSitter::TSNode, source : String) : Set(String)
-      names = Set(String).new
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        if name = function_name(node, source)
-          names.add(name)
-        end
-      end
-      names
-    end
-
     # Function names that appear more than once in a file (e.g. a top-level
     # `fn router` plus a nested `mod x { fn router }`). Bare-name routing
     # machinery can't tell them apart, so cross-nest relocation skips them.
