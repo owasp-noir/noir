@@ -6,16 +6,20 @@
 use axum::{routing::get, Router};
 
 mod admin;
+mod service;
 mod webui;
 
 async fn root() {}
 
 fn app() -> Router {
     let admin_router = admin::admin_router();
+    let service_router = service::service_router().with_state(());
+
     Router::new()
         .route("/", get(root))
         .nest("/web", webui::make_webui_router())
         .nest("/admin", admin_router)
+        .nest_api_service("/service", service_router)
 }
 
 fn main() {}
