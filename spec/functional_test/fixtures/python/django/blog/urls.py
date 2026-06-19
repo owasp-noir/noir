@@ -132,6 +132,14 @@ urlpatterns = [
         r'widget/delete',
         views.WidgetDeleteView.as_view(),
         name='widget_delete'),
+    path(
+        r'api/token/',
+        views.ApiTokenView.as_view(),
+        name='api_token'),
+    path(
+        r'api/account/',
+        views.AccountRetrieveUpdateAPIView.as_view(),
+        name='api_account'),
     re_path(
         r'^legacy/(?P<legacy_id>[0-9]+)/$',
         views.legacy_detail,

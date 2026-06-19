@@ -15,6 +15,9 @@ expected_endpoints = [
   # Simple f-string prefixes with resolvable constants should keep
   # their concrete segment instead of being dropped or emitted raw.
   Endpoint.new("/api/v1/dynamic/v1/probe", "GET"),
+  # fastapi-realworld style local settings factory:
+  # `settings = get_app_settings(); prefix=settings.api_prefix`.
+  Endpoint.new("/factory/probe", "GET"),
 ]
 
 FunctionalTester.new("fixtures/python/fastapi_settings_prefix/", {
