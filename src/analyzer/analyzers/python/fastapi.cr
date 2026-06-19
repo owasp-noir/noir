@@ -698,7 +698,120 @@ module Analyzer::Python
         return local
       end
 
+      if local_attr = resolve_local_factory_attribute(expr, source, import_modules, depth)
+        return local_attr
+      end
+
       resolve_constant_value(expr, import_modules)
+    end
+
+    private def resolve_local_factory_attribute(expression : ::String,
+                                                source : ::String,
+                                                import_modules : Hash(::String, Tuple(::String, Int32)),
+                                                depth : Int32) : ::String?
+      return if depth > 3
+      attr_match = expression.match(/^([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)$/)
+      return unless attr_match
+
+      object_name, attr_name = attr_match[1], attr_match[2]
+      call_match = source.match(/^\s*#{Regex.escape(object_name)}\s*(?::[^=]+)?=\s*([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(/m)
+      return unless call_match
+
+      callee = call_match[1]
+      callee_root = callee.split(".", 2)[0]
+      callee_name = callee.split(".")[-1]
+      if imported = import_modules[callee_root]?
+        module_path = imported.first
+        return resolve_attribute_from_file(module_path, attr_name, callee_name, depth + 1) unless module_path.empty?
+      end
+
+      nil
+    end
+
+    private def resolve_attribute_from_file(module_path : ::String,
+                                            attr_name : ::String,
+                                            factory_name : ::String?,
+                                            depth : Int32) : ::String?
+      return if depth > 4
+      return unless File.exists?(module_path)
+
+      module_source = read_file_content(module_path)
+      if value = resolve_attribute_default_in_source(module_source, attr_name)
+        return value
+      end
+
+      if factory_name
+        if return_type = extract_function_return_annotation(module_source, factory_name)
+          if value = resolve_class_attribute_from_file(module_path, module_source, return_type, attr_name, depth + 1)
+            return value
+          end
+        end
+      end
+
+      nil
+    end
+
+    private def resolve_class_attribute_from_file(module_path : ::String,
+                                                  module_source : ::String,
+                                                  class_name : ::String,
+                                                  attr_name : ::String,
+                                                  depth : Int32) : ::String?
+      return if depth > 4
+
+      if value = resolve_class_attribute_default(module_source, class_name, attr_name)
+        return value
+      end
+
+      import_modules = imported_modules_for_resolution(module_path, module_source)
+      if imported = import_modules[class_name]?
+        imported_path = imported.first
+        return if imported_path.empty? || imported_path == module_path
+        imported_source = read_file_content(imported_path)
+        return resolve_class_attribute_from_file(imported_path, imported_source, class_name, attr_name, depth + 1)
+      end
+
+      nil
+    end
+
+    private def imported_modules_for_resolution(module_path : ::String, module_source : ::String) : Hash(::String, Tuple(::String, Int32))
+      merged = Hash(::String, Tuple(::String, Int32)).new
+      candidate_bases = [] of ::String
+      base_paths.each do |base_path|
+        candidate_bases << base_path if path_under_root?(module_path, base_path)
+      end
+      candidate_bases << File.dirname(module_path)
+
+      candidate_bases.uniq.each do |base_path|
+        find_fastapi_imported_modules(base_path, module_path, module_source).each do |name, import_info|
+          merged[name] = import_info unless merged.has_key?(name)
+        end
+      end
+
+      merged
+    end
+
+    private def extract_function_return_annotation(source : ::String, function_name : ::String) : ::String?
+      match = source.match(/^\s*def\s+#{Regex.escape(function_name)}\s*\([^)]*\)\s*->\s*([A-Za-z_][A-Za-z0-9_]*)\s*:/m)
+      match ? match[1] : nil
+    end
+
+    private def resolve_attribute_default_in_source(source : ::String, attr_name : ::String) : ::String?
+      pattern = /^\s*#{Regex.escape(attr_name)}\s*(?::[^=]+)?=\s*['"]([^'"]*)['"]/m
+      if match = source.match(pattern)
+        return match[1]
+      end
+
+      nil
+    end
+
+    private def resolve_class_attribute_default(source : ::String, class_name : ::String, attr_name : ::String) : ::String?
+      class_start = source.index(/class\s+#{Regex.escape(class_name)}\s*[\(:]/)
+      return unless class_start
+
+      class_codeblock = parse_code_block(source[class_start..])
+      return unless class_codeblock
+
+      resolve_attribute_default_in_source(class_codeblock, attr_name)
     end
 
     private def resolve_f_string(value : ::String,

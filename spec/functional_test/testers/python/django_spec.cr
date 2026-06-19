@@ -147,6 +147,13 @@ expected_endpoints = [
   # DeleteView → GET (confirm) + POST (delete), never HTTP DELETE.
   Endpoint.new("/widget/delete", "GET"),
   Endpoint.new("/widget/delete", "POST"),
+  # DRF APIView honors explicitly defined HTTP methods only.
+  Endpoint.new("/api/token/", "POST", [Param.new("token", "", "form")]),
+  # DRF RetrieveUpdateAPIView maps retrieve/update to GET/PUT/PATCH,
+  # and request.data inside update must not create a stray POST.
+  Endpoint.new("/api/account/", "GET"),
+  Endpoint.new("/api/account/", "PUT", [Param.new("display_name", "", "form")]),
+  Endpoint.new("/api/account/", "PATCH", [Param.new("display_name", "", "form")]),
   Endpoint.new("/legacy/{legacy_id}/", "GET", [
     Param.new("preview", "", "query"),
     Param.new("legacy_id", "", "path"),

@@ -18,6 +18,8 @@ from django.views.generic.list import ListView
 from haystack.views import SearchView
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
+from rest_framework.generics import RetrieveUpdateAPIView
+from rest_framework.views import APIView
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from blog.models import Article, Category, LinkShowType, Links, Tag
@@ -455,6 +457,21 @@ class WidgetDeleteView(DeleteView):
     # Django's generic DeleteView serves GET (confirm) + POST (delete),
     # never the HTTP DELETE verb.
     model = Article
+
+
+class ApiTokenView(APIView):
+    def post(self, request):
+        token = request.data.get("token")
+        return HttpResponse(token)
+
+
+class AccountRetrieveUpdateAPIView(RetrieveUpdateAPIView):
+    def retrieve(self, request, *args, **kwargs):
+        return HttpResponse("account")
+
+    def update(self, request, *args, **kwargs):
+        display_name = request.data.get("display_name")
+        return HttpResponse(display_name)
 
 def legacy_detail(request, legacy_id):
     preview = request.GET.get('preview')

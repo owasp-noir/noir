@@ -1336,23 +1336,29 @@ module Analyzer::Python
           class_define_line = lines[0]
           lines = lines[1..]
 
-          # Determine implicit HTTP methods based on class name
-          if class_define_line.includes? "Form"
-            suspicious_http_methods << "GET"
-            suspicious_http_methods << "POST"
-          elsif class_define_line.includes? "Delete"
-            # Django's generic `DeleteView` serves the confirmation page
-            # on GET and performs the delete on POST — it does NOT expose
-            # the HTTP DELETE verb. Emitting DELETE here was a false
-            # positive on every `class X(DeleteView)` (wagtail: 5). A view
-            # that genuinely handles HTTP DELETE defines `def delete(self,
-            # request, ...)`, which the explicit method-def scan below
-            # already picks up, so real DELETE endpoints are unaffected.
-            suspicious_http_methods << "POST"
-          elsif class_define_line.includes? "Create"
-            suspicious_http_methods << "POST"
-          elsif class_define_line.includes? "Update"
-            suspicious_http_methods << "POST"
+          drf_generic_class = false
+          if drf_methods = default_drf_generic_view_methods(class_define_line)
+            drf_generic_class = true
+            suspicious_http_methods = drf_methods
+          else
+            # Determine implicit HTTP methods based on class name
+            if class_define_line.includes? "Form"
+              suspicious_http_methods << "GET"
+              suspicious_http_methods << "POST"
+            elsif class_define_line.includes? "Delete"
+              # Django's generic `DeleteView` serves the confirmation page
+              # on GET and performs the delete on POST — it does NOT expose
+              # the HTTP DELETE verb. Emitting DELETE here was a false
+              # positive on every `class X(DeleteView)` (wagtail: 5). A view
+              # that genuinely handles HTTP DELETE defines `def delete(self,
+              # request, ...)`, which the explicit method-def scan below
+              # already picks up, so real DELETE endpoints are unaffected.
+              suspicious_http_methods << "POST"
+            elsif class_define_line.includes? "Create"
+              suspicious_http_methods << "POST"
+            elsif class_define_line.includes? "Update"
+              suspicious_http_methods << "POST"
+            end
           end
 
           body_start_line = content[0, class_start_index].count('\n')
@@ -1363,19 +1369,19 @@ module Analyzer::Python
           method_params = Hash(String, Array(Param)).new do |hash, key|
             hash[key] = [] of Param
           end
-          current_http_method : String? = nil
+          current_http_methods : Array(String)? = nil
 
           # Check HTTP methods in class methods
           lines.each_with_index do |line, offset|
             method_function_match = line.match(REGEX_CBV_METHOD_DEF)
             any_method_function_match = line.match(/\s+(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
             if !any_method_function_match.nil?
-              current_http_method = nil
+              current_http_methods = nil
             end
 
             if !method_function_match.nil?
               method_name = method_function_match[1].upcase
-              current_http_method = method_name
+              current_http_methods = [method_name]
               suspicious_http_methods << method_name
               method_lines[method_name] = body_start_line + offset + 2
 
@@ -1388,15 +1394,31 @@ module Analyzer::Python
                   source: content
                 )
               end
+            elsif drf_generic_class && any_method_function_match && (drf_methods = drf_generic_action_http_methods(any_method_function_match[1]))
+              current_http_methods = drf_methods
+              drf_methods.each do |method_name|
+                next unless suspicious_http_methods.includes?(method_name)
+                method_lines[method_name] ||= body_start_line + offset + 2
+              end
             end
 
-            extract_params_from_line(line, suspicious_http_methods).each do |param|
-              if method_name = current_http_method
-                method_params[method_name] << param
-              else
+            if method_names = current_http_methods
+              scan_methods = method_names.dup
+              extract_params_from_line(line, scan_methods).each do |param|
+                method_names.each do |mapped_method_name|
+                  next unless suspicious_http_methods.includes?(mapped_method_name)
+                  method_params[mapped_method_name] << param
+                end
+              end
+            else
+              extract_params_from_line(line, suspicious_http_methods).each do |param|
                 common_params << param
               end
             end
+          end
+
+          if suspicious_http_methods.empty?
+            return endpoints
           end
 
           suspicious_http_methods.uniq.each do |http_method_name|
@@ -1416,6 +1438,47 @@ module Analyzer::Python
 
       # Default to GET method
       [Endpoint.new(url, "GET", Details.new(PathInfo.new(filepath)))]
+    end
+
+    private def default_drf_generic_view_methods(class_define_line : ::String) : Array(::String)?
+      return unless class_define_line.includes?("APIView")
+
+      if class_define_line.includes?("RetrieveUpdateDestroyAPIView")
+        ["GET", "PUT", "PATCH", "DELETE"]
+      elsif class_define_line.includes?("RetrieveUpdateAPIView")
+        ["GET", "PUT", "PATCH"]
+      elsif class_define_line.includes?("RetrieveDestroyAPIView")
+        ["GET", "DELETE"]
+      elsif class_define_line.includes?("ListCreateAPIView")
+        ["GET", "POST"]
+      elsif class_define_line.includes?("RetrieveAPIView")
+        ["GET"]
+      elsif class_define_line.includes?("ListAPIView")
+        ["GET"]
+      elsif class_define_line.includes?("CreateAPIView")
+        ["POST"]
+      elsif class_define_line.includes?("UpdateAPIView")
+        ["PUT", "PATCH"]
+      elsif class_define_line.includes?("DestroyAPIView")
+        ["DELETE"]
+      else
+        [] of ::String
+      end
+    end
+
+    private def drf_generic_action_http_methods(method_name : ::String) : Array(::String)?
+      case method_name
+      when "list", "retrieve"
+        ["GET"]
+      when "create"
+        ["POST"]
+      when "update"
+        ["PUT", "PATCH"]
+      when "partial_update"
+        ["PATCH"]
+      when "destroy"
+        ["DELETE"]
+      end
     end
 
     private def extract_drf_viewset_endpoints(route_base : ::String, filepath : ::String, class_name : ::String) : Array(Endpoint)
