@@ -130,6 +130,11 @@ module Analyzer::Typescript
       "fastifyTRPC",
     ]
 
+    V9_MERGE_HINTS = [
+      ".merge(",
+      ".merge (",
+    ]
+
     private def trpc_candidate?(content : String) : Bool
       content.matches?(/endpoint\s*:/) ||
         PREFIX_HINTS.any? { |hint| content.includes?(hint) } ||
@@ -142,8 +147,19 @@ module Analyzer::Typescript
         # standalone, losing its dotted prefix. `router(` imported from a
         # *trpc* module disambiguates it from express/react-router.
         (content.includes?("router(") && trpc_router_import?(content)) ||
+        # tRPC v9 used chain-style routers:
+        # `createRouter().query("name", { input, resolve }).merge("x.", child)`.
+        # OSS apps still use this shape, and it has no `Procedure` builder.
+        v9_router_candidate?(content) ||
         # A standalone procedure-definition file (no `router(...)`).
         (procedure_builder?(content) && PROCEDURE_HINTS.any? { |hint| content.includes?(hint) })
+    end
+
+    private def v9_router_candidate?(content : String) : Bool
+      return false unless content.includes?("createRouter") || content.includes?("trpc.router")
+
+      V9_MERGE_HINTS.any? { |hint| content.includes?(hint) } ||
+        PROCEDURE_HINTS.any? { |hint| content.includes?(hint) }
     end
 
     # tRPC builders are conventionally named `*Procedure` (publicProcedure,
@@ -258,7 +274,182 @@ module Analyzer::Typescript
         collected << Router.new(base_path, match[1], body, path, line)
       end
 
+      collected.concat collect_v9_chain_routers(content, path, base_path, literal_mask)
+
       collected
+    end
+
+    private def collect_v9_chain_routers(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
+      collected = [] of Router
+      assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/
+
+      content.scan(assignment_pattern) do |match|
+        match_start = match.begin(0) || 0
+        next if literal_position?(literal_mask, match_start)
+
+        value_start = skip_whitespace(content, match.end(0) || 0)
+        statement_end = find_statement_end(content, value_start)
+        expression = content[value_start...statement_end]
+        next unless v9_router_chain_expression?(expression)
+
+        line = content[0, match_start].count('\n') + 1
+        body = v9_router_chain_body(expression, content, value_start, line)
+        next if body.empty?
+
+        collected << Router.new(base_path, match[1], body, path, line)
+      end
+
+      collected
+    end
+
+    private def v9_router_chain_expression?(expression : String) : Bool
+      return false unless expression.includes?("createRouter") || expression.includes?("trpc.router")
+
+      expression.includes?(".merge") ||
+        expression.includes?(".query") ||
+        expression.includes?(".mutation") ||
+        expression.includes?(".subscription")
+    end
+
+    private def find_statement_end(content : String, start : Int32) : Int32
+      depth = 0
+      quote : Char? = nil
+      escaped = false
+      i = start
+
+      while i < content.size
+        char = content[i]
+
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          i += 1
+          next
+        end
+
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        when '\n'
+          if depth == 0
+            next_pos = i + 1
+            while next_pos < content.size && (content[next_pos] == ' ' || content[next_pos] == '\t')
+              next_pos += 1
+            end
+            return i unless content[next_pos]? == '.'
+          end
+        when ';'
+          return i if depth == 0
+        end
+
+        i += 1
+      end
+
+      content.size
+    end
+
+    private def skip_whitespace(content : String, pos : Int32) : Int32
+      i = pos
+      while i < content.size && content[i].whitespace?
+        i += 1
+      end
+      i
+    end
+
+    private def v9_router_chain_body(expression : String, content : String, expression_start : Int32, assignment_line : Int32) : String
+      entries = [] of Tuple(Int32, Int32, String, String)
+
+      expression.scan(/\.\s*(query|mutation|subscription)\s*\(\s*(['"`])([^'"`]+)\2\s*,/m) do |match|
+        match_start = match.begin(0) || 0
+        open_paren = expression.index('(', match_start)
+        next unless open_paren
+
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(expression, open_paren)
+        next unless close_paren
+
+        line = content[0, expression_start + match_start].count('\n') + 1
+        entries << {line, match_start, match[3], expression[match_start..close_paren]}
+      end
+
+      expression.scan(/\.\s*merge\s*\(/m) do |match|
+        match_start = match.begin(0) || 0
+        open_paren = expression.index('(', match_start)
+        next unless open_paren
+
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(expression, open_paren)
+        next unless close_paren
+
+        args = split_top_level(expression[(open_paren + 1)...close_paren], ',')
+        next if args.empty?
+
+        prefix : String?
+        child : String?
+        if args.size >= 2
+          prefix = string_literal_value(args[0])
+          child = extract_identifier(args[1])
+        else
+          prefix = nil
+          child = extract_identifier(args[0])
+        end
+        next unless child
+
+        key = normalize_v9_merge_prefix(prefix, child)
+        next if key.empty?
+
+        line = content[0, expression_start + match_start].count('\n') + 1
+        entries << {line, match_start, key, child}
+      end
+
+      return "" if entries.empty?
+
+      builder = String::Builder.new
+      current_line = 1
+      entries.sort_by { |line, pos, _key, _value| {line, pos} }.each do |line, _pos, key, value|
+        target_line = line - assignment_line + 1
+        current_line = append_router_body_entry(builder, current_line, target_line, key, value)
+      end
+
+      builder.to_s
+    end
+
+    private def append_router_body_entry(builder : String::Builder, current_line : Int32, target_line : Int32, key : String, value : String) : Int32
+      line = current_line
+      while line < target_line
+        builder << '\n'
+        line += 1
+      end
+
+      builder << quoted_router_key(key)
+      builder << ": "
+      builder << value
+      builder << ",\n"
+      line + value.count('\n') + 1
+    end
+
+    private def quoted_router_key(key : String) : String
+      escaped = key.gsub("\\", "\\\\").gsub("\"", "\\\"")
+      "\"#{escaped}\""
+    end
+
+    private def string_literal_value(expression : String) : String?
+      stripped = expression.strip
+      if match = stripped.match(/\A(['"`])([^'"`]*)\1\z/)
+        match[2]
+      end
+    end
+
+    private def normalize_v9_merge_prefix(prefix : String?, child : String) : String
+      raw = prefix || child
+      raw.strip.gsub(/\A\.+|\.+\z/, "")
     end
 
     PROCEDURE_VERBS = {"query" => "GET", "mutation" => "POST", "subscription" => "SUBSCRIBE"}
@@ -480,6 +671,44 @@ module Analyzer::Typescript
       nil
     end
 
+    private def split_top_level(text : String, delimiter : Char) : Array(String)
+      parts = [] of String
+      start = 0
+      depth = 0
+      quote : Char? = nil
+      escaped = false
+
+      text.each_char_with_index do |char, index|
+        if quote
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == quote
+            quote = nil
+          end
+          next
+        end
+
+        case char
+        when '\'', '"', '`'
+          quote = char
+        when '(', '[', '{'
+          depth += 1
+        when ')', ']', '}'
+          depth -= 1 if depth > 0
+        else
+          if char == delimiter && depth == 0
+            parts << text[start...index].strip
+            start = index + 1
+          end
+        end
+      end
+
+      parts << text[start..-1].strip
+      parts.reject(&.empty?)
+    end
+
     private def skip_top_level_to_comma(body : String, start : Int32) : Int32
       depth = 0
       i = start
@@ -672,21 +901,8 @@ module Analyzer::Typescript
     private def attach_input_params(value : String, method : String, endpoint : Endpoint)
       param_type = method == "POST" ? "body" : "query"
 
-      # Locate the .input(...) call; without one, every method exposes the
-      # raw `input` slot — GETs serialize it as ?input=, mutations send the
-      # body verbatim. We still surface that so consumers see the contract.
-      input_match = value.match(/\.\s*input\s*\(/)
-      unless input_match
-        return
-      end
-
-      open_paren_end = input_match.end(0) || 0
-      return if open_paren_end == 0
-      open_paren = open_paren_end - 1
-      close_paren = Noir::JSRouteExtractor.find_matching_paren(value, open_paren)
-      return unless close_paren
-
-      input_body = value[(open_paren + 1)...close_paren]
+      input_body = procedure_input_body(value)
+      return unless input_body
 
       # Shallow z.object({...}) — pull top-level field names. Deeper schemas
       # are intentionally skipped; the issue calls deep parsing out as the
@@ -712,6 +928,49 @@ module Analyzer::Typescript
       unless endpoint.params.any? { |p| p.name == "input" && p.param_type == param_type }
         endpoint.push_param(Param.new("input", "", param_type))
       end
+    end
+
+    private def procedure_input_body(value : String) : String?
+      if input_match = value.match(/\.\s*input\s*\(/)
+        open_paren_end = input_match.end(0) || 0
+        return if open_paren_end == 0
+        open_paren = open_paren_end - 1
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(value, open_paren)
+        return unless close_paren
+
+        return value[(open_paren + 1)...close_paren]
+      end
+
+      v9_procedure_input_body(value)
+    end
+
+    private def v9_procedure_input_body(value : String) : String?
+      if call_match = value.match(/\.\s*(?:query|mutation|subscription)\s*\(/)
+        open_paren = (call_match.end(0) || 0) - 1
+        close_paren = Noir::JSRouteExtractor.find_matching_paren(value, open_paren)
+        return unless close_paren
+
+        args = split_top_level(value[(open_paren + 1)...close_paren], ',')
+        return unless args.size >= 2
+
+        options = args[1].strip
+        return unless options.starts_with?("{")
+
+        close_brace = Noir::JSRouteExtractor.find_matching_brace(options, 0)
+        return unless close_brace
+
+        input_property_value(options[1...close_brace])
+      end
+    end
+
+    private def input_property_value(options_body : String) : String?
+      options_body.scan(/(?:\A|,)\s*input\s*:/m) do |match|
+        value_start = match.end(0) || 0
+        value_end = skip_top_level_to_comma(options_body, value_start)
+        return options_body[value_start...value_end].strip
+      end
+
+      nil
     end
 
     private def extract_schema_fields(schema : String) : Array(String)
