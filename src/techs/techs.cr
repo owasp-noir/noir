@@ -6,7 +6,7 @@ module NoirTechs
     "cpp_crow", "cpp_drogon", "cpp_httplib", "cpp_oatpp",
     "clojure_compojure", "clojure_pedestal", "clojure_reitit",
     "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
-    "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
+    "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints", "cs_httplistener",
     "dart_alfred", "dart_angel3", "dart_get_server", "dart_frog", "dart_serverpod", "dart_shelf",
     "elixir_bandit", "elixir_phoenix", "elixir_plug",
     "fs_giraffe",
@@ -451,6 +451,24 @@ module NoirTechs
         :params   => {
           :query  => true,
           :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :cs_httplistener => {
+      :framework => "System.Net.HttpListener",
+      :language  => "C#",
+      :similar   => ["httplistener", "http-listener", "system.net.httplistener", "system-net-httplistener", "cs-httplistener", "cs_httplistener", "c# httplistener", "c#-httplistener", "c#_httplistener"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
           :body   => true,
           :header => true,
           :cookie => true,

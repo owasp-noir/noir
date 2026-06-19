@@ -29,6 +29,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"cs_aspnet_core_minimal_api", CSharp::MinimalApis},
     {"cs_carter", CSharp::Carter},
     {"cs_fastendpoints", CSharp::FastEndpoints},
+    {"cs_httplistener", CSharp::HttpListener},
     {"crystal_amber", Crystal::Amber},
     {"crystal_grip", Crystal::Grip},
     {"crystal_kemal", Crystal::Kemal},
