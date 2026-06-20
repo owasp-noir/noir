@@ -10,7 +10,7 @@ jobs:
     name: OWASP Noir Security Analysis
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Run OWASP Noir
         id: noir
