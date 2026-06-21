@@ -1,9 +1,10 @@
 require "json"
 require "uri"
+require "../utils/http_symbols"
 
 module OutputBuilderOasCommon
   VALID_OPERATION_METHODS = Set{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
-  ANY_OPERATION_METHODS   = %w[get post put patch delete options head trace]
+  ANY_OPERATION_METHODS   = WILDCARD_HTTP_METHODS.map(&.downcase)
 
   private def normalize_oas_path(raw_url : String) : String
     uri = URI.parse(raw_url)

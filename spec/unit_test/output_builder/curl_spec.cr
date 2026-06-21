@@ -49,4 +49,23 @@ describe "OutputBuilderCurl" do
     put_line.should contain("--data-raw 'name=Updated Product&price=99.99'")
     put_line.should contain("-H 'Content-Type: application/x-www-form-urlencoded'")
   end
+
+  it "expands synthetic ANY methods into concrete curl commands" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/wildcard", "ANY")])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines.size.should eq(WILDCARD_HTTP_METHODS.size)
+    lines.map { |line| line.split("'")[1] }.should eq(WILDCARD_HTTP_METHODS)
+    lines.any?(&.includes?("'ANY'")).should be_false
+  end
 end

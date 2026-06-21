@@ -149,6 +149,22 @@ describe SendReq do
     end
   end
 
+  it "expands synthetic ANY endpoints before sending requests" do
+    server = CapturingServer.new
+    begin
+      ep = Endpoint.new(server.url_for("/wildcard"), "ANY")
+
+      sender = SendReq.new(base_deliver_options)
+      sender.run([ep])
+
+      methods = server.requests.map(&.[:method]).sort!
+      methods.should eq(WILDCARD_HTTP_METHODS.sort)
+      methods.includes?("ANY").should be_false
+    ensure
+      server.close
+    end
+  end
+
   it "applies matchers before sending and skips non-matching endpoints" do
     server = CapturingServer.new
     begin

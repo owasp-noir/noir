@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "../utils/http_symbols"
 
 class OutputBuilderPowershell < OutputBuilder
   def print(endpoints : Array(Endpoint))
@@ -7,46 +8,48 @@ class OutputBuilderPowershell < OutputBuilder
       next if endpoint.mobile? # mobile deep links aren't HTTP requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
-      cmd = "Invoke-WebRequest -Method \"#{escape_powershell(endpoint.method)}\" -Uri \"#{escape_powershell(baked[:url])}\""
+      expand_synthetic_http_methods(endpoint.method).each do |method|
+        cmd = "Invoke-WebRequest -Method \"#{escape_powershell(method)}\" -Uri \"#{escape_powershell(baked[:url])}\""
 
-      # Build headers hash including cookies
-      header_parts = [] of String
+        # Build headers hash including cookies
+        header_parts = [] of String
 
-      # Add cookies as Cookie header
-      if !baked[:cookie].empty?
-        cookie_header = baked[:cookie].map { |c| escape_powershell(c) }.join("; ")
-        header_parts << "\"Cookie\"=\"#{cookie_header}\""
-      end
-
-      # Add other headers
-      baked[:header].each do |h|
-        parts = h.split(": ", 2)
-        if parts.size == 2
-          header_parts << "\"#{escape_powershell(parts[0])}\"=\"#{escape_powershell(parts[1])}\""
-        else
-          header_parts << "\"#{escape_powershell(h)}\"=\"\""
+        # Add cookies as Cookie header
+        if !baked[:cookie].empty?
+          cookie_header = baked[:cookie].map { |c| escape_powershell(c) }.join("; ")
+          header_parts << "\"Cookie\"=\"#{cookie_header}\""
         end
-      end
 
-      # Add headers if present
-      if !header_parts.empty?
-        cmd += " -Headers @{#{header_parts.join("; ")}}"
-      end
-
-      # Add body
-      if !baked[:body].empty?
-        if baked[:body_type] == "json"
-          # Escape for PowerShell string
-          escaped_body = escape_powershell(baked[:body])
-          cmd += " -Body \"#{escaped_body}\" -ContentType \"application/json\""
-        else
-          # Form data
-          escaped_body = escape_powershell(baked[:body])
-          cmd += " -Body \"#{escaped_body}\" -ContentType \"application/x-www-form-urlencoded\""
+        # Add other headers
+        baked[:header].each do |h|
+          parts = h.split(": ", 2)
+          if parts.size == 2
+            header_parts << "\"#{escape_powershell(parts[0])}\"=\"#{escape_powershell(parts[1])}\""
+          else
+            header_parts << "\"#{escape_powershell(h)}\"=\"\""
+          end
         end
-      end
 
-      ob_puts cmd
+        # Add headers if present
+        if !header_parts.empty?
+          cmd += " -Headers @{#{header_parts.join("; ")}}"
+        end
+
+        # Add body
+        if !baked[:body].empty?
+          if baked[:body_type] == "json"
+            # Escape for PowerShell string
+            escaped_body = escape_powershell(baked[:body])
+            cmd += " -Body \"#{escaped_body}\" -ContentType \"application/json\""
+          else
+            # Form data
+            escaped_body = escape_powershell(baked[:body])
+            cmd += " -Body \"#{escaped_body}\" -ContentType \"application/x-www-form-urlencoded\""
+          end
+        end
+
+        ob_puts cmd
+      end
     end
   end
 
