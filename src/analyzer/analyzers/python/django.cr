@@ -10,9 +10,8 @@ module Analyzer::Python
     @visited_app_config_paths = Set(::String).new
 
     # Regular expressions for extracting Django URL configurations
-    REGEX_ROOT_URLCONF  = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
-    REGEX_ROUTE_MAPPING = /\b(?:url|path|re_path|register)\s*\(\s*r?['"]([^"']*)['"][^,]*,\s*([^),]*)/
-    REGEX_INCLUDE_URLS  = /\binclude\s*\(\s*r?['"]([^'"\\]*)['"]/
+    REGEX_ROOT_URLCONF = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
+    REGEX_INCLUDE_URLS = /\binclude\s*\(\s*r?['"]([^'"\\]*)['"]/
 
     # `def get(...)` / `async def post(...)` method heads in class-based
     # views. Precompiled — an interpolated literal would be recompiled on

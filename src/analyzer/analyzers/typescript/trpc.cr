@@ -107,12 +107,6 @@ module Analyzer::Typescript
       result
     end
 
-    ROUTER_HINTS = [
-      "router(",
-      "router (",
-      "createTRPCRouter",
-    ]
-
     PROCEDURE_HINTS = [
       ".query(",
       ".query (",

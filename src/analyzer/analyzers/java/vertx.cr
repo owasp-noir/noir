@@ -14,7 +14,6 @@ module Analyzer::Java
     REGEX_ROUTE_METHOD_HANDLER = /\.route\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*this::([\w$]+)\s*\)/i
     REGEX_ROUTE_ANY_HANDLER    = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
     REGEX_ROUTE_SUB_ROUTER     = /(\w+)\.route\s*\(([^)]*)\)\s*\.subRouter\s*\(/i
-    REGEX_ROUTER_INSTANCE      = /Router\s+(\w+)\s*=\s*Router\.router\(\s*[^)]*\s*\)/
     REGEX_MOUNTSUBPATH         = /(\w+)\.mountSubRouter\s*\(([^)]*)\)/i
     REGEX_STATIC_HANDLER_ROUTE = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\([^;]*StaticHandler\.create\s*\(/im
     HTTP_METHODS               = %w[GET POST PUT DELETE PATCH HEAD OPTIONS CONNECT TRACE]
