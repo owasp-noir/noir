@@ -19,7 +19,8 @@ module Detector::Specification
             locator = CodeLocator.instance
             locator.push("insomnia-json", filename)
           end
-        rescue
+        rescue e
+          logger.debug "Insomnia JSON detection failed for #{filename}: #{e}"
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         return false unless file_contents.includes?(".insomnia.rest/")
@@ -37,7 +38,8 @@ module Detector::Specification
             locator = CodeLocator.instance
             locator.push("insomnia-yaml", filename)
           end
-        rescue
+        rescue e
+          logger.debug "Insomnia YAML detection failed for #{filename}: #{e}"
         end
       end
 

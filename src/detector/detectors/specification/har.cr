@@ -16,7 +16,8 @@ module Detector::Specification
               locator.push("har-path", filename)
               return true
             end
-          rescue
+          rescue e
+            logger.debug "HAR detection failed for #{filename}: #{e}"
           end
         end
       end

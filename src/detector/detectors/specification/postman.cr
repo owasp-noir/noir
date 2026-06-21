@@ -23,7 +23,8 @@ module Detector::Specification
             locator = CodeLocator.instance
             locator.push("postman-json", filename)
           end
-        rescue
+        rescue e
+          logger.debug "Postman detection failed for #{filename}: #{e}"
         end
       end
 
