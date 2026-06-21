@@ -2,7 +2,7 @@ require "../../../models/analyzer"
 
 module Analyzer::Specification
   class K8sIngress < Analyzer
-    METHOD_ANY         = "ANY"
+    DEFAULT_METHOD     = "GET"
     REWRITE_ANNOTATION = "nginx.ingress.kubernetes.io/rewrite-target"
     DEFAULT_PATH_TYPE  = "ImplementationSpecific"
     API_VERSION_LINE   = /(?m)^[ \t-]*apiVersion:\s*["']?(?:networking\.k8s\.io\/[^"'\s#]+|extensions\/v1beta1)["']?\s*(?:#.*)?$/
@@ -126,7 +126,7 @@ module Analyzer::Specification
     end
 
     private def emit_endpoint(path : String, path_type : String, host : String, tls_hosts : Set(String), details : Details, origin : String = "rule")
-      endpoint = Endpoint.new(path, METHOD_ANY, details)
+      endpoint = Endpoint.new(path, DEFAULT_METHOD, details)
       endpoint.add_tag(Tag.new("ingress-path-type", path_type.downcase, "k8s_ingress_analyzer"))
       endpoint.add_tag(Tag.new("ingress-host", host, "k8s_ingress_analyzer")) unless host.empty?
       endpoint.add_tag(Tag.new("ingress-source", origin, "k8s_ingress_analyzer"))
