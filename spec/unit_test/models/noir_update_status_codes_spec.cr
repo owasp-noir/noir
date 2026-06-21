@@ -13,11 +13,13 @@ end
 
 # Test Runner that mocks external requests
 class TestNoirRunner < NoirRunner
+  property last_request_method : Symbol?
   property last_request_params : Hash(String, String)?
   property last_request_body : Hash(String, String)?
   property last_request_json : Bool?
 
   def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
+    @last_request_method = method
     @last_request_params = params
     @last_request_body = form
     @last_request_json = json
@@ -107,5 +109,14 @@ describe "NoirRunner#update_status_codes" do
     body["data"].should eq("value")
 
     runner.last_request_json.should be_true
+  end
+
+  it "uses GET as the representative status probe for synthetic ANY methods" do
+    runner = TestNoirRunner.new(options)
+    runner.endpoints << Endpoint.new("http://example.com/200", "ANY")
+
+    runner.update_status_codes
+
+    runner.last_request_method.should eq(:get)
   end
 end
