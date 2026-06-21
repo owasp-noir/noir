@@ -40,4 +40,19 @@ describe "http_symbols test" do
   it "QUERY" do
     get_symbol("QUERY").should eq(:query)
   end
+
+  it "expands synthetic wildcard methods to concrete HTTP methods" do
+    expand_synthetic_http_methods("ANY").should eq(WILDCARD_HTTP_METHODS)
+    expand_synthetic_http_methods("all").should eq(WILDCARD_HTTP_METHODS)
+    expand_synthetic_http_methods("*").should eq(WILDCARD_HTTP_METHODS)
+  end
+
+  it "keeps explicit methods as a single concrete method" do
+    expand_synthetic_http_methods("post").should eq(["POST"])
+  end
+
+  it "only returns methods that active delivery can send" do
+    requestable_http_methods("ANY").should eq(WILDCARD_HTTP_METHODS)
+    requestable_http_methods("SEARCH").should eq([] of String)
+  end
 end

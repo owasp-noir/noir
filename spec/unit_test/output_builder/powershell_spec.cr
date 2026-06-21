@@ -60,4 +60,23 @@ describe "OutputBuilderPowershell" do
     put_line.should contain("name=Updated Product")
     put_line.should contain("application/x-www-form-urlencoded")
   end
+
+  it "expands synthetic ANY methods into concrete PowerShell commands" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/wildcard", "ANY")])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines.size.should eq(WILDCARD_HTTP_METHODS.size)
+    lines.map { |line| line.split("\"")[1] }.should eq(WILDCARD_HTTP_METHODS)
+    lines.any?(&.includes?("\"ANY\"")).should be_false
+  end
 end

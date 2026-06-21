@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "../utils/http_symbols"
 require "json"
 
 class OutputBuilderHttpie < OutputBuilder
@@ -8,7 +9,7 @@ class OutputBuilderHttpie < OutputBuilder
       next if endpoint.mobile? # mobile deep links aren't HTTP requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
-      parts = ["http"]
+      option_parts = [] of String
       request_items = [] of String
 
       unless baked[:body].empty?
@@ -24,17 +25,17 @@ class OutputBuilderHttpie < OutputBuilder
                 end
               end
             else
-              parts << "--raw"
-              parts << shell_quote(baked[:body])
+              option_parts << "--raw"
+              option_parts << shell_quote(baked[:body])
               request_items << shell_quote("Content-Type:application/json")
             end
           rescue
-            parts << "--raw"
-            parts << shell_quote(baked[:body])
+            option_parts << "--raw"
+            option_parts << shell_quote(baked[:body])
             request_items << shell_quote("Content-Type:application/json")
           end
         else
-          parts << "--form"
+          option_parts << "--form"
           form_parts = baked[:body].split('&')
           form_parts.each do |part|
             if part.includes?('=')
@@ -44,20 +45,24 @@ class OutputBuilderHttpie < OutputBuilder
         end
       end
 
-      parts << shell_quote(endpoint.method)
-      parts << shell_quote(baked[:url])
-      parts.concat(request_items)
+      expand_synthetic_http_methods(endpoint.method).each do |method|
+        parts = ["http"]
+        parts.concat(option_parts)
+        parts << shell_quote(method)
+        parts << shell_quote(baked[:url])
+        parts.concat(request_items)
 
-      baked[:header].each do |header|
-        parts << shell_quote(header)
+        baked[:header].each do |header|
+          parts << shell_quote(header)
+        end
+
+        unless baked[:cookie].empty?
+          cookie_value = baked[:cookie].join("; ")
+          parts << shell_quote("Cookie:#{cookie_value}")
+        end
+
+        ob_puts parts.join(" ")
       end
-
-      unless baked[:cookie].empty?
-        cookie_value = baked[:cookie].join("; ")
-        parts << shell_quote("Cookie:#{cookie_value}")
-      end
-
-      ob_puts parts.join(" ")
     end
   end
 

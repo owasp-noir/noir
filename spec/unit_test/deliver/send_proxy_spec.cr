@@ -84,6 +84,21 @@ describe SendWithProxy do
     end
   end
 
+  it "expands synthetic ANY endpoints before routing through the proxy" do
+    proxy = StubProxy.new
+    begin
+      ep = Endpoint.new("http://example.test/wildcard", "ANY")
+      sender = SendWithProxy.new(base_deliver_options(proxy.url))
+      sender.run([ep])
+
+      methods = proxy.requests.map(&.[:method]).sort!
+      methods.should eq(WILDCARD_HTTP_METHODS.sort)
+      methods.includes?("ANY").should be_false
+    ensure
+      proxy.close
+    end
+  end
+
   it "swallows proxy connection errors so the batch finishes" do
     # Point at a port nobody's listening on. send_proxy must rescue
     # the connect failure and not hang the WaitGroup.
