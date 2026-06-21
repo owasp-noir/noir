@@ -1236,9 +1236,9 @@ module Analyzer::Python
 
       # Function Based View
       function_start_index = content.index /(?:async\s+)?def\s+#{function_or_class_name}\s*\(/
-      if !function_start_index.nil?
+      unless function_start_index.nil?
         function_codeblock = parse_code_block(content[function_start_index..])
-        if !function_codeblock.nil?
+        unless function_codeblock.nil?
           lines = function_codeblock.split "\n"
           function_define_line = lines[0]
           lines = lines[1..]
@@ -1248,7 +1248,7 @@ module Analyzer::Python
           # directly above the def) so a method-restricting decorator
           # under, say, `@login_required` is still seen.
           index = content_lines.index(function_define_line)
-          if !index.nil?
+          unless index.nil?
             restricted_methods = nil
             index -= 1
             while index >= 0
@@ -1270,7 +1270,7 @@ module Analyzer::Python
               else
                 HTTP_METHODS.each do |http_method_name|
                   method_name_match = preceding_definition.downcase.match /[^a-zA-Z0-9](#{http_method_name})[^a-zA-Z0-9]/
-                  if !method_name_match.nil?
+                  unless method_name_match.nil?
                     suspicious_http_methods << http_method_name.upcase
                   end
                 end
@@ -1289,7 +1289,7 @@ module Analyzer::Python
               suspicious_code = line.split("request.method")[1].strip
               HTTP_METHODS.each do |http_method_name|
                 method_name_match = suspicious_code.downcase.match /['"](#{http_method_name})['"]/
-                if !method_name_match.nil?
+                unless method_name_match.nil?
                   suspicious_http_methods << http_method_name.upcase
                 end
               end
@@ -1328,9 +1328,9 @@ module Analyzer::Python
 
       # Class Based View
       class_start_index = content.index /class\s+#{function_or_class_name}\s*[\(:]/
-      if !class_start_index.nil?
+      unless class_start_index.nil?
         class_codeblock = parse_python_class_codeblock(content, class_start_index) || parse_code_block(content[class_start_index..])
-        if !class_codeblock.nil?
+        unless class_codeblock.nil?
           lines = class_codeblock.split "\n"
           class_define_line = lines[0]
           lines = lines[1..]
@@ -1374,7 +1374,7 @@ module Analyzer::Python
           lines.each_with_index do |line, offset|
             method_function_match = line.match(REGEX_CBV_METHOD_DEF)
             any_method_function_match = line.match(/\s+(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/)
-            if !any_method_function_match.nil?
+            unless any_method_function_match.nil?
               current_http_methods = nil
             end
 
@@ -1816,7 +1816,7 @@ module Analyzer::Python
               end
 
               # If a specific parameter is found, allow the corresponding methods
-              if !field_methods.nil?
+              unless field_methods.nil?
                 field_methods.each do |field_method|
                   if !endpoint_methods.includes? field_method
                     endpoint_methods << field_method

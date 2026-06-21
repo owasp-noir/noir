@@ -194,7 +194,7 @@ class FileAnalyzer < Analyzer
 
               @@hooks.each do |hook|
                 file_results = hook.call(path, @url)
-                if !file_results.nil?
+                unless file_results.nil?
                   file_results.each do |file_result|
                     @result << file_result
                   end

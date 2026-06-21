@@ -82,7 +82,7 @@ class OutputBuilder
       end
     end
 
-    if !params.nil?
+    unless params.nil?
       params.each do |param|
         if param.param_type == "query"
           if first_query

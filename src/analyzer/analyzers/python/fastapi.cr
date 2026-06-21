@@ -73,7 +73,7 @@ module Analyzer::Python
               effective_line = coalesce_constructor_call(codelines, index, original_line, "APIRouter")
               line = effective_line.gsub(" ", "")
               match = line.includes?("FastAPI(") ? line.match(FASTAPI_INSTANCE_RE) : nil
-              if !match.nil?
+              unless match.nil?
                 fastapi_instance_name = match[1]
                 if include_router_map.has_key?(path)
                   include_router_map[path][fastapi_instance_name] ||= Router.new("")
@@ -100,7 +100,7 @@ module Analyzer::Python
 
               # https://fastapi.tiangolo.com/tutorial/bigger-applications/
               match = line.includes?("APIRouter(") ? line.match(APIROUTER_INSTANCE_RE) : nil
-              if !match.nil?
+              unless match.nil?
                 prefix = ""
                 router_instance_name = match[1]
                 if param_codes = effective_line.split("APIRouter", 2)[1]?
@@ -189,7 +189,7 @@ module Analyzer::Python
 
                 # Parsing extra params
                 function_definition = parse_function_def(codelines, def_line)
-                if !function_definition.nil?
+                unless function_definition.nil?
                   function_params = function_definition.params
                   if function_params.size > 0
                     function_params.each do |param|

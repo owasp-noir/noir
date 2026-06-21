@@ -348,7 +348,7 @@ module Noir::ImportGraph::Python
 
       unless imports.empty?
         round_bracket_index = line.index('(')
-        if !round_bracket_index.nil?
+        unless round_bracket_index.nil?
           # Parse `import (\n a,\n b,\n c)` pattern — track
           # bytes from the opening `(` to the matching `)`.
           index = offset + round_bracket_index + 1

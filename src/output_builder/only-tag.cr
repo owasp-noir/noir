@@ -5,7 +5,7 @@ class OutputBuilderOnlyTag < OutputBuilder
   def print(endpoints : Array(Endpoint))
     tags = [] of Tag
     endpoints.each do |endpoint|
-      if !endpoint.tags.nil?
+      unless endpoint.tags.nil?
         endpoint.tags.each do |tag|
           tags << tag
         end
