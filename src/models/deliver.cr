@@ -1,6 +1,7 @@
 require "colorize"
 require "./logger"
 require "../utils/utils"
+require "../utils/http_symbols"
 
 class Deliver
   @logger : NoirLogger
@@ -152,9 +153,8 @@ class Deliver
     else
       # Check if pattern is just a method name
       upper_pattern = pattern.upcase
-      http_methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY"]
 
-      if http_methods.includes?(upper_pattern)
+      if ALLOWED_HTTP_METHODS.includes?(upper_pattern)
         endpoint.method.upcase == upper_pattern
       else
         # Backward compatibility: check URL
