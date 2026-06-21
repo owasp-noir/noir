@@ -1,5 +1,6 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "../utils/http_symbols"
 require "uri"
 require "json"
 
@@ -141,28 +142,30 @@ class OutputBuilderPostman < OutputBuilder
         } of String => JSON::Any
       end
 
-      # Build request object
-      request = {
-        "method" => JSON::Any.new(endpoint.method),
-        "header" => JSON::Any.new(headers),
-        "url"    => JSON::Any.new(url_obj),
-      } of String => JSON::Any
+      expand_synthetic_http_methods(endpoint.method).each do |method|
+        # Build request object
+        request = {
+          "method" => JSON::Any.new(method),
+          "header" => JSON::Any.new(headers),
+          "url"    => JSON::Any.new(url_obj),
+        } of String => JSON::Any
 
-      if body
-        request["body"] = JSON::Any.new(body)
+        if body
+          request["body"] = JSON::Any.new(body)
+        end
+
+        # Build item
+        item = {
+          "name"    => JSON::Any.new("#{method} #{uri.path}"),
+          "request" => JSON::Any.new(request),
+        } of String => JSON::Any
+
+        if description = noir_ai_context_description(endpoint) || noir_callees_description(endpoint)
+          item["description"] = JSON::Any.new(description)
+        end
+
+        items << item
       end
-
-      # Build item
-      item = {
-        "name"    => JSON::Any.new("#{endpoint.method} #{uri.path}"),
-        "request" => JSON::Any.new(request),
-      } of String => JSON::Any
-
-      if description = noir_ai_context_description(endpoint) || noir_callees_description(endpoint)
-        item["description"] = JSON::Any.new(description)
-      end
-
-      items << item
     end
 
     # Build collection

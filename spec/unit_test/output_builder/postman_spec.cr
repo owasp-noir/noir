@@ -134,4 +134,26 @@ describe "OutputBuilderPostman" do
     collection = JSON.parse(output)
     collection["variable"][0]["value"].as_s.should eq("https://api.example.com")
   end
+
+  it "expands synthetic ANY methods into concrete collection items" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/wildcard", "ANY")])
+    collection = JSON.parse(builder.io.to_s)
+    items = collection["item"].as_a
+    methods = items.map(&.["request"].["method"].as_s)
+
+    methods.should eq(WILDCARD_HTTP_METHODS)
+    methods.includes?("ANY").should be_false
+    items.map(&.["name"].as_s).should eq(WILDCARD_HTTP_METHODS.map { |method| "#{method} /wildcard" })
+  end
 end

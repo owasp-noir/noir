@@ -210,10 +210,16 @@ class NoirRunner
     end
 
     @endpoints.each do |endpoint|
+      request_method = requestable_http_methods(endpoint.method).first?
+      unless request_method
+        final << endpoint
+        next
+      end
+
       begin
         if endpoint.params.empty?
           response = perform_request(
-            get_symbol(endpoint.method),
+            get_symbol(request_method),
             endpoint.url
           )
           endpoint.details.status_code = response.status_code
@@ -231,7 +237,7 @@ class NoirRunner
                  end
 
           response = perform_request(
-            get_symbol(endpoint.method),
+            get_symbol(request_method),
             endpoint.url,
             endpoint_hash["query"],
             body,
