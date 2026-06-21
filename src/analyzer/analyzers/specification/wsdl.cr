@@ -4,7 +4,6 @@ require "../../../models/analyzer"
 
 module Analyzer::Specification
   class WSDL < Analyzer
-    SOAP11_NS        = "http://schemas.xmlsoap.org/wsdl/soap/"
     SOAP12_NS        = "http://schemas.xmlsoap.org/wsdl/soap12/"
     MAX_IMPORT_DEPTH = 8
 

@@ -9,7 +9,6 @@ module Analyzer::Specification
     LISTEN_TLS_RE   = /\bssl\b|\bhttp2\b/
     LISTEN_RE       = /^listen\b/
     METHOD_BLOCK_RE = /^if\s*\(\s*\$request_method\s*=\s*([A-Z]+)\s*\)/
-    PROXY_PASS_RE   = /^proxy_pass\s+([^;]+);?/
 
     def analyze
       spec_files = CodeLocator.instance.all("nginx-spec")

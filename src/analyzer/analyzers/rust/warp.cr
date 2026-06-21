@@ -17,16 +17,6 @@ module Analyzer::Rust
   # subtree for the warp::* call shapes, and assembles a single
   # `Endpoint` from them.
   class Warp < RustEngine
-    VERB_TO_METHOD = {
-      "get"     => "GET",
-      "post"    => "POST",
-      "put"     => "PUT",
-      "delete"  => "DELETE",
-      "patch"   => "PATCH",
-      "head"    => "HEAD",
-      "options" => "OPTIONS",
-    }
-
     @external_handler_callee_cache = {} of String => Array(Noir::RustCalleeExtractor::Entry)
     @external_handler_miss_cache = Set(String).new
     @external_handler_callee_cache_mutex = Mutex.new

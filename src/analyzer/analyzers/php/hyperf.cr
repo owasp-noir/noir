@@ -19,8 +19,6 @@ module Analyzer::Php
       "HeadMapping"    => "HEAD",
     }
 
-    PROCEDURAL_VERBS = %w[get post put patch delete options head]
-
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")

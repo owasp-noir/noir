@@ -6,7 +6,6 @@ module Analyzer::Specification
     SAM_FUNCTION_TYPE     = "AWS::Serverless::Function"
     APIGW_RESOURCE_TYPE   = "AWS::ApiGateway::Resource"
     APIGW_METHOD_TYPE     = "AWS::ApiGateway::Method"
-    APIGW_RESTAPI_TYPE    = "AWS::ApiGateway::RestApi"
     APIGW_RESOURCE_PARENT = "ParentId"
 
     record ApigwResource, name : String, path_part : String, parent : String?

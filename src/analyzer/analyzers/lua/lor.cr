@@ -29,7 +29,6 @@ module Analyzer::Lua
     # memoize the route matcher per app/router-variable alternation.
     @route_regexes = Hash(String, Regex).new
 
-    SUPPORTED_VERBS = %w[get post put delete patch head options trace]
     # `app:all(...)` matches every method; surface the common five (the same
     # fallback set the Lapis `app:match` analyzer uses).
     ALL_VERBS = %w[GET POST PUT DELETE PATCH]
