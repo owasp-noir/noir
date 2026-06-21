@@ -154,7 +154,8 @@ module Analyzer::Specification
           query = uri.query
           normalized = path.empty? ? "/" : path
           normalized = "#{normalized}?#{query}" if query && !query.empty?
-        rescue
+        rescue e
+          logger.debug "Failed to parse Burp target URL '#{target}': #{e}"
         end
       end
 
@@ -239,7 +240,8 @@ module Analyzer::Specification
             push_unique(endpoint, Param.new(key, "", "json"))
           end
         end
-      rescue
+      rescue e
+        logger.debug "Failed to parse Burp JSON body for #{endpoint.url}: #{e}"
       end
     end
 

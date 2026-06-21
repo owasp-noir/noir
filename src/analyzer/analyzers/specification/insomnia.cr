@@ -337,7 +337,8 @@ module Analyzer::Specification
           uri = URI.parse(stripped)
           path = uri.path
           return normalize_path(path.empty? ? "/" : path)
-        rescue
+        rescue e
+          logger.debug "Failed to parse Insomnia URL '#{stripped}': #{e}"
         end
       elsif stripped =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
         return ""
@@ -363,7 +364,8 @@ module Analyzer::Specification
       begin
         uri = URI.parse(url_string)
         query = uri.query || ""
-      rescue
+      rescue e
+        logger.debug "Failed to parse Insomnia query URL '#{url_string}': #{e}"
       end
 
       if query.empty?
@@ -430,7 +432,8 @@ module Analyzer::Specification
       if h = parsed.as_h?
         h.each { |k, _| add_param(params, k, "", "json") }
       end
-    rescue
+    rescue e
+      logger.debug "Failed to parse Insomnia JSON body: #{e}"
     end
 
     private def process_json_auth(auth : JSON::Any, params : Array(Param))
