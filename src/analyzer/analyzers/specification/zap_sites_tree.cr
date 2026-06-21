@@ -50,7 +50,8 @@ module Analyzer::Specification
                 param_name = param.split("=")[0]
                 params << Param.new(param_name.to_s, "", "form")
               end
-            rescue
+            rescue e
+              logger.debug "Failed to parse ZAP query params for #{path}: #{e}"
             end
           end
 

@@ -235,7 +235,8 @@ module Analyzer::Specification
         if path = uri.path
           return normalize_path(path) unless path.empty?
         end
-      rescue
+      rescue e
+        logger.debug "Failed to parse Postman URL '#{stripped}': #{e}"
       end
 
       if scheme_idx = stripped.index("://")
@@ -292,7 +293,8 @@ module Analyzer::Specification
         URI::Params.parse(query).each do |key, value|
           params << Param.new(key, value, "query") unless key.empty?
         end
-      rescue
+      rescue e
+        logger.debug "Failed to parse Postman query params from '#{url_string}': #{e}"
       end
       params
     end

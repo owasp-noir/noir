@@ -306,7 +306,8 @@ module Analyzer::Specification
         if uri.scheme && uri.host
           return uri.path || ""
         end
-      rescue
+      rescue e
+        logger.debug "Failed to parse WSDL location '#{location}': #{e}"
       end
       location
     end

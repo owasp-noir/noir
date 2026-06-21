@@ -159,7 +159,8 @@ module Analyzer::Specification
           if h = parsed.as_h?
             h.each { |k, _| params << Param.new(k, "", "json") }
           end
-        rescue
+        rescue e
+          logger.debug "Failed to parse Caido JSON body: #{e}"
         end
       when content_type.includes?("application/x-www-form-urlencoded")
         body_str = String.new(body_bytes, encoding: "UTF-8", invalid: :skip)

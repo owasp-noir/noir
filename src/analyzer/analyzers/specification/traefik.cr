@@ -39,7 +39,8 @@ module Analyzer::Specification
           extract_dynamic_config_rules(data).each { |rule| parse_rule(rule, details, seen) }
           extract_compose_label_rules(data).each { |rule| parse_rule(rule, details, seen) }
           extract_ingress_route_rules(data).each { |rule| parse_rule(rule, details, seen) }
-        rescue
+        rescue e
+          logger.debug "Failed to parse Traefik YAML document: #{e}"
         end
       end
     end
