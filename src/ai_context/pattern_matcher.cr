@@ -7,6 +7,10 @@ module NoirAIContext
   # produces `AIContextEntry` hits. Pure functions — no per-run state —
   # so `Builder` invokes them as module methods.
   module PatternMatcher
+    # Maximum length of an AI-context display label before it is
+    # compacted or truncated.
+    MAX_LABEL_CHARS = 64
+
     extend self
 
     def detect_from_patterns(name : String,
@@ -174,8 +178,8 @@ module NoirAIContext
     private def normalize_label(text : String) : String
       label = compact_function_signature_label(text) || text.split(/\s+\|\s+\d+:/, 2)[0]
       label = label.gsub(/\s+/, " ").strip
-      label = compact_annotation_label(label) if label.size > 64
-      label[0, Math.min(label.size, 64)]
+      label = compact_annotation_label(label) if label.size > MAX_LABEL_CHARS
+      label[0, Math.min(label.size, MAX_LABEL_CHARS)]
     end
 
     private def compact_function_signature_label(label : String) : String?
