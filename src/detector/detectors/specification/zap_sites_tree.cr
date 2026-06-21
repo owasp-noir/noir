@@ -15,7 +15,8 @@ module Detector::Specification
             locator = CodeLocator.instance
             locator.push("zap-sites-tree", filename)
           end
-        rescue
+        rescue e
+          logger.debug "ZAP sites-tree detection failed for #{filename}: #{e}"
         end
       end
 

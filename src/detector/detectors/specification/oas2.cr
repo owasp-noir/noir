@@ -17,7 +17,8 @@ module Detector::Specification
             locator = CodeLocator.instance
             locator.push("swagger-json", filename)
           end
-        rescue
+        rescue e
+          logger.debug "OAS2 JSON detection failed for #{filename}: #{e}"
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         begin
@@ -27,7 +28,8 @@ module Detector::Specification
             locator = CodeLocator.instance
             locator.push("swagger-yaml", filename)
           end
-        rescue
+        rescue e
+          logger.debug "OAS2 YAML detection failed for #{filename}: #{e}"
         end
       end
 

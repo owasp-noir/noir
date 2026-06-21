@@ -14,7 +14,8 @@ module Detector::Specification
               check = true
               locator = CodeLocator.instance
               locator.push("raml-spec", filename)
-            rescue
+            rescue e
+              logger.debug "RAML detection failed for #{filename}: #{e}"
             end
           end
         end

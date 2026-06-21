@@ -14,7 +14,8 @@ module Detector::Specification
           CodeLocator.instance.push("kong-spec", filename)
           return true
         end
-      rescue
+      rescue e
+        logger.debug "Kong detection failed for #{filename}: #{e}"
       end
 
       false
