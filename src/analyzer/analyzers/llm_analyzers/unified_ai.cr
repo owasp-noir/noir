@@ -19,6 +19,7 @@ module Analyzer::AI
     AGENT_TOOL_CACHE_MAX_ENTRIES       = 96
     AGENT_CONTEXT_MAX_DYNAMIC_MESSAGES = 16
     AGENT_CONTEXT_MAX_CHARS            = 100 * 1024
+    AGENT_GREP_SNIPPET_MAX_CHARS       = 220
     AGENT_DEFAULT_FILE_PATTERN         = "*.{go,py,js,ts,java,rb,php,cs,cr,kt,rs,swift,scala,graphql}"
     VALID_METHODS                      = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
     VALID_PARAM_TYPES                  = ["query", "json", "form", "header", "cookie", "path"]
@@ -667,7 +668,7 @@ module Analyzer::AI
                 next unless regex_matches_with_timeout?(regex, line)
 
                 snippet = line.strip
-                snippet = snippet[0, 220] if snippet.size > 220
+                snippet = snippet[0, AGENT_GREP_SNIPPET_MAX_CHARS] if snippet.size > AGENT_GREP_SNIPPET_MAX_CHARS
                 matches << "#{agent_relative_path(file_path)}:#{line_number}: #{snippet}"
                 break if matches.size >= AGENT_TOOL_MAX_MATCHES
               end
