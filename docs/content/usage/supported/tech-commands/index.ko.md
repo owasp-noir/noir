@@ -10,14 +10,21 @@ sort_by = "weight"
 
 ## 플래그
 
-*   `--techs <TECHS>`: 지정된 기술만 스캔합니다 (쉼표로 구분, 예: `rails,django`).
+*   `--techs <TECHS>`: 자동 감지된 기술에 더해 지정한 기술을 분석 대상에 추가합니다 (쉼표로 구분, 예: `rails,django`).
+*   `--only-techs <TECHS>`: 자동 감지를 지정한 기술 감지기로만 제한합니다 (쉼표로 구분, 예: `rails,django`).
 *   `--exclude-techs <TECHS>`: 지정된 기술을 스캔에서 제외합니다.
-*   `--list-techs`: Noir가 지원하는 모든 기술 목록을 표시합니다.
+*   `noir list techs`: Noir가 지원하는 모든 기술 목록을 표시합니다.
 
 ### 특정 기술 포함
 
 ```bash
 noir scan . --techs rails
+```
+
+### 자동 감지를 특정 기술로 제한
+
+```bash
+noir scan . --only-techs rails
 ```
 
 ### 특정 기술 제외

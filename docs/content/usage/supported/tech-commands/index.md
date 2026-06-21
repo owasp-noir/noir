@@ -10,14 +10,21 @@ Noir can include or exclude specific technologies during scanning, letting you f
 
 ## Flags
 
-*   `--techs <TECHS>`: Only scan the specified technologies (comma-separated, e.g., `rails,django`).
+*   `--techs <TECHS>`: Add these techs to the analyzer set in addition to auto-detected ones (comma-separated, e.g., `rails,django`).
+*   `--only-techs <TECHS>`: Restrict auto-detection to these tech detectors (comma-separated, e.g., `rails,django`).
 *   `--exclude-techs <TECHS>`: Exclude the specified technologies from the scan.
-*   `--list-techs`: List all technologies Noir supports.
+*   `noir list techs`: List all technologies Noir supports.
 
 ### Include specific technologies
 
 ```bash
 noir scan . --techs rails
+```
+
+### Restrict auto-detection to specific technologies
+
+```bash
+noir scan . --only-techs rails
 ```
 
 ### Exclude specific technologies
