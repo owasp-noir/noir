@@ -1530,7 +1530,7 @@ module Analyzer::Python
         # Extract parameters from the expect decorator
         # https://flask-restx.readthedocs.io/en/latest/swagger.html#the-api-expect-decorator
         expect_match = lines[codeline_index].match /\s*@.+\.expect\(\s*(#{DOT_NATION})/
-        if !expect_match.nil?
+        unless expect_match.nil?
           parser = get_parser(path)
           if parser.@global_variables.has_key?(expect_match[1])
             gv = parser.@global_variables[expect_match[1]]

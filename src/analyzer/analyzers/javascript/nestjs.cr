@@ -353,7 +353,7 @@ module Analyzer::Javascript
         if line.includes?("@Controller")
           joined = join_decorator_header(lines, index)
           base_paths = parse_controller_decorator(joined[:text], literal_values)
-          if !base_paths.nil?
+          unless base_paths.nil?
             current_base_paths = base_paths
             current_versions = parse_controller_versions(joined[:text])
             current_content.clear
