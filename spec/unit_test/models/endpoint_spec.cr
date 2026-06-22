@@ -177,3 +177,46 @@ describe "Endpoint equality" do
     end
   end
 end
+
+describe AIContext do
+  it "is empty by default" do
+    AIContext.new.empty?.should be_true
+  end
+
+  it "is not empty after a push" do
+    ctx = AIContext.new
+    ctx.push_guard(AIContextEntry.new("guard", "auth"))
+    ctx.empty?.should be_false
+  end
+
+  it "dedups identical entries within a bucket" do
+    ctx = AIContext.new
+    ctx.push_source(AIContextEntry.new("src", "body", path: "app.py", line: 10))
+    ctx.push_source(AIContextEntry.new("src", "body", path: "app.py", line: 10))
+    ctx.sources.size.should eq 1
+  end
+
+  it "keeps entries that differ only by name" do
+    ctx = AIContext.new
+    ctx.push_source(AIContextEntry.new("src", "body"))
+    ctx.push_source(AIContextEntry.new("src", "query"))
+    ctx.sources.size.should eq 2
+  end
+
+  it "caps a bucket at MAX_PER_SECTION" do
+    ctx = AIContext.new
+    (AIContext::MAX_PER_SECTION + 5).times do |i|
+      ctx.push_sink(AIContextEntry.new("sink", "s#{i}"))
+    end
+    ctx.sinks.size.should eq AIContext::MAX_PER_SECTION
+  end
+
+  it "drops the late arrivals, not the early ones" do
+    ctx = AIContext.new
+    (AIContext::MAX_PER_SECTION + 3).times do |i|
+      ctx.push_sink(AIContextEntry.new("sink", "s#{i}"))
+    end
+    ctx.sinks.first.name.should eq "s0"
+    ctx.sinks.last.name.should eq "s#{AIContext::MAX_PER_SECTION - 1}"
+  end
+end
