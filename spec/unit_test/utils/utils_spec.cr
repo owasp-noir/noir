@@ -124,3 +124,29 @@ describe "escape_glob_path" do
     escape_glob_path("/x/{a}[b]*?\\c").should eq("/x/\\{a\\}\\[b\\]\\*\\?\\\\c")
   end
 end
+
+describe "join_path" do
+  it "joins two segments" do
+    join_path("/api", "users").should eq("/api/users")
+  end
+
+  it "collapses a double slash at the boundary" do
+    join_path("/api", "/users").should eq("/api/users")
+  end
+
+  it "strips trailing slashes from segments" do
+    join_path("api/", "/v1/").should eq("/api/v1")
+  end
+
+  it "skips empty segments" do
+    join_path("", "users").should eq("/users")
+  end
+
+  it "joins three segments (variadic)" do
+    join_path("a", "b", "c").should eq("/a/b/c")
+  end
+
+  it "always prepends a leading slash" do
+    join_path("noslash").should eq("/noslash")
+  end
+end
