@@ -5,7 +5,7 @@ require "../utils/http_symbols"
 class OutputBuilderCurl < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
-      next if endpoint.mobile? # mobile deep links aren't HTTP requests
+      next if endpoint.non_http? # mobile deep links / CLI commands aren't HTTP requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
       expand_synthetic_http_methods(endpoint.method).each do |method|

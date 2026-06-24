@@ -89,7 +89,7 @@ class EndpointOptimizer
       # Mobile deep-link URLs are not HTTP route templates: a `${...}`
       # there is an unresolved gradle manifest placeholder (kept verbatim
       # and tagged by the Android analyzer), not a JS template literal.
-      next if endpoint.mobile?
+      next if endpoint.non_http?
       endpoint.url = normalize_url_shape(endpoint.url)
       endpoints[idx] = endpoint
     end
@@ -220,7 +220,11 @@ class EndpointOptimizer
       # endpoint, not two) and keeps the emitted method canonical.
       # Unknown verbs fall back to GET.
       upcased_method = tiny_tmp.method.upcase
-      if allowed_methods.includes?(upcased_method)
+      if tiny_tmp.cli?
+        # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method;
+        # keep it intact instead of coercing the "unknown verb" to GET.
+        tiny_tmp.method = upcased_method
+      elsif allowed_methods.includes?(upcased_method)
         tiny_tmp.method = upcased_method
       else
         @logger.debug_sub "  - Invalid HTTP method: '#{tiny_tmp.method}' for '#{tiny_tmp.url}', defaulting to GET"
@@ -249,15 +253,15 @@ class EndpointOptimizer
         # papered over it). Mobile deep links are exempt: an unresolved
         # `@string/...://` or `${...}://` scheme isn't a relative path, so
         # rooting it (`/@string/...`) would corrupt the URL.
-        if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.mobile?
+        if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http?
           tiny_tmp.url = "/#{tiny_tmp.url}"
         end
 
         # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
         # unresolved gradle manifest placeholder, not a JS template literal
         # for the shape-normalizer to rewrite.
-        tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.mobile?
-        dedup_url = tiny_tmp.mobile? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
+        tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
+        dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
 
         key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, cross_tech_keys)}
 
@@ -527,6 +531,10 @@ class EndpointOptimizer
 
   private def normalized_dedup_method(method : String, allowed_methods : Array(String)) : String
     upcased_method = method.upcase
+    # CLI endpoints use the synthetic "CLI" verb; keep it so their cross-tech
+    # dedup key matches the method preserved in the main loop (which exempts
+    # cli? from the GET fallback) instead of being coerced to "GET".
+    return upcased_method if upcased_method == "CLI"
     allowed_methods.includes?(upcased_method) ? upcased_method : "GET"
   end
 
@@ -536,8 +544,8 @@ class EndpointOptimizer
 
     normalized = url
     absolute_url = normalized.matches?(ABSOLUTE_URL_RE)
-    normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.mobile?
-    return normalized if endpoint.mobile?
+    normalized = "/#{normalized}" if !absolute_url && normalized[0] != '/' && !endpoint.non_http?
+    return normalized if endpoint.non_http?
     normalized = normalize_url_shape(normalized, collection_endpoint?(endpoint))
     normalized
   end
@@ -715,7 +723,7 @@ class EndpointOptimizer
         # through untouched. Mobile deep links (incl. ones with an
         # unresolved `@string/...://` scheme) are app URLs, not paths under
         # the scanned host, so they are never base-joined either.
-        if tmp_endpoint.url.matches?(ABSOLUTE_URL_RE) || tmp_endpoint.mobile?
+        if tmp_endpoint.url.matches?(ABSOLUTE_URL_RE) || tmp_endpoint.non_http?
           tmp << tmp_endpoint
           next
         end
@@ -752,6 +760,15 @@ class EndpointOptimizer
     final = [] of Endpoint
 
     endpoints.each do |endpoint|
+      # CLI command URLs are kept verbatim — a `cli://tool/serve` segment is
+      # not a path-parameter template. Mobile deep links are NOT skipped here:
+      # their `myapp://host/:id` URLs legitimately carry path params that this
+      # pass extracts.
+      if endpoint.cli?
+        final << endpoint
+        next
+      end
+
       new_endpoint = endpoint
 
       # `{param}` patterns. A placeholder may sit at a segment boundary

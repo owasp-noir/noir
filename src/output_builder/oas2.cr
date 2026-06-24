@@ -10,7 +10,7 @@ class OutputBuilderOas2 < OutputBuilder
     paths = {} of String => Hash(String, JSON::Any)
 
     endpoints.each do |endpoint|
-      next if endpoint.mobile? # deep links aren't HTTP paths; keep them out of the spec
+      next if endpoint.non_http? # deep links / CLI commands aren't HTTP paths; keep them out of the spec
       parameters = [] of Hash(String, JSON::Any)
       consumes = [] of String
       cookie_names = [] of String
