@@ -35,6 +35,9 @@ directoryes = "directoryes"
 # `look-alikes` (plural of look-alike) in a vapor fixture comment; typos
 # mis-flags the hyphen-split `alikes` token as `alike`/`likes`.
 alikes = "alikes"
+# `sade` is a JavaScript CLI framework (referenced by the js_cli analyzer);
+# typos mis-flags it as `sad`.
+sade = "sade"
 
 [files]
 extend-exclude = [
