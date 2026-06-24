@@ -747,6 +747,28 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :go_cli => {
+      :framework => "CLI (flag / cobra / urfave / pflag / go-arg / go-flags)",
+      :language  => "Go",
+      :similar   => ["go-cli", "go_cli", "cobra", "urfave", "go-arg", "go-flags", "pflag"],
+      :supported => {
+        :endpoint => true,
+        # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method,
+        # and their inputs are flag/argument/env params, which are outside
+        # the HTTP query/path/body/header/cookie buckets the docs table
+        # tracks.
+        :method => false,
+        :params => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :go_echo => {
       :framework => "Echo",
       :language  => "Go",
@@ -2552,6 +2574,27 @@ module NoirTechs
           :body   => true,
           :header => true,
           :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :python_cli => {
+      :framework => "CLI (argparse / click / typer / fire / docopt / getopt)",
+      :language  => "Python",
+      :similar   => ["python-cli", "python_cli", "argparse", "click", "typer", "fire", "docopt"],
+      :supported => {
+        :endpoint => true,
+        # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method,
+        # and their inputs are flag/argument/env params, outside the HTTP
+        # query/path/body/header/cookie buckets the docs table tracks.
+        :method => false,
+        :params => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
         },
         :static_path => false,
         :websocket   => false,

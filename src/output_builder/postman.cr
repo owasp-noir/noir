@@ -9,6 +9,10 @@ class OutputBuilderPostman < OutputBuilder
     items = [] of Hash(String, JSON::Any)
 
     endpoints.each do |endpoint|
+      # mobile deep links / CLI commands aren't HTTP requests, so a Postman
+      # request item (URI.parse + {{baseUrl}} + HTTP verbs) is meaningless
+      # for them — keep them out of the collection.
+      next if endpoint.non_http?
       uri = URI.parse(endpoint.url)
 
       # Build URL parts

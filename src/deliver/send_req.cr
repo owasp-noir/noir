@@ -9,7 +9,7 @@ class SendReq < Deliver
     wg = WaitGroup.new
 
     applied_endpoints.each do |endpoint|
-      next if endpoint.mobile? # can't HTTP-probe an app deep link
+      next if endpoint.non_http? # can't HTTP-probe an app deep link or CLI command
       requestable_http_methods(endpoint.method).each do |request_method|
         wg.add(1)
         spawn do

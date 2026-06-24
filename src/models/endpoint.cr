@@ -18,6 +18,29 @@ struct Endpoint
     MOBILE_PROTOCOLS.includes?(@protocol)
   end
 
+  # Non-HTTP command-line entry points. A CLI endpoint models the
+  # invocation surface of a command-line program: a (sub)command addressed
+  # as `cli://<binary>/<subcommand>` whose inputs are flags/options
+  # (param_type "flag"), positional arguments ("argument"), and consumed
+  # environment variables ("env"). The method is the synthetic verb "CLI".
+  # Like mobile endpoints these are not HTTP requests, so they are excluded
+  # from HTTP-shaped output (curl/httpie/powershell, OpenAPI, Postman) and
+  # from active probing / proxy delivery, and the optimizer keeps their URL
+  # verbatim instead of normalizing it as an HTTP path.
+  CLI_PROTOCOLS = Set{"cli"}
+
+  def cli? : Bool
+    CLI_PROTOCOLS.includes?(@protocol)
+  end
+
+  # True for endpoints whose URL is not an HTTP path and must be preserved
+  # verbatim — mobile deep-link schemes and CLI command surfaces. The
+  # optimizer skips URL normalization for these, and the HTTP output
+  # builders / active deliverers skip them entirely.
+  def non_http? : Bool
+    mobile? || cli?
+  end
+
   # Free-form metadata for non-HTTP entry points (mobile deep-link
   # schemes, Android intents, universal links: action/category/host/
   # package/...). nil for ordinary endpoints and suppressed from

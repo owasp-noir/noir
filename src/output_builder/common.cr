@@ -124,6 +124,28 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << "\n  ○ extras: #{r_extras}"
       end
 
+      # CLI inputs (protocol "cli"): named flags/options, positional
+      # arguments, and consumed environment variables. HTTP endpoints have
+      # no params of these types, so these sections only render for CLI
+      # endpoints.
+      flag_params = endpoint.params.select { |p| p.param_type == "flag" }
+      if flag_params.size > 0
+        r_flags = flag_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
+        r_buffer << "\n  ○ flags: #{r_flags}"
+      end
+
+      argument_params = endpoint.params.select { |p| p.param_type == "argument" }
+      if argument_params.size > 0
+        r_arguments = argument_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
+        r_buffer << "\n  ○ arguments: #{r_arguments}"
+      end
+
+      env_params = endpoint.params.select { |p| p.param_type == "env" }
+      if env_params.size > 0
+        r_env = env_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
+        r_buffer << "\n  ○ env: #{r_env}"
+      end
+
       if baked[:body_type] == "form"
         form_params = endpoint.params.select { |p| p.param_type == "form" }
         unless form_params.empty?

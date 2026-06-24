@@ -10,7 +10,7 @@ class SendWithProxy < Deliver
     wg = WaitGroup.new
 
     applied_endpoints.each do |endpoint|
-      next if endpoint.mobile? # can't replay an app deep link through an HTTP proxy
+      next if endpoint.non_http? # can't replay an app deep link or CLI command through an HTTP proxy
       requestable_http_methods(endpoint.method).each do |request_method|
         wg.add(1)
         spawn do
