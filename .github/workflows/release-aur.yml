@@ -7,6 +7,15 @@ on:
         description: "Version to publish (e.g., 0.29.1)"
         required: true
         type: string
+      ref:
+        description: "Git ref (branch/tag/commit) to checkout (optional, defaults to v<version>)"
+        required: false
+        type: string
+      pkgrel:
+        description: "Package release version (pkgrel) (optional, defaults to 1)"
+        required: false
+        default: "1"
+        type: string
   workflow_run:
     workflows: ["Build and Release Binaries"]
     types: [completed]
@@ -21,7 +30,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.event.workflow_run.head_branch }}
+          ref: ${{ github.event.inputs.ref || (github.event_name == 'workflow_dispatch' && format('v{0}', github.event.inputs.version) || github.event.workflow_run.head_branch) }}
 
       - name: Get Version
         id: get_version
@@ -38,7 +47,7 @@ jobs:
       - name: Update PKGBUILD version
         run: |
           sed -i "s/^pkgver=.*/pkgver=${{ env.VERSION }}/" aur/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" aur/PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=${{ github.event.inputs.pkgrel || '1' }}/" aur/PKGBUILD
           cat aur/PKGBUILD
 
       - name: Publish to AUR
