@@ -531,6 +531,10 @@ class EndpointOptimizer
 
   private def normalized_dedup_method(method : String, allowed_methods : Array(String)) : String
     upcased_method = method.upcase
+    # CLI endpoints use the synthetic "CLI" verb; keep it so their cross-tech
+    # dedup key matches the method preserved in the main loop (which exempts
+    # cli? from the GET fallback) instead of being coerced to "GET".
+    return upcased_method if upcased_method == "CLI"
     allowed_methods.includes?(upcased_method) ? upcased_method : "GET"
   end
 
@@ -756,6 +760,15 @@ class EndpointOptimizer
     final = [] of Endpoint
 
     endpoints.each do |endpoint|
+      # CLI command URLs are kept verbatim — a `cli://tool/serve` segment is
+      # not a path-parameter template. Mobile deep links are NOT skipped here:
+      # their `myapp://host/:id` URLs legitimately carry path params that this
+      # pass extracts.
+      if endpoint.cli?
+        final << endpoint
+        next
+      end
+
       new_endpoint = endpoint
 
       # `{param}` patterns. A placeholder may sit at a segment boundary

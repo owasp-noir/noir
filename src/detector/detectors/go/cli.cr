@@ -24,6 +24,11 @@ module Detector::Go
     # Direct argv indexing, e.g. `os.Args[1]`.
     ARGV_INDEX = /\bos\.Args\s*\[/
 
+    # An HTTP listener: a file that uses the stdlib `flag` package for config
+    # AND serves HTTP is a web server, not a CLI, so the stdlib signals below
+    # don't qualify it (a real CLI framework, matched earlier, still does).
+    HTTP_LISTEN = /\b(?:http|fasthttp)\.ListenAndServe(?:TLS)?\s*\(|\.(?:ListenAndServe|RunTLS)\s*\(/
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".go") || File.basename(filename) == "go.mod"
       return true if CLI_LIBRARY_MARKERS.any? { |marker| file_contents.includes?(marker) }
@@ -31,6 +36,7 @@ module Detector::Go
       # go.mod has no flag/argv usage of its own; only the library markers
       # above qualify it.
       return false unless filename.ends_with?(".go")
+      return false if file_contents.matches?(HTTP_LISTEN)
       return true if file_contents.includes?("\"flag\"") && file_contents.matches?(BUILTIN_FLAG_USE)
       return true if file_contents.matches?(ARGV_INDEX)
 

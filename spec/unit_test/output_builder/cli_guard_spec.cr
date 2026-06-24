@@ -58,11 +58,14 @@ describe "cli endpoint guards" do
     paths.any?(&.includes?("cli")).should be_false
   end
 
-  it "Postman output excludes cli endpoints" do
+  it "Postman output excludes cli (and mobile) endpoints" do
     builder = OutputBuilderPostman.new(options)
     builder.io = IO::Memory.new
     builder.print(endpoints)
     out = builder.io.to_s
     out.should_not contain("cli://")
+    # The new non_http? guard also closes a pre-existing leak where mobile
+    # deep links reached the Postman collection.
+    out.should_not contain("myapp://")
   end
 end

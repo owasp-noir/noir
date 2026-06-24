@@ -42,6 +42,22 @@ FunctionalTester.new("fixtures/go/cli_cobra/", {
   :endpoints => cobra_endpoints.size,
 }, cobra_endpoints).perform_tests
 
+# --- cobra with a Use-less root command -----------------------------------
+# A root command that omits `Use:` must keep its flags on the root and must
+# not borrow the `serve` subcommand's Use token (regression for the
+# struct-bounded Use scan).
+cobra_root_endpoints = [
+  build.call("cli://rootless", [
+    Param.new("verbose", "", "flag"),
+  ]),
+  build.call("cli://rootless/serve", [] of Param),
+]
+
+FunctionalTester.new("fixtures/go/cli_cobra_root/", {
+  :techs     => 1,
+  :endpoints => cobra_root_endpoints.size,
+}, cobra_root_endpoints).perform_tests
+
 # --- urfave/cli (app + command + flags + EnvVars) --------------------------
 urfave_endpoints = [
   build.call("cli://urfavedemo", [

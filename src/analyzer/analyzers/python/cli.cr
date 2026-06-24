@@ -140,30 +140,46 @@ module Analyzer::Python
       pending_cmd : NamedTuple(receiver: String, kind: String, name: String?)? = nil
       pending_line = 0
 
-      lines.each_with_index do |line, index|
-        stripped = line.strip
-        if m = stripped.match(DECORATOR_CMD_RE)
-          name = stripped.match(DECORATOR_NAME_RE).try(&.[1])
-          pending_cmd = {receiver: m[1], kind: m[2], name: name}
-          pending_line = index + 1
+      index = 0
+      while index < lines.size
+        stripped = lines[index].strip
+
+        # Blank lines and comments don't break a decorator stack (Black often
+        # leaves a comment between the decorators and the def).
+        if stripped.empty? || stripped.starts_with?("#")
+          index += 1
           next
         end
-        if stripped.matches?(CLICK_OPTION_RE)
-          if opt = click_option_name(stripped)
+
+        # Join decorators/defs that span multiple physical lines (the standard
+        # Black/PEP8 shape) so every argument is visible on one logical line
+        # and the continuation lines aren't mistaken for stack-breaking
+        # statements.
+        start_line = index
+        logical = stripped
+        if stripped.starts_with?("@") || stripped.starts_with?("def ")
+          while parens_unbalanced?(logical) && index + 1 < lines.size
+            index += 1
+            logical += " " + lines[index].strip
+          end
+        end
+
+        if m = logical.match(DECORATOR_CMD_RE)
+          name = logical.match(DECORATOR_NAME_RE).try(&.[1])
+          pending_cmd = {receiver: m[1], kind: m[2], name: name}
+          pending_line = start_line + 1
+        elsif logical.matches?(CLICK_OPTION_RE)
+          if opt = click_option_name(logical)
             pending_params << Param.new(opt, "", "flag")
           end
-          if env = stripped.match(ENVVAR_RE)
+          if env = logical.match(ENVVAR_RE)
             pending_params << Param.new(env[1], "", "env")
           end
-          next
-        end
-        if stripped.matches?(CLICK_ARGUMENT_RE)
-          if arg = stripped.match(DECORATOR_NAME_RE)
+        elsif logical.matches?(CLICK_ARGUMENT_RE)
+          if arg = logical.match(DECORATOR_NAME_RE)
             pending_params << Param.new(arg[1], "", "argument")
           end
-          next
-        end
-        if (cmd = pending_cmd) && (dm = stripped.match(DEF_RE))
+        elsif (cmd = pending_cmd) && (dm = logical.match(DEF_RE))
           name = cmd[:name] || dm[1].gsub('_', '-')
           # A top-level group is the binary itself; everything else is a
           # subcommand under the root (flattened in v1).
@@ -176,12 +192,25 @@ module Analyzer::Python
           pending_params.each { |p| ep.push_param(p) }
           pending_cmd = nil
           pending_params.clear
-        elsif pending_cmd && !stripped.starts_with?("@") && !stripped.empty?
-          # Decorator stack broken by a non-decorator, non-def line: drop it.
+        elsif pending_cmd && !logical.starts_with?("@")
+          # A real statement (not a decorator/def/comment) broke the stack.
           pending_cmd = nil
           pending_params.clear
         end
+
+        index += 1
       end
+    end
+
+    # Whether `text` has more `(` than `)` — used to detect a decorator/def
+    # whose argument list continues on the next physical line.
+    private def parens_unbalanced?(text : String) : Bool
+      depth = 0
+      text.each_char do |ch|
+        depth += 1 if ch == '('
+        depth -= 1 if ch == ')'
+      end
+      depth > 0
     end
 
     # Picks the long option (`--name`) when present, else the short one.
@@ -269,7 +298,8 @@ module Analyzer::Python
         line_no = index + 1
         if emit_env
           {OS_ENVIRON_RE, OS_ENVIRON_GET_RE, OS_GETENV_RE}.each do |re|
-            if m = line.match(re)
+            # `scan` so multiple env reads on one line all surface.
+            line.scan(re) do |m|
               fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "env"))
             end
           end

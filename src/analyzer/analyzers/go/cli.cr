@@ -77,14 +77,19 @@ module Analyzer::Go
           binary = go_binary_name(modules, path)
           root_url = "cli://#{binary}"
           lines = content.lines
-          http_server = content.matches?(HTTP_LISTEN_RE)
+          framework_cli = FRAMEWORK_IMPORTS.any? { |marker| content.includes?(marker) }
+          # stdlib flag / os.Args / raw os.Getenv only describe a CLI surface
+          # when this file isn't really an HTTP server using flags for config.
+          # An explicit CLI framework (cobra/urfave/...) overrides that — a
+          # `serve` subcommand legitimately starts a listener.
+          emit_stdlib = framework_cli || !content.matches?(HTTP_LISTEN_RE)
           has_cli_parse = cli_parse_point?(content)
 
           # Map cobra command variables to their command URL.
           cobra_cmd_urls = map_cobra_commands(lines, binary, root_url)
 
           scan_lines(lines, path, binary, root_url, endpoints, cobra_cmd_urls,
-            http_server, has_cli_parse)
+            emit_stdlib, has_cli_parse)
           scan_struct_tags(content, path, root_url, endpoints)
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
@@ -130,30 +135,48 @@ module Analyzer::Go
     end
 
     # Builds a `cmdVar => url` map for cobra by pairing each
-    # `var x = &cobra.Command{` with the nearest following `Use:` token. A
-    # root command (Use token == binary) maps to `cli://<binary>`, every
-    # other command to `cli://<binary>/<token>`.
+    # `var x = &cobra.Command{` with the `Use:` token inside that same struct
+    # literal. A root command (Use token == binary) maps to `cli://<binary>`,
+    # every other command to `cli://<binary>/<token>`. A command with no
+    # `Use:` field (a common root pattern: only Short/Long/Run) is left
+    # unmapped so its flags fall back to the root rather than borrowing a
+    # sibling command's Use token.
     private def map_cobra_commands(lines : Array(String), binary : String, root_url : String) : Hash(String, String)
       urls = {} of String => String
       lines.each_with_index do |line, index|
         next unless m = line.match(COBRA_CMD_DECL_RE)
-        var = m[1]
-        use_token = nil
-        # Same line first, then a small forward window for the Use: field.
-        if u = line.match(COBRA_USE_RE)
-          use_token = u[1]
-        else
-          (index + 1).upto(Math.min(index + 25, lines.size - 1)) do |j|
-            if u = lines[j].match(COBRA_USE_RE)
-              use_token = u[1]
-              break
-            end
-          end
-        end
+        use_token = find_use_in_struct(lines, index)
         next unless use_token
-        urls[var] = use_token == binary ? root_url : "#{root_url}/#{use_token}"
+        urls[m[1]] = use_token == binary ? root_url : "#{root_url}/#{use_token}"
       end
       urls
+    end
+
+    # Finds the `Use:` token of the `cobra.Command{...}` struct literal that
+    # opens on `start`, bounded by that literal's own braces so a Use-less
+    # command can't borrow a sibling's `Use:` declared further down.
+    private def find_use_in_struct(lines : Array(String), start : Int32) : String?
+      depth = 0
+      seen_open = false
+      index = start
+      while index < lines.size
+        line = lines[index]
+        if u = line.match(COBRA_USE_RE)
+          return u[1]
+        end
+        line.each_char do |ch|
+          if ch == '{'
+            depth += 1
+            seen_open = true
+          elsif ch == '}'
+            depth -= 1
+          end
+        end
+        break if seen_open && depth <= 0 # struct literal closed without a Use:
+        index += 1
+        break if index - start > 60 # safety bound for malformed input
+      end
+      nil
     end
 
     # Single forward pass that attributes flags/args/env to the right
@@ -162,7 +185,7 @@ module Analyzer::Go
     private def scan_lines(lines : Array(String), path : String, binary : String,
                            root_url : String, endpoints : Hash(String, Endpoint),
                            cobra_cmd_urls : Hash(String, String),
-                           http_server : Bool, has_cli_parse : Bool)
+                           emit_stdlib : Bool, has_cli_parse : Bool)
       urfave_cmd_url = root_url
       urfave_pending : Symbol? = nil
 
@@ -218,32 +241,36 @@ module Analyzer::Go
           end
         end
 
-        # builtin flag / pflag / argv -> root command.
-        if m = line.match(BUILTIN_FLAG_RE)
-          root = fetch_endpoint(endpoints, root_url, path, line_no)
-          root.push_param(Param.new(m[1], "", "flag"))
-        end
-        if m = line.match(BUILTIN_FLAG_VAR_RE)
-          root = fetch_endpoint(endpoints, root_url, path, line_no)
-          root.push_param(Param.new(m[1], "", "flag"))
-        end
-        if m = line.match(PFLAG_RE)
-          root = fetch_endpoint(endpoints, root_url, path, line_no)
-          root.push_param(Param.new(m[1], "", "flag"))
-        end
-        if m = line.match(BUILTIN_ARG_RE)
-          root = fetch_endpoint(endpoints, root_url, path, line_no)
-          root.push_param(Param.new("arg#{m[1]}", "", "argument"))
-        end
-        if line.matches?(BUILTIN_ARGS_RE)
-          root = fetch_endpoint(endpoints, root_url, path, line_no)
-          root.push_param(Param.new("args", "", "argument"))
-        end
-        if m = line.match(OS_ARG_INDEX_RE)
-          # os.Args[0] is the program name, not an input argument.
-          unless m[1] == "0"
+        # builtin flag / pflag / argv -> root command. Gated by emit_stdlib so
+        # an HTTP server that merely uses the flag package for config doesn't
+        # surface as a CLI (a real CLI framework lifts the gate).
+        if emit_stdlib
+          if m = line.match(BUILTIN_FLAG_RE)
+            root = fetch_endpoint(endpoints, root_url, path, line_no)
+            root.push_param(Param.new(m[1], "", "flag"))
+          end
+          if m = line.match(BUILTIN_FLAG_VAR_RE)
+            root = fetch_endpoint(endpoints, root_url, path, line_no)
+            root.push_param(Param.new(m[1], "", "flag"))
+          end
+          if m = line.match(PFLAG_RE)
+            root = fetch_endpoint(endpoints, root_url, path, line_no)
+            root.push_param(Param.new(m[1], "", "flag"))
+          end
+          if m = line.match(BUILTIN_ARG_RE)
             root = fetch_endpoint(endpoints, root_url, path, line_no)
             root.push_param(Param.new("arg#{m[1]}", "", "argument"))
+          end
+          if line.matches?(BUILTIN_ARGS_RE)
+            root = fetch_endpoint(endpoints, root_url, path, line_no)
+            root.push_param(Param.new("args", "", "argument"))
+          end
+          if m = line.match(OS_ARG_INDEX_RE)
+            # os.Args[0] is the program name, not an input argument.
+            unless m[1] == "0"
+              root = fetch_endpoint(endpoints, root_url, path, line_no)
+              root.push_param(Param.new("arg#{m[1]}", "", "argument"))
+            end
           end
         end
 
@@ -254,11 +281,14 @@ module Analyzer::Go
           root.push_param(Param.new(env_name, "", "env"))
         end
 
-        # Raw env reads: only when this file is a genuine CLI entry and has
-        # no HTTP server (otherwise it's almost certainly server config).
-        if (m = line.match(OS_GETENV_RE)) && has_cli_parse && !http_server
-          root = fetch_endpoint(endpoints, root_url, path, line_no)
-          root.push_param(Param.new(m[1], "", "env"))
+        # Raw env reads: only in a genuine CLI entry (emit_stdlib already
+        # excludes HTTP servers). `scan` so multiple reads on one line all
+        # surface.
+        if emit_stdlib && has_cli_parse
+          line.scan(OS_GETENV_RE) do |env_match|
+            root = fetch_endpoint(endpoints, root_url, path, line_no)
+            root.push_param(Param.new(env_match[1], "", "env"))
+          end
         end
       end
     end
