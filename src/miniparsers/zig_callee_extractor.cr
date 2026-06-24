@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 # Shared structural helper for the Zig framework analyzers (jetzig, zap,
 # httpz, tokamak). Zig has no vendored tree-sitter grammar in noir, so the
@@ -18,10 +19,8 @@ require "../models/endpoint"
 # anywhere in the file can't turn the per-character loops into O(n²).
 module Noir::ZigCalleeExtractor
   extend self
+  include Noir::CalleeExtractorBase
 
-  # (name, path, line) — mirrors the other callee extractors' tuple so the
-  # `attach_to` helper can feed `Endpoint#push_callee` directly.
-  alias Entry = Tuple(String, String, Int32)
   alias FunctionBody = NamedTuple(body: String, path: String, start_line: Int32)
   alias FunctionInfo = NamedTuple(name: String, body: String, start_line: Int32, open: Int32, close: Int32)
 
@@ -176,12 +175,6 @@ module Noir::ZigCalleeExtractor
     end
 
     entries
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   # ---- filtering -----------------------------------------------------------

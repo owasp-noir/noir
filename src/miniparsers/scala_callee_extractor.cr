@@ -1,9 +1,9 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::ScalaCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   RESERVED = Set{
     "abstract", "case", "catch", "class", "def", "do", "else",
@@ -44,12 +44,6 @@ module Noir::ScalaCalleeExtractor
 
     scan_code(code.to_s, file_path, start_line, line_offsets, entries)
     dedup_entries(entries.sort_by(&.[0]).map(&.[1]))
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   def strip_comment(line : String, block_comment_depth : Int32 = 0, in_multiline_string : Bool = false) : String
@@ -189,18 +183,5 @@ module Noir::ScalaCalleeExtractor
 
     last = name.split('.').last
     RESERVED.includes?(last)
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(String).new
-    entries.select do |name, path, line|
-      key = "#{name}\0#{path}\0#{line}"
-      if seen.includes?(key)
-        false
-      else
-        seen.add(key)
-        true
-      end
-    end
   end
 end

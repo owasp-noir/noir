@@ -1,6 +1,7 @@
 require "acp"
 require "json"
 require "log"
+require "../response_cleanup"
 
 module LLM
   # ACP-backed client wrapper for communicating with local AI agents.
@@ -206,7 +207,7 @@ module LLM
     end
 
     private def clean_response(raw : String) : String
-      raw.gsub("```json", "").gsub("```", "").strip
+      LLM.strip_json_fences(raw)
     end
   end
 end

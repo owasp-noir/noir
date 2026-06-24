@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 require "./swift_callee_extractor"
 
 # Best-effort 1-hop callee extraction for Objective-C method bodies. Mirrors
@@ -10,8 +11,7 @@ require "./swift_callee_extractor"
 # uses the same `//`, `/* */`, and `"..."` lexical forms).
 module Noir::ObjcCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   # Keywords and primitive type names that can sit where a selector / call
   # name would, but are never a 1-hop callee.
@@ -63,13 +63,5 @@ module Noir::ObjcCalleeExtractor
   private def add_entry(entries : Array(Entry), name : String, file_path : String, line_number : Int32)
     return if name.empty? || RESERVED.includes?(name) || MEMORY_SELECTORS.includes?(name)
     entries << {name, file_path, line_number}
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(String).new
-    entries.select do |name, path, line|
-      key = "#{name}\0#{path}\0#{line}"
-      seen.add?(key)
-    end
   end
 end

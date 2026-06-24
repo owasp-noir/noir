@@ -1,7 +1,9 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./callee_extractor_base"
 
 module Noir::JSCalleeExtractor
   extend self
+  include Noir::CalleeExtractorBase
 
   HTTP_VERB_METHODS = {
     "get"     => "GET",
@@ -32,7 +34,6 @@ module Noir::JSCalleeExtractor
     "cachedEventHandler",
   }
 
-  alias Entry = Tuple(String, String, Int32)
   alias Definitions = Hash(String, Int32?)
 
   def callees_for_routes(source : String, file_path : String) : Hash(String, Array(Entry))
@@ -750,19 +751,6 @@ module Noir::JSCalleeExtractor
   private def same_node?(left : LibTreeSitter::TSNode, right : LibTreeSitter::TSNode) : Bool
     LibTreeSitter.ts_node_start_byte(left) == LibTreeSitter.ts_node_start_byte(right) &&
       LibTreeSitter.ts_node_end_byte(left) == LibTreeSitter.ts_node_end_byte(right)
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(String).new
-    entries.select do |name, path, line|
-      key = "#{name}\0#{path}\0#{line}"
-      if seen.includes?(key)
-        false
-      else
-        seen.add(key)
-        true
-      end
-    end
   end
 
   private def decode_string(node : LibTreeSitter::TSNode, source : String) : String

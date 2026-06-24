@@ -1,9 +1,10 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::HaskellCalleeExtractor
   extend self
+  include Noir::CalleeExtractorBase
 
-  alias Entry = Tuple(String, String, Int32)
   alias FunctionBody = NamedTuple(name: String, body: String, path: String, start_line: Int32)
 
   RESERVED = Set{
@@ -93,12 +94,6 @@ module Noir::HaskellCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
@@ -321,10 +316,5 @@ module Noir::HaskellCalleeExtractor
       index += 1
     end
     chars.size
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end

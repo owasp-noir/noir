@@ -1,9 +1,9 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::CppCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   RESERVED = Set{
     "alignas", "alignof", "and", "and_eq", "asm", "auto", "bitand",
@@ -42,12 +42,6 @@ module Noir::CppCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   def extract_block_after(source : String, start_index : Int32, limit : Int32 = source.bytesize) : Tuple(String, Int32)?
@@ -336,10 +330,5 @@ module Noir::CppCalleeExtractor
     end
 
     limit - 1
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end

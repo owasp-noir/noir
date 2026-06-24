@@ -1,9 +1,10 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::FsharpCalleeExtractor
   extend self
+  include Noir::CalleeExtractorBase
 
-  alias Entry = Tuple(String, String, Int32)
   alias StripState = NamedTuple(block_comment_depth: Int32, triple_string: Bool)
 
   INITIAL_STATE = {
@@ -44,12 +45,6 @@ module Noir::FsharpCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
@@ -170,10 +165,5 @@ module Noir::FsharpCalleeExtractor
     end
 
     chars.size - 1
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end

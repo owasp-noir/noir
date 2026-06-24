@@ -107,12 +107,4 @@ class WebhookTagger < Tagger
     return true if matched.any? { |part| !CALLBACK_PARTS.includes?(part) }
     parts.none? { |part| AUTH_CALLBACK_SEGMENTS.includes?(part) }
   end
-
-  private def url_parts(url : String) : Array(String)
-    url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-  end
-
-  private def normalize_param_name(name : String) : String
-    name.downcase.tr("-", "_")
-  end
 end

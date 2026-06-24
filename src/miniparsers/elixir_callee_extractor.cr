@@ -1,9 +1,9 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::ElixirCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   RESERVED = Set{
     "after", "alias", "and", "case", "catch", "cond", "def", "defdelegate",
@@ -30,12 +30,6 @@ module Noir::ElixirCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
@@ -87,9 +81,5 @@ module Noir::ElixirCalleeExtractor
     end
 
     stripped.to_s
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    entries.uniq
   end
 end

@@ -99,8 +99,4 @@ class FileUploadTagger < Tagger
     path = url.split("?", 2)[0].split("#", 2)[0]
     path.downcase.split("/").any? { |seg| SEGMENT_ONLY_PATH_PARTS.includes?(seg) }
   end
-
-  private def normalize_param_name(name : String) : String
-    name.downcase.tr("-", "_")
-  end
 end

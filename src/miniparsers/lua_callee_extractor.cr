@@ -1,9 +1,10 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::LuaCalleeExtractor
   extend self
+  include Noir::CalleeExtractorBase
 
-  alias Entry = Tuple(String, String, Int32)
   alias FunctionBody = NamedTuple(body: String, path: String, start_line: Int32)
 
   RESERVED = Set{
@@ -87,12 +88,6 @@ module Noir::LuaCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   def extract_function_after(source : String,
@@ -684,10 +679,5 @@ module Noir::LuaCalleeExtractor
       cursor += 1
     end
     indent
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end

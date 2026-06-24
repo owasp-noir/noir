@@ -89,12 +89,4 @@ class CryptoTagger < Tagger
       end
     end
   end
-
-  private def url_parts(url : String) : Array(String)
-    url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-  end
-
-  private def normalize_param_name(name : String) : String
-    name.downcase.tr("-", "_")
-  end
 end

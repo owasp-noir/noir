@@ -81,10 +81,6 @@ class AccountRecoveryTagger < Tagger
     end
   end
 
-  private def url_parts(url : String) : Array(String)
-    url.downcase.split(/[\/\-_\.]+/).reject(&.empty?)
-  end
-
   # Match `two-factor` / `second-factor` / `multi-factor` (and their `_` or
   # no-separator spellings) as whole slash segments, without the generic
   # separator split fragmenting them into benign tokens. Exact membership
@@ -95,9 +91,5 @@ class AccountRecoveryTagger < Tagger
     path.downcase.split("/").any? do |segment|
       STRONG_SQUISHED_SEGMENTS.includes?(segment.gsub(/[^a-z0-9]/, ""))
     end
-  end
-
-  private def normalize_param_name(name : String) : String
-    name.downcase.tr("-", "_")
   end
 end
