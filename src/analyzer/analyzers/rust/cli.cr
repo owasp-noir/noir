@@ -5,8 +5,16 @@ module Analyzer::Rust
   # Surfaces the command-line attack surface of Rust programs as `cli://`
   # endpoints: one endpoint per (sub)command with named options
   # (param_type "flag"), positional arguments ("argument") and consumed
-  # environment variables ("env"). Covers `std::env::args`/`var` plus clap
-  # (derive + builder), structopt and argh.
+  # environment variables ("env"). Covers `std::env::args`/`var` plus the
+  # clap / structopt / argh derive macros.
+  #
+  # Scope notes (follow-ups): the clap *builder* API (`Command::new(...)
+  # .arg(Arg::new(...))`) is only recognized as a CLI signal, not parsed into
+  # args — a line-scan can't reliably track its method-chain/paren scoping.
+  # Tuple subcommand variants that reference a separate `#[derive(Args)]`
+  # struct (`Serve(ServeArgs)`) surface that struct's flags on the root
+  # rather than the subcommand, since the variant→struct link isn't resolved
+  # here; inline-field variants (`Serve { ... }`) attribute correctly.
   #
   # Line-scan analyzer (Go/Python CLI house style) with a cross-file
   # URL-merge, instead of the tree-sitter analyze_file path the HTTP Rust
@@ -21,12 +29,9 @@ module Analyzer::Rust
     FIELD_RE     = /^\s*(?:pub\s+)?(\w+)\s*:/
     VARIANT_RE   = /^\s*(?:#\[\s*command\s*\(\s*name\s*=\s*"([^"]+)"[^\]]*\)\s*\]\s*)?([A-Z]\w*)/
 
-    # clap builder.
+    # clap builder marker (used only to recognise a builder-style CLI; the
+    # builder arg/subcommand tree is a follow-up — see the note in `analyze`).
     BUILDER_NEW = /Command::new\s*\(\s*"([^"]+)"/
-    BUILDER_SUB = /\.subcommand\s*\(/
-    ARG_NEW     = /Arg::new\s*\(\s*"([^"]+)"/
-    ARG_LONG    = /\.long\s*\(\s*"([^"]+)"/
-    ARG_ENV     = /\.env\s*\(\s*"([^"]+)"/
 
     # builtin.
     ENV_VAR_RE  = /\b(?:std::)?env::var(?:_os)?\s*\(\s*"([^"]+)"/
@@ -81,11 +86,10 @@ module Analyzer::Rust
       depth = 0
       item_kind : Symbol? = nil # :parser | :subcommand | :args
       item_body_depth = -1
+      item_entered = false
       current_cmd = root_url
       pending_derive : String? = nil
       pending_attr : Tuple(Symbol, String)? = nil # {:clap|:argh, body}
-      builder_sub_pending = false
-      builder_cmd_url = root_url
 
       lines.each_with_index do |line, index|
         entry_depth = depth
@@ -102,7 +106,12 @@ module Analyzer::Rust
               item_kind = kind
               current_cmd = root_url
               opened = line.count('{')
+              # The body may open on this line (`struct X {`) or the next
+              # (`struct X\n{`). Only mark the item "entered" once its brace
+              # is actually seen, so the teardown guard below can't fire on
+              # the declaration line and drop the whole item.
               item_body_depth = opened > 0 ? entry_depth + opened : entry_depth + 1
+              item_entered = opened > 0
             end
             pending_derive = nil
           end
@@ -131,27 +140,6 @@ module Analyzer::Rust
           end
         end
 
-        # clap builder API (cursor-based, independent of derive).
-        if line.matches?(BUILDER_SUB)
-          builder_sub_pending = true
-        end
-        if m = line.match(BUILDER_NEW)
-          if builder_sub_pending
-            builder_cmd_url = m[1] == binary ? root_url : "#{root_url}/#{m[1]}"
-            fetch_endpoint(endpoints, builder_cmd_url, path, line_no) unless builder_cmd_url == root_url
-            builder_sub_pending = false
-          elsif m[1] == binary
-            builder_cmd_url = root_url
-          end
-        end
-        if m = line.match(ARG_NEW)
-          name = line.match(ARG_LONG).try(&.[1]) || m[1]
-          fetch_endpoint(endpoints, builder_cmd_url, path, line_no).push_param(Param.new(name, "", "flag"))
-          if env = line.match(ARG_ENV)
-            fetch_endpoint(endpoints, builder_cmd_url, path, line_no).push_param(Param.new(env[1], "", "env"))
-          end
-        end
-
         # builtin env reads (gated).
         if emit_env
           line.scan(ENV_VAR_RE) do |env_match|
@@ -160,8 +148,10 @@ module Analyzer::Rust
         end
 
         depth += line.count('{') - line.count('}')
-        if item_kind && depth < item_body_depth
+        item_entered = true if item_kind && !item_entered && depth >= item_body_depth
+        if item_kind && item_entered && depth < item_body_depth
           item_kind = nil
+          item_entered = false
           current_cmd = root_url
           pending_attr = nil
         end

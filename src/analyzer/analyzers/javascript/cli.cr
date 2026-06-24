@@ -31,6 +31,12 @@ module Analyzer::Javascript
     MEOW_FLAGS_HEADER = /\bflags\s*:\s*\{/
     OBJECT_KEY_RE     = /^\s*['"]?([A-Za-z_$][\w$-]*)['"]?\s*:/
 
+    # A fresh statement that chains command/option/argument off an identifier
+    # (`program.option(...)`, `cli.command(...)`) starts at the root program,
+    # not the previously-seen subcommand — used to reset the cursor so a
+    # global option declared after a subcommand isn't mis-attributed to it.
+    NEW_CHAIN_RE = /^[A-Za-z_$][\w$]*\s*\.\s*(?:command|option|argument)\b/
+
     # env reads (gated). NODE_ENV is config plumbing, not an input.
     ENV_DOT   = /\bprocess\.env\.([A-Za-z_][A-Za-z0-9_]*)/
     ENV_INDEX = /\bprocess\.env\s*\[\s*['"]([A-Za-z_][A-Za-z0-9_]*)['"]\s*\]/
@@ -92,6 +98,11 @@ module Analyzer::Javascript
       while index < lines.size
         line = lines[index]
         line_no = index + 1
+
+        # A new statement chaining off the root program var resets the cursor
+        # to root before this line's .command (if any) re-sets it, so a global
+        # `program.option(...)` after a subcommand attributes to the root.
+        current_url = root_url if line.lstrip.matches?(NEW_CHAIN_RE)
 
         # Subcommand: set the cursor so subsequent option/argument lines (and
         # ones chained on the same line) attribute to it.
@@ -165,8 +176,12 @@ module Analyzer::Javascript
       index = start
       while index < lines.size
         line = lines[index]
+        # depth == 1 is the flag-name level of the schema; option descriptor
+        # keys (type/alias/default) live one level deeper and are never seen
+        # here, so every key collected is a real flag name (including one
+        # literally named `type`).
         if seen_open && depth == 1 && (m = line.match(OBJECT_KEY_RE))
-          keys << m[1] unless m[1] == "type" || m[1] == "alias" || m[1] == "default"
+          keys << m[1]
         end
         line.each_char do |ch|
           if ch == '{'
