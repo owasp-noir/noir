@@ -74,13 +74,5 @@ class Detector
     file_contents.matches?(/\badd(?:_runtime)?_dependency\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/)
   end
 
-  macro define_getter_methods(names)
-    {% for name, index in names %}
-      def {{ name.id }}
-        @{{ name.id }}
-      end
-    {% end %}
-  end
-
-  define_getter_methods [name, logger]
+  getter name, logger
 end

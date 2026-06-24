@@ -149,15 +149,7 @@ class Analyzer
     end
   end
 
-  macro define_getter_methods(names)
-    {% for name, index in names %}
-      def {{ name.id }}
-        @{{ name.id }}
-      end
-    {% end %}
-  end
-
-  define_getter_methods [result, base_path, base_paths, url, logger]
+  getter result, base_path, base_paths, url, logger
 end
 
 class FileAnalyzer < Analyzer

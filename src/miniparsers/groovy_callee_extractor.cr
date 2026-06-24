@@ -1,10 +1,10 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 require "../utils/groovy_literal_scanner"
 
 module Noir::GroovyCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   RESERVED = Set{
     "as", "assert", "break", "case", "catch", "class", "const", "continue",
@@ -30,12 +30,6 @@ module Noir::GroovyCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
@@ -157,10 +151,5 @@ module Noir::GroovyCalleeExtractor
       stripped << (body[index] == '\n' ? '\n' : ' ')
       index += 1
     end
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end

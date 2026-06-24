@@ -83,10 +83,6 @@ class OAuthTagger < Tagger
     end
   end
 
-  private def normalize_param_name(name : String) : String
-    name.downcase.tr("-", "_")
-  end
-
   # The URL's path with scheme/host/query/fragment stripped and lowercased.
   private def path_only(url : String) : String
     path = url.strip

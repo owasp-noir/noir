@@ -1,10 +1,10 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 require "./rust_callee_extractor_ts"
 
 module Noir::RustCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   # Kept as a public constant for any external caller that still
   # consults the reserved set; the active implementation lives on
@@ -18,12 +18,6 @@ module Noir::RustCalleeExtractor
   # analyzers don't need to change.
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     Noir::RustCalleeExtractorTS.callees_for_body_text(body, file_path, start_line)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   def strip_comment(line : String, in_block_comment : Bool = false, preserve_strings : Bool = false) : String

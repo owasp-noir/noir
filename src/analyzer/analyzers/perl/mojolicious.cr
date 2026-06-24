@@ -65,12 +65,6 @@ module Analyzer::Perl
       endpoints
     end
 
-    private def perl_test_path?(path : String, ext : String) : Bool
-      return true if ext == ".t"
-      return true if path.includes?("/t/")
-      false
-    end
-
     def analyze_content(content : String,
                         file_path : String,
                         include_callee : Bool = false,

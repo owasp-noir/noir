@@ -89,10 +89,6 @@ class JwtTagger < Tagger
     !!value.match(/\AeyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\z/)
   end
 
-  private def normalize_param_name(name : String) : String
-    name.downcase.tr("-", "_")
-  end
-
   private def auth_url?(url : String) : Bool
     parts = url.downcase.tr("-", "_").split(/[\/\.]+/).reject(&.empty?)
     parts.any? { |part| AUTH_PATH_PARTS.includes?(part) }

@@ -347,38 +347,9 @@ module Analyzer::Perl
       offsets
     end
 
-    private def perl_test_path?(path : String, ext : String) : Bool
-      return true if ext == ".t"
-      return true if path.includes?("/t/")
-      false
-    end
-
     # POD blocks (`=head1` ... `=cut`) and `__END__`/`__DATA__` sections
     # are documentation/data, not code. Blank them while preserving the
     # original line count so endpoint line numbers stay aligned with the
     # source file.
-    private def sanitize_perl_lines(lines : Array(String)) : Array(String)
-      in_pod = false
-      ended = false
-      lines.map do |line|
-        stripped = line.lstrip
-        if ended
-          ""
-        elsif stripped.starts_with?("__END__") || stripped.starts_with?("__DATA__")
-          ended = true
-          ""
-        elsif in_pod
-          if stripped.starts_with?("=cut")
-            in_pod = false
-          end
-          ""
-        elsif stripped.size >= 2 && stripped[0] == '=' && stripped[1].ascii_letter?
-          in_pod = true
-          ""
-        else
-          line
-        end
-      end
-    end
   end
 end

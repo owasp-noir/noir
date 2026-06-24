@@ -1,9 +1,10 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::DartCalleeExtractor
   extend self
+  include Noir::CalleeExtractorBase
 
-  alias Entry = Tuple(String, String, Int32)
   alias BodyInfo = Tuple(String, Int32, Int32)
   alias StripState = NamedTuple(block_comment: Bool, triple_quote: Char)
 
@@ -39,12 +40,6 @@ module Noir::DartCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   def extract_body_after(source : String, start_index : Int32, limit : Int32 = source.bytesize) : BodyInfo?
@@ -374,10 +369,5 @@ module Noir::DartCalleeExtractor
     end
 
     limit - 1
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end

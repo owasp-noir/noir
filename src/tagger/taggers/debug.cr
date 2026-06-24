@@ -105,8 +105,4 @@ class DebugTagger < Tagger
       url
     end
   end
-
-  private def normalize_param_name(name : String) : String
-    name.downcase.tr("-", "_")
-  end
 end

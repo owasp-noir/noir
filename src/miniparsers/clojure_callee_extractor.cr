@@ -1,9 +1,9 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::ClojureCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   RESERVED = Set{
     "def", "defn", "defmacro", "fn", "let", "letfn", "if", "if-not",
@@ -36,12 +36,6 @@ module Noir::ClojureCalleeExtractor
     result = Hash(String, Array(Entry)).new
     scan_function_definitions(source, 0, source.bytesize, file_path, result)
     result
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   private def scan_function_definitions(source : String,
@@ -376,10 +370,5 @@ module Noir::ClojureCalleeExtractor
 
   private def whitespace?(char : Char) : Bool
     char.whitespace?
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end

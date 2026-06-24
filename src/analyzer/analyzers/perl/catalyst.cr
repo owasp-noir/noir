@@ -735,42 +735,12 @@ module Analyzer::Perl
       normalized.size > 1 && normalized.ends_with?("/") ? normalized.rchop : normalized
     end
 
-    private def perl_test_path?(path : String, ext : String) : Bool
-      return true if ext == ".t"
-      return true if path.includes?("/t/")
-      false
-    end
-
     private def catalyst_source_file?(path : String) : Bool
       ext = File.extname(path)
       return false unless ext == ".pl" || ext == ".pm" ||
                           ext == ".psgi" || ext == ".t"
       return false if perl_test_path?(path, ext)
       true
-    end
-
-    private def sanitize_perl_lines(lines : Array(String)) : Array(String)
-      in_pod = false
-      ended = false
-      lines.map do |line|
-        stripped = line.lstrip
-        if ended
-          ""
-        elsif stripped.starts_with?("__END__") || stripped.starts_with?("__DATA__")
-          ended = true
-          ""
-        elsif in_pod
-          if stripped.starts_with?("=cut")
-            in_pod = false
-          end
-          ""
-        elsif stripped.size >= 2 && stripped[0] == '=' && stripped[1].ascii_letter?
-          in_pod = true
-          ""
-        else
-          line
-        end
-      end
     end
 
     private def brace_delta(line : String) : Int32

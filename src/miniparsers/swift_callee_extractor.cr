@@ -1,9 +1,9 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::SwiftCalleeExtractor
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   RESERVED = Set{
     "as", "associatedtype", "break", "case", "catch", "class",
@@ -35,12 +35,6 @@ module Noir::SwiftCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   def strip_comment(line : String, in_block_comment : Bool = false) : String
@@ -163,18 +157,5 @@ module Noir::SwiftCalleeExtractor
   private def control_flow_condition?(line : String, name_start : Int32) : Bool
     prefix = line[0...name_start].strip
     !!prefix.match(/\b(if|guard|while|for|switch|catch|else|do)$/)
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(String).new
-    entries.select do |name, path, line|
-      key = "#{name}\0#{path}\0#{line}"
-      if seen.includes?(key)
-        false
-      else
-        seen.add(key)
-        true
-      end
-    end
   end
 end

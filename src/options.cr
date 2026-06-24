@@ -9,6 +9,18 @@ private def append_to_yaml_array(hash : Hash(String, YAML::Any), key : String, v
   hash[key] = YAML::Any.new(arr)
 end
 
+# Append a value onto a comma-separated string option, accumulating across
+# repeated flags instead of overwriting (so `--flag a --flag b` keeps both).
+# When `reset_if` equals the current value — e.g. an untouched default list —
+# the accumulation starts fresh so the first user value replaces the default
+# rather than appending to it.
+private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, value : String, reset_if : String? = nil)
+  existing = (hash[key]? || YAML::Any.new("")).to_s
+  existing = "" if reset_if && existing == reset_if
+  combined = existing.empty? ? value : "#{existing},#{value}"
+  hash[key] = YAML::Any.new(combined)
+end
+
 # Pre-scan ARGV for `--config-file PATH` / `--config-file=PATH` so
 # `run_options_parser` can hand the path to ConfigInitializer
 # before any YAML is read. Returns the last occurrence (matching
@@ -269,9 +281,7 @@ def run_options_parser
       # Accumulate same as --exclude-path / --use-taggers / -t etc.
       # so users can repeat the flag (`--exclude-codes 404
       # --exclude-codes 500`) without losing the first value.
-      existing = (noir_options["exclude_codes"]? || YAML::Any.new("")).to_s
-      combined = existing.empty? ? v : "#{existing},#{v}"
-      noir_options["exclude_codes"] = YAML::Any.new(combined)
+      append_to_csv_option(noir_options, "exclude_codes", v)
     end
     parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go; repeatable)" do |v|
       # Storage is a comma-separated string (the detector splits on
@@ -279,9 +289,7 @@ def run_options_parser
       # the first via plain `=`. Concatenate instead so users can
       # repeat the flag OR pack patterns into one comma list — both
       # shapes accumulate to the same final list.
-      existing = (noir_options["exclude_path"]? || YAML::Any.new("")).to_s
-      combined = existing.empty? ? v : "#{existing},#{v}"
-      noir_options["exclude_path"] = YAML::Any.new(combined)
+      append_to_csv_option(noir_options, "exclude_path", v)
     end
     parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
       apply_include_list(noir_options, v)
@@ -339,9 +347,7 @@ def run_options_parser
       # `--use-taggers` value. Pre-fix `--use-taggers hunt
       # --use-taggers cors` silently dropped `hunt` because the
       # second assignment overwrote the first.
-      existing = (noir_options["use_taggers"]? || YAML::Any.new("")).to_s
-      combined = existing.empty? ? v : "#{existing},#{v}"
-      noir_options["use_taggers"] = YAML::Any.new(combined)
+      append_to_csv_option(noir_options, "use_taggers", v)
     end
 
     # PROBE — fire HTTP requests against the endpoints noir just
@@ -430,12 +436,7 @@ def run_options_parser
       # first `--ai-native-tools-allowlist openai` would land
       # appended onto the default list ("openai,anthropic,gemini,…
       # ,openai") instead of replacing it.
-      defaults_csv = LLM::NativeToolCalling.default_allowlist_csv
-      existing_any = noir_options["ai_native_tools_allowlist"]?
-      existing = existing_any.try(&.to_s) || ""
-      existing = "" if existing == defaults_csv
-      combined = existing.empty? ? v : "#{existing},#{v}"
-      noir_options["ai_native_tools_allowlist"] = YAML::Any.new(combined)
+      append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv)
     end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       validated = positive_int_or_die!("--ai-max-token", v)
@@ -470,19 +471,13 @@ def run_options_parser
     # dropped tech. `--only-techs` and `--exclude-techs` had the
     # same shape.
     parser.on "-t LIST", "--techs rails,php", "Add these techs to the analyzer set (in addition to auto-detected ones; repeatable)" do |v|
-      existing = (noir_options["techs"]? || YAML::Any.new("")).to_s
-      combined = existing.empty? ? v : "#{existing},#{v}"
-      noir_options["techs"] = YAML::Any.new(combined)
+      append_to_csv_option(noir_options, "techs", v)
     end
     parser.on "--only-techs LIST", "Restrict auto-detection to these tech detectors (repeatable)" do |v|
-      existing = (noir_options["only_techs"]? || YAML::Any.new("")).to_s
-      combined = existing.empty? ? v : "#{existing},#{v}"
-      noir_options["only_techs"] = YAML::Any.new(combined)
+      append_to_csv_option(noir_options, "only_techs", v)
     end
     parser.on "--exclude-techs LIST", "Drop these techs from the final result after detection (repeatable)" do |v|
-      existing = (noir_options["exclude_techs"]? || YAML::Any.new("")).to_s
-      combined = existing.empty? ? v : "#{existing},#{v}"
-      noir_options["exclude_techs"] = YAML::Any.new(combined)
+      append_to_csv_option(noir_options, "exclude_techs", v)
     end
 
     parser.separator "\n CONFIG:".colorize(:blue)

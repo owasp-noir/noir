@@ -1,6 +1,7 @@
 require "json"
 require "uri"
 require "http/client"
+require "../response_cleanup"
 
 module LLM
   # General OpenAI-compatible LLM client
@@ -88,7 +89,7 @@ module LLM
       end
       response_json = JSON.parse(response.body)
 
-      response_json["choices"][0]["message"]["content"].to_s.gsub("```json", "").gsub("```", "").strip
+      LLM.strip_json_fences(response_json["choices"][0]["message"]["content"].to_s)
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
@@ -151,7 +152,7 @@ module LLM
     end
 
     private def self.clean_content(text : String) : String
-      text.gsub("```json", "").gsub("```", "").strip
+      LLM.strip_json_fences(text)
     end
 
     private def ensure_chat_completions_path(url : String) : String

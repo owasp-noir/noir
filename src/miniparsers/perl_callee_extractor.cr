@@ -1,9 +1,10 @@
 require "../models/endpoint"
+require "./callee_extractor_base"
 
 module Noir::PerlCalleeExtractor
   extend self
+  include Noir::CalleeExtractorBase
 
-  alias Entry = Tuple(String, String, Int32)
   alias SubBody = NamedTuple(body: String, path: String, start_line: Int32)
 
   RESERVED = Set{
@@ -44,12 +45,6 @@ module Noir::PerlCalleeExtractor
     end
 
     dedup_entries(entries)
-  end
-
-  def attach_to(endpoint : Endpoint, callees : Array(Entry))
-    callees.each do |name, path, line|
-      endpoint.push_callee(Callee.new(name, path: path, line: line))
-    end
   end
 
   def controller_action_callees(source : String, file_path : String) : Hash(String, Array(Entry))
@@ -488,10 +483,5 @@ module Noir::PerlCalleeExtractor
       end
       index += 1
     end
-  end
-
-  private def dedup_entries(entries : Array(Entry)) : Array(Entry)
-    seen = Set(Entry).new
-    entries.select { |entry| seen.add?(entry) }
   end
 end
