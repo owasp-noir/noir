@@ -27,7 +27,7 @@ module Noir
     # Drop duplicate (name, path, line) entries, preserving first-seen order.
     # Entry is a value tuple, so set membership compares by value; this is
     # equivalent to the former per-extractor string-key and Array#uniq forms.
-    def dedup_entries(entries : Array(Entry)) : Array(Entry)
+    private def dedup_entries(entries : Array(Entry)) : Array(Entry)
       seen = Set(Entry).new
       entries.select { |entry| seen.add?(entry) }
     end

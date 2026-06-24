@@ -113,38 +113,6 @@ module Analyzer::Perl
       endpoints
     end
 
-    # POD blocks (`=head1` ... `=cut`) and `__END__`/`__DATA__` sections
-    # are documentation/data, not code. Real-world Mojolicious modules
-    # (e.g. `Mojolicious::Plugin::Minion::Admin`) ship example
-    # `app->routes->any('/...')` calls inside their POD, which would
-    # otherwise be picked up as live routes. We blank those lines while
-    # preserving the original line count so endpoint line numbers stay
-    # aligned with the source file.
-    private def sanitize_perl_lines(lines : Array(String)) : Array(String)
-      in_pod = false
-      ended = false
-      lines.map do |line|
-        stripped = line.lstrip
-        if ended
-          ""
-        elsif stripped.starts_with?("__END__") || stripped.starts_with?("__DATA__")
-          ended = true
-          ""
-        elsif in_pod
-          if stripped.starts_with?("=cut")
-            in_pod = false
-          end
-          ""
-        elsif stripped.size >= 2 && stripped[0] == '=' && stripped[1].ascii_letter?
-          # POD directives: =head1, =head2, =item, =over, =pod, =for, =begin, =encoding ...
-          in_pod = true
-          ""
-        else
-          line
-        end
-      end
-    end
-
     private def index_controller_callees : ControllerCalleeIndex
       callees = ControllerCalleeIndex.new
 

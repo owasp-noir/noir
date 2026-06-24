@@ -57,6 +57,7 @@ module Analyzer::Perl
           end
           ""
         elsif stripped.size >= 2 && stripped[0] == '=' && stripped[1].ascii_letter?
+          # POD directives: =head1, =head2, =item, =over, =pod, =for, =begin, =encoding ...
           in_pod = true
           ""
         else

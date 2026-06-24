@@ -21,8 +21,6 @@ module Noir::ZigCalleeExtractor
   extend self
   include Noir::CalleeExtractorBase
 
-  # (name, path, line) — mirrors the other callee extractors' tuple so the
-  # `attach_to` helper can feed `Endpoint#push_callee` directly.
   alias FunctionBody = NamedTuple(body: String, path: String, start_line: Int32)
   alias FunctionInfo = NamedTuple(name: String, body: String, start_line: Int32, open: Int32, close: Int32)
 

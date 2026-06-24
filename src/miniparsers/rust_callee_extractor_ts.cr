@@ -1,4 +1,5 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./callee_extractor_base"
 
 # Tree-sitter-backed Rust callee extractor. Replaces the regex
 # line-scanner in `Noir::RustCalleeExtractor` with an AST walker over
@@ -20,8 +21,7 @@ require "../ext/tree_sitter/tree_sitter"
 # `Noir::GoCalleeExtractor`.
 module Noir::RustCalleeExtractorTS
   extend self
-
-  alias Entry = Tuple(String, String, Int32)
+  include Noir::CalleeExtractorBase
 
   # Rust keywords + commonly-aliased control-flow constructors that
   # surface as `call_expression`s but carry no useful callee signal.
