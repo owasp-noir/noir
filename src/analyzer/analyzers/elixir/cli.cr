@@ -26,11 +26,12 @@ module Analyzer::Elixir
             next unless content.matches?(MARKERS)
             root_url = "cli://#{cli_binary_name(path)}"
             emit_env = !content.matches?(WEB_RE)
-            root = fetch_endpoint(endpoints, root_url, path, 1)
 
-            # switches:[...] keyword list (may span lines).
-            if m = content.match(SWITCHES)
-              m[1].scan(SWITCH_KEY) { |sm| root.push_param(Param.new(sm[1], "", "flag")) }
+            # Every `switches: [...]` keyword list (a file may dispatch several
+            # OptionParser.parse calls). Endpoint is created lazily so a bare
+            # `System.argv` file with no switches/env emits nothing.
+            content.scan(SWITCHES) do |m|
+              m[1].scan(SWITCH_KEY) { |sm| fetch_endpoint(endpoints, root_url, path, 1).push_param(Param.new(sm[1], "", "flag")) }
             end
 
             content.each_line.with_index do |line, index|

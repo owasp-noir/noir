@@ -6,7 +6,7 @@ module Analyzer::Clojure
   # *command-line-args* / (System/getenv). Line-scan, merged by URL.
   class Cli < Analyzer
     TOOLS_CLI_LONG = /"--([A-Za-z0-9][\w-]*)/
-    TOOLS_CLI_SPEC = /\[\s*(?:"-[A-Za-z0-9]"|nil)\s+"--/
+    TOOLS_CLI_SPEC = /\[\s*(?:(?:"-[A-Za-z0-9]"|nil)\s+)?"--/
     MATIC_COMMAND  = /:command\s+"([^"]+)"/
     MATIC_OPTION   = /:option\s+"([A-Za-z0-9][\w-]*)"/
     NTH_ARGS       = /\(\s*nth\s+(?:\*command-line-args\*|args)\s+(\d+)/
@@ -34,11 +34,10 @@ module Analyzer::Clojure
                 current_url = "#{root_url}/#{m[1]}"
                 fetch_endpoint(endpoints, current_url, path, line_no)
               end
-              # tools.cli option vector: ["-p" "--port PORT" ...]
+              # tools.cli option vectors: ["-p" "--port PORT" ...]. `scan` so
+              # several vectors on one line (and the long-only form) all surface.
               if line.matches?(TOOLS_CLI_SPEC)
-                if lm = line.match(TOOLS_CLI_LONG)
-                  fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(lm[1], "", "flag"))
-                end
+                line.scan(TOOLS_CLI_LONG) { |lm| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(lm[1], "", "flag")) }
               end
               if m = line.match(MATIC_OPTION)
                 fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "flag"))

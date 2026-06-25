@@ -25,18 +25,23 @@ module Analyzer::Haskell
             next unless content.matches?(MARKERS)
             root_url = "cli://#{cli_binary_name(path)}"
             emit_env = !content.matches?(WEB_RE)
-            current_url = root_url
             content.each_line.with_index do |line, index|
               line_no = index + 1
+              # optparse-applicative defines subcommand option parsers in
+              # separate top-level bindings, so a sticky cursor would
+              # misattribute later root globals. Scope a `command "x"` only to
+              # options on the SAME line (the common inline shape); otherwise
+              # attribute to the root.
+              target = root_url
               if m = line.match(COMMAND)
-                current_url = "#{root_url}/#{m[1]}"
-                fetch_endpoint(endpoints, current_url, path, line_no)
+                target = "#{root_url}/#{m[1]}"
+                fetch_endpoint(endpoints, target, path, line_no)
               end
               if m = line.match(LONG)
-                fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+                fetch_endpoint(endpoints, target, path, line_no).push_param(Param.new(m[1], "", "flag"))
               end
               if m = line.match(ARGUMENT)
-                fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1].downcase, "", "argument"))
+                fetch_endpoint(endpoints, target, path, line_no).push_param(Param.new(m[1].downcase, "", "argument"))
               end
               if emit_env
                 line.scan(GET_ENV) { |em| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(em[1], "", "env")) }
