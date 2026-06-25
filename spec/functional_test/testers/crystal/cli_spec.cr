@@ -1,0 +1,17 @@
+require "../../func_spec.cr"
+
+build = ->(url : String, params : Array(Param)) do
+  ep = Endpoint.new(url, "CLI", params)
+  ep.protocol = "cli"
+  ep
+end
+
+endpoints = [
+  build.call("cli://tool", [
+    Param.new("verbose", "", "flag"),
+    Param.new("name", "", "flag"),
+    Param.new("API_TOKEN", "", "env"),
+    Param.new("arg0", "", "argument"),
+  ]),
+]
+FunctionalTester.new("fixtures/crystal/cli_optionparser/", {:techs => 1, :endpoints => endpoints.size}, endpoints).perform_tests
