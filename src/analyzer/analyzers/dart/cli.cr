@@ -5,12 +5,14 @@ module Analyzer::Dart
   # endpoints: the args package (ArgParser / CommandRunner) plus
   # main(List<String>) argv and Platform.environment. Line-scan, merged by URL.
   class Cli < Analyzer
-    ADD_OPTION   = /\.addOption\s*\(\s*['"]([^'"]+)['"]/
-    ADD_FLAG     = /\.addFlag\s*\(\s*['"]([^'"]+)['"]/
-    ADD_COMMAND  = /\.addCommand\s*\(\s*['"]([^'"]+)['"]/
-    RUNNER_NAME  = /\bget\s+name\s*=>\s*['"]([^'"]+)['"]/
-    ARGS_IDX     = /\bargs\s*\[\s*(\d+)\s*\]/
-    PLATFORM_ENV = /Platform\.environment\s*\[\s*['"]([^'"]+)['"]\s*\]/
+    ARGPARSER_VAR  = /(\w+)\s*=\s*ArgParser\s*\(/
+    SUBCOMMAND_VAR = /(\w+)\s*=\s*\w+\s*\.\s*addCommand\s*\(\s*['"]([^'"]+)['"]/
+    ADD_COMMAND    = /\.addCommand\s*\(\s*['"]([^'"]+)['"]/
+    ADD_OPTION     = /(\w+)\s*\.\s*addOption\s*\(\s*['"]([^'"]+)['"]/
+    ADD_FLAG       = /(\w+)\s*\.\s*addFlag\s*\(\s*['"]([^'"]+)['"]/
+    RUNNER_NAME    = /\bget\s+name\s*=>\s*['"]([^'"]+)['"]/
+    ARGS_IDX       = /\bargs\s*\[\s*(\d+)\s*\]/
+    PLATFORM_ENV   = /Platform\.environment\s*\[\s*['"]([^'"]+)['"]\s*\]/
 
     MARKERS = /package:args\/|package:dcli\/|\bArgParser\s*\(|\bCommandRunner\b|\bextends\s+Command\b|main\s*\(\s*List<String>/
     WEB_RE  = /package:shelf\/|package:dart_frog|package:angel3|package:alfred|\bHttpServer\.bind\b/
@@ -37,11 +39,20 @@ module Analyzer::Dart
     end
 
     private def scan(lines, path, root_url, endpoints, emit_env)
-      current_url = root_url
+      current_url = root_url            # cursor for CommandRunner `get name`
+      var_urls = {} of String => String # ArgParser / addCommand variables
       lines.each_with_index do |line, index|
         line_no = index + 1
 
-        if m = line.match(ADD_COMMAND)
+        if m = line.match(ARGPARSER_VAR)
+          var_urls[m[1]] = root_url
+        end
+        if m = line.match(SUBCOMMAND_VAR)
+          url = "#{root_url}/#{m[2]}"
+          var_urls[m[1]] = url
+          current_url = url
+          fetch_endpoint(endpoints, url, path, line_no)
+        elsif m = line.match(ADD_COMMAND)
           current_url = "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
         end
@@ -49,11 +60,14 @@ module Analyzer::Dart
           current_url = "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
         end
+        # Options/flags attribute by receiver variable (root parser vs a
+        # subcommand var); CommandRunner's `argParser.addOption` falls back to
+        # the current `get name` cursor.
         if m = line.match(ADD_OPTION)
-          fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+          fetch_endpoint(endpoints, var_urls[m[1]]? || current_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
         end
         if m = line.match(ADD_FLAG)
-          fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+          fetch_endpoint(endpoints, var_urls[m[1]]? || current_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
         end
         if m = line.match(ARGS_IDX)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{m[1]}", "", "argument"))

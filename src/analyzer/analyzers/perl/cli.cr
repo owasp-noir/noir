@@ -27,11 +27,20 @@ module Analyzer::Perl
             next unless content.matches?(MARKERS)
             root_url = "cli://#{cli_binary_name(path)}"
             emit_env = !content.matches?(WEB_RE)
-            has_getoptions = content.includes?("GetOptions")
+            in_getoptions = false
+            go_depth = 0
             content.each_line.with_index do |line, index|
               line_no = index + 1
-              if has_getoptions && (m = line.match(GETOPT_KEY))
-                fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+              # Only treat `"key" => \ref` pairs as flags inside the
+              # GetOptions(...) call, so unrelated reference hashes elsewhere
+              # in the file don't leak as bogus flags.
+              in_getoptions = true if line.includes?("GetOptions") && line.includes?("(")
+              if in_getoptions
+                line.scan(GETOPT_KEY) { |m| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag")) }
+              end
+              if in_getoptions
+                go_depth += line.count('(') - line.count(')')
+                in_getoptions = false if go_depth <= 0
               end
               if m = line.match(GETOPTS)
                 parse_getopt_short(m[1], fetch_endpoint(endpoints, root_url, path, line_no))

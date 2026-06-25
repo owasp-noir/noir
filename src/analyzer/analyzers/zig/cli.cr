@@ -8,9 +8,10 @@ module Analyzer::Zig
     # zig-clap multiline param string lines (each begins with `\\`).
     CLAP_FLAG = /\\\\\s*(?:-[A-Za-z0-9]\s*,\s*)?--([A-Za-z0-9][\w-]*)/
     CLAP_ARG  = /\\\\\s*<([A-Za-z_]\w*)>/
-    # zig-cli struct literals.
+    # zig-cli struct literals. (Only flags are extracted: a `.name` literal is
+    # ambiguous between the app name, a subcommand, and a positional-arg name,
+    # so subcommand extraction from zig-cli is a follow-up.)
     CLI_LONG = /\.long_name\s*=\s*"(-{0,2}[A-Za-z0-9][\w-]*)"/
-    CLI_NAME = /\.name\s*=\s*"([A-Za-z0-9][\w.-]*)"/
     # builtin.
     ARGS_IDX = /\bargs\s*\[\s*(\d+)\s*\]/
     GET_ENV  = /\b(?:std\.process\.getEnvVarOwned\s*\(\s*[\w.]+\s*,\s*"([^"]+)"|(?:std\.)?posix\.getenv\s*\(\s*"([^"]+)")/
@@ -40,9 +41,6 @@ module Analyzer::Zig
             end
             if m = line.match(CLI_LONG)
               fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "flag"))
-            elsif m = line.match(CLI_NAME)
-              # The first .name is the app/binary; later ones are subcommands.
-              fetch_endpoint(endpoints, "#{root_url}/#{m[1]}", path, line_no) unless m[1] == binary
             end
             if m = line.match(ARGS_IDX)
               fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{m[1]}", "", "argument")) unless m[1] == "0"

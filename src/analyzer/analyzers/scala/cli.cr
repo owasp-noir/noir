@@ -28,18 +28,32 @@ module Analyzer::Scala
           next unless content.matches?(MARKERS)
           root_url = "cli://#{cli_binary_name(path)}"
           emit_env = !content.matches?(WEB_RE)
-          current_url = root_url
+          pending_cmd_url = root_url
+          in_children = false
+          children_depth = 0
           content.each_line.with_index do |line, index|
             line_no = index + 1
             if (m = line.match(SCOPT_CMD)) || (m = line.match(DEC_CMD))
-              current_url = "#{root_url}/#{m[1]}"
-              fetch_endpoint(endpoints, current_url, path, line_no)
+              pending_cmd_url = "#{root_url}/#{m[1]}"
+              fetch_endpoint(endpoints, pending_cmd_url, path, line_no)
             end
+            # scopt scopes a subcommand's opts inside `.children( ... )`; only
+            # there do options bind to the subcommand. Outside, they (and any
+            # trailing root opts after the block) bind to the root.
+            in_children = true if line.includes?(".children(")
+            target = in_children ? pending_cmd_url : root_url
             if (m = line.match(SCOPT_OPT)) || (m = line.match(DEC_OPT)) || (m = line.match(DEC_FLAG))
-              fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+              fetch_endpoint(endpoints, target, path, line_no).push_param(Param.new(m[1], "", "flag"))
             end
             if (m = line.match(SCOPT_ARG)) || (m = line.match(DEC_ARG))
-              fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1], "", "argument"))
+              fetch_endpoint(endpoints, target, path, line_no).push_param(Param.new(m[1], "", "argument"))
+            end
+            if in_children
+              children_depth += line.count('(') - line.count(')')
+              if children_depth <= 0
+                in_children = false
+                children_depth = 0
+              end
             end
             if emit_env
               line.scan(SYS_ENV) do |em|
