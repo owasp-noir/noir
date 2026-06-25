@@ -13,6 +13,8 @@ module Analyzer::Java
   # JavaEngine.test_path? to skip tests.
   class Cli < Analyzer
     COMMAND_ATTR    = /@Command\s*\([^)]*\bname\s*=\s*"([^"]+)"/
+    COMMAND_OPEN    = /@Command\b/
+    COMMAND_NAME_KV = /\bname\s*=\s*"([^"]+)"/
     SUBCOMMANDS_KEY = /\bsubcommands\s*=/
     OPTION_ATTR     = /@Option\s*\(([^)]*)\)/
     PARAMETER_ATTR  = /@Parameter\s*\(([^)]*)\)/  # jcommander
@@ -81,16 +83,30 @@ module Analyzer::Java
         line_no = index + 1
 
         # jcommander subcommand (commandNames) takes precedence over the
-        # plain @Parameters positional form.
+        # plain @Parameters positional form. A new command context also drops
+        # any dangling positional (e.g. @Parameters on a method, which never
+        # reaches a field declaration).
         if m = line.match(JC_COMMAND)
+          pending_argument = false
           current_url = "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
         elsif m = line.match(COMMAND_ATTR)
+          pending_argument = false
           current_url = m[1] == binary ? root_url : "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
+        elsif line.matches?(COMMAND_OPEN)
+          # Multi-line @Command(...): the name= sits on a following line.
+          if name = command_name_lookahead(lines, index)
+            pending_argument = false
+            current_url = name == binary ? root_url : "#{root_url}/#{name}"
+            fetch_endpoint(endpoints, current_url, path, line_no)
+          end
         end
 
         if m = line.match(OPTION_ATTR)
+          # A real field/option annotation ends any dangling positional so a
+          # method-level @Parameters can't steal this @Option's field.
+          pending_argument = false
           if name = annotation_flag_name(m[1])
             fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag"))
           end
@@ -122,6 +138,20 @@ module Analyzer::Java
           end
         end
       end
+    end
+
+    # Finds the `name = "..."` of a multi-line @Command annotation that opens
+    # on `start`, scanning until the annotation closes (`)`) or the class
+    # declaration begins.
+    private def command_name_lookahead(lines : Array(String), start : Int32) : String?
+      (start...Math.min(start + 8, lines.size)).each do |j|
+        line = lines[j]
+        if m = line.match(COMMAND_NAME_KV)
+          return m[1]
+        end
+        break if j > start && (line.includes?(")") || line.matches?(/\b(?:class|interface|enum)\s/))
+      end
+      nil
     end
 
     # Extracts the long flag name from an @Option/@Parameter body's

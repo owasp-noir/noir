@@ -15,11 +15,17 @@ module Analyzer::CSharp
   class Cli < Analyzer
     include Common
 
-    # System.CommandLine (builder).
-    ROOT_COMMAND = /\bnew\s+RootCommand\b/
-    NEW_COMMAND  = /\bnew\s+Command\s*\(\s*@?"([^"]+)"/
-    NEW_OPTION   = /\bnew\s+Option(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
-    NEW_ARGUMENT = /\bnew\s+Argument(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
+    # System.CommandLine (builder). Variable-mapped: a command/option binds to
+    # its receiver variable, so root options declared after a subcommand
+    # aren't mis-attributed to the subcommand.
+    ROOT_COMMAND    = /\bnew\s+RootCommand\b/
+    ROOT_VAR        = /(\w+)\s*=\s*new\s+RootCommand\b/
+    COMMAND_VAR     = /(\w+)\s*=\s*new\s+Command\s*\(\s*@?"([^"]+)"/
+    NEW_COMMAND     = /\bnew\s+Command\s*\(\s*@?"([^"]+)"/
+    ADD_OPTION_RECV = /(\w+)\s*\.\s*Add(?:Global)?Option\s*\(\s*new\s+Option(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
+    ADD_ARG_RECV    = /(\w+)\s*\.\s*AddArgument\s*\(\s*new\s+Argument(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
+    NEW_OPTION      = /\bnew\s+Option(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
+    NEW_ARGUMENT    = /\bnew\s+Argument(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
 
     # Attribute-driven libs (CommandLineParser / CliFx / Spectre / airline-ish).
     VERB_ATTR   = /\[\s*(?:Verb|Command)\s*\(\s*@?"([^"]+)"/
@@ -85,17 +91,28 @@ module Analyzer::CSharp
 
     private def scan(lines : Array(String), path : String, binary : String,
                      root_url : String, endpoints : Hash(String, Endpoint), emit_builtin : Bool)
-      current_url = root_url
-      main_argv : String? = nil
+      current_url = root_url            # cursor for the attribute-driven path
+      var_urls = {} of String => String # System.CommandLine command variables
+
+      # Resolve the Main(string[] argv) param once and compile its index
+      # regex a single time (interpolating it per line recompiles PCRE2).
+      main_argv = nil
+      lines.each { |l| main_argv ||= l.match(MAIN_ARGS).try(&.[1]) }
+      argv_re = main_argv ? Regex.new("\\b#{Regex.escape(main_argv)}\\s*\\[\\s*(\\d+)\\s*\\]") : nil
 
       lines.each_with_index do |line, index|
         line_no = index + 1
 
-        main_argv = line.match(MAIN_ARGS).try(&.[1]) || main_argv
-
-        # System.CommandLine builder: RootCommand -> root, new Command -> sub.
-        current_url = root_url if line.matches?(ROOT_COMMAND)
-        if m = line.match(NEW_COMMAND)
+        # System.CommandLine builder, attributed by receiver variable.
+        if m = line.match(ROOT_VAR)
+          var_urls[m[1]] = root_url
+        end
+        if m = line.match(COMMAND_VAR)
+          url = "#{root_url}/#{m[2]}"
+          var_urls[m[1]] = url
+          current_url = url
+          fetch_endpoint(endpoints, url, path, line_no)
+        elsif m = line.match(NEW_COMMAND)
           current_url = "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
         end
@@ -104,15 +121,21 @@ module Analyzer::CSharp
           fetch_endpoint(endpoints, sub, path, line_no)
           current_url = sub
         end
-        if m = line.match(NEW_OPTION)
+        if m = line.match(ADD_OPTION_RECV)
+          url = var_urls[m[1]]? || current_url
+          fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(m[2].lstrip('-'), "", "flag"))
+        elsif m = line.match(NEW_OPTION)
           fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "flag"))
         end
-        if m = line.match(NEW_ARGUMENT)
+        if m = line.match(ADD_ARG_RECV)
+          url = var_urls[m[1]]? || current_url
+          fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(m[2].lstrip('-'), "", "argument"))
+        elsif m = line.match(NEW_ARGUMENT)
           fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "argument"))
         end
 
         # Attribute-driven libs: [Verb/Command("x")] opens a subcommand whose
-        # following [Option]/[Value]/[CommandParameter] properties bind to it.
+        # following [Option]/[CommandParameter] properties bind to it.
         if m = line.match(VERB_ATTR)
           current_url = "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
@@ -131,7 +154,7 @@ module Analyzer::CSharp
 
         # builtin argv positional + env (gated).
         if emit_builtin
-          if (argv = main_argv) && (m = line.match(/\b#{Regex.escape(argv)}\s*\[\s*(\d+)\s*\]/))
+          if (re = argv_re) && (m = line.match(re))
             fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{m[1]}", "", "argument"))
           end
           line.scan(GET_ENV) do |env_match|
@@ -144,9 +167,13 @@ module Analyzer::CSharp
     # Extracts the flag name from a [Option(...)] / [CommandOption(...)] body.
     # CommandLineParser uses ('x', "name") or ("name"); CliFx ("name");
     # Spectre ("-n|--name"). Prefer the long form.
+    # CommandLineParser uses ('x', "name") — the short char is SINGLE-quoted,
+    # the long name DOUBLE-quoted; CliFx ("name"); Spectre ("-n|--name"). Only
+    # double-quoted, space-free tokens are option names (skips the short 'x'
+    # char and any HelpText = "..." value). Prefer the long form.
     private def attr_option_name(body : String) : String?
       tokens = [] of String
-      body.scan(/["']([^"']+)["']/) { |m| tokens << m[1] }
+      body.scan(/"([^"]+)"/) { |m| tokens << m[1] unless m[1].includes?(' ') }
       return if tokens.empty?
       # Spectre packs "-n|--name" into one token.
       long = nil

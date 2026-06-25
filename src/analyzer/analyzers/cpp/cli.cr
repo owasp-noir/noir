@@ -12,18 +12,23 @@ module Analyzer::Cpp
   class Cli < Analyzer
     EXTS = [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx"]
 
-    # CLI11.
-    APP_DECL   = /\bCLI::App\s+\w+/
-    SUBCOMMAND = /\.add_subcommand\s*\(\s*"([^"]+)"/
-    ADD_OPTION = /(?:\.|->)\s*add_option\s*\(\s*"([^"]+)"/
-    ADD_FLAG   = /(?:\.|->)\s*add_flag\s*\(\s*"([^"]+)"/
+    # CLI11. Variable-mapped: an option/flag binds to its receiver variable
+    # (app vs a subcommand), so a root option declared after a subcommand
+    # isn't mis-attributed to it.
+    APP_DECL       = /\bCLI::App\s+(\w+)/
+    SUBCOMMAND_VAR = /(\w+)\s*=\s*\w+\s*(?:\.|->)\s*add_subcommand\s*\(\s*"([^"]+)"/
+    SUBCOMMAND     = /(?:\.|->)\s*add_subcommand\s*\(\s*"([^"]+)"/
+    ADD_OPTION     = /(\w+)\s*(?:\.|->)\s*add_option\s*\(\s*"([^"]+)"/
+    ADD_FLAG       = /(\w+)\s*(?:\.|->)\s*add_flag\s*\(\s*"([^"]+)"/
 
     # getopt_long struct option entries + short spec.
     LONG_OPT_ENTRY = /\{\s*"([A-Za-z0-9][\w-]*)"\s*,\s*(?:no_argument|required_argument|optional_argument|\d)/
     GETOPT_CALL    = /\bgetopt(?:_long)?\s*\([^,]+,[^,]+,\s*"([^"]*)"/
 
-    # cxxopts / boost::program_options: ("p,port", ...) / ("port", ...).
-    OPTS_PAIR = /\(\s*"([A-Za-z0-9][\w,-]*)"\s*,/
+    # cxxopts / boost::program_options option specs are bare `("name", ...)`
+    # grouping/chaining calls — the `(` is preceded by `)` or whitespace, not
+    # an identifier (which would make it a helper call like default_value(...)).
+    OPTS_PAIR = /(?<!\w)\(\s*"([A-Za-z0-9][\w,-]*)"\s*,/
     OPTS_CALL = /add_options\s*\(\s*\)/
 
     # gflags.
@@ -81,25 +86,35 @@ module Analyzer::Cpp
 
     private def scan(lines : Array(String), path : String, root_url : String,
                      endpoints : Hash(String, Endpoint), emit_env : Bool)
-      current_url = root_url
+      current_url = root_url            # cursor for bare add_subcommand chains
+      var_urls = {} of String => String # CLI11 App / subcommand variables
       in_opts_block = false
 
       lines.each_with_index do |line, index|
         line_no = index + 1
 
-        current_url = root_url if line.matches?(APP_DECL)
-        if m = line.match(SUBCOMMAND)
+        # CLI11 variables: `CLI::App app{...}` -> root; `auto* x = ....add_subcommand("y")` -> sub.
+        if m = line.match(APP_DECL)
+          var_urls[m[1]] = root_url
+        end
+        if m = line.match(SUBCOMMAND_VAR)
+          url = "#{root_url}/#{m[2]}"
+          var_urls[m[1]] = url
+          current_url = url
+          fetch_endpoint(endpoints, url, path, line_no)
+        elsif m = line.match(SUBCOMMAND)
           current_url = "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
         end
 
-        # CLI11 add_option("-p,--port" | "config") / add_flag("-v,--verbose").
+        # CLI11 add_option("-p,--port" | "config") / add_flag("-v,--verbose"),
+        # attributed by the receiver variable.
         if m = line.match(ADD_OPTION)
-          push_named(endpoints, current_url, path, line_no, m[1])
+          push_named(endpoints, var_urls[m[1]]? || current_url, path, line_no, m[2])
         end
         if m = line.match(ADD_FLAG)
-          name = opt_long(m[1])
-          fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag")) unless name.empty?
+          name = opt_long(m[2])
+          fetch_endpoint(endpoints, var_urls[m[1]]? || current_url, path, line_no).push_param(Param.new(name, "", "flag")) unless name.empty?
         end
 
         # getopt_long struct option entries + short spec (root flags).
@@ -110,11 +125,14 @@ module Analyzer::Cpp
           parse_getopt_short(m[1], fetch_endpoint(endpoints, root_url, path, line_no))
         end
 
-        # cxxopts / boost::program_options option pairs.
+        # cxxopts / boost::program_options option pairs — `scan` so every pair
+        # on a chained line is captured.
         in_opts_block = true if line.matches?(OPTS_CALL)
-        if in_opts_block && (m = line.match(OPTS_PAIR))
-          name = opt_long(m[1])
-          fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag")) unless name.empty?
+        if in_opts_block
+          line.scan(OPTS_PAIR) do |om|
+            name = opt_long(om[1])
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag")) unless name.empty?
+          end
         end
         in_opts_block = false if in_opts_block && line.includes?(";")
 
