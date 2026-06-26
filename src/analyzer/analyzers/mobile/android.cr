@@ -665,8 +665,14 @@ module Analyzer::Mobile
                                package : String) : Hash(String, String)
       metadata = {} of String => String
       metadata["via"] = via unless via.empty?
-      metadata["action"] = actions.first if actions.size > 0
-      metadata["category"] = categories.first if categories.size > 0
+      if actions.size > 0
+        metadata["action"] = actions.first
+        metadata["actions"] = actions.join(", ")
+      end
+      if categories.size > 0
+        metadata["category"] = categories.first
+        metadata["categories"] = categories.join(", ")
+      end
       metadata["host"] = host unless host.empty?
       metadata["package"] = package unless package.empty?
       metadata

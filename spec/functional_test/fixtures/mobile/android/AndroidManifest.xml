@@ -150,10 +150,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Exported component with a data-less custom action (IPC surface) -->
+        <!-- Exported component with a data-less custom action (IPC surface).
+             Declares several actions/categories in one filter: every entry is a
+             valid external match, so all of them must show up in metadata. -->
         <service android:name=".SyncService" android:exported="true">
             <intent-filter>
                 <action android:name="com.example.ACTION_SYNC" />
+                <action android:name="com.example.ACTION_REFRESH" />
+                <action android:name="com.example.ACTION_CANCEL" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="com.example.category.BACKGROUND" />
             </intent-filter>
         </service>
 
