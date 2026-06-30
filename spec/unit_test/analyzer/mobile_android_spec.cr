@@ -71,6 +71,14 @@ describe "Analyzer::Mobile::Android" do
     ep.metadata.not_nil!["action"].should eq("com.example.ACTION_SYNC")
   end
 
+  it "preserves every action and category from a multi-entry intent-filter" do
+    md = find.call("intent://com.example.myapp/.SyncService").not_nil!.metadata.not_nil!
+    md["action"].should eq("com.example.ACTION_SYNC")
+    md["actions"].should eq("com.example.ACTION_SYNC, com.example.ACTION_REFRESH, com.example.ACTION_CANCEL")
+    md["category"].should eq("android.intent.category.DEFAULT")
+    md["categories"].should eq("android.intent.category.DEFAULT, com.example.category.BACKGROUND")
+  end
+
   it "emits an explicit android-intent surface for an exported, filter-less component" do
     ep = find.call("intent://com.example.myapp/.ExportedActivity").not_nil!
     ep.protocol.should eq("android-intent")
