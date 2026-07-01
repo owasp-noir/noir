@@ -106,18 +106,26 @@ No package manager? Grab a prebuilt binary from [GitHub Releases](https://github
 
 To install or update:
 
-1. Download the archive for your platform (e.g., `noir-linux-x86_64.tar.gz` or `noir-macos-universal.tar.gz`).
-2. Extract:
+1. Download the binary for your platform (e.g., `noir-v1.1.0-linux-x86_64` on Linux, or `noir-v1.1.0-osx-arm64.tar.gz` on macOS).
+2. **Linux** — make it executable and move it into your `PATH`:
 
     ```bash
-    tar xzf noir-*.tar.gz
+    chmod +x noir-v*-linux-*
+    sudo mv noir-v*-linux-* /usr/local/bin/noir
     ```
 
-3. Move or overwrite the existing binary in your `PATH`:
+3. **macOS** — extract the tarball and keep the bundled `lib/` directory next to the binary:
 
     ```bash
-    sudo mv noir /usr/local/bin/
+    # system-wide install
+    sudo mkdir -p /opt/noir
+    sudo tar xzf noir-v*-osx-*.tar.gz -C /opt/noir
+    sudo ln -sf /opt/noir/noir /usr/local/bin/noir
     ```
+
+    For a user-local install without `sudo`, extract under `~/.local/noir` instead and add `~/.local/noir` to your `PATH`.
+
+    The macOS archive ships OpenSSL libraries in `lib/`; do not move only the `noir` binary without them.
 
 4. Verify:
 

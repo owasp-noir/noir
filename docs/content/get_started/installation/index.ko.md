@@ -106,18 +106,26 @@ nix run github:owasp-noir/noir -- -h
 
 설치 및 업데이트:
 
-1. 플랫폼에 맞는 압축 파일(예: `noir-linux-x86_64.tar.gz`, `noir-macos-universal.tar.gz`)을 다운로드합니다.
-2. 압축을 해제합니다.
+1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.1.0-linux-x86_64`, macOS는 `noir-v1.1.0-osx-arm64.tar.gz`).
+2. **Linux** — 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
 
     ```bash
-    tar xzf noir-*.tar.gz
+    chmod +x noir-v*-linux-*
+    sudo mv noir-v*-linux-* /usr/local/bin/noir
     ```
 
-3. `PATH`에 있는 디렉터리로 옮기거나 기존 바이너리를 덮어씁니다.
+3. **macOS** — tarball을 풀고 `lib/` 디렉터리를 바이너리와 함께 유지합니다.
 
     ```bash
-    sudo mv noir /usr/local/bin/
+    # 시스템 전역 설치
+    sudo mkdir -p /opt/noir
+    sudo tar xzf noir-v*-osx-*.tar.gz -C /opt/noir
+    sudo ln -sf /opt/noir/noir /usr/local/bin/noir
     ```
+
+    `sudo` 없이 설치하려면 `~/.local/noir`에 풀고 `PATH`에 해당 디렉터리를 추가하세요.
+
+    macOS 아카이브에는 OpenSSL 라이브러리가 `lib/`에 포함되어 있으므로, `noir` 바이너리만 따로 옮기지 마세요.
 
 4. 설치를 확인합니다.
 
