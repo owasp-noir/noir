@@ -12,7 +12,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: ubuntu-24.04-arm
+            platform: linux
+          - os: macos-latest
+            platform: macos
+          - os: macos-15-intel
+            platform: macos
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Crystal
@@ -32,7 +40,7 @@ jobs:
           else
             echo "ARCH=unknown" >> $GITHUB_ENV
           fi
-      - if: startsWith(matrix.os, 'ubuntu')
+      - if: matrix.platform == 'linux'
         name: Build binary (Linux)
         run: |
           mkdir -p build
@@ -43,13 +51,20 @@ jobs:
             mkdir -p build &&
             crystal build src/noir.cr -o build/noir-${GITHUB_REF_SLUG}-linux-${ARCH} --release --no-debug --static
           "
-      - if: startsWith(matrix.os, 'macos')
-        name: Build binary (macOS)
+      - if: matrix.platform == 'macos'
+        name: Install macOS build dependencies
+        run: brew install openssl@3 pkg-config
+      - if: matrix.platform == 'macos'
+        name: Build and package binary (macOS)
         run: |
           mkdir -p build
-          crystal build src/noir.cr \
-            -o build/noir-${GITHUB_REF_SLUG}-osx-${ARCH} \
-            --no-debug --release
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          export PKG_CONFIG_PATH="${OPENSSL_PREFIX}/lib/pkgconfig"
+          BIN="build/noir-${GITHUB_REF_SLUG}-osx-${ARCH}"
+          crystal build src/noir.cr -o "$BIN" --no-debug --release
+          chmod +x scripts/package-macos.sh
+          scripts/package-macos.sh "$BIN" "build/noir-${GITHUB_REF_SLUG}-osx-${ARCH}.tar.gz"
+          rm -f "$BIN"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
