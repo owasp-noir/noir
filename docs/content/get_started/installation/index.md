@@ -117,9 +117,13 @@ To install or update:
 3. **macOS** — extract the tarball and keep the bundled `lib/` directory next to the binary:
 
     ```bash
-    tar xzf noir-v*-osx-*.tar.gz -C /opt/noir
+    # system-wide install
+    sudo mkdir -p /opt/noir
+    sudo tar xzf noir-v*-osx-*.tar.gz -C /opt/noir
     sudo ln -sf /opt/noir/noir /usr/local/bin/noir
     ```
+
+    For a user-local install without `sudo`, extract under `~/.local/noir` instead and add `~/.local/noir` to your `PATH`.
 
     The macOS archive ships OpenSSL libraries in `lib/`; do not move only the `noir` binary without them.
 

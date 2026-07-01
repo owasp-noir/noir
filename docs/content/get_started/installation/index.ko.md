@@ -117,9 +117,13 @@ nix run github:owasp-noir/noir -- -h
 3. **macOS** — tarball을 풀고 `lib/` 디렉터리를 바이너리와 함께 유지합니다.
 
     ```bash
-    tar xzf noir-v*-osx-*.tar.gz -C /opt/noir
+    # 시스템 전역 설치
+    sudo mkdir -p /opt/noir
+    sudo tar xzf noir-v*-osx-*.tar.gz -C /opt/noir
     sudo ln -sf /opt/noir/noir /usr/local/bin/noir
     ```
+
+    `sudo` 없이 설치하려면 `~/.local/noir`에 풀고 `PATH`에 해당 디렉터리를 추가하세요.
 
     macOS 아카이브에는 OpenSSL 라이브러리가 `lib/`에 포함되어 있으므로, `noir` 바이너리만 따로 옮기지 마세요.
 

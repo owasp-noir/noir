@@ -63,8 +63,11 @@ done
 
 rewrite_paths() {
   local target="$1"
+  local linked
+  linked="$(otool -L "$target" | awk 'NR>1 {print $1}')"
   while IFS= read -r dep; do
     [[ -z "$dep" ]] && continue
+    echo "$linked" | grep -Fxq "$dep" || continue
     install_name_tool -change "$dep" "@executable_path/lib/$(basename "$dep")" "$target"
   done < "$DEPS_FILE"
 }
@@ -76,14 +79,19 @@ for lib in "$STAGING"/lib/*.dylib; do
   rewrite_paths "$lib"
 done
 
-if otool -L "$STAGING/noir" | awk 'NR>1 {print $1}' | grep -Eq "$BREW_PREFIX_RE"; then
-  echo "error: Homebrew paths remain after bundling:" >&2
-  otool -L "$STAGING/noir" >&2
-  exit 1
-fi
+for candidate in "$STAGING/noir" "$STAGING"/lib/*.dylib; do
+  [[ -e "$candidate" ]] || continue
+  if otool -L "$candidate" | awk 'NR>1 {print $1}' | grep -Eq "$BREW_PREFIX_RE"; then
+    echo "error: Homebrew paths remain after bundling in $candidate:" >&2
+    otool -L "$candidate" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$(dirname "$OUTPUT")"
 tar -czf "$OUTPUT" -C "$STAGING" noir lib
 
 echo "Created $OUTPUT"
-"$STAGING/noir" --version
+if "$STAGING/noir" --version >/dev/null 2>&1; then
+  "$STAGING/noir" --version
+fi

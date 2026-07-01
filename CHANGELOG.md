@@ -2,6 +2,11 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- macOS release binaries are now shipped as portable `.tar.gz` archives with bundled OpenSSL libraries, instead of a bare executable linked against Homebrew `openssl@1.1` that failed to launch on clean machines (`dyld: libssl.1.1.dylib not found`).
+
 ## v1.1.0
 
 Noir v1.1.0 is a large coverage and accuracy release. It introduces mobile deep-link analysis, Zig support, and a broad set of new framework, tagger, and specification analyzers, alongside a codebase-wide accuracy sweep and significant performance work.
