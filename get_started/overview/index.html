@@ -1,0 +1,767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; form-action 'self'">
+  
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#050507">
+  <meta name="description" content="OWASP Noir is a SAST tool that extracts endpoints from source code to feed human reviewers, AI auditors, and DAST scanners.">
+  <title>What is Noir? - OWASP Noir</title>
+  <meta property="og:title" content="What is Noir?">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/get_started/overview/">
+  <meta property="og:description" content="OWASP Noir is a SAST tool that extracts endpoints from source code to feed human reviewers, AI auditors, and DAST scanners.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/get_started-overview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="What is Noir?">
+  <meta name="twitter:description" content="OWASP Noir is a SAST tool that extracts endpoints from source code to feed human reviewers, AI auditors, and DAST scanners.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/get_started-overview.png">
+  
+  
+  
+  
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/get_started/overview/">
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/overview/">
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/overview/">
+  <link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/get_started/overview/">
+  <script type="application/ld+json">
+  
+  
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "What is Noir?",
+    "description": "OWASP Noir is a SAST tool that extracts endpoints from source code to feed human reviewers, AI auditors, and DAST scanners.",
+    "inLanguage": "en",
+    "url": "https://owasp-noir.github.io/noir/get_started/overview/",
+    "isPartOf": {"@type": "WebSite", "name": "OWASP Noir", "url": "https://owasp-noir.github.io/noir/"},
+    "publisher": {"@type": "Organization", "name": "OWASP", "url": "https://owasp.org"}
+  }
+  
+  
+  </script>
+  
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/fonts.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="https://owasp-noir.github.io/noir/" class="header-logo">
+          <img src="https://owasp-noir.github.io/noir/images/noir-dark.webp" alt="OWASP Noir" class="header-logo-img">
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+        <a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Usage</a>
+        <a href="https://owasp-noir.github.io/noir/development/how_to_build/">Development</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var basePath = new URL('https://owasp-noir.github.io/noir').pathname.replace(/\/+$/, '');
+          var path = window.location.pathname;
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
+            } else {
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docs-sidebar">
+    <nav class="sidebar-nav">
+        <div class="sidebar-section" data-section="get_started">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"
+                        />
+                        <path
+                            d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"
+                        />
+                        <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+                        <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+                    </svg>
+                    Get Started</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/overview/">What is Noir?</a>
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/installation/"
+                        >Install Noir</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/running/">Your First Scan</a>
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/migrate_v0_to_v1/">Migrating from v0 to v1</a>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="usage">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="4 17 10 11 4 5" />
+                        <line x1="12" x2="20" y1="19" y2="19" />
+                    </svg>
+                    Usage</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Supported</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/"
+                                >Languages & Frameworks</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/specification/"
+                                >Specification</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/callee_coverage/"
+                                >Callee Coverage</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/"
+                                >Tech Commands</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Configurations</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/"
+                                >Configuration File</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/"
+                                >Shell Completion</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Output Formats</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/json/"
+                                >JSON</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/"
+                                >YAML</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/"
+                                >cURL</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/"
+                                >OpenAPI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/"
+                                >SARIF</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/html/"
+                                >HTML</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/"
+                                >Mermaid</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/more/"
+                                >More</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Passive Scan</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/"
+                                >Rule</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/"
+                                >Default Rules</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/"
+                                >Community Rules</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/usage/github_action/"
+                        class="sidebar-direct-link"
+                        >GitHub Action</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>More Features</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/more_features/deliver/"
+                                >Deliver</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/more_features/diff/"
+                                >Diff</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/"
+                                >Pipeline for DAST</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/more_features/tagger/"
+                                >Tagger</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/get_started/ai_power/"
+                        class="sidebar-direct-link"
+                        >AI Power</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>AI Providers</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/"
+                                >OpenAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/"
+                                >Ollama</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/"
+                                >LM Studio</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/"
+                                >Azure</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/"
+                                >GitHub Marketplace</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/"
+                                >OpenRouter</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/"
+                                >vLLM</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/"
+                                >xAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/"
+                                >ACP</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="development">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="16 18 22 12 16 6" />
+                        <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                    Development</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/how_to_build/"
+                        >How to Build</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/analyzer_architecture/"
+                        >Analyzer Architecture</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/how_to_release/"
+                        >How to Release</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/debug_flags/"
+                        >Debug Flags</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/nix_environment/"
+                        >Nix Environment</a
+                    >
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="community">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    Community</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/community/media/">Media</a></li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="resources">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"
+                        />
+                    </svg>
+                    Resources</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/resources/faq/">FAQ</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/resources/troubleshooting/">Troubleshooting</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/resources/artwork/">Artwork</a></li>
+            </ul>
+        </div>
+    </nav>
+</aside>
+    <main class="docs-main" id="main-content">
+      <article class="docs-article">
+        <h1>What is Noir?</h1>
+        <div class="mascot-bubble mascot-hi">
+  <div class="mascot-avatar">
+    <img src="https://owasp-noir.github.io/noir/images/mascot/hak-hi.webp" alt="Hak">
+  </div>
+  <div class="mascot-speech">
+    <div class="mascot-speech-arrow"></div>
+    <div class="mascot-speech-content">Hi! I'm Hak, the Noir mascot. Let me show you what Noir can do for you.</div>
+  </div>
+</div>
+<p>Noir is an open-source SAST tool. It reads source code and extracts the endpoints an application exposes: paths, methods, parameters, headers, cookies, and the source files behind them. Shadow APIs and undocumented routes come out as part of the same inventory; they aren't a separate mode.</p>
+<p>That inventory feeds three audiences:</p>
+<ul>
+<li><strong>Human reviewers.</strong> Security engineers and code auditors get a focused list of attacker-reachable entrypoints and the files, parameters, and tags around them, instead of having to skim the whole repository.</li>
+<li><strong>AI auditors.</strong> LLM-based SAST agents get the same focused list, plus per-endpoint review context (<code>--include callee</code> for 1-hop callees, <code>--ai-context</code> for guards, sinks, validators, and signals).</li>
+<li><strong>DAST tools.</strong> ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.</li>
+</ul>
+<p><img loading="lazy" src="./noir-usage.jpg" alt="noir-usage" /></p>
+<h2 id="what-noir-does">What Noir does</h2>
+<p><strong>Extract endpoints.</strong> Static analysis pulls endpoints, parameters, headers, and cookies out of source, including the ones nobody documented.</p>
+<p><strong>Cover the stack.</strong> A single binary supports 50+ frameworks across Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift, and more. No plugins or per-language setup.</p>
+<p><strong>Fall back to an LLM.</strong> When a framework isn't natively supported (or when routing is custom enough that static rules don't apply), point Noir at an LLM (OpenAI, Ollama, and so on) and let it fill the gap.</p>
+<p><strong>Feed DAST scanners.</strong> Pipe endpoints straight into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import. The scanner stops missing routes that were never linked from a page.</p>
+<p><strong>Give AI SAST useful context.</strong> The endpoint inventory (entrypoints, source files, parameters, tags, and, with <code>--include callee</code>, the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. <code>--ai-context</code> goes further and attaches review context per endpoint (guards, callees, sinks, validators, and signals) so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.</p>
+<p><strong>Export to whatever reads next.</strong> JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL, HTTPie, HTML reports, Postman collections, and similar formats that the next tool in the pipeline expects.</p>
+<h2 id="how-does-it-work">How Does It Work?</h2>
+<p>Point Noir at your source code and it automatically:</p>
+<ol>
+<li><strong>Detects</strong> which languages and frameworks your project uses</li>
+<li><strong>Analyzes</strong> the code to extract endpoints, parameters, and headers</li>
+<li><strong>Reports</strong> results in your preferred format</li>
+</ol>
+<div class="mermaid-container">
+  <pre class="mermaid">flowchart LR
+    SourceCode:::highlight --> Detectors
+
+    subgraph Detectors
+        direction LR
+        Detector1 & Detector2 & Detector3 --> |Condition| PassiveScan
+    end
+
+    PassiveScan --> |Results| BaseOptimizer
+
+    Detectors --> |Techs| Analyzers
+
+    subgraph Analyzers
+        direction LR
+        CodeAnalyzers & FileAnalyzer & LLMAnalyzer
+        CodeAnalyzers --> |Condition| Minilexer
+        CodeAnalyzers --> |Condition| Miniparser
+    end
+   subgraph Optimizer
+       direction LR
+       BaseOptimizer[Optimizer] --> LLMOptimizer[LLM Optimizer]
+       LLMOptimizer[LLM Optimizer] --> OptimizedResult
+       OptimizedResult[Result]
+   end
+
+    Analyzers --> |Condition| Deliver
+    Analyzers --> |Condition| Tagger
+    Deliver --> 3rdParty
+    BaseOptimizer --> OptimizedResult
+    OptimizedResult --> OutputBuilder
+    Tagger --> |Tags| BaseOptimizer
+    Analyzers --> |Endpoints| BaseOptimizer
+    OutputBuilder --> Report:::highlight
+
+    classDef highlight fill:#000,stroke:#333,stroke-width:4px;</pre>
+</div>
+<script>
+if (!window._mermaidLoaded) {
+  window._mermaidLoaded = true;
+  var s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js';
+  s.onload = function() {
+    mermaid.initialize({ theme: 'dark', startOnLoad: true });
+  };
+  document.head.appendChild(s);
+}
+</script>
+<h2 id="contributing">Contributing</h2>
+<p>Noir is open-source and welcomes contributions. See the <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md">Contributing Guide</a> for details.</p>
+<h3 id="contributors">Contributors</h3>
+<p><img loading="lazy" src="https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg" alt="" /></p>
+<hr />
+<p><strong>Next</strong>: <a href="/noir/get_started/installation/">Install Noir</a></p>
+
+        
+
+      </article>
+    </main>
+      <aside class="docs-toc" id="docs-toc">
+    <div class="toc-inner">
+      <div class="toc-title">On this page</div>
+      <nav class="toc-nav" id="toc-nav">
+      </nav>
+    </div>
+  </aside>
+  </div>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="Search documentation..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://owasp-noir.github.io/noir/js/sidebar.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/toc.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+  <script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  <script src="https://owasp-noir.github.io/noir/js/codeblock.js"></script>
+  
+</body>
+</html>

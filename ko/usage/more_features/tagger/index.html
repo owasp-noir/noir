@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; form-action 'self'">
+  
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#050507">
+  <meta name="description" content="엔드포인트와 매개변수에 자동으로 태그를 추가하여 잠재적 보안 위험을 식별합니다.">
+  <title>상황별 분석을 위한 Tagger 사용하기 - OWASP Noir</title>
+  <meta property="og:title" content="상황별 분석을 위한 Tagger 사용하기">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/">
+  <meta property="og:description" content="엔드포인트와 매개변수에 자동으로 태그를 추가하여 잠재적 보안 위험을 식별합니다.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-more_features-tagger.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="상황별 분석을 위한 Tagger 사용하기">
+  <meta name="twitter:description" content="엔드포인트와 매개변수에 자동으로 태그를 추가하여 잠재적 보안 위험을 식별합니다.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-more_features-tagger.png">
+  
+  
+  
+  
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/">
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/more_features/tagger/">
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/">
+  <link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/usage/more_features/tagger/">
+  <script type="application/ld+json">
+  
+  
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "상황별 분석을 위한 Tagger 사용하기",
+    "description": "엔드포인트와 매개변수에 자동으로 태그를 추가하여 잠재적 보안 위험을 식별합니다.",
+    "inLanguage": "ko",
+    "url": "https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/",
+    "isPartOf": {"@type": "WebSite", "name": "OWASP Noir", "url": "https://owasp-noir.github.io/noir/"},
+    "publisher": {"@type": "Organization", "name": "OWASP", "url": "https://owasp.org"}
+  }
+  
+  
+  </script>
+  
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/fonts.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <a href="#main-content" class="skip-link">본문으로 건너뛰기</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="https://owasp-noir.github.io/noir/" class="header-logo">
+          <img src="https://owasp-noir.github.io/noir/images/noir-dark.webp" alt="OWASP Noir" class="header-logo-img">
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">시작하기</a>
+        <a href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/">사용 가이드</a>
+        <a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/">개발</a>
+        <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var basePath = new URL('https://owasp-noir.github.io/noir').pathname.replace(/\/+$/, '');
+          var path = window.location.pathname;
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
+            } else {
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docs-sidebar">
+    <nav class="sidebar-nav">
+        <div class="sidebar-section" data-section="get_started">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"
+                        />
+                        <path
+                            d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"
+                        />
+                        <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+                        <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+                    </svg>
+                    시작하기</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">Noir란?</a>
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/get_started/installation/"
+                        >Noir 설치</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/get_started/running/">첫 번째 스캔</a>
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/get_started/migrate_v0_to_v1/">v0 → v1 마이그레이션</a>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="usage">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="4 17 10 11 4 5" />
+                        <line x1="12" x2="20" y1="19" y2="19" />
+                    </svg>
+                    사용 가이드</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>지원되는 기술</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/"
+                                >언어 및 프레임워크</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/specification/"
+                                >명세</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/callee_coverage/"
+                                >Callee 커버리지</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/"
+                                >기술 명령어</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>구성</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/"
+                                >구성 파일</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/"
+                                >셸 자동완성</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>출력 형식</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/json/"
+                                >JSON</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/"
+                                >YAML</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/"
+                                >cURL</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/"
+                                >OpenAPI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/"
+                                >SARIF</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/html/"
+                                >HTML</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/"
+                                >Mermaid</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/more/"
+                                >추가 출력 형식</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>패시브 스캔</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/"
+                                >규칙</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/"
+                                >기본 규칙</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/"
+                                >커뮤니티 규칙</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/ko/usage/github_action/"
+                        class="sidebar-direct-link"
+                        >GitHub Action</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>추가 기능</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/"
+                                >Deliver</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/more_features/diff/"
+                                >Diff</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/"
+                                >DAST 파이프라인</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/"
+                                >Tagger</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/ko/get_started/ai_power/"
+                        class="sidebar-direct-link"
+                        >AI 기반 분석</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>AI 제공업체</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/"
+                                >OpenAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/"
+                                >Ollama</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/"
+                                >LM Studio</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/"
+                                >Azure</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/"
+                                >GitHub Marketplace</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/"
+                                >OpenRouter</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/"
+                                >vLLM</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/"
+                                >xAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/"
+                                >ACP</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="development">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="16 18 22 12 16 6" />
+                        <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                    개발</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/"
+                        >빌드 방법</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/"
+                        >분석기 아키텍처</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/how_to_release/"
+                        >릴리스 방법</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/debug_flags/"
+                        >디버그 플래그</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/ko/development/nix_environment/"
+                        >Nix 환경</a
+                    >
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="community">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    커뮤니티</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/ko/community/media/">미디어</a></li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="resources">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"
+                        />
+                    </svg>
+                    리소스</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/faq/">FAQ</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/troubleshooting/">문제 해결</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/ko/resources/artwork/">아트워크</a></li>
+            </ul>
+        </div>
+    </nav>
+</aside>
+    <main class="docs-main" id="main-content">
+      <article class="docs-article">
+        <h1>상황별 분석을 위한 Tagger 사용하기</h1>
+        <p>엔드포인트와 파라미터에 설명적 태그를 자동으로 추가하여 기능과 잠재적 보안 위험(SQL 인젝션, 인증 엔드포인트 등)을 식별합니다.</p>
+<p><img loading="lazy" src="./tagger.png" alt="" /></p>
+<h2 id="사용법">사용법</h2>
+<p>Tagger는 기본적으로 비활성화되어 있습니다.</p>
+<p><strong>모든 태거 활성화</strong></p>
+<pre><code class="language-bash hljs">noir scan &lt;BASE_PATH&gt; -T
+</code></pre>
+<p><strong>특정 태거만 활성화</strong> (<code>noir list taggers</code>로 목록 확인)</p>
+<pre><code class="language-bash hljs">noir scan &lt;BASE_PATH&gt; --use-taggers hunt,oauth
+</code></pre>
+<h2 id="출력">출력</h2>
+<p>태그는 엔드포인트 레벨과 파라미터 레벨 양쪽의 <code>tags</code> 배열에 추가됩니다. 각 태그에는 <code>name</code>(짧은 식별자, 예: <code>sqli</code>, <code>oauth</code>), 사람이 읽을 수 있는 <code>description</code>, 그리고 태그를 생성한 <code>tagger</code>(예: <code>Hunt</code>는 취약점 패턴, <code>Oauth</code>는 인증 흐름)가 들어갑니다.</p>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/query&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;params&quot;: [
+    {
+      &quot;name&quot;: &quot;query&quot;,
+      &quot;value&quot;: &quot;&quot;,
+      &quot;param_type&quot;: &quot;form&quot;,
+      &quot;tags&quot;: [
+        {
+          &quot;name&quot;: &quot;sqli&quot;,
+          &quot;description&quot;: &quot;This parameter may be vulnerable to SQL Injection attacks.&quot;,
+          &quot;tagger&quot;: &quot;Hunt&quot;
+        }
+      ]
+    }
+  ],
+  &quot;protocol&quot;: &quot;http&quot;,
+  &quot;tags&quot;: []
+},
+{
+  &quot;url&quot;: &quot;/token&quot;,
+  &quot;method&quot;: &quot;GET&quot;,
+  &quot;protocol&quot;: &quot;http&quot;,
+  &quot;tags&quot;: [
+    {
+      &quot;name&quot;: &quot;oauth&quot;,
+      &quot;description&quot;: &quot;Suspected OAuth endpoint for granting 3rd party access.&quot;,
+      &quot;tagger&quot;: &quot;Oauth&quot;
+    }
+  ]
+}
+</code></pre>
+<h2 id="태그-분류">태그 분류</h2>
+<p>태거는 여러 종류의 보안 관련 신호를 다룹니다. 전체 최신 목록은 <code>noir list taggers</code>로 확인하세요.</p>
+<ul>
+<li>
+<p><strong>파라미터 취약점 클래스</strong> — <code>hunt</code>는 알려진 위험 이름과 일치하는 개별 파라미터를 표시합니다(<code>sqli</code>, <code>ssrf</code>, <code>idor</code>, <code>file-inclusion</code>, <code>command-injection</code> 등).</p>
+</li>
+<li>
+<p><strong>프로토콜 / 인터페이스</strong> — <code>graphql</code>, <code>soap</code>, <code>websocket</code>, <code>mcp</code>, <code>cors</code>.</p>
+</li>
+<li>
+<p><strong>인증 &amp; 토큰</strong> — <code>oauth</code>, <code>jwt</code>, 그리고 프레임워크 인지 인증 태거(Spring Security, Django, Express 등).</p>
+</li>
+<li>
+<p><strong>엔드포인트 민감도 &amp; 용도</strong> — 엔드포인트가 <em>무엇을 위한 것인지</em> 분류하여, 리뷰어가 가장 중요한 표면에 우선순위를 둘 수 있게 합니다:</p>
+<ul>
+<li><code>pii</code> — 개인식별정보(주민번호, 카드 정보, 연락처)를 다루는 엔드포인트. 데이터 노출 및 과도한 수집 검토 대상.</li>
+<li><code>admin</code> — 관리/특권 라우트(<code>/admin</code>, 권한 변경 파라미터). 깨진 접근 제어 및 권한 상승의 주요 표적.</li>
+<li><code>payment</code> — 결제/금융 트랜잭션 엔드포인트. 금액·가격 조작, 통화 혼동, 금융 레코드 IDOR 검토 대상.</li>
+<li><code>webhook</code> — 인바운드 웹훅/콜백 엔드포인트. 서명 검증, 재전송 방어, 아웃바운드 호출의 SSRF 검토 대상.</li>
+<li><code>crypto</code> — 암호화 연산 엔드포인트(암복호화, 서명, 해시, 키 관리). 약하거나 구식인 알고리즘, 패딩/서명 오라클, 정적 IV/salt 재사용, 키 노출 검토 대상.</li>
+<li><code>debug</code> — 디버그·진단·내부 전용 엔드포인트(디버그 콘솔/토글, 프로파일러, actuator/management, pprof, heap/thread dump, <code>/internal</code> API). 외부에 노출되면 안 되며, 정보 노출 및 위험한 진단 동작 검토 대상.</li>
+<li><code>api_docs</code> — API 문서/스키마 엔드포인트(Swagger, OpenAPI, GraphiQL, ReDoc, WSDL). 전체 API 표면을 드러내고 인증 없이 노출되는 경우가 많음. 비인증 노출 및 정보 유출 검토 대상.</li>
+<li><code>account_recovery</code> — 자격증명 관리·계정 복구 엔드포인트(비밀번호 재설정/변경, 이메일 변경, MFA/OTP, 인증). 전형적인 계정 탈취 표면 — 리셋 토큰 유출, reset 링크 host-header 인젝션, 계정 열거, 레이트리밋 부재 검토 대상.</li>
+<li><code>file_upload</code> — 파일 업로드 엔드포인트. 무제한 업로드, 경로 탐색, 악성 파일 처리 검토 대상.</li>
+</ul>
+</li>
+<li>
+<p><strong>프레임워크별 보호 장치 &amp; 위험</strong> — 프레임워크의 보안 통제와 안전한 기본값에서 <em>벗어난 지점</em>을 해당 엔드포인트에 표시하는 프레임워크 인지 태거. Rails(<code>rails_security</code>)의 경우:</p>
+<ul>
+<li><code>csrf-protection</code> — CSRF 검증이 비활성화(<code>skip_before_action :verify_authenticity_token</code>, <code>skip_forgery_protection</code>)되었거나 약화(<code>protect_from_forgery with: :null_session</code>)된 경우. Rails는 상태 변경 요청을 기본으로 보호하므로, 명시적으로 해제한 지점이 검토 대상.</li>
+<li><code>mass-assignment</code> — Strong Parameters가 우회된 경우(<code>params.permit!</code>, <code>params.to_unsafe_h</code>, 또는 <code>Model.new(params[:user])</code>처럼 가공되지 않은 <code>params[:x]</code> 해시를 모델 라이터에 전달). 공격자가 제어하는 속성 쓰기(권한 플래그, 소유권 컬럼) 검토 대상.</li>
+<li><code>rate-limit</code> — Rails 8 네이티브 <code>rate_limit</code> 매크로로 스로틀링되는 액션. 무차별 대입/남용 노출을 평가할 때 유용한 맥락이며, 인증·복구 표면에서 이것이 부재하면 그 자체가 점검 포인트.</li>
+</ul>
+<p>Spring(<code>spring_security</code>)의 경우, 인증 태거 <code>spring_auth</code>를 보완:</p>
+<ul>
+<li><code>csrf-protection</code> — <code>SecurityFilterChain</code>에서 CSRF가 꺼진 경우. 체인 전체 비활성화(<code>csrf().disable()</code>, <code>csrf(AbstractHttpConfigurer::disable)</code>, Kotlin <code>csrf { disable() }</code>)이거나 특정 경로만 선택적으로 제외(<code>csrf(c -&gt; c.ignoringRequestMatchers(&quot;/api/**&quot;))</code>)된 경우 모두 해당 상태 변경 엔드포인트(POST/PUT/PATCH/DELETE)에 표시. 무상태/토큰 API에서는 흔하지만 항상 검토 가치가 있고, <code>securityMatcher</code>가 있으면 그 체인 범위로 한정.</li>
+<li><code>cors</code> — 핸들러/컨트롤러의 <code>@CrossOrigin</code> 애너테이션 또는 전역 <code>WebMvcConfigurer</code> 매핑(<code>addMapping(...).allowedOrigins(&quot;*&quot;)</code>)으로 브라우저 동일 출처 기본값에서 엔드포인트가 벗어난 경우. 와일드카드 출처(<code>*</code>), 특히 자격 증명과 함께 사용된 경우 과도한(permissive) 설정으로 표시.</li>
+<li><code>security-headers</code> — Spring의 기본 응답 헤더 보호가 약화된 경우: 클릭재킹 보호 해제(<code>frameOptions().disable()</code>) 또는 헤더 라이터 전체 비활성화(<code>headers().disable()</code> / <code>headers(HeadersConfigurer::disable)</code>).</li>
+<li><code>input-validation</code> — <code>@Valid</code> / <code>@Validated</code>로 요청 페이로드에 Bean Validation이 적용된 경우. 적용된 지점을 드러내면, 적용되지 않은 공백(<code>@RequestBody</code>를 받으면서 검증이 없는 핸들러)도 부재로 드러남.</li>
+</ul>
+<p>Rust 웹 프레임워크(<code>rust_security</code>, Actix-Web·Axum/tower-http·Rocket·Loco·Warp 등)의 경우 — Rust에는 암묵적 보안 기본값이 없으므로, 태거는 실제로 연결된 보호 장치(<code>.wrap(..)</code>/<code>.layer(..)</code> 미들웨어 또는 Loco의 <code>config/*.yaml</code>)를 기록하고 위험한 설정을 플래그합니다:</p>
+<ul>
+<li><code>cors</code> — CORS 미들웨어. 허용적 설정(<code>Cors::permissive()</code>, <code>CorsLayer::very_permissive()</code>, <code>allow_any_origin</code>, <code>allow_origins: [&quot;*&quot;]</code>)은 위험으로 표시하고, 제한된 허용 목록은 정보성으로 기록.</li>
+<li><code>rate-limit</code> — 요청 스로틀링(<code>actix-governor</code>, <code>tower_governor</code>, <code>actix-limitation</code>, tower limit 레이어). 감싸는 스코프에 매핑되므로 <em>보호되지 않은</em> 라우트가 무엇인지 파악 가능.</li>
+<li><code>security-headers</code> — 라우트에 설정된 강화 응답 헤더(HSTS, CSP, <code>X-Frame-Options</code>, <code>X-Content-Type-Options</code> 등).</li>
+<li><code>body-limit</code> — 요청 본문 크기 제한(DoS 완화). 제한이 비활성화(<code>DefaultBodyLimit::disable()</code>)된 경우 위험으로 표시.</li>
+</ul>
+<p>Go 웹 프레임워크(<code>go_security</code>)의 경우, 각 엔드포인트에 매핑되는 것은 <em>보호 미들웨어</em>입니다. Rails와 달리 Go는 이런 보호를 기본으로 제공하지 않으므로, 그 <em>존재</em>(그리고 상태 변경 라우트에서의 부재)가 곧 신호입니다. 그룹 단위 <code>.Use(...)</code>, 전역 래퍼, 인라인 라우트 미들웨어로부터 Echo·Gin·Fiber·Chi 등 전반에서 탐지합니다:</p>
+<ul>
+<li><code>csrf-protection</code> — 라우트의 CSRF 미들웨어(Echo <code>middleware.CSRF</code>, Fiber <code>csrf.New</code>, gorilla/csrf <code>csrf.Protect</code>, gin-csrf, <code>nosurf</code>). 쿠키 인증 기반 상태 변경 라우트에서 부재하면 검토 대상.</li>
+<li><code>security-headers</code> — 응답 강화 미들웨어(Echo <code>middleware.Secure</code>, Fiber <code>helmet</code>, unrolled/gin-contrib <code>secure</code>). HSTS / <code>X-Frame-Options</code> / nosniff / XSS 보호 헤더 설정.</li>
+<li><code>rate-limit</code> — 스로틀링 미들웨어(Echo <code>RateLimiter</code>, chi <code>Throttle</code>, Fiber/ulule <code>limiter</code>, go-chi/httprate, tollbooth). 무차별 대입/남용 노출을 매핑.</li>
+<li><code>body-limit</code> — 요청 본문 크기 제한(Echo <code>BodyLimit</code>, gin-contrib/size). DoS/자원 고갈 방어 장치.</li>
+<li><code>timeout</code> — 요청 타임아웃 미들웨어(Echo/chi <code>middleware.Timeout</code>, Fiber <code>timeout</code>). 느린 요청/자원 고갈 방어 장치.</li>
+<li><code>cors</code> — CORS 미들웨어(Echo <code>middleware.CORS</code>, Fiber/gin-contrib/go-chi/rs <code>cors</code>, gorilla <code>handlers.CORS</code>). 알려진 permissive 생성자(<code>cors.Default()</code>, <code>cors.AllowAll()</code>)는 모든 origin 허용으로 플래깅. 헤더 파라미터 기반 <code>cors</code> 태거를 보완.</li>
+<li><code>secure-cookies</code> — 쿠키 기밀성/무결성 미들웨어(Fiber <code>encryptcookie</code>).</li>
+</ul>
+</li>
+</ul>
+<p>엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 사용하는 엔드포인트별 요약을 더욱 풍부하게 만듭니다.</p>
+
+        
+
+      </article>
+    </main>
+      <aside class="docs-toc" id="docs-toc">
+    <div class="toc-inner">
+      <div class="toc-title">On this page</div>
+      <nav class="toc-nav" id="toc-nav">
+      </nav>
+    </div>
+  </aside>
+  </div>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="문서 검색..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">문서</a>
+        <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://owasp-noir.github.io/noir/js/sidebar.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/toc.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+  <script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  <script src="https://owasp-noir.github.io/noir/js/codeblock.js"></script>
+  
+</body>
+</html>

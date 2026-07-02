@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; form-action 'self'">
+  
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#050507">
+  <meta name="description" content="Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.">
+  <title>--ai-context and --include-callee — hint and sink for AI code review - OWASP Noir</title>
+  <meta property="og:title" content="--ai-context and --include-callee — hint and sink for AI code review">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/">
+  <meta property="og:description" content="Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/blog-ai-context-and-callee-hints.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="--ai-context and --include-callee — hint and sink for AI code review">
+  <meta name="twitter:description" content="Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/blog-ai-context-and-callee-hints.png">
+  
+  
+  
+  
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/">
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/">
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/blog/ai-context-and-callee-hints/">
+  <link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/">
+  <script type="application/ld+json">
+  
+  
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "--ai-context and --include-callee — hint and sink for AI code review",
+    "description": "Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.",
+    "inLanguage": "en",
+    "url": "https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/",
+    "isPartOf": {"@type": "WebSite", "name": "OWASP Noir", "url": "https://owasp-noir.github.io/noir/"},
+    "publisher": {"@type": "Organization", "name": "OWASP", "url": "https://owasp.org"}
+  }
+  
+  
+  </script>
+  
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/fonts.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="https://owasp-noir.github.io/noir/" class="header-logo">
+          <img src="https://owasp-noir.github.io/noir/images/noir-dark.webp" alt="OWASP Noir" class="header-logo-img">
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+        <a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Usage</a>
+        <a href="https://owasp-noir.github.io/noir/development/how_to_build/">Development</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var basePath = new URL('https://owasp-noir.github.io/noir').pathname.replace(/\/+$/, '');
+          var path = window.location.pathname;
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
+            } else {
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <main class="blog-main">
+    <article class="blog-post">
+      <p class="blog-post-back">
+        <a href="https://owasp-noir.github.io/noir/blog/">
+          &larr; Back to blog
+        </a>
+      </p>
+
+      <header class="blog-post-header">
+        <h1 class="blog-post-title">--ai-context and --include-callee — hint and sink for AI code review</h1>
+        
+          <p class="blog-post-lede">Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.</p>
+        
+        <div class="blog-post-meta">
+          <time datetime="2026-05-24">2026-05-24</time>
+          
+            <span class="blog-post-meta-dot">·</span>
+            <span class="blog-post-meta-tags">
+              <span class="blog-post-card-tag">#v1</span><span class="blog-post-card-tag">#ai-context</span><span class="blog-post-card-tag">#callee</span><span class="blog-post-card-tag">#design</span>
+            </span>
+          
+        </div>
+
+        
+        <ul class="blog-post-authors">
+          
+          
+          <li class="blog-post-author">
+            
+              <img class="blog-post-author-avatar" src="https://github.com/hahwul.png" alt="HAHWUL">
+            
+            <div class="blog-post-author-info">
+              
+              <a class="blog-post-author-name" href="https://owasp-noir.github.io/noir/authors/hahwul/">HAHWUL</a>
+              
+                <span class="blog-post-author-role">Noir Co-Lead, Creator</span>
+              
+            </div>
+            
+            
+              
+              <a class="blog-post-author-link" href="https://github.com/hahwul" target="_blank" rel="noopener noreferrer">
+                
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+
+                <span>@hahwul</span>
+              </a>
+            
+          </li>
+          
+        </ul>
+        
+      </header>
+
+      <div class="blog-post-content">
+        <p>Around late 2025, AI's leap forward reshaped how software gets built — and source-code vulnerability analysis has been moving in the same AI-first direction from roughly the same point.</p>
+<p>A lot of AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To actually work well, the LLM needs to know <em>what to look at</em>. Drop the whole codebase on it and you burn tokens while missing the points that matter.</p>
+<p>Noir v1 ships two flags that extract that &quot;what to look at&quot; upfront and pack it into the output.</p>
+<ul>
+<li><code>--include-callee</code> — adds a 1-hop callee graph to each endpoint as a <code>callees</code> array</li>
+<li><code>--ai-context</code> — includes the same callee data and sorts it into <strong>five security categories</strong> under <code>ai_context</code></li>
+</ul>
+<h2 id="include-callee-who-calls-whom">--include-callee — who calls whom</h2>
+<p>The simpler of the two. Parses each endpoint handler body with tree-sitter and pulls out 1-hop callees as <code>{name, path, line}</code>.</p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --include callee -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;callees&quot;: [
+    { &quot;name&quot;: &quot;get_hash&quot;,          &quot;path&quot;: &quot;app/utils.py&quot;, &quot;line&quot;: 3 },
+    { &quot;name&quot;: &quot;User.query.filter&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 21 },
+    { &quot;name&quot;: &quot;User&quot;,              &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 24 },
+    { &quot;name&quot;: &quot;db_session.add&quot;,    &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 25 },
+    { &quot;name&quot;: &quot;db_session.commit&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 26 }
+  ]
+}
+</code></pre>
+<p>To an LLM this reads as &quot;to review this endpoint, also look at <code>utils.py:3</code> and <code>app.py:21,24,25,26</code>&quot;. Token-efficient too — instead of shipping the entire codebase, you only need the handler plus those few referenced lines.</p>
+<h2 id="ai-context-same-data-sorted-into-security-categories">--ai-context — same data, sorted into security categories</h2>
+<p><code>--ai-context</code> takes the same callee information and runs further analysis to bucket it into five categories.</p>
+<ul>
+<li><strong>guards</strong> — auth middleware / decorators / access-control checks</li>
+<li><strong>callees</strong> — same as above but enriched with a code snippet and a confidence score</li>
+<li><strong>sinks</strong> — potential SQL / command-exec / file-I/O / redirect / template-render endpoints</li>
+<li><strong>validators</strong> — input-validation calls</li>
+<li><strong>signals</strong> — heuristic flags like <code>state_change</code>, <code>credential_input</code>, <code>guard_absence</code></li>
+</ul>
+<p>Running the same Flask <code>/sign</code> POST endpoint with <code>--ai-context</code></p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --ai-context -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;ai_context&quot;: {
+    &quot;sinks&quot;: [
+      {
+        &quot;kind&quot;: &quot;sql&quot;,
+        &quot;name&quot;: &quot;query&quot;,
+        &quot;description&quot;: &quot;Potential SQL/data-store sink inferred from code or callee name&quot;,
+        &quot;path&quot;: &quot;app/app.py&quot;, &quot;line&quot;: 21, &quot;confidence&quot;: 78,
+        &quot;snippet&quot;: &quot;20: password = get_hash(request.form['password'], ...) | 21: if User.query.filter(...).first(): | 22: return render_template('error.html')&quot;
+      }
+    ],
+    &quot;signals&quot;: [
+      { &quot;kind&quot;: &quot;state_change&quot;,     &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 88 },
+      { &quot;kind&quot;: &quot;credential_input&quot;, &quot;name&quot;: &quot;form.password&quot;, &quot;confidence&quot;: 86 },
+      { &quot;kind&quot;: &quot;guard_absence&quot;,    &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 28,
+        &quot;description&quot;: &quot;No auth guard was detected for this state-changing endpoint.&quot; }
+    ]
+  }
+}
+</code></pre>
+<p>What the LLM gets from this single endpoint</p>
+<ol>
+<li>There's a <code>credential_input</code> — a password arrives via form</li>
+<li>It's a <code>state_change</code> — POST</li>
+<li>There's a <code>guard_absence</code> — no auth decorator detected</li>
+<li>There's a <code>sql</code> sink — <code>User.query.filter</code></li>
+</ol>
+<p>Human reviewer or LLM, four signals stacking on one handler land cleanly: <strong>review this first</strong>. A credential-handling endpoint missing auth is priority 1 without further reasoning.</p>
+<p>For contrast, here's a case where <code>--ai-context</code> did pick up auth (flask_auth fixture)</p>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/profile&quot;,
+  &quot;method&quot;: &quot;GET&quot;,
+  &quot;ai_context&quot;: {
+    &quot;guards&quot;: [{
+      &quot;kind&quot;: &quot;auth_guard&quot;,
+      &quot;name&quot;: &quot;flask-login login_required&quot;,
+      &quot;description&quot;: &quot;Protected by flask-login login_required&quot;,
+      &quot;confidence&quot;: 86,
+      &quot;snippet&quot;: &quot;12: | 13: @login_required | 14: @app.route('/profile') | 15: def profile():&quot;
+    }]
+  }
+}
+</code></pre>
+<p>The <code>@login_required</code> decorator landed in <code>guards</code>. To an LLM that's a <strong>negative</strong> signal — &quot;this endpoint already has an auth check, focus on other vuln classes instead&quot;.</p>
+<h2 id="hint-and-sink-at-the-same-time">Hint and sink at the same time</h2>
+<p>The interesting bit is that these flags work as both hint and sink at once.</p>
+<ul>
+<li>As a <strong>hint</strong> — pre-curated per-endpoint context narrows the LLM's attention. Instead of &quot;review the entire codebase&quot;, it's &quot;this handler plus these files&quot;.</li>
+<li>As a <strong>sink</strong> (the source-to-sink kind) — the <code>sinks</code> bucket lists framework-aware candidates for where data might land. A generic LLM <em>can</em> reason that <code>User.query.filter</code> is SQL, but it burns tokens doing so every time. Noir pre-labels them so the LLM can skip that reasoning step.</li>
+</ul>
+<p>The framework-aware labeling is where the leverage is. The same callee name <code>query</code> means different things in different contexts.</p>
+<ul>
+<li>Flask + SQLAlchemy: <code>User.query.filter</code> → SQL sink</li>
+<li>Express + MongoDB: <code>User.find</code> → NoSQL sink</li>
+<li>A plain LLM either misses the distinction or re-derives it on every pass</li>
+</ul>
+<p>Noir identifies the framework in the detector phase, and the augmentor applies that framework's idioms when matching sink / guard patterns. The LLM consumes pre-labeled, framework-aware context instead of raw code.</p>
+<h2 id="recommended-use">Recommended use</h2>
+<p>For an AI-driven code review pipeline</p>
+<pre><code class="language-bash hljs"># Every category
+noir -b ./app --ai-context -f json
+
+# Narrow to the categories you actually want (saves tokens)
+noir -b ./app --ai-context=guards,sinks,signals -f json
+
+# Just callees — lightweight hint
+noir -b ./app --include callee -f json
+</code></pre>
+<p>The full category set is best for the first audit pass. For incremental review or PR-level checks, <code>guards,sinks,signals</code> is usually enough.</p>
+<h2 id="whats-next">What's next</h2>
+<p><code>--ai-context</code>'s sink and guard patterns are currently regex-based heuristics. We don't do real data-flow tracing — we mark &quot;this looks like a sink&quot; based on callee names and code patterns, and stop there. That's a deliberate trade-off. Precise taint analysis has dedicated tooling, and Noir aims to be the layer that gives that tool (or an LLM) a fast <strong>focus point</strong> to start from.</p>
+<p>Going forward, the pattern catalogue will get more framework-aware and new signal kinds will land. Feedback and new pattern proposals are always welcome.</p>
+
+      </div>
+    </article>
+  </main>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="Search documentation..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+  <script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  <script src="https://owasp-noir.github.io/noir/js/codeblock.js"></script>
+  
+</body>
+</html>

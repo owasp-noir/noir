@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; manifest-src 'self'; object-src 'none'; form-action 'self'">
+  
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#050507">
+  <meta name="description" content="Generate executable cURL, HTTPie, and PowerShell commands from Noir scan results.">
+  <title>HTTP Client Commands - OWASP Noir</title>
+  <meta property="og:title" content="HTTP Client Commands">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/usage/output_formats/curl/">
+  <meta property="og:description" content="Generate executable cURL, HTTPie, and PowerShell commands from Noir scan results.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/usage-output_formats-curl.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="HTTP Client Commands">
+  <meta name="twitter:description" content="Generate executable cURL, HTTPie, and PowerShell commands from Noir scan results.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/usage-output_formats-curl.png">
+  
+  
+  
+  
+  
+  
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/">
+  <link rel="alternate" hreflang="x-default" href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">
+  <script type="application/ld+json">
+  
+  
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "headline": "HTTP Client Commands",
+    "description": "Generate executable cURL, HTTPie, and PowerShell commands from Noir scan results.",
+    "inLanguage": "en",
+    "url": "https://owasp-noir.github.io/noir/usage/output_formats/curl/",
+    "isPartOf": {"@type": "WebSite", "name": "OWASP Noir", "url": "https://owasp-noir.github.io/noir/"},
+    "publisher": {"@type": "Organization", "name": "OWASP", "url": "https://owasp.org"}
+  }
+  
+  
+  </script>
+  
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/inter-600-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/fonts.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-left">
+        <button class="hamburger" id="hamburger-toggle" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+        <a href="https://owasp-noir.github.io/noir/" class="header-logo">
+          <img src="https://owasp-noir.github.io/noir/images/noir-dark.webp" alt="OWASP Noir" class="header-logo-img">
+        </a>
+      </div>
+      <nav class="header-nav">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+        <a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Usage</a>
+        <a href="https://owasp-noir.github.io/noir/development/how_to_build/">Development</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      </nav>
+      <div class="header-right">
+        <button class="search-trigger" id="search-trigger" aria-label="Search">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span class="search-shortcut">Ctrl+K</span>
+        </button>
+        <div class="lang-switcher" id="lang-switcher">
+          <a href="#" class="lang-link" data-lang="en">EN</a>
+          <a href="#" class="lang-link" data-lang="ko">KO</a>
+        </div>
+        <script>
+        (function(){
+          var basePath = new URL('https://owasp-noir.github.io/noir').pathname.replace(/\/+$/, '');
+          var path = window.location.pathname;
+          var rel = path.substring(basePath.length) || '/';
+          var isKo = rel.startsWith('/ko/') || rel === '/ko';
+          var switcher = document.getElementById('lang-switcher');
+          var links = switcher.querySelectorAll('.lang-link');
+          for (var i = 0; i < links.length; i++) {
+            var lang = links[i].getAttribute('data-lang');
+            if ((lang === 'ko' && isKo) || (lang === 'en' && !isKo)) {
+              links[i].classList.add('active');
+            }
+            if (lang === 'ko') {
+              links[i].href = isKo ? path : basePath + '/ko' + rel;
+            } else {
+              links[i].href = isKo ? basePath + rel.replace(/^\/ko/, '') : path;
+            }
+          }
+        })();
+        </script>
+      </div>
+    </div>
+  </header>
+  <div class="site-overlay" id="site-overlay"></div>
+  <div class="docs-layout">
+    <aside class="docs-sidebar" id="docs-sidebar">
+    <nav class="sidebar-nav">
+        <div class="sidebar-section" data-section="get_started">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"
+                        />
+                        <path
+                            d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"
+                        />
+                        <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+                        <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+                    </svg>
+                    Get Started</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/overview/">What is Noir?</a>
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/installation/"
+                        >Install Noir</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/running/">Your First Scan</a>
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/get_started/migrate_v0_to_v1/">Migrating from v0 to v1</a>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="usage">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="4 17 10 11 4 5" />
+                        <line x1="12" x2="20" y1="19" y2="19" />
+                    </svg>
+                    Usage</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Supported</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/"
+                                >Languages & Frameworks</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/specification/"
+                                >Specification</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/callee_coverage/"
+                                >Callee Coverage</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/"
+                                >Tech Commands</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Configurations</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/"
+                                >Configuration File</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/"
+                                >Shell Completion</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Output Formats</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/json/"
+                                >JSON</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/"
+                                >YAML</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/"
+                                >cURL</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/"
+                                >OpenAPI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/"
+                                >SARIF</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/html/"
+                                >HTML</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/"
+                                >Mermaid</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/output_formats/more/"
+                                >More</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>Passive Scan</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/"
+                                >Rule</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/"
+                                >Default Rules</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/"
+                                >Community Rules</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/usage/github_action/"
+                        class="sidebar-direct-link"
+                        >GitHub Action</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>More Features</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/more_features/deliver/"
+                                >Deliver</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/more_features/diff/"
+                                >Diff</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/"
+                                >Pipeline for DAST</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/more_features/tagger/"
+                                >Tagger</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+                <li>
+                    <a
+                        href="https://owasp-noir.github.io/noir/get_started/ai_power/"
+                        class="sidebar-direct-link"
+                        >AI Power</a
+                    >
+                </li>
+                <li class="sidebar-subsection">
+                    <button class="sidebar-subheading">
+                        <span>AI Providers</span>
+                        <svg
+                            class="sidebar-chevron"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                        >
+                            <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                    </button>
+                    <ul class="sidebar-sublinks">
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/"
+                                >OpenAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/"
+                                >Ollama</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/"
+                                >LM Studio</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/"
+                                >Azure</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/"
+                                >GitHub Marketplace</a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/"
+                                >OpenRouter</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/"
+                                >vLLM</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/"
+                                >xAI</a
+                            >
+                        </li>
+                        <li>
+                            <a href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/"
+                                >ACP</a
+                            >
+                        </li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="development">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <polyline points="16 18 22 12 16 6" />
+                        <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                    Development</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/how_to_build/"
+                        >How to Build</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/analyzer_architecture/"
+                        >Analyzer Architecture</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/how_to_release/"
+                        >How to Release</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/debug_flags/"
+                        >Debug Flags</a
+                    >
+                </li>
+                <li>
+                    <a href="https://owasp-noir.github.io/noir/development/nix_environment/"
+                        >Nix Environment</a
+                    >
+                </li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="community">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    Community</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/community/media/">Media</a></li>
+            </ul>
+        </div>
+        <div class="sidebar-section" data-section="resources">
+            <button class="sidebar-heading">
+                <span
+                    ><svg
+                        class="sidebar-icon"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <path
+                            d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"
+                        />
+                    </svg>
+                    Resources</span
+                >
+                <svg
+                    class="sidebar-chevron"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                >
+                    <polyline points="6 9 12 15 18 9" />
+                </svg>
+            </button>
+            <ul class="sidebar-links">
+                <li><a href="https://owasp-noir.github.io/noir/resources/faq/">FAQ</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/resources/troubleshooting/">Troubleshooting</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a></li>
+                <li><a href="https://owasp-noir.github.io/noir/resources/artwork/">Artwork</a></li>
+            </ul>
+        </div>
+    </nav>
+</aside>
+    <main class="docs-main" id="main-content">
+      <article class="docs-article">
+        <h1>HTTP Client Commands</h1>
+        <p>Turn discovered endpoints into ready-to-run commands for popular HTTP clients. Use <code>-u</code> to set the base URL that gets prepended to each path.</p>
+<h2 id="curl">cURL</h2>
+<p><a href="https://curl.se/">cURL</a> is the most widely used command-line HTTP client. The generated commands include <code>-i</code> (show response headers), <code>-X</code> (HTTP method), <code>-d</code> (request body), <code>-H</code> (headers), and <code>--cookie</code> as appropriate.</p>
+<pre><code class="language-bash hljs">noir scan . -f curl -u https://www.example.com
+</code></pre>
+<p>Example output:</p>
+<pre><code class="language-bash hljs">curl -i -X GET https://www.example.com/ -H &quot;x-api-key: &quot;
+curl -i -X POST https://www.example.com/query -d &quot;query=&quot; --cookie &quot;my_auth=&quot;
+curl -i -X GET https://www.example.com/token -d &quot;client_id=&amp;redirect_url=&amp;grant_type=&quot;
+</code></pre>
+<h2 id="httpie">HTTPie</h2>
+<p><a href="https://httpie.io/">HTTPie</a> has a more intuitive syntax than cURL, with colorized output and built-in JSON support.</p>
+<pre><code class="language-bash hljs">noir scan . -f httpie -u https://www.example.com
+</code></pre>
+<p>Example output:</p>
+<pre><code class="language-bash hljs">http GET https://www.example.com/ &quot;x-api-key: &quot;
+http POST https://www.example.com/query &quot;query=&quot; &quot;Cookie: my_auth=&quot;
+http GET https://www.example.com/token &quot;client_id=&amp;redirect_url=&amp;grant_type=&quot;
+</code></pre>
+<h2 id="powershell">PowerShell</h2>
+<p>For Windows environments. Generates <a href="https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest">Invoke-WebRequest</a> commands that work natively without extra tools.</p>
+<pre><code class="language-bash hljs">noir scan . -f powershell -u https://www.example.com
+</code></pre>
+<p>Example output:</p>
+<pre><code class="language-powershell hljs">Invoke-WebRequest -Method GET -Uri &quot;https://www.example.com/&quot; -Headers @{&quot;x-api-key&quot;=&quot;&quot;}
+Invoke-WebRequest -Method POST -Uri &quot;https://www.example.com/query&quot; -Headers @{&quot;Cookie&quot;=&quot;my_auth=&quot;} -Body &quot;query=&quot; -ContentType &quot;application/x-www-form-urlencoded&quot;
+Invoke-WebRequest -Method GET -Uri &quot;https://www.example.com/token&quot; -Body &quot;client_id=&amp;redirect_url=&amp;grant_type=&quot; -ContentType &quot;application/x-www-form-urlencoded&quot;
+</code></pre>
+<h2 id="adb-android">ADB (Android)</h2>
+<p>Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. <code>-f adb</code> does the inverse: it turns the Android deep links, intent components, and content providers Noir discovers into <a href="https://developer.android.com/tools/adb">Android Debug Bridge</a> commands you can run against a connected device or emulator.</p>
+<p><code>adb</code> is Android-only, so the format emits commands for Android-originated entry points and skips everything it can't launch — HTTP endpoints, iOS schemes (use <a href="#simctl-ios"><code>-f simctl</code></a>), and bare App Links domain associations — each reported as a one-line warning to stderr (the command list on stdout stays pipe-clean).</p>
+<pre><code class="language-bash hljs">noir scan ./my-android-app -f adb
+</code></pre>
+<p>Example output:</p>
+<pre><code class="language-bash hljs"># custom-scheme deep link / verified app link → am start with a VIEW intent
+adb shell am start -a 'android.intent.action.VIEW' -c 'android.intent.category.BROWSABLE' -d 'myapp://host/path' -p 'com.example.app'
+# explicit activity / service / receiver → am start / startservice / broadcast
+adb shell am start -n 'com.example.app/.ExportedActivity'
+adb shell am startservice -n 'com.example.app/.SyncService'
+adb shell am broadcast -n 'com.example.app/.BootReceiver'
+# exported ContentProvider → content query
+adb shell content query --uri 'content://com.example.app.provider'
+</code></pre>
+<p>The action, category, and package come from the manifest's intent-filter, so each launch matches the declared filter. Intent extras discovered in the handler are emitted as <code>--es</code> string extras (empty templates you can fill, or seed with <code>--pvalue</code>). See <a href="../../supported/mobile/">Mobile Apps</a> for how these entry points are extracted.</p>
+<h2 id="simctl-ios">simctl (iOS)</h2>
+<p><code>-f simctl</code> is the iOS counterpart to <code>-f adb</code>: it turns the iOS custom-scheme deep links and universal links Noir discovers into <a href="https://developer.apple.com/documentation/xcode/simulator"><code>xcrun simctl openurl</code></a> commands that open them on a booted iOS Simulator. iOS has no intent or content-provider analog, so every command is a single <code>openurl</code>.</p>
+<pre><code class="language-bash hljs">noir scan ./my-ios-app -f simctl
+</code></pre>
+<p>Example output:</p>
+<pre><code class="language-bash hljs">xcrun simctl openurl booted 'myapp://host/path?token='
+xcrun simctl openurl booted 'https://app.example.com/buy'
+</code></pre>
+<p>Like <code>-f adb</code>, <code>simctl</code> is platform-specific: it emits commands for iOS-originated entry points and skips what it can't open — HTTP endpoints, Android entry points (use <code>-f adb</code>), and bare App Links domain associations — each reported as a one-line warning to stderr.</p>
+<h2 id="filling-parameter-values">Filling Parameter Values</h2>
+<p>By default Noir leaves parameter values empty (<code>x-api-key=</code>, <code>query=</code>, …) so the commands work as templates. Pre-populate values with <code>--pvalue</code>, handy when you want a script you can run as-is, or when you want to seed fuzzing input.</p>
+<pre><code>--pvalue TYPE=VALUE     # repeatable
+</code></pre>
+<table>
+<thead>
+<tr>
+<th><code>TYPE</code></th>
+<th>Scope</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>any</code> (or omit)</td>
+<td>Every parameter type</td>
+</tr>
+<tr>
+<td><code>query</code></td>
+<td>Query string</td>
+</tr>
+<tr>
+<td><code>form</code></td>
+<td>Form body (<code>application/x-www-form-urlencoded</code>)</td>
+</tr>
+<tr>
+<td><code>json</code></td>
+<td>JSON body</td>
+</tr>
+<tr>
+<td><code>header</code></td>
+<td>Request headers</td>
+</tr>
+<tr>
+<td><code>cookie</code></td>
+<td>Cookies</td>
+</tr>
+<tr>
+<td><code>path</code></td>
+<td>Path parameters</td>
+</tr>
+</tbody>
+</table>
+<p><code>VALUE</code> accepts two forms:</p>
+<table>
+<thead>
+<tr>
+<th>Form</th>
+<th>Behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>&lt;value&gt;</code></td>
+<td>Used for every parameter of the targeted type</td>
+</tr>
+<tr>
+<td><code>&lt;name&gt;=&lt;value&gt;</code> or <code>&lt;name&gt;:&lt;value&gt;</code></td>
+<td>Used only for parameters named <code>&lt;name&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>--pvalue</code> is repeatable, and per-type rules win over the generic <code>any</code> scope when both match.</p>
+<pre><code class="language-bash hljs"># Fill every parameter with `test`
+noir scan . -f curl -u https://example.com --pvalue &quot;test&quot;
+
+# Fill only the `Authorization` header and `id` path param
+noir scan . -f curl -u https://example.com \
+  --pvalue &quot;header=Authorization=Bearer xyz&quot; \
+  --pvalue &quot;path=id=42&quot;
+
+# Mix: default `1` for query, but `limit` always 10
+noir scan . -f curl -u https://example.com \
+  --pvalue &quot;query=1&quot; \
+  --pvalue &quot;query=limit=10&quot;
+</code></pre>
+<p>The same flag applies to HTTPie and PowerShell output, and feeds downstream into the OpenAPI, Postman, and JSON formats wherever values are rendered.</p>
+<blockquote>
+<p><strong>Legacy:</strong> v0's <code>--set-pvalue</code>, <code>--set-pvalue-query</code>, <code>--set-pvalue-header</code>,
+etc. still work as silent aliases in v1.x. New scripts should prefer
+the unified <code>--pvalue TYPE=VALUE</code> form above.</p>
+</blockquote>
+
+        
+
+      </article>
+    </main>
+      <aside class="docs-toc" id="docs-toc">
+    <div class="toc-inner">
+      <div class="toc-title">On this page</div>
+      <nav class="toc-nav" id="toc-nav">
+      </nav>
+    </div>
+  </aside>
+  </div>
+  <div class="search-modal" id="search-modal">
+    <div class="search-modal-overlay"></div>
+    <div class="search-modal-content">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" id="search-input" placeholder="Search documentation..." autocomplete="off">
+        <kbd class="search-esc">Esc</kbd>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </div>
+  </div>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <div class="footer-branding">
+        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
+        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
+      </div>
+      <div class="footer-links">
+        <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+        <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+        <a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a>
+      </div>
+    </div>
+  </footer>
+  <script src="https://owasp-noir.github.io/noir/js/sidebar.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/toc.js"></script>
+  <script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+  <script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js"></script>
+<script>hljs.highlightAll();</script>
+  <script src="https://owasp-noir.github.io/noir/js/codeblock.js"></script>
+  
+</body>
+</html>
