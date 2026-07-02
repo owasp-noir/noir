@@ -121,7 +121,10 @@ module Analyzer::Ruby
           # below a bare `private` are helpers, not commands. Track both so
           # they don't surface as bogus subcommands (an indentation-matched
           # `end` is the line-scan approximation of the block boundary).
-          if nc = line.match(/^(\s*)no_commands\b/)
+          # Only the `do ... end` form arms the tracker: a single-line
+          # `no_commands { ... }` closes on its own line, so treating it as
+          # an open block would suppress every later command in the file.
+          if nc = line.match(/^(\s*)no_commands\s+do\b/)
             no_commands_indent ||= nc[1].size
           elsif (indent = no_commands_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
             no_commands_indent = nil

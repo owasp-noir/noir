@@ -84,7 +84,10 @@ module Analyzer::Kotlin
           ep.push_param(Param.new(name, "", "flag"))
           # `option(..., envvar = "X")` also reads the environment; the env
           # binding belongs to the option's command, not the file's root.
-          if env = m[2].match(CLIKT_ENVVAR)
+          # Scan the whole line, not the `([^)]*)` option body: a `)` inside
+          # an earlier help string (`help = "path (see docs)"`) truncates
+          # that capture before the trailing `envvar =` is reached.
+          if env = line.match(CLIKT_ENVVAR)
             ep.push_param(Param.new(env[1], "", "env"))
           end
         end
