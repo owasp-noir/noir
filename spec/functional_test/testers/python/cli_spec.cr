@@ -14,6 +14,7 @@ end
 argparse_endpoints = [
   build.call("cli://pytool", [
     Param.new("verbose", "", "flag"),
+    Param.new("output", "", "flag"),
     Param.new("source", "", "argument"),
     Param.new("API_TOKEN", "", "env"),
   ]),

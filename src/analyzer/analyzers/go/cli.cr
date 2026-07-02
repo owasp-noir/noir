@@ -222,7 +222,10 @@ module Analyzer::Go
             fetch_endpoint(endpoints, urfave_cmd_url, path, line_no)
           when :flag
             ep = fetch_endpoint(endpoints, urfave_cmd_url, path, line_no)
-            ep.push_param(Param.new(nm[1], "", "flag"))
+            # urfave/cli v1 packs short aliases into the name ("config, c");
+            # the optimizer drops params whose name contains a space, so keep
+            # only the canonical first token.
+            ep.push_param(Param.new(nm[1].split(',').first.strip, "", "flag"))
           when :app
             # App.Name is the binary itself; flags below it bind to root.
             urfave_cmd_url = root_url

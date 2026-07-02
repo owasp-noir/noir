@@ -54,6 +54,10 @@ class OutputBuilderMermaid < OutputBuilder
     endpoints.each do |endpoint|
       # Parse the URL path
       path = endpoint.url
+      # A CLI command surface (`cli://tool/serve`) is not an HTTP path:
+      # group it as cli -> tool -> serve instead of leaving the scheme as
+      # a mangled `cli_` segment.
+      path = path.sub("cli://", "cli/") if endpoint.cli?
       # Remove query parameters if any
       if path.includes?("?")
         path = path.split("?")[0]
@@ -145,6 +149,20 @@ class OutputBuilderMermaid < OutputBuilder
         body_params.keys.sort!.each do |param|
           param_indent = "  " * (indent + 2)
           ob_puts "#{param_indent}#{sanitize_segment(param)}"
+        end
+      end
+
+      # CLI inputs (protocol "cli") live outside the six canonical HTTP
+      # buckets — render flags / positional arguments / env reads as their
+      # own groups so they aren't silently dropped from the mindmap.
+      {"flag" => "flags", "argument" => "arguments", "env" => "env"}.each do |param_type, label|
+        bucket = params_hash[param_type]?
+        next if bucket.nil? || bucket.empty?
+        group_indent = "  " * (indent + 1)
+        ob_puts "#{group_indent}#{label}"
+        bucket.keys.sort!.each do |name|
+          item_indent = "  " * (indent + 2)
+          ob_puts "#{item_indent}#{sanitize_segment(name)}"
         end
       end
     end

@@ -6,11 +6,13 @@ build = ->(url : String, params : Array(Param)) do
   ep
 end
 
-# CLI11 (App + add_flag + add_subcommand + add_option, std::getenv)
+# CLI11 (App + add_flag + add_subcommand + add_option, std::getenv,
+# raw argv[N] positional)
 endpoints = [
   build.call("cli://tool", [
     Param.new("verbose", "", "flag"),
     Param.new("API_TOKEN", "", "env"),
+    Param.new("arg1", "", "argument"),
   ]),
   build.call("cli://tool/serve", [
     Param.new("port", "", "flag"),

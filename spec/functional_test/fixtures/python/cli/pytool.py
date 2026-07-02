@@ -4,8 +4,13 @@ import os
 
 def main():
     parser = argparse.ArgumentParser(prog="pytool")
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("source")
+    parser.add_argument(
+        "--output",
+        type=str,
+        default="out.txt",
+    )
 
     sub = parser.add_subparsers()
     serve = sub.add_parser("serve")

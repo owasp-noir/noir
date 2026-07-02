@@ -22,3 +22,21 @@ FunctionalTester.new("fixtures/java/cli_picocli/", {
   :techs     => 1,
   :endpoints => endpoints.size,
 }, endpoints).perform_tests
+
+# jcommander (@Parameter names -> flags, name-less @Parameter -> main
+# positional bound to the next field, @Parameters commandNames subcommand)
+jcommander_endpoints = [
+  build.call("cli://Tool", [
+    Param.new("verbose", "", "flag"),
+    Param.new("files", "", "argument"),
+    Param.new("JC_TOKEN", "", "env"),
+  ]),
+  build.call("cli://Tool/serve", [
+    Param.new("port", "", "flag"),
+  ]),
+]
+
+FunctionalTester.new("fixtures/java/cli_jcommander/", {
+  :techs     => 1,
+  :endpoints => jcommander_endpoints.size,
+}, jcommander_endpoints).perform_tests

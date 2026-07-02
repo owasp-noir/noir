@@ -38,7 +38,14 @@ module Analyzer::CSharp
     MAIN_ARGS    = /\bstatic\s+(?:async\s+)?(?:int|void|Task(?:<int>)?)\s+Main\s*\(\s*string\s*\[\s*\]\s+(\w+)\s*\)/
     GET_CMD_ARGS = /\bEnvironment\.GetCommandLineArgs\s*\(/
 
-    CLI_LIB_MARKERS = ["System.CommandLine", "CommandLine", "CliFx", "Spectre.Console.Cli"]
+    # Marker strings must not substring-match unrelated code: a bare
+    # "CommandLine" would also hit `Environment.GetCommandLineArgs` (or any
+    # comment), qualifying a web app as a framework CLI and leaking its env
+    # reads. CommandLineParser is matched via its `using CommandLine` /
+    # `CommandLine.Parser` namespace forms instead (same shape the cs_cli
+    # detector uses).
+    CLI_LIB_MARKERS = ["System.CommandLine", "CliFx", "Spectre.Console.Cli"]
+    CLP_NAMESPACE   = /\busing\s+CommandLine\b|\bCommandLine\.Parser\b|\bParser\.Default\.ParseArguments\b/
     WEB_HOST_RE     = /\bWebApplication\.(?:Create(?:Builder|SlimBuilder|EmptyBuilder)?|CreateDefault)\b|\bnew\s+HttpListener\b|\.MapGet\s*\(|\.MapControllers\s*\(|\[\s*ApiController\s*\]|:\s*ControllerBase\b|\bHost\.CreateDefaultBuilder\b/
 
     def analyze
@@ -56,7 +63,7 @@ module Analyzer::CSharp
 
           binary = csharp_binary_name(assemblies, path)
           root_url = "cli://#{binary}"
-          framework_cli = CLI_LIB_MARKERS.any? { |m| content.includes?(m) }
+          framework_cli = cli_library?(content)
           emit_builtin = framework_cli || !content.matches?(WEB_HOST_RE)
           scan(content.lines, path, binary, root_url, endpoints, emit_builtin)
         rescue e
@@ -69,8 +76,12 @@ module Analyzer::CSharp
       @result
     end
 
+    private def cli_library?(content : String) : Bool
+      CLI_LIB_MARKERS.any? { |m| content.includes?(m) } || content.matches?(CLP_NAMESPACE)
+    end
+
     private def cli_evidence?(content : String) : Bool
-      return true if CLI_LIB_MARKERS.any? { |m| content.includes?(m) }
+      return true if cli_library?(content)
       return true if content.matches?(ROOT_COMMAND) || content.matches?(VERB_ATTR)
       return false if content.matches?(WEB_HOST_RE)
       content.matches?(MAIN_ARGS) || content.matches?(GET_CMD_ARGS)

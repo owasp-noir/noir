@@ -21,7 +21,7 @@ module Analyzer::Python
     ARGPARSE_NEW_RE  = /(\w+)\s*=\s*argparse\.ArgumentParser\s*\(/
     ARGPARSE_PROG_RE = /ArgumentParser\([^)]*\bprog\s*=\s*[rf]?["']([^"']+)["']/
     ADD_PARSER_RE    = /(\w+)\s*=\s*(\w+)\.add_parser\s*\(\s*[rf]?["']([^"']+)["']/
-    ADD_ARGUMENT_RE  = /(\w+)\s*\.\s*add_argument\s*\(\s*[rf]?["']([^"']+)["']/
+    ADD_ARGUMENT_RE  = /(\w+)\s*\.\s*add_argument\s*\(([^)]*)/
 
     # click / typer decorators
     DECORATOR_CMD_RE  = /^@(\w+)\.(command|group|callback)\s*\(/
@@ -117,16 +117,48 @@ module Analyzer::Python
       end
       return if var_urls.empty?
 
-      lines.each_with_index do |line, index|
-        next unless m = line.match(ADD_ARGUMENT_RE)
+      index = 0
+      while index < lines.size
+        line = lines[index]
+        unless m = line.match(ADD_ARGUMENT_RE)
+          index += 1
+          next
+        end
         url = var_urls[m[1]]?
-        next unless url
-        ep = fetch_endpoint(endpoints, url, path, index + 1)
-        token = m[2]
-        if token.starts_with?("-")
-          ep.push_param(Param.new(token.lstrip('-'), "", "flag"))
+        unless url
+          index += 1
+          next
+        end
+        start = index
+        line_no = start + 1
+
+        # Join a multi-line `add_argument(` call (the Black/PEP8 shape puts
+        # the name on its own following line) so the name token is visible on
+        # one logical line, mirroring the click decorator handling.
+        logical = line
+        while parens_unbalanced?(logical) && index + 1 < lines.size && index - start < 40
+          index += 1
+          logical += " " + lines[index]
+        end
+        body = logical.match(ADD_ARGUMENT_RE).try(&.[2])
+        index += 1
+        next unless body
+
+        ep = fetch_endpoint(endpoints, url, path, line_no)
+        # The canonical form declares both names — `add_argument("-v",
+        # "--verbose")` — and argparse derives the destination from the long
+        # one, so prefer it over the short alias. Cut at the first `=` so
+        # keyword-argument values (help=, metavar=, dest=) can't pose as
+        # name tokens.
+        tokens = [] of String
+        body.split('=').first.scan(/[rf]?["']([^"']+)["']/) { |t| tokens << t[1] }
+        first = tokens.first?
+        next unless first
+        if first.starts_with?("-")
+          long = tokens.find(&.starts_with?("--")) || first
+          ep.push_param(Param.new(long.lstrip('-'), "", "flag"))
         else
-          ep.push_param(Param.new(token, "", "argument"))
+          ep.push_param(Param.new(first, "", "argument"))
         end
       end
     end

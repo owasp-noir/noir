@@ -141,6 +141,14 @@ module Analyzer::Cpp
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
         end
 
+        # raw argv positionals. `scan` so every argv[N] on one line surfaces
+        # and the argv[0]-program-name skip is applied per index, not just to
+        # the first match (`execl(argv[0], argv[1], ...)` must still yield arg1).
+        line.scan(ARGV_IDX) do |am|
+          next if am[1] == "0"
+          fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{am[1]}", "", "argument"))
+        end
+
         if emit_env
           line.scan(GETENV) do |em|
             fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(em[1], "", "env"))

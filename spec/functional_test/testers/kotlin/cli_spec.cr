@@ -6,10 +6,13 @@ build = ->(url : String, params : Array(Param)) do
   ep
 end
 
-# clikt (CliktCommand root + subcommand, option/argument, System.getenv)
+# clikt (CliktCommand root + subcommand, option/argument with envvar,
+# System.getenv)
 endpoints = [
   build.call("cli://tool", [
     Param.new("verbose", "", "flag"),
+    Param.new("config", "", "flag"),
+    Param.new("TOOL_CONFIG", "", "env"),
     Param.new("API_TOKEN", "", "env"),
   ]),
   build.call("cli://tool/serve", [

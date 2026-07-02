@@ -14,6 +14,22 @@ class CLI < Thor
   def build(target)
     puts target
   end
+
+  def self.exit_on_failure?
+    true
+  end
+
+  no_commands do
+    def render_banner
+      puts "banner"
+    end
+  end
+
+  private
+
+  def internal_cleanup
+    puts "cleanup"
+  end
 end
 
 CLI.start(ARGV)

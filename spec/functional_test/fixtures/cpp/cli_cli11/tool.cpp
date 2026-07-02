@@ -14,6 +14,7 @@ int main(int argc, char** argv) {
     serve->add_option("config", config_file);
 
     const char* token = std::getenv("API_TOKEN");
+    const char* raw_target = argc > 1 ? argv[1] : "";
     CLI11_PARSE(app, argc, argv);
     return 0;
 }

@@ -18,6 +18,7 @@ module Analyzer::Kotlin
     CLIKT_NAME   = /CliktCommand\s*\([^)]*\bname\s*=\s*"([^"]+)"/
     CLIKT_OPTION = /\bval\s+(\w+)\s+by\s+option\s*\(([^)]*)\)/
     CLIKT_ARG    = /\bval\s+(\w+)\s+by\s+argument\s*\(/
+    CLIKT_ENVVAR = /\benvvar\s*=\s*"([^"]+)"/
 
     # kotlinx-cli.
     ARGPARSER   = /\bArgParser\s*\(\s*"([^"]+)"/
@@ -78,8 +79,17 @@ module Analyzer::Kotlin
         end
 
         if m = line.match(CLIKT_OPTION)
+          ep = fetch_endpoint(endpoints, current_url, path, line_no)
           name = option_long(m[2]) || camel_to_kebab(m[1])
-          fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag"))
+          ep.push_param(Param.new(name, "", "flag"))
+          # `option(..., envvar = "X")` also reads the environment; the env
+          # binding belongs to the option's command, not the file's root.
+          # Scan the whole line, not the `([^)]*)` option body: a `)` inside
+          # an earlier help string (`help = "path (see docs)"`) truncates
+          # that capture before the trailing `envvar =` is reached.
+          if env = line.match(CLIKT_ENVVAR)
+            ep.push_param(Param.new(env[1], "", "env"))
+          end
         end
         if m = line.match(CLIKT_ARG)
           fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(camel_to_kebab(m[1]), "", "argument"))
