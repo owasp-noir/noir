@@ -48,6 +48,14 @@ class HuntParamTagger < Tagger
 
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
+      # HUNT word lists model HTTP parameter vulnerabilities (SSRF via a
+      # `port` query param, debug toggles, ...). A CLI command's flags,
+      # positional arguments and env reads are not HTTP inputs — `--port`
+      # is where the tool listens, not a request it sends — so tagging
+      # them only produces noise. Mobile deep-link params stay: their
+      # query params are attacker-supplied URL inputs like any other.
+      next if endpoint.cli?
+
       endpoint.params.each do |param|
         TAG_DEFINITIONS.each do |k, v|
           next if param.param_type == "path" && !PATH_ALLOWED_TAGS.includes?(k)

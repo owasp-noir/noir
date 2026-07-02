@@ -19,7 +19,10 @@ module Analyzer::Ruby
     THOR_SUBCLASS = /<\s*Thor\b/
     THOR_DESC     = /^\s*desc\s+["']([^"'\s]+)/
     THOR_OPTION   = /^\s*(?:method_option|option)\s+:?["']?([A-Za-z0-9][\w-]*)/
-    DEF_RE        = /^\s*def\s+([a-z_][\w]*[?!]?)/
+    # Instance methods only: `def self.exit_on_failure?` (standard Thor
+    # boilerplate) is a class method, never a command, so the name must be
+    # followed by an argument list, whitespace or end-of-line — not `.`.
+    DEF_RE = /^\s*def\s+([a-z_]\w*[?!]?)\s*(?:[(\s]|$)/
 
     # GLI / commander gem command blocks + flags.
     BLOCK_COMMAND = /^\s*command\s+:?["']?([A-Za-z0-9][\w-]*)/
@@ -107,22 +110,44 @@ module Analyzer::Ruby
       pending_desc : String? = nil
       pending_thor_opts = [] of String
       block_cmd_url = root_url
+      thor_private = false
+      no_commands_indent : Int32? = nil
 
       lines.each_with_index do |line, index|
         line_no = index + 1
 
         if thor
+          # Thor's task rules: `no_commands do ... end` bodies and methods
+          # below a bare `private` are helpers, not commands. Track both so
+          # they don't surface as bogus subcommands (an indentation-matched
+          # `end` is the line-scan approximation of the block boundary).
+          if nc = line.match(/^(\s*)no_commands\b/)
+            no_commands_indent ||= nc[1].size
+          elsif (indent = no_commands_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
+            no_commands_indent = nil
+          end
+          if line.matches?(/^\s*private\s*$/)
+            thor_private = true
+          elsif line.matches?(/^\s*public\s*$/) || line.matches?(THOR_SUBCLASS)
+            thor_private = false
+          end
+
           if m = line.match(THOR_DESC)
             pending_desc = m[1]
           elsif m = line.match(THOR_OPTION)
             pending_thor_opts << m[1]
           elsif (m = line.match(DEF_RE)) && (name = m[1]) != "initialize"
-            command = pending_desc || name
-            url = "#{root_url}/#{command}"
-            ep = fetch_endpoint(endpoints, url, path, line_no)
-            pending_thor_opts.each { |opt| ep.push_param(Param.new(opt, "", "flag")) }
-            pending_desc = nil
-            pending_thor_opts.clear
+            if thor_private || no_commands_indent
+              pending_desc = nil
+              pending_thor_opts.clear
+            else
+              command = pending_desc || name
+              url = "#{root_url}/#{command}"
+              ep = fetch_endpoint(endpoints, url, path, line_no)
+              pending_thor_opts.each { |opt| ep.push_param(Param.new(opt, "", "flag")) }
+              pending_desc = nil
+              pending_thor_opts.clear
+            end
           end
         else
           # TTY::Option DSL (option/flag/keyword/argument) — only outside a

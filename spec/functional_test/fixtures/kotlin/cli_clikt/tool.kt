@@ -5,6 +5,7 @@ import com.github.ajalt.clikt.parameters.options.option
 
 class Tool : CliktCommand() {
     val verbose by option("-v", "--verbose")
+    val config by option("--config", envvar = "TOOL_CONFIG")
     override fun run() {
         val token = System.getenv("API_TOKEN")
     }

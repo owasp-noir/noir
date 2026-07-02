@@ -141,6 +141,13 @@ module Analyzer::Cpp
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
         end
 
+        # raw argv positionals. argv[0] is the program name, not an input.
+        if m = line.match(ARGV_IDX)
+          unless m[1] == "0"
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{m[1]}", "", "argument"))
+          end
+        end
+
         if emit_env
           line.scan(GETENV) do |em|
             fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(em[1], "", "env"))

@@ -112,6 +112,18 @@ module Analyzer::Java
           end
         end
 
+        # jcommander @Parameter: `names = {"-p", "--port"}` is a named
+        # option; a name-less @Parameter(description = ...) is the command's
+        # main parameter — bind the next field declaration as a positional.
+        if m = line.match(PARAMETER_ATTR)
+          if name = annotation_flag_name(m[1])
+            pending_argument = false
+            fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag"))
+          else
+            pending_argument = true
+          end
+        end
+
         # commons-cli (root flags).
         if m = line.match(ADD_OPTION_LL)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))

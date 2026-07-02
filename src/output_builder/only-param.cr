@@ -4,7 +4,9 @@ require "../models/endpoint"
 class OutputBuilderOnlyParam < OutputBuilder
   def print(endpoints : Array(Endpoint))
     common_params = [] of String
-    targets = ["query", "json", "form"]
+    # CLI endpoints carry their fuzzable inputs as flag/argument/env params,
+    # so include them alongside the HTTP body-ish buckets.
+    targets = ["query", "json", "form", "flag", "argument", "env"]
 
     endpoints.each do |endpoint|
       endpoint.params.each do |param|

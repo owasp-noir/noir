@@ -4,7 +4,7 @@ import os
 
 def main():
     parser = argparse.ArgumentParser(prog="pytool")
-    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("source")
 
     sub = parser.add_subparsers()

@@ -13,5 +13,6 @@ Noir is designed to be a versatile tool that can work with a wide variety of tec
 *   **Callee Coverage**: Check which frameworks can emit best-effort 1-hop handler callees for AI SAST and code review workflows.
 *   **AI Context**: Aggregate per-endpoint guards, sinks, validators, and signals into an AI-review-ready context object with `--ai-context`.
 *   **Mobile Apps**: Learn how Noir extracts Android and iOS deep-link entry points (custom schemes, intents, universal links) and links them to the code that handles them.
+*   **CLI Apps**: See how Noir maps the command-line attack surface of CLI programs — subcommands, flags, positional arguments, and consumed environment variables — across 21 languages.
 
 By understanding what Noir supports, you can better integrate it into your existing development and security workflows.
