@@ -55,6 +55,16 @@ jobs:
 | `concurrency` | Concurrency level (`--concurrency`) | No | `` |
 | `exclude_codes` | Exclude HTTP response codes (comma‑separated) (`--exclude-codes`) | No | `` |
 | `status_codes` | Display HTTP status codes for discovered endpoints (`--status-codes`) | No | `false` |
+| `ai_provider` | AI provider prefix or full custom URL (`--ai-provider`) | No | `` |
+| `ai_model` | AI model name (`--ai-model`) | No | `` |
+| `ai_key` | AI API key (`--ai-key`) | No | `` |
+| `ai_agent` | Enable agentic AI workflow (`--ai-agent`) | No | `false` |
+| `probe` | Fire HTTP requests at discovered endpoints (`--probe`) | No | `false` |
+| `probe_via` | Route probes through a proxy URL (`--probe-via`) | No | `` |
+| `export_es` | Index endpoints in Elasticsearch or OpenSearch (`--export-es`) | No | `` |
+| `export_webhook` | POST endpoint catalog as JSON to a webhook URL (`--export-webhook`) | No | `` |
+| `diff_path` | Old code version path for diff analysis (`--diff-path`) | No | `` |
+| `no_log` | Hide execution logs and show only results (`--no-log`) | No | `true` |
 
 **Notes:**
 - Pass boolean options as strings (`'true'`/`'false'`)

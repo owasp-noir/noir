@@ -53,6 +53,16 @@ jobs:
 | `concurrency` | 동시성 수준 (`--concurrency`) | 아니오 | `` |
 | `exclude_codes` | 제외할 HTTP 상태코드(쉼표 구분) (`--exclude-codes`) | 아니오 | `` |
 | `status_codes` | 발견된 엔드포인트에 HTTP 상태코드 표시 (`--status-codes`) | 아니오 | `false` |
+| `ai_provider` | AI 제공자 접두사 또는 전체 커스텀 URL (`--ai-provider`) | 아니오 | `` |
+| `ai_model` | AI 모델명 (`--ai-model`) | 아니오 | `` |
+| `ai_key` | AI API 키 (`--ai-key`) | 아니오 | `` |
+| `ai_agent` | 에이전틱 AI 워크플로 활성화 (`--ai-agent`) | 아니오 | `false` |
+| `probe` | 발견된 엔드포인트에 HTTP 요청 실행 (`--probe`) | 아니오 | `false` |
+| `probe_via` | 프로브 요청을 프록시 URL로 라우팅 (`--probe-via`) | 아니오 | `` |
+| `export_es` | Elasticsearch 또는 OpenSearch에 엔드포인트 색인 (`--export-es`) | 아니오 | `` |
+| `export_webhook` | 엔드포인트 카탈로그를 웹훅 URL로 JSON POST (`--export-webhook`) | 아니오 | `` |
+| `diff_path` | 차이 분석을 위한 이전 코드 경로 (`--diff-path`) | 아니오 | `` |
+| `no_log` | 실행 로그를 숨기고 결과만 표시 (`--no-log`) | 아니오 | `true` |
 
 **참고:**
 - 불리언 옵션은 문자열(`'true'`/`'false'`)로 전달
