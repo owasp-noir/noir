@@ -248,16 +248,6 @@ module Noir
       unique
     end
 
-    private def apply_prefix(route : JSRoutePattern, prefix : String)
-      return if prefix.empty?
-
-      if !route.path.starts_with?("/")
-        route.path = "#{prefix}/#{route.path}"
-      else
-        route.path = "#{prefix}#{route.path}"
-      end
-    end
-
     # Resolve full prefix for a router by walking up all parent chains
     # Supports multiple parents (router mounted under different parent routers)
     private def resolve_full_prefixes(router : String, router_prefixes : Hash(String, Array(String)), router_parents : Hash(String, Array(String)), visited : Set(String) = Set(String).new) : Array(String)
@@ -619,11 +609,6 @@ module Noir
       candidates.last
     end
 
-    private def current_token
-      return JSToken.new(:eof, "", @position) if at_end?
-      @tokens[@position]
-    end
-
     private def advance
       @position += 1 if !at_end?
       @tokens[@position - 1]
@@ -771,26 +756,6 @@ module Noir
       end
 
       results
-    end
-
-    private def extract_path_string(start_token_idx = @position) : String?
-      # Look for a string token that might represent a route path
-      idx = start_token_idx
-
-      # Find the first string after a dot and HTTP method
-      while idx < @tokens.size
-        if idx > 1 &&
-           @tokens[idx - 2].type == :dot &&
-           http_method?(@tokens[idx - 1]) &&
-           @tokens[idx].type == :lparen &&
-           idx + 1 < @tokens.size &&
-           @tokens[idx + 1].type == :string
-          return @tokens[idx + 1].value
-        end
-        idx += 1
-      end
-
-      nil
     end
 
     private def parse_express_route : Array(JSRoutePattern)
@@ -1133,68 +1098,6 @@ module Noir
       end
 
       results
-    end
-
-    private def parse_fastify_register_route : JSRoutePattern?
-      # Parse fastify.register(routes, { prefix: '/api/v1' }) patterns
-      # Only check at the current position to avoid skipping other routes
-      idx = @position
-
-      if idx < @tokens.size - 3 &&
-         (@tokens[idx].value == "fastify" || @tokens[idx].value == "app" || @tokens[idx].value == "server") &&
-         idx + 2 < @tokens.size &&
-         @tokens[idx + 1].type == :dot &&
-         @tokens[idx + 2].value == "register" &&
-         idx + 3 < @tokens.size &&
-         @tokens[idx + 3].type == :lparen
-        # Skip to the options object
-        options_idx = idx + 4
-        prefix = ""
-
-        # Look for { prefix: '/path' } pattern
-        while options_idx < @tokens.size && @tokens[options_idx].type != :rbrace
-          if @tokens[options_idx].value == "prefix" &&
-             options_idx + 1 < @tokens.size &&
-             @tokens[options_idx + 1].type == :colon &&
-             options_idx + 2 < @tokens.size &&
-             @tokens[options_idx + 2].type == :string
-            prefix = @tokens[options_idx + 2].value
-            break
-          end
-          options_idx += 1
-        end
-
-        unless prefix.empty?
-          # Look ahead for potential routes within the registered module
-          ahead_idx = options_idx + 3 # Skip past the closing brace
-          while ahead_idx < @tokens.size - 3
-            if ahead_idx + 2 < @tokens.size &&
-               @tokens[ahead_idx + 1].type == :dot &&
-               http_method?(@tokens[ahead_idx + 2]) &&
-               ahead_idx + 3 < @tokens.size &&
-               @tokens[ahead_idx + 3].type == :lparen &&
-               ahead_idx + 4 < @tokens.size &&
-               @tokens[ahead_idx + 4].type == :string
-              method = @tokens[ahead_idx + 2].value.upcase
-              path = @tokens[ahead_idx + 4].value
-              start_pos = @tokens[ahead_idx].position
-
-              # Create route with the prefix
-              raw_path = path
-              route = JSRoutePattern.new(method, "#{prefix}#{path}", raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-
-              @position = ahead_idx + 5
-              return route
-            end
-            ahead_idx += 1
-          end
-        end
-      end
-
-      nil
     end
 
     private def parse_restify_apply_routes : JSRoutePattern?
