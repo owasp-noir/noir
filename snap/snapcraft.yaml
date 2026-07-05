@@ -56,7 +56,10 @@ parts:
       - libgc-dev
       - liblzma-dev
       - libicu-dev
-    stage-packages:
-      - libssl3
-      - libxml2
-      - libevent-2.1-7t64
+    # No stage-packages: this part builds a fully static binary (--static +
+    # cc-wrapper), so libssl3/libxml2/libevent are linked in at build time and
+    # not needed at runtime. Staging them only bloated the snap and caused the
+    # store's USN scanner to flag the vendored (unused) libxml2 deb.
+    # Verify after building: `ldd prime/noir` should report "not a dynamic
+    # executable" (or list only linux-vdso/ld-linux). If any of these libs show
+    # up as a real dependency, add it back to a stage-packages: block.
