@@ -5,7 +5,7 @@ class ZAP
   API_ACCESS = "/JSON/core/action/accessUrl"
 
   def initialize(@endpoint)
-    if ENV.keys.includes? "ZAP_API_KEY"
+    if ENV.has_key?("ZAP_API_KEY")
       @apikey = ENV["ZAP_API_KEY"].to_s
     else
       @apikey = ""
