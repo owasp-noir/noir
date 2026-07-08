@@ -76,7 +76,7 @@ From here:
 OWASP Noir joined the OWASP Foundation in **June 2024**.
 
 - Official project page: [https://owasp.org/www-project-noir/](https://owasp.org/www-project-noir/)
-- OWASP Nest: [https://nest.owasp.org/organizations/owasp-noir](https://nest.owasp.org/organizations/owasp-noir)
+- OWASP Nest: [https://nest.owasp.org/projects/noir](https://nest.owasp.org/projects/noir)
 
 ## News & Updates
 
