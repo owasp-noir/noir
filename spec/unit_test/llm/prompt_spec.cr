@@ -100,6 +100,18 @@ describe LLM do
         openai["gpt-5.5"].should eq(1000000)
       end
 
+      it "includes gpt-5.6-sol with 1000000 tokens" do
+        openai["gpt-5.6-sol"].should eq(1000000)
+      end
+
+      it "includes gpt-5.6-terra with 1000000 tokens" do
+        openai["gpt-5.6-terra"].should eq(1000000)
+      end
+
+      it "includes gpt-5.6-luna with 1000000 tokens" do
+        openai["gpt-5.6-luna"].should eq(1000000)
+      end
+
       it "has default of 8000" do
         openai["default"].should eq(8000)
       end
@@ -134,6 +146,14 @@ describe LLM do
 
       it "includes grok-4.3 with 2000000 tokens" do
         xai["grok-4.3"].should eq(2000000)
+      end
+
+      it "includes grok-4.5 with 500000 tokens" do
+        xai["grok-4.5"].should eq(500000)
+      end
+
+      it "includes grok-4.5-latest with 500000 tokens" do
+        xai["grok-4.5-latest"].should eq(500000)
       end
 
       it "includes grok-4.1-fast with 2000000 tokens" do
@@ -176,6 +196,10 @@ describe LLM do
         anthropic["claude-sonnet-4-6"].should eq(1000000)
       end
 
+      it "includes claude-sonnet-5 with 1000000 tokens" do
+        anthropic["claude-sonnet-5"].should eq(1000000)
+      end
+
       it "includes claude-opus-4-6 with 200000 tokens" do
         anthropic["claude-opus-4-6"].should eq(200000)
       end
@@ -210,6 +234,18 @@ describe LLM do
 
       it "includes gpt-4.1 with 1000000 tokens" do
         azure["gpt-4.1"].should eq(1000000)
+      end
+
+      it "includes gpt-5.6-sol with 1000000 tokens" do
+        azure["gpt-5.6-sol"].should eq(1000000)
+      end
+
+      it "includes gpt-5.6-terra with 1000000 tokens" do
+        azure["gpt-5.6-terra"].should eq(1000000)
+      end
+
+      it "includes gpt-5.6-luna with 1000000 tokens" do
+        azure["gpt-5.6-luna"].should eq(1000000)
       end
 
       it "has default of 8000" do
