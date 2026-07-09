@@ -1171,30 +1171,6 @@ module Analyzer::Ruby
       parts.join("/")
     end
 
-    # Build URL for a `get :action` inside member/collection blocks. For
-    # member: uses the parent resource's `name/1` prefix; for collection:
-    # strips the trailing `/1` so the action sits on the index URL.
-    private def member_collection_url(stack : Array(Frame), action : String, in_collection : Bool) : String?
-      resources_idx = nil
-      stack.each_with_index do |f, i|
-        resources_idx = i if f.kind == :resources
-      end
-      return if resources_idx.nil?
-
-      parts = [] of String
-      stack[0, resources_idx].each do |f|
-        parts << f.path unless f.path.empty?
-      end
-      rf = stack[resources_idx]
-      seg = rf.path
-      if in_collection && seg.ends_with?("/1")
-        seg = seg[0, seg.size - 2]
-      end
-      parts << seg unless seg.empty?
-      parts << action
-      "/" + parts.join("/")
-    end
-
     def controller_to_endpoint(
       path : String,
       @url : String,

@@ -204,14 +204,6 @@ module Analyzer::Php
       tokens
     end
 
-    private def extract_methods_from_annotation_context(context : String) : Array(String)
-      extract_methods_from_symfony_context(context)
-    end
-
-    private def extract_methods_from_attribute_context(context : String) : Array(String)
-      extract_methods_from_symfony_context(context)
-    end
-
     private def analyze_yaml_routes(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
 
