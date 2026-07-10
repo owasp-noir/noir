@@ -72,11 +72,13 @@
   --warn:      light-dark(#8a5a00, #d8a130);
   --warn-tint: color-mix(in srgb, var(--warn) 9%, transparent);
 
-  /* The hero is a photograph. It stays dark in both themes, so it carries
-     its own fixed ink rather than the themed tokens. */
-  --film:     #0b0b0c;
-  --film-ink: #f2f1ef;
-  --film-dim: rgba(242, 241, 239, 0.66);
+  /* The hero is a photograph, and there are two plates of it: the night street
+     and the same street in fog. The theme picks the plate, so the ink over it
+     has to turn with the theme too. --film is the colour the scrim fades the
+     plate out to; it tracks --bg so the poster dissolves into the page. */
+  --film:     light-dark(#fbfbfa, #0b0b0c);
+  --film-ink: light-dark(#131314, #f2f1ef);
+  --film-dim: light-dark(rgba(19, 19, 20, 0.72), rgba(242, 241, 239, 0.66));
 
   /* The product screenshots are dark terminals in both themes. Anything that
      blends with them has to use their own background, not the card's. Sampled
@@ -143,6 +145,7 @@
     --border: #232326; --border-subtle: #1a1a1d;
     --heading: #f2f1ef; --text: #c9c7c3; --text-secondary: #8e8c88; --text-muted: #85837e;
     --warn: #d8a130;
+    --film: #0b0b0c; --film-ink: #f2f1ef; --film-dim: rgba(242, 241, 239, 0.66);
   }
 }
 
@@ -232,8 +235,8 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
   transition: background 0.35s var(--ease), border-color 0.35s var(--ease);
 }
 
-/* Over the hero photograph the bar is invisible and its ink is bone. It has
-   nothing to do with the theme; it sits on a film still.
+/* Over the hero photograph the bar is invisible and its ink is the poster's,
+   which the theme has already resolved for the plate on show.
 
    Only colors change here. The bar stays sticky and stays in flow: swapping
    to position:fixed on scroll would hand its 64px back to the layout and
@@ -249,7 +252,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
 
 @media (prefers-reduced-transparency: reduce) {
   .site-header { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .site-header[data-over-hero] { background: rgba(11, 11, 12, 0.55); }
+  .site-header[data-over-hero] { background: color-mix(in srgb, var(--film) 55%, transparent); }
 }
 
 .header-inner {
@@ -268,9 +271,8 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
   :root:not([data-theme="dark"]) .header-logo .logo-dark { display: none; }
   :root:not([data-theme="dark"]) .header-logo .logo-light { display: block; }
 }
-/* Over the hero the wordmark is always the white one, on any theme. */
-.site-header[data-over-hero] .header-logo .logo-dark { display: block; }
-.site-header[data-over-hero] .header-logo .logo-light { display: none; }
+/* No override over the hero: the poster now turns with the theme, so the
+   wordmark the theme already picked is the one that reads on it. */
 
 .header-version {
   font-family: var(--font-mono);
@@ -872,18 +874,34 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 }
 
 .hero-media { position: absolute; inset: 0; }
-.hero-media picture { display: block; width: 100%; height: 100%; }
+.hero-plate { display: block; width: 100%; height: 100%; }
 .hero-art { width: 100%; height: 100%; object-fit: cover; object-position: 50% 40%; }
+
+/* Both plates ship in the markup and one is display:none, so the theme swap
+   costs no script and cannot flash on a pinned theme. */
+.hero-plate-light { display: none; }
+:root[data-theme="light"] .hero-plate-dark { display: none; }
+:root[data-theme="light"] .hero-plate-light { display: block; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .hero-plate-dark { display: none; }
+  :root:not([data-theme="dark"]) .hero-plate-light { display: block; }
+}
+
+/* One alpha ramp, mixed into whichever --film is current: it sinks the night
+   plate into black and lifts the fog plate into bone, and either way the copy
+   ends up on near-solid --film and the top edge keeps its vignette. */
 .hero-scrim {
   position: absolute; inset: 0;
   background:
     linear-gradient(to top,
       var(--film) 0%,
-      rgba(11, 11, 12, 0.95) 20%,
-      rgba(11, 11, 12, 0.62) 42%,
-      rgba(11, 11, 12, 0.12) 66%,
-      rgba(11, 11, 12, 0.45) 100%),
-    linear-gradient(to right, rgba(11, 11, 12, 0.72), rgba(11, 11, 12, 0.1) 58%);
+      color-mix(in srgb, var(--film) 95%, transparent) 20%,
+      color-mix(in srgb, var(--film) 62%, transparent) 42%,
+      color-mix(in srgb, var(--film) 12%, transparent) 66%,
+      color-mix(in srgb, var(--film) 45%, transparent) 100%),
+    linear-gradient(to right,
+      color-mix(in srgb, var(--film) 72%, transparent),
+      color-mix(in srgb, var(--film) 10%, transparent) 58%);
 }
 .hero-inner {
   position: relative;
@@ -922,8 +940,12 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 .btn-primary { background: var(--accent); color: var(--accent-ink); }
 .btn-primary:hover { background: color-mix(in srgb, var(--accent) 86%, #fff); }
 
-.btn-ghost { color: var(--film-ink); border-color: rgba(242, 241, 239, 0.3); }
-.btn-ghost:hover { border-color: rgba(242, 241, 239, 0.62); background: rgba(242, 241, 239, 0.07); }
+/* Hero only, so it strokes itself in the poster's ink, not the theme's. */
+.btn-ghost { color: var(--film-ink); border-color: color-mix(in srgb, var(--film-ink) 30%, transparent); }
+.btn-ghost:hover {
+  border-color: color-mix(in srgb, var(--film-ink) 62%, transparent);
+  background: color-mix(in srgb, var(--film-ink) 7%, transparent);
+}
 
 .btn-outline { color: var(--heading); border-color: var(--border); }
 .btn-outline:hover { border-color: var(--text-muted); background: var(--bg-subtle); }
@@ -1354,7 +1376,10 @@ a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: n
   .hero-media { position: relative; aspect-ratio: 1168 / 784; }
   .hero-art { object-position: 50% 50%; }
   .hero-scrim {
-    background: linear-gradient(to top, var(--film) 2%, rgba(11, 11, 12, 0.08) 46%, rgba(11, 11, 12, 0.5) 100%);
+    background: linear-gradient(to top,
+      var(--film) 2%,
+      color-mix(in srgb, var(--film) 8%, transparent) 46%,
+      color-mix(in srgb, var(--film) 50%, transparent) 100%);
   }
   .hero-inner { padding-top: 0; padding-bottom: 3.5rem; margin-top: -2.5rem; }
   .hero h1 { font-size: 1.75rem; }
