@@ -9,13 +9,22 @@
   var COPY_ICON = '<svg class="ic ic-copy" aria-hidden="true"><use href="#i-copy"/></svg>';
   var CHECK_ICON = '<svg class="ic ic-check" aria-hidden="true"><use href="#i-check"/></svg>';
 
+  var T = window.NOIR_I18N || {};
+  var COPY = T.copy || "Copy";
+  var COPIED = T.copied || "Copied";
+  var COPY_MANUAL = T.copyManual || "Press Ctrl C";
+
   function labelFor(code) {
     var match = /(?:^|\s)language-([\w+#-]+)/.exec(code.className || "");
     if (match) return match[1];
     return "code";
   }
 
-  document.querySelectorAll(".prose pre").forEach(function (pre) {
+  /* :not(.mermaid) matters. The mermaid shortcode emits <pre class="mermaid">
+     inside .prose, so a bare ".prose pre" wraps every diagram in a code block
+     with a bogus "CODE" label and a Copy button that copies the rendered SVG's
+     node labels. */
+  document.querySelectorAll(".prose pre:not(.mermaid)").forEach(function (pre) {
     if (pre.parentElement && pre.parentElement.classList.contains("code-block")) return;
 
     var code = pre.querySelector("code");
@@ -33,8 +42,9 @@
     var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "code-copy";
-    btn.innerHTML = COPY_ICON + CHECK_ICON + '<span class="code-copy-label">Copy</span>';
-    btn.setAttribute("aria-label", "Copy code to clipboard");
+    btn.innerHTML = COPY_ICON + CHECK_ICON + '<span class="code-copy-label"></span>';
+    btn.querySelector(".code-copy-label").textContent = COPY;
+    btn.setAttribute("aria-label", COPY);
 
     /* The async Clipboard API rejects on an unfocused document and does not
        exist outside a secure context, so keep the old execCommand path as a
@@ -56,12 +66,12 @@
     btn.addEventListener("click", function () {
       var text = (code || pre).innerText;
       var done = function (ok) {
-        btn.querySelector(".code-copy-label").textContent = ok ? "Copied" : "Press Ctrl C";
+        btn.querySelector(".code-copy-label").textContent = ok ? COPIED : COPY_MANUAL;
         if (ok) btn.setAttribute("data-copied", "");
         clearTimeout(resetTimer);
         resetTimer = setTimeout(function () {
           btn.removeAttribute("data-copied");
-          btn.querySelector(".code-copy-label").textContent = "Copy";
+          btn.querySelector(".code-copy-label").textContent = COPY;
         }, 1800);
       };
 

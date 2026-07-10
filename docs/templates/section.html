@@ -13,6 +13,17 @@
       <ul class="section-list">
         {{ section.list }}
       </ul>
+      {# Sections are _index.md rather than index.md. See page.html for why the
+         path is rebuilt from the URL. #}
+      {% set src = page.url | replace(lang_prefix ~ "/", "/") %}
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content{{ src }}_index{% if page_language == "ko" %}.ko{% endif %}.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          {{ "ui.edit_page" | t }}
+        </a>
+      </footer>
     </article>
   </main>
   {% include "partials/toc.html" %}

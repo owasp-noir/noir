@@ -16,12 +16,15 @@
     {# Iterate the data-file registry (every declared author) rather than
        site.authors (only authors with at least one post), so team members
        without posts still appear. A profile page only exists once an author
-       has a post, so those cards stay non-clickable. #}
+       has a post, so those cards stay non-clickable.
+
+       Profiles are emitted per language, so lang_prefix keeps the reader in
+       theirs. #}
     <ul class="author-grid">
       {% for key, author in site.data.authors %}
       {% set has_posts = site.authors[key] is defined and site.authors[key] %}
       <li class="author-card">
-        {% if has_posts %}<a class="author-card-inner" href="{{ base_url }}/authors/{{ key }}/">{% else %}<div class="author-card-inner">{% endif %}
+        {% if has_posts %}<a class="author-card-inner" href="{{ base_url }}{{ lang_prefix }}/authors/{{ key }}/">{% else %}<div class="author-card-inner">{% endif %}
           {% if author.image %}
           <img class="author-avatar author-avatar-lg" src="{{ author.image }}" alt="{{ author.name | default(key) }}" width="56" height="56" loading="lazy" decoding="async">
           {% endif %}

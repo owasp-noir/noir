@@ -79,7 +79,11 @@ flowchart LR
     Analyzers --> |Endpoints| BaseOptimizer
     OutputBuilder --> Report:::highlight
 
-    classDef highlight fill:#000,stroke:#333,stroke-width:4px;
+    classDef highlight fill:#ee2a22,stroke:#ee2a22,stroke-width:2px,color:#0b0b0c;
+    %% The entry and exit nodes carry the site accent. fill:#000 was safe
+    %% while the docs were dark-only; under light mode the node label is
+    %% near-black and vanished into the fill. Near-black on this red is
+    %% 4.67:1, the same pairing the primary CTA uses.
 {% end %}
 
 ## 기여하기

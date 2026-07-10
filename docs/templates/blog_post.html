@@ -28,9 +28,9 @@
             <img class="author-avatar" src="{{ author.image }}" alt="{{ author.name | default(slug) }}" width="40" height="40" loading="lazy" decoding="async">
             {% endif %}
             <span class="author-chip-info">
-              {# hwaro emits a single global /authors/<slug>/ tree regardless of
-                 language, so both EN and KO link to the same profile. #}
-              <a class="author-name" href="{{ base_url }}/authors/{{ slug }}/">{{ author.name | default(slug) }}</a>
+              {# The profile is emitted per language (/authors/<slug>/ and
+                 /ko/authors/<slug>/), so keep the reader in theirs. #}
+              <a class="author-name" href="{{ base_url }}{{ lang_prefix }}/authors/{{ slug }}/">{{ author.name | default(slug) }}</a>
               {% if author and author.role %}<span class="author-role">{{ author.role }}</span>{% endif %}
             </span>
             {% if author and author.links %}

@@ -10,9 +10,15 @@
       <div class="prose">
         {{ content }}
       </div>
+      {# hwaro exposes no source-file path (page.path, page.file, page.source and
+         friends are all empty), so it is rebuilt from the URL. This template
+         only ever renders leaf pages, which are page bundles: <url>/index.md,
+         or index.ko.md in Korean. Sections use _index.md; see section.html.
+         scripts/check_edit_links.sh asserts every emitted link exists. #}
+      {% set src = page.url | replace(lang_prefix ~ "/", "/") %}
       <footer class="docs-article-footer">
         <a class="edit-link"
-           href="https://github.com/owasp-noir/noir/edit/main/docs/content{{ page.path }}"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content{{ src }}index{% if page_language == "ko" %}.ko{% endif %}.md"
            target="_blank" rel="noopener noreferrer">
           <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
           {{ "ui.edit_page" | t }}
