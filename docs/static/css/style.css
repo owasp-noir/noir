@@ -813,8 +813,8 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
   transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
 }
 .prev-next a:hover { border-color: var(--accent-edge); background: var(--bg-subtle); text-decoration: none; }
-.pn-dir { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: 0.2rem; }
-.pn-next { text-align: right; grid-column: 2; }
+.prevnext-dir { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: 0.2rem; }
+.prevnext-next { text-align: right; grid-column: 2; }
 
 .section-list { list-style: none; padding: 0; display: grid; gap: 0.75rem; margin-top: 1.75rem; }
 .section-list li { margin: 0; }
@@ -1360,7 +1360,7 @@ a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: n
   .cell-a, .cell-b, .cell-c, .cell-d, .cell-e { grid-column: span 12; }
   .stat-row { gap: 1.5rem; }
   .prev-next { grid-template-columns: 1fr; }
-  .pn-next { grid-column: 1; text-align: left; }
+  .prevnext-next { grid-column: 1; text-align: left; }
   .footer-links { margin-left: 0; }
   .prose { font-size: 1rem; }
   .flow-cmd { font-size: 0.75rem; }

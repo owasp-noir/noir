@@ -6,14 +6,14 @@
 {% if page.extra.prev_page_path is defined or page.extra.next_page_path is defined %}
 <nav class="prev-next" aria-label="{{ "ui.page_nav_aria" | t }}">
   {% if page.extra.prev_page_path is defined %}
-  <a class="pn-prev" href="{{ base_url }}{{ lang_prefix }}{{ page.extra.prev_page_path }}">
-    <span class="pn-dir">{{ "ui.previous" | t }}</span>
+  <a class="prevnext-prev" href="{{ base_url }}{{ lang_prefix }}{{ page.extra.prev_page_path }}">
+    <span class="prevnext-dir">{{ "ui.previous" | t }}</span>
     {{ page.extra.prev_page_label | e }}
   </a>
   {% endif %}
   {% if page.extra.next_page_path is defined %}
-  <a class="pn-next" href="{{ base_url }}{{ lang_prefix }}{{ page.extra.next_page_path }}">
-    <span class="pn-dir">{{ "ui.next" | t }}</span>
+  <a class="prevnext-next" href="{{ base_url }}{{ lang_prefix }}{{ page.extra.next_page_path }}">
+    <span class="prevnext-dir">{{ "ui.next" | t }}</span>
     {{ page.extra.next_page_label | e }}
   </a>
   {% endif %}

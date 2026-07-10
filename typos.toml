@@ -52,8 +52,8 @@ extend-exclude = [
   # vendored tree-sitter runtime + grammars (auto-generated, not ours to fix)
   "src/ext/tree_sitter/runtime/**",
   "src/ext/tree_sitter/grammars/**",
-  # vendored docs assets: minified highlight.js + generated @font-face tables
-  # whose unicode-range codepoints (e.g. U+02BA) read as typos, not prose
+  # vendored docs assets: minified highlight.js
+  # (docs/static/css/fonts.css is gone; the @font-face table now lives in
+  #  style.css and carries no unicode-range codepoints)
   "docs/static/assets/**",
-  "docs/static/css/fonts.css",
 ]
