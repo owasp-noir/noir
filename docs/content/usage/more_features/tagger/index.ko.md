@@ -8,7 +8,7 @@ sort_by = "weight"
 
 엔드포인트와 파라미터에 설명적 태그를 자동으로 추가하여 기능과 잠재적 보안 위험(SQL 인젝션, 인증 엔드포인트 등)을 식별합니다.
 
-![](./tagger.png)
+<img src="./tagger.png" alt="엔드포인트에 태그가 붙은 Noir 출력. POST /query 와 GET /api/me 는 sqli, GET /token 은 oauth 로 태깅되어 있다." width="769" height="394" loading="lazy" decoding="async">
 
 ## 사용법
 

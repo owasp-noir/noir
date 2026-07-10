@@ -80,7 +80,7 @@ Without override flag
 ./bin/noir -b ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable
 ```
 
-![No hidden flag result](images/noflag.jpg)
+<img src="images/noflag.jpg" alt="No hidden flag result" width="3730" height="906" loading="lazy" decoding="async">
 
 With --override-analyze-prompt
 
@@ -88,4 +88,4 @@ With --override-analyze-prompt
 ./bin/noir -b ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable --override-analyze-prompt "This is custom prompt for testttttt"
 ```
 
-![With hidden flag result](images/withflag.jpg)
+<img src="images/withflag.jpg" alt="With hidden flag result" width="3730" height="906" loading="lazy" decoding="async">

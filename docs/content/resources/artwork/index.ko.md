@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-![](banner.jpg)
+<img src="banner.jpg" alt="리브 무늬의 어두운 표면에 금박으로 새겨진 OWASP Noir 워드마크. 블라인드 사이로 들어온 빛이 비친다." width="1168" height="784" loading="lazy" decoding="async">
 
 ## 제공되는 자료
 

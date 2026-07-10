@@ -8,7 +8,7 @@ sort_by = "weight"
 
 Automatically add descriptive tags to endpoints and parameters to flag functionality and potential security risks (e.g., SQL injection, authentication endpoints).
 
-![](./tagger.png)
+<img src="./tagger.png" alt="Noir output where endpoints carry tags: POST /query and GET /api/me are tagged sqli, and GET /token is tagged oauth." width="769" height="394" loading="lazy" decoding="async">
 
 ## Usage
 

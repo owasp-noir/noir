@@ -8,7 +8,7 @@ sort_by = "weight"
 
 Connect Noir to Large Language Models (cloud-based, local, or ACP agent-based) for deeper code analysis. AI helps identify endpoints in unsupported languages and frameworks.
 
-![](./ai_integration.jpeg)
+<img src="./ai_integration.jpeg" alt="Noir scanning a codebase no static analyzer recognises; with Ollama attached, the LLM analyzer still infers two endpoints and their cookies." width="3562" height="1492" loading="lazy" decoding="async">
 
 ## Quick Examples
 

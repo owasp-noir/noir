@@ -13,7 +13,7 @@ sort_by = "weight"
 1.  **LM Studio 설치**: [공식 웹사이트](https://lmstudio.ai)에서 다운로드하세요.
 2.  **로컬 서버 시작**: LM Studio를 열고 모델을 선택한 다음 "Local Server" 탭에서 "Start Server"를 클릭하세요.
 
-    ![](./lmstudio.png)
+    ![상태가 Running 이고 phi-4 모델이 로드되어 요청을 받을 준비가 된 LM Studio 서버 탭.](./lmstudio.png)
 
 ## 사용 방법
 

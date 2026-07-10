@@ -69,4 +69,4 @@ techs:
   - '*'
 ```
 
-![](./passive_private_key.png)
+<img src="./passive_private_key.png" alt="Passive scan results reporting a critical PRIVATE_KEY finding, quoting the BEGIN PRIVATE KEY line and the file it sits on." width="787" height="286" loading="lazy" decoding="async">

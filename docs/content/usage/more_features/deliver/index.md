@@ -31,7 +31,7 @@ Send every endpoint through a local Burp/ZAP proxy so its scanner picks them up.
 noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080
 ```
 
-![](./deliver-proxy.png)
+<img src="./deliver-proxy.png" alt="Noir sending its four discovered endpoints through a proxy on localhost:8090, beside the proxy's history tab showing the four requests arrive." width="1534" height="392" loading="lazy" decoding="async">
 
 ### Custom headers
 
@@ -43,7 +43,7 @@ noir scan ./source -u http://localhost:3000 \
   --probe-header "Authorization: Bearer your-token"
 ```
 
-![](./deliver-header.png)
+<img src="./deliver-header.png" alt="A proxied request in the intercepting proxy, carrying the custom Abcd and X-API-Key headers Noir was told to add." width="1136" height="460" loading="lazy" decoding="async">
 
 ### Match / skip
 
@@ -76,7 +76,7 @@ noir scan ./source -u http://localhost:3000 \
   --probe-match "GET" --probe-match "POST:/api"
 ```
 
-![](./deliver-mf.png)
+<img src="./deliver-mf.png" alt="Noir finds eleven endpoints but, with two matchers set, forwards only POST /update and GET /socket to the proxy." width="1242" height="493" loading="lazy" decoding="async">
 
 ## Export
 

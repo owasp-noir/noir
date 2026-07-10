@@ -20,7 +20,7 @@ That inventory feeds three audiences:
 - **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include callee` for 1-hop callees, `--ai-context` for guards, sinks, validators, and signals).
 - **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
 
-![noir-usage](./noir-usage.jpg)
+<img src="./noir-usage.jpg" alt="noir-usage" width="1920" height="1167" loading="lazy" decoding="async">
 
 ## What Noir does
 
@@ -88,7 +88,7 @@ Noir is open-source and welcomes contributions. See the [Contributing Guide](htt
 
 ### Contributors
 
-![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
+![Avatars of the people who have contributed to OWASP Noir.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
 
 ---
 

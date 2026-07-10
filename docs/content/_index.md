@@ -1,177 +1,195 @@
 +++
 title = "OWASP Noir"
+description = "Hunt every endpoint in your code. Noir statically analyses source across 23 languages and 144 frameworks, exposing shadow APIs and mapping the attack surface."
 template = "landing"
 +++
 
+<!-- CommonMark ends an HTML block at the first blank line. The next line, if it
+     is indented 4+ spaces, then becomes an indented code block. So: no blank
+     lines inside a <section>. Separate sections with a blank line only, and
+     start each one at column zero. -->
+
 <section class="hero">
+  <div class="hero-sentinel" aria-hidden="true"></div>
+  <div class="hero-media">
+    <picture>
+      <source srcset="./images/noir-wallpaper.webp" type="image/webp">
+      <img class="hero-art" src="./images/noir-wallpaper.jpg"
+           alt="A deserted city street at night, shot in monochrome, with the OWASP Noir wordmark lit across it."
+           width="1168" height="784" fetchpriority="high" decoding="async">
+    </picture>
+    <div class="hero-scrim" aria-hidden="true"></div>
+  </div>
   <div class="hero-inner">
-    <div class="hero-intro">
-      <div class="hero-eyebrow">
-        <span class="hero-badge">v1.1.0</span>
-        <span class="hero-badge hero-badge-owasp">OWASP Project</span>
-      </div>
-      <h1 class="hero-title">
-        <span class="hero-title-line">Hunt Endpoints.</span>
-        <span class="hero-title-line">Expose Shadow APIs.</span>
-        <span class="hero-title-line hero-title-accent">Map the Attack Surface.</span>
-      </h1>
-      <p class="hero-desc">Discovers endpoints, parameters, and hidden routes from source code across 50+ frameworks. The inventory goes to reviewers, AI auditors, and DAST scanners that need a real route list.</p>
+    <div class="hero-copy">
+      <h1>Hunt every endpoint in your code.</h1>
+      <p class="hero-sub">Noir reads your source and returns the routes, parameters, and headers an attacker can reach.</p>
       <div class="hero-actions">
-        <a href="./get_started/overview" class="hero-btn hero-btn-primary">
-          <span>Get Started</span>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        <a class="btn btn-primary" href="./get_started/overview/">
+          Get Started
+          <svg class="ic" aria-hidden="true"><use href="#i-arrow-right"/></svg>
         </a>
-        <a href="https://github.com/owasp-noir/noir" class="hero-btn hero-btn-secondary">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          <span>GitHub</span>
+        <a class="btn btn-ghost" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+          GitHub
         </a>
       </div>
     </div>
-    <div class="hero-showcase">
-      <div class="split-stage">
-        <div class="split-pane split-a">
-          <img src="./images/landing/1.webp" alt="Noir turns source code into a clean, human-readable endpoint inventory" width="1904" height="1162" loading="eager" decoding="async" fetchpriority="high">
-          <span class="split-tag">source &rarr; endpoints</span>
+  </div>
+</section>
+
+<section class="logowall">
+  <h2 class="sr-only">Built with</h2>
+  <div class="wrap logowall-inner">
+    <a href="https://owasp.org/www-project-noir/" target="_blank" rel="noopener noreferrer">
+      <img src="./images/owasp.webp" alt="OWASP" width="500" height="174" loading="lazy" decoding="async">
+    </a>
+    <a href="https://crystal-lang.org/" target="_blank" rel="noopener noreferrer">
+      <img src="./images/crystal.webp" alt="Crystal" width="500" height="174" loading="lazy" decoding="async">
+    </a>
+    <a href="https://hwaro.hahwul.com/" target="_blank" rel="noopener noreferrer">
+      <img src="./images/hwaro-wide.webp" alt="Hwaro" width="1316" height="483" loading="lazy" decoding="async">
+    </a>
+  </div>
+</section>
+
+<section class="section wrap">
+  <header class="section-head" data-reveal>
+    <h2 class="section-title">What it does</h2>
+    <p class="section-lede">One pass over your source produces the endpoint inventory that reviewers, models, and scanners all need.</p>
+  </header>
+  <div class="bento">
+    <article class="cell cell-a" data-reveal>
+      <div class="cell-body">
+        <h3>Endpoint extraction</h3>
+        <p>Static analysis pulls routes, methods, parameters, headers, and cookies out of the code. Shadow APIs and forgotten handlers surface in the same pass, not a separate mode.</p>
+      </div>
+      <div class="cell-shot">
+        <img src="./images/landing/bento-endpoints.webp" alt="Noir output listing the HTTP methods, paths, headers, and idor tags it extracted from a codebase, beside the source tree it read." width="1420" height="564" loading="lazy" decoding="async">
+      </div>
+    </article>
+    <article class="cell cell-b" data-reveal style="--reveal-delay: 70ms">
+      <div class="cell-body">
+        <h3>Context for AI reviewers</h3>
+        <p><code>--ai-context</code> attaches guards, sinks, validators, and signals to each endpoint, so a model reads the handler instead of the whole repository.</p>
+      </div>
+      <div class="cell-shot">
+        <img src="./images/landing/bento-aicontext.webp" alt="Per-endpoint AI context: the route definition, the detected framework, and the signals a reviewer should check." width="790" height="530" loading="lazy" decoding="async">
+      </div>
+    </article>
+    <article class="cell cell-c" data-reveal>
+      <div class="cell-body">
+        <h3>Every mainstream stack</h3>
+        <p>One binary, no plugins and no per-language setup. Frameworks the static rules miss fall back to an LLM.</p>
+        <div class="stat-row">
+          <span><span class="stat-val">23</span><span class="stat-key">Languages</span></span>
+          <span><span class="stat-val">144</span><span class="stat-key">Frameworks</span></span>
         </div>
-        <div class="split-pane split-b">
-          <img src="./images/landing/2.webp" alt="Per-endpoint AI context: callees, guards, and security signals" width="1904" height="1162" loading="lazy" decoding="async">
-          <span class="split-tag">ai context</span>
+      </div>
+    </article>
+    <article class="cell cell-d cell-plate" data-reveal style="--reveal-delay: 70ms">
+      <div class="cell-body">
+        <h3>Passive scanning</h3>
+        <p>Severity-graded rules run over the same tree and report hardcoded keys, tokens, and credentials. Bring your own rules or use the community set.</p>
+      </div>
+    </article>
+    <article class="cell cell-e" data-reveal style="--reveal-delay: 140ms">
+      <div class="cell-body">
+        <h3>Semantic tags</h3>
+        <p>Seventeen taggers annotate endpoints with the properties that decide where you look first.</p>
+        <div class="tag-cloud">
+          <code>cors</code><code>jwt</code><code>oauth</code><code>graphql</code><code>pii</code><code>payment</code><code>file_upload</code><code>webhook</code><code>websocket</code><code>soap</code><code>crypto</code><code>debug</code><code>admin</code><code>account_recovery</code><code>api_docs</code><code>hunt_param</code><code>mcp</code>
         </div>
-        <span class="split-hint">hover to reveal</span>
+      </div>
+    </article>
+  </div>
+</section>
+
+<section class="section wrap">
+  <header class="section-head" data-reveal>
+    <h2 class="section-title">How it runs</h2>
+  </header>
+  <div class="flow">
+    <div class="flow-step" data-reveal>
+      <h3>Point it at a codebase</h3>
+      <p>Noir detects the language, the framework, and the routing convention on its own. There is nothing to configure first.</p>
+      <code class="flow-cmd">noir scan ./your-project</code>
+    </div>
+    <div class="flow-step" data-reveal>
+      <h3>Read what it found</h3>
+      <p>Every endpoint carries the file and line it came from, so a finding is one click away from the code that produced it.</p>
+      <code class="flow-cmd">noir scan ./your-project --include path,techs -f json -o endpoints.json</code>
+    </div>
+    <div class="flow-step" data-reveal>
+      <h3>Hand it to the next tool</h3>
+      <p>Export OpenAPI for a scanner, SARIF for your code-scanning dashboard, or route probes straight through an intercepting proxy.</p>
+      <code class="flow-cmd">noir scan ./your-project -f oas3 --probe-via http://127.0.0.1:8080</code>
+    </div>
+  </div>
+</section>
+
+<section class="section wrap">
+  <header class="section-head" data-reveal>
+    <h2 class="section-title">Output formats</h2>
+    <p class="section-lede">Twenty-two of them. Pick the one your next tool already speaks.</p>
+  </header>
+  <div data-reveal>
+    <div class="marquee">
+      <div class="marquee-track">
+        <code class="fmt">plain</code><code class="fmt">json</code><code class="fmt">jsonl</code><code class="fmt">yaml</code><code class="fmt">toml</code><code class="fmt">markdown-table</code><code class="fmt">sarif</code><code class="fmt">html</code><code class="fmt">oas2</code><code class="fmt">oas3</code><code class="fmt">postman</code>
+        <code class="fmt" aria-hidden="true">plain</code><code class="fmt" aria-hidden="true">json</code><code class="fmt" aria-hidden="true">jsonl</code><code class="fmt" aria-hidden="true">yaml</code><code class="fmt" aria-hidden="true">toml</code><code class="fmt" aria-hidden="true">markdown-table</code><code class="fmt" aria-hidden="true">sarif</code><code class="fmt" aria-hidden="true">html</code><code class="fmt" aria-hidden="true">oas2</code><code class="fmt" aria-hidden="true">oas3</code><code class="fmt" aria-hidden="true">postman</code>
+      </div>
+    </div>
+    <div class="marquee marquee--reverse">
+      <div class="marquee-track">
+        <code class="fmt">curl</code><code class="fmt">httpie</code><code class="fmt">powershell</code><code class="fmt">adb</code><code class="fmt">simctl</code><code class="fmt">mermaid</code><code class="fmt">only-url</code><code class="fmt">only-param</code><code class="fmt">only-header</code><code class="fmt">only-cookie</code><code class="fmt">only-tag</code>
+        <code class="fmt" aria-hidden="true">curl</code><code class="fmt" aria-hidden="true">httpie</code><code class="fmt" aria-hidden="true">powershell</code><code class="fmt" aria-hidden="true">adb</code><code class="fmt" aria-hidden="true">simctl</code><code class="fmt" aria-hidden="true">mermaid</code><code class="fmt" aria-hidden="true">only-url</code><code class="fmt" aria-hidden="true">only-param</code><code class="fmt" aria-hidden="true">only-header</code><code class="fmt" aria-hidden="true">only-cookie</code><code class="fmt" aria-hidden="true">only-tag</code>
       </div>
     </div>
   </div>
 </section>
 
-<div class="stats-bar">
-  <div class="stats-inner">
-    <div class="stat-item">
-      <span class="stat-value">50+</span>
-      <span class="stat-label">Languages & Frameworks</span>
-    </div>
-    <div class="stat-sep"></div>
-    <div class="stat-item">
-      <span class="stat-value">20+</span>
-      <span class="stat-label">Output Formats</span>
-    </div>
-    <div class="stat-sep"></div>
-    <div class="stat-item">
-      <span class="stat-value">AI</span>
-      <span class="stat-label">Powered Analysis</span>
-    </div>
-    <div class="stat-sep"></div>
-    <div class="stat-item">
-      <span class="stat-value">OSS</span>
-      <span class="stat-label">Open Source</span>
-    </div>
-  </div>
-</div>
-
-<section class="features-section">
-  <div class="features-inner">
-    <p class="features-label">Capabilities</p>
-    <h2 class="features-title">What it does</h2>
-    <div class="features-grid">
-      <div class="feature-cell feature-wide">
-        <div class="feature-number">01</div>
-        <h3>Endpoint Extraction</h3>
-        <p>Static analysis pulls endpoints, parameters, headers, and cookies out of source. Shadow APIs, deprecated routes, and undocumented handlers come out of the same pass, not a separate mode.</p>
-      </div>
-      <div class="feature-cell">
-        <div class="feature-number">02</div>
-        <h3>Multi-Language</h3>
-        <p>Crystal, Ruby, Python, Go, Java, Kotlin, JS/TS, PHP, C#, and more. 50+ frameworks in a single binary, no plugins or per-language setup.</p>
-      </div>
-      <div class="feature-cell">
-        <div class="feature-number">03</div>
-        <h3>LLM Fallback</h3>
-        <p>Frameworks Noir doesn't natively support fall back to an LLM (OpenAI, Ollama, etc.). Point it at the codebase and let the model fill the gap.</p>
-      </div>
-      <div class="feature-cell">
-        <div class="feature-number">04</div>
-        <h3>CI/CD Friendly</h3>
-        <p>GitHub Action, SARIF output, exit codes. Fits the pipeline you already have.</p>
-      </div>
-      <div class="feature-cell">
-        <div class="feature-number">05</div>
-        <h3>For Humans, AI, and DAST</h3>
-        <p>The same endpoint inventory serves all three: human reviewers and LLM-based code auditors get a focused list of attacker-reachable entrypoints; DAST scanners (ZAP, Burp, Caido) get routes they wouldn't have crawled.</p>
-      </div>
-      <div class="feature-cell feature-full">
-        <div class="feature-number">06</div>
-        <h3>Flexible Output</h3>
-        <div class="feature-formats">
-          <code>JSON</code><code>JSONL</code><code>YAML</code><code>TOML</code><code>OpenAPI 2.0</code><code>OpenAPI 3.0</code><code>SARIF</code><code>HTML</code><code>Markdown</code><code>cURL</code><code>HTTPie</code><code>PowerShell</code><code>ADB</code><code>simctl</code><code>Postman</code><code>Mermaid</code><code>Only-URL</code><code>Only-Param</code><code>Only-Header</code><code>Only-Cookie</code><code>Only-Tag</code>
+<section class="section wrap">
+  <div class="split">
+    <div data-reveal>
+      <h2 class="section-title">One inventory, three readers</h2>
+      <div class="split-list">
+        <div class="split-item">
+          <h3>Security reviewers</h3>
+          <p>A focused list of attacker-reachable entrypoints instead of a repository to skim.</p>
+        </div>
+        <div class="split-item">
+          <h3>AI code auditors</h3>
+          <p>The same list, plus the guards, sinks, and validators around each endpoint.</p>
+        </div>
+        <div class="split-item">
+          <h3>DAST scanners</h3>
+          <p>Routes a crawler would never reach, handed to ZAP, Burp, or Caido as a proxy target or an OpenAPI import.</p>
         </div>
       </div>
+    </div>
+    <div class="split-shot" data-reveal style="--reveal-delay: 90ms">
+      <img src="./images/report-dark.webp" alt="The Noir HTML report, listing discovered endpoints with their methods, parameters, and tags." width="1280" height="1080" loading="lazy" decoding="async">
     </div>
   </div>
 </section>
 
-<section class="how-section">
-  <div class="how-inner">
-    <p class="how-label">Workflow</p>
-    <h2 class="how-title">How it runs</h2>
-    <div class="how-steps">
-      <div class="how-step">
-        <div class="how-step-num">01</div>
-        <div class="how-step-content">
-          <h3>Point it at a codebase</h3>
-          <p>Noir detects language, framework, and routing patterns on its own. No config to write.</p>
-          <div class="how-step-code">$ noir scan ./your-project</div>
-        </div>
-      </div>
-      <div class="how-step">
-        <div class="how-step-num">02</div>
-        <div class="how-step-content">
-          <h3>Extract endpoints</h3>
-          <p>Static analyzers pull out routes, parameters, and headers. An LLM fallback handles frameworks the static rules don't cover.</p>
-        </div>
-      </div>
-      <div class="how-step">
-        <div class="how-step-num">03</div>
-        <div class="how-step-content">
-          <h3>Hand off to humans, AI, or DAST</h3>
-          <p>Export JSON, OpenAPI, or SARIF for human reviewers; pipe straight into ZAP, Burp, or Caido as a proxy target; or hand the inventory to an LLM-based code auditor as focused entrypoint context.</p>
-          <div class="how-step-code">$ noir scan . -f oas3 --probe-via http://localhost:8090</div>
-        </div>
-      </div>
+<section class="section wrap">
+  <div class="community-inner">
+    <div class="poster-frame" data-reveal>
+      <img src="./images/hak-poster.webp" alt="A film poster of Hak, the OWASP Noir mascot: a crane in a trench coat and goggles, standing in the rain." width="2000" height="1116" loading="lazy" decoding="async">
+    </div>
+    <div class="community-copy" data-reveal style="--reveal-delay: 90ms">
+      <h2 class="section-title">Built in the open</h2>
+      <p>Noir is an OWASP Foundation project, MIT licensed, and maintained by the people who use it. Framework support, scan rules, and output formats all arrive as contributions.</p>
+      <a class="btn btn-outline" href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
+        Read the contributing guide
+        <svg class="ic" aria-hidden="true"><use href="#i-arrow-up-right"/></svg>
+      </a>
     </div>
   </div>
-</section>
-
-<section class="trust-section">
-  <div class="trust-inner">
-    <h2 class="section-title">Built With</h2>
-    <div class="trust-logos">
-      <img src="./images/owasp.webp" alt="OWASP" class="trust-logo">
-      <img src="./images/crystal.webp" alt="Crystal" class="trust-logo">
-      <img src="./images/hwaro-wide.webp" alt="Hwaro" class="trust-logo">
-    </div>
-  </div>
-</section>
-
-<section class="cta-section">
-  <div class="cta-inner">
-    <div class="cta-panel">
-      <div class="cta-panel-mascot">
-        <img src="images/hak-2.webp" alt="OWASP Noir Mascot - Hak" width="320" height="320">
-      </div>
-      <div class="cta-panel-body">
-        <p class="cta-label">Open Source</p>
-        <h2 class="cta-title">Join the Community</h2>
-        <p class="cta-desc">OWASP Noir is built by the community. Contribute, report issues, or just star the repo.</p>
-        <div class="cta-buttons">
-          <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" class="cta-btn" target="_blank" rel="noopener noreferrer">Contributing Guide</a>
-          <a href="https://github.com/owasp-noir/noir" class="cta-btn cta-btn-ghost" target="_blank" rel="noopener noreferrer">Star on GitHub</a>
-        </div>
-      </div>
-    </div>
-    <div class="cta-contributors">
-      <p class="contributors-label">Thanks to our contributors</p>
-      <div class="cta-image">
-        <img src="https://github.com/owasp-noir/noir/raw/main/docs/static/CONTRIBUTORS.svg" alt="Contributors" loading="lazy">
-      </div>
-    </div>
+  <div class="contributors" data-reveal>
+    <p>Thanks to everyone who has contributed.</p>
+    <img src="./CONTRIBUTORS.svg" alt="Avatars of the people who have contributed to OWASP Noir." width="740" height="222" loading="lazy" decoding="async">
   </div>
 </section>

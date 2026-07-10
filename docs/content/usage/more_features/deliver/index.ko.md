@@ -31,7 +31,7 @@ Noir의 결과 전송은 성격이 다른 두 family로 나뉘어 있어요.
 noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080
 ```
 
-![](./deliver-proxy.png)
+<img src="./deliver-proxy.png" alt="Noir가 발견한 엔드포인트 4개를 localhost:8090 프록시로 보내고, 프록시의 히스토리 탭에 요청 4건이 도착한 모습." width="1534" height="392" loading="lazy" decoding="async">
 
 ### Custom headers
 
@@ -43,7 +43,7 @@ noir scan ./source -u http://localhost:3000 \
   --probe-header "Authorization: Bearer your-token"
 ```
 
-![](./deliver-header.png)
+<img src="./deliver-header.png" alt="인터셉트 프록시에 잡힌 요청. Noir가 추가하도록 지정한 Abcd 와 X-API-Key 헤더가 함께 실려 있다." width="1136" height="460" loading="lazy" decoding="async">
 
 ### Match / skip
 
@@ -76,7 +76,7 @@ noir scan ./source -u http://localhost:3000 \
   --probe-match "GET" --probe-match "POST:/api"
 ```
 
-![](./deliver-mf.png)
+<img src="./deliver-mf.png" alt="Noir가 엔드포인트 11개를 찾았지만, 매처 2개를 지정해 POST /update 와 GET /socket 만 프록시로 전달한 모습." width="1242" height="493" loading="lazy" decoding="async">
 
 ## Export
 

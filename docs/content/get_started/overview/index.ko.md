@@ -20,7 +20,7 @@ Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케
 - **AI 감사자.** LLM 기반 SAST 에이전트는 같은 진입점 목록에 더해, 엔드포인트별 리뷰 컨텍스트(`--include callee`로 1-hop callee, `--ai-context`로 guards/sinks/validators/signals)까지 받습니다.
 - **DAST 도구.** ZAP, Burp Suite, Caido는 크롤링만으로는 절대 닿지 못했을 경로까지 포함된 실제 라우트 목록을 스캔 대상으로 받습니다.
 
-![noir-usage](./noir-usage.jpg)
+<img src="./noir-usage.jpg" alt="noir-usage" width="1920" height="1167" loading="lazy" decoding="async">
 
 ## Noir가 하는 일
 
@@ -88,7 +88,7 @@ Noir는 오픈 소스이며 모든 기여를 환영합니다. [기여 가이드]
 
 ### 기여자
 
-![](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
+![OWASP Noir 에 기여한 사람들의 프로필 이미지.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)
 
 ---
 
