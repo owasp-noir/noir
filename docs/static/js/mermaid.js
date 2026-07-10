@@ -65,8 +65,16 @@
     window.mermaid.run({ nodes: Array.prototype.slice.call(nodes) });
   }
 
+  /* Pinned to an exact version with a subresource integrity hash. A floating
+     `mermaid@10` tag resolves to whatever the newest 10.x happens to be, which
+     means a third party can change the script this site executes. Bump both
+     values together:
+       curl -sfL <url> | openssl dgst -sha384 -binary | openssl base64 -A */
   var script = document.createElement("script");
-  script.src = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js";
+  script.src = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js";
+  script.integrity = "sha384-WmdflGW9aGfoBdHc4rRyWzYuAjEmDwMdGdiPNacbwfGKxBW/SO6guzuQ76qjnSlr";
+  script.crossOrigin = "anonymous";
+  script.referrerPolicy = "no-referrer";
   script.onload = function () {
     render();
 

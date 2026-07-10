@@ -172,10 +172,22 @@ because the language switcher would point at a 404.
 
 ```
 bash docs/scripts/check_doc_parity.sh            # CI gate: EN/KO parity
+(cd docs && hwaro build)
+bash docs/scripts/check_edit_links.sh            # every "Edit this page" target exists
 cd docs
-hwaro build && hwaro doctor && hwaro tool validate && hwaro tool check-links
+hwaro doctor && hwaro tool validate && hwaro tool check-links
 hwaro serve -p 3100 --base-url "http://127.0.0.1:3100"
 hwaro build --base-url "https://owasp-noir.github.io/noir"   # sub-path check
 ```
+
+Two more traps worth knowing:
+
+- **hwaro exposes no source-file path.** `page.path`, `page.file`, `page.source`
+  and friends are all empty, so `page.html` and `section.html` rebuild the edit
+  link from `page.url` plus the page language. `check_edit_links.sh` is what
+  keeps that derivation honest.
+- **`.prose pre` also matches `<pre class="mermaid">`.** Any script that styles
+  or decorates code blocks must use `.prose pre:not(.mermaid)`, or every diagram
+  gains a "CODE" label and a Copy button that copies SVG node labels.
 
 Look at the result in **both** themes and at 390px before calling it done.
