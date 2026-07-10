@@ -179,7 +179,10 @@ p { margin: 0; text-wrap: pretty; }
 a { color: var(--accent-text); text-decoration: none; }
 a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
 
-img, svg, picture, video { display: block; max-width: 100%; }
+/* height: auto is required when HTML width/height attributes are present.
+   Without it, max-width shrinks the width while the height attribute stays
+   fixed, so content images (e.g. running.png) render stretched. */
+img, svg, picture, video { display: block; max-width: 100%; height: auto; }
 
 code, kbd, pre, samp { font-family: var(--font-mono); }
 
