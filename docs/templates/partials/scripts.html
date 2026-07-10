@@ -2,12 +2,26 @@
    ignores base_url and 404s under a sub-path, so the vendored build is
    referenced directly here instead. #}
 <script src="{{ base_url }}/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "{{ base_url }}";
+  {# The scripts cannot reach the `t` filter, so the handful of strings they
+     render are handed over here. Keep the values quote-free in i18n/*.toml. #}
+  window.NOIR_I18N = {
+    copy: "{{ "ui.copy" | t }}",
+    copied: "{{ "ui.copied" | t }}",
+    copyManual: "{{ "ui.copy_manual" | t }}",
+    noResults: "{{ "ui.no_results" | t }}",
+    theme: "{{ "ui.theme" | t }}",
+    themeAuto: "{{ "ui.theme_auto" | t }}",
+    themeLight: "{{ "ui.theme_light" | t }}",
+    themeDark: "{{ "ui.theme_dark" | t }}"
+  };
+</script>
 <script src="{{ base_url }}/js/theme.js" defer></script>
 <script src="{{ base_url }}/js/nav.js" defer></script>
 <script src="{{ base_url }}/js/code.js" defer></script>
 <script src="{{ base_url }}/js/toc.js" defer></script>
 <script src="{{ base_url }}/js/reveal.js" defer></script>
 <script src="{{ base_url }}/js/mermaid.js" defer></script>
-<script>window.NOIR_BASE = "{{ base_url }}";</script>
 <script src="{{ base_url }}/js/search.js" defer></script>
 {{ auto_includes_js }}

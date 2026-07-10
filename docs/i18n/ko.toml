@@ -21,6 +21,17 @@ primary_nav_aria = "주요 메뉴"
 footer_nav_aria = "푸터"
 page_nav_aria = "페이지 이동"
 
+# 클라이언트 스크립트가 쓰는 문자열. partials/scripts.html 에서 넘겨줍니다.
+# `t` 필터를 직접 쓸 수 없으므로 따옴표를 넣지 마세요.
+copy = "복사"
+copied = "복사됨"
+copy_manual = "Ctrl C 를 누르세요"
+no_results = "검색 결과가 없습니다:"
+theme = "테마"
+theme_auto = "자동"
+theme_light = "라이트"
+theme_dark = "다크"
+
 [notfound]
 title = "이 페이지는 없습니다."
 body = "요청한 경로를 찾을 수 없습니다. 옮겨졌거나, 처음부터 존재하지 않았을 수 있습니다."

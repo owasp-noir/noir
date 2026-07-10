@@ -427,6 +427,9 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
   scrollbar-width: thin;
 }
 
+/* The groups are <details>, the headings <summary>. Disclosure works without
+   JavaScript, and the browser owns the expanded state. Hide the native marker;
+   the chevron is ours. */
 .sidebar-group + .sidebar-group { margin-top: 1.6rem; }
 .sidebar-heading {
   display: flex; align-items: center; gap: 0.55rem;
@@ -434,11 +437,13 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
   color: var(--heading);
   font-size: var(--fs-sm); font-weight: 600;
   letter-spacing: 0.01em;
+  cursor: pointer;
+  list-style: none;
 }
+.sidebar-heading::-webkit-details-marker { display: none; }
 .sidebar-heading .ic { font-size: 1rem; color: var(--text-muted); }
 .sidebar-chevron { margin-left: auto; font-size: 0.9rem; transition: transform 0.22s var(--ease); }
-.sidebar-group[data-collapsed] .sidebar-heading .sidebar-chevron { transform: rotate(-90deg); }
-.sidebar-group[data-collapsed] > .sidebar-links { display: none; }
+.sidebar-group:not([open]) > .sidebar-heading .sidebar-chevron { transform: rotate(-90deg); }
 
 .sidebar-links { list-style: none; margin: 0.35rem 0 0; padding: 0; }
 .sidebar-links li { margin: 0; }
@@ -464,10 +469,12 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
   width: calc(100% - 0.5rem); margin-left: 0.5rem; padding: 0.32rem 0.75rem;
   border-left: 1px solid var(--border);
   color: var(--text-secondary); font-size: 0.875rem; text-align: left;
+  cursor: pointer;
+  list-style: none;
 }
+.sidebar-subheading::-webkit-details-marker { display: none; }
 .sidebar-subheading:hover { color: var(--heading); }
-.sidebar-subgroup[data-collapsed] .sidebar-chevron { transform: rotate(-90deg); }
-.sidebar-subgroup[data-collapsed] .sidebar-sub { display: none; }
+.sidebar-subgroup:not([open]) > .sidebar-subheading .sidebar-chevron { transform: rotate(-90deg); }
 .sidebar-sub a { margin-left: 1.25rem; }
 
 /* Main column */

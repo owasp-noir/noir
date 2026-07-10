@@ -16,6 +16,7 @@
   var lastFocus = null;
 
   var base = (window.NOIR_BASE || "").replace(/\/+$/, "");
+  var T = window.NOIR_I18N || {};
 
   function load() {
     if (data || loading) return Promise.resolve(data || []);
@@ -72,7 +73,7 @@
     hits = hits.slice(0, 8);
 
     if (!hits.length) {
-      results.innerHTML = '<p class="search-empty">No results for "' + escapeHtml(q) + '"</p>';
+      results.innerHTML = '<p class="search-empty">' + escapeHtml(T.noResults || "No results for") + ' "' + escapeHtml(q) + '"</p>';
       active = -1;
       return;
     }

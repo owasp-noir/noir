@@ -54,23 +54,12 @@
     }
   });
 
-  /* ---- Sidebar collapse -------------------------------------------------- */
-  function wireCollapse(buttonSelector, groupSelector) {
-    document.querySelectorAll(buttonSelector).forEach(function (btn) {
-      var group = btn.closest(groupSelector);
-      if (!group) return;
-      btn.addEventListener("click", function () {
-        var collapsed = group.hasAttribute("data-collapsed");
-        if (collapsed) group.removeAttribute("data-collapsed");
-        else group.setAttribute("data-collapsed", "");
-        btn.setAttribute("aria-expanded", String(collapsed));
-      });
-    });
-  }
-  wireCollapse(".sidebar-heading", ".sidebar-group");
-  wireCollapse(".sidebar-subheading", ".sidebar-subgroup");
+  /* ---- Sidebar ----------------------------------------------------------- */
+  /* No collapse handler: the groups are <details>/<summary>, so the browser
+     does the disclosure, keyboard handling and accessible state on its own,
+     and it keeps working with JavaScript disabled.
 
-  /* Which branch starts open is decided server-side in sidebar.html, so the tree
+     Which branch starts open is decided server-side in sidebar.html, so the tree
      never renders fully expanded and then snaps shut. Nothing to do here but
      bring the current page into view when the open branch is taller than the
      rail. */

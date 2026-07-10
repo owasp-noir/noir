@@ -21,6 +21,17 @@ primary_nav_aria = "Primary"
 footer_nav_aria = "Footer"
 page_nav_aria = "Page navigation"
 
+# Strings consumed by the client scripts, handed over in partials/scripts.html.
+# They cannot use the `t` filter directly, so keep them free of quotes.
+copy = "Copy"
+copied = "Copied"
+copy_manual = "Press Ctrl C"
+no_results = "No results for"
+theme = "Theme"
+theme_auto = "auto"
+theme_light = "light"
+theme_dark = "dark"
+
 [notfound]
 title = "This page is not here."
 body = "The route you asked for did not resolve. It may have moved, or it may never have existed."

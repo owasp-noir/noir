@@ -41,7 +41,8 @@
         <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
       </a>
 
-      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="Theme: auto">
+      {# theme.js rewrites this label with the resolved mode on load. #}
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="{{ "ui.theme" | t }}">
         <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
         <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
         <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>

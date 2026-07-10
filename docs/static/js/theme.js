@@ -11,6 +11,13 @@
   var btn = document.getElementById("themeToggle");
   if (!btn) return;
 
+  var T = window.NOIR_I18N || {};
+  var LABEL = {
+    auto: T.themeAuto || "auto",
+    light: T.themeLight || "light",
+    dark: T.themeDark || "dark"
+  };
+
   function apply(mode) {
     if (mode === "auto") {
       root.removeAttribute("data-theme");
@@ -20,8 +27,9 @@
       try { localStorage.setItem(KEY, mode); } catch (e) {}
     }
     btn.setAttribute("data-mode", mode);
-    btn.setAttribute("aria-label", "Theme: " + mode + ". Click to switch.");
-    btn.title = "Theme: " + mode;
+    var text = (T.theme || "Theme") + ": " + LABEL[mode];
+    btn.setAttribute("aria-label", text);
+    btn.title = text;
   }
 
   var stored = "auto";
