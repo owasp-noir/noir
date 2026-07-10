@@ -8,7 +8,7 @@ sort_by = "weight"
 
 Noir를 대규모 언어 모델(LLM, 클라우드/로컬/ACP 에이전트)에 연결하여 심층 코드 분석을 수행합니다. 미지원 언어와 프레임워크에서도 엔드포인트를 식별할 수 있습니다.
 
-![](./ai_integration.jpeg)
+<img src="./ai_integration.jpeg" alt="어떤 정적 분석기도 알아보지 못하는 코드베이스를 Noir 가 스캔하는 모습. Ollama 를 붙이자 LLM 분석기가 엔드포인트 2개와 쿠키를 추론해 낸다." width="3562" height="1492" loading="lazy" decoding="async">
 
 ## 빠른 예제
 

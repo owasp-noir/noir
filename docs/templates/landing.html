@@ -1,34 +1,14 @@
 {% include "header.html" %}
-  <div class="landing" id="main-content">
-    {{ content }}
-  </div>
-  <div class="search-modal" id="search-modal">
-    <div class="search-modal-overlay"></div>
-    <div class="search-modal-content">
-      <div class="search-input-wrap">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input type="text" id="search-input" placeholder="Search documentation..." autocomplete="off">
-        <kbd class="search-esc">Esc</kbd>
-      </div>
-      <div class="search-results" id="search-results"></div>
-    </div>
-  </div>
-  <footer class="site-footer">
-    <div class="footer-inner">
-      <div class="footer-branding">
-        <span>Copyright &copy; 2026 by <a href="https://github.com/owasp-noir">Noir team</a></span>
-        <span>Documentation built with <a href="https://hwaro.hahwul.com" target="_blank" rel="noopener noreferrer">Hwaro</a></span>
-      </div>
-      <div class="footer-links">
-        <a href="{{ base_url }}/get_started/overview/">Docs</a>
-        <a href="{{ base_url }}/blog/">Blog</a>
-        <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
-        <a href="{{ base_url }}/resources/contact/">Contact</a>
-      </div>
-    </div>
-  </footer>
-  <script src="{{ base_url }}/js/search.js" defer></script>
-  {% include "_highlight_js.html" %}
-  {{ auto_includes_js }}
+{% set over_hero = true %}
+{% include "partials/nav.html" %}
+{% include "partials/search.html" %}
+<div class="grain" aria-hidden="true"></div>
+{# .landing pulls the hero up under the sticky header. Without it the bar sits
+   on the page background and its bone ink lands on white in light mode. #}
+<main id="main" class="landing">
+  {{ content }}
+</main>
+{% include "partials/site-footer.html" %}
+{% include "partials/scripts.html" %}
 </body>
 </html>

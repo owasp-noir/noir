@@ -22,6 +22,18 @@ entries.each do |label, _, version|
 end
 puts
 
+# A file whose version cannot be read used to be dropped by compact_map, so a
+# broken pattern reported "All versions match" while silently covering one file
+# fewer. Treat it as a failure: the point of this check is coverage.
+not_found = entries.select { |_, _, v| v.nil? }
+unless not_found.empty?
+  puts "❌ Version not found in #{not_found.size} file(s):"
+  not_found.each { |label, path, _| puts "     - #{label} (#{path})" }
+  puts
+  puts "   The pattern no longer matches. Fix scripts/version_common.cr."
+  exit 1
+end
+
 versions = entries.compact_map { |_, _, v| v }
 if versions.empty?
   puts "No versions found!"

@@ -1,9 +1,6 @@
-<div class="mascot-bubble mascot-{{ mood | default(value="hi") }}">
-  <div class="mascot-avatar">
-    <img src="{{ base_url }}/images/mascot/hak-{{ mood | default(value="hi") }}.webp" alt="Hak">
-  </div>
-  <div class="mascot-speech">
-    <div class="mascot-speech-arrow"></div>
-    <div class="mascot-speech-content">{{ body }}</div>
-  </div>
-</div>
+{# Hak, the mascot. `mood` maps to the artwork filenames in static/images/mascot. #}
+<figure class="mascot-note">
+  <img src="{{ base_url }}/images/mascot/hak-{{ mood | default("hi") }}.webp"
+       alt="Hak, the OWASP Noir mascot" width="512" height="512" loading="lazy" decoding="async">
+  <figcaption>{{ body | markdownify }}</figcaption>
+</figure>

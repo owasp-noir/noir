@@ -10,7 +10,7 @@ sort_by = "weight"
 ### Featured: OWASP Seoul (Aug 2025) - Open Source Gardening
 A talk introducing OWASP Noir and its development story at the OWASP Seoul meetup.
 
-![OWASP Seoul 2025 - Open Source Gardening](owasp-seoul.jpg)
+<img src="owasp-seoul.jpg" alt="OWASP Seoul 2025 - Open Source Gardening" width="2622" height="1206" loading="lazy" decoding="async">
 
 ## Articles & Blogs & Links
 Community-written articles about OWASP Noir. Want yours listed here? Let us know!

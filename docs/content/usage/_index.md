@@ -4,6 +4,10 @@ description = "How to use Noir: supported technologies, output formats, AI integ
 weight = 2
 sort_by = "weight"
 
+
+[cascade]
+toc = true
+
 +++
 
 Reference for running Noir and configuring its individual features.

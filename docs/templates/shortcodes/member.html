@@ -1,18 +1,15 @@
 <div class="member-card">
-  <div class="member-avatar">
-    <img src="{{ image }}" alt="{{ name }}">
-  </div>
+  <img class="member-avatar" src="{{ image }}" alt="{{ name }}" loading="lazy" decoding="async">
   <div class="member-info">
     <h3 class="member-name">{{ name }}</h3>
     <p class="member-role">{{ role }}</p>
     {% if links %}
     <div class="member-links">
       {#
-        Each entry is `label|url`. Crinja rejects bracket indexing
-        on a parenthesized filter expression (`(... | split())[0]`),
-        and `set` inside a `for` does not survive an inner `if`
-        boundary — so we lean on `first` / `last` to pull the two
-        ends without naming intermediate variables.
+        Each entry is `label|url`. Crinja rejects bracket indexing on a
+        parenthesized filter expression, and `set` inside a `for` does not
+        survive an inner `if` boundary, so `first` / `last` pull the two ends
+        without naming intermediate variables.
       #}
       {% for link in links | split(pat=",") %}
         <a href="{{ link | trim | split(pat="|") | last | trim }}" target="_blank" rel="noopener noreferrer">{{ link | trim | split(pat="|") | first | trim }}</a>

@@ -6,8 +6,9 @@ NOIR_FILE      = "src/noir.cr"
 FLAKE_FILE     = "flake.nix"
 DOCKERFILE     = "Dockerfile"
 SNAPCRAFT_FILE = "snap/snapcraft.yaml"
-DOCS_INDEX     = "docs/content/_index.md"
-DOCS_INDEX_KO  = "docs/content/_index.ko.md"
+# The version chip lives in the shared nav template, so one file covers both
+# languages. It used to be a hero badge inside each landing page.
+DOCS_NAV       = "docs/templates/partials/nav.html"
 ACTION_README  = "github-action/README.md"
 RELEASE_DOC    = "docs/content/development/how_to_release/index.md"
 RELEASE_DOC_KO = "docs/content/development/how_to_release/index.ko.md"
@@ -51,9 +52,9 @@ rescue
   nil
 end
 
-# Extract hero-badge version from a docs index file
-def get_docs_index_version(path : String) : String?
-  match = File.read(path).match(/class="hero-badge">v([\d.]+)</)
+# Extract the version chip from the docs nav template
+def get_docs_nav_version(path : String) : String?
+  match = File.read(path).match(/class="header-version"[^>]*>v([\d.]+)</)
   match ? match[1] : nil
 rescue
   nil
@@ -91,8 +92,7 @@ def collect_versions : Array(Tuple(String, String, String?))
     {"flake.nix", FLAKE_FILE, get_flake_version},
     {"Dockerfile", DOCKERFILE, get_dockerfile_version},
     {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version},
-    {"docs/_index.md", DOCS_INDEX, get_docs_index_version(DOCS_INDEX)},
-    {"docs/_index.ko.md", DOCS_INDEX_KO, get_docs_index_version(DOCS_INDEX_KO)},
+    {"docs/templates/partials/nav.html", DOCS_NAV, get_docs_nav_version(DOCS_NAV)},
     {"github-action/README.md", ACTION_README, get_action_readme_version},
     {"docs/.../how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC)},
     {"docs/.../how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO)},

@@ -13,7 +13,7 @@ Run local language models using [LM Studio](https://lmstudio.ai) for private cod
 1.  **Install**: Download from [lmstudio.ai](https://lmstudio.ai)
 2.  **Start Server**: Open LM Studio, select a model, navigate to "Local Server" tab, and click "Start Server"
 
-    ![](./lmstudio.png)
+    ![The LM Studio server tab with status Running and the phi-4 model loaded and ready to serve requests.](./lmstudio.png)
 
 ## Usage
 

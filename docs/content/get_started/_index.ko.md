@@ -4,6 +4,10 @@ description = "이 섹션은 설치부터 첫 번째 스캔까지 OWASP Noir를 
 weight = 1
 sort_by = "weight"
 
+
+[cascade]
+toc = true
+
 +++
 
 세 단계로 Noir를 시작하세요. 이 과정을 마치면 코드베이스를 스캔하고 API 엔드포인트를 발견할 수 있습니다.

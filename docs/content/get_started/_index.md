@@ -4,6 +4,10 @@ description = "This section provides everything you need to get started with OWA
 weight = 1
 sort_by = "weight"
 
+
+[cascade]
+toc = true
+
 +++
 
 Get up and running with Noir in three steps. By the end, you'll have scanned your first codebase and discovered its API endpoints.

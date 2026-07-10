@@ -69,4 +69,4 @@ techs:
   - '*'
 ```
 
-![](./passive_private_key.png)
+<img src="./passive_private_key.png" alt="BEGIN PRIVATE KEY 줄과 해당 파일을 함께 보여 주며 critical 등급의 PRIVATE_KEY 를 보고하는 패시브 스캔 결과." width="787" height="286" loading="lazy" decoding="async">

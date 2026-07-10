@@ -4,6 +4,10 @@ description = "Find additional resources for OWASP Noir, including the changelog
 weight = 12
 sort_by = "weight"
 
+
+[cascade]
+toc = true
+
 +++
 
 Supplementary references for OWASP Noir: FAQ, troubleshooting, artwork, and how to get in touch.

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-![](banner.jpg)
+<img src="banner.jpg" alt="The OWASP Noir wordmark in gold foil, embossed on a ribbed dark surface lit by venetian-blind shadows." width="1168" height="784" loading="lazy" decoding="async">
 
 ## What's Available
 

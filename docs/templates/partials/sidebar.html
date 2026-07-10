@@ -1,0 +1,217 @@
+{# Hand-authored, not derived from weights. Every page must appear here exactly
+   once, in both languages. An unlinked page is an orphan, and the previous
+   sidebar quietly stranded four of them (usage/supported/{mobile,cli,
+   ai_context_coverage} and usage/cli_commands).
+
+   `href` is language-neutral. lang_prefix turns it into /ko/... on Korean
+   pages, and page.url already carries that prefix, so the current-page test
+   has to compare against the prefixed form. #}
+{% macro navlink(href, key) %}
+        <li><a href="{{ base_url }}{{ lang_prefix }}{{ href }}"{% if page.url == lang_prefix ~ href %} aria-current="page"{% endif %}>{{ key | t }}</a></li>
+{% endmacro %}
+
+{# Only the branch holding the current page starts open. Sixty-one links
+   expanded at once is a list, not a navigation aid. This is computed here
+   rather than in nav.js so the sidebar never renders fully open and then
+   snaps shut on load.
+
+   <details>/<summary> rather than a div plus a click handler: the disclosure
+   works with JavaScript disabled (otherwise a reader reaches 6 of 61 links),
+   the summary is focusable and toggles on Enter and Space for free, and the
+   browser exposes the expanded state to assistive tech without an
+   aria-expanded we would have to keep in sync.
+
+   Crinja has no `in` operator and no `startswith` test, so "is this URL under
+   this prefix" is written as "does removing the prefix change the string".
+   taxonomy_term.html uses the same trick. #}
+{% set u = page.url %}
+{% set p = lang_prefix %}
+
+{% set g_started = (u | replace(p ~ "/get_started/", "")) != u %}
+{% set g_usage   = (u | replace(p ~ "/usage/", "")) != u %}
+{% set g_dev     = (u | replace(p ~ "/development/", "")) != u %}
+{% set in_res    = (u | replace(p ~ "/resources/", "")) != u %}
+{% set in_com    = (u | replace(p ~ "/community/", "")) != u %}
+{% set g_res     = in_res or in_com %}
+
+{% set s_supported = (u | replace(p ~ "/usage/supported/", "")) != u %}
+{% set s_formats   = (u | replace(p ~ "/usage/output_formats/", "")) != u %}
+{% set s_passive   = (u | replace(p ~ "/usage/passive_scan/", "")) != u %}
+{% set s_more      = (u | replace(p ~ "/usage/more_features/", "")) != u %}
+{% set s_ai        = (u | replace(p ~ "/usage/ai_providers/", "")) != u %}
+{% set s_config    = (u | replace(p ~ "/usage/configurations/", "")) != u %}
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="{{ "ui.docs_nav_aria" | t }}">
+
+    <details class="sidebar-group" data-group="get_started"{% if g_started %} open{% endif %}>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>{{ "sidebar.get_started" | t }}</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        {{ navlink("/get_started/", "sidebar.overview") }}
+        {{ navlink("/get_started/overview/", "sidebar.what_is_noir") }}
+        {{ navlink("/get_started/installation/", "sidebar.install") }}
+        {{ navlink("/get_started/running/", "sidebar.first_scan") }}
+        {{ navlink("/get_started/ai_power/", "sidebar.ai_power") }}
+        {{ navlink("/get_started/migrate_v0_to_v1/", "sidebar.migrate") }}
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage"{% if g_usage %} open{% endif %}>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>{{ "sidebar.usage" | t }}</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        {{ navlink("/usage/", "sidebar.overview") }}
+        {{ navlink("/usage/cli_commands/", "sidebar.cli_commands") }}
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported"{% if s_supported %} open{% endif %}>
+          <summary class="sidebar-subheading">
+            <span>{{ "sidebar.supported" | t }}</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            {{ navlink("/usage/supported/", "sidebar.overview") }}
+            {{ navlink("/usage/supported/language_and_frameworks/", "sidebar.langs_frameworks") }}
+            {{ navlink("/usage/supported/specification/", "sidebar.specifications") }}
+            {{ navlink("/usage/supported/callee_coverage/", "sidebar.callee_coverage") }}
+            {{ navlink("/usage/supported/ai_context_coverage/", "sidebar.ai_context_coverage") }}
+            {{ navlink("/usage/supported/mobile/", "sidebar.mobile_apps") }}
+            {{ navlink("/usage/supported/cli/", "sidebar.cli_apps") }}
+            {{ navlink("/usage/supported/tech-commands/", "sidebar.tech_scopes") }}
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats"{% if s_formats %} open{% endif %}>
+          <summary class="sidebar-subheading">
+            <span>{{ "sidebar.output_formats" | t }}</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            {{ navlink("/usage/output_formats/", "sidebar.overview") }}
+            {{ navlink("/usage/output_formats/json/", "sidebar.json") }}
+            {{ navlink("/usage/output_formats/yaml/", "sidebar.yaml") }}
+            {{ navlink("/usage/output_formats/curl/", "sidebar.http_clients") }}
+            {{ navlink("/usage/output_formats/openapi/", "sidebar.openapi") }}
+            {{ navlink("/usage/output_formats/sarif/", "sidebar.sarif") }}
+            {{ navlink("/usage/output_formats/html/", "sidebar.html_report") }}
+            {{ navlink("/usage/output_formats/mermaid/", "sidebar.mermaid") }}
+            {{ navlink("/usage/output_formats/more/", "sidebar.more_formats") }}
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive"{% if s_passive %} open{% endif %}>
+          <summary class="sidebar-subheading">
+            <span>{{ "sidebar.passive_scan" | t }}</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            {{ navlink("/usage/passive_scan/", "sidebar.overview") }}
+            {{ navlink("/usage/passive_scan/rule/", "sidebar.writing_rule") }}
+            {{ navlink("/usage/passive_scan/default_rules/", "sidebar.default_rules") }}
+            {{ navlink("/usage/passive_scan/community_rules/", "sidebar.community_rules") }}
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features"{% if s_more %} open{% endif %}>
+          <summary class="sidebar-subheading">
+            <span>{{ "sidebar.more_features" | t }}</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            {{ navlink("/usage/more_features/", "sidebar.overview") }}
+            {{ navlink("/usage/more_features/tagger/", "sidebar.tagger") }}
+            {{ navlink("/usage/more_features/deliver/", "sidebar.deliver") }}
+            {{ navlink("/usage/more_features/diff/", "sidebar.diff") }}
+            {{ navlink("/usage/more_features/pipeline-for-dast/", "sidebar.dast_pipeline") }}
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers"{% if s_ai %} open{% endif %}>
+          <summary class="sidebar-subheading">
+            <span>{{ "sidebar.ai_providers" | t }}</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            {{ navlink("/usage/ai_providers/", "sidebar.overview") }}
+            {{ navlink("/usage/ai_providers/openai/", "sidebar.openai") }}
+            {{ navlink("/usage/ai_providers/xai/", "sidebar.xai") }}
+            {{ navlink("/usage/ai_providers/azure/", "sidebar.azure") }}
+            {{ navlink("/usage/ai_providers/github_marketplace/", "sidebar.github_marketplace") }}
+            {{ navlink("/usage/ai_providers/openrouter/", "sidebar.openrouter") }}
+            {{ navlink("/usage/ai_providers/ollama/", "sidebar.ollama") }}
+            {{ navlink("/usage/ai_providers/vllm/", "sidebar.vllm") }}
+            {{ navlink("/usage/ai_providers/lmstudio/", "sidebar.lmstudio") }}
+            {{ navlink("/usage/ai_providers/acp/", "sidebar.acp") }}
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations"{% if s_config %} open{% endif %}>
+          <summary class="sidebar-subheading">
+            <span>{{ "sidebar.configuration" | t }}</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            {{ navlink("/usage/configurations/", "sidebar.overview") }}
+            {{ navlink("/usage/configurations/configuration_file/", "sidebar.config_file") }}
+            {{ navlink("/usage/configurations/shell-completion/", "sidebar.shell_completion") }}
+          </ul>
+          </details>
+        </li>
+
+        {{ navlink("/usage/github_action/", "sidebar.github_action") }}
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development"{% if g_dev %} open{% endif %}>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>{{ "sidebar.development" | t }}</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        {{ navlink("/development/", "sidebar.overview") }}
+        {{ navlink("/development/how_to_build/", "sidebar.how_to_build") }}
+        {{ navlink("/development/analyzer_architecture/", "sidebar.analyzer_arch") }}
+        {{ navlink("/development/nix_environment/", "sidebar.nix_env") }}
+        {{ navlink("/development/debug_flags/", "sidebar.debug_flags") }}
+        {{ navlink("/development/how_to_release/", "sidebar.how_to_release") }}
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources"{% if g_res %} open{% endif %}>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>{{ "sidebar.resources" | t }}</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        {{ navlink("/resources/", "sidebar.overview") }}
+        {{ navlink("/resources/faq/", "sidebar.faq") }}
+        {{ navlink("/resources/troubleshooting/", "sidebar.troubleshooting") }}
+        {{ navlink("/resources/artwork/", "sidebar.artwork") }}
+        {{ navlink("/resources/contact/", "sidebar.contact") }}
+        {{ navlink("/community/", "sidebar.community") }}
+        {{ navlink("/community/media/", "sidebar.media") }}
+      </ul>
+    </details>
+
+  </nav>
+</aside>

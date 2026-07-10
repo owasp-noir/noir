@@ -64,10 +64,10 @@ rescue ex
   false
 end
 
-# Update hero-badge version in a docs index file
-def update_docs_index_version(path : String, new_version : String) : Bool
+# Update the version chip in the docs nav template
+def update_docs_nav_version(path : String, new_version : String) : Bool
   content = File.read(path)
-  File.write(path, content.gsub(/(class="hero-badge">)v[\d.]+(<\/)/, "\\1v#{new_version}\\2"))
+  File.write(path, content.gsub(/(class="header-version"[^>]*>)v[\d.]+(<)/, "\\1v#{new_version}\\2"))
   true
 rescue ex
   STDERR.puts "  Error updating #{path}: #{ex.message}"
@@ -178,8 +178,7 @@ updates = [
   {"flake.nix", FLAKE_FILE, get_flake_version, -> { update_flake_version(new_version) }},
   {"Dockerfile", DOCKERFILE, get_dockerfile_version, -> { update_dockerfile_version(new_version) }},
   {"snap/snapcraft.yaml", SNAPCRAFT_FILE, get_snapcraft_version, -> { update_snapcraft_version(new_version) }},
-  {"docs/_index.md", DOCS_INDEX, get_docs_index_version(DOCS_INDEX), -> { update_docs_index_version(DOCS_INDEX, new_version) }},
-  {"docs/_index.ko.md", DOCS_INDEX_KO, get_docs_index_version(DOCS_INDEX_KO), -> { update_docs_index_version(DOCS_INDEX_KO, new_version) }},
+  {"docs/templates/partials/nav.html", DOCS_NAV, get_docs_nav_version(DOCS_NAV), -> { update_docs_nav_version(DOCS_NAV, new_version) }},
   {"github-action/README.md", ACTION_README, get_action_readme_version, -> { update_action_readme_version(new_version) }},
   {"how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC), -> { update_release_doc_version(RELEASE_DOC, new_version) }},
   {"how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO), -> { update_release_doc_version(RELEASE_DOC_KO, new_version) }},

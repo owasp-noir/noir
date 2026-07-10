@@ -22,11 +22,11 @@ The screenshots below are a **real report**, generated from Noir's bundled Kemal
 noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 ```
 
-![Noir HTML report — light theme](./report-light.png)
+<img src="./report-light.png" alt="Noir HTML report — light theme" width="1280" height="2445" loading="lazy" decoding="async">
 
 The report includes a built-in **dark theme**. Toggle it from the control in the top-right corner; your choice is remembered across visits (via `localStorage`) and the report also honors your operating system's `prefers-color-scheme` on first open.
 
-![Noir HTML report — dark theme](./report-dark.png)
+<img src="./report-dark.png" alt="Noir HTML report — dark theme" width="1280" height="1080" loading="lazy" decoding="async">
 
 ### What's in the report
 
