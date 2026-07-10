@@ -3,12 +3,14 @@
 # =============================================================================
 
 title = "OWASP Noir"
-description = "Attack surface detector that identifies endpoints by static analysis."
+description = "Hunt every endpoint in your code. Noir statically analyses source across 23 languages and 144 frameworks, exposing shadow APIs and mapping the attack surface."
 base_url = "https://owasp-noir.github.io/noir"
 
 # =============================================================================
 # Multilingual
 # =============================================================================
+# Every page must exist in both languages. scripts/check_doc_parity.sh enforces
+# it in CI, because the language switcher would otherwise point at a 404.
 
 default_language = "en"
 
@@ -37,11 +39,15 @@ allow_extensions = ["jpg", "jpeg", "png", "gif", "svg", "webp"]
 # =============================================================================
 # Syntax Highlighting
 # =============================================================================
+# use_cdn = false keeps highlight.js self-hosted (static/assets/js/highlight.min.js),
+# which removes the only CDN dependency for code. The theme is irrelevant:
+# style.css overrides every .hljs-* token with the monochrome palette.
 
 [highlight]
 enabled = true
-theme = "atom-one-dark"
+mode = "client"
 use_cdn = false
+theme = "atom-one-dark"
 
 # =============================================================================
 # OpenGraph & Twitter Cards
@@ -52,8 +58,22 @@ default_image = "/images/noir-wallpaper.jpg"
 type = "article"
 twitter_card = "summary_large_image"
 
+[og.auto_image]
+enabled = true
+background = "#0b0b0c"
+text_color = "#f2f1ef"
+accent_color = "#ee2a22"
+font_size = 48
+logo = "static/images/logo-s.png"
+output_dir = "og-images"
+show_title = true
+style = "diagonal"
+pattern_opacity = 0.15
+pattern_scale = 1.0
+format = "png"
+
 # =============================================================================
-# Search Configuration
+# Search
 # =============================================================================
 
 [search]
@@ -74,18 +94,16 @@ per_page = 10
 # =============================================================================
 # Taxonomies
 # =============================================================================
-# `authors` powers the blog per-author profile pages at
-# /authors/<slug>/. Rich profile metadata (display name, role,
-# GitHub handle, avatar) lives in the author registry block at the
-# top of the blog templates — front matter references authors by
-# their registry key.
+# `authors` powers the blog per-author profile pages at /authors/<slug>/.
+# Profile metadata lives in data/authors.yaml; post front matter references
+# authors by their registry key.
 
 [[taxonomies]]
 name = "authors"
 feed = true
 
 # =============================================================================
-# SEO: Sitemap
+# SEO
 # =============================================================================
 
 [sitemap]
@@ -93,20 +111,12 @@ enabled = true
 filename = "sitemap.xml"
 exclude = []
 
-# =============================================================================
-# SEO: Robots.txt
-# =============================================================================
-
 [robots]
 enabled = true
 filename = "robots.txt"
 rules = [
   { user_agent = "*", disallow = [] }
 ]
-
-# =============================================================================
-# SEO: LLMs.txt
-# =============================================================================
 
 [llms]
 enabled = true
@@ -116,103 +126,47 @@ full_enabled = true
 full_filename = "llms-full.txt"
 
 # =============================================================================
-# RSS/Atom Feeds
+# RSS Feeds
 # =============================================================================
 
 [feeds]
 enabled = true
-type = "rss"                  # rss | atom
-sections = ["blog"]           # only blog posts in the feed
+type = "rss"
+sections = ["blog"]
 limit = 20
-full_content = true           # full HTML body inline
-default_language_only = true  # /rss.xml = EN-only, KO gets /ko/rss.xml automatically
+full_content = true
+default_language_only = true  # /rss.xml is EN; KO gets /ko/rss.xml
 
 # =============================================================================
-# Markdown Configuration
+# Markdown
 # =============================================================================
 
 [markdown]
 safe = false
 lazy_loading = true
+emoji = false
+task_lists = true
+definition_lists = true
+footnotes = true
 
 # =============================================================================
-# PWA (Progressive Web App) (Optional)
+# PWA
 # =============================================================================
-# Generate manifest.json and service worker for offline access
 
 [pwa]
 enabled = true
 name = "OWASP Noir"
 short_name = "Noir"
-theme_color = "#050507"
-background_color = "#050507"
+theme_color = "#0b0b0c"
+background_color = "#0b0b0c"
 display = "standalone"
 start_url = "/"
 
 # =============================================================================
-# AMP (Accelerated Mobile Pages) (Optional)
-# =============================================================================
-# Generate AMP-compliant versions of content pages
-
-# [amp]
-# enabled = true
-# path_prefix = "amp"
-# sections = ["posts"]
-
-# =============================================================================
-# Series (Optional)
-# =============================================================================
-# Group posts into ordered series
-
-# [series]
-# enabled = true
-
-# =============================================================================
-# Related Posts (Optional)
-# =============================================================================
-# Recommend related content based on shared taxonomy terms
-
-# [related]
-# enabled = true
-# limit = 5
-# taxonomies = ["tags"]
-
-# =============================================================================
-# Asset Pipeline (Optional)
+# Asset Pipeline
 # =============================================================================
 
 [assets]
 enabled = true
 minify = true
 fingerprint = true
-
-# =============================================================================
-# Deployment (Optional)
-# =============================================================================
-
-# [deployment]
-# target = "prod"
-# source_dir = "public"
-#
-# [[deployment.targets]]
-# name = "prod"
-# url = "file://./out"
-
-# =============================================================================
-# Auto OG Images (Optional)
-# =============================================================================
-# Auto-generate Open Graph preview images for social sharing
-
-[og.auto_image]
-enabled = true
-background = "#1a1a2e"
-text_color = "#ffffff"
-accent_color = "#7E8690"
-font_size = 48
-logo = "static/images/logo-s.png"
-output_dir = "og-images"
-show_title = true
-style = "diagonal"
-pattern_opacity = 0.15
-pattern_scale = 1.0
-format = "png"
