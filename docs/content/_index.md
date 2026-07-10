@@ -12,11 +12,17 @@ template = "landing"
 <section class="hero">
   <div class="hero-sentinel" aria-hidden="true"></div>
   <div class="hero-media">
-    <picture>
+    <picture class="hero-plate hero-plate-dark">
       <source srcset="./images/noir-wallpaper.webp" type="image/webp">
       <img class="hero-art" src="./images/noir-wallpaper.jpg"
            alt="A deserted city street at night, shot in monochrome, with the OWASP Noir wordmark lit across it."
            width="1168" height="784" fetchpriority="high" decoding="async">
+    </picture>
+    <picture class="hero-plate hero-plate-light">
+      <source srcset="./images/noir-wallpaper-white.webp" type="image/webp">
+      <img class="hero-art" src="./images/noir-wallpaper-white.jpg"
+           alt="The same deserted city street in daylight fog, with the OWASP Noir wordmark cast across it in shadow."
+           width="1248" height="832" fetchpriority="high" decoding="async">
     </picture>
     <div class="hero-scrim" aria-hidden="true"></div>
   </div>
