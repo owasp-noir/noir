@@ -172,9 +172,9 @@ module NoirTechs
       },
     },
     :clojure_cli => {
-      :framework => "CLI (clojure.tools.cli / cli-matic)",
+      :framework => "CLI (clojure.tools.cli / cli-matic / environ / babashka.cli)",
       :language  => "Clojure",
-      :similar   => ["clojure-cli", "clojure_cli", "tools.cli", "cli-matic"],
+      :similar   => ["clojure-cli", "clojure_cli", "tools.cli", "cli-matic", "environ", "babashka-cli", "babashka.cli"],
       :supported => {
         :endpoint => true,
         :method   => false,
