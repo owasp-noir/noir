@@ -3,9 +3,9 @@ require "../../../models/detector"
 module Detector::Go
   # Detects Go command-line applications: programs that parse argv / flags
   # through the stdlib `flag` package or a CLI framework (cobra, urfave/cli,
-  # go-arg, go-flags, pflag), or that index `os.Args` directly. Gates the Go
-  # CLI analyzer, which surfaces the argv / flag / env attack surface as
-  # `cli://` endpoints.
+  # go-arg, go-flags, pflag, kong, kingpin, mitchellh/cli), or that index
+  # `os.Args` directly. Gates the Go CLI analyzer, which surfaces the argv /
+  # flag / env attack surface as `cli://` endpoints.
   class Cli < Detector
     # CLI framework import paths. Presence of any of these — in go.mod or a
     # source import block — is a strong, unambiguous CLI signal.
@@ -15,6 +15,10 @@ module Detector::Go
       "github.com/alexflint/go-arg",
       "github.com/jessevdk/go-flags",
       "github.com/spf13/pflag",
+      "github.com/alecthomas/kong",
+      "github.com/mitchellh/cli",
+      "github.com/alecthomas/kingpin",
+      "gopkg.in/alecthomas/kingpin.v2",
     ]
 
     # A real call into the stdlib `flag` package (not just the bare token

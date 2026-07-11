@@ -874,9 +874,9 @@ module NoirTechs
       },
     },
     :go_cli => {
-      :framework => "CLI (flag / cobra / urfave / pflag / go-arg / go-flags)",
+      :framework => "CLI (flag / cobra / urfave / pflag / go-arg / go-flags / kong / kingpin / mitchellh)",
       :language  => "Go",
-      :similar   => ["go-cli", "go_cli", "cobra", "urfave", "go-arg", "go-flags", "pflag"],
+      :similar   => ["go-cli", "go_cli", "cobra", "urfave", "go-arg", "go-flags", "pflag", "kong", "kingpin", "mitchellh-cli"],
       :supported => {
         :endpoint => true,
         # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method,
