@@ -399,12 +399,17 @@ module Analyzer::Swift
       # String-aware: only truncate at a `//` OUTSIDE a string literal, so a path
       # like "api//v2" or a "https://..." redirect arg isn't cut (which made
       # call_arguments fail and silently drop the route / group prefix).
+      #
+      # This runs on every scanned line, so per-index `line[index]` matters:
+      # on non-ASCII lines it re-walks from byte 0 each call, making the scan
+      # O(n^2). `chars` gives O(1) indexed access, keeping this O(n).
+      chars = line.chars
       in_string = false
       escaped = false
       quote = '"'
       index = 0
-      while index < line.size
-        char = line[index]
+      while index < chars.size
+        char = chars[index]
         if in_string
           if escaped
             escaped = false
@@ -416,7 +421,7 @@ module Analyzer::Swift
         elsif char == '"' || char == '\''
           in_string = true
           quote = char
-        elsif char == '/' && line[index + 1]? == '/'
+        elsif char == '/' && chars[index + 1]? == '/'
           return line[0...index]
         end
         index += 1
