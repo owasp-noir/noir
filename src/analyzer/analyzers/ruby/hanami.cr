@@ -38,56 +38,54 @@ module Analyzer::Ruby
     private def parse_routes_file(path : String, framework_root : String, include_callee : Bool)
       stack = [] of RouteFrame
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        hanami_logical_lines(file).each do |line, index|
-          if closes_block?(line)
-            stack.pop unless stack.empty?
-            next
-          end
+      hanami_logical_lines(read_file_content(path)).each do |line, index|
+        if closes_block?(line)
+          stack.pop unless stack.empty?
+          next
+        end
 
-          opens_block = opens_route_block?(line)
-          details = Details.new(PathInfo.new(path, index + 1))
+        opens_block = opens_route_block?(line)
+        details = Details.new(PathInfo.new(path, index + 1))
 
-          if mounted = mount_endpoint(line, stack, details)
-            @result << mounted
-            next
-          end
+        if mounted = mount_endpoint(line, stack, details)
+          @result << mounted
+          next
+        end
 
-          if neutral_block?(line)
-            stack << RouteFrame.new if opens_block
-            next
-          end
+        if neutral_block?(line)
+          stack << RouteFrame.new if opens_block
+          next
+        end
 
-          if frame = slice_frame(line)
-            stack << frame if opens_block
-            next
-          end
+        if frame = slice_frame(line)
+          stack << frame if opens_block
+          next
+        end
 
-          if frame = prefix_frame(line, ["namespace", "scope"])
-            stack << frame if opens_block
-            next
-          end
+        if frame = prefix_frame(line, ["namespace", "scope"])
+          stack << frame if opens_block
+          next
+        end
 
-          if resource = resource_call(line)
-            routes, nested_frame = expand_resource(resource, stack, details)
-            routes.each { |route| attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee) }
-            @result.concat(routes.map(&.endpoint))
-            stack << nested_frame if opens_block
-            next
-          end
+        if resource = resource_call(line)
+          routes, nested_frame = expand_resource(resource, stack, details)
+          routes.each { |route| attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee) }
+          @result.concat(routes.map(&.endpoint))
+          stack << nested_frame if opens_block
+          next
+        end
 
-          if route = root_endpoint(line, stack, details)
-            attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
-            @result << route.endpoint
-            stack << RouteFrame.new if opens_block
-            next
-          end
+        if route = root_endpoint(line, stack, details)
+          attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
+          @result << route.endpoint
+          stack << RouteFrame.new if opens_block
+          next
+        end
 
-          if route = verb_endpoint(line, stack, details)
-            attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
-            @result << route.endpoint
-            stack << RouteFrame.new if opens_block
-          end
+        if route = verb_endpoint(line, stack, details)
+          attach_action_context(route.endpoint, route.target, framework_root, stack, include_callee)
+          @result << route.endpoint
+          stack << RouteFrame.new if opens_block
         end
       end
     end
@@ -101,12 +99,12 @@ module Analyzer::Ruby
     # never opened and all of the route's params/callees are dropped.
     # Returns {logical_line, first_line_index} pairs; comments are stripped
     # and strings preserved, mirroring the per-line parse.
-    private def hanami_logical_lines(file) : Array(Tuple(String, Int32))
+    private def hanami_logical_lines(content : String) : Array(Tuple(String, Int32))
       result = [] of Tuple(String, Int32)
       buffer = ""
       buffer_index = 0
 
-      file.each_line.with_index do |raw_line, index|
+      content.each_line.with_index do |raw_line, index|
         line = Noir::RubyCalleeExtractor.strip_comment(raw_line, preserve_strings: true).strip
         next if line.empty?
 
@@ -146,10 +144,7 @@ module Analyzer::Ruby
     def scan_action_file(endpoint : Endpoint, action_path : String, include_callee : Bool = false)
       return unless File.exists?(action_path)
 
-      lines = [] of String
-      File.open(action_path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        lines = file.each_line.to_a
-      end
+      lines = read_file_content(action_path).each_line.to_a
 
       scan_action_params(endpoint, lines)
       attach_handle_callees(endpoint, action_path, lines) if include_callee
