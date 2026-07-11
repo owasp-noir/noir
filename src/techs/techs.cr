@@ -2544,9 +2544,9 @@ module NoirTechs
       },
     },
     :php_cli => {
-      :framework => "CLI (symfony/console / getopt)",
+      :framework => "CLI (symfony/console / getopt / artisan / wp-cli / robo)",
       :language  => "PHP",
-      :similar   => ["php-cli", "php_cli", "symfony-console", "getopt", "climate", "minicli"],
+      :similar   => ["php-cli", "php_cli", "symfony-console", "getopt", "climate", "minicli", "artisan", "illuminate-console", "wp-cli", "robo"],
       :supported => {
         :endpoint => true,
         :method   => false,
