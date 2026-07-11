@@ -30,6 +30,22 @@ module Analyzer::Python
       "do_trace"   => "TRACE",
     }
 
+    # `query_vars`/`form_vars`/`json_vars` below hold a discovered (but
+    # low-cardinality — real code overwhelmingly reuses the same handful of
+    # conventional names like `qs`/`data`/`params`) variable name, so the
+    # bracket/`.get(...)` access matchers can't be hoisted to constants.
+    # Memoize the compiled pair per name across the whole scan instead of
+    # rebuilding it every time the name recurs (same handler-body shape
+    # across query/form/json access, so one cache serves all three).
+    @var_access_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
+
+    private def var_access_regexes(var : ::String) : Tuple(Regex, Regex)
+      @var_access_regex_cache[var] ||= {
+        /#{Regex.escape(var)}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
+        /#{Regex.escape(var)}\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/,
+      }
+    end
+
     def analyze
       python_files = get_files_by_extension(".py")
       base_paths.each do |current_base_path|
@@ -282,10 +298,11 @@ module Analyzer::Python
         query_vars << qv unless query_vars.includes?(qv)
       end
       query_vars.each do |var|
-        body.scan(/#{Regex.escape(var)}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |mm|
+        bracket_re, get_re = var_access_regexes(var)
+        body.scan(bracket_re) do |mm|
           record.call(mm[1], "query")
         end
-        body.scan(/#{Regex.escape(var)}\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |mm|
+        body.scan(get_re) do |mm|
           record.call(mm[1], "query")
         end
       end
@@ -326,10 +343,11 @@ module Analyzer::Python
           form_vars << fv unless form_vars.includes?(fv)
         end
         form_vars.each do |var|
-          body.scan(/#{Regex.escape(var)}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |mm|
+          bracket_re, get_re = var_access_regexes(var)
+          body.scan(bracket_re) do |mm|
             record.call(mm[1], "form")
           end
-          body.scan(/#{Regex.escape(var)}\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |mm|
+          body.scan(get_re) do |mm|
             record.call(mm[1], "form")
           end
         end
@@ -340,10 +358,11 @@ module Analyzer::Python
           json_vars << m[1] unless json_vars.includes?(m[1])
         end
         json_vars.each do |var|
-          body.scan(/#{Regex.escape(var)}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/) do |mm|
+          bracket_re, get_re = var_access_regexes(var)
+          body.scan(bracket_re) do |mm|
             record.call(mm[1], "json")
           end
-          body.scan(/#{Regex.escape(var)}\.get\s*\(\s*[rf]?['"]([^'"]+)['"]/) do |mm|
+          body.scan(get_re) do |mm|
             record.call(mm[1], "json")
           end
         end
