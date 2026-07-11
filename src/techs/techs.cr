@@ -1359,9 +1359,9 @@ module NoirTechs
       },
     },
     :java_cli => {
-      :framework => "CLI (picocli / args4j / JCommander / commons-cli / airline)",
+      :framework => "CLI (picocli / args4j / JCommander / commons-cli / airline / JOpt Simple)",
       :language  => "Java",
-      :similar   => ["java-cli", "java_cli", "picocli", "args4j", "jcommander", "commons-cli", "airline"],
+      :similar   => ["java-cli", "java_cli", "picocli", "args4j", "jcommander", "commons-cli", "airline", "jopt-simple", "joptsimple"],
       :supported => {
         :endpoint => true,
         :method   => false,

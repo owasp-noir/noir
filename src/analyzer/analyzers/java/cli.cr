@@ -6,7 +6,7 @@ module Analyzer::Java
   # endpoints: one endpoint per (sub)command with named options
   # (param_type "flag"), positional arguments ("argument") and consumed
   # environment variables ("env"). Covers picocli, args4j, JCommander,
-  # commons-cli and airline, plus gated System.getenv reads.
+  # commons-cli, airline and jopt-simple, plus gated System.getenv reads.
   #
   # Line-scan analyzer (Go/Ruby/Rust CLI house style) merging endpoints by
   # URL. Subclasses Analyzer directly (JavaEngine is a module) and uses
@@ -30,7 +30,19 @@ module Analyzer::Java
 
     GET_ENV = /\bSystem\.getenv\s*\(\s*"([^"]+)"\s*\)/
 
-    LIB_MARKERS      = ["picocli.", "org.kohsuke.args4j", "com.beust.jcommander", "org.apache.commons.cli", "com.github.rvesse.airline", "io.airlift.airline"]
+    # jopt-simple (no subcommands; flags land on root, like commons-cli).
+    # `.accepts("flag")`/`.acceptsAll(List.of("f","flag"))` are only real CLI
+    # flags when called on a variable that was actually bound to
+    # `new OptionParser(...)` — jopt-simple's `OptionParser` isn't the only
+    # class with an `accepts(...)` method (e.g. a `FormatMatcher.accepts(fmt)`
+    # helper), so the receiver is tracked per-file in the same forward pass
+    # and matches on an untracked receiver are dropped rather than attributed
+    # to the root command.
+    JOPT_PARSER_DECL = /\b(\w+)\s*=\s*new\s+OptionParser\s*\(/
+    JOPT_ACCEPTS     = /\b(\w+)\.accepts\s*\(\s*"([^"]+)"/
+    JOPT_ACCEPTS_ALL = /\b(\w+)\.acceptsAll\s*\(\s*(?:Arrays\.asList|List\.of|Collections\.singletonList)\s*\(\s*"([^"]+)"/
+
+    LIB_MARKERS      = ["picocli.", "org.kohsuke.args4j", "com.beust.jcommander", "org.apache.commons.cli", "com.github.rvesse.airline", "io.airlift.airline", "joptsimple."]
     WEB_FRAMEWORK_RE = /\bimport\s+(?:org\.springframework|jakarta\.ws\.rs|javax\.ws\.rs|io\.quarkus|io\.micronaut|io\.javalin|io\.vertx|com\.linecorp\.armeria|io\.dropwizard|spark\.|org\.apache\.struts)/
 
     def analyze
@@ -78,6 +90,7 @@ module Analyzer::Java
                      root_url : String, endpoints : Hash(String, Endpoint), emit_env : Bool)
       current_url = root_url
       pending_argument = false
+      jopt_vars = Set(String).new
 
       lines.each_with_index do |line, index|
         line_no = index + 1
@@ -130,6 +143,25 @@ module Analyzer::Java
         end
         if m = line.match(LONG_OPT)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+        end
+
+        # jopt-simple (root flags). Track `x = new OptionParser(...)` bindings
+        # as they're seen, then only attribute `.accepts(...)`/`.acceptsAll(...)`
+        # to a CLI flag when the receiver is a tracked parser variable — a
+        # same-named `accepts`/`acceptsAll` method on an unrelated object must
+        # not be attributed here.
+        if m = line.match(JOPT_PARSER_DECL)
+          jopt_vars << m[1]
+        end
+        if m = line.match(JOPT_ACCEPTS_ALL)
+          if jopt_vars.includes?(m[1])
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
+          end
+        end
+        if m = line.match(JOPT_ACCEPTS)
+          if jopt_vars.includes?(m[1])
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
+          end
         end
 
         # positional args (picocli @Parameters / args4j @Argument / airline
