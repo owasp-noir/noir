@@ -86,7 +86,7 @@ module Analyzer::Java
                       next unless child_routes
 
                       child_routes.each do |child|
-                        endpoint = join_paths(mount.endpoint, child.endpoint)
+                        endpoint = Helper.join_paths(mount.endpoint, child.endpoint)
                         found = build_endpoint(endpoint, child.method, details)
                         attach_callees(found, callees_by_route, child.method, child.endpoint)
                         @result << found
@@ -383,12 +383,6 @@ module Analyzer::Java
       value.size >= 2 &&
         ((value.starts_with?('"') && value.ends_with?('"')) ||
           (value.starts_with?("'") && value.ends_with?("'")))
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
 
     private def build_endpoint(path : String, method : String, details : Details) : Endpoint
