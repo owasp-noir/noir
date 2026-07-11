@@ -14,6 +14,10 @@ module Analyzer::Rust
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias GlobalFunctionEntry = NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, callees: Array(Noir::RustCalleeExtractor::Entry))
 
+    # Precompiled union for analyze_file's builder-pass evidence gate, so it
+    # costs a single PCRE2 match instead of two naive substring scans.
+    BUILDER_PASS_EVIDENCE_RE = Regex.union(".route(", "resource(")
+
     # Cross-file scope registrations: `web::scope("/auth").service(mod::handler)`
     # frequently mounts a `#[get("/x")]` handler that lives in a *different*
     # file (the scope tree sits in `main.rs` / a router-setup module, the
@@ -105,7 +109,7 @@ module Analyzer::Rust
         # attribute-macro-only handler file — so the added scope-prefix
         # machinery costs nothing where it can't apply. `resource(` is needed
         # for the verb-less `web::resource("/p").to(handler)` form.
-        if source.includes?(".route(") || source.includes?("resource(")
+        if source.matches?(BUILDER_PASS_EVIDENCE_RE)
           scope_prefixes = collect_scope_prefixes(root, source, test_regions)
           function_index = build_function_index(root, source)
           # Map each builder route back to the `.configure`d fn that encloses
