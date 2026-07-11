@@ -54,6 +54,19 @@ module Analyzer::Kotlin
       "Flux.",
     ]
 
+    # File-classification gates: several `String#includes?` calls OR-ed
+    # over the same buffer, replaced with a single precompiled
+    # `Regex.union` scan (PCRE2 JIT, auto-escapes each literal). Each of
+    # these runs once (sometimes twice) per Kotlin file in the scan.
+    SPRING_MAPPING_ANNOTATION_RE = Regex.union(
+      "@RequestMapping", "@GetMapping", "@PostMapping", "@PutMapping", "@DeleteMapping", "@PatchMapping"
+    )
+    STOMP_ROUTE_MARKER_RE       = Regex.union("addEndpoint", "@MessageMapping", "@SubscribeMapping")
+    GRAPHQL_ROUTE_MARKER_RE     = Regex.union("@QueryMapping", "@MutationMapping", "@SubscriptionMapping", "@SchemaMapping")
+    FUNCTIONAL_ROUTER_MARKER_RE = Regex.union("coRouter", "router {")
+    CONTROLLER_ANNOTATION_RE    = Regex.union("RestController", "Controller")
+    CLASS_OR_OBJECT_RE          = Regex.union("class", "object")
+
     private struct SpringInterfaceRouteEntry
       getter route : SpringRoute
       getter path : String
@@ -235,13 +248,15 @@ module Analyzer::Kotlin
       dirs.to_a
     end
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
+    # literal, including the `.` in `/.git/`/`/.gradle/`) replaces the six
+    # OR-ed `String#includes?` scans below. Both callers run this over
+    # every file in the configured base (not just Kotlin sources), once
+    # each in spring_kotlin_files and spring_src_dirs.
+    IGNORED_PATH_SEGMENT_RE = Regex.union("/.git/", "/.gradle/", "/build/", "/out/", "/target/", "/node_modules/")
+
     private def spring_ignored_path?(path : String) : Bool
-      path.includes?("/.git/") ||
-        path.includes?("/.gradle/") ||
-        path.includes?("/build/") ||
-        path.includes?("/out/") ||
-        path.includes?("/target/") ||
-        path.includes?("/node_modules/")
+      path.matches?(IGNORED_PATH_SEGMENT_RE)
     end
 
     # Read Spring Webflux base-path + static-locations from
@@ -257,7 +272,7 @@ module Analyzer::Kotlin
       application_yml_path = File.join(path, "main/resources/application.yml")
       if File.exists?(application_yml_path)
         begin
-          config = YAML.parse(File.read(application_yml_path))
+          config = YAML.parse(read_file_content(application_yml_path))
           spring = config["spring"]
           if spring
             resources = spring["resources"] || spring["web"]
@@ -287,7 +302,7 @@ module Analyzer::Kotlin
       application_properties_path = File.join(path, "main/resources/application.properties")
       if File.exists?(application_properties_path)
         begin
-          properties = File.read(application_properties_path)
+          properties = read_file_content(application_properties_path)
           static_locs = properties.match(/spring(\.web)?\.resources\.static-locations\s*=\s*(.*)/)
           if static_locs
             static_locs[2].split(",").each do |loc|
@@ -344,9 +359,7 @@ module Analyzer::Kotlin
 
         content = read_file_content(path)
         next unless content.includes?("interface")
-        next unless content.includes?("@RequestMapping") || content.includes?("@GetMapping") ||
-                    content.includes?("@PostMapping") || content.includes?("@PutMapping") ||
-                    content.includes?("@DeleteMapping") || content.includes?("@PatchMapping")
+        next unless content.matches?(SPRING_MAPPING_ANNOTATION_RE)
 
         Noir::TreeSitter.parse_kotlin(content) do |root|
           package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
@@ -373,7 +386,7 @@ module Analyzer::Kotlin
         next if KotlinEngine.test_path?(path)
 
         content = read_file_content(path)
-        next unless content.includes?("fun") && (content.includes?("class") || content.includes?("object"))
+        next unless content.includes?("fun") && content.matches?(CLASS_OR_OBJECT_RE)
 
         Noir::TreeSitter.parse_kotlin(content) do |root|
           package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
@@ -543,20 +556,15 @@ module Analyzer::Kotlin
     end
 
     private def stomp_route_file?(content : String) : Bool
-      content.includes?("addEndpoint") ||
-        content.includes?("@MessageMapping") ||
-        content.includes?("@SubscribeMapping")
+      content.matches?(STOMP_ROUTE_MARKER_RE)
     end
 
     private def graphql_route_file?(content : String) : Bool
-      content.includes?("@QueryMapping") ||
-        content.includes?("@MutationMapping") ||
-        content.includes?("@SubscriptionMapping") ||
-        content.includes?("@SchemaMapping")
+      content.matches?(GRAPHQL_ROUTE_MARKER_RE)
     end
 
     private def kotlin_functional_router_file?(content : String) : Bool
-      content.includes?("coRouter") || content.includes?("router {")
+      content.matches?(FUNCTIONAL_ROUTER_MARKER_RE)
     end
 
     private def kotlin_spring_route_candidate_file?(content : String) : Bool
@@ -569,12 +577,7 @@ module Analyzer::Kotlin
     end
 
     private def kotlin_spring_mapping_route_file?(content : String) : Bool
-      content.includes?("@RequestMapping") ||
-        content.includes?("@GetMapping") ||
-        content.includes?("@PostMapping") ||
-        content.includes?("@PutMapping") ||
-        content.includes?("@DeleteMapping") ||
-        content.includes?("@PatchMapping")
+      content.matches?(SPRING_MAPPING_ANNOTATION_RE)
     end
 
     private def spring_gateway_route_file?(content : String) : Bool
@@ -582,7 +585,7 @@ module Analyzer::Kotlin
     end
 
     private def spring_controller_interface_candidate_file?(content : String) : Bool
-      content.includes?("RestController") || content.includes?("Controller")
+      content.matches?(CONTROLLER_ANNOTATION_RE)
     end
 
     private def stomp_application_prefixes_for(file_list : Array(String),
@@ -671,7 +674,7 @@ module Analyzer::Kotlin
     end
 
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      document = YAML.parse(File.read(path))
+      document = YAML.parse(read_file_content(path))
       if value = yaml_string_value(document, "server", "servlet", "context-path")
         values["server.servlet.context-path"] = value
       end
@@ -722,7 +725,7 @@ module Analyzer::Kotlin
       properties_path = File.join(root, "src/main/resources/application.properties")
       if File.exists?(properties_path)
         begin
-          File.read(properties_path).each_line do |line|
+          read_file_content(properties_path).each_line do |line|
             if match = line.match(/^\s*spring\.graphql\.path\s*=\s*(\S+)/)
               return normalize_graphql_path(match[1])
             end
@@ -736,7 +739,7 @@ module Analyzer::Kotlin
       [yml_path, yaml_path].each do |path|
         next unless File.exists?(path)
         begin
-          config = YAML.parse(File.read(path))
+          config = YAML.parse(read_file_content(path))
           spring = config["spring"]
           next unless spring
           graphql = spring["graphql"]

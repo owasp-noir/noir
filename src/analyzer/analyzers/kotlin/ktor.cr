@@ -60,10 +60,13 @@ module Analyzer::Kotlin
       @result
     end
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
+    # literal) replaces the three OR-ed `String#includes?` passes over the
+    # same buffer — this gate runs once per Kotlin file in the scan.
+    POTENTIAL_KTOR_ROUTE_RE = Regex.union("routing", "io.ktor.server.routing", "Route.")
+
     private def potential_ktor_route_file?(content : String) : Bool
-      content.includes?("routing") ||
-        content.includes?("io.ktor.server.routing") ||
-        content.includes?("Route.")
+      content.matches?(POTENTIAL_KTOR_ROUTE_RE)
     end
 
     private def fully_qualified_constant?(name : String) : Bool
