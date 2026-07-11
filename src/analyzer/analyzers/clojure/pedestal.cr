@@ -33,6 +33,12 @@ module Analyzer::Clojure
       "any"     => "ANY",
     }
 
+    # Whole-file detection gate, evaluated once per candidate file.
+    # `String#matches?` (PCRE2 JIT) replaces five naive `String#includes?`
+    # char scans with a single pass; `Regex.union` auto-escapes each literal,
+    # so it is provably equivalent to the OR-of-substrings it replaces.
+    PEDESTAL_SOURCE_RE = Regex.union("io.pedestal", "pedestal.service", "pedestal.route", "defroutes", "table-routes")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
@@ -58,11 +64,7 @@ module Analyzer::Clojure
     end
 
     private def pedestal_source?(content : String) : Bool
-      content.includes?("io.pedestal") ||
-        content.includes?("pedestal.service") ||
-        content.includes?("pedestal.route") ||
-        content.includes?("defroutes") ||
-        content.includes?("table-routes")
+      content.matches?(PEDESTAL_SOURCE_RE)
     end
 
     private def walk_forms(source : String,
