@@ -272,7 +272,17 @@ module Analyzer::Cpp
     private def absl_flag_names(line : String) : Array(String)
       names = [] of String
       offset = 0
+      # Lazily materialized on the first match: String#[](Int) / #[](Range)
+      # walk the UTF-8 buffer from the start on every call for any line
+      # containing a multi-byte char, turning this scan into O(n^2)/O(n^3).
+      # Array(Char) indexing/slicing is O(1)/O(k), so once a line actually
+      # has an ABSL_FLAG( match, the loop below stays O(n) overall. Lines
+      # without a match (the overwhelming majority in a scan) never pay for
+      # the array allocation at all.
+      chars = nil
+
       while offset <= line.size && (m = line.match(ABSL_FLAG_MARK, offset))
+        chars ||= line.chars
         args_start = m.end
         fields = [] of String
         depth = 0
@@ -280,13 +290,13 @@ module Analyzer::Cpp
         i = args_start
         closed_at = nil
 
-        while i < line.size
-          case line[i]
+        while i < chars.size
+          case chars[i]
           when '(', '<'
             depth += 1
           when ')'
             if depth == 0
-              fields << line[field_start...i]
+              fields << chars[field_start...i].join
               closed_at = i
               break
             end
@@ -295,7 +305,7 @@ module Analyzer::Cpp
             depth -= 1 if depth > 0
           when ','
             if depth == 0
-              fields << line[field_start...i]
+              fields << chars[field_start...i].join
               field_start = i + 1
             end
           end
