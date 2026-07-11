@@ -2,10 +2,10 @@ require "../../../models/detector"
 
 module Detector::Perl
   # Detects Perl command-line apps via Getopt::Long / Getopt::Std, App::Cmd,
-  # MooseX::Getopt, or explicit @ARGV indexing. Never gates on bare %ENV
-  # (Mojolicious/Dancer2 config).
+  # MooseX::Getopt, Getopt::Long::Descriptive, MooX::Options, or explicit
+  # @ARGV indexing. Never gates on bare %ENV (Mojolicious/Dancer2 config).
   class Cli < Detector
-    MARKERS = /\buse\s+Getopt::(?:Long|Std)\b|\bGetOptions\s*\(|\bgetopts?\s*\(|\buse\s+App::Cmd\b|\bMooseX::Getopt\b|\$ARGV\s*\[\s*\d+\s*\]/
+    MARKERS = /\buse\s+Getopt::(?:Long|Std)\b|\bGetOptions\s*\(|\bgetopts?\s*\(|\buse\s+App::Cmd\b|\bMooseX::Getopt\b|\$ARGV\s*\[\s*\d+\s*\]|\buse\s+Getopt::Long::Descriptive\b|\bdescribe_options\s*\(|\buse\s+MooX::Options\b/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)

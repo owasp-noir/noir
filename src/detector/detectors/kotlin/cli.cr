@@ -1,11 +1,11 @@
 require "../../../models/detector"
 
 module Detector::Kotlin
-  # Detects Kotlin command-line applications. Gated on clikt / kotlinx-cli
-  # imports or their constructs — NOT on bare `fun main(args)`, which Spring
-  # Boot and most Kotlin apps have.
+  # Detects Kotlin command-line applications. Gated on clikt / kotlinx-cli /
+  # picocli imports or their constructs — NOT on bare `fun main(args)`, which
+  # Spring Boot and most Kotlin apps have.
   class Cli < Detector
-    LIB_IMPORTS = ["com.github.ajalt.clikt", "kotlinx.cli"]
+    LIB_IMPORTS = ["com.github.ajalt.clikt", "kotlinx.cli", "picocli.CommandLine"]
     USAGE       = /:\s*CliktCommand\b|\bArgParser\s*\(/
 
     def detect(filename : String, file_contents : String) : Bool

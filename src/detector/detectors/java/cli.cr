@@ -13,8 +13,15 @@ module Detector::Java
       "org.apache.commons.cli",
       "com.github.rvesse.airline",
       "io.airlift.airline",
+      "joptsimple.",
     ]
 
+    # NOTE: deliberately no `new\s+OptionParser\s*\(` alternative here — jopt-simple's
+    # `OptionParser` is a common, generic class name apps also give their own
+    # options-parsing helpers (e.g. a video/report settings `OptionParser`). Genuine
+    # jopt-simple usage always requires `import joptsimple.*` or a `joptsimple.`
+    # fully-qualified reference, which LIB_IMPORTS already covers — adding a bare
+    # class-name pattern here would mistag unrelated classes as `java_cli`.
     USAGE = /\bnew\s+Options\s*\(\s*\)|\bOption\.builder\s*\(|\bnew\s+JCommander\s*\(|\bJCommander\.newBuilder\s*\(|\bnew\s+CmdLineParser\s*\(|\bnew\s+CommandLine\s*\(/
 
     def detect(filename : String, file_contents : String) : Bool

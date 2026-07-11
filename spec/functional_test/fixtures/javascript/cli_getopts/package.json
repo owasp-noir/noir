@@ -1,0 +1,10 @@
+{
+  "name": "getoptsdemo",
+  "version": "1.0.0",
+  "bin": {
+    "getoptsdemo": "cli.js"
+  },
+  "dependencies": {
+    "getopts": "^2.3.0"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "argdemo",
+  "version": "1.0.0",
+  "bin": {
+    "argdemo": "cli.js"
+  },
+  "dependencies": {
+    "arg": "^5.0.2"
+  }
+}

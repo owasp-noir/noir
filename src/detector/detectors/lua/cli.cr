@@ -1,10 +1,11 @@
 require "../../../models/detector"
 
 module Detector::Lua
-  # Detects Lua command-line apps via the argparse library or explicit `arg`
-  # indexing. Never gates on bare os.getenv (lapis/lor config).
+  # Detects Lua command-line apps via the argparse library, the cliargs
+  # (lua_cliargs) library, or explicit `arg` indexing. Never gates on bare
+  # os.getenv (lapis/lor config).
   class Cli < Detector
-    MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|\barg\s*\[\s*\d+\s*\]/
+    MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|\barg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".lua")

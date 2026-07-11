@@ -100,9 +100,9 @@ module NoirTechs
       },
     },
     :cpp_cli => {
-      :framework => "CLI (CLI11 / getopt / cxxopts / boost.program_options / gflags)",
+      :framework => "CLI (CLI11 / getopt / cxxopts / boost.program_options / gflags / Abseil Flags / argparse)",
       :language  => "C++",
-      :similar   => ["cpp-cli", "cpp_cli", "cli11", "getopt", "cxxopts", "program_options", "gflags"],
+      :similar   => ["cpp-cli", "cpp_cli", "cli11", "getopt", "cxxopts", "program_options", "gflags", "abseil", "absl-flags", "argparse"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -172,9 +172,9 @@ module NoirTechs
       },
     },
     :clojure_cli => {
-      :framework => "CLI (clojure.tools.cli / cli-matic)",
+      :framework => "CLI (clojure.tools.cli / cli-matic / environ / babashka.cli)",
       :language  => "Clojure",
-      :similar   => ["clojure-cli", "clojure_cli", "tools.cli", "cli-matic"],
+      :similar   => ["clojure-cli", "clojure_cli", "tools.cli", "cli-matic", "environ", "babashka-cli", "babashka.cli"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -424,9 +424,9 @@ module NoirTechs
       },
     },
     :cs_cli => {
-      :framework => "CLI (System.CommandLine / CommandLineParser / CliFx / Spectre.Console)",
+      :framework => "CLI (System.CommandLine / CommandLineParser / CliFx / Spectre.Console / McMaster / Cocona)",
       :language  => "C#",
-      :similar   => ["cs-cli", "cs_cli", "csharp-cli", "system.commandline", "commandlineparser", "clifx", "spectre.console"],
+      :similar   => ["cs-cli", "cs_cli", "csharp-cli", "system.commandline", "commandlineparser", "clifx", "spectre.console", "mcmaster", "commandlineutils", "cocona"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -784,9 +784,9 @@ module NoirTechs
       },
     },
     :perl_cli => {
-      :framework => "CLI (Getopt::Long / Getopt::Std / App::Cmd)",
+      :framework => "CLI (Getopt::Long / Getopt::Std / App::Cmd / Getopt::Long::Descriptive / MooX::Options)",
       :language  => "Perl",
-      :similar   => ["perl-cli", "perl_cli", "getopt::long", "getopt::std", "app::cmd"],
+      :similar   => ["perl-cli", "perl_cli", "getopt::long", "getopt::std", "app::cmd", "getopt::long::descriptive", "moox::options"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -874,9 +874,9 @@ module NoirTechs
       },
     },
     :go_cli => {
-      :framework => "CLI (flag / cobra / urfave / pflag / go-arg / go-flags)",
+      :framework => "CLI (flag / cobra / urfave / pflag / go-arg / go-flags / kong / kingpin / mitchellh)",
       :language  => "Go",
-      :similar   => ["go-cli", "go_cli", "cobra", "urfave", "go-arg", "go-flags", "pflag"],
+      :similar   => ["go-cli", "go_cli", "cobra", "urfave", "go-arg", "go-flags", "pflag", "kong", "kingpin", "mitchellh-cli"],
       :supported => {
         :endpoint => true,
         # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method,
@@ -1176,9 +1176,9 @@ module NoirTechs
       },
     },
     :groovy_cli => {
-      :framework => "CLI (CliBuilder / picocli)",
+      :framework => "CLI (CliBuilder / picocli / commons-cli / JCommander)",
       :language  => "Groovy",
-      :similar   => ["groovy-cli", "groovy_cli", "clibuilder", "picocli"],
+      :similar   => ["groovy-cli", "groovy_cli", "clibuilder", "picocli", "commons-cli", "jcommander"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -1212,9 +1212,9 @@ module NoirTechs
       },
     },
     :haskell_cli => {
-      :framework => "CLI (optparse-applicative / cmdargs / GetOpt)",
+      :framework => "CLI (optparse-applicative / cmdargs / GetOpt / turtle)",
       :language  => "Haskell",
-      :similar   => ["haskell-cli", "haskell_cli", "optparse-applicative", "cmdargs"],
+      :similar   => ["haskell-cli", "haskell_cli", "optparse-applicative", "cmdargs", "turtle"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -1359,9 +1359,9 @@ module NoirTechs
       },
     },
     :java_cli => {
-      :framework => "CLI (picocli / args4j / JCommander / commons-cli / airline)",
+      :framework => "CLI (picocli / args4j / JCommander / commons-cli / airline / JOpt Simple)",
       :language  => "Java",
-      :similar   => ["java-cli", "java_cli", "picocli", "args4j", "jcommander", "commons-cli", "airline"],
+      :similar   => ["java-cli", "java_cli", "picocli", "args4j", "jcommander", "commons-cli", "airline", "jopt-simple", "joptsimple"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -1575,9 +1575,9 @@ module NoirTechs
       },
     },
     :lua_cli => {
-      :framework => "CLI (argparse)",
+      :framework => "CLI (argparse / lua_cliargs)",
       :language  => "Lua",
-      :similar   => ["lua-cli", "lua_cli", "argparse"],
+      :similar   => ["lua-cli", "lua_cli", "argparse", "cliargs", "lua_cliargs"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -1665,9 +1665,9 @@ module NoirTechs
       },
     },
     :js_cli => {
-      :framework => "CLI (parseArgs / commander / yargs / cac / meow / minimist)",
+      :framework => "CLI (parseArgs / commander / yargs / cac / meow / minimist / citty / arg / command-line-args / getopts)",
       :language  => "JavaScript",
-      :similar   => ["js-cli", "js_cli", "commander", "yargs", "cac", "meow", "minimist", "oclif", "clipanion", "sade"],
+      :similar   => ["js-cli", "js_cli", "commander", "yargs", "cac", "meow", "minimist", "oclif", "clipanion", "sade", "citty", "arg", "command-line-args", "getopts"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -2079,9 +2079,9 @@ module NoirTechs
       },
     },
     :zig_cli => {
-      :framework => "CLI (zig-cli / zig-clap / std.process)",
+      :framework => "CLI (zig-cli / zig-clap / std.process / yazap / zig-args)",
       :language  => "Zig",
-      :similar   => ["zig-cli", "zig_cli", "clap", "zig-clap"],
+      :similar   => ["zig-cli", "zig_cli", "clap", "zig-clap", "yazap", "zig-args"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -2187,9 +2187,9 @@ module NoirTechs
       },
     },
     :kotlin_cli => {
-      :framework => "CLI (clikt / kotlinx-cli)",
+      :framework => "CLI (clikt / kotlinx-cli / picocli)",
       :language  => "Kotlin",
-      :similar   => ["kotlin-cli", "kotlin_cli", "clikt", "kotlinx-cli"],
+      :similar   => ["kotlin-cli", "kotlin_cli", "clikt", "kotlinx-cli", "picocli"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -2544,9 +2544,9 @@ module NoirTechs
       },
     },
     :php_cli => {
-      :framework => "CLI (symfony/console / getopt)",
+      :framework => "CLI (symfony/console / getopt / artisan / wp-cli / robo)",
       :language  => "PHP",
-      :similar   => ["php-cli", "php_cli", "symfony-console", "getopt", "climate", "minicli"],
+      :similar   => ["php-cli", "php_cli", "symfony-console", "getopt", "climate", "minicli", "artisan", "illuminate-console", "wp-cli", "robo"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -2850,9 +2850,9 @@ module NoirTechs
       },
     },
     :python_cli => {
-      :framework => "CLI (argparse / click / typer / fire / docopt / getopt)",
+      :framework => "CLI (argparse / click / typer / fire / docopt / getopt / absl / cleo)",
       :language  => "Python",
-      :similar   => ["python-cli", "python_cli", "argparse", "click", "typer", "fire", "docopt"],
+      :similar   => ["python-cli", "python_cli", "argparse", "click", "typer", "fire", "docopt", "absl", "abseil", "cleo"],
       :supported => {
         :endpoint => true,
         # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method,
@@ -3231,9 +3231,9 @@ module NoirTechs
       },
     },
     :ruby_cli => {
-      :framework => "CLI (OptionParser / Thor / GLI / Slop / TTY::Option)",
+      :framework => "CLI (OptionParser / Thor / GLI / Slop / TTY::Option / Optimist / Clamp / dry-cli)",
       :language  => "Ruby",
-      :similar   => ["ruby-cli", "ruby_cli", "thor", "optparse", "optionparser", "gli", "slop", "tty-option"],
+      :similar   => ["ruby-cli", "ruby_cli", "thor", "optparse", "optionparser", "gli", "slop", "tty-option", "optimist", "clamp", "dry-cli"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -3393,9 +3393,9 @@ module NoirTechs
       },
     },
     :rust_cli => {
-      :framework => "CLI (std::env / clap / structopt / argh)",
+      :framework => "CLI (std::env / clap / structopt / argh / getopts)",
       :language  => "Rust",
-      :similar   => ["rust-cli", "rust_cli", "clap", "structopt", "argh", "bpaf", "pico-args"],
+      :similar   => ["rust-cli", "rust_cli", "clap", "structopt", "argh", "bpaf", "pico-args", "getopts"],
       :supported => {
         :endpoint => true,
         :method   => false,
@@ -3555,9 +3555,9 @@ module NoirTechs
       },
     },
     :scala_cli => {
-      :framework => "CLI (scopt / decline / mainargs)",
+      :framework => "CLI (scopt / decline / mainargs / scallop / twitter-util)",
       :language  => "Scala",
-      :similar   => ["scala-cli", "scala_cli", "scopt", "decline", "mainargs"],
+      :similar   => ["scala-cli", "scala_cli", "scopt", "decline", "mainargs", "scallop", "twitter-util", "util-app"],
       :supported => {
         :endpoint => true,
         :method   => false,

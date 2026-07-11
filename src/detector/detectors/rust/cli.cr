@@ -2,16 +2,16 @@ require "../../../models/detector"
 
 module Detector::Rust
   # Detects Rust command-line applications: crates depending on a CLI library
-  # (clap, structopt, argh, bpaf, pico-args) or source that derives a parser /
-  # uses `std::env::args()`. Gates the Rust CLI analyzer. Bare
+  # (clap, structopt, argh, bpaf, pico-args, getopts) or source that derives a
+  # parser / uses `std::env::args()`. Gates the Rust CLI analyzer. Bare
   # `std::env::var(...)` (config reads, common in web crates) does not qualify.
   class Cli < Detector
-    CLI_CRATES = ["clap", "structopt", "argh", "bpaf", "pico-args"]
+    CLI_CRATES = ["clap", "structopt", "argh", "bpaf", "pico-args", "getopts"]
 
     DERIVE_PARSER    = /#\[\s*derive\s*\([^)]*\b(?:Parser|Subcommand|Args)\b/
     DERIVE_STRUCTOPT = /#\[\s*derive\s*\([^)]*\bStructOpt\b/
     DERIVE_ARGH      = /#\[\s*derive\s*\([^)]*\bFromArgs\b/
-    USE_CLI_LIB      = /\buse\s+(?:clap|structopt|argh|bpaf|pico_args)\b|\b(?:clap|structopt|argh|bpaf|pico_args)::/
+    USE_CLI_LIB      = /\buse\s+(?:clap|structopt|argh|bpaf|pico_args|getopts)\b|\b(?:clap|structopt|argh|bpaf|pico_args|getopts)::/
     BUILDER_CMD      = /\bCommand::new\s*\(/
     ENV_ARGS         = /\b(?:std::)?env::args(?:_os)?\s*\(/
 

@@ -5,7 +5,8 @@ module Analyzer::Cpp
   # endpoints: one endpoint per (sub)command with named options
   # (param_type "flag"), positional arguments ("argument") and consumed
   # environment variables ("env"). Covers CLI11, getopt/getopt_long, cxxopts,
-  # boost::program_options and gflags, plus gated getenv reads.
+  # boost::program_options, gflags, Abseil Flags and p-ranav/argparse, plus
+  # gated getenv reads.
   #
   # Line-scan analyzer (Go/Ruby/Rust CLI house style) merging endpoints by
   # URL. There is no C++ engine, so it subclasses Analyzer directly.
@@ -21,6 +22,19 @@ module Analyzer::Cpp
     ADD_OPTION     = /(\w+)\s*(?:\.|->)\s*add_option\s*\(\s*"([^"]+)"/
     ADD_FLAG       = /(\w+)\s*(?:\.|->)\s*add_flag\s*\(\s*"([^"]+)"/
 
+    # p-ranav/argparse. Declare-then-register style: an ArgumentParser
+    # variable's role (root vs subcommand) is only known once it's observed
+    # either as the receiver of `.parse_args(argc, argv)` / owner side of
+    # `.add_subparser(...)`, or by elimination when it's the file's only
+    # declared parser. Resolved once per file in `resolve_argparse_vars`
+    # before options are attributed, so declaration order in the file never
+    # decides which parser is root (a helper-function-local parser can never
+    # be mistaken for the real root).
+    ARGPARSE_DECL      = /\bargparse::ArgumentParser\s+(\w+)\s*\(\s*"([^"]+)"/
+    ARGPARSE_ADD_ARG   = /(\w+)\s*(?:\.|->)\s*add_argument\s*\(\s*"([^"]+)"(?:\s*,\s*"([^"]+)")?/
+    ARGPARSE_SUBPARSER = /(\w+)\s*(?:\.|->)\s*add_subparser\s*\(\s*(\w+)\s*\)/
+    ARGPARSE_PARSE     = /(\w+)\s*(?:\.|->)\s*parse_args\s*\(\s*argc\s*,\s*argv\s*\)/
+
     # getopt_long struct option entries + short spec.
     LONG_OPT_ENTRY = /\{\s*"([A-Za-z0-9][\w-]*)"\s*,\s*(?:no_argument|required_argument|optional_argument|\d)/
     GETOPT_CALL    = /\bgetopt(?:_long)?\s*\([^,]+,[^,]+,\s*"([^"]*)"/
@@ -34,10 +48,22 @@ module Analyzer::Cpp
     # gflags.
     GFLAGS_DEF = /\bDEFINE_(?:string|int32|int64|bool|double|uint32|uint64)\s*\(\s*(\w+)/
 
+    # Abseil Flags. `ABSL_FLAG(type, name, default, help)` — the type is
+    # matched with a depth-aware manual scan (see `absl_flag_names`) rather
+    # than a character-class regex, so a template type with a top-level
+    # comma (e.g. `std::map<std::string,int>`) doesn't truncate/misparse the
+    # name field.
+    ABSL_FLAG_MARK = /\bABSL_FLAG\s*\(/
+
     GETENV   = /\b(?:std::)?getenv\s*\(\s*"([^"]+)"/
     ARGV_IDX = /\bargv\s*\[\s*(\d+)\s*\]/
 
-    CLI_MARKERS = ["CLI::App", "getopt", "struct option", "cxxopts::", "program_options", "DEFINE_string", "DEFINE_int", "DEFINE_bool"]
+    # Whitespace-tolerant substring markers (no trailing "(" on macro-style
+    # entries) so this gate can never diverge from what the extraction
+    # regexes above actually accept, e.g. `ABSL_FLAG (int32_t, ...)` with a
+    # space before the paren is valid C++ and must not be silently skipped.
+    CLI_MARKERS = ["CLI::App", "getopt", "struct option", "cxxopts::", "program_options",
+                   "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser"]
     WEB_RE      = /\b(?:Crow|crow|drogon|httplib|oatpp)\b|Crow::|drogon::|httplib::|oatpp::/
 
     def analyze
@@ -88,6 +114,7 @@ module Analyzer::Cpp
                      endpoints : Hash(String, Endpoint), emit_env : Bool)
       current_url = root_url            # cursor for bare add_subcommand chains
       var_urls = {} of String => String # CLI11 App / subcommand variables
+      argparse_var_urls = resolve_argparse_vars(lines, path, root_url, endpoints)
       in_opts_block = false
 
       lines.each_with_index do |line, index|
@@ -136,9 +163,26 @@ module Analyzer::Cpp
         end
         in_opts_block = false if in_opts_block && line.includes?(";")
 
+        # p-ranav/argparse add_argument("-v","--verbose") / add_argument("input"),
+        # attributed by the receiver variable. Strict lookup: a receiver that
+        # `resolve_argparse_vars` never bound to a root/subcommand url (e.g. a
+        # parser built by an unrelated helper function) is dropped rather than
+        # falling back to the file's root — no stray-match root fallback.
+        if m = line.match(ARGPARSE_ADD_ARG)
+          if url = argparse_var_urls[m[1]]?
+            raw = m[3]? ? "#{m[2]},#{m[3]}" : m[2]
+            push_named(endpoints, url, path, line_no, raw)
+          end
+        end
+
         # gflags.
         if m = line.match(GFLAGS_DEF)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+        end
+
+        # Abseil Flags: ABSL_FLAG(type, name, default, help) — root flags.
+        absl_flag_names(line).each do |name|
+          fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag"))
         end
 
         # raw argv positionals. `scan` so every argv[N] on one line surfaces
@@ -155,6 +199,113 @@ module Analyzer::Cpp
           end
         end
       end
+    end
+
+    # Resolves p-ranav/argparse ArgumentParser variables to their root/
+    # subcommand urls in a single pre-pass over the whole file, so that
+    # declaration order (a helper function's local parser declared above
+    # `main`) can never decide which variable is the real root — only an
+    # explicit linking call can:
+    #   - a var seen as the receiver of `.parse_args(argc, argv)` (and never
+    #     itself a subparser child) is root;
+    #   - otherwise a var seen as the owner (receiver) side of
+    #     `.add_subparser(child)` (and never itself a child) is root;
+    #   - otherwise, if there is exactly one declared parser that is never a
+    #     child, it's root by elimination (the common no-subcommands case).
+    # A parser var that resolves to neither role (e.g. a factory helper's
+    # local parser, never linked or parsed) is left unbound — its
+    # add_argument calls are dropped in `scan` rather than mis-attributed.
+    private def resolve_argparse_vars(lines : Array(String), path : String, root_url : String,
+                                      endpoints : Hash(String, Endpoint)) : Hash(String, String)
+      declared = {} of String => String     # var -> display name
+      links = [] of Tuple(String, String, Int32) # parent_var, child_var, line_no
+      parse_vars = [] of String
+
+      lines.each_with_index do |line, index|
+        if m = line.match(ARGPARSE_DECL)
+          declared[m[1]] = m[2] unless declared.has_key?(m[1])
+        end
+        if m = line.match(ARGPARSE_SUBPARSER)
+          links << {m[1], m[2], index + 1}
+        end
+        if m = line.match(ARGPARSE_PARSE)
+          parse_vars << m[1]
+        end
+      end
+
+      var_urls = {} of String => String
+      return var_urls if declared.empty?
+
+      child_vars = links.map { |l| l[1] }
+      owner_vars = links.map { |l| l[0] }
+
+      root_var = parse_vars.find { |v| declared.has_key?(v) && !child_vars.includes?(v) }
+      root_var ||= owner_vars.find { |v| declared.has_key?(v) && !child_vars.includes?(v) }
+      if root_var.nil?
+        candidates = declared.keys.reject { |v| child_vars.includes?(v) }
+        root_var = candidates.first if candidates.size == 1
+      end
+      return var_urls if root_var.nil?
+
+      var_urls[root_var] = root_url
+      links.each do |link|
+        parent, child, line_no = link
+        next unless parent == root_var # single-level subcommand nesting only
+        next unless name = declared[child]?
+        url = "#{root_url}/#{name}"
+        var_urls[child] = url
+        fetch_endpoint(endpoints, url, path, line_no)
+      end
+      var_urls
+    end
+
+    # Extracts flag names from `ABSL_FLAG(type, name, default, help)` on a
+    # line via a depth-aware manual scan rather than a character-class
+    # regex, so a template type containing a top-level comma (e.g.
+    # `std::map<std::string,int>`) doesn't break extraction of the name
+    # field: `<`/`(` open a nesting level, `>`/`)` close one, and only a
+    # comma at depth 0 separates macro arguments.
+    private def absl_flag_names(line : String) : Array(String)
+      names = [] of String
+      offset = 0
+      while offset <= line.size && (m = line.match(ABSL_FLAG_MARK, offset))
+        args_start = m.end.not_nil!
+        fields = [] of String
+        depth = 0
+        field_start = args_start
+        i = args_start
+        closed_at = nil
+
+        while i < line.size
+          case line[i]
+          when '(', '<'
+            depth += 1
+          when ')'
+            if depth == 0
+              fields << line[field_start...i]
+              closed_at = i
+              break
+            end
+            depth -= 1
+          when '>'
+            depth -= 1 if depth > 0
+          when ','
+            if depth == 0
+              fields << line[field_start...i]
+              field_start = i + 1
+            end
+          end
+          i += 1
+        end
+
+        if fields.size >= 2
+          name = fields[1].strip
+          names << name if name.matches?(/\A\w+\z/)
+        end
+
+        offset = closed_at ? closed_at + 1 : args_start + 1
+      end
+      names
     end
 
     # A CLI11 add_option name starting with `-` is an option/flag; otherwise

@@ -1,0 +1,10 @@
+{
+  "name": "claddemo",
+  "version": "1.0.0",
+  "bin": {
+    "claddemo": "cli.js"
+  },
+  "dependencies": {
+    "command-line-args": "^5.2.1"
+  }
+}

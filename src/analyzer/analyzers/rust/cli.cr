@@ -6,7 +6,8 @@ module Analyzer::Rust
   # endpoints: one endpoint per (sub)command with named options
   # (param_type "flag"), positional arguments ("argument") and consumed
   # environment variables ("env"). Covers `std::env::args`/`var` plus the
-  # clap / structopt / argh derive macros.
+  # clap / structopt / argh derive macros and the getopts builder API
+  # (`Options::new()` + `opts.optopt`/`optflag`/`optflagopt`/`optmulti`/`reqopt`).
   #
   # Scope notes (follow-ups): the clap *builder* API (`Command::new(...)
   # .arg(Arg::new(...))`) is only recognized as a CLI signal, not parsed into
@@ -36,6 +37,17 @@ module Analyzer::Rust
     # builtin.
     ENV_VAR_RE  = /\b(?:std::)?env::var(?:_os)?\s*\(\s*"([^"]+)"/
     ENV_ARGS_RE = /\b(?:std::)?env::args(?:_os)?\s*\(/
+
+    # getopts: a flat (no-subcommand) builder API. `let mut opts =
+    # Options::new();` binds a receiver variable, then `opts.optopt(short,
+    # long, desc, hint)` / `optflag(short, long, desc)` /
+    # `optflagopt(short, long, desc, hint)` / `optmulti(short, long, desc,
+    # hint)` / `reqopt(short, long, desc, hint)` register each option on it.
+    # The optional type-annotation group tolerates a `getopts::` prefix
+    # (`let mut opts: getopts::Options = ...`), matching the same prefix
+    # already tolerated before `Options::new`.
+    GETOPTS_NEW_RE  = /\blet\s+(?:mut\s+)?(\w+)(?:\s*:\s*(?:getopts::)?Options)?\s*=\s*(?:getopts::)?Options::new\s*\(\s*\)/
+    GETOPTS_CALL_RE = /\b(\w+)\.(?:optopt|reqopt|optflagopt|optflag|optmulti)\s*\(\s*"([^"]*)"\s*,\s*"([^"]*)"/
 
     # Web crates: their env::var reads are config, not a CLI surface.
     WEB_CRATE_RE = /\buse\s+(?:axum|actix_web|rocket|warp|tide|poem|salvo|gotham|loco_rs|hyper|tonic|tower_http)\b|::serve\s*\(|HttpServer::new|TcpListener::bind/
@@ -68,7 +80,7 @@ module Analyzer::Rust
 
     private def cli_evidence?(content : String) : Bool
       content.matches?(DERIVE_RE) && content.matches?(/\b(?:Parser|Subcommand|Args|StructOpt|FromArgs)\b/) ||
-        content.matches?(/\buse\s+(?:clap|structopt|argh|bpaf|pico_args)\b|\b(?:clap|structopt|argh|bpaf|pico_args)::/) ||
+        content.matches?(/\buse\s+(?:clap|structopt|argh|bpaf|pico_args|getopts)\b|\b(?:clap|structopt|argh|bpaf|pico_args|getopts)::/) ||
         content.matches?(ENV_ARGS_RE) ||
         (content.includes?("clap") && content.matches?(BUILDER_NEW))
     end
@@ -90,6 +102,11 @@ module Analyzer::Rust
       current_cmd = root_url
       pending_derive : String? = nil
       pending_attr : Tuple(Symbol, String)? = nil # {:clap|:argh, body}
+      # getopts has no subcommand concept: a receiver-variable map (not a
+      # sticky cursor) links each `Options::new()` binding to the command
+      # URL its `opt*` calls should attach to (always root_url today, but
+      # keeps the same variable-scoping shape as the other CLI analyzers).
+      getopts_vars = {} of String => String
 
       lines.each_with_index do |line, index|
         entry_depth = depth
@@ -137,6 +154,22 @@ module Analyzer::Rust
           elsif (attr = pending_attr) && (fm = stripped.match(FIELD_RE))
             apply_field(attr, fm[1], current_cmd, path, line_no, endpoints)
             pending_attr = nil
+          end
+        end
+
+        # getopts: bind `let mut opts = Options::new();` to the current
+        # binary's root command, then attribute each `opts.optopt(...)` /
+        # `optflag(...)` / `optflagopt(...)` / `optmulti(...)` / `reqopt(...)`
+        # call to that same receiver via the variable map.
+        if nm = line.match(GETOPTS_NEW_RE)
+          getopts_vars[nm[1]] = root_url
+        end
+        if cm = line.match(GETOPTS_CALL_RE)
+          if url = getopts_vars[cm[1]]?
+            short = cm[2]
+            long = cm[3]
+            name = long.empty? ? short : long
+            fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(name, "", "flag")) unless name.empty?
           end
         end
 
