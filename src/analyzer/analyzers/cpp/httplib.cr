@@ -42,6 +42,15 @@ module Analyzer::Cpp
     # naive substring scans.
     VERB_CALL_EVIDENCE_RE = Regex.union(".Get(", ".Post(", ".Put(", ".Delete(", ".Patch(", ".Options(")
 
+    # extract_function_body builds a `/\b#{Regex.escape(name)}\s*\(/` matcher
+    # for each named handler function it resolves. Crystal recompiles an
+    # interpolated regex literal on every evaluation, and this runs once per
+    # non-lambda route call in a scan, so a handler function reused across
+    # several routes would otherwise recompile the identical pattern each
+    # time. Cache the compiled regex per name in an instance Hash + `||=` so
+    # a repeated name reuses the already-compiled Regex.
+    @function_body_regex_cache = Hash(String, Regex).new
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -125,7 +134,7 @@ module Analyzer::Cpp
     end
 
     private def extract_function_body(source : String, name : String) : Tuple(String, Int32)?
-      regex = /\b#{Regex.escape(name)}\s*\(/
+      regex = @function_body_regex_cache[name] ||= /\b#{Regex.escape(name)}\s*\(/
       source.scan(regex) do |match|
         match_start = source.char_index_to_byte_index(match.begin(0) || 0) || 0
         # Skip call sites (`foo.name(`, `obj::name(`); we want the definition.
