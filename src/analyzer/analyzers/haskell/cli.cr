@@ -42,6 +42,12 @@ module Analyzer::Haskell
     MARKERS = /\bimport\s+(?:qualified\s+)?Options\.Applicative\b|\b(?:execParser|strOption|subparser|hsubparser)\b|\bimport\s+(?:qualified\s+)?System\.Console\.(?:GetOpt|CmdArgs)\b|\bgetArgs\b|#{TURTLE_MARKERS}/
     WEB_RE  = /\bimport\s+(?:qualified\s+)?(?:Web\.Scotty|Servant|Yesod|Network\.Wai)\b/
 
+    # Per-path test-file gate. A precompiled `Regex.union` (PCRE2 JIT)
+    # replaces the two OR-ed `String#includes?` scans it used to run --
+    # provably equivalent since union auto-escapes each literal, and a
+    # single regex pass over `lower` is cheaper than two substring scans.
+    TEST_PATH_RE = Regex.union("/test/", "_spec.")
+
     def analyze
       endpoints = {} of String => Endpoint
       [".hs", ".lhs"].each do |ext|
@@ -141,8 +147,7 @@ module Analyzer::Haskell
     end
 
     private def cli_test_path?(path : String) : Bool
-      lower = path.downcase
-      lower.includes?("/test/") || lower.includes?("_spec.")
+      path.downcase.matches?(TEST_PATH_RE)
     end
 
     private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,

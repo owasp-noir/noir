@@ -801,12 +801,18 @@ module Analyzer::Haskell
     end
 
     private def split_head_args(segment : String) : Tuple(String, String)
+      # `String#[](Int)` re-walks from byte 0 to locate a character index
+      # whenever the string isn't single-byte-optimizable (any non-ASCII
+      # content), so indexing it inside a `while idx < size` loop is O(n^2)
+      # on such input. Materialize the chars once (O(n)) and index the
+      # Array(Char) instead, which is O(1) per lookup.
+      chars = segment.chars
       idx = 0
-      while idx < segment.size && !segment[idx].whitespace?
+      while idx < chars.size && !chars[idx].whitespace?
         idx += 1
       end
-      head = segment[0...idx]
-      args = idx < segment.size ? segment[idx..].strip : ""
+      head = chars[0...idx].join
+      args = idx < chars.size ? chars[idx..].join.strip : ""
       {head, args}
     end
 
@@ -871,24 +877,35 @@ module Analyzer::Haskell
       depth == 0
     end
 
+    # This is the hottest splitter in the file -- called (and recursed into,
+    # via flatten_route_segments/distribute_route) on expanded Servant API
+    # bodies that can run up to MAX_EXPANSION_BYTES. `String#[](Int)` re-walks
+    # from byte 0 to locate a character index whenever the string isn't
+    # single-byte-optimizable (any non-ASCII content: accented path segments,
+    # unicode string literals, etc.), so indexing `input` by character inside
+    # a `while i < size` loop was O(n^2) on such input. Materialize the chars
+    # once (O(n)) and index the Array(Char) instead, which is O(1) per lookup;
+    # slices are joined back to String only when a part/segment is emitted.
     private def split_top_level(input : String, separator : String) : Array(String)
       parts = [] of String
       paren_depth = 0
       bracket_depth = 0
       brace_depth = 0
+      chars = input.chars
+      sep_chars = separator.chars
       start = 0
       i = 0
-      sep_size = separator.size
+      sep_size = sep_chars.size
 
-      while i < input.size
-        c = input[i]
+      while i < chars.size
+        c = chars[i]
         if c == '"'
           i += 1
-          while i < input.size && input[i] != '"'
-            i += 1 if input[i] == '\\' && i + 1 < input.size
+          while i < chars.size && chars[i] != '"'
+            i += 1 if chars[i] == '\\' && i + 1 < chars.size
             i += 1
           end
-          i += 1 if i < input.size
+          i += 1 if i < chars.size
           next
         end
 
@@ -904,8 +921,8 @@ module Analyzer::Haskell
           brace_depth += 1
         elsif c == '}'
           brace_depth -= 1 if brace_depth > 0
-        elsif paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && matches_at?(input, i, separator)
-          parts << input[start...i]
+        elsif paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && matches_at?(chars, i, sep_chars)
+          parts << chars[start...i].join
           i += sep_size
           start = i
           next
@@ -914,14 +931,14 @@ module Analyzer::Haskell
         i += 1
       end
 
-      parts << input[start..]
+      parts << chars[start..].join
       parts.map(&.strip).reject(&.empty?)
     end
 
-    private def matches_at?(input : String, index : Int32, sep : String) : Bool
-      return false if index + sep.size > input.size
+    private def matches_at?(chars : Array(Char), index : Int32, sep : Array(Char)) : Bool
+      return false if index + sep.size > chars.size
       sep.size.times do |k|
-        return false if input[index + k] != sep[k]
+        return false if chars[index + k] != sep[k]
       end
       true
     end
