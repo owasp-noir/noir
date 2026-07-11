@@ -54,9 +54,16 @@ module Analyzer::Php
       dedup_endpoints(endpoints)
     end
 
+    # Precompiled once at load: the three namespace markers used to be
+    # three separate `String#includes?` scans of the whole file ORed
+    # together. Crystal's `String#includes?` is measurably slower than a
+    # single precompiled `Regex#matches?` call, and this runs on every
+    # `.php` file fed into the analyzer during a project-wide scan.
+    NAMESPACE_MARKER_RE = /Laminas\\|Zend\\|Mezzio\\/
+
     private def laminas_relevant?(path : String, content : String) : Bool
       return true if path.includes?("/config/") && (content.includes?("'router'") || content.includes?("\"router\""))
-      return true if content.includes?("Laminas\\") || content.includes?("Zend\\") || content.includes?("Mezzio\\")
+      return true if content.matches?(NAMESPACE_MARKER_RE)
       return true if content.includes?("RouteStackInterface")
       !!content.match(/->(?:get|post|put|patch|delete|options|head|any|route)\s*\(\s*['"][^'"]+['"]/i)
     end
