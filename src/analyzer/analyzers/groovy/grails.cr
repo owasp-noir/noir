@@ -72,6 +72,14 @@ module Analyzer::Groovy
       responseFormats namespace transactional
     ]
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces the two OR-ed
+    # `String#includes?` scans `url_mappings_path?` used to run over every
+    # candidate path -- Crystal's `includes?` is not Boyer-Moore accelerated,
+    # so a single regex pass is cheaper than two substring scans. `union`
+    # auto-escapes each literal, so this is exactly equivalent to the
+    # OR-chain it replaces.
+    URL_MAPPINGS_DIR_RE = Regex.union("/grails-app/conf/", "/grails-app/controllers/")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
@@ -103,8 +111,7 @@ module Analyzer::Groovy
       # Grails versions: 1.x/2.x kept it under `grails-app/conf/`, while
       # Grails 3+ moved it to `grails-app/controllers/`. Accept both so modern
       # apps (the common case today) are not silently skipped.
-      return false unless path.includes?("/grails-app/conf/") ||
-                          path.includes?("/grails-app/controllers/")
+      return false unless path.matches?(URL_MAPPINGS_DIR_RE)
       File.basename(path).ends_with?("UrlMappings.groovy")
     end
 
