@@ -703,8 +703,14 @@ module Analyzer::Mobile
       path.gsub(/(?<!\$)\{([^}]+)\}/, ":\\1")
     end
 
+    # Per-endpoint gate, evaluated for every emitted deep-link/provider URL.
+    # `String#matches?` (PCRE2 JIT) replaces three OR-ed `String#includes?`
+    # scans with a single pass; `Regex.union` auto-escapes each literal, so
+    # it is provably equivalent to the OR-of-substrings it replaces.
+    UNRESOLVED_URL_RE = Regex.union("@string/", "@{", "${")
+
     private def mark_unresolved(endpoint : Endpoint, url : String)
-      return unless url.includes?("@string/") || url.includes?("@{") || url.includes?("${")
+      return unless url.matches?(UNRESOLVED_URL_RE)
       endpoint.add_tag(Tag.new("unresolved", "Contains an unresolved manifest reference", "android"))
     end
 
