@@ -30,6 +30,31 @@ module Analyzer::Fsharp
       {m, /\b#{m}\b/}
     end
 
+    # Combinator matchers for the main scan loop below. `\G` (rather than
+    # `\A`) anchors each match to the exact byte offset passed to
+    # `Regex#match_at_byte_index`, mirroring what `\A` did against a
+    # freshly sliced `cleaned[i..]` remainder -- but without the slice.
+    SUB_ROUTE_RE   = /\G(subRoute(?:Ci|f)?)\s+"([^"]+)"\s*([\(\[])/
+    VERB_CHOOSE_RE = /\G(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*>=>\s*choose\s*\[/
+    VERB_LIST_RE   = /\G(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\[/
+    ROUTE_BIND_RE  = /\GrouteBind(?:\s*<[^>\n]*>)?\s+"([^"]+)"/
+    ROUTEF_RE      = /\G(?:routef|routeCif)\s+"([^"]+)"/
+    ROUTE_RE       = /\G(?:routeCix|routexp|routeCi|routex|route)\s+"([^"]+)"/
+    ROUTE_CONST_RE = /\G(?:routeCix|routexp|routeCi|routex|route)\s+([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)/
+
+    # PCRE2 (Crystal's regex backend) re-validates UTF-8 encoding of the
+    # subject on every `match_at_byte_index` call by default -- an
+    # O(remaining-length) pass, since our scan loop calls it at every
+    # character position that O(n²) rather than O(n). `content` (and
+    # `cleaned`, built from it) is always sourced through
+    # `Analyzer#read_file_content`, which reads with `invalid: :skip`, so
+    # both are guaranteed structurally valid UTF-8 already -- the same
+    # invariant `String#scan` in the standard library relies on when it
+    # sets this same option after its first match. Confirmed empirically:
+    # a 4x-larger synthetic file went from ~16.7s to ~0.014s once this was
+    # applied to the combinator matchers below (~1000x).
+    NO_UTF_CHECK = Regex::MatchOptions::NO_UTF_CHECK
+
     # Mapping of routef format specifiers to noir path-param types.
     ROUTEF_PARAM_TYPES = {
       'i' => "int",
@@ -77,6 +102,18 @@ module Analyzer::Fsharp
       # O(n) on non-ASCII source (one em-dash defeats single-byte optimization),
       # so the per-character work below — and the literal skip — would be O(n²).
       cleaned_chars = cleaned.chars
+      # Byte offset of every char position (plus one past the end), computed
+      # once in O(n). Lets the loop below hand `Regex#match_at_byte_index` a
+      # ready byte offset for the *current* position instead of re-slicing
+      # `cleaned[i..]` on every iteration — that slice copies O(remaining
+      # length) bytes each time, so the O(n) scan becomes O(n²) regardless of
+      # ASCII content (confirmed: 4x source size measured ~16x scan time).
+      byte_offsets = char_byte_offsets(cleaned_chars)
+      # Newline positions in `content`, computed once in O(n) so
+      # `line_for_offset` below can binary-search instead of re-walking
+      # from the start of the file for every emitted route (see its
+      # doc comment for the O(n²) this replaces).
+      newline_offsets = collect_newline_offsets(content)
       scope_stack = [] of SubRouteScope
       string_constants = collect_string_constants(cleaned)
 
@@ -96,18 +133,18 @@ module Analyzer::Fsharp
           next
         end
 
-        rest = cleaned[i..]
+        byte_i = byte_offsets[i]
 
         # subRoute / subRouteCi / subRoutef "/prefix" (handler)
         # or the Giraffe 6+ Endpoint Routing form: `subRoute "/prefix" [ ... ]`.
-        sub_match = rest.match(/\A(subRoute(?:Ci|f)?)\s+"([^"]+)"\s*([\(\[])/)
+        sub_match = SUB_ROUTE_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if sub_match
           combinator = sub_match[1]
           raw_prefix = sub_match[2]
           opener = sub_match[3]
-          match_end_local = sub_match.end(0)
-          if match_end_local
-            open_abs = i + match_end_local - 1
+          match_end = sub_match.end(0)
+          if match_end
+            open_abs = match_end - 1
             close_pos = opener == "(" ? find_matching_paren(cleaned, open_abs) : find_matching_bracket(cleaned, open_abs)
             if close_pos
               translated_prefix, prefix_params = if combinator == "subRoutef"
@@ -121,7 +158,7 @@ module Analyzer::Fsharp
                 params:  prefix_params,
                 method:  nil,
               }
-              i += match_end_local
+              i = match_end
               next
             end
           end
@@ -133,12 +170,12 @@ module Analyzer::Fsharp
         # without it every nested route falls back to the full method
         # set. `\s` spans the line break in the common multi-line layout
         # where the verb sits on its own line above `choose [`.
-        verb_choose_match = rest.match(/\A(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*>=>\s*choose\s*\[/)
+        verb_choose_match = VERB_CHOOSE_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if verb_choose_match && verb_list_method_context?(cleaned, i)
           verb = verb_choose_match[1]
-          match_end_local = verb_choose_match.end(0)
-          if match_end_local
-            open_bracket_abs = i + match_end_local - 1
+          match_end = verb_choose_match.end(0)
+          if match_end
+            open_bracket_abs = match_end - 1
             close_bracket = find_matching_bracket(cleaned, open_bracket_abs)
             if close_bracket
               scope_stack << {
@@ -147,7 +184,7 @@ module Analyzer::Fsharp
                 params:  [] of Param,
                 method:  verb,
               }
-              i += match_end_local
+              i = match_end
               next
             end
           end
@@ -157,12 +194,12 @@ module Analyzer::Fsharp
         # The verb token wraps a list of routes. When this form is used,
         # the embedded `route` lines do not carry the verb on their own
         # line, so we push a method-only scope until the matching `]`.
-        verb_list_match = rest.match(/\A(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\[/)
+        verb_list_match = VERB_LIST_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if verb_list_match && verb_list_method_context?(cleaned, i)
           verb = verb_list_match[1]
-          match_end_local = verb_list_match.end(0)
-          if match_end_local
-            open_bracket_abs = i + match_end_local - 1
+          match_end = verb_list_match.end(0)
+          if match_end
+            open_bracket_abs = match_end - 1
             close_bracket = find_matching_bracket(cleaned, open_bracket_abs)
             if close_bracket
               scope_stack << {
@@ -171,7 +208,7 @@ module Analyzer::Fsharp
                 params:  [] of Param,
                 method:  verb,
               }
-              i += match_end_local
+              i = match_end
               next
             end
           end
@@ -181,23 +218,23 @@ module Analyzer::Fsharp
         # bound to a record's properties. `{name}` placeholders become
         # `:name` path params. The pattern may also carry trailing regex
         # (e.g. `(/?)`), which is reported verbatim.
-        bind_match = rest.match(/\ArouteBind(?:\s*<[^>\n]*>)?\s+"([^"]+)"/)
+        bind_match = ROUTE_BIND_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if bind_match && token_boundary?(cleaned, i)
           path_pattern = bind_match[1]
-          match_end_local = bind_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, bind: true)
-          i += match_end_local || 1
+          match_end = bind_match.end(0)
+          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, bind: true, newline_offsets: newline_offsets)
+          i = match_end || (i + 1)
           next
         end
 
         # routef / routeCif "/users/%i/%s" — typed format parameters
         # (routeCif is the case-insensitive variant of routef).
-        routef_match = rest.match(/\A(?:routef|routeCif)\s+"([^"]+)"/)
+        routef_match = ROUTEF_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if routef_match && token_boundary?(cleaned, i)
           path_pattern = routef_match[1]
-          match_end_local = routef_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: true, include_callee: include_callee)
-          i += match_end_local || 1
+          match_end = routef_match.end(0)
+          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: true, include_callee: include_callee, newline_offsets: newline_offsets)
+          i = match_end || (i + 1)
           next
         end
 
@@ -205,12 +242,12 @@ module Analyzer::Fsharp
         # routex / routeCix / routexp (path reported verbatim). The
         # `routeStartsWith*` prefix guards are intentionally excluded —
         # they filter without defining a complete endpoint.
-        route_match = rest.match(/\A(?:routeCix|routexp|routeCi|routex|route)\s+"([^"]+)"/)
+        route_match = ROUTE_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if route_match && token_boundary?(cleaned, i)
           path_pattern = route_match[1]
-          match_end_local = route_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee)
-          i += match_end_local || 1
+          match_end = route_match.end(0)
+          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
+          i = match_end || (i + 1)
           next
         end
 
@@ -219,20 +256,36 @@ module Analyzer::Fsharp
         # where `let index = "/"`. Resolve it against file-level `let`
         # bindings; if the name is unknown, skip without emitting (no
         # phantom endpoint).
-        route_const_match = rest.match(/\A(?:routeCix|routexp|routeCi|routex|route)\s+([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)/)
+        route_const_match = ROUTE_CONST_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if route_const_match && token_boundary?(cleaned, i)
           ident = route_const_match[1]
-          match_end_local = route_const_match.end(0)
+          match_end = route_const_match.end(0)
           resolved = string_constants[ident.split('.').last]?
           if resolved
-            emit_route(path, content, cleaned, i, scope_stack, resolved, routef: false, include_callee: include_callee)
+            emit_route(path, content, cleaned, i, scope_stack, resolved, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
           end
-          i += match_end_local || 1
+          i = match_end || (i + 1)
           next
         end
 
         i += 1
       end
+    end
+
+    # Precomputes the byte offset of every character position in `chars`
+    # (index `chars.size` maps to the total byte length). Computed once in
+    # O(n) so the scan loop can look up `Regex#match_at_byte_index`'s start
+    # position in O(1) instead of re-deriving it (or re-slicing the string)
+    # on every iteration.
+    private def char_byte_offsets(chars : Array(Char)) : Array(Int32)
+      offsets = Array(Int32).new(chars.size + 1)
+      acc = 0
+      offsets << acc
+      chars.each do |c|
+        acc += c.bytesize
+        offsets << acc
+      end
+      offsets
     end
 
     # Collects `let NAME = "VALUE"` string bindings so routes that
@@ -296,7 +349,7 @@ module Analyzer::Fsharp
     private def emit_route(path : String, content : String, cleaned : String,
                            offset : Int32, scope_stack : Array(SubRouteScope),
                            path_pattern : String, routef : Bool, include_callee : Bool,
-                           bind : Bool = false)
+                           newline_offsets : Array(Int32), bind : Bool = false)
       url, params = if bind
                       translate_route_bind(path_pattern)
                     elsif routef
@@ -310,9 +363,9 @@ module Analyzer::Fsharp
       method = find_method_for_route(cleaned, offset) || scope_method(scope_stack)
       methods = method ? [method] : FALLBACK_METHODS
 
-      line = line_for_offset(content, offset)
+      line = line_for_offset(newline_offsets, offset)
       details = Details.new(PathInfo.new(path, line))
-      callees = include_callee ? callees_for_route(path, content, cleaned, offset) : [] of Noir::FsharpCalleeExtractor::Entry
+      callees = include_callee ? callees_for_route(path, content, cleaned, offset, newline_offsets) : [] of Noir::FsharpCalleeExtractor::Entry
 
       methods.each do |verb|
         endpoint_params = full_params.map { |p| Param.new(p.name, p.value, p.param_type) }
@@ -325,12 +378,13 @@ module Analyzer::Fsharp
     private def callees_for_route(path : String,
                                   content : String,
                                   cleaned : String,
-                                  offset : Int32) : Array(Noir::FsharpCalleeExtractor::Entry)
+                                  offset : Int32,
+                                  newline_offsets : Array(Int32)) : Array(Noir::FsharpCalleeExtractor::Entry)
       body_info = route_handler_body(cleaned, offset)
       return [] of Noir::FsharpCalleeExtractor::Entry unless body_info
 
       body, body_start = body_info
-      start_line = line_for_offset(content, body_start)
+      start_line = line_for_offset(newline_offsets, body_start)
       Noir::FsharpCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
@@ -763,21 +817,31 @@ module Analyzer::Fsharp
       result.to_s
     end
 
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      # Walk with a Char::Reader rather than `content[i]`: integer indexing is
-      # O(n) on a non-ASCII string, so the per-character loop was O(n²) and hung
-      # the scan on a large file with a single multi-byte character in it.
-      count = 1
-      reader = Char::Reader.new(content)
-      i = 0
-      while i < limit && reader.has_next?
-        count += 1 if reader.current_char == '\n'
-        reader.next_char
-        i += 1
+    # Char index of every newline in the analyzed file, in ascending order.
+    # Computed once per file (O(n), non-ASCII-safe via `each_char_with_index`)
+    # so `line_for_offset` can binary-search it instead of re-walking from
+    # the start of the file on every call — see that method's doc comment.
+    private def collect_newline_offsets(text : String) : Array(Int32)
+      offsets = [] of Int32
+      text.each_char_with_index do |c, idx|
+        offsets << idx if c == '\n'
       end
-      count
+      offsets
+    end
+
+    # `emit_route` calls this once per matched route (and again per callee
+    # extraction), in file order but always against the *same* file. Walking
+    # from the start of the file for every call — the previous
+    # `Char::Reader.new(content)` implementation — is O(file length) per
+    # call, so scanning N routes costs O(N * file length): a file with 4x
+    # the routes (and proportionally more content) measured ~16x the scan
+    # time. Binary-searching a precomputed, sorted newline-offset table
+    # turns each lookup into O(log n).
+    private def line_for_offset(newline_offsets : Array(Int32), offset : Int32) : Int32
+      return 1 if offset <= 0
+      idx = newline_offsets.bsearch_index { |pos| pos >= offset }
+      count = idx || newline_offsets.size
+      count + 1
     end
   end
 end
