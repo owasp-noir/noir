@@ -30,6 +30,15 @@ module Analyzer::Ruby
       "do_options" => "OPTIONS",
     }
 
+    # `extract_verbs_from_handler_body`'s per-verb loop OR-ed four
+    # String#includes? scans (with string interpolation) over the handler
+    # body for each of the seven fixed HTTP verbs — up to 28 naive substring
+    # scans per call. The verb set never changes, so precompile one
+    # Regex.union per verb at class load instead.
+    VERB_GUARD_MARKERS = ["get", "post", "put", "patch", "delete", "head", "options"].to_h do |v|
+      {v, Regex.union("\"#{v}\"", "'#{v}'", v.upcase, ":#{v}")}
+    end
+
     # `extract_webrick_params` builds a `/#{Regex.escape(var)}\[...\]/`
     # subscript matcher for each variable name it discovers (the LHS of a
     # `parse_query(...)`/`JSON.parse(...)` assignment). Crystal recompiles an
@@ -221,11 +230,9 @@ module Analyzer::Ruby
       b = body.downcase
       has_method_check = b.includes?("request_method")
 
-      ["get", "post", "put", "patch", "delete", "head", "options"].each do |v|
+      VERB_GUARD_MARKERS.each do |v, marker_re|
         if has_method_check
-          if b.includes?("\"#{v}\"") || b.includes?("'#{v}'") || b.includes?(v.upcase) || b.includes?(":#{v}")
-            verbs << v.upcase
-          end
+          verbs << v.upcase if b.matches?(marker_re)
         end
       end
       # If the block is unconditional (plain mount_proc without method guard), verbs will be empty -> caller defaults to GET
