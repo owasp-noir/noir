@@ -54,6 +54,19 @@ module Analyzer::Kotlin
       "Flux.",
     ]
 
+    # File-classification gates: several `String#includes?` calls OR-ed
+    # over the same buffer, replaced with a single precompiled
+    # `Regex.union` scan (PCRE2 JIT, auto-escapes each literal). Each of
+    # these runs once (sometimes twice) per Kotlin file in the scan.
+    SPRING_MAPPING_ANNOTATION_RE = Regex.union(
+      "@RequestMapping", "@GetMapping", "@PostMapping", "@PutMapping", "@DeleteMapping", "@PatchMapping"
+    )
+    STOMP_ROUTE_MARKER_RE       = Regex.union("addEndpoint", "@MessageMapping", "@SubscribeMapping")
+    GRAPHQL_ROUTE_MARKER_RE     = Regex.union("@QueryMapping", "@MutationMapping", "@SubscriptionMapping", "@SchemaMapping")
+    FUNCTIONAL_ROUTER_MARKER_RE = Regex.union("coRouter", "router {")
+    CONTROLLER_ANNOTATION_RE    = Regex.union("RestController", "Controller")
+    CLASS_OR_OBJECT_RE          = Regex.union("class", "object")
+
     private struct SpringInterfaceRouteEntry
       getter route : SpringRoute
       getter path : String
@@ -344,9 +357,7 @@ module Analyzer::Kotlin
 
         content = read_file_content(path)
         next unless content.includes?("interface")
-        next unless content.includes?("@RequestMapping") || content.includes?("@GetMapping") ||
-                    content.includes?("@PostMapping") || content.includes?("@PutMapping") ||
-                    content.includes?("@DeleteMapping") || content.includes?("@PatchMapping")
+        next unless content.matches?(SPRING_MAPPING_ANNOTATION_RE)
 
         Noir::TreeSitter.parse_kotlin(content) do |root|
           package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
@@ -373,7 +384,7 @@ module Analyzer::Kotlin
         next if KotlinEngine.test_path?(path)
 
         content = read_file_content(path)
-        next unless content.includes?("fun") && (content.includes?("class") || content.includes?("object"))
+        next unless content.includes?("fun") && content.matches?(CLASS_OR_OBJECT_RE)
 
         Noir::TreeSitter.parse_kotlin(content) do |root|
           package_name = Noir::TreeSitterKotlinParameterExtractor.extract_package_name_from(root, content)
@@ -543,20 +554,15 @@ module Analyzer::Kotlin
     end
 
     private def stomp_route_file?(content : String) : Bool
-      content.includes?("addEndpoint") ||
-        content.includes?("@MessageMapping") ||
-        content.includes?("@SubscribeMapping")
+      content.matches?(STOMP_ROUTE_MARKER_RE)
     end
 
     private def graphql_route_file?(content : String) : Bool
-      content.includes?("@QueryMapping") ||
-        content.includes?("@MutationMapping") ||
-        content.includes?("@SubscriptionMapping") ||
-        content.includes?("@SchemaMapping")
+      content.matches?(GRAPHQL_ROUTE_MARKER_RE)
     end
 
     private def kotlin_functional_router_file?(content : String) : Bool
-      content.includes?("coRouter") || content.includes?("router {")
+      content.matches?(FUNCTIONAL_ROUTER_MARKER_RE)
     end
 
     private def kotlin_spring_route_candidate_file?(content : String) : Bool
@@ -569,12 +575,7 @@ module Analyzer::Kotlin
     end
 
     private def kotlin_spring_mapping_route_file?(content : String) : Bool
-      content.includes?("@RequestMapping") ||
-        content.includes?("@GetMapping") ||
-        content.includes?("@PostMapping") ||
-        content.includes?("@PutMapping") ||
-        content.includes?("@DeleteMapping") ||
-        content.includes?("@PatchMapping")
+      content.matches?(SPRING_MAPPING_ANNOTATION_RE)
     end
 
     private def spring_gateway_route_file?(content : String) : Bool
@@ -582,7 +583,7 @@ module Analyzer::Kotlin
     end
 
     private def spring_controller_interface_candidate_file?(content : String) : Bool
-      content.includes?("RestController") || content.includes?("Controller")
+      content.matches?(CONTROLLER_ANNOTATION_RE)
     end
 
     private def stomp_application_prefixes_for(file_list : Array(String),
