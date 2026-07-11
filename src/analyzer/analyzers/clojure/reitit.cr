@@ -32,6 +32,12 @@ module Analyzer::Clojure
       ":form"   => "form",
     }
 
+    # Whole-file detection gate, evaluated once per candidate file.
+    # `String#matches?` (PCRE2 JIT) replaces two naive `String#includes?`
+    # char scans with a single pass; `Regex.union` auto-escapes each literal,
+    # so it is provably equivalent to the OR-of-substrings it replaces.
+    REITIT_SOURCE_RE = Regex.union("reitit.", "metosin/reitit")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
@@ -57,7 +63,7 @@ module Analyzer::Clojure
       # split across namespaces that only pull a coercion/middleware ns
       # (`reitit.coercion.spec`, `reitit.ring.coercion`, …) rather than the
       # core/ring/http entry points, so match the family broadly.
-      content.includes?("reitit.") || content.includes?("metosin/reitit")
+      content.matches?(REITIT_SOURCE_RE)
     end
 
     # Iterate forms looking for route-shaped vectors. A vector is

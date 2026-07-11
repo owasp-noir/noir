@@ -18,6 +18,13 @@ module Analyzer::Clojure
       "any"     => "ANY",
     }
 
+    # Whole-file detection gates, evaluated once per candidate file.
+    # `String#matches?` (PCRE2 JIT) replaces the naive `String#includes?`
+    # char scans with a single pass; `Regex.union` auto-escapes each literal,
+    # so each is provably equivalent to the OR-of-substrings it replaces.
+    RING_EXCLUDE_RE = Regex.union("compojure.core", "defroutes")
+    RING_SIGNAL_RE  = Regex.union(":request-method", ":uri")
+
     def analyze
       all_files.each do |path|
         next unless clojure_file?(path)
@@ -41,9 +48,8 @@ module Analyzer::Clojure
     private def ring_source?(content : String) : Bool
       # Compojure files are handled by the Compojure analyzer; skipping them
       # avoids double extraction when both analyzers run on the same project.
-      return false if content.includes?("compojure.core")
-      return false if content.includes?("defroutes")
-      content.includes?(":request-method") || content.includes?(":uri")
+      return false if content.matches?(RING_EXCLUDE_RE)
+      content.matches?(RING_SIGNAL_RE)
     end
 
     # `case`/`condp` clauses use literal vector keys like `[:get "/users"]`.
