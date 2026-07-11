@@ -30,6 +30,11 @@ module Analyzer::Rust
     alias ScopedNameKey = Tuple(String, String)
     alias PrefixEdge = Tuple(ScopedNameKey, String)
 
+    # Precompiled union for build_fn_external_prefixes' per-file evidence
+    # gate, so it costs a single PCRE2 match instead of two naive substring
+    # scans.
+    FN_EDGE_EVIDENCE_RE = Regex.union(".push(", ".unshift(")
+
     # Cross-function router composition. Salvo apps build their tree with
     # builder fns mounted via `.push(build_system_route())`, where
     # `build_system_route()` lives in another file and returns a nested
@@ -668,7 +673,7 @@ module Analyzer::Rust
         next if RustEngine.test_path?(fpath)
         base = configured_base_for(fpath)
         src = read_file_content(fpath)
-        next unless src.includes?(".push(") || src.includes?(".unshift(")
+        next unless src.matches?(FN_EDGE_EVIDENCE_RE)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|
