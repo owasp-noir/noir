@@ -473,6 +473,13 @@ module Analyzer::Typescript
     # procedure definitions so a router that references NAME resolves it.
     private def collect_procedures(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Procedure)
       collected = [] of Procedure
+      # `procedure_terminal`/`verb_call_at?` index by char within an
+      # up-to-8000-char window; materializing `chars` once per file
+      # (instead of once per declaration) keeps a non-ASCII file with many
+      # top-level declarations from re-walking `content` from byte 0 on
+      # every char access (Crystal has no char-index cache) — otherwise a
+      # single call already costs up to O(8000 * start).
+      chars = content.chars
       content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/) do |match|
         match_start = match.begin(0) || 0
         next if literal_position?(literal_mask, match_start)
@@ -481,7 +488,7 @@ module Analyzer::Typescript
         first = content[value_start]?
         next unless first && (first.ascii_letter? || first == '_' || first == '$')
 
-        info = procedure_terminal(content, value_start)
+        info = procedure_terminal(content, chars, value_start)
         next unless info
         method, value = info
         line = content[0, match_start].count('\n') + 1
@@ -495,12 +502,13 @@ module Analyzer::Typescript
     # `.query/.mutation/.subscription(` terminal is found. Nested parens —
     # the `.input(z.object({...}))` schema, refinement arrows, the resolver
     # — sit at depth > 0, so only the procedure's own terminal verb matches.
-    private def procedure_terminal(content : String, start : Int32) : Tuple(String, String)?
+    private def procedure_terminal(content : String, chars : Array(Char), start : Int32) : Tuple(String, String)?
       i = start
       depth = 0
-      limit = Math.min(content.size, start + 8000)
+      n = chars.size
+      limit = Math.min(n, start + 8000)
       while i < limit
-        case content[i]
+        case chars[i]
         when '(', '[', '{'
           depth += 1
         when ')', ']', '}'
@@ -511,7 +519,7 @@ module Analyzer::Typescript
         when '.'
           if depth == 0
             PROCEDURE_VERBS.each do |verb, method|
-              return {method, content[start...i]} if verb_call_at?(content, i + 1, verb)
+              return {method, content[start...i]} if verb_call_at?(chars, i + 1, verb)
             end
           end
         else
@@ -522,20 +530,21 @@ module Analyzer::Typescript
       nil
     end
 
-    private def verb_call_at?(content : String, pos : Int32, verb : String) : Bool
-      return false if pos + verb.size > content.size
+    private def verb_call_at?(chars : Array(Char), pos : Int32, verb : String) : Bool
+      n = chars.size
+      return false if pos + verb.size > n
       verb.each_char_with_index do |ch, k|
-        return false unless content[pos + k] == ch
+        return false unless chars[pos + k] == ch
       end
       after = pos + verb.size
-      if nxt = content[after]?
+      if nxt = chars[after]?
         return false if nxt.ascii_alphanumeric? || nxt == '_'
       end
       j = after
-      while j < content.size && content[j].whitespace?
+      while j < n && chars[j].whitespace?
         j += 1
       end
-      content[j]? == '('
+      chars[j]? == '('
     end
 
     private def extract_object_assignment_body(content : String, identifier : String, literal_mask : Array(Bool)) : Tuple(String, Int32)?
