@@ -41,6 +41,12 @@ module Analyzer::Cpp
     @method_def_regexes = Hash(String, Regex).new
     @class_decl_regexes = Hash(String, Regex).new
 
+    # Precompiled union for the per-file evidence gate in `analyze`, so it
+    # costs a single PCRE2 match instead of up to eight naive substring
+    # scans.
+    EVIDENCE_RE = Regex.union("drogon", "registerHandler", "PATH_LIST_BEGIN", "PATH_ADD",
+      "METHOD_LIST_BEGIN", "METHOD_ADD", "ADD_METHOD_TO", "ADD_METHOD_VIA_REGEX")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -54,14 +60,7 @@ module Analyzer::Cpp
           next unless CPP_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
 
           content = read_file_content(path)
-          next unless content.includes?("drogon") ||
-                      content.includes?("registerHandler") ||
-                      content.includes?("PATH_LIST_BEGIN") ||
-                      content.includes?("PATH_ADD") ||
-                      content.includes?("METHOD_LIST_BEGIN") ||
-                      content.includes?("METHOD_ADD") ||
-                      content.includes?("ADD_METHOD_TO") ||
-                      content.includes?("ADD_METHOD_VIA_REGEX")
+          next unless content.matches?(EVIDENCE_RE)
 
           analyze_file(path, content, include_callee)
         end
