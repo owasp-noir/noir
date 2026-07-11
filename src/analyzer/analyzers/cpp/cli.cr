@@ -62,8 +62,10 @@ module Analyzer::Cpp
     # entries) so this gate can never diverge from what the extraction
     # regexes above actually accept, e.g. `ABSL_FLAG (int32_t, ...)` with a
     # space before the paren is valid C++ and must not be silently skipped.
-    CLI_MARKERS = ["CLI::App", "getopt", "struct option", "cxxopts::", "program_options",
-                   "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser"]
+    # Precompiled as a single Regex.union so the per-file evidence gate costs
+    # one PCRE2 match instead of up to ten naive substring scans.
+    CLI_MARKERS_RE = Regex.union("CLI::App", "getopt", "struct option", "cxxopts::", "program_options",
+      "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser")
     WEB_RE = /\b(?:Crow|crow|drogon|httplib|oatpp)\b|Crow::|drogon::|httplib::|oatpp::/
 
     def analyze
@@ -77,7 +79,7 @@ module Analyzer::Cpp
 
           begin
             content = read_file_content(path)
-            next unless CLI_MARKERS.any? { |m| content.includes?(m) }
+            next unless content.matches?(CLI_MARKERS_RE)
 
             binary = cpp_binary_name(path)
             root_url = "cli://#{binary}"
