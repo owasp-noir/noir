@@ -11,6 +11,17 @@ module Analyzer::Scala
       {method, /(?<![.\w])#{method}\s*\(\s*"([^"]+)"/}
     end
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces two separate
+    # `String#includes?` scans of the same path -- Crystal's `includes?` is
+    # not Boyer-Moore accelerated, so a single regex pass is cheaper than
+    # two. Equivalent to the OR-of-substrings it replaces (union escapes
+    # each literal).
+    TEST_PATH_RE = Regex.union("/src/test/", "/src/sbt-test/")
+
+    # Same rationale: replaces the three `includes?` calls gating the
+    # `class`/`object`/`trait` declaration scan in `single_mount_prefix`.
+    CLASS_OBJECT_TRAIT_RE = Regex.union("class", "object", "trait")
+
     # Servlet/filter class name -> mount prefix, harvested from
     # `context.mount(new XController, "/prefix")` in ScalatraBootstrap.
     @mount_prefixes = {} of String => String
@@ -61,7 +72,7 @@ module Analyzer::Scala
     end
 
     private def scalatra_test_path?(path : String) : Bool
-      path.includes?("/src/test/") || path.includes?("/src/sbt-test/")
+      path.matches?(TEST_PATH_RE)
     end
 
     # Extract routes from Scalatra DSL
@@ -191,7 +202,7 @@ module Analyzer::Scala
 
       prefixes = Set(String).new
       code_lines.each do |line|
-        next unless line.includes?("class") || line.includes?("object") || line.includes?("trait")
+        next unless line.matches?(CLASS_OBJECT_TRAIT_RE)
         line.scan(/(?<![.\w])(?:class|object|trait)\s+(\w+)/) do |m|
           if pfx = @mount_prefixes[m[1]]?
             prefixes << pfx
