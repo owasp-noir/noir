@@ -22,6 +22,12 @@ module Analyzer::Cpp
     ENDPOINT_ASYNC_REGEX = /\bENDPOINT_ASYNC\s*\(/
     PATH_PARAM_REGEX     = /\{([^{}\/]+)\}/
 
+    # Precompiled unions for analyze_file's two per-file evidence gates, so
+    # each costs a single PCRE2 match instead of up to two naive substring
+    # scans.
+    LIBRARY_EVIDENCE_RE = Regex.union("oatpp", "ApiController")
+    MACRO_EVIDENCE_RE   = Regex.union("ENDPOINT(", "ENDPOINT_ASYNC(")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -43,8 +49,8 @@ module Analyzer::Cpp
 
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
-      return unless source.includes?("oatpp") || source.includes?("ApiController")
-      return unless source.includes?("ENDPOINT(") || source.includes?("ENDPOINT_ASYNC(")
+      return unless source.matches?(LIBRARY_EVIDENCE_RE)
+      return unless source.matches?(MACRO_EVIDENCE_RE)
 
       source = Noir::CppCalleeExtractor.strip_comments(source)
 
