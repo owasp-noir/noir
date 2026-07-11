@@ -207,10 +207,16 @@ module Analyzer::Javascript
             function_end = function_start + 1
 
             open_braces = 1
-            while open_braces > 0 && function_end < content.size
-              if content[function_end] == '{'
+            # `content[function_end]` re-decodes UTF-8 from byte 0 on every
+            # call once the string isn't single_byte_optimizable? (any
+            # non-ASCII char), making this O(n^2) on a large non-ASCII
+            # file. Index a pre-materialized Char array instead — same
+            # semantics, O(1) lookup.
+            chars = content.chars
+            while open_braces > 0 && function_end < chars.size
+              if chars[function_end] == '{'
                 open_braces += 1
-              elsif content[function_end] == '}'
+              elsif chars[function_end] == '}'
                 open_braces -= 1
               end
               function_end += 1
