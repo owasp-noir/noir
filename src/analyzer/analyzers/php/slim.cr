@@ -2,6 +2,16 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Slim < PhpEngine
+    # ASCII byte values scanned by `find_matching_close_brace` below. Both
+    # are < 0x80, so they can never collide with a UTF-8 multi-byte
+    # continuation/lead byte (>= 0x80) — same invariant
+    # `PhpEngine#find_matching_php_close_brace` relies on.
+    private BYTE_LBRACE    = '{'.ord.to_u8
+    private BYTE_RBRACE    = '}'.ord.to_u8
+    private BYTE_DQUOTE    = '"'.ord.to_u8
+    private BYTE_SQUOTE    = '\''.ord.to_u8
+    private BYTE_BACKSLASH = '\\'.ord.to_u8
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
@@ -198,29 +208,40 @@ module Analyzer::Php
       content[0...pos].count('\n')
     end
 
+    # Byte-level scan for O(1) positional access instead of the previous
+    # `String#[](Int)` per-character loop, which is O(n) on any string
+    # containing a multi-byte UTF-8 character and turned a single call into
+    # O(n^2) — see `PhpEngine#find_matching_php_close_brace` for the same
+    # fix applied to the shared brace matcher. `find_group_call` and
+    # `extract_handler_body_with_end` both call this over the full
+    # remainder of the file, so this is the hot path for any Slim routes
+    # file with non-ASCII content (e.g. CJK comments/strings).
     private def find_matching_close_brace(content : String, open_pos : Int32) : Int32?
-      return unless open_pos < content.size && content[open_pos] == '{'
+      bytes = content.to_slice
+      start = content.char_index_to_byte_index(open_pos)
+      return unless start && start < bytes.size && bytes[start] == BYTE_LBRACE
 
       depth = 0
       in_string = false
-      quote_char = '\0'
-      pos = open_pos
-      while pos < content.size
-        char = content[pos]
+      quote_byte = 0_u8
+      pos = start
+      size = bytes.size
+      while pos < size
+        byte = bytes[pos]
         if !in_string
-          case char
-          when '{'
+          case byte
+          when BYTE_LBRACE
             depth += 1
-          when '}'
+          when BYTE_RBRACE
             depth -= 1
-            return pos if depth == 0
-          when '"', '\''
+            return content.byte_index_to_char_index(pos) if depth == 0
+          when BYTE_DQUOTE, BYTE_SQUOTE
             in_string = true
-            quote_char = char
+            quote_byte = byte
           end
-        elsif char == '\\'
+        elsif byte == BYTE_BACKSLASH
           pos += 1
-        elsif char == quote_char
+        elsif byte == quote_byte
           in_string = false
         end
         pos += 1
