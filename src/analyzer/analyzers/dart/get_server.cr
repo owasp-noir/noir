@@ -268,14 +268,18 @@ module Analyzer::Dart
     # Index of the first `:` outside any bracket/paren/string — the
     # separator of a named argument.
     private def top_level_colon(text : String) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = text.chars
       depth = 0
       i = 0
       in_string = false
       string_quote = '\0'
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -302,15 +306,16 @@ module Analyzer::Dart
     end
 
     private def find_matching_paren(text : String, open_idx : Int32) : Int32?
+      chars = text.chars
       depth = 0
       i = open_idx
       in_string = false
       string_quote = '\0'
 
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -339,6 +344,7 @@ module Analyzer::Dart
 
     private def split_top_level_args(text : String) : Array(String)
       result = [] of String
+      chars = text.chars
       depth_paren = 0
       depth_brace = 0
       depth_bracket = 0
@@ -348,10 +354,10 @@ module Analyzer::Dart
       in_string = false
       string_quote = '\0'
 
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -382,7 +388,7 @@ module Analyzer::Dart
           depth_angle -= 1 if depth_angle > 0
         when ','
           if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << text[start...i]
+            result << chars[start...i].join
             start = i + 1
           end
         else
@@ -390,7 +396,7 @@ module Analyzer::Dart
         end
         i += 1
       end
-      result << text[start..] if start <= text.size
+      result << chars[start..].join if start <= chars.size
       result
     end
 
@@ -399,8 +405,11 @@ module Analyzer::Dart
       limit = offset > content.size ? content.size : offset
       count = 1
       i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
+      # `each_char` walks the UTF-8 buffer once with a reader instead of
+      # re-scanning from byte 0 on every indexed `content[i]` access.
+      content.each_char do |c|
+        break if i >= limit
+        count += 1 if c == '\n'
         i += 1
       end
       count
