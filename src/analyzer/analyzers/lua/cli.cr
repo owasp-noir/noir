@@ -22,6 +22,10 @@ module Analyzer::Lua
 
     MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|\barg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
     WEB_RE  = /\brequire\s*\(?\s*['"](?:lapis|lor)['"]/
+    # `cli_test_path?`'s two OR-ed String#includes? scans, folded into one
+    # precompiled union so the per-file boolean gate costs a single PCRE2
+    # match instead of up to two naive substring scans.
+    TEST_PATH_RE = Regex.union("_spec.", "/test/")
 
     def analyze
       endpoints = {} of String => Endpoint
@@ -138,8 +142,7 @@ module Analyzer::Lua
     end
 
     private def cli_test_path?(path : String) : Bool
-      lower = path.downcase
-      lower.includes?("_spec.") || lower.includes?("/test/")
+      path.downcase.matches?(TEST_PATH_RE)
     end
 
     private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
