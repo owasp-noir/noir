@@ -4,6 +4,34 @@ module Analyzer::Php
   class Laminas < PhpEngine
     HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
+    # ASCII byte values for the structural characters the byte-level
+    # helpers below scan for. All are < 0x80, so they can never collide
+    # with a UTF-8 multi-byte continuation/lead byte (>= 0x80) — the same
+    # invariant `PhpEngine#find_matching_php_close_brace` relies on to scan
+    # raw bytes safely regardless of the file's encoding content.
+    private BYTE_SPACE     = ' '.ord.to_u8
+    private BYTE_NEWLINE   = '\n'.ord.to_u8
+    private BYTE_STAR      = '*'.ord.to_u8
+    private BYTE_SLASH     = '/'.ord.to_u8
+    private BYTE_HASH      = '#'.ord.to_u8
+    private BYTE_BACKSLASH = '\\'.ord.to_u8
+    private BYTE_DQUOTE    = '"'.ord.to_u8
+    private BYTE_SQUOTE    = '\''.ord.to_u8
+    private BYTE_LBRACKET  = '['.ord.to_u8
+    private BYTE_RBRACKET  = ']'.ord.to_u8
+    private BYTE_LPAREN    = '('.ord.to_u8
+    private BYTE_RPAREN    = ')'.ord.to_u8
+    private BYTE_LBRACE    = '{'.ord.to_u8
+    private BYTE_RBRACE    = '}'.ord.to_u8
+    private BYTE_COMMA     = ','.ord.to_u8
+    private BYTE_EQUAL     = '='.ord.to_u8
+    private BYTE_GT        = '>'.ord.to_u8
+
+    private def ascii_ws_byte?(byte : UInt8) : Bool
+      byte == 0x20_u8 || byte == 0x09_u8 || byte == 0x0A_u8 ||
+        byte == 0x0B_u8 || byte == 0x0C_u8 || byte == 0x0D_u8
+    end
+
     private struct PhpArrayEntry
       getter key, value, array_body
 
@@ -350,82 +378,90 @@ module Analyzer::Php
       methods.empty? ? HTTP_METHODS : methods
     end
 
+    # Byte-level scan for O(1) positional access instead of `String#[](Int)`,
+    # which is O(n) on strings containing multi-byte characters and turns a
+    # single call into O(n^2) — see `find_matching_delimiter` below for the
+    # same fix applied elsewhere in this file.
     private def split_top_level_args(content : String) : Array(String)
       args = [] of String
+      bytes = content.to_slice
       start = 0
       i = 0
       depth = 0
       in_string = false
-      quote = '\0'
+      quote = 0_u8
       escaped = false
+      size = bytes.size
 
-      while i < content.size
-        char = content[i]
+      while i < size
+        byte = bytes[i]
         if in_string
           if escaped
             escaped = false
-          elsif char == '\\'
+          elsif byte == BYTE_BACKSLASH
             escaped = true
-          elsif char == quote
+          elsif byte == quote
             in_string = false
           end
-        elsif char == '\'' || char == '"'
+        elsif byte == BYTE_SQUOTE || byte == BYTE_DQUOTE
           in_string = true
-          quote = char
-        elsif char == '[' || char == '(' || char == '{'
+          quote = byte
+        elsif byte == BYTE_LBRACKET || byte == BYTE_LPAREN || byte == BYTE_LBRACE
           depth += 1
-        elsif char == ']' || char == ')' || char == '}'
+        elsif byte == BYTE_RBRACKET || byte == BYTE_RPAREN || byte == BYTE_RBRACE
           depth -= 1 if depth > 0
-        elsif char == ',' && depth == 0
-          args << content[start...i].strip
+        elsif byte == BYTE_COMMA && depth == 0
+          args << String.new(bytes[start...i]).strip
           start = i + 1
         end
         i += 1
       end
 
-      args << content[start...content.size].strip if start < content.size
+      args << String.new(bytes[start...size]).strip if start < size
       args
     end
 
     private def parse_top_level_entries(content : String) : Array(PhpArrayEntry)
       entries = [] of PhpArrayEntry
+      bytes = content.to_slice
       pos = 0
+      size = bytes.size
 
-      while pos < content.size
-        pos = skip_ws_and_commas(content, pos)
-        break if pos >= content.size
+      while pos < size
+        pos = skip_ws_and_commas(bytes, pos)
+        break if pos >= size
 
-        key_info = read_php_string(content, pos)
+        key_info = read_php_string(bytes, pos)
         unless key_info
           pos += 1
           next
         end
 
         key, after_key = key_info
-        pos = skip_ws(content, after_key)
-        unless content[pos, 2]? == "=>"
+        pos = skip_ws(bytes, after_key)
+        unless pos + 1 < size && bytes[pos] == BYTE_EQUAL && bytes[pos + 1] == BYTE_GT
           pos = after_key
           next
         end
 
-        pos = skip_ws(content, pos + 2)
-        break if pos >= content.size
+        pos = skip_ws(bytes, pos + 2)
+        break if pos >= size
 
-        if array_start = array_value_start(content, pos)
-          close_pos = find_matching_delimiter(content, array_start)
+        if array_start = array_value_start(bytes, pos)
+          close_pos = find_matching_delimiter(bytes, array_start)
           unless close_pos
             pos += 1
             next
           end
 
-          entries << PhpArrayEntry.new(key, nil, content[(array_start + 1)...close_pos])
+          entries << PhpArrayEntry.new(key, nil, String.new(bytes[(array_start + 1)...close_pos]))
           pos = close_pos + 1
-        elsif value_info = read_php_string(content, pos)
+        elsif value_info = read_php_string(bytes, pos)
           value, after_value = value_info
           entries << PhpArrayEntry.new(key, value, nil)
           pos = after_value
         else
-          value, after_value = read_raw_value(content, pos)
+          value, after_value = read_raw_value(bytes, pos)
           entries << PhpArrayEntry.new(key, value, nil)
           pos = after_value
         end
@@ -434,132 +470,156 @@ module Analyzer::Php
       entries
     end
 
-    private def array_value_start(content : String, pos : Int32) : Int32?
-      return pos if content[pos]? == '['
+    private def array_value_start(bytes : Bytes, pos : Int32) : Int32?
+      return pos if pos < bytes.size && bytes[pos] == BYTE_LBRACKET
+      return unless ascii_ci_literal_at?(bytes, pos, "array")
 
-      if match = content[pos..].match(/\Aarray\s*\(/i)
-        return pos + match[0].size - 1
-      end
+      after = skip_ws(bytes, pos + 5)
+      return unless after < bytes.size && bytes[after] == BYTE_LPAREN
 
-      nil
+      after
     end
 
-    private def read_php_string(content : String, pos : Int32) : Tuple(String, Int32)?
-      quote = content[pos]?
-      return unless quote == '\'' || quote == '"'
+    # Case-insensitive match of an ASCII literal (e.g. "array") at `pos`.
+    private def ascii_ci_literal_at?(bytes : Bytes, pos : Int32, literal : String) : Bool
+      return false if pos + literal.bytesize > bytes.size
 
-      value = String.build do |io|
-        i = pos + 1
-        escaped = false
-        while i < content.size
-          char = content[i]
-          if escaped
-            io << char
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            return {io.to_s, i + 1}
-          else
-            io << char
-          end
-          i += 1
+      literal.each_byte.with_index do |lb, offset|
+        byte = bytes[pos + offset]
+        # ASCII-only downcase: clear bit 0x20 off an uppercase letter.
+        byte = byte + 0x20_u8 if byte >= 0x41_u8 && byte <= 0x5A_u8
+        return false unless byte == lb
+      end
+
+      true
+    end
+
+    private def read_php_string(bytes : Bytes, pos : Int32) : Tuple(String, Int32)?
+      return unless pos < bytes.size
+      quote = bytes[pos]
+      return unless quote == BYTE_SQUOTE || quote == BYTE_DQUOTE
+
+      io = IO::Memory.new
+      i = pos + 1
+      escaped = false
+      size = bytes.size
+      while i < size
+        byte = bytes[i]
+        if escaped
+          io.write_byte(byte)
+          escaped = false
+        elsif byte == BYTE_BACKSLASH
+          escaped = true
+        elsif byte == quote
+          return {io.to_s, i + 1}
+        else
+          io.write_byte(byte)
         end
+        i += 1
       end
 
-      {value, content.size}
+      {io.to_s, size}
     end
 
-    private def read_raw_value(content : String, pos : Int32) : Tuple(String, Int32)
+    private def read_raw_value(bytes : Bytes, pos : Int32) : Tuple(String, Int32)
       start = pos
       i = pos
       depth = 0
       in_string = false
-      quote = '\0'
+      quote = 0_u8
       escaped = false
+      size = bytes.size
 
-      while i < content.size
-        char = content[i]
+      while i < size
+        byte = bytes[i]
         if in_string
           if escaped
             escaped = false
-          elsif char == '\\'
+          elsif byte == BYTE_BACKSLASH
             escaped = true
-          elsif char == quote
+          elsif byte == quote
             in_string = false
           end
-        elsif char == '\'' || char == '"'
+        elsif byte == BYTE_SQUOTE || byte == BYTE_DQUOTE
           in_string = true
-          quote = char
-        elsif char == '[' || char == '(' || char == '{'
+          quote = byte
+        elsif byte == BYTE_LBRACKET || byte == BYTE_LPAREN || byte == BYTE_LBRACE
           depth += 1
-        elsif char == ']' || char == ')' || char == '}'
+        elsif byte == BYTE_RBRACKET || byte == BYTE_RPAREN || byte == BYTE_RBRACE
           break if depth == 0
           depth -= 1
-        elsif char == ',' && depth == 0
+        elsif byte == BYTE_COMMA && depth == 0
           break
         end
         i += 1
       end
 
-      {content[start...i].strip, i}
+      {String.new(bytes[start...i]).strip, i}
     end
 
-    private def find_matching_delimiter(content : String, open_pos : Int32) : Int32?
-      open_char = content[open_pos]?
-      close_char = case open_char
-                   when '[' then ']'
-                   when '(' then ')'
-                   when '{' then '}'
+    # Find the delimiter (`]`, `)`, or `}`) that matches the opener at
+    # `open_pos`, skipping delimiters inside strings and `//`, `#`,
+    # `/* */` comments. Byte-level scan for O(1) positional access — see
+    # `PhpEngine#find_matching_php_close_brace` for the equivalent fix
+    # applied to brace-only matching.
+    private def find_matching_delimiter(bytes : Bytes, open_pos : Int32) : Int32?
+      return unless open_pos < bytes.size
+
+      open_byte = bytes[open_pos]
+      close_byte = case open_byte
+                   when BYTE_LBRACKET then BYTE_RBRACKET
+                   when BYTE_LPAREN   then BYTE_RPAREN
+                   when BYTE_LBRACE   then BYTE_RBRACE
                    else
                      return
                    end
 
-      stack = [close_char]
+      stack = [close_byte]
       in_string = false
       in_line_comment = false
       in_block_comment = false
       escaped = false
-      quote = '\0'
+      quote = 0_u8
       pos = open_pos + 1
+      size = bytes.size
 
-      while pos < content.size
-        char = content[pos]
-        next_char = content[pos + 1]?
+      while pos < size
+        byte = bytes[pos]
+        next_byte = pos + 1 < size ? bytes[pos + 1] : 0_u8
 
         if in_line_comment
-          in_line_comment = false if char == '\n'
+          in_line_comment = false if byte == BYTE_NEWLINE
         elsif in_block_comment
-          if char == '*' && next_char == '/'
+          if byte == BYTE_STAR && next_byte == BYTE_SLASH
             in_block_comment = false
             pos += 1
           end
         elsif in_string
           if escaped
             escaped = false
-          elsif char == '\\'
+          elsif byte == BYTE_BACKSLASH
             escaped = true
-          elsif char == quote
+          elsif byte == quote
             in_string = false
           end
-        elsif char == '/' && next_char == '/'
+        elsif byte == BYTE_SLASH && next_byte == BYTE_SLASH
           in_line_comment = true
           pos += 1
-        elsif char == '/' && next_char == '*'
+        elsif byte == BYTE_SLASH && next_byte == BYTE_STAR
           in_block_comment = true
           pos += 1
-        elsif char == '#'
+        elsif byte == BYTE_HASH
           in_line_comment = true
-        elsif char == '"' || char == '\''
+        elsif byte == BYTE_DQUOTE || byte == BYTE_SQUOTE
           in_string = true
-          quote = char
-        elsif char == '['
-          stack << ']'
-        elsif char == '('
-          stack << ')'
-        elsif char == '{'
-          stack << '}'
-        elsif char == stack.last?
+          quote = byte
+        elsif byte == BYTE_LBRACKET
+          stack << BYTE_RBRACKET
+        elsif byte == BYTE_LPAREN
+          stack << BYTE_RPAREN
+        elsif byte == BYTE_LBRACE
+          stack << BYTE_RBRACE
+        elsif byte == stack.last?
           stack.pop
           return pos if stack.empty?
         end
@@ -570,62 +630,92 @@ module Analyzer::Php
       nil
     end
 
+    # Char-index overload for the top-level call sites (`route_blocks`,
+    # `extract_handler_body_with_end`, `analyze_programmatic_routes`) that
+    # only have a char position on hand. Converts once at the boundary
+    # instead of on every byte, then delegates to the byte-native version
+    # above.
+    private def find_matching_delimiter(content : String, open_pos : Int32) : Int32?
+      byte_pos = content.char_index_to_byte_index(open_pos)
+      return unless byte_pos
+
+      result = find_matching_delimiter(content.to_slice, byte_pos)
+      result ? content.byte_index_to_char_index(result) : nil
+    end
+
+    # Blank out `//`, `#` and `/* */` comment bodies (replacing each masked
+    # byte with a space; newlines are preserved) so the route-verb scans
+    # that run over the result never match syntax that only appears inside
+    # a comment.
+    #
+    # Byte-level scan for O(1) positional access — see
+    # `find_matching_delimiter` above. Nothing downstream compares this
+    # result's char count against the original `content` (every
+    # regex/index operation performed on it stays self-contained within
+    # the result itself), so masking a multi-byte comment character with
+    # one space per byte — rather than one space per character, as the
+    # previous char-based version did — is a safe, simpler substitute.
     private def strip_php_comments(content : String) : String
+      bytes = content.to_slice
       String.build do |io|
         in_string = false
         in_line_comment = false
         in_block_comment = false
         escaped = false
-        quote = '\0'
+        quote = 0_u8
         pos = 0
+        size = bytes.size
 
-        while pos < content.size
-          char = content[pos]
-          next_char = content[pos + 1]?
+        while pos < size
+          byte = bytes[pos]
+          next_byte = pos + 1 < size ? bytes[pos + 1] : 0_u8
 
           if in_line_comment
-            if char == '\n'
+            if byte == BYTE_NEWLINE
               in_line_comment = false
-              io << char
+              io.write_byte(byte)
             else
-              io << ' '
+              io.write_byte(BYTE_SPACE)
             end
           elsif in_block_comment
-            if char == '*' && next_char == '/'
+            if byte == BYTE_STAR && next_byte == BYTE_SLASH
               in_block_comment = false
-              io << "  "
+              io.write_byte(BYTE_SPACE)
+              io.write_byte(BYTE_SPACE)
               pos += 1
-            elsif char == '\n'
-              io << char
+            elsif byte == BYTE_NEWLINE
+              io.write_byte(byte)
             else
-              io << ' '
+              io.write_byte(BYTE_SPACE)
             end
           elsif in_string
-            io << char
+            io.write_byte(byte)
             if escaped
               escaped = false
-            elsif char == '\\'
+            elsif byte == BYTE_BACKSLASH
               escaped = true
-            elsif char == quote
+            elsif byte == quote
               in_string = false
             end
-          elsif char == '/' && next_char == '/'
+          elsif byte == BYTE_SLASH && next_byte == BYTE_SLASH
             in_line_comment = true
-            io << "  "
+            io.write_byte(BYTE_SPACE)
+            io.write_byte(BYTE_SPACE)
             pos += 1
-          elsif char == '/' && next_char == '*'
+          elsif byte == BYTE_SLASH && next_byte == BYTE_STAR
             in_block_comment = true
-            io << "  "
+            io.write_byte(BYTE_SPACE)
+            io.write_byte(BYTE_SPACE)
             pos += 1
-          elsif char == '#'
+          elsif byte == BYTE_HASH
             in_line_comment = true
-            io << ' '
-          elsif char == '"' || char == '\''
+            io.write_byte(BYTE_SPACE)
+          elsif byte == BYTE_DQUOTE || byte == BYTE_SQUOTE
             in_string = true
-            quote = char
-            io << char
+            quote = byte
+            io.write_byte(byte)
           else
-            io << char
+            io.write_byte(byte)
           end
 
           pos += 1
@@ -633,17 +723,17 @@ module Analyzer::Php
       end
     end
 
-    private def skip_ws(content : String, pos : Int32) : Int32
+    private def skip_ws(bytes : Bytes, pos : Int32) : Int32
       i = pos
-      while i < content.size && content[i].ascii_whitespace?
+      while i < bytes.size && ascii_ws_byte?(bytes[i])
         i += 1
       end
       i
     end
 
-    private def skip_ws_and_commas(content : String, pos : Int32) : Int32
+    private def skip_ws_and_commas(bytes : Bytes, pos : Int32) : Int32
       i = pos
-      while i < content.size && (content[i].ascii_whitespace? || content[i] == ',')
+      while i < bytes.size && (ascii_ws_byte?(bytes[i]) || bytes[i] == BYTE_COMMA)
         i += 1
       end
       i
