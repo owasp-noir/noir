@@ -17,6 +17,11 @@ module Analyzer::Dart
     MARKERS = /package:args\/|package:dcli\/|\bArgParser\s*\(|\bCommandRunner\b|\bextends\s+Command\b|main\s*\(\s*List<String>/
     WEB_RE  = /package:shelf\/|package:dart_frog|package:angel3|package:alfred|\bHttpServer\.bind\b/
 
+    # Per-path test-file gate. A precompiled `Regex.union` (PCRE2 JIT)
+    # replaces the two OR-ed `String#includes?` scans it used to run —
+    # provably equivalent since union auto-escapes each literal.
+    TEST_PATH_RE = Regex.union("/test/", "_test.")
+
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".dart").each do |path|
@@ -89,7 +94,7 @@ module Analyzer::Dart
 
     private def cli_test_path?(path : String) : Bool
       lower = path.downcase
-      lower.includes?("/test/") || lower.includes?("_test.")
+      lower.matches?(TEST_PATH_RE)
     end
 
     private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
