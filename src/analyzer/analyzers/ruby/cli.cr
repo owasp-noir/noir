@@ -6,14 +6,15 @@ module Analyzer::Ruby
   # endpoints: one endpoint per (sub)command, with named options
   # (param_type "flag"), positional arguments ("argument") and consumed
   # environment variables ("env"). Covers stdlib OptionParser / ARGV plus
-  # Thor, GLI, Slop, TTY::Option and the commander gem.
+  # Thor, GLI, Slop, TTY::Option, the commander gem, Optimist, Clamp and
+  # dry-cli.
   #
   # Line-scan analyzer (house style for non-tree-sitter Ruby adapters),
   # merging endpoints by URL across files.
   class Cli < RubyEngine
     # OptionParser: `opts.on("-p", "--port PORT")` — prefer the long name.
     OPTPARSE_LONG  = /\.on\s*\(?[^)]*?["'](-{2}[A-Za-z0-9][\w-]*)/
-    OPTPARSE_SHORT = /\.on\s*\(\s*["'](-[A-Za-z0-9])(?:["' ]|\))/
+    OPTPARSE_SHORT = /\.on\s*\(\s*["'](-[A-Za-z0-9])(["' ]|\))/
 
     # Thor DSL.
     THOR_SUBCLASS = /<\s*Thor\b/
@@ -42,6 +43,37 @@ module Analyzer::Ruby
     ENV_INDEX  = /\bENV\s*\[\s*["']([^"']+)["']\s*\]/
     ENV_FETCH  = /\bENV\.fetch\s*\(\s*["']([^"']+)["']/
 
+    # Optimist: `opt :name, "desc", type: :string` — a flat parser (no
+    # subcommand DSL), gated on the block-opening call so a bare local
+    # variable/method named `opt` elsewhere doesn't false-positive.
+    OPTIMIST_CALL = /\bOptimist(?:::|\.)options\b/
+    OPTIMIST_OPT  = /^\s*opt\s+:([A-Za-z0-9_]+)/
+
+    # Clamp: `class Foo < Clamp::Command` with `option`/`parameter` DSL and
+    # optional nested `subcommand "name", "desc" do ... end` blocks. The DSL
+    # call's first argument (the switch name or an array of switch names)
+    # must appear immediately after `option` + whitespace — a `(?=["'\[])`
+    # lookahead — so an unrelated local/instance variable assignment like
+    # `option = default? ? "--json" : "--text"` cannot masquerade as the
+    # DSL call just because a dash-prefixed quoted string appears somewhere
+    # later on the line. Mirrors CLAMP_PARAMETER, which already requires the
+    # quote directly after the keyword.
+    CLAMP_SUBCLASS     = /<\s*Clamp::Command\b/
+    CLAMP_SUBCOMMAND   = /^(\s*)subcommand\s+["']([A-Za-z0-9][\w-]*)["'][^\n]*\bdo\s*$/
+    CLAMP_OPTION_LONG  = /^\s*option\s+(?=["'\[])[^\n]*?["'](-{2}[A-Za-z0-9][\w-]*)["']/
+    CLAMP_OPTION_SHORT = /^\s*option\s+(?=["'\[])[^\n]*?["'](-[A-Za-z0-9])["']/
+    CLAMP_PARAMETER    = /^\s*parameter\s+["']\[?([A-Za-z0-9_]+)/
+
+    # dry-cli: `class Build < Dry::CLI::Command` with `option`/`argument`
+    # DSL; each subclass is its own (sub)command. DRY_CLI_MARKER (unanchored)
+    # is for whole-content evidence checks; DRY_CLI_CLASS (line-anchored, to
+    # capture indent) is for the per-line scan — `^` in Crystal only matches
+    # the very start of a multi-line string, not after every `\n`.
+    DRY_CLI_MARKER   = /<\s*Dry::CLI::Command\b/
+    DRY_CLI_CLASS    = /^(\s*)class\s+([A-Za-z0-9_]+)\s*<\s*Dry::CLI::Command\b/
+    DRY_CLI_OPTION   = /^\s*option\s+:([A-Za-z0-9_]+)/
+    DRY_CLI_ARGUMENT = /^\s*argument\s+:([A-Za-z0-9_]+)/
+
     # Program-name hints.
     COMMANDER_PROGRAM = /\bprogram\s+:name\s*,\s*["']([^"']+)["']/
     OPTPARSE_BANNER   = /banner\s*=\s*["']Usage:\s*(\S+)/
@@ -65,9 +97,12 @@ module Analyzer::Ruby
             root_url = "cli://#{binary}"
             lines = content.lines
             thor = content.matches?(THOR_SUBCLASS)
+            clamp = content.matches?(CLAMP_SUBCLASS)
+            dry_cli = content.matches?(DRY_CLI_MARKER)
+            optimist = content.matches?(OPTIMIST_CALL)
             emit_env = !content.matches?(WEB_FRAMEWORK_RE)
 
-            scan(lines, path, root_url, endpoints, thor, emit_env)
+            scan(lines, path, root_url, endpoints, thor, emit_env, clamp, dry_cli, optimist)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
             next
@@ -87,7 +122,10 @@ module Analyzer::Ruby
         content.matches?(/\bSlop\.(?:parse|new)\b/) ||
         content.includes?("TTY::Option") ||
         content.includes?("Commander::Methods") ||
-        content.matches?(ARGV_INDEX)
+        content.matches?(ARGV_INDEX) ||
+        content.matches?(OPTIMIST_CALL) ||
+        content.matches?(CLAMP_SUBCLASS) ||
+        content.matches?(DRY_CLI_MARKER)
     end
 
     private def ruby_binary_name(content : String, path : String) : String
@@ -106,16 +144,34 @@ module Analyzer::Ruby
     end
 
     private def scan(lines : Array(String), path : String, root_url : String,
-                     endpoints : Hash(String, Endpoint), thor : Bool, emit_env : Bool)
+                     endpoints : Hash(String, Endpoint), thor : Bool, emit_env : Bool,
+                     clamp : Bool, dry_cli : Bool, optimist : Bool)
       pending_desc : String? = nil
       pending_thor_opts = [] of String
       block_cmd_url = root_url
       thor_private = false
       no_commands_indent : Int32? = nil
+      clamp_sub_indent : Int32? = nil
+      clamp_sub_url = root_url
+      dry_cli_indent : Int32? = nil
+      dry_cli_url : String? = nil
 
       lines.each_with_index do |line, index|
         line_no = index + 1
 
+        # NOTE: `thor`/`clamp`/`dry_cli`/`optimist` are mutually exclusive
+        # branches — intentionally one-DSL-per-file, matching the existing
+        # TTY::Option-vs-Thor precedent above. A file that (unusually) mixes
+        # markers for two of these frameworks only has the first-checked
+        # framework's option/argument declarations scanned; the other
+        # framework's class still gets a root/command endpoint (via
+        # `cli_evidence?`/`DEF_RE`/etc. where applicable) but its
+        # `option`/`parameter`/`argument` lines are silently skipped rather
+        # than merged. This is a deliberate simplification: real-world Ruby
+        # CLI files essentially never combine two CLI DSLs in one file, and
+        # per-line (rather than per-file) dispatch would require detecting
+        # which framework's *block* a given line sits in, which the
+        # line-scan house style doesn't support today.
         if thor
           # Thor's task rules: `no_commands do ... end` bodies and methods
           # below a bare `private` are helpers, not commands. Track both so
@@ -151,6 +207,54 @@ module Analyzer::Ruby
               pending_desc = nil
               pending_thor_opts.clear
             end
+          end
+        elsif clamp
+          # Clamp: `option`/`parameter` attach to the innermost open
+          # `subcommand "name" do ... end` block (indent-scoped, never a
+          # sticky cursor), falling back to the root command.
+          if sc = line.match(CLAMP_SUBCOMMAND)
+            clamp_sub_indent = sc[1].size
+            clamp_sub_url = "#{root_url}/#{sc[2]}"
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no)
+          elsif (indent = clamp_sub_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
+            clamp_sub_indent = nil
+            clamp_sub_url = root_url
+          end
+
+          if m = line.match(CLAMP_OPTION_LONG)
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "flag"))
+          elsif m = line.match(CLAMP_OPTION_SHORT)
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "flag"))
+          end
+          if m = line.match(CLAMP_PARAMETER)
+            fetch_endpoint(endpoints, clamp_sub_url, path, line_no).push_param(Param.new(m[1].downcase, "", "argument"))
+          end
+        elsif dry_cli
+          # dry-cli: each `class Xxx < Dry::CLI::Command` is its own
+          # (sub)command; `option`/`argument` attach to the innermost open
+          # class body (indent-scoped), never a sticky cursor.
+          if cm = line.match(DRY_CLI_CLASS)
+            dry_cli_indent = cm[1].size
+            new_command_url = "#{root_url}/#{cm[2].downcase}"
+            dry_cli_url = new_command_url
+            fetch_endpoint(endpoints, new_command_url, path, line_no)
+          elsif (indent = dry_cli_indent) && (em = line.match(/^(\s*)end\b/)) && em[1].size <= indent
+            dry_cli_indent = nil
+            dry_cli_url = nil
+          end
+
+          if url = dry_cli_url
+            if m = line.match(DRY_CLI_OPTION)
+              fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+            elsif m = line.match(DRY_CLI_ARGUMENT)
+              fetch_endpoint(endpoints, url, path, line_no).push_param(Param.new(m[1], "", "argument"))
+            end
+          end
+        elsif optimist
+          # Optimist has no subcommand DSL: every `opt` declaration is a
+          # flat, root-level flag.
+          if m = line.match(OPTIMIST_OPT)
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
           end
         else
           # TTY::Option DSL (option/flag/keyword/argument) — only outside a

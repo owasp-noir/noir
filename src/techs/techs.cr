@@ -3231,9 +3231,9 @@ module NoirTechs
       },
     },
     :ruby_cli => {
-      :framework => "CLI (OptionParser / Thor / GLI / Slop / TTY::Option)",
+      :framework => "CLI (OptionParser / Thor / GLI / Slop / TTY::Option / Optimist / Clamp / dry-cli)",
       :language  => "Ruby",
-      :similar   => ["ruby-cli", "ruby_cli", "thor", "optparse", "optionparser", "gli", "slop", "tty-option"],
+      :similar   => ["ruby-cli", "ruby_cli", "thor", "optparse", "optionparser", "gli", "slop", "tty-option", "optimist", "clamp", "dry-cli"],
       :supported => {
         :endpoint => true,
         :method   => false,

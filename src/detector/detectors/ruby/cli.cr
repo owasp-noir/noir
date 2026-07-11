@@ -3,11 +3,12 @@ require "../../../models/detector"
 module Detector::Ruby
   # Detects Ruby command-line applications: programs that parse argv via the
   # stdlib OptionParser, a `< Thor` subclass, or a CLI gem (gli, slop,
-  # tty-option, commander), or that index ARGV directly. Gates the Ruby CLI
-  # analyzer. Intentionally import/usage-anchored: bare `ENV[...]` or a plain
-  # `ARGV` reference (without an index) is too common in web apps to qualify.
+  # tty-option, commander, optimist, clamp, dry-cli), or that index ARGV
+  # directly. Gates the Ruby CLI analyzer. Intentionally import/usage-anchored:
+  # bare `ENV[...]` or a plain `ARGV` reference (without an index) is too
+  # common in web apps to qualify.
   class Cli < Detector
-    CLI_GEMS = ["thor", "gli", "slop", "tty-option", "commander"]
+    CLI_GEMS = ["thor", "gli", "slop", "tty-option", "commander", "optimist", "clamp", "dry-cli"]
 
     REQUIRE_OPTPARSE = /\brequire\s+["']optparse["']/
     OPTION_PARSER    = /\bOptionParser\.new\b/
@@ -17,6 +18,9 @@ module Detector::Ruby
     TTY_OPTION       = /\binclude\s+TTY::Option\b/
     COMMANDER_USE    = /\binclude\s+Commander::Methods\b/
     ARGV_INDEX       = /\bARGV\s*\[\s*\d+\s*\]/
+    OPTIMIST_USE     = /\bOptimist(?:::|\.)options\b/
+    CLAMP_SUBCLASS   = /<\s*Clamp::Command\b/
+    DRY_CLI_SUBCLASS = /<\s*Dry::CLI::Command\b/
 
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
@@ -30,6 +34,8 @@ module Detector::Ruby
       return true if file_contents.matches?(GLI_APP) || file_contents.matches?(SLOP_USE) ||
                      file_contents.matches?(TTY_OPTION) || file_contents.matches?(COMMANDER_USE)
       return true if file_contents.matches?(ARGV_INDEX)
+      return true if file_contents.matches?(OPTIMIST_USE) || file_contents.matches?(CLAMP_SUBCLASS) ||
+                     file_contents.matches?(DRY_CLI_SUBCLASS)
 
       false
     end
