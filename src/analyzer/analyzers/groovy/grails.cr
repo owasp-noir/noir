@@ -80,6 +80,14 @@ module Analyzer::Groovy
     # OR-chain it replaces.
     URL_MAPPINGS_DIR_RE = Regex.union("/grails-app/conf/", "/grails-app/controllers/")
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces the four OR-ed
+    # `String#includes?` scans that used to gate every verbless paren-form
+    # mapping match in emit_mapping_endpoints (runs once per match, so a
+    # UrlMappings file with many entries repeats this often). `union`
+    # auto-escapes each literal, so this is exactly equivalent to the
+    # OR-chain it replaces.
+    BODY_ARGS_KEY_RE = Regex.union("controller:", "action:", "view:", "uri:")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
@@ -484,8 +492,7 @@ module Analyzer::Groovy
           next
         end
 
-        next unless body_args.includes?("controller:") || body_args.includes?("action:") ||
-                    body_args.includes?("view:") || body_args.includes?("uri:")
+        next unless body_args.matches?(BODY_ARGS_KEY_RE)
 
         # A trailing closure block may declare per-verb action dispatch via
         # `action = [GET: "show", PUT: "apiUpdate"]`. When present, surface one
