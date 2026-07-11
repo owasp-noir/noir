@@ -24,7 +24,7 @@ module Analyzer::Scala
     PATH_DIRECTIVE_RE = /(?<![.\w])path[A-Za-z]*/
 
     def analyze_file(path : String) : Array(Endpoint)
-      content = File.read(path)
+      content = read_file_content(path)
       extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
     end
 

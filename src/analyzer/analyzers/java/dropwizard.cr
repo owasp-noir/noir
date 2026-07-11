@@ -142,7 +142,7 @@ module Analyzer::Java
     end
 
     private def read_path_config(path : String) : DropwizardPathConfig
-      root = YAML.parse(File.read(path))
+      root = YAML.parse(read_file_content(path))
       server = root["server"]?
       return DropwizardPathConfig.new unless server
 
