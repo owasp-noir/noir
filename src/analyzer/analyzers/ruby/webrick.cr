@@ -30,6 +30,15 @@ module Analyzer::Ruby
       "do_options" => "OPTIONS",
     }
 
+    # `extract_webrick_params` builds a `/#{Regex.escape(var)}\[...\]/`
+    # subscript matcher for each variable name it discovers (the LHS of a
+    # `parse_query(...)`/`JSON.parse(...)` assignment). Crystal recompiles an
+    # interpolated regex literal on every evaluation, and common variable
+    # names (`p`, `data`, `body`) repeat across many handler bodies in a
+    # single scan, so memoize the compiled regex per name instead of
+    # rebuilding it every time the same name reappears.
+    @var_subscript_regex_cache = Hash(String, Regex).new
+
     def analyze
       include_callee = callees_needed?
 
@@ -288,7 +297,7 @@ module Analyzer::Ruby
           form_vars << m[1] unless form_vars.includes?(m[1])
         end
         form_vars.each do |var|
-          clean.scan(/#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |mm|
+          clean.scan(var_subscript_regex(var)) do |mm|
             name = mm[1].strip
             next if name.empty? || seen.includes?("form:#{name}")
             params << Param.new(name, "", "form")
@@ -302,7 +311,7 @@ module Analyzer::Ruby
           json_vars << m[1] unless json_vars.includes?(m[1])
         end
         json_vars.each do |var|
-          clean.scan(/#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |mm|
+          clean.scan(var_subscript_regex(var)) do |mm|
             name = mm[1].strip
             next if name.empty? || seen.includes?("json:#{name}")
             params << Param.new(name, "", "json")
@@ -319,6 +328,12 @@ module Analyzer::Ruby
       end
 
       params
+    end
+
+    # Memoized per-name compiled matcher for `var['k']` subscripts (see the
+    # `@var_subscript_regex_cache` note above).
+    private def var_subscript_regex(var : String) : Regex
+      @var_subscript_regex_cache[var] ||= /#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/
     end
   end
 end
