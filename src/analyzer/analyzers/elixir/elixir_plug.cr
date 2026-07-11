@@ -14,19 +14,20 @@ module Analyzer::Elixir
       return [] of Endpoint if test_only_path?(path)
 
       endpoints = [] of Endpoint
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        # A Phoenix router is owned by the Phoenix analyzer, which
-        # understands `scope` prefixes, the `resources` macro, and the
-        # controller/action mapping. The bare `get "/path"` regex here
-        # would re-extract those same lines stripped of their scope
-        # prefix and minus every `resources`-generated route — degraded
-        # duplicates that pollute the result. Skip the file and let the
-        # Phoenix analyzer handle it.
-        next endpoints if phoenix_router?(content)
-        analyze_content(content, path).each do |endpoint|
-          endpoints << endpoint unless endpoint.method.empty?
-        end
+      # `read_file_content` reuses the detector's already-cached bytes
+      # (same "utf-8"/`invalid: :skip` decoding as the `File.open` this
+      # replaced) instead of re-reading the file from disk here.
+      content = read_file_content(path)
+      # A Phoenix router is owned by the Phoenix analyzer, which
+      # understands `scope` prefixes, the `resources` macro, and the
+      # controller/action mapping. The bare `get "/path"` regex here
+      # would re-extract those same lines stripped of their scope
+      # prefix and minus every `resources`-generated route — degraded
+      # duplicates that pollute the result. Skip the file and let the
+      # Phoenix analyzer handle it.
+      return endpoints if phoenix_router?(content)
+      analyze_content(content, path).each do |endpoint|
+        endpoints << endpoint unless endpoint.method.empty?
       end
       endpoints
     end
