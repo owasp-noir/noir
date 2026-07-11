@@ -71,35 +71,41 @@ module Analyzer::Scala
       params = [] of String
 
       s = segments_str
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < s.size; ch = s[i]; ...` scan is O(n) per char, i.e.
+      # O(n^2) overall on non-ASCII route expressions. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = s.chars
       i = 0
-      while i < s.size
-        ch = s[i]
+      while i < chars.size
+        ch = chars[i]
         if ch == '/' || ch == ' ' || ch == '\t'
           i += 1
         elsif ch == '"'
           close = s.index('"', i + 1)
           break unless close
-          literal = s[(i + 1)...close]
+          literal = chars[(i + 1)...close].join
           literal.split('/').each do |part|
             segments << part unless part.empty?
           end
           i = close + 1
         elsif ch.ascii_letter? || ch == '_'
           start = i
-          while i < s.size && (s[i].ascii_alphanumeric? || s[i] == '_' || s[i] == '.')
+          while i < chars.size && (chars[i].ascii_alphanumeric? || chars[i] == '_' || chars[i] == '.')
             i += 1
           end
-          ident = s[start...i]
+          ident = chars[start...i].join
 
           j = i
-          while j < s.size && (s[j] == ' ' || s[j] == '\t')
+          while j < chars.size && (chars[j] == ' ' || chars[j] == '\t')
             j += 1
           end
 
-          if j < s.size && s[j] == '('
+          if j < chars.size && chars[j] == '('
             paren_end = s.index(')', j)
             break unless paren_end
-            inner = s[(j + 1)...paren_end]
+            inner = chars[(j + 1)...paren_end].join
             if name_match = inner.match(/"([^"]+)"/)
               name = name_match[1]
             else

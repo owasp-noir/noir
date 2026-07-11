@@ -287,35 +287,42 @@ module Analyzer::Scala
       scopes = [] of String
       regex = METHOD_SCOPE_PATTERNS[method]? || /(?<![.\w])#{Regex.escape(method)}(?![\w])/
       search_from = 0
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so the position-tracking scans below (which reindex `content` at
+      # arbitrary offsets, not sequentially) are O(n) per char -- O(n^2)
+      # overall on non-ASCII route blocks. Materialize once and index the
+      # array instead -- same char offsets, O(1) access.
+      chars = content.chars
 
       while match = content.match(regex, search_from)
         method_start = match.begin || search_from
         method_end = match.end || method_start
-        next_index = skip_whitespace(content, method_end)
+        next_index = skip_whitespace(chars, method_end)
 
-        if next_index < content.size
-          case content[next_index]
+        if next_index < chars.size
+          case chars[next_index]
           when '{'
-            if block = balanced_slice(content, next_index, '{', '}')
+            if block = balanced_slice(chars, next_index, '{', '}')
               scopes << block
             end
           when '('
-            if args = balanced_slice(content, next_index, '(', ')')
+            if args = balanced_slice(chars, next_index, '(', ')')
               scope = args
-              after_args = skip_whitespace(content, next_index + args.size)
-              if after_args < content.size && content[after_args] == '{'
-                if block = balanced_slice(content, after_args, '{', '}')
+              after_args = skip_whitespace(chars, next_index + args.size)
+              if after_args < chars.size && chars[after_args] == '{'
+                if block = balanced_slice(chars, after_args, '{', '}')
                   scope = "#{scope}\n#{block}"
                 end
               end
               scopes << scope
             end
           else
-            if chain_block = chained_directive_scope(content, method_start)
+            if chain_block = chained_directive_scope(chars, method_start)
               scopes << chain_block
             end
           end
-        elsif method_end == content.size
+        elsif method_end == chars.size
           scopes << method
         end
 
@@ -325,33 +332,33 @@ module Analyzer::Scala
       scopes
     end
 
-    private def chained_directive_scope(content : String, method_start : Int32) : String?
-      opening_brace = next_unquoted_char(content, '{', method_start)
+    private def chained_directive_scope(chars : Array(Char), method_start : Int32) : String?
+      opening_brace = next_unquoted_char(chars, '{', method_start)
       return unless opening_brace
 
-      header = content[method_start...opening_brace]
+      header = chars[method_start...opening_brace].join
       return unless header.includes?("&")
-      block = balanced_slice(content, opening_brace, '{', '}') || content[opening_brace..]
+      block = balanced_slice(chars, opening_brace, '{', '}') || chars[opening_brace..].join
 
       "#{header}\n#{block}"
     end
 
-    private def skip_whitespace(content : String, index : Int32) : Int32
+    private def skip_whitespace(chars : Array(Char), index : Int32) : Int32
       i = index
-      while i < content.size && content[i].whitespace?
+      while i < chars.size && chars[i].whitespace?
         i += 1
       end
       i
     end
 
-    private def next_unquoted_char(content : String, needle : Char, start : Int32) : Int32?
+    private def next_unquoted_char(chars : Array(Char), needle : Char, start : Int32) : Int32?
       in_string = false
       quote = '\0'
       escape = false
       i = start
 
-      while i < content.size
-        char = content[i]
+      while i < chars.size
+        char = chars[i]
         if in_string
           if escape
             escape = false
@@ -376,8 +383,8 @@ module Analyzer::Scala
       nil
     end
 
-    private def balanced_slice(content : String, start : Int32, open_char : Char, close_char : Char) : String?
-      return unless start < content.size && content[start] == open_char
+    private def balanced_slice(chars : Array(Char), start : Int32, open_char : Char, close_char : Char) : String?
+      return unless start < chars.size && chars[start] == open_char
 
       depth = 0
       in_string = false
@@ -385,8 +392,8 @@ module Analyzer::Scala
       escape = false
       i = start
 
-      while i < content.size
-        char = content[i]
+      while i < chars.size
+        char = chars[i]
         if in_string
           if escape
             escape = false
@@ -404,7 +411,7 @@ module Analyzer::Scala
             depth += 1 if char == open_char
             if char == close_char
               depth -= 1
-              return content[start..i] if depth == 0
+              return chars[start..i].join if depth == 0
             end
           end
         end

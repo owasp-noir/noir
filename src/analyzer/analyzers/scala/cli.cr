@@ -55,6 +55,13 @@ module Analyzer::Scala
     MARKERS = /\bscopt\b|\bOParser\b|\bcom\.monovore\.decline\b|\bOpts\.(?:option|flag|argument|arguments)\b|\bmainargs\b|\borg\.rogach\.scallop\b|\bScallopConf\b|\bcom\.twitter\.app\b/
     WEB_RE  = /\bimport\s+(?:akka\.http|play\.api|org\.http4s|cask|com\.twitter\.finatra|com\.linecorp\.armeria|zhttp|zio\.http)\b/
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces four separate
+    # `String#includes?` scans of the same buffer -- Crystal's `includes?` is
+    # not Boyer-Moore accelerated, so a single regex pass over `lower` is
+    # cheaper than four. Equivalent to the OR-of-substrings it replaces
+    # (union escapes each literal).
+    CLI_TEST_PATH_RE = Regex.union("/test/", "/it/", "spec.scala", "test.scala")
+
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".scala").each do |path|
@@ -175,8 +182,7 @@ module Analyzer::Scala
     end
 
     private def cli_test_path?(path : String) : Bool
-      lower = path.downcase
-      lower.includes?("/test/") || lower.includes?("/it/") || lower.includes?("spec.scala") || lower.includes?("test.scala")
+      path.downcase.matches?(CLI_TEST_PATH_RE)
     end
 
     private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
