@@ -11,6 +11,11 @@ module Analyzer::Crystal
     # `get "/…", {{namespace}}::Videos, :videos` — substituting it back lets
     # those routes resolve their controller and carry callees.
     MACRO_VAR_PATTERN = /\{\{\s*(\w+)\s*=\s*([A-Za-z_][\w:]*)\s*\}\}/
+    # `serve_static false` / `serve_static(false)` — checked on every source
+    # line, so the two fixed OR-ed `String#includes?` substring scans are
+    # precompiled into a single regex union (one PCRE2 JIT scan per line
+    # instead of two naive substring scans).
+    SERVE_STATIC_DISABLED_RE = Regex.union("serve_static false", "serve_static(false)")
 
     @static_disabled_bases : Set(String) = Set(String).new
     @public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String)
@@ -60,7 +65,7 @@ module Analyzer::Crystal
 
       lines.each_with_index do |line, index|
         # Collect public folder / serve_static info (used by post-pass)
-        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
+        if line.matches?(SERVE_STATIC_DISABLED_RE)
           @static_disabled_bases << file_base
         end
 
