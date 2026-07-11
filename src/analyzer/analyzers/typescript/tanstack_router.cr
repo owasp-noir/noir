@@ -68,9 +68,13 @@ module Analyzer::Typescript
       "createRootRoute",
       "createRootRouteWithContext",
     ]
+    # One precompiled `Regex.union` (PCRE2 JIT) scan replaces five sequential
+    # `String#includes?` calls — this gate runs on every scanned .ts/.tsx
+    # file's raw content, twice (once pre- and once post-comment-strip).
+    ROUTE_CONSTRUCTOR_RE = Regex.union(ROUTE_CONSTRUCTOR_HINTS)
 
     private def tanstack_route_candidate?(content : String) : Bool
-      ROUTE_CONSTRUCTOR_HINTS.any? { |hint| content.includes?(hint) }
+      content.matches?(ROUTE_CONSTRUCTOR_RE)
     end
 
     TEST_FIXTURE_PATH_MARKERS = [
