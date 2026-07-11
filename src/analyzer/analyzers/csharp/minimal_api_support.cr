@@ -280,17 +280,22 @@ module Analyzer::CSharp::MinimalApiSupport
     arrow_index = block.index("=>")
     return "" unless arrow_index
 
+    # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
+    # O(n) per access on multi-byte source and turns these backward scans
+    # O(n^2) on a non-ASCII (CJK comment/string) inline lambda handler.
+    chars = block.chars
+
     end_index = arrow_index - 1
-    while end_index >= 0 && block[end_index].ascii_whitespace?
+    while end_index >= 0 && chars[end_index].ascii_whitespace?
       end_index -= 1
     end
     return "" if end_index < 0
 
-    if block[end_index] == ')'
+    if chars[end_index] == ')'
       depth = 0
       index = end_index
       while index >= 0
-        case block[index]
+        case chars[index]
         when ')'
           depth += 1
         when '('
@@ -304,7 +309,7 @@ module Analyzer::CSharp::MinimalApiSupport
     end
 
     start_index = end_index
-    while start_index >= 0 && (block[start_index].ascii_alphanumeric? || block[start_index] == '_')
+    while start_index >= 0 && (chars[start_index].ascii_alphanumeric? || chars[start_index] == '_')
       start_index -= 1
     end
     block[(start_index + 1)..end_index]
@@ -493,11 +498,15 @@ module Analyzer::CSharp::MinimalApiSupport
     open = block.index('(', m.begin)
     return [] of String unless open
 
+    # Index over `Array(Char)` (O(1)) rather than `String#[](Int)`, which is
+    # O(n) per access on multi-byte source and turns this paren-depth walk
+    # O(n^2) across a large inline lambda handler with non-ASCII content.
+    chars = block.chars
     depth = 0
     i = open
     close = -1
-    while i < block.size
-      case block[i]
+    while i < chars.size
+      case chars[i]
       when '('
         depth += 1
       when ')'
