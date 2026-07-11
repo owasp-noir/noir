@@ -37,6 +37,10 @@ module Analyzer::Cpp
     NAMED_PARAM_REGEX = /:([A-Za-z_][A-Za-z0-9_]*)/
     # Regex metacharacters that mark a route pattern as a regex (kept verbatim).
     REGEX_META = /[()\[\]\\+*?^$|]/
+    # Precompiled union for the per-file verb-call evidence gate in
+    # analyze_file, so it costs a single PCRE2 match instead of up to six
+    # naive substring scans.
+    VERB_CALL_EVIDENCE_RE = Regex.union(".Get(", ".Post(", ".Put(", ".Delete(", ".Patch(", ".Options(")
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -63,9 +67,7 @@ module Analyzer::Cpp
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
       return unless source.includes?("httplib")
-      return unless source.includes?(".Get(") || source.includes?(".Post(") ||
-                    source.includes?(".Put(") || source.includes?(".Delete(") ||
-                    source.includes?(".Patch(") || source.includes?(".Options(")
+      return unless source.matches?(VERB_CALL_EVIDENCE_RE)
 
       source = Noir::CppCalleeExtractor.strip_comments(source)
       using_ns = source.includes?("using namespace httplib")
