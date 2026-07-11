@@ -9,6 +9,11 @@ module Analyzer::Crystal
     NAMESPACE_PATTERN = /^(\s*)namespace\s+["']([^"']*)["']\s+do\b/
     # `resources "/posts", PostController[, only: …][, except: …]`.
     RESOURCES_PATTERN = /^\s*resources\s+["']([^"']+)["']\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*(.*)$/
+    # `serve_static false` / `serve_static(false)` — checked on every source
+    # line, so the two fixed OR-ed `String#includes?` substring scans are
+    # precompiled into a single regex union (one PCRE2 JIT scan per line
+    # instead of two naive substring scans).
+    SERVE_STATIC_DISABLED_RE = Regex.union("serve_static false", "serve_static(false)")
 
     # Amber's `resources` macro expands to the seven RESTful routes below
     # (update is registered for both PUT and PATCH). `resource` (singular)
@@ -105,7 +110,7 @@ module Analyzer::Crystal
           end
         end
 
-        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
+        if line.matches?(SERVE_STATIC_DISABLED_RE)
           @static_disabled_bases << file_base
         end
 
