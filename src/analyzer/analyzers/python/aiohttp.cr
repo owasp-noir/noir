@@ -119,258 +119,259 @@ module Analyzer::Python
           next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            file_content = file.gets_to_end
-            lines = file_content.lines
-            next unless aiohttp_relevant_source?(file_content)
+          # Prefer the detector-cached content over a fresh disk read;
+          # falls back to File.read (same encoding: utf-8, invalid: :skip)
+          # when the file wasn't cached.
+          file_content = read_file_content(path)
+          lines = file_content.lines
+          next unless aiohttp_relevant_source?(file_content)
 
-            import_modules = find_imported_modules(current_base_path, path, file_content)
-            app_prefixes = collect_app_prefixes(lines)
-            route_table_prefixes = collect_route_table_prefixes(lines, app_prefixes)
-            route_list_prefixes = collect_route_list_prefixes(lines, app_prefixes)
-            route_aliases = Hash(::String, ::String).new
+          import_modules = find_imported_modules(current_base_path, path, file_content)
+          app_prefixes = collect_app_prefixes(lines)
+          route_table_prefixes = collect_route_table_prefixes(lines, app_prefixes)
+          route_list_prefixes = collect_route_list_prefixes(lines, app_prefixes)
+          route_aliases = Hash(::String, ::String).new
 
-            handler_routes[path] ||= [] of Tuple(::String, ::String, Int32, ::String)
-            class_view_routes[path] ||= [] of Tuple(::String, Int32, ::String)
+          handler_routes[path] ||= [] of Tuple(::String, ::String, Int32, ::String)
+          class_view_routes[path] ||= [] of Tuple(::String, Int32, ::String)
 
-            # Tree-sitter pre-pass for Style B decorators. aiohttp's
-            # `@routes.route("METHOD", "/path")` has a method-first signature
-            # that the generic extractor would misread as path="METHOD", so
-            # we skip any decoration whose attribute is literally `route`
-            # and fall back to a dedicated regex below for that shape only.
-            view_attributes = {"view" => "GET"}
-            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: view_attributes).each do |deco|
-              next if deco.attribute_name == "route"
-              prefixes = route_table_prefixes[deco.router_name]? || [""]
-              if deco.attribute_name == "view"
-                prefixes.each do |prefix|
-                  class_view_routes[path] << {join_paths(prefix, deco.path), deco.decorator_line, deco.def_name}
-                end
-                next
-              end
-
+          # Tree-sitter pre-pass for Style B decorators. aiohttp's
+          # `@routes.route("METHOD", "/path")` has a method-first signature
+          # that the generic extractor would misread as path="METHOD", so
+          # we skip any decoration whose attribute is literally `route`
+          # and fall back to a dedicated regex below for that shape only.
+          view_attributes = {"view" => "GET"}
+          Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: view_attributes).each do |deco|
+            next if deco.attribute_name == "route"
+            prefixes = route_table_prefixes[deco.router_name]? || [""]
+            if deco.attribute_name == "view"
               prefixes.each do |prefix|
-                deco.methods.uniq.each do |deco_method|
-                  def_line = deco.def_line >= 0 ? deco.def_line : deco.decorator_line
-                  next if def_line == deco.decorator_line
-                  emit_endpoint(
-                    path,
-                    lines,
-                    def_line,
-                    join_paths(prefix, deco.path),
-                    deco_method,
-                    deco.decorator_line,
-                    definition_base_path: current_base_path,
-                    source: file_content
-                  )
+                class_view_routes[path] << {join_paths(prefix, deco.path), deco.decorator_line, deco.def_name}
+              end
+              next
+            end
+
+            prefixes.each do |prefix|
+              deco.methods.uniq.each do |deco_method|
+                def_line = deco.def_line >= 0 ? deco.def_line : deco.decorator_line
+                next if def_line == deco.decorator_line
+                emit_endpoint(
+                  path,
+                  lines,
+                  def_line,
+                  join_paths(prefix, deco.path),
+                  deco_method,
+                  deco.decorator_line,
+                  definition_base_path: current_base_path,
+                  source: file_content
+                )
+              end
+            end
+          end
+
+          lines.each_with_index do |line, line_index|
+            stripped = line.gsub(" ", "")
+
+            # Style B (continued): the method-first `@<router>.route("GET", "/path")`
+            # shape kept as regex because tree-sitter's generic route
+            # decoder assumes path-first.
+            aiohttp_route_deco = stripped.includes?(".route(") ? stripped.match(ROUTE_DECO_RE) : nil
+            if aiohttp_route_deco
+              method = aiohttp_route_deco[2].upcase
+              route_path = aiohttp_route_deco[3]
+              if orig_match = line.match(/@#{aiohttp_route_deco[1]}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+                route_path = orig_match[1]
+              end
+              expand_aiohttp_methods(method).each do |expanded_method|
+                process_decorator_route(
+                  path,
+                  lines,
+                  line_index,
+                  route_path,
+                  expanded_method,
+                  definition_base_path: current_base_path,
+                  source: file_content
+                )
+              end
+            end
+
+            # Style A: app.router.add_<method>("/path", handler)
+            add_match = stripped.includes?(".add_") ? stripped.match(ADD_METHOD_RE) : nil
+            if add_match
+              receiver = add_match[1]
+              method_name = add_match[2]
+              route_path = add_match[3]
+              handler_name = add_match[4]
+              if (orig_re = ADD_METHOD_ORIG_RE[method_name]?) && (orig_match = line.match(orig_re))
+                route_path = orig_match[1]
+              end
+              prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
+                handler_routes[path] << {join_paths(prefix, route_path), method_name.upcase, line_index, handler_name}
+              end
+            end
+
+            # Static file route:
+            #   app.router.add_static("/static/", path="...")
+            # aiohttp serves all files below the mounted prefix, so expose
+            # it as a GET wildcard endpoint. Respect sub-app prefixes via
+            # the same receiver prefix table as imperative routes.
+            static_match = stripped.includes?(".add_static(") ? stripped.match(ADD_STATIC_RE) : nil
+            if static_match
+              receiver = static_match[1]
+              static_path = static_match[2]
+              if orig_match = line.match(/\.add_static\s*\(\s*[rf]?['"]([^'"]*)['"]/)
+                static_path = orig_match[1]
+              end
+              prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
+                full_path = static_route_path(join_paths(prefix, static_path))
+                result << Endpoint.new(full_path, "GET", Details.new(PathInfo.new(path, line_index + 1)))
+              end
+            end
+
+            # Style A: app.router.add_route("METHOD", "/path", handler)
+            if stripped.includes?(".add_route") && (alias_match = stripped.match(ROUTE_ALIAS_RE))
+              route_aliases[alias_match[1]] = alias_match[2]
+            end
+
+            add_route_match = stripped.includes?(".add_route(") ? stripped.match(ADD_ROUTE_RE) : nil
+            if add_route_match
+              receiver = add_route_match[1]
+              method = add_route_match[2].upcase
+              route_path = add_route_match[3]
+              handler_name = add_route_match[4]
+              if orig_match = line.match(/\.add_route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+                route_path = orig_match[1]
+              end
+              prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
+                expand_aiohttp_methods(method).each do |expanded_method|
+                  handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
                 end
               end
             end
 
-            lines.each_with_index do |line, line_index|
-              stripped = line.gsub(" ", "")
-
-              # Style B (continued): the method-first `@<router>.route("GET", "/path")`
-              # shape kept as regex because tree-sitter's generic route
-              # decoder assumes path-first.
-              aiohttp_route_deco = stripped.includes?(".route(") ? stripped.match(ROUTE_DECO_RE) : nil
-              if aiohttp_route_deco
-                method = aiohttp_route_deco[2].upcase
-                route_path = aiohttp_route_deco[3]
-                if orig_match = line.match(/@#{aiohttp_route_deco[1]}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
-                  route_path = orig_match[1]
-                end
+            # Style A alias:
+            #   add_route = app.router.add_route
+            #   add_route("GET", "/path", handler)
+            alias_route_match = stripped.includes?("(") ? stripped.match(ADD_ROUTE_ALIAS_RE) : nil
+            if alias_route_match && (receiver = route_aliases[alias_route_match[1]]?)
+              method = alias_route_match[2].upcase
+              route_path = alias_route_match[3]
+              handler_name = alias_route_match[4]
+              if orig_match = line.match(alias_route_origin_regex(alias_route_match[1]))
+                route_path = orig_match[1]
+              end
+              prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
                 expand_aiohttp_methods(method).each do |expanded_method|
-                  process_decorator_route(
-                    path,
-                    lines,
-                    line_index,
-                    route_path,
-                    expanded_method,
-                    definition_base_path: current_base_path,
-                    source: file_content
-                  )
+                  handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
                 end
               end
+            end
 
-              # Style A: app.router.add_<method>("/path", handler)
-              add_match = stripped.includes?(".add_") ? stripped.match(ADD_METHOD_RE) : nil
-              if add_match
-                receiver = add_match[1]
-                method_name = add_match[2]
-                route_path = add_match[3]
-                handler_name = add_match[4]
-                if (orig_re = ADD_METHOD_ORIG_RE[method_name]?) && (orig_match = line.match(orig_re))
-                  route_path = orig_match[1]
-                end
-                prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
+            # Style D: class-based views via
+            # `app.router.add_view("/path", ViewClass)`.
+            add_view_match = stripped.includes?(".add_view(") ? stripped.match(ADD_VIEW_RE) : nil
+            if add_view_match
+              receiver = add_view_match[1]
+              route_path = add_view_match[2]
+              class_name = add_view_match[3].split(".").last
+              if orig_match = line.match(/\.add_view\s*\(\s*[rf]?['"]([^'"]*)['"]/)
+                route_path = orig_match[1]
+              end
+              prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
+                class_view_routes[path] << {join_paths(prefix, route_path), line_index, class_name}
+              end
+            end
+
+            # Style C: `web.<method>("/path", handler)` route entries that
+            # live inside `app.add_routes([...])` lists or in a
+            # standalone `routes = [...]` literal passed to
+            # `app.add_routes(routes)`. The list itself doesn't need
+            # tracking — every `web.<method>(...)` call only exists as a
+            # route declaration in real aiohttp code. Multi-line entries
+            # are coalesced by `join_until_python_call_closes` so the
+            # path/handler regex sees the full call.
+            if stripped.includes?("web.") && stripped.matches?(WEB_METHOD_GUARD_RE)
+              effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
+              effective_line.scan(WEB_METHOD_RE) do |web_match|
+                next if web_match.size < 4
+                method_name = web_match[1]
+                route_path = web_match[2]
+                handler_name = web_match[3]
+                prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
                   handler_routes[path] << {join_paths(prefix, route_path), method_name.upcase, line_index, handler_name}
                 end
               end
+            end
 
-              # Static file route:
-              #   app.router.add_static("/static/", path="...")
-              # aiohttp serves all files below the mounted prefix, so expose
-              # it as a GET wildcard endpoint. Respect sub-app prefixes via
-              # the same receiver prefix table as imperative routes.
-              static_match = stripped.includes?(".add_static(") ? stripped.match(ADD_STATIC_RE) : nil
-              if static_match
-                receiver = static_match[1]
-                static_path = static_match[2]
-                if orig_match = line.match(/\.add_static\s*\(\s*[rf]?['"]([^'"]*)['"]/)
-                  static_path = orig_match[1]
-                end
-                prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
-                  full_path = static_route_path(join_paths(prefix, static_path))
-                  result << Endpoint.new(full_path, "GET", Details.new(PathInfo.new(path, line_index + 1)))
-                end
-              end
-
-              # Style A: app.router.add_route("METHOD", "/path", handler)
-              if stripped.includes?(".add_route") && (alias_match = stripped.match(ROUTE_ALIAS_RE))
-                route_aliases[alias_match[1]] = alias_match[2]
-              end
-
-              add_route_match = stripped.includes?(".add_route(") ? stripped.match(ADD_ROUTE_RE) : nil
-              if add_route_match
-                receiver = add_route_match[1]
-                method = add_route_match[2].upcase
-                route_path = add_route_match[3]
-                handler_name = add_route_match[4]
-                if orig_match = line.match(/\.add_route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
-                  route_path = orig_match[1]
-                end
-                prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
-                  expand_aiohttp_methods(method).each do |expanded_method|
-                    handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
-                  end
-                end
-              end
-
-              # Style A alias:
-              #   add_route = app.router.add_route
-              #   add_route("GET", "/path", handler)
-              alias_route_match = stripped.includes?("(") ? stripped.match(ADD_ROUTE_ALIAS_RE) : nil
-              if alias_route_match && (receiver = route_aliases[alias_route_match[1]]?)
-                method = alias_route_match[2].upcase
-                route_path = alias_route_match[3]
-                handler_name = alias_route_match[4]
-                if orig_match = line.match(alias_route_origin_regex(alias_route_match[1]))
-                  route_path = orig_match[1]
-                end
-                prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
-                  expand_aiohttp_methods(method).each do |expanded_method|
-                    handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
-                  end
-                end
-              end
-
-              # Style D: class-based views via
-              # `app.router.add_view("/path", ViewClass)`.
-              add_view_match = stripped.includes?(".add_view(") ? stripped.match(ADD_VIEW_RE) : nil
-              if add_view_match
-                receiver = add_view_match[1]
-                route_path = add_view_match[2]
-                class_name = add_view_match[3].split(".").last
-                if orig_match = line.match(/\.add_view\s*\(\s*[rf]?['"]([^'"]*)['"]/)
-                  route_path = orig_match[1]
-                end
-                prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
+            # Style D: class-based views via `web.view("/path", ViewClass)`.
+            # aiohttp dispatches to async `get` / `post` / ... methods on
+            # the class, so emit one endpoint per method definition.
+            if stripped.includes?("web.view(")
+              effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
+              effective_line.scan(WEB_VIEW_RE) do |view_match|
+                next if view_match.size < 3
+                route_path = view_match[1]
+                class_name = view_match[2].split(".").last
+                prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
                   class_view_routes[path] << {join_paths(prefix, route_path), line_index, class_name}
                 end
               end
-
-              # Style C: `web.<method>("/path", handler)` route entries that
-              # live inside `app.add_routes([...])` lists or in a
-              # standalone `routes = [...]` literal passed to
-              # `app.add_routes(routes)`. The list itself doesn't need
-              # tracking — every `web.<method>(...)` call only exists as a
-              # route declaration in real aiohttp code. Multi-line entries
-              # are coalesced by `join_until_python_call_closes` so the
-              # path/handler regex sees the full call.
-              if stripped.includes?("web.") && stripped.matches?(WEB_METHOD_GUARD_RE)
-                effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
-                effective_line.scan(WEB_METHOD_RE) do |web_match|
-                  next if web_match.size < 4
-                  method_name = web_match[1]
-                  route_path = web_match[2]
-                  handler_name = web_match[3]
-                  prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
-                    handler_routes[path] << {join_paths(prefix, route_path), method_name.upcase, line_index, handler_name}
-                  end
-                end
-              end
-
-              # Style D: class-based views via `web.view("/path", ViewClass)`.
-              # aiohttp dispatches to async `get` / `post` / ... methods on
-              # the class, so emit one endpoint per method definition.
-              if stripped.includes?("web.view(")
-                effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
-                effective_line.scan(WEB_VIEW_RE) do |view_match|
-                  next if view_match.size < 3
-                  route_path = view_match[1]
-                  class_name = view_match[2].split(".").last
-                  prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
-                    class_view_routes[path] << {join_paths(prefix, route_path), line_index, class_name}
-                  end
-                end
-              end
             end
+          end
 
-            # Resolve add_X handler references by finding their def lines.
-            handler_routes[path].each do |route_path, method, line_index, handler_name|
-              def_index = find_handler_def(lines, handler_name)
-              if def_index.nil?
-                if emit_external_handler_endpoint(
-                     path,
-                     route_path,
-                     method,
-                     line_index,
-                     handler_name,
-                     import_modules,
-                     definition_base_path: current_base_path
-                   )
-                  next
-                end
-
-                # Handler is defined in another module (common with
-                # `app.add_routes([web.get("/x", handler_from_other_file)])`).
-                # Emit the endpoint anyway with path params parsed from
-                # the route literal; the body-side param extraction is
-                # skipped because there's no local def to walk.
-                details = Details.new(PathInfo.new(path, line_index + 1))
-                endpoint = Endpoint.new(route_path, method, details)
-                route_path.scan(/\{(\w+)(?::[^}]+)?\}/) do |path_match|
-                  endpoint.push_param(Param.new(path_match[1], "", "path"))
-                end
-                result << endpoint
+          # Resolve add_X handler references by finding their def lines.
+          handler_routes[path].each do |route_path, method, line_index, handler_name|
+            def_index = find_handler_def(lines, handler_name)
+            if def_index.nil?
+              if emit_external_handler_endpoint(
+                   path,
+                   route_path,
+                   method,
+                   line_index,
+                   handler_name,
+                   import_modules,
+                   definition_base_path: current_base_path
+                 )
                 next
               end
-              emit_endpoint(
-                path,
-                lines,
-                def_index,
-                route_path,
-                method,
-                line_index,
-                definition_base_path: current_base_path,
-                source: file_content
-              )
-            end
 
-            # Resolve class-based `web.view(...)` registrations by finding
-            # HTTP verb methods on the referenced `web.View` subclass.
-            class_view_routes[path].each do |route_path, line_index, class_name|
-              emit_class_view_endpoints(
-                path,
-                lines,
-                route_path,
-                line_index,
-                class_name,
-                definition_base_path: current_base_path,
-                source: file_content
-              )
+              # Handler is defined in another module (common with
+              # `app.add_routes([web.get("/x", handler_from_other_file)])`).
+              # Emit the endpoint anyway with path params parsed from
+              # the route literal; the body-side param extraction is
+              # skipped because there's no local def to walk.
+              details = Details.new(PathInfo.new(path, line_index + 1))
+              endpoint = Endpoint.new(route_path, method, details)
+              route_path.scan(/\{(\w+)(?::[^}]+)?\}/) do |path_match|
+                endpoint.push_param(Param.new(path_match[1], "", "path"))
+              end
+              result << endpoint
+              next
             end
+            emit_endpoint(
+              path,
+              lines,
+              def_index,
+              route_path,
+              method,
+              line_index,
+              definition_base_path: current_base_path,
+              source: file_content
+            )
+          end
+
+          # Resolve class-based `web.view(...)` registrations by finding
+          # HTTP verb methods on the referenced `web.View` subclass.
+          class_view_routes[path].each do |route_path, line_index, class_name|
+            emit_class_view_endpoints(
+              path,
+              lines,
+              route_path,
+              line_index,
+              class_name,
+              definition_base_path: current_base_path,
+              source: file_content
+            )
           end
         end
       end

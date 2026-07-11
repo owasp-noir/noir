@@ -80,73 +80,74 @@ module Analyzer::Python
           next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            file_content = file.gets_to_end
-            lines = file_content.lines
-            next unless lines.any?(&.includes?("sanic"))
-            api_instances = Hash(::String, ::String).new
-            path_api_instances[path] = api_instances
+          # Prefer the detector-cached content over a fresh disk read;
+          # falls back to File.read (same encoding: utf-8, invalid: :skip)
+          # when the file wasn't cached.
+          file_content = read_file_content(path)
+          lines = file_content.lines
+          next unless lines.any?(&.includes?("sanic"))
+          api_instances = Hash(::String, ::String).new
+          path_api_instances[path] = api_instances
 
-            # Tree-sitter pre-pass: parse once and harvest every
-            # `@<router>.route(...)` / `@<router>.<method>(...)` decorator
-            # plus every `<name> = (sanic.)?Blueprint(url_prefix=...)`
-            # declaration. Replaces the per-line regex sweep in the loop
-            # below and handles multi-line decorators for free.
-            Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["sanic"]).each do |bp|
-              blueprint_prefixes[bp.name] ||= bp.prefix
-              api_instances[bp.name] ||= bp.prefix
+          # Tree-sitter pre-pass: parse once and harvest every
+          # `@<router>.route(...)` / `@<router>.<method>(...)` decorator
+          # plus every `<name> = (sanic.)?Blueprint(url_prefix=...)`
+          # declaration. Replaces the per-line regex sweep in the loop
+          # below and handles multi-line decorators for free.
+          Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["sanic"]).each do |bp|
+            blueprint_prefixes[bp.name] ||= bp.prefix
+            api_instances[bp.name] ||= bp.prefix
+          end
+          collect_blueprint_registrations(file_content, blueprint_registration_prefixes, current_base_path)
+          collect_blueprint_groups_and_versions(file_content, blueprint_group_prefixes, blueprint_versions)
+          Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: {"websocket" => "GET"}).each do |decoration|
+            methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
+            extra_params = "methods=[#{methods_literal}]"
+            router_info = Tuple(Int32, ::String, ::String, ::String, ::String).new(decoration.decorator_line, path, decoration.path, extra_params, decoration.attribute_name)
+            @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+            @routes[decoration.router_name] << router_info
+          end
+
+          lines.each_with_index do |original_line, line_index|
+            line = original_line.gsub(" ", "") # remove spaces for easier regex matching
+
+            # Identify Sanic instance assignments (tree-sitter extractor
+            # doesn't cover this shape yet).
+            sanic_match = line.includes?("Sanic(") ? line.match(SANIC_INSTANCE_RE) : nil
+            if sanic_match
+              sanic_instance_name = sanic_match[1]
+              api_instances[sanic_instance_name] ||= ""
+              sanic_instances[sanic_instance_name] ||= ""
             end
-            collect_blueprint_registrations(file_content, blueprint_registration_prefixes, current_base_path)
-            collect_blueprint_groups_and_versions(file_content, blueprint_group_prefixes, blueprint_versions)
-            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: {"websocket" => "GET"}).each do |decoration|
-              methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
-              extra_params = "methods=[#{methods_literal}]"
-              router_info = Tuple(Int32, ::String, ::String, ::String, ::String).new(decoration.decorator_line, path, decoration.path, extra_params, decoration.attribute_name)
-              @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-              @routes[decoration.router_name] << router_info
+
+            if line.includes?(".add_route(")
+              effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+              if class_route_info = parse_programmatic_class_route(effective_line)
+                router_name, route_path, class_name, extra_params = class_route_info
+                @programmatic_class_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+                @programmatic_class_routes[router_name] << {line_index, path, route_path, extra_params, class_name}
+              elsif route_info = parse_programmatic_route(effective_line)
+                router_name, route_path, handler_name, extra_params = route_info
+                @programmatic_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+                @programmatic_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
+              end
             end
 
-            lines.each_with_index do |original_line, line_index|
-              line = original_line.gsub(" ", "") # remove spaces for easier regex matching
-
-              # Identify Sanic instance assignments (tree-sitter extractor
-              # doesn't cover this shape yet).
-              sanic_match = line.includes?("Sanic(") ? line.match(SANIC_INSTANCE_RE) : nil
-              if sanic_match
-                sanic_instance_name = sanic_match[1]
-                api_instances[sanic_instance_name] ||= ""
-                sanic_instances[sanic_instance_name] ||= ""
+            if line.includes?(".add_websocket_route(")
+              effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+              if route_info = parse_programmatic_websocket_route(effective_line)
+                router_name, route_path, handler_name, extra_params = route_info
+                @programmatic_websocket_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
+                @programmatic_websocket_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
               end
+            end
 
-              if line.includes?(".add_route(")
-                effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-                if class_route_info = parse_programmatic_class_route(effective_line)
-                  router_name, route_path, class_name, extra_params = class_route_info
-                  @programmatic_class_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-                  @programmatic_class_routes[router_name] << {line_index, path, route_path, extra_params, class_name}
-                elsif route_info = parse_programmatic_route(effective_line)
-                  router_name, route_path, handler_name, extra_params = route_info
-                  @programmatic_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-                  @programmatic_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
-                end
-              end
-
-              if line.includes?(".add_websocket_route(")
-                effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-                if route_info = parse_programmatic_websocket_route(effective_line)
-                  router_name, route_path, handler_name, extra_params = route_info
-                  @programmatic_websocket_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String)
-                  @programmatic_websocket_routes[router_name] << {line_index, path, route_path, extra_params, handler_name}
-                end
-              end
-
-              if line.includes?(".static(")
-                effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-                if static_route_info = parse_static_route(effective_line)
-                  router_name, static_path = static_route_info
-                  @static_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String)
-                  @static_routes[router_name] << {line_index, path, static_path}
-                end
+            if line.includes?(".static(")
+              effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
+              if static_route_info = parse_static_route(effective_line)
+                router_name, static_path = static_route_info
+                @static_routes[router_name] ||= [] of Tuple(Int32, ::String, ::String)
+                @static_routes[router_name] << {line_index, path, static_path}
               end
             end
           end

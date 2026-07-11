@@ -46,49 +46,50 @@ module Analyzer::Python
           next if path.includes?("/site-packages/")
           next if python_test_path?(path)
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            file_content = file.gets_to_end
-            next unless file_content.includes?("robyn")
-            lines = file_content.lines
+          # Prefer the detector-cached content over a fresh disk read;
+          # falls back to File.read (same encoding: utf-8, invalid: :skip)
+          # when the file wasn't cached.
+          file_content = read_file_content(path)
+          next unless file_content.includes?("robyn")
+          lines = file_content.lines
 
-            # Capture `name = Robyn(__file__)` and `name = SubRouter(__file__, "/prefix")`
-            # so prefix composition can resolve via include_router below.
-            collect_router_assignments(lines, router_prefixes)
+          # Capture `name = Robyn(__file__)` and `name = SubRouter(__file__, "/prefix")`
+          # so prefix composition can resolve via include_router below.
+          collect_router_assignments(lines, router_prefixes)
 
-            # `app.include_router(sub_router)` — propagate the SubRouter's
-            # prefix without rewriting the original entry; the SubRouter
-            # already owns its prefix.
-            scan_include_routers(lines, router_prefixes)
+          # `app.include_router(sub_router)` — propagate the SubRouter's
+          # prefix without rewriting the original entry; the SubRouter
+          # already owns its prefix.
+          scan_include_routers(lines, router_prefixes)
 
-            # Decorator-driven routes via tree-sitter (handles multi-line
-            # decorator headers cleanly).
-            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, nil, WEBSOCKET_ATTRIBUTES).each do |deco|
-              next unless router_prefixes.has_key?(deco.router_name)
-              attr = deco.attribute_name.downcase
-              next unless attr.in?(HTTP_METHOD_DECORATORS) || attr == "websocket"
+          # Decorator-driven routes via tree-sitter (handles multi-line
+          # decorator headers cleanly).
+          Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, nil, WEBSOCKET_ATTRIBUTES).each do |deco|
+            next unless router_prefixes.has_key?(deco.router_name)
+            attr = deco.attribute_name.downcase
+            next unless attr.in?(HTTP_METHOD_DECORATORS) || attr == "websocket"
 
-              http_method = attr == "websocket" ? "GET" : attr.upcase
-              prefix = router_prefixes[deco.router_name]
-              route_path = normalize_path(deco.path)
-              full_path = join_prefix(prefix, route_path)
+            http_method = attr == "websocket" ? "GET" : attr.upcase
+            prefix = router_prefixes[deco.router_name]
+            route_path = normalize_path(deco.path)
+            full_path = join_prefix(prefix, route_path)
 
-              params = [] of Param
-              # `:name` and `{name}` segments are path params.
-              full_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) do |m|
-                params << Param.new(m[1], "", "path")
-              end
-
-              def_index = deco.def_line >= 0 ? deco.def_line : Noir::PythonRouteExtractor.find_def_line(lines, deco.decorator_line)
-              if def_index >= 0 && def_index < lines.size
-                handler_body = extract_function_body(lines, def_index)
-                extract_body_params(handler_body).each { |p| params << p }
-              end
-
-              details = Details.new(PathInfo.new(path, deco.decorator_line + 1))
-              endpoint = Endpoint.new(full_path, http_method, params, details)
-              endpoint.protocol = "ws" if attr == "websocket"
-              result << endpoint
+            params = [] of Param
+            # `:name` and `{name}` segments are path params.
+            full_path.scan(/\{([A-Za-z_][A-Za-z0-9_]*)\}/) do |m|
+              params << Param.new(m[1], "", "path")
             end
+
+            def_index = deco.def_line >= 0 ? deco.def_line : Noir::PythonRouteExtractor.find_def_line(lines, deco.decorator_line)
+            if def_index >= 0 && def_index < lines.size
+              handler_body = extract_function_body(lines, def_index)
+              extract_body_params(handler_body).each { |p| params << p }
+            end
+
+            details = Details.new(PathInfo.new(path, deco.decorator_line + 1))
+            endpoint = Endpoint.new(full_path, http_method, params, details)
+            endpoint.protocol = "ws" if attr == "websocket"
+            result << endpoint
           end
         end
       end
