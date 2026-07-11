@@ -36,7 +36,7 @@ module Analyzer::Scala
 
     def analyze_file(path : String) : Array(Endpoint)
       return [] of Endpoint if scalatra_test_path?(path)
-      content = File.read(path)
+      content = read_file_content(path)
       extract_routes_from_content(path, content, any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?))
     end
 
@@ -50,7 +50,7 @@ module Analyzer::Scala
         next unless File.exists?(path) && File.extname(path) == ".scala"
         next if scalatra_test_path?(path)
         begin
-          content = File.read(path)
+          content = read_file_content(path)
         rescue
           next
         end

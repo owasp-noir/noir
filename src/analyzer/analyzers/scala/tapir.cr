@@ -52,7 +52,7 @@ module Analyzer::Scala
     )
 
     def analyze_file(path : String) : Array(Endpoint)
-      content = File.read(path)
+      content = read_file_content(path)
       extract_routes_from_content(path, content)
     end
 

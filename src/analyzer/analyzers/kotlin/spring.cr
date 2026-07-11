@@ -660,7 +660,7 @@ module Analyzer::Kotlin
 
     private def read_properties(path : String) : Hash(String, String)
       values = Hash(String, String).new
-      File.each_line(path) do |line|
+      read_file_content(path).each_line do |line|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
 
