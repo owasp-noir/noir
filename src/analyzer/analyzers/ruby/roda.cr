@@ -19,6 +19,12 @@ module Analyzer::Ruby
       {verb, /\br\.#{verb}\b\s*(?:do\b|\{|\/|$)/}
     end
 
+    # `analyze_file`'s per-file evidence gate OR-ed two String#includes?
+    # scans as a standalone boolean gate. Folded into one precompiled union
+    # so it costs a single PCRE2 match instead of up to two naive substring
+    # scans per file.
+    RODA_EVIDENCE_RE = Regex.union("Roda", "route do")
+
     alias PrefixEntry = NamedTuple(depth: Int32, segments: Array(String), path_params: Array(String))
 
     def analyze
@@ -35,7 +41,7 @@ module Analyzer::Ruby
 
     private def analyze_file(path : String, include_callee : Bool)
       content = read_file_content(path)
-      return unless content.includes?("Roda") || content.includes?("route do")
+      return unless content.matches?(RODA_EVIDENCE_RE)
 
       lines = content.lines
       in_route = false

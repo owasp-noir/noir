@@ -30,6 +30,36 @@ module Analyzer::Ruby
       "do_options" => "OPTIONS",
     }
 
+    # `extract_verbs_from_handler_body`'s per-verb loop OR-ed four
+    # String#includes? scans (with string interpolation) over the handler
+    # body for each of the seven fixed HTTP verbs — up to 28 naive substring
+    # scans per call. The verb set never changes, so precompile one
+    # Regex.union per verb at class load instead.
+    VERB_GUARD_MARKERS = ["get", "post", "put", "patch", "delete", "head", "options"].to_h do |v|
+      {v, Regex.union("\"#{v}\"", "'#{v}'", v.upcase, ":#{v}")}
+    end
+
+    # `analyze`'s per-file evidence gate OR-ed three String#includes? scans
+    # as a standalone boolean gate. Folded into one precompiled union so it
+    # costs a single PCRE2 match instead of up to three naive substring
+    # scans per file.
+    WEBRICK_EVIDENCE_RE = Regex.union("webrick", "WEBrick", "mount_proc")
+
+    # `extract_webrick_params`'s per-line cookie-scan gate OR-ed two
+    # String#includes? scans as a standalone boolean gate. Folded into one
+    # precompiled union so it costs a single PCRE2 match instead of up to
+    # two naive substring scans per line of the handler body.
+    COOKIE_LINE_GATE_RE = Regex.union("cookies", ".name")
+
+    # `extract_webrick_params` builds a `/#{Regex.escape(var)}\[...\]/`
+    # subscript matcher for each variable name it discovers (the LHS of a
+    # `parse_query(...)`/`JSON.parse(...)` assignment). Crystal recompiles an
+    # interpolated regex literal on every evaluation, and common variable
+    # names (`p`, `data`, `body`) repeat across many handler bodies in a
+    # single scan, so memoize the compiled regex per name instead of
+    # rebuilding it every time the same name reappears.
+    @var_subscript_regex_cache = Hash(String, Regex).new
+
     def analyze
       include_callee = callees_needed?
 
@@ -42,7 +72,7 @@ module Analyzer::Ruby
         next if ruby_non_production_path?(path)
         content = read_file_content(path)
         # Gate early on webrick signals (avoid unnecessary work + comment-only noise)
-        next unless content.includes?("webrick") || content.includes?("WEBrick") || content.includes?("mount_proc")
+        next unless content.matches?(WEBRICK_EVIDENCE_RE)
         process_webrick_file(path, content, servlet_index, include_callee)
       end
 
@@ -212,11 +242,9 @@ module Analyzer::Ruby
       b = body.downcase
       has_method_check = b.includes?("request_method")
 
-      ["get", "post", "put", "patch", "delete", "head", "options"].each do |v|
+      VERB_GUARD_MARKERS.each do |v, marker_re|
         if has_method_check
-          if b.includes?("\"#{v}\"") || b.includes?("'#{v}'") || b.includes?(v.upcase) || b.includes?(":#{v}")
-            verbs << v.upcase
-          end
+          verbs << v.upcase if b.matches?(marker_re)
         end
       end
       # If the block is unconditional (plain mount_proc without method guard), verbs will be empty -> caller defaults to GET
@@ -257,7 +285,7 @@ module Analyzer::Ruby
       # cookies: req.cookies.find { |c| c.name == 'session' } or similar literal near cookies
       # Use line-scoped to avoid cross-line greedy match.
       clean.each_line do |ln|
-        next unless ln.includes?("cookies") || ln.includes?(".name")
+        next unless ln.matches?(COOKIE_LINE_GATE_RE)
         ln.scan(/(?:req|request)\.cookies[^\n]*['"]([^'"]+)['"]/) do |m|
           name = m[1].strip
           next if name.empty? || seen.includes?("cookie:#{name}")
@@ -288,7 +316,7 @@ module Analyzer::Ruby
           form_vars << m[1] unless form_vars.includes?(m[1])
         end
         form_vars.each do |var|
-          clean.scan(/#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |mm|
+          clean.scan(var_subscript_regex(var)) do |mm|
             name = mm[1].strip
             next if name.empty? || seen.includes?("form:#{name}")
             params << Param.new(name, "", "form")
@@ -302,7 +330,7 @@ module Analyzer::Ruby
           json_vars << m[1] unless json_vars.includes?(m[1])
         end
         json_vars.each do |var|
-          clean.scan(/#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |mm|
+          clean.scan(var_subscript_regex(var)) do |mm|
             name = mm[1].strip
             next if name.empty? || seen.includes?("json:#{name}")
             params << Param.new(name, "", "json")
@@ -319,6 +347,12 @@ module Analyzer::Ruby
       end
 
       params
+    end
+
+    # Memoized per-name compiled matcher for `var['k']` subscripts (see the
+    # `@var_subscript_regex_cache` note above).
+    private def var_subscript_regex(var : String) : Regex
+      @var_subscript_regex_cache[var] ||= /#{Regex.escape(var)}\s*\[\s*['"]([^'"]+)['"]\s*\]/
     end
   end
 end

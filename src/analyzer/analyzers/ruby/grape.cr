@@ -4,6 +4,12 @@ module Analyzer::Ruby
   class Grape < RubyEngine
     GRAPE_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
+    # `build_grape_index`'s whole-tree pre-pass gate OR-ed two
+    # String#includes? scans over every file's content as a standalone
+    # boolean gate. Folded into one precompiled union so it costs a single
+    # PCRE2 match instead of up to two naive substring scans per file.
+    GRAPE_OR_MOUNT_MARKER_RE = Regex.union("Grape", "mount ")
+
     # Crystal recompiles an interpolated regex literal (`/^#{verb}.../`)
     # on every evaluation — ~11000x slower than a precompiled one — so
     # matching the verb DSL inside the per-line loop used to recompile
@@ -80,7 +86,7 @@ module Analyzer::Ruby
         # `< Base` against the resolved class set. Restricting the whole-tree
         # pre-pass to these two markers keeps it off the thousands of
         # unrelated `.rb` files in a large repo.
-        next unless content.includes?("Grape") || content.includes?("mount ")
+        next unless content.matches?(GRAPE_OR_MOUNT_MARKER_RE)
         next unless content.includes?("class ") && content.includes?("<")
 
         # Edges are collected for every `class X < Y`, but the
