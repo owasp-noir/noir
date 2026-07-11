@@ -47,6 +47,11 @@ module Analyzer::Cpp
     EVIDENCE_RE = Regex.union("drogon", "registerHandler", "PATH_LIST_BEGIN", "PATH_ADD",
       "METHOD_LIST_BEGIN", "METHOD_ADD", "ADD_METHOD_TO", "ADD_METHOD_VIA_REGEX")
 
+    # extract_params's per-line JSON-body-access check is used twice (once
+    # positively, once negated) on the same line buffer; precompile it once
+    # instead of repeating the two-way includes? OR each time.
+    JSON_ACCESS_RE = Regex.union("->getJsonObject(", "->getJsonValue(")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -637,12 +642,11 @@ module Analyzer::Cpp
           add_unique_param(params, Param.new(match[1], "", "cookie"))
         end
 
-        if line.includes?("->getJsonObject(") || line.includes?("->getJsonValue(")
+        if line.matches?(JSON_ACCESS_RE)
           add_unique_param(params, Param.new("body", "", "json"))
         end
 
-        if line.matches?(/->\s*(body|getBody)\s*\(\s*\)/) &&
-           !line.includes?("->getJsonObject(") && !line.includes?("->getJsonValue(")
+        if line.matches?(/->\s*(body|getBody)\s*\(\s*\)/) && !line.matches?(JSON_ACCESS_RE)
           add_unique_param(params, Param.new("body", "", "body"))
         end
       end
