@@ -57,12 +57,8 @@ module Analyzer::Perl
       # accounts for ~1100 phantom endpoints).
       return [] of Endpoint if perl_test_path?(path, ext)
 
-      endpoints = [] of Endpoint
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        endpoints.concat(analyze_content(content, path, include_callee, controller_callees))
-      end
-      endpoints
+      content = read_file_content(path)
+      analyze_content(content, path, include_callee, controller_callees)
     end
 
     def analyze_content(content : String,
