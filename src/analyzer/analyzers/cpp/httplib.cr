@@ -37,6 +37,19 @@ module Analyzer::Cpp
     NAMED_PARAM_REGEX = /:([A-Za-z_][A-Za-z0-9_]*)/
     # Regex metacharacters that mark a route pattern as a regex (kept verbatim).
     REGEX_META = /[()\[\]\\+*?^$|]/
+    # Precompiled union for the per-file verb-call evidence gate in
+    # analyze_file, so it costs a single PCRE2 match instead of up to six
+    # naive substring scans.
+    VERB_CALL_EVIDENCE_RE = Regex.union(".Get(", ".Post(", ".Put(", ".Delete(", ".Patch(", ".Options(")
+
+    # extract_function_body builds a `/\b#{Regex.escape(name)}\s*\(/` matcher
+    # for each named handler function it resolves. Crystal recompiles an
+    # interpolated regex literal on every evaluation, and this runs once per
+    # non-lambda route call in a scan, so a handler function reused across
+    # several routes would otherwise recompile the identical pattern each
+    # time. Cache the compiled regex per name in an instance Hash + `||=` so
+    # a repeated name reuses the already-compiled Regex.
+    @function_body_regex_cache = Hash(String, Regex).new
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -63,9 +76,7 @@ module Analyzer::Cpp
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
       return unless source.includes?("httplib")
-      return unless source.includes?(".Get(") || source.includes?(".Post(") ||
-                    source.includes?(".Put(") || source.includes?(".Delete(") ||
-                    source.includes?(".Patch(") || source.includes?(".Options(")
+      return unless source.matches?(VERB_CALL_EVIDENCE_RE)
 
       source = Noir::CppCalleeExtractor.strip_comments(source)
       using_ns = source.includes?("using namespace httplib")
@@ -123,7 +134,7 @@ module Analyzer::Cpp
     end
 
     private def extract_function_body(source : String, name : String) : Tuple(String, Int32)?
-      regex = /\b#{Regex.escape(name)}\s*\(/
+      regex = @function_body_regex_cache[name] ||= /\b#{Regex.escape(name)}\s*\(/
       source.scan(regex) do |match|
         match_start = source.char_index_to_byte_index(match.begin(0) || 0) || 0
         # Skip call sites (`foo.name(`, `obj::name(`); we want the definition.

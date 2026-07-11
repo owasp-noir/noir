@@ -41,6 +41,17 @@ module Analyzer::Cpp
     @method_def_regexes = Hash(String, Regex).new
     @class_decl_regexes = Hash(String, Regex).new
 
+    # Precompiled union for the per-file evidence gate in `analyze`, so it
+    # costs a single PCRE2 match instead of up to eight naive substring
+    # scans.
+    EVIDENCE_RE = Regex.union("drogon", "registerHandler", "PATH_LIST_BEGIN", "PATH_ADD",
+      "METHOD_LIST_BEGIN", "METHOD_ADD", "ADD_METHOD_TO", "ADD_METHOD_VIA_REGEX")
+
+    # extract_params's per-line JSON-body-access check is used twice (once
+    # positively, once negated) on the same line buffer; precompile it once
+    # instead of repeating the two-way includes? OR each time.
+    JSON_ACCESS_RE = Regex.union("->getJsonObject(", "->getJsonValue(")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -54,14 +65,7 @@ module Analyzer::Cpp
           next unless CPP_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
 
           content = read_file_content(path)
-          next unless content.includes?("drogon") ||
-                      content.includes?("registerHandler") ||
-                      content.includes?("PATH_LIST_BEGIN") ||
-                      content.includes?("PATH_ADD") ||
-                      content.includes?("METHOD_LIST_BEGIN") ||
-                      content.includes?("METHOD_ADD") ||
-                      content.includes?("ADD_METHOD_TO") ||
-                      content.includes?("ADD_METHOD_VIA_REGEX")
+          next unless content.matches?(EVIDENCE_RE)
 
           analyze_file(path, content, include_callee)
         end
@@ -638,12 +642,11 @@ module Analyzer::Cpp
           add_unique_param(params, Param.new(match[1], "", "cookie"))
         end
 
-        if line.includes?("->getJsonObject(") || line.includes?("->getJsonValue(")
+        if line.matches?(JSON_ACCESS_RE)
           add_unique_param(params, Param.new("body", "", "json"))
         end
 
-        if line.matches?(/->\s*(body|getBody)\s*\(\s*\)/) &&
-           !line.includes?("->getJsonObject(") && !line.includes?("->getJsonValue(")
+        if line.matches?(/->\s*(body|getBody)\s*\(\s*\)/) && !line.matches?(JSON_ACCESS_RE)
           add_unique_param(params, Param.new("body", "", "body"))
         end
       end

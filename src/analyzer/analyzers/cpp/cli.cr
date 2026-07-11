@@ -62,9 +62,15 @@ module Analyzer::Cpp
     # entries) so this gate can never diverge from what the extraction
     # regexes above actually accept, e.g. `ABSL_FLAG (int32_t, ...)` with a
     # space before the paren is valid C++ and must not be silently skipped.
-    CLI_MARKERS = ["CLI::App", "getopt", "struct option", "cxxopts::", "program_options",
-                   "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser"]
+    # Precompiled as a single Regex.union so the per-file evidence gate costs
+    # one PCRE2 match instead of up to ten naive substring scans.
+    CLI_MARKERS_RE = Regex.union("CLI::App", "getopt", "struct option", "cxxopts::", "program_options",
+      "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser")
     WEB_RE = /\b(?:Crow|crow|drogon|httplib|oatpp)\b|Crow::|drogon::|httplib::|oatpp::/
+
+    # Precompiled union for the per-file test-path skip gate (cpp_test_path?),
+    # matched via String#matches? instead of five naive substring scans.
+    CPP_TEST_PATH_RE = Regex.union("/test/", "/tests/", "_test.", "test_", ".test.")
 
     def analyze
       endpoints = {} of String => Endpoint
@@ -77,7 +83,7 @@ module Analyzer::Cpp
 
           begin
             content = read_file_content(path)
-            next unless CLI_MARKERS.any? { |m| content.includes?(m) }
+            next unless content.matches?(CLI_MARKERS_RE)
 
             binary = cpp_binary_name(path)
             root_url = "cli://#{binary}"
@@ -95,9 +101,7 @@ module Analyzer::Cpp
     end
 
     private def cpp_test_path?(path : String) : Bool
-      lower = path.downcase
-      lower.includes?("/test/") || lower.includes?("/tests/") ||
-        lower.includes?("_test.") || lower.includes?("test_") || lower.includes?(".test.")
+      path.downcase.matches?(CPP_TEST_PATH_RE)
     end
 
     private def cpp_binary_name(path : String) : String
@@ -268,7 +272,17 @@ module Analyzer::Cpp
     private def absl_flag_names(line : String) : Array(String)
       names = [] of String
       offset = 0
+      # Lazily materialized on the first match: String#[](Int) / #[](Range)
+      # walk the UTF-8 buffer from the start on every call for any line
+      # containing a multi-byte char, turning this scan into O(n^2)/O(n^3).
+      # Array(Char) indexing/slicing is O(1)/O(k), so once a line actually
+      # has an ABSL_FLAG( match, the loop below stays O(n) overall. Lines
+      # without a match (the overwhelming majority in a scan) never pay for
+      # the array allocation at all.
+      chars = nil
+
       while offset <= line.size && (m = line.match(ABSL_FLAG_MARK, offset))
+        chars ||= line.chars
         args_start = m.end
         fields = [] of String
         depth = 0
@@ -276,13 +290,13 @@ module Analyzer::Cpp
         i = args_start
         closed_at = nil
 
-        while i < line.size
-          case line[i]
+        while i < chars.size
+          case chars[i]
           when '(', '<'
             depth += 1
           when ')'
             if depth == 0
-              fields << line[field_start...i]
+              fields << chars[field_start...i].join
               closed_at = i
               break
             end
@@ -291,7 +305,7 @@ module Analyzer::Cpp
             depth -= 1 if depth > 0
           when ','
             if depth == 0
-              fields << line[field_start...i]
+              fields << chars[field_start...i].join
               field_start = i + 1
             end
           end
