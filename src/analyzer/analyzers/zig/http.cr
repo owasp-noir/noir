@@ -19,6 +19,16 @@ module Analyzer::Zig
     TARGET_PRONG_RE    = /"((?:[^"\\]|\\.)*)"\s*=>/
     IF_RE              = /(?:^|[^A-Za-z0-9_])if\s*\(/
 
+    # Whole-file detection gate, evaluated once per `.zig` file. `String#matches?`
+    # (PCRE2 JIT) is faster than the naive `String#includes?` char scan, and
+    # `STD_IMPORT_RE` folds the two-way OR into a single scan. Each matcher is
+    # equivalent to the literal substring test it replaces.
+    STD_HTTP_SERVER_RE = /std\.http\.Server/
+    STD_IMPORT_RE      = Regex.union("@import(\"std\")", "std.http")
+    RECEIVE_HEAD_RE    = /\.receiveHead\(/
+    HEAD_TARGET_RE     = /\.head\.target/
+    RESPOND_RE         = /\.respond\(/
+
     alias IfBlock = NamedTuple(cond_start: Int32, cond_end: Int32, body_open: Int32, body_close: Int32)
     alias MethodContext = NamedTuple(method: String, body_open: Int32, body_close: Int32)
     alias RouteHit = NamedTuple(url: String, offset: Int32)
@@ -39,11 +49,11 @@ module Analyzer::Zig
     end
 
     private def std_http_server_file?(content : String) : Bool
-      return true if content.includes?("std.http.Server")
+      return true if content.matches?(STD_HTTP_SERVER_RE)
 
-      has_std = content.includes?("@import(\"std\")") || content.includes?("std.http")
-      has_server_flow = content.includes?(".receiveHead(") && content.includes?(".head.target")
-      has_response = content.includes?(".respond(")
+      has_std = content.matches?(STD_IMPORT_RE)
+      has_server_flow = content.matches?(RECEIVE_HEAD_RE) && content.matches?(HEAD_TARGET_RE)
+      has_response = content.matches?(RESPOND_RE)
 
       has_std && has_server_flow && has_response
     end
