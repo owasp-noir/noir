@@ -55,6 +55,21 @@ module Analyzer::Python
     # working; the analyzer rewrites `protocol` to `"ws"` later.
     WEBSOCKET_ATTRIBUTES = {"websocket" => "GET"}
 
+    # Per-line route-discovery patterns. These interpolate only the
+    # PYTHON_VAR_NAME_REGEX/DOT_NATION constants, so an inline literal
+    # inside the per-line analyze loop recompiled an identical PCRE2
+    # pattern on every source line of every file. Compile once here; the
+    # `.to_s` expansion of the interpolated constants is byte-identical
+    # to the previous inline form, so matching behaviour is unchanged.
+    QUART_INSTANCE_RE       = /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:quart\.)?Quart\(/
+    VIEW_ASSIGN_RE          = /(#{PYTHON_VAR_NAME_REGEX})=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
+    ADD_URL_RULE_SCAN_RE    = /(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\s*\((.*)\)\s*$/m
+    REGISTER_BLUEPRINT_RE   = /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+    METHOD_VIEW_DIRECT_RE   = /view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
+    METHOD_VIEW_VAR_RE      = /view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})/
+    METHOD_VIEW_POS_VIEW_RE = /^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/
+    METHOD_VIEW_POS_VAR_RE  = /^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})(?:\s*,|\s*$)/
+
     @file_content_cache = Hash(::String, ::String).new
 
     # JSON-variable access patterns interpolate a discovered (dynamic but
@@ -125,20 +140,20 @@ module Analyzer::Python
             line = original_line.gsub(" ", "")
 
             # Identify Quart instance assignments: `app = Quart(__name__)`
-            quart_match = line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{PYTHON_VAR_NAME_REGEX})?=(?:quart\.)?Quart\(/
+            quart_match = line.match QUART_INSTANCE_RE
             if quart_match
               quart_instance_name = quart_match[1]
               api_instances[quart_instance_name] ||= ""
               quart_instances[quart_instance_name] ||= ""
             end
 
-            if view_assign_match = line.match(/(#{PYTHON_VAR_NAME_REGEX})=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/)
+            if view_assign_match = line.match(VIEW_ASSIGN_RE)
               view_assignments[view_assign_match[1]] = view_assign_match[2]
             end
 
             if line.includes?(".add_url_rule(")
               effective_line = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-              effective_line.scan(/(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\s*\((.*)\)\s*$/m) do |rule_match|
+              effective_line.scan(ADD_URL_RULE_SCAN_RE) do |rule_match|
                 next if rule_match.size < 3
                 router_name = rule_match[1]
                 args = rule_match[2]
@@ -168,7 +183,7 @@ module Analyzer::Python
 
             # Identify Blueprint registration:
             #   `app.register_blueprint(bp, url_prefix="/api")`
-            register_blueprint_match = line.match /(#{PYTHON_VAR_NAME_REGEX})\.register_blueprint\((#{DOT_NATION})/
+            register_blueprint_match = line.match REGISTER_BLUEPRINT_RE
             if register_blueprint_match
               parent_name = register_blueprint_match[1]
               blueprint_name = register_blueprint_match[2]
@@ -381,19 +396,19 @@ module Analyzer::Python
     end
 
     private def extract_method_view_class(args : ::String, view_assignments : Hash(::String, ::String)) : ::String
-      if direct_match = args.match(/view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/)
+      if direct_match = args.match(METHOD_VIEW_DIRECT_RE)
         return direct_match[1]
       end
 
-      if variable_match = args.match(/view_func\s*=\s*(#{PYTHON_VAR_NAME_REGEX})/)
+      if variable_match = args.match(METHOD_VIEW_VAR_RE)
         return view_assignments[variable_match[1]]? || ""
       end
 
-      if positional_match = args.match(/^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})\.as_view\s*\(/)
+      if positional_match = args.match(METHOD_VIEW_POS_VIEW_RE)
         return positional_match[1]
       end
 
-      if positional_variable_match = args.match(/^\s*[rf]?['"][^'"]*['"]\s*,\s*[rf]?['"][^'"]*['"]\s*,\s*(#{PYTHON_VAR_NAME_REGEX})(?:\s*,|\s*$)/)
+      if positional_variable_match = args.match(METHOD_VIEW_POS_VAR_RE)
         return view_assignments[positional_variable_match[1]]? || ""
       end
 
