@@ -115,6 +115,10 @@ module Analyzer::Typescript
       ".subscription(",
       ".subscription (",
     ]
+    # One precompiled `Regex.union` (PCRE2 JIT) scan replaces the six-item
+    # `.any? { includes? }` check below — this gate is evaluated on every
+    # candidate file, from both v9_router_candidate? and trpc_candidate?.
+    PROCEDURE_HINTS_RE = Regex.union(PROCEDURE_HINTS)
 
     PREFIX_HINTS = [
       "endpoint:",
@@ -123,17 +127,29 @@ module Analyzer::Typescript
       "fastifyTRPCPlugin",
       "fastifyTRPC",
     ]
+    PREFIX_HINTS_RE = Regex.union(PREFIX_HINTS)
 
     V9_MERGE_HINTS = [
       ".merge(",
       ".merge (",
     ]
+    V9_MERGE_HINTS_RE = Regex.union(V9_MERGE_HINTS)
+
+    # `initTRPC`/`createTRPCRouter` are OR-ed as a standalone boolean gate
+    # in trpc_candidate? below; union them into one scan like the hint
+    # lists above instead of two sequential String#includes? calls.
+    TRPC_ROOT_MARKER_RE = Regex.union("initTRPC", "createTRPCRouter")
+
+    # `createRouter`/`trpc.router` gate the v9 chain-router shape.
+    V9_ROUTER_MARKER_RE = Regex.union("createRouter", "trpc.router")
+
+    # `Procedure`/`.procedure` identify a procedure-builder reference.
+    PROCEDURE_BUILDER_RE = Regex.union("Procedure", ".procedure")
 
     private def trpc_candidate?(content : String) : Bool
       content.matches?(/endpoint\s*:/) ||
-        PREFIX_HINTS.any? { |hint| content.includes?(hint) } ||
-        content.includes?("initTRPC") ||
-        content.includes?("createTRPCRouter") ||
+        content.matches?(PREFIX_HINTS_RE) ||
+        content.matches?(TRPC_ROOT_MARKER_RE) ||
         # A pure ROOT/sub-router composition file (`export const appRouter =
         # router({ document: documentRouter, ... })`) has no inline
         # procedure hint, so the old `router( && .query(` gate skipped it —
@@ -146,21 +162,20 @@ module Analyzer::Typescript
         # OSS apps still use this shape, and it has no `Procedure` builder.
         v9_router_candidate?(content) ||
         # A standalone procedure-definition file (no `router(...)`).
-        (procedure_builder?(content) && PROCEDURE_HINTS.any? { |hint| content.includes?(hint) })
+        (procedure_builder?(content) && content.matches?(PROCEDURE_HINTS_RE))
     end
 
     private def v9_router_candidate?(content : String) : Bool
-      return false unless content.includes?("createRouter") || content.includes?("trpc.router")
+      return false unless content.matches?(V9_ROUTER_MARKER_RE)
 
-      V9_MERGE_HINTS.any? { |hint| content.includes?(hint) } ||
-        PROCEDURE_HINTS.any? { |hint| content.includes?(hint) }
+      content.matches?(V9_MERGE_HINTS_RE) || content.matches?(PROCEDURE_HINTS_RE)
     end
 
     # tRPC builders are conventionally named `*Procedure` (publicProcedure,
     # protectedProcedure, authenticatedProcedure) or accessed as
     # `t.procedure`.
     private def procedure_builder?(content : String) : Bool
-      content.includes?("Procedure") || content.includes?(".procedure")
+      content.matches?(PROCEDURE_BUILDER_RE)
     end
 
     # `import { router } from '.../trpc'` — tRPC's `router` factory, as
