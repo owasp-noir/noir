@@ -100,9 +100,9 @@ module NoirTechs
       },
     },
     :cpp_cli => {
-      :framework => "CLI (CLI11 / getopt / cxxopts / boost.program_options / gflags)",
+      :framework => "CLI (CLI11 / getopt / cxxopts / boost.program_options / gflags / Abseil Flags / argparse)",
       :language  => "C++",
-      :similar   => ["cpp-cli", "cpp_cli", "cli11", "getopt", "cxxopts", "program_options", "gflags"],
+      :similar   => ["cpp-cli", "cpp_cli", "cli11", "getopt", "cxxopts", "program_options", "gflags", "abseil", "absl-flags", "argparse"],
       :supported => {
         :endpoint => true,
         :method   => false,
