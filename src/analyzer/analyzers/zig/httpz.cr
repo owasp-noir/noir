@@ -28,6 +28,10 @@ module Analyzer::Zig
     # is idiomatic. The `@"…"` alternative keeps that form from being dropped.
     ROUTE_RE  = /(\w+)\s*\.\s*(get|post|put|delete|head|patch|trace|options|connect|all)\s*\(\s*"(\/[^"]*)"\s*,\s*(@"[^"]*"|[A-Za-z_][\w.]*)/
     METHOD_RE = /(\w+)\s*\.\s*method\s*\(\s*"([^"]*)"\s*,\s*"(\/[^"]*)"\s*,\s*(@"[^"]*"|[A-Za-z_][\w.]*)/
+    # Cheap routing-signal gate: one precompiled `Regex.union` scan (PCRE2
+    # JIT) instead of two naive `String#includes?` char scans. Equivalent to
+    # `includes?("(\"/") || includes?(".group(")`.
+    ROUTE_SIGNAL_RE = Regex.union("(\"/", ".group(")
 
     def analyze
       include_callee = callees_needed?
@@ -43,7 +47,7 @@ module Analyzer::Zig
         # argument, or a `.group(` call) instead of the framework name so
         # those files are still scanned. The analyzer only runs at all when
         # the project is already detected as httpz.
-        next unless content.includes?("(\"/") || content.includes?(".group(")
+        next unless content.matches?(ROUTE_SIGNAL_RE)
         process_file(path, content, include_callee)
       end
 
