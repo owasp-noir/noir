@@ -18,6 +18,11 @@ module Analyzer::Rust
     alias HandlerContext = NamedTuple(params: Array(Param), callees: Array(Noir::RustCalleeExtractor::Entry))
     alias ByteRange = Tuple(Int32, Int32)
 
+    # Precompiled union for build_cross_nest_index's per-file evidence gate,
+    # so it costs a single PCRE2 match instead of three naive substring
+    # scans.
+    CROSS_NEST_EVIDENCE_RE = Regex.union(".nest(", ".nest_api_service(", ".merge(")
+
     # Verbs accepted as the inner handler call (`get(...)`, `post(...)`,
     # …). Anything outside this set is treated as `GET` to match the
     # legacy fallback the regex analyzer used. `any` covers
@@ -1162,7 +1167,7 @@ module Analyzer::Rust
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(fpath)
         src = read_file_content(fpath)
-        next unless src.includes?(".nest(") || src.includes?(".nest_api_service(") || src.includes?(".merge(")
+        next unless src.matches?(CROSS_NEST_EVIDENCE_RE)
         base = configured_base_for(fpath)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
