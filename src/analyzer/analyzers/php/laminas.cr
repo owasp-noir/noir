@@ -45,10 +45,8 @@ module Analyzer::Php
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless laminas_relevant?(path, content)
-
+      content = read_file_content(path)
+      if laminas_relevant?(path, content)
         endpoints.concat(analyze_config_routes(path, content))
         endpoints.concat(analyze_programmatic_routes(path, content, include_callee))
       end
