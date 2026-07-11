@@ -51,7 +51,7 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
       stripped_lines = strip_code_lines(lines)
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
@@ -739,7 +739,7 @@ module Analyzer::Swift
 
       files.each do |path|
         base = configured_base_for(path)
-        lines = strip_code_lines(File.read_lines(path, encoding: "utf-8", invalid: :skip))
+        lines = strip_code_lines(read_file_content(path).lines)
         lines.each do |line|
           if (func = line.match(FUNCTION_SIGNATURE_PATTERN)) && line.match(ROUTER_PARAM_PATTERN)
             route_methods_by_base[base] << func[1]
@@ -760,7 +760,7 @@ module Analyzer::Swift
                                                method_set : Set(String),
                                                assignments : Hash(ScopedPrefixKey, String),
                                                base : String)
-      original_lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      original_lines = read_file_content(path).lines
       stripped_lines = strip_code_lines(original_lines)
 
       merge_logical_lines(stripped_lines, original_lines) do |stripped, original|
