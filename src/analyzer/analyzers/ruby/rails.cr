@@ -55,6 +55,18 @@ module Analyzer::Ruby
       {"DELETE", "/oauth/authorized_applications/:id", "authorized_applications", "destroy"},
     ]
 
+    # `parse_options` runs on most DSL lines of every routes.rb file (scope,
+    # namespace, resources, member/collection actions, verb routes, match) —
+    # i.e. once per line in the main route-parsing hot loop. It used to build
+    # two `Regex.new("...#{value_pattern}...")` regexes from scratch on every
+    # call even though `value_pattern` is a fixed literal that never varies —
+    # Crystal doesn't cache/memoize a `Regex.new(String)` call the way it
+    # embeds a non-interpolated regex *literal* at compile time. Precompile
+    # both patterns once at class load instead.
+    PARSE_OPTIONS_VALUE_PATTERN = "nil|['\"][^'\"]+['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
+    PARSE_OPTIONS_KEY_VALUE_RE  = Regex.new("(\\w+):\\s*(#{PARSE_OPTIONS_VALUE_PATTERN})")
+    PARSE_OPTIONS_HASHROCKET_RE = Regex.new(":(\\w+)\\s*=>\\s*(#{PARSE_OPTIONS_VALUE_PATTERN})")
+
     struct Frame
       property kind : Symbol
       property path : String
@@ -1120,14 +1132,13 @@ module Analyzer::Ruby
 
     private def parse_options(line : String) : Hash(String, String)
       result = {} of String => String
-      value_pattern = "nil|['\"][^'\"]+['\"]|:[a-zA-Z_]\\w*|\\[[^\\]]*\\]|%i[\\[\\(][^\\]\\)]*[\\]\\)]|%w[\\[\\(][^\\]\\)]*[\\]\\)]"
       # capture key: "value", key: :symbol, key: [..], key: %i[..], and
       # older hash-rocket forms like :only => [:index].
-      line.scan(Regex.new("(\\w+):\\s*(#{value_pattern})")) do |m|
+      line.scan(PARSE_OPTIONS_KEY_VALUE_RE) do |m|
         key = m[1]
         result[key] = normalize_option_value(m[2])
       end
-      line.scan(Regex.new(":(\\w+)\\s*=>\\s*(#{value_pattern})")) do |m|
+      line.scan(PARSE_OPTIONS_HASHROCKET_RE) do |m|
         key = m[1]
         result[key] = normalize_option_value(m[2])
       end
