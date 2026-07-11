@@ -514,10 +514,16 @@ module Analyzer::Typescript
       depth = 0
       quote : Char? = nil
       escaped = false
+      # `text[i]` walks a non-ASCII String from byte 0 on every call (Crystal
+      # has no char-index cache), turning this scan O(n) per char -> O(n^2)
+      # over a `validateSearch:` value. Materializing `chars` once makes
+      # every access O(1).
+      chars = text.chars
+      n = chars.size
       i = start
 
-      while i < text.size
-        char = text[i]
+      while i < n
+        char = chars[i]
 
         if quote
           if escaped
