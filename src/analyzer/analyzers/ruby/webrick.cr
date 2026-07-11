@@ -45,6 +45,12 @@ module Analyzer::Ruby
     # scans per file.
     WEBRICK_EVIDENCE_RE = Regex.union("webrick", "WEBrick", "mount_proc")
 
+    # `extract_webrick_params`'s per-line cookie-scan gate OR-ed two
+    # String#includes? scans as a standalone boolean gate. Folded into one
+    # precompiled union so it costs a single PCRE2 match instead of up to
+    # two naive substring scans per line of the handler body.
+    COOKIE_LINE_GATE_RE = Regex.union("cookies", ".name")
+
     # `extract_webrick_params` builds a `/#{Regex.escape(var)}\[...\]/`
     # subscript matcher for each variable name it discovers (the LHS of a
     # `parse_query(...)`/`JSON.parse(...)` assignment). Crystal recompiles an
@@ -279,7 +285,7 @@ module Analyzer::Ruby
       # cookies: req.cookies.find { |c| c.name == 'session' } or similar literal near cookies
       # Use line-scoped to avoid cross-line greedy match.
       clean.each_line do |ln|
-        next unless ln.includes?("cookies") || ln.includes?(".name")
+        next unless ln.matches?(COOKIE_LINE_GATE_RE)
         ln.scan(/(?:req|request)\.cookies[^\n]*['"]([^'"]+)['"]/) do |m|
           name = m[1].strip
           next if name.empty? || seen.includes?("cookie:#{name}")
