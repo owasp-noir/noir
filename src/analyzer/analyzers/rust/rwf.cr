@@ -23,6 +23,11 @@ module Analyzer::Rust
   # fragment and scan it too, mapping line numbers back onto the file.
   class Rwf < RustEngine
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
+
+    # Precompiled union for collect_route_macro_fragments' per-macro
+    # evidence gate, so it costs a single PCRE2 match instead of four naive
+    # substring scans.
+    ROUTE_MACRO_EVIDENCE_RE = Regex.union("route", "crud", "rest", "wildcard")
     # `crud!` / `rest!` register the standard REST surface. `:id` is the
     # resource identifier param RWF uses for the member routes.
     REST_ROUTES = [
@@ -289,7 +294,7 @@ module Analyzer::Rust
         end
         next unless tt = token_tree
         text = Noir::TreeSitter.node_text(tt, source)
-        next unless text.includes?("route") || text.includes?("crud") || text.includes?("rest") || text.includes?("wildcard")
+        next unless text.matches?(ROUTE_MACRO_EVIDENCE_RE)
         # A `vec!` body sitting inside a mounted engine's `Engine::new(...)`
         # inherits that engine's mount prefix.
         tt_byte = LibTreeSitter.ts_node_start_byte(tt).to_i

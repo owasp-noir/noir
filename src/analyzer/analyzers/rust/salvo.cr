@@ -30,6 +30,11 @@ module Analyzer::Rust
     alias ScopedNameKey = Tuple(String, String)
     alias PrefixEdge = Tuple(ScopedNameKey, String)
 
+    # Precompiled union for build_fn_external_prefixes' per-file evidence
+    # gate, so it costs a single PCRE2 match instead of two naive substring
+    # scans.
+    FN_EDGE_EVIDENCE_RE = Regex.union(".push(", ".unshift(")
+
     # Cross-function router composition. Salvo apps build their tree with
     # builder fns mounted via `.push(build_system_route())`, where
     # `build_system_route()` lives in another file and returns a nested
@@ -457,30 +462,35 @@ module Analyzer::Rust
     # the placeholder early.
     private def canonicalize_salvo_path(route : String) : String
       return route unless route.includes?('{')
+      # Array(Char) indexing/slicing is O(1)/O(k); String#[](Int)/#[](Range)
+      # walk the UTF-8 buffer from the start on every call for any route
+      # containing a multi-byte char, which would otherwise turn this scan
+      # into O(n^2).
+      chars = route.chars
       String.build do |io|
         i = 0
-        while i < route.size
-          if route[i] == '{'
+        while i < chars.size
+          if chars[i] == '{'
             depth = 1
             j = i + 1
-            while j < route.size && depth > 0
-              depth += 1 if route[j] == '{'
-              depth -= 1 if route[j] == '}'
+            while j < chars.size && depth > 0
+              depth += 1 if chars[j] == '{'
+              depth -= 1 if chars[j] == '}'
               j += 1
             end
             if depth > 0
               # Unbalanced '{' (no matching '}'): emit the rest verbatim rather
               # than dropping the final char / producing an empty `{}`.
-              io << route[i..]
+              chars[i..].each { |c| io << c }
               break
             end
-            inner = route[(i + 1)...(j - 1)]
+            inner = chars[(i + 1)...(j - 1)].join
             stars = inner.starts_with?("**") ? "**" : inner.starts_with?("*") ? "*" : ""
             name = inner.lstrip('*').split(/[:|]/, 2).first
             io << "{#{stars}#{name}}"
             i = j
           else
-            io << route[i]
+            io << chars[i]
             i += 1
           end
         end
@@ -663,7 +673,7 @@ module Analyzer::Rust
         next if RustEngine.test_path?(fpath)
         base = configured_base_for(fpath)
         src = read_file_content(fpath)
-        next unless src.includes?(".push(") || src.includes?(".unshift(")
+        next unless src.matches?(FN_EDGE_EVIDENCE_RE)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
           Noir::TreeSitter.parse_rust(src) do |root|

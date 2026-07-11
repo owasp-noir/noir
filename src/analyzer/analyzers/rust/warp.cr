@@ -21,6 +21,11 @@ module Analyzer::Rust
     @external_handler_miss_cache = Set(String).new
     @external_handler_callee_cache_mutex = Mutex.new
 
+    # Precompiled union for collect_warp_mounts' per-function-body evidence
+    # check, so it costs a single PCRE2 match instead of two naive substring
+    # scans.
+    ROUTE_FN_EVIDENCE_RE = Regex.union("warp::path(", "warp::path!")
+
     def analyze
       @external_handler_callee_cache_mutex.synchronize do
         @external_handler_callee_cache.clear
@@ -127,7 +132,7 @@ module Analyzer::Rust
         # leaf. `warp::path::param`/`::end` don't match `warp::path(`.
         if body
           btext = Noir::TreeSitter.node_text(body, source)
-          route_fns << name if btext.includes?("warp::path(") || btext.includes?("warp::path!")
+          route_fns << name if btext.matches?(ROUTE_FN_EVIDENCE_RE)
         end
       end
 

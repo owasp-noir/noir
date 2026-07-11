@@ -17,6 +17,10 @@ module Analyzer::Rust
     alias RouteLeaf = Tuple(String, String?)
     alias MountEntry = Tuple(String, Symbol, Array(RouteLeaf), String?, String, String)
 
+    # Precompiled union for build_mount_index's per-file evidence gate, so it
+    # costs a single PCRE2 match instead of three naive substring scans.
+    MOUNT_INDEX_EVIDENCE_RE = Regex.union("routes!", ".mount(", "routes as")
+
     # Cross-file `.mount()` prefix composition. A Rocket handler's real URL
     # is its `#[get("/x")]` attribute path prefixed by the base it is mounted
     # under — but the `.mount("/api", routes![...])` call lives in `main.rs`
@@ -105,7 +109,7 @@ module Analyzer::Rust
         next if RustEngine.test_path?(path)
         base = configured_base_for(path)
         src = read_file_content(path)
-        next unless src.includes?("routes!") || src.includes?(".mount(") || src.includes?("routes as")
+        next unless src.matches?(MOUNT_INDEX_EVIDENCE_RE)
         file_mod = primary_module(path)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
