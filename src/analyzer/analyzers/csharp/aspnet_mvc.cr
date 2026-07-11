@@ -19,37 +19,36 @@ module Analyzer::CSharp
       route_config_file = locator.get("cs-apinet-mvc-routeconfig")
 
       # Analyze RouteConfig.cs for route definitions
-      if File.exists?("#{route_config_file}")
-        File.open("#{route_config_file}", "r", encoding: "utf-8", invalid: :skip) do |file|
-          maproute_check = false
-          maproute_buffer = ""
+      route_config_path = "#{route_config_file}"
+      if File.exists?(route_config_path)
+        maproute_check = false
+        maproute_buffer = ""
 
-          file.each_line.with_index do |line, index|
-            if line.includes? ".MapRoute("
-              maproute_check = true
-              maproute_buffer = line
-            end
+        read_file_content(route_config_path).each_line.with_index do |line, index|
+          if line.includes? ".MapRoute("
+            maproute_check = true
+            maproute_buffer = line
+          end
 
-            if line.includes? ");"
-              maproute_check = false
-              unless maproute_buffer.empty?
-                buffer = maproute_buffer.gsub(/[\r\n]/, "")
-                buffer = buffer.gsub(/\s+/, "")
-                buffer.split(",").each do |item|
-                  if item.includes? "url:"
-                    url = item.gsub(/url:/, "").gsub(/"/, "")
-                    details = Details.new(PathInfo.new(route_config_file, index + 1))
-                    @result << Endpoint.new("/#{url}", "GET", details)
-                  end
+          if line.includes? ");"
+            maproute_check = false
+            unless maproute_buffer.empty?
+              buffer = maproute_buffer.gsub(/[\r\n]/, "")
+              buffer = buffer.gsub(/\s+/, "")
+              buffer.split(",").each do |item|
+                if item.includes? "url:"
+                  url = item.gsub(/url:/, "").gsub(/"/, "")
+                  details = Details.new(PathInfo.new(route_config_file, index + 1))
+                  @result << Endpoint.new("/#{url}", "GET", details)
                 end
-
-                maproute_buffer = ""
               end
-            end
 
-            if maproute_check
-              maproute_buffer += line
+              maproute_buffer = ""
             end
+          end
+
+          if maproute_check
+            maproute_buffer += line
           end
         end
       end
