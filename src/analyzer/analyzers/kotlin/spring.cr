@@ -248,13 +248,15 @@ module Analyzer::Kotlin
       dirs.to_a
     end
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
+    # literal, including the `.` in `/.git/`/`/.gradle/`) replaces the six
+    # OR-ed `String#includes?` scans below. Both callers run this over
+    # every file in the configured base (not just Kotlin sources), once
+    # each in spring_kotlin_files and spring_src_dirs.
+    IGNORED_PATH_SEGMENT_RE = Regex.union("/.git/", "/.gradle/", "/build/", "/out/", "/target/", "/node_modules/")
+
     private def spring_ignored_path?(path : String) : Bool
-      path.includes?("/.git/") ||
-        path.includes?("/.gradle/") ||
-        path.includes?("/build/") ||
-        path.includes?("/out/") ||
-        path.includes?("/target/") ||
-        path.includes?("/node_modules/")
+      path.matches?(IGNORED_PATH_SEGMENT_RE)
     end
 
     # Read Spring Webflux base-path + static-locations from
