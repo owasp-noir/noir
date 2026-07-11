@@ -81,6 +81,12 @@ module Analyzer::Ruby
     # Web frameworks: their ENV reads are config, not a CLI surface.
     WEB_FRAMEWORK_RE = /(?:^|\n)\s*require\s+["'](?:sinatra|rails|action_controller|active_record|grape|hanami|roda|rack|rackup|puma|unicorn|thin)\b|<\s*(?:Sinatra::Base|Grape::API|ApplicationController)\b|Rails\.application/
 
+    # `cli_evidence?` runs once per .rb file and OR-ed four String#includes?
+    # scans as a standalone boolean gate. Folded into one precompiled union
+    # so the literal-marker half of the gate costs a single PCRE2 match
+    # instead of up to four naive substring scans.
+    CLI_EVIDENCE_MARKERS_RE = Regex.union("OptionParser.new", "GLI::App", "TTY::Option", "Commander::Methods")
+
     def analyze
       endpoints = {} of String => Endpoint
 
@@ -117,11 +123,8 @@ module Analyzer::Ruby
 
     private def cli_evidence?(content : String) : Bool
       content.matches?(THOR_SUBCLASS) ||
-        content.includes?("OptionParser.new") ||
-        content.includes?("GLI::App") ||
+        content.matches?(CLI_EVIDENCE_MARKERS_RE) ||
         content.matches?(/\bSlop\.(?:parse|new)\b/) ||
-        content.includes?("TTY::Option") ||
-        content.includes?("Commander::Methods") ||
         content.matches?(ARGV_INDEX) ||
         content.matches?(OPTIMIST_CALL) ||
         content.matches?(CLAMP_SUBCLASS) ||
