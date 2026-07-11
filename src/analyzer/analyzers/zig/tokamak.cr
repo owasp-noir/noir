@@ -61,6 +61,11 @@ module Analyzer::Zig
     ROUTE_CONST_RE  = /pub\s+const\s+@"(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+(\/[^"]*)"/
     STRUCT_DECL_RE  = /(?:^|[^A-Za-z0-9_.])(?:pub\s+)?const\s+([A-Za-z_]\w*)\s*=\s*struct\s*\{/
     IMPORT_RE       = /(?:pub\s+)?(?:const|var)\s+([A-Za-z_]\w*)\s*=\s*@import\(\s*"([^"]+\.zig)"\s*\)/
+    # Cheap whole-file route gate. One precompiled `Regex.union` scan (PCRE2
+    # JIT) replaces five naive `String#includes?` char scans and rejects a
+    # non-route file in a single pass instead of running all five. Equivalent
+    # to the OR-of-substrings it replaces (union escapes each literal).
+    ROUTE_FILE_RE = Regex.union("tk.Route", ".group(", ".router(", "pub fn @\"", "pub const @\"")
 
     private record GroupFrame, prefix : String, close : Int32
     # A `.router(...)` mount targeting a controller file. `scope` is the struct
@@ -88,9 +93,7 @@ module Analyzer::Zig
     end
 
     private def route_file?(content : String) : Bool
-      content.includes?("tk.Route") || content.includes?(".group(") ||
-        content.includes?(".router(") || content.includes?("pub fn @\"") ||
-        content.includes?("pub const @\"")
+      content.matches?(ROUTE_FILE_RE)
     end
 
     # alias identifier => absolute file it `@import`s.
