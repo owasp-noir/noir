@@ -59,87 +59,88 @@ module Analyzer::Python
           next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            file_content = file.gets_to_end
-            lines = file_content.lines
-            next unless lines.any?(&.includes?("bottle"))
+          # Prefer the detector-cached content over a fresh disk read;
+          # falls back to File.read (same encoding: utf-8, invalid: :skip)
+          # when the file wasn't cached.
+          file_content = read_file_content(path)
+          lines = file_content.lines
+          next unless lines.any?(&.includes?("bottle"))
 
-            router_prefixes = collect_router_prefixes(lines)
+          router_prefixes = collect_router_prefixes(lines)
 
-            # Tree-sitter pre-pass for Form 1 (`@<var>.route(...)` /
-            # `@<var>.<method>(...)`). Replaces the per-line regex sweep.
-            Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content).each do |deco|
-              methods_literal = deco.methods.map { |m| "'#{m}'" }.join(",")
-              extra_params = "methods=[#{methods_literal}]"
-              prefixes = router_prefixes[deco.router_name]? || [""]
-              prefixes.each do |prefix|
-                process_route(
-                  path,
-                  lines,
-                  line_index: deco.decorator_line,
-                  route_path: join_paths(prefix, deco.path),
-                  extra_params: extra_params,
-                  definition_base_path: current_base_path,
-                  source: file_content
-                )
+          # Tree-sitter pre-pass for Form 1 (`@<var>.route(...)` /
+          # `@<var>.<method>(...)`). Replaces the per-line regex sweep.
+          Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content).each do |deco|
+            methods_literal = deco.methods.map { |m| "'#{m}'" }.join(",")
+            extra_params = "methods=[#{methods_literal}]"
+            prefixes = router_prefixes[deco.router_name]? || [""]
+            prefixes.each do |prefix|
+              process_route(
+                path,
+                lines,
+                line_index: deco.decorator_line,
+                route_path: join_paths(prefix, deco.path),
+                extra_params: extra_params,
+                definition_base_path: current_base_path,
+                source: file_content
+              )
+            end
+          end
+
+          # Form 2 still needs per-line regex — bare `@route("/path")` has
+          # no router object, so the tree-sitter extractor (which gates
+          # on `<router>.<attr>`) doesn't match it.
+          lines.each_with_index do |line, line_index|
+            effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
+            stripped = effective_line.gsub(" ", "")
+            # `@deco` (contiguous in the source by both regex shapes) is a
+            # necessary condition for either match, so non-decorator lines
+            # skip the regex work entirely.
+            if stripped.includes?('@')
+              BARE_DECORATOR_PATTERNS.each do |deco_name, deco_guard, bare_re, orig_re, kw_re|
+                next unless stripped.includes?(deco_guard)
+                # `@route("/foo", method="POST")` or `@get("/foo")` on the stripped line.
+                if bare_match = stripped.match(bare_re)
+                  # Recover spaces in path via the original line.
+                  path_value = bare_match[1]
+                  if orig_match = effective_line.match(orig_re)
+                    path_value = orig_match[1]
+                  end
+                  extra = deco_name == "route" ? bare_match[2] : "methods=['#{deco_name.upcase}']"
+                  process_route(
+                    path,
+                    lines,
+                    line_index,
+                    path_value,
+                    extra,
+                    definition_base_path: current_base_path,
+                    source: file_content
+                  )
+                elsif kw_path_match = effective_line.match(kw_re)
+                  extra = deco_name == "route" ? effective_line : "methods=['#{deco_name.upcase}']"
+                  process_route(
+                    path,
+                    lines,
+                    line_index,
+                    kw_path_match[1],
+                    extra,
+                    definition_base_path: current_base_path,
+                    source: file_content
+                  )
+                end
               end
             end
 
-            # Form 2 still needs per-line regex — bare `@route("/path")` has
-            # no router object, so the tree-sitter extractor (which gates
-            # on `<router>.<attr>`) doesn't match it.
-            lines.each_with_index do |line, line_index|
-              effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
-              stripped = effective_line.gsub(" ", "")
-              # `@deco` (contiguous in the source by both regex shapes) is a
-              # necessary condition for either match, so non-decorator lines
-              # skip the regex work entirely.
-              if stripped.includes?('@')
-                BARE_DECORATOR_PATTERNS.each do |deco_name, deco_guard, bare_re, orig_re, kw_re|
-                  next unless stripped.includes?(deco_guard)
-                  # `@route("/foo", method="POST")` or `@get("/foo")` on the stripped line.
-                  if bare_match = stripped.match(bare_re)
-                    # Recover spaces in path via the original line.
-                    path_value = bare_match[1]
-                    if orig_match = effective_line.match(orig_re)
-                      path_value = orig_match[1]
-                    end
-                    extra = deco_name == "route" ? bare_match[2] : "methods=['#{deco_name.upcase}']"
-                    process_route(
-                      path,
-                      lines,
-                      line_index,
-                      path_value,
-                      extra,
-                      definition_base_path: current_base_path,
-                      source: file_content
-                    )
-                  elsif kw_path_match = effective_line.match(kw_re)
-                    extra = deco_name == "route" ? effective_line : "methods=['#{deco_name.upcase}']"
-                    process_route(
-                      path,
-                      lines,
-                      line_index,
-                      kw_path_match[1],
-                      extra,
-                      definition_base_path: current_base_path,
-                      source: file_content
-                    )
-                  end
-                end
-              end
-
-              if !line.lstrip.starts_with?("@") && effective_line.includes?(".route(")
-                process_programmatic_route(
-                  path,
-                  lines,
-                  line_index,
-                  effective_line,
-                  router_prefixes,
-                  definition_base_path: current_base_path,
-                  source: file_content
-                )
-              end
+            if !line.lstrip.starts_with?("@") && effective_line.includes?(".route(")
+              process_programmatic_route(
+                path,
+                lines,
+                line_index,
+                effective_line,
+                router_prefixes,
+                definition_base_path: current_base_path,
+                source: file_content
+              )
             end
           end
         end

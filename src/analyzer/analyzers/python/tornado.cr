@@ -50,61 +50,62 @@ module Analyzer::Python
           next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
-          File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-            lines = file.each_line.to_a
-            next unless lines.any?(&.includes?("tornado"))
-            api_instances = Hash(::String, ::String).new
-            path_api_instances[path] = api_instances
+          # Goes through this analyzer's own memoized read_file_content
+          # (see below), which itself prefers the detector-cached content
+          # over a fresh disk read.
+          lines = read_file_content(path).lines
+          next unless lines.any?(&.includes?("tornado"))
+          api_instances = Hash(::String, ::String).new
+          path_api_instances[path] = api_instances
 
-            # Tornado's own source documents routing with
-            # `.. code-block:: python` examples inside module/class
-            # docstrings — routing.py literally shows
-            # `Application([(r"/app1/handler", Handler)])`. Those are not
-            # real routes. Flag every line that begins inside a
-            # triple-quoted string so the route-detection entry points
-            # below skip them.
-            docstring_line = compute_docstring_line_flags(lines)
+          # Tornado's own source documents routing with
+          # `.. code-block:: python` examples inside module/class
+          # docstrings — routing.py literally shows
+          # `Application([(r"/app1/handler", Handler)])`. Those are not
+          # real routes. Flag every line that begins inside a
+          # triple-quoted string so the route-detection entry points
+          # below skip them.
+          docstring_line = compute_docstring_line_flags(lines)
 
-            lines.each_with_index do |line, line_index|
-              next if docstring_line[line_index]
-              line = line.gsub(" ", "") # remove spaces for easier regex matching
+          lines.each_with_index do |line, line_index|
+            next if docstring_line[line_index]
+            line = line.gsub(" ", "") # remove spaces for easier regex matching
 
-              # Identify Tornado Application instance assignments
-              app_match = line.includes?("Application(") ? line.match(APP_INSTANCE_RE) : nil
-              if app_match
-                app_instance_name = app_match[1]
-                api_instances[app_instance_name] ||= ""
-                tornado_app_instances[app_instance_name] ||= ""
-              end
+            # Identify Tornado Application instance assignments
+            app_match = line.includes?("Application(") ? line.match(APP_INSTANCE_RE) : nil
+            if app_match
+              app_instance_name = app_match[1]
+              api_instances[app_instance_name] ||= ""
+              tornado_app_instances[app_instance_name] ||= ""
+            end
 
-              # Look for URL routing patterns in tornado.web.Application
-              # Pattern: [(r"/path", HandlerClass), ...]
-              if line.includes?("Application(") || line.includes?("Application([")
-                # Extract URL patterns from this and following lines
-                extract_url_patterns_from_application(lines, line_index, path, api_instances)
-              end
+            # Look for URL routing patterns in tornado.web.Application
+            # Pattern: [(r"/path", HandlerClass), ...]
+            if line.includes?("Application(") || line.includes?("Application([")
+              # Extract URL patterns from this and following lines
+              extract_url_patterns_from_application(lines, line_index, path, api_instances)
+            end
 
-              # Tornado apps commonly attach routes after Application()
-              # construction via app.add_handlers(host_pattern, handlers).
-              if line.includes?(".add_handlers(")
-                extract_url_patterns_from_add_handlers(lines, line_index, path)
-              end
+            # Tornado apps commonly attach routes after Application()
+            # construction via app.add_handlers(host_pattern, handlers).
+            if line.includes?(".add_handlers(")
+              extract_url_patterns_from_add_handlers(lines, line_index, path)
+            end
 
-              # Module-level handler lists registered from ELSEWHERE.
-              # Large Tornado apps (jupyterhub, jupyter-server, the
-              # tornado demos) define routes as a top-level
-              # `default_handlers = [(r"/api/x", XHandler), ...]` /
-              # `handlers = [...]` / `url_patterns = [...]` and aggregate
-              # the list in a different module, so there's no local
-              # `Application(...)` to anchor on — the entire API was
-              # missed (jupyterhub: 66 handler tuples → 0). Detect the
-              # assignment by its conventional name and extract its
-              # tuples directly; the handler-class gate in
-              # `extract_routes_from_lines` keeps non-route lists out.
-              list_match = line.includes?("=[") ? line.match(HANDLER_LIST_RE) : nil
-              if list_match && tornado_handler_list_name?(list_match[1])
-                extract_routes_from_lines(lines, line_index, path)
-              end
+            # Module-level handler lists registered from ELSEWHERE.
+            # Large Tornado apps (jupyterhub, jupyter-server, the
+            # tornado demos) define routes as a top-level
+            # `default_handlers = [(r"/api/x", XHandler), ...]` /
+            # `handlers = [...]` / `url_patterns = [...]` and aggregate
+            # the list in a different module, so there's no local
+            # `Application(...)` to anchor on — the entire API was
+            # missed (jupyterhub: 66 handler tuples → 0). Detect the
+            # assignment by its conventional name and extract its
+            # tuples directly; the handler-class gate in
+            # `extract_routes_from_lines` keeps non-route lists out.
+            list_match = line.includes?("=[") ? line.match(HANDLER_LIST_RE) : nil
+            if list_match && tornado_handler_list_name?(list_match[1])
+              extract_routes_from_lines(lines, line_index, path)
             end
           end
         end
@@ -185,11 +186,16 @@ module Analyzer::Python
       i = start_index
       while i < lines.size
         line = lines[i].strip
+        # `String#[]` walks from the start on every call for non-ASCII
+        # content (Crystal strings aren't fixed-width), so indexing it
+        # inside this while loop was O(n^2) per line. `chars` is an
+        # Array(Char) with O(1) random access; values are unchanged.
+        chars = line.chars
         line_idx = 0
-        while line_idx < line.size
-          c = line[line_idx]
+        while line_idx < chars.size
+          c = chars[line_idx]
           if in_triple_string
-            if line_idx + 2 < line.size && c == triple_string_char && line[line_idx + 1] == triple_string_char && line[line_idx + 2] == triple_string_char
+            if line_idx + 2 < chars.size && c == triple_string_char && chars[line_idx + 1] == triple_string_char && chars[line_idx + 2] == triple_string_char
               in_triple_string = false
               line_idx += 3
               next
@@ -197,7 +203,7 @@ module Analyzer::Python
             line_idx += 1
             next
           elsif in_string
-            if c == string_char && (line_idx == 0 || line[line_idx - 1] != '\\')
+            if c == string_char && (line_idx == 0 || chars[line_idx - 1] != '\\')
               in_string = false
             end
             line_idx += 1
@@ -205,7 +211,7 @@ module Analyzer::Python
           elsif c == '#'
             break
           elsif c == '"' || c == '\''
-            if line_idx + 2 < line.size && line[line_idx + 1] == c && line[line_idx + 2] == c
+            if line_idx + 2 < chars.size && chars[line_idx + 1] == c && chars[line_idx + 2] == c
               in_triple_string = true
               triple_string_char = c
               line_idx += 3
@@ -311,17 +317,21 @@ module Analyzer::Python
         line = lines[i].strip
         block_pieces << line
 
-        # Track bracket depth, skipping characters inside string literals and comments
+        # Track bracket depth, skipping characters inside string literals and comments.
+        # `String#[]` walks from the start on every call for non-ASCII
+        # content, so indexing `line` directly inside this while loop was
+        # O(n^2) per line; `chars` gives O(1) random access instead.
         in_comment = false
+        chars = line.chars
         line_index = 0
-        while line_index < line.size
-          c = line[line_index]
+        while line_index < chars.size
+          c = chars[line_index]
 
           if in_comment
             line_index += 1
             next
           elsif in_triple_string
-            if line_index + 2 < line.size && c == triple_string_char && line[line_index + 1] == triple_string_char && line[line_index + 2] == triple_string_char
+            if line_index + 2 < chars.size && c == triple_string_char && chars[line_index + 1] == triple_string_char && chars[line_index + 2] == triple_string_char
               in_triple_string = false
               line_index += 3
               next
@@ -329,7 +339,7 @@ module Analyzer::Python
             line_index += 1
             next
           elsif in_string
-            if c == string_char && (line_index == 0 || line[line_index - 1] != '\\')
+            if c == string_char && (line_index == 0 || chars[line_index - 1] != '\\')
               in_string = false
             end
             line_index += 1
@@ -338,7 +348,7 @@ module Analyzer::Python
             if c == '#'
               in_comment = true
             elsif c == '"' || c == '\''
-              if line_index + 2 < line.size && line[line_index + 1] == c && line[line_index + 2] == c
+              if line_index + 2 < chars.size && chars[line_index + 1] == c && chars[line_index + 2] == c
                 in_triple_string = true
                 triple_string_char = c
                 line_index += 3

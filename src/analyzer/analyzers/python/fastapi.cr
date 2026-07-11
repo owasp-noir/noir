@@ -818,11 +818,17 @@ module Analyzer::Python
                                  source : ::String,
                                  import_modules : Hash(::String, Tuple(::String, Int32)),
                                  depth : Int32) : ::String?
+      # `String#[]` walks from the start on every call for non-ASCII
+      # content, so indexing `value` directly inside this while loop was
+      # O(n^2); `chars` (Array(Char)) gives O(1) random access instead.
+      # `value.index`/range-slice stay on `value` — they only run once
+      # per `{...}` placeholder found, not once per character.
+      chars = value.chars
       result = String.build do |io|
         index = 0
-        while index < value.size
-          if value[index] == '{'
-            if index + 1 < value.size && value[index + 1] == '{'
+        while index < chars.size
+          if chars[index] == '{'
+            if index + 1 < chars.size && chars[index + 1] == '{'
               io << '{'
               index += 2
               next
@@ -836,11 +842,11 @@ module Analyzer::Python
             return unless resolved
             io << resolved
             index = end_index + 1
-          elsif value[index] == '}' && index + 1 < value.size && value[index + 1] == '}'
+          elsif chars[index] == '}' && index + 1 < chars.size && chars[index + 1] == '}'
             io << '}'
             index += 2
           else
-            io << value[index]
+            io << chars[index]
             index += 1
           end
         end
@@ -869,12 +875,16 @@ module Analyzer::Python
       return unless match
 
       index = match.end
+      # `String#[]` walks from the start on every call for non-ASCII
+      # content, so indexing `call_tail` directly inside this while loop
+      # was O(n^2); `chars` gives O(1) random access instead.
+      chars = call_tail.chars
       expression = String.build do |io|
         depth = 0
         in_quote = nil
         escaped = false
-        while index < call_tail.size
-          ch = call_tail[index]
+        while index < chars.size
+          ch = chars[index]
           if in_quote
             io << ch
             if escaped
@@ -1164,8 +1174,14 @@ module Analyzer::Python
       in_quote = nil
       escaped = false
       index = 0
-      while index < input.size
-        ch = input[index]
+      # `String#[]` walks from the start on every call for non-ASCII
+      # content, so indexing `input` directly inside this while loop was
+      # O(n^2); `chars` gives O(1) random access instead. The
+      # `input[start...index]` slices below stay on `input` — they only
+      # run once per delimiter found, not once per character.
+      chars = input.chars
+      while index < chars.size
+        ch = chars[index]
         if in_quote
           if escaped
             escaped = false

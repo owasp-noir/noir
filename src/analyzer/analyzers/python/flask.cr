@@ -64,6 +64,11 @@ module Analyzer::Python
     DOTTED_REFERENCE_RE = /^#{DOT_NATION}$/
     VIEW_ASSIGN_RE      = /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(#{PYTHON_VAR_NAME_REGEX})\.as_view\(/
     ADD_URL_RULE_RE     = /(#{PYTHON_VAR_NAME_REGEX})\.add_url_rule\((.+)\)/m
+    # `view_func=` extractors for the add_url_rule scan below — same
+    # constant-only interpolation, hoisted so they aren't rebuilt on every
+    # `add_url_rule(...)` match found in a file.
+    VIEW_FUNC_AS_VIEW_RE = /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+    VIEW_FUNC_VAR_RE     = /view_func=(#{PYTHON_VAR_NAME_REGEX})[,\)]/
 
     # flask_restful / flask-restx register class-based `Resource`s with
     # `api.add_resource(ResourceClass, "/url"[, "/url2"], endpoint=...)`.
@@ -80,6 +85,37 @@ module Analyzer::Python
     @parsers = Hash(::String, PythonParser).new
     @routes = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String))).new
     @class_views = Hash(::String, Array(Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)))).new
+
+    # `Api(...)`/`add_namespace(...)`/`routes=` registration matchers
+    # interpolate a discovered instance/blueprint name, so they can't be
+    # hoisted to class constants. They used to be rebuilt from scratch for
+    # every (matching line x known-instance) pair; the discovered-name set
+    # is small and stable per scan, so memoize the compiled regex per name
+    # instead (mirrors FastAPI's `instance_regexes` cache).
+    @api_from_instance_regex_cache = Hash(::String, Regex).new
+    @add_namespace_call_regex_cache = Hash(::String, Regex).new
+    @view_registration_regex_cache = Hash(::String, Regex).new
+    @view_registration_original_regex_cache = Hash(::String, Regex).new
+
+    private def api_from_instance_regex(instance_name : ::String) : Regex
+      @api_from_instance_regex_cache[instance_name] ||=
+        /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{instance_name}[,)]/
+    end
+
+    private def add_namespace_call_regex(api_instance_name : ::String) : Regex
+      @add_namespace_call_regex_cache[api_instance_name] ||=
+        /(#{api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
+    end
+
+    private def view_registration_regex(blueprint_name : ::String) : Regex
+      @view_registration_regex_cache[blueprint_name] ||=
+        /#{blueprint_name},routes=(.*)\)/
+    end
+
+    private def view_registration_original_regex(blueprint_name : ::String) : Regex
+      @view_registration_original_regex_cache[blueprint_name] ||=
+        /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
+    end
 
     def analyze
       flask_instances = Hash(ScopedNameKey, ::String).new
@@ -216,7 +252,7 @@ module Analyzer::Python
                 flask_instances.each do |key, _prefix|
                   next unless key[0] == current_base_path
                   _flask_instance_name = key[1]
-                  api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_flask_instance_name}[,)]/
+                  api_match = api_line.match api_from_instance_regex(_flask_instance_name)
                   if api_match
                     api_instance_name = api_match[1]
                     api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
@@ -227,7 +263,7 @@ module Analyzer::Python
                 blueprint_prefixes.each do |key, _prefix|
                   next unless key[0] == current_base_path
                   _blueprint_instance_name = key[1]
-                  api_match = api_line.match /(#{PYTHON_VAR_NAME_REGEX})(?::#{DOT_NATION})?=(?:flask_restx\.)?Api\((app=)?#{_blueprint_instance_name}[,)]/
+                  api_match = api_line.match api_from_instance_regex(_blueprint_instance_name)
                   if api_match
                     api_instance_name = api_match[1]
                     api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
@@ -246,7 +282,7 @@ module Analyzer::Python
               # the call is present on this line (the match requires it).
               if ns_line.includes?(".add_namespace(")
                 api_instances.each do |_api_instance_name, _prefix|
-                  add_namespace_match = ns_line.match /(#{_api_instance_name})\.add_namespace\((#{PYTHON_VAR_NAME_REGEX})/
+                  add_namespace_match = ns_line.match add_namespace_call_regex(_api_instance_name)
                   if add_namespace_match
                     parser = get_parser(path)
                     if parser.@global_variables.has_key?(add_namespace_match[2])
@@ -280,10 +316,10 @@ module Analyzer::Python
                 blueprint_prefixes.each do |key, blueprint_prefix|
                   next unless key[0] == current_base_path
                   blueprint_name = key[1]
-                  view_registration_match = line.match /#{blueprint_name},routes=(.*)\)/
+                  view_registration_match = line.match view_registration_regex(blueprint_name)
                   if view_registration_match
                     # Re-extract route paths from original line to preserve spaces in paths
-                    original_registration_match = original_line.match /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
+                    original_registration_match = original_line.match view_registration_original_regex(blueprint_name)
                     route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
                     route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
                       if !path_str_match.nil? && path_str_match.size == 2
@@ -396,12 +432,12 @@ module Analyzer::Python
 
                 # Extract view_func: try keyword form, then positional form
                 # Keyword: view_func=ClassName.as_view('name') or view_func=view_var
-                view_func_match = args_str.match /view_func=(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+                view_func_match = args_str.match VIEW_FUNC_AS_VIEW_RE
                 if view_func_match
                   class_name = view_func_match[1]
                   view_name = view_func_match[2]
                 else
-                  view_var_match = args_str.match /view_func=(#{PYTHON_VAR_NAME_REGEX})[,\)]/
+                  view_var_match = args_str.match VIEW_FUNC_VAR_RE
                   if view_var_match
                     view_var = view_var_match[1]
                     if view_assignments.has_key?(view_var)
@@ -430,10 +466,15 @@ module Analyzer::Python
                     # Stop at keyword arguments
                     break if remaining.match /^#{PYTHON_VAR_NAME_REGEX}=/
                     # Match an expression, tracking paren depth to handle nested calls like .as_view('name')
+                    # `String#[]` walks from the start on every call for
+                    # non-ASCII content, so indexing `remaining` directly
+                    # inside this while loop was O(n^2) per segment;
+                    # `chars` gives O(1) random access instead.
                     paren_depth = 0
                     end_idx = 0
-                    while end_idx < remaining.size
-                      ch = remaining[end_idx]
+                    remaining_chars = remaining.chars
+                    while end_idx < remaining_chars.size
+                      ch = remaining_chars[end_idx]
                       if ch == '('
                         paren_depth += 1
                       elsif ch == ')'
