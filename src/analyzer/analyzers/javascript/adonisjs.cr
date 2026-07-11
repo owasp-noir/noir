@@ -4,11 +4,12 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Adonisjs < Analyzer
-    JS_EXTENSIONS  = [".js", ".mjs", ".cjs", ".ts"]
-    ADONIS_MARKERS = [
-      "@adonisjs/core",
-      "@ioc:Adonis",
-    ]
+    JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
+    # Precompiled once — a single PCRE2-JIT scan replaces two naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal, so it is provably equivalent
+    # to the OR-of-includes? it replaces.
+    ADONIS_MARKERS_RE = Regex.union("@adonisjs/core", "@ioc:Adonis")
 
     def analyze
       file_list = all_files()
@@ -17,7 +18,7 @@ module Analyzer::Javascript
         next unless JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
 
         content = read_file_content(path)
-        next unless ADONIS_MARKERS.any? { |m| content.includes?(m) }
+        next unless content.matches?(ADONIS_MARKERS_RE)
         # Reuse the shared JS test-stub gate so `*.spec.ts` /
         # `*.test.ts` (japa, vitest, jest) AdonisJS test scaffolds
         # don't leak. adonisjs/core's own repo parks ~19 phantom
