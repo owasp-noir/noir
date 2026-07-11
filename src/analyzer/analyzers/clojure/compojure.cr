@@ -35,6 +35,11 @@ module Analyzer::Clojure
       ":header-params" => "header",
     }
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
+    # Whole-file detection gate, evaluated once per candidate file.
+    # `String#matches?` (PCRE2 JIT) replaces four naive `String#includes?`
+    # char scans with a single pass; `Regex.union` auto-escapes each literal,
+    # so it is provably equivalent to the OR-of-substrings it replaces.
+    COMPOJURE_SOURCE_RE = Regex.union("compojure.core", "compojure.api", "defroutes", "(context")
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -56,10 +61,7 @@ module Analyzer::Clojure
     end
 
     private def compojure_source?(content : String) : Bool
-      content.includes?("compojure.core") ||
-        content.includes?("compojure.api") ||
-        content.includes?("defroutes") ||
-        content.includes?("(context")
+      content.matches?(COMPOJURE_SOURCE_RE)
     end
 
     private def scan_forms(source : String, start_index : Int32, end_index : Int32, prefix : String, path : String, include_callee : Bool)
