@@ -27,7 +27,11 @@ module Analyzer::Zig
     # reached through a namespace re-export (`Endpoints.UserWeb.init("/u")`),
     # and the meaningful key is the final segment (`UserWeb`), which is itself
     # preceded by a `.`.
-    INIT_RE         = /(?<![A-Za-z0-9_])([A-Za-z_]\w*)\.init\s*\(([^()]*)\)/
+    INIT_RE = /(?<![A-Za-z0-9_])([A-Za-z_]\w*)\.init\s*\(([^()]*)\)/
+    # Cheap path-binding gate: one precompiled `Regex.union` scan (PCRE2 JIT)
+    # in place of two naive `String#includes?` char scans. Equivalent to
+    # `includes?(".path") || includes?(".init(")`.
+    PATH_OR_INIT_RE = Regex.union(".path", ".init(")
     LITERAL_PATH_RE = /\.path\s*=\s*"([^"]*)"/
     HANDLE_FUNC_RE  = /\.\s*handle_func(_unbound)?\s*\(/
     IMPORT_RE       = /(?:pub\s+)?(?:const|var)\s+([A-Za-z_]\w*)\s*=\s*@import\(\s*"([^"]+\.zig)"\s*\)/
@@ -90,7 +94,7 @@ module Analyzer::Zig
           end
         end
 
-        next unless content.includes?(".path") || content.includes?(".init(")
+        next unless content.matches?(PATH_OR_INIT_RE)
 
         # Path literals/bindings inside `test { … }` blocks are unit-test
         # fixtures (the zap framework's own `test_auth.zig` binds `.path =
