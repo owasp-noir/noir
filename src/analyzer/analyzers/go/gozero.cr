@@ -204,8 +204,10 @@ module Analyzer::Go
                    else                  "query"
                    end
 
-      accessor_regex = PARAM_ACCESSOR_PATTERNS[pattern]? || /#{Regex.escape(pattern)}\(\s*"([^"]+)"/
-      if match = line.match(accessor_regex)
+      # `get_param` is only ever called with one of the five patterns
+      # `PARAM_ACCESSOR_PATTERNS` was built from (see the loop above), so
+      # this lookup always hits — no interpolated-regex fallback needed.
+      if match = line.match(PARAM_ACCESSOR_PATTERNS[pattern])
         return Param.new(match[1], "", param_type)
       end
       Param.new("", "", "")

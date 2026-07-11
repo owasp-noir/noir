@@ -141,9 +141,16 @@ module Analyzer::Go
     end
 
     private def parse_proto(content : String, file_path : String, mounts : Hash(ServiceMountKey, ServiceMount))
+      # `extract_brace_block` below walks position-by-position; a plain
+      # `String#[](Int)` re-decodes UTF-8 from the start on every call once
+      # the string has any multi-byte char, making that walk O(n^2) on
+      # non-ASCII `.proto` content (comments/strings often carry one).
+      # Precompute the char array once per file — shared by every message
+      # and service block extraction below — for O(1) positional reads.
+      chars = content.chars
       package = parse_package(content)
-      messages = parse_messages(content)
-      parse_services(content, file_path, package, messages, mounts)
+      messages = parse_messages(content, chars)
+      parse_services(content, chars, file_path, package, messages, mounts)
     end
 
     private def parse_package(content : String) : String
@@ -154,7 +161,7 @@ module Analyzer::Go
       end
     end
 
-    private def parse_messages(content : String) : Hash(String, MessageFields)
+    private def parse_messages(content : String, chars : Array(Char)) : Hash(String, MessageFields)
       messages = {} of String => MessageFields
 
       content.scan(/message\s+(\w+)\s*\{/m) do |match|
@@ -162,7 +169,7 @@ module Analyzer::Go
         start_pos = match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
         next if brace_pos.nil?
-        msg_body = extract_brace_block(content, brace_pos)
+        msg_body = extract_brace_block(content, chars, brace_pos)
         next if msg_body.nil?
 
         fields = [] of Param
@@ -184,25 +191,30 @@ module Analyzer::Go
       messages
     end
 
-    private def parse_services(content : String, file_path : String, package : String, messages : Hash(String, MessageFields), mounts : Hash(ServiceMountKey, ServiceMount))
+    private def parse_services(content : String, chars : Array(Char), file_path : String, package : String, messages : Hash(String, MessageFields), mounts : Hash(ServiceMountKey, ServiceMount))
       content.scan(/service\s+(\w+)\s*\{/m) do |service_match|
         service_name = service_match[1]
         start_pos = service_match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
         next if brace_pos.nil?
-        service_body = extract_brace_block(content, brace_pos)
+        service_body = extract_brace_block(content, chars, brace_pos)
         next if service_body.nil?
 
         parse_rpc_methods(service_body, file_path, package, service_name, messages, content, mounts)
       end
     end
 
-    private def extract_brace_block(content : String, open_pos : Int32) : String?
+    # `content` is still used for the bulk comment/string skips below (single
+    # `String#index` calls that jump straight to the target position, not a
+    # per-char walk); `chars` backs every incremental positional read so the
+    # walk stays O(1) per step regardless of encoding.
+    private def extract_brace_block(content : String, chars : Array(Char), open_pos : Int32) : String?
       depth = 0
       pos = open_pos
       in_string = false
-      while pos < content.size
-        ch = content[pos]
+      size = chars.size
+      while pos < size
+        ch = chars[pos]
         if in_string
           # A quote closes the string only when preceded by an EVEN number of
           # backslashes (so `\\"` = literal backslash + terminator toggles, but
@@ -210,21 +222,21 @@ module Analyzer::Go
           if ch == '"'
             bs = 0
             bp = pos - 1
-            while bp >= 0 && content[bp] == '\\'
+            while bp >= 0 && chars[bp] == '\\'
               bs += 1
               bp -= 1
             end
             in_string = false if bs.even?
           end
-        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '/'
+        elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '/'
           # Line comment: skip to EOL so a stray `}` or `"` can't shift state.
           nl = content.index('\n', pos)
-          pos = nl.nil? ? content.size : nl
+          pos = nl.nil? ? size : nl
           next
-        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '*'
+        elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '*'
           # Block comment: skip to the closing */.
           close = content.index("*/", pos + 2)
-          pos = close.nil? ? content.size : close + 2
+          pos = close.nil? ? size : close + 2
           next
         elsif ch == '"'
           in_string = true
@@ -232,7 +244,7 @@ module Analyzer::Go
           depth += 1
         elsif ch == '}'
           depth -= 1
-          return content[(open_pos + 1)..(pos - 1)] if depth == 0
+          return chars[(open_pos + 1)..(pos - 1)].join if depth == 0
         end
         pos += 1
       end
