@@ -2187,9 +2187,9 @@ module NoirTechs
       },
     },
     :kotlin_cli => {
-      :framework => "CLI (clikt / kotlinx-cli)",
+      :framework => "CLI (clikt / kotlinx-cli / picocli)",
       :language  => "Kotlin",
-      :similar   => ["kotlin-cli", "kotlin_cli", "clikt", "kotlinx-cli"],
+      :similar   => ["kotlin-cli", "kotlin_cli", "clikt", "kotlinx-cli", "picocli"],
       :supported => {
         :endpoint => true,
         :method   => false,
