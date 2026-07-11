@@ -31,79 +31,77 @@ module Analyzer::Php
     private def analyze_php_routes(path : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        class_prefixes = extract_class_route_prefixes(content)
+      content = read_file_content(path)
+      class_prefixes = extract_class_route_prefixes(content)
 
-        # Look for route annotations (@Route) - more flexible pattern
-        # Track offset to find each match correctly
-        offset = 0
-        content.scan(/@Route\s*\((.*?)\)/m) do |match|
-          route_path = extract_symfony_route_path(match[1])
-          next unless route_path
+      # Look for route annotations (@Route) - more flexible pattern
+      # Track offset to find each match correctly
+      offset = 0
+      content.scan(/@Route\s*\((.*?)\)/m) do |match|
+        route_path = extract_symfony_route_path(match[1])
+        next unless route_path
 
-          full_match = match[0]
+        full_match = match[0]
 
-          # Find this specific match starting from current offset
-          route_start = content.index(full_match, offset)
-          if route_start
-            offset = route_start + full_match.size
-            next if route_applies_to_class?(content, offset)
+        # Find this specific match starting from current offset
+        route_start = content.index(full_match, offset)
+        if route_start
+          offset = route_start + full_match.size
+          next if route_applies_to_class?(content, offset)
 
-            # Extract methods from the annotation itself
-            methods = extract_methods_from_symfony_context(full_match)
-            methods = ["GET"] if methods.empty?
+          # Extract methods from the annotation itself
+          methods = extract_methods_from_symfony_context(full_match)
+          methods = ["GET"] if methods.empty?
 
-            method_body = extract_php_method_body_after(content, route_start)
+          method_body = extract_php_method_body_after(content, route_start)
 
-            full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
-            params = extract_brace_path_params(full_path)
-            # Extract additional parameters from method body
-            params.concat(extract_method_params(method_body[0])) if method_body
+          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
+          params = extract_brace_path_params(full_path)
+          # Extract additional parameters from method body
+          params.concat(extract_method_params(method_body[0])) if method_body
 
-            details = Details.new(PathInfo.new(path))
+          details = Details.new(PathInfo.new(path))
 
-            methods.each do |method|
-              endpoint = Endpoint.new(full_path, method.upcase, params, details)
-              attach_method_callees(endpoint, method_body, path) if include_callee
-              endpoints << endpoint
-            end
+          methods.each do |method|
+            endpoint = Endpoint.new(full_path, method.upcase, params, details)
+            attach_method_callees(endpoint, method_body, path) if include_callee
+            endpoints << endpoint
           end
         end
+      end
 
-        # Look for route attributes (#[Route]) - PHP 8 style
-        # Track offset to find each match correctly
-        offset = 0
-        content.scan(/#\[Route\s*\((.*?)\)\]/m) do |match|
-          route_path = extract_symfony_route_path(match[1])
-          next unless route_path
+      # Look for route attributes (#[Route]) - PHP 8 style
+      # Track offset to find each match correctly
+      offset = 0
+      content.scan(/#\[Route\s*\((.*?)\)\]/m) do |match|
+        route_path = extract_symfony_route_path(match[1])
+        next unless route_path
 
-          full_match = match[0]
+        full_match = match[0]
 
-          # Find this specific match starting from current offset
-          route_start = content.index(full_match, offset)
-          if route_start
-            offset = route_start + full_match.size
-            next if route_applies_to_class?(content, offset)
+        # Find this specific match starting from current offset
+        route_start = content.index(full_match, offset)
+        if route_start
+          offset = route_start + full_match.size
+          next if route_applies_to_class?(content, offset)
 
-            # Extract methods from the attribute itself
-            methods = extract_methods_from_symfony_context(full_match)
-            methods = ["GET"] if methods.empty?
+          # Extract methods from the attribute itself
+          methods = extract_methods_from_symfony_context(full_match)
+          methods = ["GET"] if methods.empty?
 
-            method_body = extract_php_method_body_after(content, route_start)
+          method_body = extract_php_method_body_after(content, route_start)
 
-            full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
-            params = extract_brace_path_params(full_path)
-            # Extract additional parameters from method body
-            params.concat(extract_method_params(method_body[0])) if method_body
+          full_path = build_full_path(class_prefix_for_position(class_prefixes, route_start), route_path)
+          params = extract_brace_path_params(full_path)
+          # Extract additional parameters from method body
+          params.concat(extract_method_params(method_body[0])) if method_body
 
-            details = Details.new(PathInfo.new(path))
+          details = Details.new(PathInfo.new(path))
 
-            methods.each do |method|
-              endpoint = Endpoint.new(full_path, method.upcase, params, details)
-              attach_method_callees(endpoint, method_body, path) if include_callee
-              endpoints << endpoint
-            end
+          methods.each do |method|
+            endpoint = Endpoint.new(full_path, method.upcase, params, details)
+            attach_method_callees(endpoint, method_body, path) if include_callee
+            endpoints << endpoint
           end
         end
       end
@@ -208,33 +206,31 @@ module Analyzer::Php
       endpoints = [] of Endpoint
 
       begin
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          content = file.gets_to_end
+        content = read_file_content(path)
 
-          # Simple YAML route parsing for Symfony
-          # Look for patterns like:
-          # route_name:
-          #   path: /api/users/{id}
-          #   methods: [GET, POST]
+        # Simple YAML route parsing for Symfony
+        # Look for patterns like:
+        # route_name:
+        #   path: /api/users/{id}
+        #   methods: [GET, POST]
 
-          yaml = YAML.parse(content)
-          if routes = yaml.as_h?
-            routes.each_value do |route|
-              route_h = route.as_h?
-              next unless route_h
+        yaml = YAML.parse(content)
+        if routes = yaml.as_h?
+          routes.each_value do |route|
+            route_h = route.as_h?
+            next unless route_h
 
-              route_path = route_h[YAML::Any.new("path")]?.try(&.as_s?)
-              next unless route_path
+            route_path = route_h[YAML::Any.new("path")]?.try(&.as_s?)
+            next unless route_path
 
-              methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
-              methods = ["GET"] if methods.empty?
+            methods = extract_yaml_methods(route_h[YAML::Any.new("methods")]?)
+            methods = ["GET"] if methods.empty?
 
-              params = extract_brace_path_params(route_path)
-              details = Details.new(PathInfo.new(path))
+            params = extract_brace_path_params(route_path)
+            details = Details.new(PathInfo.new(path))
 
-              methods.each do |method|
-                endpoints << Endpoint.new(route_path, method.upcase, params, details)
-              end
+            methods.each do |method|
+              endpoints << Endpoint.new(route_path, method.upcase, params, details)
             end
           end
         end
