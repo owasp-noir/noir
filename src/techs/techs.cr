@@ -3555,9 +3555,9 @@ module NoirTechs
       },
     },
     :scala_cli => {
-      :framework => "CLI (scopt / decline / mainargs)",
+      :framework => "CLI (scopt / decline / mainargs / scallop / twitter-util)",
       :language  => "Scala",
-      :similar   => ["scala-cli", "scala_cli", "scopt", "decline", "mainargs"],
+      :similar   => ["scala-cli", "scala_cli", "scopt", "decline", "mainargs", "scallop", "twitter-util", "util-app"],
       :supported => {
         :endpoint => true,
         :method   => false,
