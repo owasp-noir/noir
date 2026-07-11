@@ -1028,14 +1028,20 @@ module Analyzer::Swift
     end
 
     private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
+      # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
+      # `line[index]` re-walks from byte 0 to locate the char offset, making
+      # this scan O(n^2). Materializing the char array once keeps indexed
+      # access O(1) and the whole scan O(n); the single closing slice below
+      # (`line[args_start...index]`) is unchanged and still O(n) once.
+      chars = line.chars
       depth = 1
       in_string = false
       escaped = false
       quote = '"'
       index = args_start
 
-      while index < line.size
-        char = line[index]
+      while index < chars.size
+        char = chars[index]
 
         if in_string
           if escaped
