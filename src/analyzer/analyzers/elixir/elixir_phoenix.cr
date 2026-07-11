@@ -86,7 +86,10 @@ module Analyzer::Elixir
       in_triple_double = false
       in_triple_single = false
 
-      content = File.open(path, "r", encoding: "utf-8", invalid: :skip, &.gets_to_end)
+      # `read_file_content` reuses the detector's already-cached bytes
+      # (same "utf-8"/`invalid: :skip` decoding as the `File.open` this
+      # replaced) instead of re-reading the file from disk here.
+      content = read_file_content(path)
       lines = content.lines
       current_module = extract_module_name(content)
 
