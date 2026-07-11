@@ -115,6 +115,10 @@ module Analyzer::Typescript
       ".subscription(",
       ".subscription (",
     ]
+    # One precompiled `Regex.union` (PCRE2 JIT) scan replaces the six-item
+    # `.any? { includes? }` check below — this gate is evaluated on every
+    # candidate file, from both v9_router_candidate? and trpc_candidate?.
+    PROCEDURE_HINTS_RE = Regex.union(PROCEDURE_HINTS)
 
     PREFIX_HINTS = [
       "endpoint:",
@@ -123,17 +127,29 @@ module Analyzer::Typescript
       "fastifyTRPCPlugin",
       "fastifyTRPC",
     ]
+    PREFIX_HINTS_RE = Regex.union(PREFIX_HINTS)
 
     V9_MERGE_HINTS = [
       ".merge(",
       ".merge (",
     ]
+    V9_MERGE_HINTS_RE = Regex.union(V9_MERGE_HINTS)
+
+    # `initTRPC`/`createTRPCRouter` are OR-ed as a standalone boolean gate
+    # in trpc_candidate? below; union them into one scan like the hint
+    # lists above instead of two sequential String#includes? calls.
+    TRPC_ROOT_MARKER_RE = Regex.union("initTRPC", "createTRPCRouter")
+
+    # `createRouter`/`trpc.router` gate the v9 chain-router shape.
+    V9_ROUTER_MARKER_RE = Regex.union("createRouter", "trpc.router")
+
+    # `Procedure`/`.procedure` identify a procedure-builder reference.
+    PROCEDURE_BUILDER_RE = Regex.union("Procedure", ".procedure")
 
     private def trpc_candidate?(content : String) : Bool
       content.matches?(/endpoint\s*:/) ||
-        PREFIX_HINTS.any? { |hint| content.includes?(hint) } ||
-        content.includes?("initTRPC") ||
-        content.includes?("createTRPCRouter") ||
+        content.matches?(PREFIX_HINTS_RE) ||
+        content.matches?(TRPC_ROOT_MARKER_RE) ||
         # A pure ROOT/sub-router composition file (`export const appRouter =
         # router({ document: documentRouter, ... })`) has no inline
         # procedure hint, so the old `router( && .query(` gate skipped it —
@@ -146,21 +162,20 @@ module Analyzer::Typescript
         # OSS apps still use this shape, and it has no `Procedure` builder.
         v9_router_candidate?(content) ||
         # A standalone procedure-definition file (no `router(...)`).
-        (procedure_builder?(content) && PROCEDURE_HINTS.any? { |hint| content.includes?(hint) })
+        (procedure_builder?(content) && content.matches?(PROCEDURE_HINTS_RE))
     end
 
     private def v9_router_candidate?(content : String) : Bool
-      return false unless content.includes?("createRouter") || content.includes?("trpc.router")
+      return false unless content.matches?(V9_ROUTER_MARKER_RE)
 
-      V9_MERGE_HINTS.any? { |hint| content.includes?(hint) } ||
-        PROCEDURE_HINTS.any? { |hint| content.includes?(hint) }
+      content.matches?(V9_MERGE_HINTS_RE) || content.matches?(PROCEDURE_HINTS_RE)
     end
 
     # tRPC builders are conventionally named `*Procedure` (publicProcedure,
     # protectedProcedure, authenticatedProcedure) or accessed as
     # `t.procedure`.
     private def procedure_builder?(content : String) : Bool
-      content.includes?("Procedure") || content.includes?(".procedure")
+      content.matches?(PROCEDURE_BUILDER_RE)
     end
 
     # `import { router } from '.../trpc'` — tRPC's `router` factory, as
@@ -276,13 +291,19 @@ module Analyzer::Typescript
     private def collect_v9_chain_routers(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
       collected = [] of Router
       assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/
+      # `find_statement_end`/`skip_whitespace` index by char; materializing
+      # `chars` once per file (instead of once per assignment match) keeps
+      # a non-ASCII file with many top-level declarations from re-walking
+      # `content` from byte 0 on every char access (Crystal has no
+      # char-index cache), which is O(n) per char -> O(n^2) per match.
+      chars = content.chars
 
       content.scan(assignment_pattern) do |match|
         match_start = match.begin(0) || 0
         next if literal_position?(literal_mask, match_start)
 
-        value_start = skip_whitespace(content, match.end(0) || 0)
-        statement_end = find_statement_end(content, value_start)
+        value_start = skip_whitespace(chars, match.end(0) || 0)
+        statement_end = find_statement_end(chars, value_start)
         expression = content[value_start...statement_end]
         next unless v9_router_chain_expression?(expression)
 
@@ -305,14 +326,15 @@ module Analyzer::Typescript
         expression.includes?(".subscription")
     end
 
-    private def find_statement_end(content : String, start : Int32) : Int32
+    private def find_statement_end(chars : Array(Char), start : Int32) : Int32
       depth = 0
       quote : Char? = nil
       escaped = false
       i = start
+      n = chars.size
 
-      while i < content.size
-        char = content[i]
+      while i < n
+        char = chars[i]
 
         if quote
           if escaped
@@ -336,10 +358,10 @@ module Analyzer::Typescript
         when '\n'
           if depth == 0
             next_pos = i + 1
-            while next_pos < content.size && (content[next_pos] == ' ' || content[next_pos] == '\t')
+            while next_pos < n && (chars[next_pos] == ' ' || chars[next_pos] == '\t')
               next_pos += 1
             end
-            return i unless content[next_pos]? == '.'
+            return i unless chars[next_pos]? == '.'
           end
         when ';'
           return i if depth == 0
@@ -348,12 +370,13 @@ module Analyzer::Typescript
         i += 1
       end
 
-      content.size
+      n
     end
 
-    private def skip_whitespace(content : String, pos : Int32) : Int32
+    private def skip_whitespace(chars : Array(Char), pos : Int32) : Int32
       i = pos
-      while i < content.size && content[i].whitespace?
+      n = chars.size
+      while i < n && chars[i].whitespace?
         i += 1
       end
       i
@@ -465,6 +488,13 @@ module Analyzer::Typescript
     # procedure definitions so a router that references NAME resolves it.
     private def collect_procedures(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Procedure)
       collected = [] of Procedure
+      # `procedure_terminal`/`verb_call_at?` index by char within an
+      # up-to-8000-char window; materializing `chars` once per file
+      # (instead of once per declaration) keeps a non-ASCII file with many
+      # top-level declarations from re-walking `content` from byte 0 on
+      # every char access (Crystal has no char-index cache) — otherwise a
+      # single call already costs up to O(8000 * start).
+      chars = content.chars
       content.scan(/\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/) do |match|
         match_start = match.begin(0) || 0
         next if literal_position?(literal_mask, match_start)
@@ -473,7 +503,7 @@ module Analyzer::Typescript
         first = content[value_start]?
         next unless first && (first.ascii_letter? || first == '_' || first == '$')
 
-        info = procedure_terminal(content, value_start)
+        info = procedure_terminal(content, chars, value_start)
         next unless info
         method, value = info
         line = content[0, match_start].count('\n') + 1
@@ -487,12 +517,13 @@ module Analyzer::Typescript
     # `.query/.mutation/.subscription(` terminal is found. Nested parens —
     # the `.input(z.object({...}))` schema, refinement arrows, the resolver
     # — sit at depth > 0, so only the procedure's own terminal verb matches.
-    private def procedure_terminal(content : String, start : Int32) : Tuple(String, String)?
+    private def procedure_terminal(content : String, chars : Array(Char), start : Int32) : Tuple(String, String)?
       i = start
       depth = 0
-      limit = Math.min(content.size, start + 8000)
+      n = chars.size
+      limit = Math.min(n, start + 8000)
       while i < limit
-        case content[i]
+        case chars[i]
         when '(', '[', '{'
           depth += 1
         when ')', ']', '}'
@@ -503,7 +534,7 @@ module Analyzer::Typescript
         when '.'
           if depth == 0
             PROCEDURE_VERBS.each do |verb, method|
-              return {method, content[start...i]} if verb_call_at?(content, i + 1, verb)
+              return {method, content[start...i]} if verb_call_at?(chars, i + 1, verb)
             end
           end
         else
@@ -514,20 +545,21 @@ module Analyzer::Typescript
       nil
     end
 
-    private def verb_call_at?(content : String, pos : Int32, verb : String) : Bool
-      return false if pos + verb.size > content.size
+    private def verb_call_at?(chars : Array(Char), pos : Int32, verb : String) : Bool
+      n = chars.size
+      return false if pos + verb.size > n
       verb.each_char_with_index do |ch, k|
-        return false unless content[pos + k] == ch
+        return false unless chars[pos + k] == ch
       end
       after = pos + verb.size
-      if nxt = content[after]?
+      if nxt = chars[after]?
         return false if nxt.ascii_alphanumeric? || nxt == '_'
       end
       j = after
-      while j < content.size && content[j].whitespace?
+      while j < n && chars[j].whitespace?
         j += 1
       end
-      content[j]? == '('
+      chars[j]? == '('
     end
 
     private def extract_object_assignment_body(content : String, identifier : String, literal_mask : Array(Bool)) : Tuple(String, Int32)?
@@ -585,46 +617,54 @@ module Analyzer::Typescript
     end
 
     private def each_top_level_kv(body : String, &)
+      # `body[i]` walks a non-ASCII String from byte 0 on every access
+      # (Crystal has no char-index cache), turning this per-char state
+      # machine — which scans an entire router/procedure map body — O(n)
+      # per char -> O(n^2). Materialize `chars` once and thread it through
+      # to `find_matching_bracket`/`skip_top_level_to_comma` so the
+      # conversion isn't repeated per key/value pair; all substring
+      # extraction still reads from the original `body` String.
+      chars = body.chars
       i = 0
-      n = body.size
+      n = chars.size
       while i < n
-        while i < n && (body[i].whitespace? || body[i] == ',' || body[i] == ';')
+        while i < n && (chars[i].whitespace? || chars[i] == ',' || chars[i] == ';')
           i += 1
         end
         break if i >= n
 
-        key = case body[i]
+        key = case chars[i]
               when '\'', '"', '`'
-                quote = body[i]
+                quote = chars[i]
                 j = i + 1
-                while j < n && body[j] != quote
-                  j += body[j] == '\\' ? 2 : 1
+                while j < n && chars[j] != quote
+                  j += chars[j] == '\\' ? 2 : 1
                 end
                 literal = body[(i + 1)...j]
                 i = j < n ? j + 1 : j
                 literal
               when '['
                 # Computed key like ['foo']: ... — skip the bracket span.
-                if close = find_matching_bracket(body, i)
+                if close = find_matching_bracket(chars, i)
                   literal = body[(i + 1)...close].strip.gsub(/^['"`]|['"`]$/, "")
                   i = close + 1
                   literal
                 else
-                  i = skip_top_level_to_comma(body, i)
+                  i = skip_top_level_to_comma(chars, i)
                   ""
                 end
               else
-                c = body[i]
+                c = chars[i]
                 if c.ascii_letter? || c == '_' || c == '$'
                   j = i
-                  while j < n && (body[j].ascii_alphanumeric? || body[j] == '_' || body[j] == '$')
+                  while j < n && (chars[j].ascii_alphanumeric? || chars[j] == '_' || chars[j] == '$')
                     j += 1
                   end
                   literal = body[i...j]
                   i = j
                   literal
                 else
-                  i = skip_top_level_to_comma(body, i)
+                  i = skip_top_level_to_comma(chars, i)
                   ""
                 end
               end
@@ -633,27 +673,27 @@ module Analyzer::Typescript
           next
         end
 
-        while i < n && body[i].whitespace?
+        while i < n && chars[i].whitespace?
           i += 1
         end
 
-        if i >= n || body[i] == ','
+        if i >= n || chars[i] == ','
           # Shorthand: `userRouter,` — value is the same identifier.
           value_line = body[0, i].count('\n') + 1
           yield key, key, value_line unless key.empty?
-          i += 1 if i < n && body[i] == ','
+          i += 1 if i < n && chars[i] == ','
           next
         end
 
-        unless body[i] == ':'
+        unless chars[i] == ':'
           # Spread, method shorthand, or other construct we don't handle.
-          i = skip_top_level_to_comma(body, i)
+          i = skip_top_level_to_comma(chars, i)
           next
         end
 
         i += 1
         value_start = i
-        value_end = skip_top_level_to_comma(body, i)
+        value_end = skip_top_level_to_comma(chars, i)
         value = body[value_start...value_end]
         value_line = body[0, value_start].count('\n') + 1
         yield key, value, value_line unless key.empty?
@@ -661,12 +701,12 @@ module Analyzer::Typescript
       end
     end
 
-    private def find_matching_bracket(body : String, open : Int32) : Int32?
+    private def find_matching_bracket(chars : Array(Char), open : Int32) : Int32?
       depth = 0
       i = open
-      n = body.size
+      n = chars.size
       while i < n
-        c = body[i]
+        c = chars[i]
         if c == '['
           depth += 1
         elsif c == ']'
@@ -716,18 +756,18 @@ module Analyzer::Typescript
       parts.reject(&.empty?)
     end
 
-    private def skip_top_level_to_comma(body : String, start : Int32) : Int32
+    private def skip_top_level_to_comma(chars : Array(Char), start : Int32) : Int32
       depth = 0
       i = start
-      n = body.size
+      n = chars.size
       while i < n
-        c = body[i]
+        c = chars[i]
         case c
         when '\'', '"', '`'
           quote = c
           i += 1
-          while i < n && body[i] != quote
-            i += body[i] == '\\' ? 2 : 1
+          while i < n && chars[i] != quote
+            i += chars[i] == '\\' ? 2 : 1
           end
           i += 1
           next
@@ -973,7 +1013,7 @@ module Analyzer::Typescript
     private def input_property_value(options_body : String) : String?
       options_body.scan(/(?:\A|,)\s*input\s*:/m) do |match|
         value_start = match.end(0) || 0
-        value_end = skip_top_level_to_comma(options_body, value_start)
+        value_end = skip_top_level_to_comma(options_body.chars, value_start)
         return options_body[value_start...value_end].strip
       end
 
@@ -984,17 +1024,22 @@ module Analyzer::Typescript
       fields = [] of String
       depth = 0
       i = 0
-      n = schema.size
+      # `schema[i]` walks a non-ASCII String from byte 0 on every access
+      # (Crystal has no char-index cache); materializing `chars` once
+      # makes this whole-schema-body scan O(n) instead of O(n^2). Field
+      # names are still sliced from the original `schema` String.
+      chars = schema.chars
+      n = chars.size
       key_start = -1
 
       while i < n
-        c = schema[i]
+        c = chars[i]
         case c
         when '\'', '"', '`'
           quote = c
           i += 1
-          while i < n && schema[i] != quote
-            i += schema[i] == '\\' ? 2 : 1
+          while i < n && chars[i] != quote
+            i += chars[i] == '\\' ? 2 : 1
           end
           i += 1
           next
@@ -1013,10 +1058,10 @@ module Analyzer::Typescript
             # we distinguish a property key from any other identifier left
             # at depth 0 by oddly formatted schemas.
             j = i
-            while j < n && schema[j].whitespace?
+            while j < n && chars[j].whitespace?
               j += 1
             end
-            fields << name if j < n && schema[j] == ':'
+            fields << name if j < n && chars[j] == ':'
             key_start = -1
           end
         else
