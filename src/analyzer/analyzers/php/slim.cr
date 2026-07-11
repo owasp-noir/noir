@@ -25,14 +25,18 @@ module Analyzer::Php
       endpoints
     end
 
+    # Precompiled once at load: these four markers used to be four separate
+    # `String#includes?` scans of the whole file ORed together. Crystal's
+    # `String#includes?` is measurably slower than a single precompiled
+    # `Regex#matches?` call, and this runs on every .php file fed into the
+    # analyzer during a project-wide scan.
+    RELEVANCE_MARKER_RE = /Slim\\|SlimFramework|AppFactory|RouteCollectorProxy/
+
     # Cheap pre-filter: avoid heavy regex work on files that clearly aren't
     # Slim. Any file that reaches this analyzer via detection is usually in
     # a Slim project, but project-wide scans still feed unrelated PHP here.
     private def slim_relevant?(content : String) : Bool
-      content.includes?("Slim\\") ||
-        content.includes?("SlimFramework") ||
-        content.includes?("AppFactory") ||
-        content.includes?("RouteCollectorProxy") ||
+      content.matches?(RELEVANCE_MARKER_RE) ||
         !!content.match(/\$\w+->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i)
     end
 
