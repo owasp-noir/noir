@@ -26,6 +26,10 @@ module Analyzer::Go
       "github.com/alecthomas/kingpin",
       "gopkg.in/alecthomas/kingpin.v2",
     ]
+    # `FRAMEWORK_IMPORTS.any? { |m| content.includes?(m) }` re-scans the
+    # whole file once per marker (used at two call sites below); one
+    # precompiled `Regex.union` (PCRE2 JIT) checks all nine in a single pass.
+    FRAMEWORK_IMPORTS_RE = Regex.union(FRAMEWORK_IMPORTS)
 
     # --- builtin flag / argv -------------------------------------------------
     # The flag name is always the FIRST quoted string in the call: the `*Var`
@@ -127,7 +131,7 @@ module Analyzer::Go
           binary = go_binary_name(modules, path)
           root_url = "cli://#{binary}"
           lines = content.lines
-          framework_cli = FRAMEWORK_IMPORTS.any? { |marker| content.includes?(marker) }
+          framework_cli = content.matches?(FRAMEWORK_IMPORTS_RE)
           # stdlib flag / os.Args / raw os.Getenv only describe a CLI surface
           # when this file isn't really an HTTP server using flags for config.
           # An explicit CLI framework (cobra/urfave/...) overrides that — a
@@ -166,25 +170,34 @@ module Analyzer::Go
     # A file is part of the CLI surface when it imports a CLI framework or
     # uses the stdlib flag package / os.Args directly.
     private def cli_evidence?(content : String) : Bool
-      return true if FRAMEWORK_IMPORTS.any? { |m| content.includes?(m) }
+      return true if content.matches?(FRAMEWORK_IMPORTS_RE)
       return true if content.includes?("\"flag\"") &&
                      (content.matches?(BUILTIN_FLAG_RE) || content.includes?("flag.Parse(") ||
                      content.matches?(BUILTIN_ARG_RE) || content.matches?(BUILTIN_ARGS_RE))
       content.matches?(OS_ARG_INDEX_RE)
     end
 
+    # Five markers OR-ed as a standalone boolean gate for `cli_parse_point?`
+    # below — one precompiled `Regex.union` (PCRE2 JIT) replaces the
+    # separate `content.includes?` scan each used to make over the same
+    # buffer. kong/kingpin/mitchellh are deliberately excluded (see the
+    # comment in `cli_parse_point?`).
+    CLI_PARSE_POINT_RE = Regex.union(
+      "github.com/spf13/cobra",
+      "github.com/urfave/cli",
+      "github.com/alexflint/go-arg",
+      "github.com/jessevdk/go-flags",
+      "flag.Parse(",
+    )
+
     # A real argv/flag parse point — used to gate raw os.Getenv reads so a
     # web app's config reads don't masquerade as a CLI surface.
     private def cli_parse_point?(content : String) : Bool
-      return true if content.includes?("github.com/spf13/cobra")
-      return true if content.includes?("github.com/urfave/cli")
-      return true if content.includes?("github.com/alexflint/go-arg")
-      return true if content.includes?("github.com/jessevdk/go-flags")
       # kong/kingpin/mitchellh's own scans attribute their env vars
       # precisely (struct tag / .Envar() / scoped Run() body) — they
       # deliberately don't opt into the raw root-level os.Getenv fallback
       # below, which would double-attribute (or mis-scope) those reads.
-      return true if content.includes?("flag.Parse(")
+      return true if content.matches?(CLI_PARSE_POINT_RE)
       return true if content.matches?(OS_ARG_INDEX_RE)
       content.includes?("os.Args")
     end
