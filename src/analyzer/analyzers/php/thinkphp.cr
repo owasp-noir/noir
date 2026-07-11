@@ -26,32 +26,30 @@ module Analyzer::Php
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
+      content = read_file_content(path)
 
-        # 1. Explicit Route definitions
-        if is_route
-          # Determine base prefix from multi-app route files (e.g. app/shop/route/app.php -> prefix is "/shop")
-          base_prefix = ""
-          if path.includes?("app/") || path.includes?("application/")
-            segments = path.split('/')
-            route_idx = segments.index("route")
-            if route_idx && route_idx > 1
-              parent = segments[route_idx - 1]
-              if parent != "app" && parent != "application"
-                base_prefix = "/" + camel_to_snake(parent)
-              end
+      # 1. Explicit Route definitions
+      if is_route
+        # Determine base prefix from multi-app route files (e.g. app/shop/route/app.php -> prefix is "/shop")
+        base_prefix = ""
+        if path.includes?("app/") || path.includes?("application/")
+          segments = path.split('/')
+          route_idx = segments.index("route")
+          if route_idx && route_idx > 1
+            parent = segments[route_idx - 1]
+            if parent != "app" && parent != "application"
+              base_prefix = "/" + camel_to_snake(parent)
             end
           end
-
-          endpoints.concat(analyze_routes_content(content, base_prefix, path, include_callee))
         end
 
-        # 2. Implicit Controller auto-routing
-        if is_controller
-          endpoints.concat(analyze_controller(path, content, include_callee))
-          endpoints.concat(analyze_annotation_routes(path, content, include_callee))
-        end
+        endpoints.concat(analyze_routes_content(content, base_prefix, path, include_callee))
+      end
+
+      # 2. Implicit Controller auto-routing
+      if is_controller
+        endpoints.concat(analyze_controller(path, content, include_callee))
+        endpoints.concat(analyze_annotation_routes(path, content, include_callee))
       end
 
       endpoints
