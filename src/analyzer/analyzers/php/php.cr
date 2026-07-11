@@ -2,6 +2,14 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Php < PhpEngine
+    # Precompiled once at load. The per-line gate below used to be
+    # `allow_patterns.any? { |pattern| line.includes? pattern }` — 7
+    # `String#includes?` scans of the line per pattern. Crystal's
+    # `String#includes?` is measurably slower than a single precompiled
+    # `Regex#matches?` call, and this runs on every line of every `.php`
+    # file in the project, so the union regex is a straight win.
+    ALLOW_PATTERNS_RE = Regex.union(["$_GET", "$_POST", "$_REQUEST", "$_SERVER", "$_COOKIE", "$_FILES", "filter_input"])
+
     def analyze_file(path : String) : Array(Endpoint)
       return [] of Endpoint unless File.extname(path) == ".php"
 
@@ -9,59 +17,57 @@ module Analyzer::Php
       relative_path = get_relative_path(php_base_path_for(path), path)
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        params_query = [] of Param
-        params_body = [] of Param
-        methods = [] of String
+      content = read_file_content(path)
+      params_query = [] of Param
+      params_body = [] of Param
+      methods = [] of String
 
-        content.each_line do |line|
-          if allow_patterns.any? { |pattern| line.includes? pattern }
-            superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
-            superglobal_matches.each do |match|
-              apply_param_reference(match[1], match[2], params_query, params_body, methods)
-            end
-
-            filter_input_matches = line.scan(/filter_input\s*\(\s*INPUT_(GET|POST|REQUEST|SERVER|COOKIE)\s*,\s*['"]([^'"]+)['"]/)
-            filter_input_matches.each do |match|
-              apply_param_reference(match[1], match[2], params_query, params_body, methods)
-            end
+      content.each_line do |line|
+        if line.matches?(ALLOW_PATTERNS_RE)
+          superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
+          superglobal_matches.each do |match|
+            apply_param_reference(match[1], match[2], params_query, params_body, methods)
           end
-        rescue
-          next
-        end
 
-        # For the pure-PHP analyzer we are parameter-driven (not route-driven).
-        # A file with thousands of superglobal references (e.g. a large controller
-        # with many action methods) used to produce thousands of near-identical
-        # Endpoint objects for the same pseudo-path. The optimizer would later
-        # collapse them by (method, url) while merging params. Creating the
-        # duplicates up-front was extremely expensive on large files.
-        #
-        # We emit at most the POST pseudo-endpoint (when any POST/REQUEST/FILES
-        # reference was seen) plus the always-present GET pseudo-endpoint (for
-        # query/cookie/header params discovered in the file). We also deduplicate
-        # params by (name, param_type) in first-seen order so that the Endpoint
-        # objects we hand to later stages carry the same logical set that the
-        # optimizer would have produced. This is semantically identical to the
-        # previous behaviour for all observable outputs and test expectations,
-        # but avoids the O(N) explosion in intermediate objects.
-        #
-        # Note: unlike real framework analyzers, this one only ever contributes
-        # "POST" (or nothing) to the methods list; the GET is emitted separately.
-        # The wording is intentionally specific to avoid implying full multi-verb
-        # route support here.
-        distinct_methods = methods.uniq
-        query_params = unique_params_preserve_order(params_query)
-        body_params = unique_params_preserve_order(params_body)
-
-        details = Details.new(PathInfo.new(path))
-        distinct_methods.each do |method|
-          endpoints << Endpoint.new("/#{relative_path}", method, body_params, details)
+          filter_input_matches = line.scan(/filter_input\s*\(\s*INPUT_(GET|POST|REQUEST|SERVER|COOKIE)\s*,\s*['"]([^'"]+)['"]/)
+          filter_input_matches.each do |match|
+            apply_param_reference(match[1], match[2], params_query, params_body, methods)
+          end
         end
-        endpoints << Endpoint.new("/#{relative_path}", "GET", query_params, details)
-        attach_file_callees(endpoints, content, path) if include_callee
+      rescue
+        next
       end
+
+      # For the pure-PHP analyzer we are parameter-driven (not route-driven).
+      # A file with thousands of superglobal references (e.g. a large controller
+      # with many action methods) used to produce thousands of near-identical
+      # Endpoint objects for the same pseudo-path. The optimizer would later
+      # collapse them by (method, url) while merging params. Creating the
+      # duplicates up-front was extremely expensive on large files.
+      #
+      # We emit at most the POST pseudo-endpoint (when any POST/REQUEST/FILES
+      # reference was seen) plus the always-present GET pseudo-endpoint (for
+      # query/cookie/header params discovered in the file). We also deduplicate
+      # params by (name, param_type) in first-seen order so that the Endpoint
+      # objects we hand to later stages carry the same logical set that the
+      # optimizer would have produced. This is semantically identical to the
+      # previous behaviour for all observable outputs and test expectations,
+      # but avoids the O(N) explosion in intermediate objects.
+      #
+      # Note: unlike real framework analyzers, this one only ever contributes
+      # "POST" (or nothing) to the methods list; the GET is emitted separately.
+      # The wording is intentionally specific to avoid implying full multi-verb
+      # route support here.
+      distinct_methods = methods.uniq
+      query_params = unique_params_preserve_order(params_query)
+      body_params = unique_params_preserve_order(params_body)
+
+      details = Details.new(PathInfo.new(path))
+      distinct_methods.each do |method|
+        endpoints << Endpoint.new("/#{relative_path}", method, body_params, details)
+      end
+      endpoints << Endpoint.new("/#{relative_path}", "GET", query_params, details)
+      attach_file_callees(endpoints, content, path) if include_callee
 
       endpoints
     end

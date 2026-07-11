@@ -34,11 +34,9 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       begin
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          content = file.gets_to_end
-          endpoints.concat(analyze_routes_content(content, "", path, include_callee, "App\\Controllers"))
-          endpoints.concat(analyze_ci3_routes(content, path))
-        end
+        content = read_file_content(path)
+        endpoints.concat(analyze_routes_content(content, "", path, include_callee, "App\\Controllers"))
+        endpoints.concat(analyze_ci3_routes(content, path))
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
       end

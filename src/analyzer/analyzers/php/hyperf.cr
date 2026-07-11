@@ -24,10 +24,8 @@ module Analyzer::Php
       return endpoints unless path.ends_with?(".php")
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless hyperf_relevant?(content)
-
+      content = read_file_content(path)
+      if hyperf_relevant?(content)
         endpoints.concat(analyze_annotation_routes(content, path, include_callee))
         endpoints.concat(analyze_procedural_routes(content, "", path, include_callee))
       end
@@ -39,8 +37,11 @@ module Analyzer::Php
     # aren't part of a Hyperf project. Project-wide scans still feed unrelated
     # PHP through this analyzer.
     private def hyperf_relevant?(content : String) : Bool
+      # `content.includes?("Hyperf\\HttpServer")` used to be ORed in here
+      # too, but any string containing that substring necessarily contains
+      # "Hyperf\\" — the check was dead weight, always scanning the whole
+      # buffer a second time for a condition the first check already covers.
       content.includes?("Hyperf\\") ||
-        content.includes?("Hyperf\\HttpServer") ||
         !!content.match(/\bRouter::(?:get|post|put|patch|delete|options|head|addRoute|addGroup)\s*\(/i) ||
         !!content.match(/#\[\s*(?:AutoController|Controller|Get|Post|Put|Patch|Delete|Options|Head|RequestMapping)/)
     end

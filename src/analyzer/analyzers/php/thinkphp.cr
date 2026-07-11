@@ -26,32 +26,30 @@ module Analyzer::Php
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
+      content = read_file_content(path)
 
-        # 1. Explicit Route definitions
-        if is_route
-          # Determine base prefix from multi-app route files (e.g. app/shop/route/app.php -> prefix is "/shop")
-          base_prefix = ""
-          if path.includes?("app/") || path.includes?("application/")
-            segments = path.split('/')
-            route_idx = segments.index("route")
-            if route_idx && route_idx > 1
-              parent = segments[route_idx - 1]
-              if parent != "app" && parent != "application"
-                base_prefix = "/" + camel_to_snake(parent)
-              end
+      # 1. Explicit Route definitions
+      if is_route
+        # Determine base prefix from multi-app route files (e.g. app/shop/route/app.php -> prefix is "/shop")
+        base_prefix = ""
+        if path.includes?("app/") || path.includes?("application/")
+          segments = path.split('/')
+          route_idx = segments.index("route")
+          if route_idx && route_idx > 1
+            parent = segments[route_idx - 1]
+            if parent != "app" && parent != "application"
+              base_prefix = "/" + camel_to_snake(parent)
             end
           end
-
-          endpoints.concat(analyze_routes_content(content, base_prefix, path, include_callee))
         end
 
-        # 2. Implicit Controller auto-routing
-        if is_controller
-          endpoints.concat(analyze_controller(path, content, include_callee))
-          endpoints.concat(analyze_annotation_routes(path, content, include_callee))
-        end
+        endpoints.concat(analyze_routes_content(content, base_prefix, path, include_callee))
+      end
+
+      # 2. Implicit Controller auto-routing
+      if is_controller
+        endpoints.concat(analyze_controller(path, content, include_callee))
+        endpoints.concat(analyze_annotation_routes(path, content, include_callee))
       end
 
       endpoints
@@ -510,9 +508,21 @@ module Analyzer::Php
       params
     end
 
+    # Precompiled once at load. Both of these used to be several
+    # `String#includes?` scans of the (whole, unchanging) `context` buffer
+    # OR'd together, re-run once per regex match inside their enclosing
+    # `context.scan` loop below even though `context` never changes within
+    # a single `extract_request_params` call. Hoisting the check out of the
+    # loop and collapsing it into one precompiled Regex#matches? call turns
+    # an O(matches) full-buffer rescan into a single O(1) check per call.
+    INPUT_POST_EVIDENCE_RE = Regex.union(["post.", "->post(", "request()->post"])
+    ONLY_POST_EVIDENCE_RE  = Regex.union(["post.", "->post(", "request()->post", "$_POST", "postMore"])
+
     private def extract_request_params(context : String) : Array(Param)
       params = [] of Param
       seen = Set(String).new
+      input_post_evidence = context.matches?(INPUT_POST_EVIDENCE_RE)
+      only_post_evidence = context.matches?(ONLY_POST_EVIDENCE_RE)
 
       # 1. input('name') or input('get.name')
       context.scan(/input\s*\(\s*['"](?:get\.|post\.|param\.)?([^'"\/]+)[^'"]*['"]/) do |match|
@@ -523,7 +533,7 @@ module Analyzer::Php
                        "form"
                      elsif match[0].includes?("get.")
                        "query"
-                     elsif context.includes?("post.") || context.includes?("->post(") || context.includes?("request()->post")
+                     elsif input_post_evidence
                        "form"
                      else
                        "query"
@@ -588,7 +598,7 @@ module Analyzer::Php
         array_content.scan(/['"]([^'"]+)['"]/).each do |m|
           name = m[1]
           next if seen.includes?(name)
-          param_type = context.includes?("post.") || context.includes?("->post(") || context.includes?("request()->post") || context.includes?("$_POST") || context.includes?("postMore") ? "form" : "query"
+          param_type = only_post_evidence ? "form" : "query"
           params << Param.new(name, "", param_type)
           seen.add(name)
         end
@@ -611,12 +621,14 @@ module Analyzer::Php
       params
     end
 
+    # Precompiled once at load: five String#includes? scans of the whole
+    # method body OR'd together, replaced with a single Regex#matches?
+    # call (Crystal's String#includes? is measurably slower than a
+    # precompiled Regex).
+    BODY_POST_EVIDENCE_RE = Regex.union(["->post(", "post.", "request()->post", "$_POST", "isPost"])
+
     private def infer_methods_from_body(context : String) : Array(String)
-      touches_post = context.includes?("->post(") ||
-                     context.includes?("post.") ||
-                     context.includes?("request()->post") ||
-                     context.includes?("$_POST") ||
-                     context.includes?("isPost")
+      touches_post = context.matches?(BODY_POST_EVIDENCE_RE)
       touches_post ? ["GET", "POST"] : ["GET"]
     end
 

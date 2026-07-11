@@ -18,16 +18,14 @@ module Analyzer::Php
       return endpoints unless path.ends_with?(".php")
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
+      content = read_file_content(path)
 
-        if path.includes?("config") && content.includes?("urlManager")
-          endpoints.concat(analyze_url_manager(path, content))
-        end
+      if path.includes?("config") && content.includes?("urlManager")
+        endpoints.concat(analyze_url_manager(path, content))
+      end
 
-        if path.ends_with?("Controller.php") || content.match(/class\s+\w+Controller\s+extends/)
-          endpoints.concat(analyze_controller(path, content, include_callee))
-        end
+      if path.ends_with?("Controller.php") || content.match(/class\s+\w+Controller\s+extends/)
+        endpoints.concat(analyze_controller(path, content, include_callee))
       end
 
       endpoints
@@ -60,6 +58,15 @@ module Analyzer::Php
 
     # Note: brace counting may be inaccurate if braces appear inside strings or comments.
     # A full PHP parser is out of scope; this is a best-effort implementation.
+    #
+    # Byte-level scan for O(1) positional access instead of the previous
+    # `String#[](Int)` per-character loop, which is O(n) on any string
+    # containing a multi-byte UTF-8 character and turned a single call into
+    # O(n^2) — this walks the *entire* `urlManager.rules` array (every
+    # route in the config file), so it's the hot path for a Yii2 config
+    # with non-ASCII content (e.g. CJK comments). `open_char`/`close_char`
+    # are always one of `[`/`]`/`(`/`)`, all ASCII (< 0x80), so they can
+    # never collide with a UTF-8 continuation/lead byte.
     private def extract_rules_section(content : String) : String?
       idx = content.index(/["']rules["']\s*=>\s*(?:\[|array\()/)
       return unless idx
@@ -68,13 +75,20 @@ module Analyzer::Php
       start = content.index(open_char, idx)
       return unless start
 
+      bytes = content.to_slice
+      byte_start = content.char_index_to_byte_index(start)
+      return unless byte_start
+
+      open_byte = open_char.ord.to_u8
+      close_byte = close_char.ord.to_u8
+      size = bytes.size
       depth = 1
-      pos = start + 1
-      while pos < content.size && depth > 0
-        case content[pos]
-        when open_char
+      pos = byte_start + 1
+      while pos < size && depth > 0
+        byte = bytes[pos]
+        if byte == open_byte
           depth += 1
-        when close_char
+        elsif byte == close_byte
           depth -= 1
           break if depth == 0
         end
@@ -82,7 +96,9 @@ module Analyzer::Php
       end
 
       return if depth != 0
-      content[(start + 1)...pos]
+      char_pos = content.byte_index_to_char_index(pos)
+      return unless char_pos
+      content[(start + 1)...char_pos]
     end
 
     private def detect_rules_brackets(content : String, idx : Int32) : Tuple(Char, Char)

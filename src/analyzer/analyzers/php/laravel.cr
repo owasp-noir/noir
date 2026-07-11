@@ -67,15 +67,13 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       begin
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          content = file.gets_to_end
-          # `use App\Http\Controllers\...;` imports map the short class
-          # names used in route handlers back to their FQCNs so callee
-          # resolution can locate the controller file. Only parsed when
-          # callees/ai-context are requested.
-          imports = include_callee ? parse_use_imports(content) : EMPTY_IMPORTS
-          endpoints = analyze_routes_content(content, "", path, include_callee, imports: imports)
-        end
+        content = read_file_content(path)
+        # `use App\Http\Controllers\...;` imports map the short class
+        # names used in route handlers back to their FQCNs so callee
+        # resolution can locate the controller file. Only parsed when
+        # callees/ai-context are requested.
+        imports = include_callee ? parse_use_imports(content) : EMPTY_IMPORTS
+        endpoints = analyze_routes_content(content, "", path, include_callee, imports: imports)
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
       end
@@ -86,42 +84,39 @@ module Analyzer::Php
 
     private def analyze_controller_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
+      content = read_file_content(path)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
+      # Look for Laravel Route attributes on controller methods
+      # e.g., #[Route('/users', methods: ['GET'])]
+      method_matches = content.scan(/#\[Route\s*\(([^]]*)\]\s*public\s+function\s+(\w+)/m)
+      method_matches.each do |match|
+        attribute_content = match[1] # This is the content of the attribute
 
-        # Look for Laravel Route attributes on controller methods
-        # e.g., #[Route('/users', methods: ['GET'])]
-        method_matches = content.scan(/#\[Route\s*\(([^]]*)\]\s*public\s+function\s+(\w+)/m)
-        method_matches.each do |match|
-          attribute_content = match[1] # This is the content of the attribute
+        path_match = attribute_content.match(/['"]([^'"]+)['"]/)
+        next unless path_match
 
-          path_match = attribute_content.match(/['"]([^'"]+)['"]/)
-          next unless path_match
+        route_path = path_match[1]
+        params = extract_brace_path_params(route_path)
+        details = Details.new(PathInfo.new(path))
 
-          route_path = path_match[1]
-          params = extract_brace_path_params(route_path)
-          details = Details.new(PathInfo.new(path))
-
-          methods = [] of String
-          methods_match = attribute_content.match(/methods:\s*\[([^\]]*)\]/i)
-          if methods_match
-            methods = extract_methods_from_array(methods_match[1])
-          else
-            # also check for single method: methods: 'POST' or methods: "POST"
-            method_match = attribute_content.match(/methods:\s*['"]([^'"]+)['"]/)
-            if method_match
-              methods << method_match[1].upcase
-            end
+        methods = [] of String
+        methods_match = attribute_content.match(/methods:\s*\[([^\]]*)\]/i)
+        if methods_match
+          methods = extract_methods_from_array(methods_match[1])
+        else
+          # also check for single method: methods: 'POST' or methods: "POST"
+          method_match = attribute_content.match(/methods:\s*['"]([^'"]+)['"]/)
+          if method_match
+            methods << method_match[1].upcase
           end
+        end
 
-          if methods.empty?
-            methods << "GET"
-          end
+        if methods.empty?
+          methods << "GET"
+        end
 
-          methods.each do |http_method|
-            endpoints << Endpoint.new(route_path, http_method, params, details.dup)
-          end
+        methods.each do |http_method|
+          endpoints << Endpoint.new(route_path, http_method, params, details.dup)
         end
       end
 

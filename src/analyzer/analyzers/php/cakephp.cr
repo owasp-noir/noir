@@ -22,10 +22,8 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       begin
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          content = file.gets_to_end
-          endpoints = analyze_routes_content(content, "", path, include_callee)
-        end
+        content = read_file_content(path)
+        endpoints = analyze_routes_content(content, "", path, include_callee)
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"
       end

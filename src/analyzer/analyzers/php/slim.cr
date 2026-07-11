@@ -2,28 +2,41 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Slim < PhpEngine
+    # ASCII byte values scanned by `find_matching_close_brace` below. Both
+    # are < 0x80, so they can never collide with a UTF-8 multi-byte
+    # continuation/lead byte (>= 0x80) — same invariant
+    # `PhpEngine#find_matching_php_close_brace` relies on.
+    private BYTE_LBRACE    = '{'.ord.to_u8
+    private BYTE_RBRACE    = '}'.ord.to_u8
+    private BYTE_DQUOTE    = '"'.ord.to_u8
+    private BYTE_SQUOTE    = '\''.ord.to_u8
+    private BYTE_BACKSLASH = '\\'.ord.to_u8
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless slim_relevant?(content)
+      content = read_file_content(path)
+      if slim_relevant?(content)
         endpoints = analyze_routes_content(content, "", path, include_callee)
       end
 
       endpoints
     end
 
+    # Precompiled once at load: these four markers used to be four separate
+    # `String#includes?` scans of the whole file ORed together. Crystal's
+    # `String#includes?` is measurably slower than a single precompiled
+    # `Regex#matches?` call, and this runs on every .php file fed into the
+    # analyzer during a project-wide scan.
+    RELEVANCE_MARKER_RE = /Slim\\|SlimFramework|AppFactory|RouteCollectorProxy/
+
     # Cheap pre-filter: avoid heavy regex work on files that clearly aren't
     # Slim. Any file that reaches this analyzer via detection is usually in
     # a Slim project, but project-wide scans still feed unrelated PHP here.
     private def slim_relevant?(content : String) : Bool
-      content.includes?("Slim\\") ||
-        content.includes?("SlimFramework") ||
-        content.includes?("AppFactory") ||
-        content.includes?("RouteCollectorProxy") ||
+      content.matches?(RELEVANCE_MARKER_RE) ||
         !!content.match(/\$\w+->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i)
     end
 
@@ -198,29 +211,40 @@ module Analyzer::Php
       content[0...pos].count('\n')
     end
 
+    # Byte-level scan for O(1) positional access instead of the previous
+    # `String#[](Int)` per-character loop, which is O(n) on any string
+    # containing a multi-byte UTF-8 character and turned a single call into
+    # O(n^2) — see `PhpEngine#find_matching_php_close_brace` for the same
+    # fix applied to the shared brace matcher. `find_group_call` and
+    # `extract_handler_body_with_end` both call this over the full
+    # remainder of the file, so this is the hot path for any Slim routes
+    # file with non-ASCII content (e.g. CJK comments/strings).
     private def find_matching_close_brace(content : String, open_pos : Int32) : Int32?
-      return unless open_pos < content.size && content[open_pos] == '{'
+      bytes = content.to_slice
+      start = content.char_index_to_byte_index(open_pos)
+      return unless start && start < bytes.size && bytes[start] == BYTE_LBRACE
 
       depth = 0
       in_string = false
-      quote_char = '\0'
-      pos = open_pos
-      while pos < content.size
-        char = content[pos]
+      quote_byte = 0_u8
+      pos = start
+      size = bytes.size
+      while pos < size
+        byte = bytes[pos]
         if !in_string
-          case char
-          when '{'
+          case byte
+          when BYTE_LBRACE
             depth += 1
-          when '}'
+          when BYTE_RBRACE
             depth -= 1
-            return pos if depth == 0
-          when '"', '\''
+            return content.byte_index_to_char_index(pos) if depth == 0
+          when BYTE_DQUOTE, BYTE_SQUOTE
             in_string = true
-            quote_char = char
+            quote_byte = byte
           end
-        elsif char == '\\'
+        elsif byte == BYTE_BACKSLASH
           pos += 1
-        elsif char == quote_char
+        elsif byte == quote_byte
           in_string = false
         end
         pos += 1
