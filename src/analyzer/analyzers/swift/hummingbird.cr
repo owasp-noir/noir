@@ -283,12 +283,20 @@ module Analyzer::Swift
                                    paren_depth : Int32,
                                    start_col : Int32,
                                    hits : Array(RouteHit))
+      # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
+      # `line[i]` re-walks from byte 0 to locate the char offset, making this
+      # scan O(n^2). Materializing the char array once keeps the dominant
+      # per-character walk O(1)-indexed. The `.` branch below still slices
+      # `line[i..]` for its lookahead match — left as-is, since that regex is
+      # `^`-anchored to "start of the remaining text" and only fires at `.`
+      # positions (bounded by dot count on the line, not every character).
+      chars = line.chars
       i = start_col
       closed = false
       stop = line.size
 
-      while i < line.size
-        char = line[i]
+      while i < chars.size
+        char = chars[i]
 
         if paren_depth > 0
           case char
