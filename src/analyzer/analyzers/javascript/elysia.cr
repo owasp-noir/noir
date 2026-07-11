@@ -3,8 +3,13 @@ require "../../../miniparsers/elysia_extractor_ts"
 
 module Analyzer::Javascript
   class Elysia < Analyzer
-    JS_EXTENSIONS  = [".js", ".mjs", ".cjs", ".ts"]
-    ELYSIA_MARKERS = ["from 'elysia'", "from \"elysia\"", "require('elysia')", "require(\"elysia\")"]
+    JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
+    # Precompiled once — a single PCRE2-JIT scan replaces four naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal (including the parens in
+    # "require('elysia')"), so it is provably equivalent to the
+    # OR-of-includes? it replaces.
+    ELYSIA_MARKERS_RE = Regex.union("from 'elysia'", "from \"elysia\"", "require('elysia')", "require(\"elysia\")")
 
     def analyze
       file_list = all_files()
@@ -13,7 +18,7 @@ module Analyzer::Javascript
         next unless JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
 
         content = read_file_content(path)
-        next unless ELYSIA_MARKERS.any? { |m| content.includes?(m) }
+        next unless content.matches?(ELYSIA_MARKERS_RE)
 
         include_callee = callees_needed?
         Noir::TreeSitterElysiaExtractor.extract_routes(content, include_callee).each do |route|

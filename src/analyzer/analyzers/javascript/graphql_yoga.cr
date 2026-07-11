@@ -20,7 +20,11 @@ module Analyzer::Javascript
     DEFAULT_GRAPHQL_PATH = "/graphql"
 
     # Cheap content hints used to gate the heavier SDL extraction.
-    YOGA_HINTS = ["graphql-yoga", "createYoga"]
+    # Precompiled once — a single PCRE2-JIT scan replaces two naive
+    # String#includes? substring scans. Regex.union auto-escapes each
+    # literal, so it is provably equivalent to the OR-of-includes? it
+    # replaces.
+    YOGA_HINTS_RE = Regex.union("graphql-yoga", "createYoga")
 
     def analyze
       parallel_file_scan do |path|
@@ -36,7 +40,7 @@ module Analyzer::Javascript
     end
 
     private def yoga_in_file?(content : String) : Bool
-      YOGA_HINTS.any? { |hint| content.includes?(hint) }
+      content.matches?(YOGA_HINTS_RE)
     end
 
     private def process_file(path : String, content : String)

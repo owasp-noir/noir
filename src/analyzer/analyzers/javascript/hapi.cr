@@ -4,7 +4,12 @@ require "../../../miniparsers/hapi_extractor_ts"
 module Analyzer::Javascript
   class Hapi < Analyzer
     JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
-    HAPI_MARKERS  = ["@hapi/hapi", "require('hapi')", "require(\"hapi\")", "from 'hapi'", "from \"hapi\""]
+    # Precompiled once — a single PCRE2-JIT scan replaces five naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal (including the parens in
+    # "require('hapi')"), so it is provably equivalent to the
+    # OR-of-includes? it replaces.
+    HAPI_MARKERS_RE = Regex.union("@hapi/hapi", "require('hapi')", "require(\"hapi\")", "from 'hapi'", "from \"hapi\"")
 
     def analyze
       file_list = all_files()
@@ -13,7 +18,7 @@ module Analyzer::Javascript
         next unless JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
 
         content = read_file_content(path)
-        next unless HAPI_MARKERS.any? { |m| content.includes?(m) }
+        next unless content.matches?(HAPI_MARKERS_RE)
 
         include_callee = callees_needed?
         Noir::TreeSitterHapiExtractor.extract_routes(content, include_callee).each do |route|

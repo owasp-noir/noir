@@ -5,7 +5,6 @@ require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Hono < JavascriptEngine
-    ON_ROUTE_CALL_HINTS   = [".on(", ".on ("]
     ON_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*on(?:\s|\n|\r)*\(/
 
     def analyze
@@ -56,8 +55,13 @@ module Analyzer::Javascript
     end
 
     private def on_route_candidate?(content : String) : Bool
-      ON_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) } ||
-        content.matches?(ON_ROUTE_CALL_PATTERN)
+      # `ON_ROUTE_CALL_PATTERN` already matches both ".on(" and ".on ("
+      # (its `(?:\s|\n|\r)*` groups allow zero-or-more whitespace around
+      # "on"), so the two former String#includes? checks ahead of it were
+      # a strictly redundant pre-filter — and per this project's own
+      # benchmarking, Crystal's naive includes? scan is slower than a
+      # PCRE2-JIT matches? call, so the "pre-gate" was a pure regression.
+      content.matches?(ON_ROUTE_CALL_PATTERN)
     end
 
     private def extract_on_routes(path : String,
@@ -181,8 +185,13 @@ module Analyzer::Javascript
       escaped = false
       i = start_pos
 
+      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
+      # string isn't single_byte_optimizable? (any non-ASCII char), making
+      # this O(n^2) on a large non-ASCII handler body. Index a
+      # pre-materialized Char array instead — same semantics, O(1) lookup.
+      chars = content.chars
       while i < end_pos
-        char = content[i]
+        char = chars[i]
 
         if quote
           if escaped

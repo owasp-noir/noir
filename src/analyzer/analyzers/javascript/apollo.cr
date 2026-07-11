@@ -21,8 +21,11 @@ module Analyzer::Javascript
 
     # File-level signals that mark a JS/TS file as Apollo-relevant. The
     # parallel_file_scan walks every JS/TS source, so we gate with a cheap
-    # substring check before doing the heavier SDL extraction.
-    APOLLO_HINTS = ["@apollo/server", "apollo-server", "ApolloServer"]
+    # substring check before doing the heavier SDL extraction. Precompiled
+    # once — a single PCRE2-JIT scan replaces three naive String#includes?
+    # substring scans. Regex.union auto-escapes each literal, so it is
+    # provably equivalent to the OR-of-includes? it replaces.
+    APOLLO_HINTS_RE = Regex.union("@apollo/server", "apollo-server", "ApolloServer")
 
     def analyze
       parallel_file_scan do |path|
@@ -42,7 +45,7 @@ module Analyzer::Javascript
     end
 
     private def apollo_in_file?(content : String) : Bool
-      APOLLO_HINTS.any? { |hint| content.includes?(hint) }
+      content.matches?(APOLLO_HINTS_RE)
     end
 
     private def process_file(path : String, content : String)

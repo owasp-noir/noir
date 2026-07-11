@@ -82,7 +82,11 @@ module Analyzer::Javascript
 
     # Markers that a file configures `@fastify/autoload`. Both the scoped
     # package and the legacy bare name are matched so older projects work.
-    AUTOLOAD_MARKERS = ["@fastify/autoload", "fastify-autoload"]
+    # Precompiled once — a single PCRE2-JIT scan replaces two naive
+    # String#includes? substring scans. Regex.union auto-escapes each
+    # literal, so it is provably equivalent to the OR-of-includes? it
+    # replaces.
+    AUTOLOAD_MARKERS_RE = Regex.union("@fastify/autoload", "fastify-autoload")
 
     # A directory `@fastify/autoload` registers. `dir_prefix` records the
     # config's `dirNameRoutePrefix` — when it is `false`, subdirectories
@@ -109,7 +113,7 @@ module Analyzer::Javascript
       all_files.each do |path|
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
         content = read_file_content(path)
-        next unless AUTOLOAD_MARKERS.any? { |m| content.includes?(m) }
+        next unless content.matches?(AUTOLOAD_MARKERS_RE)
         next unless content.includes?("dir")
 
         base_dir = File.dirname(File.expand_path(path))
