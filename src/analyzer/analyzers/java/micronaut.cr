@@ -230,7 +230,7 @@ module Analyzer::Java
 
     private def read_properties(path : String) : Hash(String, String)
       values = Hash(String, String).new
-      File.each_line(path) do |line|
+      read_file_content(path).each_line do |line|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
 
@@ -244,7 +244,7 @@ module Analyzer::Java
     end
 
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      flatten_yaml_values(values, YAML.parse(File.read(path)))
+      flatten_yaml_values(values, YAML.parse(read_file_content(path)))
     rescue
       nil
     end
