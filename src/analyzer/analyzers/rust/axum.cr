@@ -1056,6 +1056,11 @@ module Analyzer::Rust
 
     UTOIPA_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 
+    # Precompiled union for build_utoipa_prefix_index's per-file evidence
+    # gate, so it costs a single PCRE2 match instead of two naive substring
+    # scans.
+    UTOIPA_INDEX_EVIDENCE_RE = Regex.union("OpenApiRouter", ".routes(")
+
     # Emit an endpoint for every `#[utoipa::path(method, path = "/x")]`
     # handler in the file, composed with the OpenApiRouter nest prefix the
     # handler is registered under.
@@ -1431,7 +1436,7 @@ module Analyzer::Rust
         next if RustEngine.test_path?(fpath)
         base = configured_base_for(fpath)
         src = read_file_content(fpath)
-        next unless src.includes?("OpenApiRouter") || src.includes?(".routes(")
+        next unless src.matches?(UTOIPA_INDEX_EVIDENCE_RE)
         file_mod = primary_module(fpath)
         begin
           test_regions = RustEngine.collect_cfg_test_regions(src)
