@@ -72,6 +72,22 @@ module Analyzer::Groovy
       responseFormats namespace transactional
     ]
 
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces the two OR-ed
+    # `String#includes?` scans `url_mappings_path?` used to run over every
+    # candidate path -- Crystal's `includes?` is not Boyer-Moore accelerated,
+    # so a single regex pass is cheaper than two substring scans. `union`
+    # auto-escapes each literal, so this is exactly equivalent to the
+    # OR-chain it replaces.
+    URL_MAPPINGS_DIR_RE = Regex.union("/grails-app/conf/", "/grails-app/controllers/")
+
+    # One precompiled `Regex.union` scan (PCRE2 JIT) replaces the four OR-ed
+    # `String#includes?` scans that used to gate every verbless paren-form
+    # mapping match in emit_mapping_endpoints (runs once per match, so a
+    # UrlMappings file with many entries repeats this often). `union`
+    # auto-escapes each literal, so this is exactly equivalent to the
+    # OR-chain it replaces.
+    BODY_ARGS_KEY_RE = Regex.union("controller:", "action:", "view:", "uri:")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       all_files.each do |path|
@@ -103,8 +119,7 @@ module Analyzer::Groovy
       # Grails versions: 1.x/2.x kept it under `grails-app/conf/`, while
       # Grails 3+ moved it to `grails-app/controllers/`. Accept both so modern
       # apps (the common case today) are not silently skipped.
-      return false unless path.includes?("/grails-app/conf/") ||
-                          path.includes?("/grails-app/controllers/")
+      return false unless path.matches?(URL_MAPPINGS_DIR_RE)
       File.basename(path).ends_with?("UrlMappings.groovy")
     end
 
@@ -231,9 +246,16 @@ module Analyzer::Groovy
       actions = [] of Action
       depth = 0
       i = 0
+      # `String#[](Int)` walks from byte 0 on every call once `body` holds any
+      # multi-byte UTF-8 char (no cached char->byte index), so indexing it on
+      # every position of this brace-depth scan was O(n) per access -- O(n^2)
+      # overall on a non-ASCII controller body. Materialize once and index
+      # the array instead; char offsets (and thus `action[:offset]`) are
+      # unchanged.
+      chars = body.chars
 
-      while i < body.size
-        c = body[i]
+      while i < chars.size
+        c = chars[i]
 
         if literal_end = Noir::GroovyLiteralScanner.skip_literal(body, i)
           i = literal_end
@@ -339,8 +361,11 @@ module Analyzer::Groovy
 
       depth = 1
       i = header_end
-      while i < body.size && depth > 0
-        c = body[i]
+      # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
+      # materialize once and index the array instead of re-indexing `body`.
+      chars = body.chars
+      while i < chars.size && depth > 0
+        c = chars[i]
         case c
         when '['
           depth += 1
@@ -467,8 +492,7 @@ module Analyzer::Groovy
           next
         end
 
-        next unless body_args.includes?("controller:") || body_args.includes?("action:") ||
-                    body_args.includes?("view:") || body_args.includes?("uri:")
+        next unless body_args.matches?(BODY_ARGS_KEY_RE)
 
         # A trailing closure block may declare per-verb action dispatch via
         # `action = [GET: "show", PUT: "apiUpdate"]`. When present, surface one
@@ -535,16 +559,19 @@ module Analyzer::Groovy
     end
 
     private def find_matching_brace(text : String, open_idx : Int32) : Int32?
-      return unless open_idx < text.size && text[open_idx] == '{'
+      # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
+      # materialize once and index the array instead of re-indexing `text`.
+      chars = text.chars
+      return unless open_idx < chars.size && chars[open_idx] == '{'
       depth = 1
       i = open_idx + 1
-      while i < text.size && depth > 0
+      while i < chars.size && depth > 0
         if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
           i = literal_end
           next
         end
 
-        c = text[i]
+        c = chars[i]
         case c
         when '{'
           depth += 1
@@ -630,23 +657,29 @@ module Analyzer::Groovy
     end
 
     private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
+      # Same non-ASCII O(n) `String#[]` concern as elsewhere in this file:
+      # materialize once and index the array instead of re-indexing `text`.
+      # `text[body_start...i]` below still reads from the original String
+      # (a single one-shot slice, not a per-char access), so output bytes
+      # are unaffected.
+      chars = text.chars
       i = start
-      while i < text.size && text[i] != '{'
+      while i < chars.size && chars[i] != '{'
         i += 1
       end
-      return if i >= text.size
+      return if i >= chars.size
 
       body_start = i + 1
       depth = 1
       i += 1
 
-      while i < text.size && depth > 0
+      while i < chars.size && depth > 0
         if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
           i = literal_end
           next
         end
 
-        c = text[i]
+        c = chars[i]
         case c
         when '{'
           depth += 1
@@ -665,41 +698,51 @@ module Analyzer::Groovy
 
     private def strip_groovy_comments(text : String) : String
       result = String::Builder.new
+      # This walks the *entire* file once per analyzed controller/mappings
+      # file. `String#[](Int)` walks from byte 0 on every call once `text`
+      # holds any multi-byte UTF-8 char (no cached char->byte index), so
+      # per-char indexing here was O(n) per access -- O(n^2) overall on a
+      # non-ASCII source file. Materialize once and index the array instead
+      # (including inside `append_source_range`, which copies a literal's
+      # span and would otherwise be its own O(n^2) hot spot on a large
+      # string literal).
+      chars = text.chars
+      size = chars.size
       i = 0
 
-      while i < text.size
-        c = text[i]
+      while i < size
+        c = chars[i]
 
         if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
-          append_source_range(result, text, i, literal_end)
+          append_source_range(result, chars, i, literal_end)
           i = literal_end
           next
         end
 
-        if i + 1 < text.size && c == '/' && text[i + 1] == '/'
+        if i + 1 < size && c == '/' && chars[i + 1] == '/'
           result << ' '
           result << ' '
           i += 2
-          while i < text.size && text[i] != '\n'
+          while i < size && chars[i] != '\n'
             result << ' '
             i += 1
           end
-          if i < text.size
-            result << text[i]
+          if i < size
+            result << chars[i]
             i += 1
           end
           next
         end
 
-        if i + 1 < text.size && c == '/' && text[i + 1] == '*'
+        if i + 1 < size && c == '/' && chars[i + 1] == '*'
           result << ' '
           result << ' '
           i += 2
-          while i + 1 < text.size && !(text[i] == '*' && text[i + 1] == '/')
-            result << (text[i] == '\n' ? '\n' : ' ')
+          while i + 1 < size && !(chars[i] == '*' && chars[i + 1] == '/')
+            result << (chars[i] == '\n' ? '\n' : ' ')
             i += 1
           end
-          if i + 1 < text.size
+          if i + 1 < size
             result << ' '
             result << ' '
             i += 2
@@ -714,10 +757,10 @@ module Analyzer::Groovy
       result.to_s
     end
 
-    private def append_source_range(result : String::Builder, text : String, start : Int32, finish : Int32)
+    private def append_source_range(result : String::Builder, chars : Array(Char), start : Int32, finish : Int32)
       index = start
-      while index < finish && index < text.size
-        result << text[index]
+      while index < finish && index < chars.size
+        result << chars[index]
         index += 1
       end
     end
@@ -725,11 +768,16 @@ module Analyzer::Groovy
     private def line_for_offset(content : String, offset : Int32) : Int32
       return 1 if offset <= 0
       limit = offset > content.size ? content.size : offset
+      # `content[i]` walks from byte 0 on every call once `content` holds any
+      # multi-byte UTF-8 char, so the sequential scan below was O(n) per
+      # access -- O(n^2) overall -- and this runs once per emitted endpoint.
+      # `each_char_with_index` walks the string's `Char::Reader` once and
+      # breaks out as soon as `limit` is reached, avoiding both the repeated
+      # re-indexing and materializing chars past what's needed.
       count = 1
-      i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
-        i += 1
+      content.each_char_with_index do |ch, i|
+        break if i >= limit
+        count += 1 if ch == '\n'
       end
       count
     end
