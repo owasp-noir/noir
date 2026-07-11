@@ -9,6 +9,14 @@ module Analyzer::Java
     JAVA_EXTENSION = "java"
     alias ApplicationBaseKey = Tuple(String, String)
 
+    # `jaxrs_or_websocket_source?` gates the per-file tree-sitter parse;
+    # one precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
+    # literal) replaces 5 separate `String#includes?` passes over the
+    # same buffer.
+    JAXRS_OR_WEBSOCKET_SOURCE_RE = Regex.union(
+      "jakarta.ws.rs", "javax.ws.rs", "jakarta.websocket", "javax.websocket", "@ServerEndpoint"
+    )
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
@@ -120,11 +128,7 @@ module Analyzer::Java
     end
 
     private def jaxrs_or_websocket_source?(content : String) : Bool
-      content.includes?("jakarta.ws.rs") ||
-        content.includes?("javax.ws.rs") ||
-        content.includes?("jakarta.websocket") ||
-        content.includes?("javax.websocket") ||
-        content.includes?("@ServerEndpoint")
+      content.matches?(JAXRS_OR_WEBSOCKET_SOURCE_RE)
     end
 
     private def add_application_package(application_packages : Hash(String, Array(ApplicationBaseKey)),
