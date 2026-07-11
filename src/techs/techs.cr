@@ -2079,9 +2079,9 @@ module NoirTechs
       },
     },
     :zig_cli => {
-      :framework => "CLI (zig-cli / zig-clap / std.process)",
+      :framework => "CLI (zig-cli / zig-clap / std.process / yazap / zig-args)",
       :language  => "Zig",
-      :similar   => ["zig-cli", "zig_cli", "clap", "zig-clap"],
+      :similar   => ["zig-cli", "zig_cli", "clap", "zig-clap", "yazap", "zig-args"],
       :supported => {
         :endpoint => true,
         :method   => false,
