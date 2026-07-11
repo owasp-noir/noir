@@ -1575,9 +1575,9 @@ module NoirTechs
       },
     },
     :lua_cli => {
-      :framework => "CLI (argparse)",
+      :framework => "CLI (argparse / lua_cliargs)",
       :language  => "Lua",
-      :similar   => ["lua-cli", "lua_cli", "argparse"],
+      :similar   => ["lua-cli", "lua_cli", "argparse", "cliargs", "lua_cliargs"],
       :supported => {
         :endpoint => true,
         :method   => false,
