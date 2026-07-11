@@ -37,8 +37,11 @@ module Analyzer::Php
     # aren't part of a Hyperf project. Project-wide scans still feed unrelated
     # PHP through this analyzer.
     private def hyperf_relevant?(content : String) : Bool
+      # `content.includes?("Hyperf\\HttpServer")` used to be ORed in here
+      # too, but any string containing that substring necessarily contains
+      # "Hyperf\\" — the check was dead weight, always scanning the whole
+      # buffer a second time for a condition the first check already covers.
       content.includes?("Hyperf\\") ||
-        content.includes?("Hyperf\\HttpServer") ||
         !!content.match(/\bRouter::(?:get|post|put|patch|delete|options|head|addRoute|addGroup)\s*\(/i) ||
         !!content.match(/#\[\s*(?:AutoController|Controller|Get|Post|Put|Patch|Delete|Options|Head|RequestMapping)/)
     end
