@@ -585,46 +585,54 @@ module Analyzer::Typescript
     end
 
     private def each_top_level_kv(body : String, &)
+      # `body[i]` walks a non-ASCII String from byte 0 on every access
+      # (Crystal has no char-index cache), turning this per-char state
+      # machine — which scans an entire router/procedure map body — O(n)
+      # per char -> O(n^2). Materialize `chars` once and thread it through
+      # to `find_matching_bracket`/`skip_top_level_to_comma` so the
+      # conversion isn't repeated per key/value pair; all substring
+      # extraction still reads from the original `body` String.
+      chars = body.chars
       i = 0
-      n = body.size
+      n = chars.size
       while i < n
-        while i < n && (body[i].whitespace? || body[i] == ',' || body[i] == ';')
+        while i < n && (chars[i].whitespace? || chars[i] == ',' || chars[i] == ';')
           i += 1
         end
         break if i >= n
 
-        key = case body[i]
+        key = case chars[i]
               when '\'', '"', '`'
-                quote = body[i]
+                quote = chars[i]
                 j = i + 1
-                while j < n && body[j] != quote
-                  j += body[j] == '\\' ? 2 : 1
+                while j < n && chars[j] != quote
+                  j += chars[j] == '\\' ? 2 : 1
                 end
                 literal = body[(i + 1)...j]
                 i = j < n ? j + 1 : j
                 literal
               when '['
                 # Computed key like ['foo']: ... — skip the bracket span.
-                if close = find_matching_bracket(body, i)
+                if close = find_matching_bracket(chars, i)
                   literal = body[(i + 1)...close].strip.gsub(/^['"`]|['"`]$/, "")
                   i = close + 1
                   literal
                 else
-                  i = skip_top_level_to_comma(body, i)
+                  i = skip_top_level_to_comma(chars, i)
                   ""
                 end
               else
-                c = body[i]
+                c = chars[i]
                 if c.ascii_letter? || c == '_' || c == '$'
                   j = i
-                  while j < n && (body[j].ascii_alphanumeric? || body[j] == '_' || body[j] == '$')
+                  while j < n && (chars[j].ascii_alphanumeric? || chars[j] == '_' || chars[j] == '$')
                     j += 1
                   end
                   literal = body[i...j]
                   i = j
                   literal
                 else
-                  i = skip_top_level_to_comma(body, i)
+                  i = skip_top_level_to_comma(chars, i)
                   ""
                 end
               end
@@ -633,27 +641,27 @@ module Analyzer::Typescript
           next
         end
 
-        while i < n && body[i].whitespace?
+        while i < n && chars[i].whitespace?
           i += 1
         end
 
-        if i >= n || body[i] == ','
+        if i >= n || chars[i] == ','
           # Shorthand: `userRouter,` — value is the same identifier.
           value_line = body[0, i].count('\n') + 1
           yield key, key, value_line unless key.empty?
-          i += 1 if i < n && body[i] == ','
+          i += 1 if i < n && chars[i] == ','
           next
         end
 
-        unless body[i] == ':'
+        unless chars[i] == ':'
           # Spread, method shorthand, or other construct we don't handle.
-          i = skip_top_level_to_comma(body, i)
+          i = skip_top_level_to_comma(chars, i)
           next
         end
 
         i += 1
         value_start = i
-        value_end = skip_top_level_to_comma(body, i)
+        value_end = skip_top_level_to_comma(chars, i)
         value = body[value_start...value_end]
         value_line = body[0, value_start].count('\n') + 1
         yield key, value, value_line unless key.empty?
@@ -661,12 +669,12 @@ module Analyzer::Typescript
       end
     end
 
-    private def find_matching_bracket(body : String, open : Int32) : Int32?
+    private def find_matching_bracket(chars : Array(Char), open : Int32) : Int32?
       depth = 0
       i = open
-      n = body.size
+      n = chars.size
       while i < n
-        c = body[i]
+        c = chars[i]
         if c == '['
           depth += 1
         elsif c == ']'
@@ -716,18 +724,18 @@ module Analyzer::Typescript
       parts.reject(&.empty?)
     end
 
-    private def skip_top_level_to_comma(body : String, start : Int32) : Int32
+    private def skip_top_level_to_comma(chars : Array(Char), start : Int32) : Int32
       depth = 0
       i = start
-      n = body.size
+      n = chars.size
       while i < n
-        c = body[i]
+        c = chars[i]
         case c
         when '\'', '"', '`'
           quote = c
           i += 1
-          while i < n && body[i] != quote
-            i += body[i] == '\\' ? 2 : 1
+          while i < n && chars[i] != quote
+            i += chars[i] == '\\' ? 2 : 1
           end
           i += 1
           next
@@ -973,7 +981,7 @@ module Analyzer::Typescript
     private def input_property_value(options_body : String) : String?
       options_body.scan(/(?:\A|,)\s*input\s*:/m) do |match|
         value_start = match.end(0) || 0
-        value_end = skip_top_level_to_comma(options_body, value_start)
+        value_end = skip_top_level_to_comma(options_body.chars, value_start)
         return options_body[value_start...value_end].strip
       end
 
