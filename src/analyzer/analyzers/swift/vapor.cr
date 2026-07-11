@@ -34,7 +34,7 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = named_handler_bodies(lines)
       prefix_by_receiver = {} of String => String
