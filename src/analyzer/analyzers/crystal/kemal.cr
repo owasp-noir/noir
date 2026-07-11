@@ -192,20 +192,30 @@ module Analyzer::Crystal
 
       @public_folders.each do |base, folder|
         next if @static_disabled_bases.includes?(base)
+
+        # `folder` is fixed for this outer iteration, but the interpolated
+        # regex below used to be rebuilt (a full PCRE2 JIT compile) on every
+        # file the folder contains. Precompute it once per folder instead of
+        # once per file, and escape the discovered name since it comes from
+        # arbitrary source text and may contain regex metacharacters.
+        nested_folder = folder.includes?("/")
+        folder_path = nested_folder ? (folder.ends_with?("/") ? folder : "#{folder}/") : ""
+        folder_re = if nested_folder
+                      /\/#{Regex.escape(folder.split("/").last)}\/(.*)/
+                    else
+                      /\/#{Regex.escape(folder)}\/(.*)/
+                    end
+
         get_public_dir_files(base, folder).each do |file|
-          if folder.includes?("/")
-            folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
+          if nested_folder
             if file.starts_with?(folder_path)
               relative_path = file.sub(folder_path, "")
               @result << Endpoint.new("/#{relative_path}", "GET")
-            else
-              folder_name = folder.split("/").last
-              if file =~ /\/#{folder_name}\/(.*)/
-                relative_path = $1
-                @result << Endpoint.new("/#{relative_path}", "GET")
-              end
+            elsif file =~ folder_re
+              relative_path = $1
+              @result << Endpoint.new("/#{relative_path}", "GET")
             end
-          elsif file =~ /\/#{folder}\/(.*)/
+          elsif file =~ folder_re
             relative_path = $1
             @result << Endpoint.new("/#{relative_path}", "GET")
           end
