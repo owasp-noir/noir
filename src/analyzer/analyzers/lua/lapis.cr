@@ -36,6 +36,10 @@ module Analyzer::Lua
     APP_VAR_RE       = /(?:^|[^A-Za-z0-9_])(?:local\s+)?([A-Za-z_]\w*)\s*=\s*lapis\.Application(?:\b|:extend|\s*\()/
     APP_PATH_RE      = /(?:^|[^A-Za-z0-9_.])([A-Za-z_]\w*)\.path\s*=\s*(['"])([^'"]*)\2/
     MOON_PATH_RE     = /@path\s*:\s*(['"])([^'"]*)\1/
+    # `moonscript_action?`'s two OR-ed String#includes? scans, folded into
+    # one precompiled union so the boolean gate costs a single PCRE2 match
+    # instead of up to two naive substring scans.
+    MOON_ACTION_MARKER_RE = Regex.union("=>", "respond_to")
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -342,7 +346,7 @@ module Analyzer::Lua
     # entry, not a route, so it is rejected — guarding the broadened
     # bare-key match against string→string maps in non-route files.
     private def moonscript_action?(region_text : String) : Bool
-      return true if region_text.includes?("=>") || region_text.includes?("respond_to")
+      return true if region_text.matches?(MOON_ACTION_MARKER_RE)
       stripped = region_text.lstrip
       return false if stripped.empty?
       first = stripped[0]
