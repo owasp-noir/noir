@@ -130,13 +130,20 @@ module Analyzer::CSharp
             url = build_url(controller_route_prefix, action_route, controller_name, action_name)
             details = Details.new(PathInfo.new(file, i + 1))
             endpoint = Endpoint.new(url, http_method, details)
-            body_block = extract_method_block(lines, masked_lines, end_index)
 
             parameters.each do |param|
               endpoint.params << param
             end
 
-            attach_csharp_callees(endpoint, body_block, file, end_index + 1, include_callee, skip_first_line: true)
+            # Unlike aspnet_core_mvc, this analyzer parses params from the
+            # signature only, so `body_block` exists purely to feed callee
+            # extraction — skip building it on the default scan path where
+            # `attach_csharp_callees` is a no-op anyway (`include_callee`
+            # false).
+            if include_callee
+              body_block = extract_method_block(lines, masked_lines, end_index)
+              attach_csharp_callees(endpoint, body_block, file, end_index + 1, include_callee, skip_first_line: true)
+            end
             @result << endpoint
 
             # Reset to default after processing the method
