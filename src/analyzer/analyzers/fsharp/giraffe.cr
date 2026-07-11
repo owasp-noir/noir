@@ -96,6 +96,11 @@ module Analyzer::Fsharp
       # length) bytes each time, so the O(n) scan becomes O(n²) regardless of
       # ASCII content (confirmed: 4x source size measured ~16x scan time).
       byte_offsets = char_byte_offsets(cleaned_chars)
+      # Newline positions in `content`, computed once in O(n) so
+      # `line_for_offset` below can binary-search instead of re-walking
+      # from the start of the file for every emitted route (see its
+      # doc comment for the O(n²) this replaces).
+      newline_offsets = collect_newline_offsets(content)
       scope_stack = [] of SubRouteScope
       string_constants = collect_string_constants(cleaned)
 
@@ -204,7 +209,7 @@ module Analyzer::Fsharp
         if bind_match && token_boundary?(cleaned, i)
           path_pattern = bind_match[1]
           match_end = bind_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, bind: true)
+          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, bind: true, newline_offsets: newline_offsets)
           i = match_end || (i + 1)
           next
         end
@@ -215,7 +220,7 @@ module Analyzer::Fsharp
         if routef_match && token_boundary?(cleaned, i)
           path_pattern = routef_match[1]
           match_end = routef_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: true, include_callee: include_callee)
+          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: true, include_callee: include_callee, newline_offsets: newline_offsets)
           i = match_end || (i + 1)
           next
         end
@@ -228,7 +233,7 @@ module Analyzer::Fsharp
         if route_match && token_boundary?(cleaned, i)
           path_pattern = route_match[1]
           match_end = route_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee)
+          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
           i = match_end || (i + 1)
           next
         end
@@ -244,7 +249,7 @@ module Analyzer::Fsharp
           match_end = route_const_match.end(0)
           resolved = string_constants[ident.split('.').last]?
           if resolved
-            emit_route(path, content, cleaned, i, scope_stack, resolved, routef: false, include_callee: include_callee)
+            emit_route(path, content, cleaned, i, scope_stack, resolved, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
           end
           i = match_end || (i + 1)
           next
@@ -331,7 +336,7 @@ module Analyzer::Fsharp
     private def emit_route(path : String, content : String, cleaned : String,
                            offset : Int32, scope_stack : Array(SubRouteScope),
                            path_pattern : String, routef : Bool, include_callee : Bool,
-                           bind : Bool = false)
+                           newline_offsets : Array(Int32), bind : Bool = false)
       url, params = if bind
                       translate_route_bind(path_pattern)
                     elsif routef
@@ -345,9 +350,9 @@ module Analyzer::Fsharp
       method = find_method_for_route(cleaned, offset) || scope_method(scope_stack)
       methods = method ? [method] : FALLBACK_METHODS
 
-      line = line_for_offset(content, offset)
+      line = line_for_offset(newline_offsets, offset)
       details = Details.new(PathInfo.new(path, line))
-      callees = include_callee ? callees_for_route(path, content, cleaned, offset) : [] of Noir::FsharpCalleeExtractor::Entry
+      callees = include_callee ? callees_for_route(path, content, cleaned, offset, newline_offsets) : [] of Noir::FsharpCalleeExtractor::Entry
 
       methods.each do |verb|
         endpoint_params = full_params.map { |p| Param.new(p.name, p.value, p.param_type) }
@@ -360,12 +365,13 @@ module Analyzer::Fsharp
     private def callees_for_route(path : String,
                                   content : String,
                                   cleaned : String,
-                                  offset : Int32) : Array(Noir::FsharpCalleeExtractor::Entry)
+                                  offset : Int32,
+                                  newline_offsets : Array(Int32)) : Array(Noir::FsharpCalleeExtractor::Entry)
       body_info = route_handler_body(cleaned, offset)
       return [] of Noir::FsharpCalleeExtractor::Entry unless body_info
 
       body, body_start = body_info
-      start_line = line_for_offset(content, body_start)
+      start_line = line_for_offset(newline_offsets, body_start)
       Noir::FsharpCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
@@ -798,21 +804,31 @@ module Analyzer::Fsharp
       result.to_s
     end
 
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      # Walk with a Char::Reader rather than `content[i]`: integer indexing is
-      # O(n) on a non-ASCII string, so the per-character loop was O(n²) and hung
-      # the scan on a large file with a single multi-byte character in it.
-      count = 1
-      reader = Char::Reader.new(content)
-      i = 0
-      while i < limit && reader.has_next?
-        count += 1 if reader.current_char == '\n'
-        reader.next_char
-        i += 1
+    # Char index of every newline in the analyzed file, in ascending order.
+    # Computed once per file (O(n), non-ASCII-safe via `each_char_with_index`)
+    # so `line_for_offset` can binary-search it instead of re-walking from
+    # the start of the file on every call — see that method's doc comment.
+    private def collect_newline_offsets(text : String) : Array(Int32)
+      offsets = [] of Int32
+      text.each_char_with_index do |c, idx|
+        offsets << idx if c == '\n'
       end
-      count
+      offsets
+    end
+
+    # `emit_route` calls this once per matched route (and again per callee
+    # extraction), in file order but always against the *same* file. Walking
+    # from the start of the file for every call — the previous
+    # `Char::Reader.new(content)` implementation — is O(file length) per
+    # call, so scanning N routes costs O(N * file length): a file with 4x
+    # the routes (and proportionally more content) measured ~16x the scan
+    # time. Binary-searching a precomputed, sorted newline-offset table
+    # turns each lookup into O(log n).
+    private def line_for_offset(newline_offsets : Array(Int32), offset : Int32) : Int32
+      return 1 if offset <= 0
+      idx = newline_offsets.bsearch_index { |pos| pos >= offset }
+      count = idx || newline_offsets.size
+      count + 1
     end
   end
 end
