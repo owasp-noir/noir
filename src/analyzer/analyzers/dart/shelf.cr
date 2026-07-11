@@ -346,22 +346,26 @@ module Analyzer::Dart
                               include_callee : Bool,
                               routes : Array(Route),
                               mounts : Array(Mount))
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = cleaned.chars
       i = start_idx
       while i < end_idx - 1
         # Match `..name(` while ignoring `...` (spread).
-        if cleaned[i] == '.' && cleaned[i + 1] == '.' &&
-           !(i + 2 < cleaned.size && cleaned[i + 2] == '.')
+        if chars[i] == '.' && chars[i + 1] == '.' &&
+           !(i + 2 < chars.size && chars[i + 2] == '.')
           j = i + 2
-          j += 1 if j < cleaned.size && cleaned[j] == '?' # `..?name`
+          j += 1 if j < chars.size && chars[j] == '?' # `..?name`
           name_start = j
-          while j < cleaned.size && (cleaned[j].alphanumeric? || cleaned[j] == '_')
+          while j < chars.size && (chars[j].alphanumeric? || chars[j] == '_')
             j += 1
           end
-          name = cleaned[name_start...j]
-          while j < cleaned.size && cleaned[j].whitespace?
+          name = chars[name_start...j].join
+          while j < chars.size && chars[j].whitespace?
             j += 1
           end
-          if j < cleaned.size && cleaned[j] == '(' && relevant_method?(name)
+          if j < chars.size && chars[j] == '(' && relevant_method?(name)
             close_paren = find_matching_paren(cleaned, j)
             if close_paren && close_paren < end_idx
               handle_call(name, cleaned, j, close_paren, file_content, path, include_callee, routes, mounts)
@@ -569,6 +573,9 @@ module Analyzer::Dart
     # ---------- Source-string utilities ----------
 
     private def find_statement_end(text : String, start : Int32) : Int32
+      # See scan_cascades: index a materialized Array(Char) so this stays
+      # O(n) instead of O(n^2) on any source containing multi-byte chars.
+      chars = text.chars
       depth_paren = 0
       depth_brace = 0
       depth_bracket = 0
@@ -576,10 +583,10 @@ module Analyzer::Dart
       in_string = false
       string_quote = '\0'
 
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -611,19 +618,20 @@ module Analyzer::Dart
         end
         i += 1
       end
-      text.size
+      chars.size
     end
 
     private def find_matching_paren(text : String, open_idx : Int32) : Int32?
+      chars = text.chars
       depth = 0
       i = open_idx
       in_string = false
       string_quote = '\0'
 
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -652,6 +660,7 @@ module Analyzer::Dart
 
     private def split_top_level_args(text : String) : Array(String)
       result = [] of String
+      chars = text.chars
       depth_paren = 0
       depth_brace = 0
       depth_bracket = 0
@@ -661,10 +670,10 @@ module Analyzer::Dart
       in_string = false
       string_quote = '\0'
 
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -695,7 +704,7 @@ module Analyzer::Dart
           depth_angle -= 1 if depth_angle > 0
         when ','
           if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << text[start...i]
+            result << chars[start...i].join
             start = i + 1
           end
         else
@@ -703,7 +712,7 @@ module Analyzer::Dart
         end
         i += 1
       end
-      result << text[start..] if start <= text.size
+      result << chars[start..].join if start <= chars.size
       result
     end
 
@@ -782,8 +791,11 @@ module Analyzer::Dart
       limit = offset > content.size ? content.size : offset
       count = 1
       i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
+      # `each_char` walks the UTF-8 buffer once with a reader instead of
+      # re-scanning from byte 0 on every indexed `content[i]` access.
+      content.each_char do |c|
+        break if i >= limit
+        count += 1 if c == '\n'
         i += 1
       end
       count
