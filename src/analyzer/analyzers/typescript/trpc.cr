@@ -1009,17 +1009,22 @@ module Analyzer::Typescript
       fields = [] of String
       depth = 0
       i = 0
-      n = schema.size
+      # `schema[i]` walks a non-ASCII String from byte 0 on every access
+      # (Crystal has no char-index cache); materializing `chars` once
+      # makes this whole-schema-body scan O(n) instead of O(n^2). Field
+      # names are still sliced from the original `schema` String.
+      chars = schema.chars
+      n = chars.size
       key_start = -1
 
       while i < n
-        c = schema[i]
+        c = chars[i]
         case c
         when '\'', '"', '`'
           quote = c
           i += 1
-          while i < n && schema[i] != quote
-            i += schema[i] == '\\' ? 2 : 1
+          while i < n && chars[i] != quote
+            i += chars[i] == '\\' ? 2 : 1
           end
           i += 1
           next
@@ -1038,10 +1043,10 @@ module Analyzer::Typescript
             # we distinguish a property key from any other identifier left
             # at depth 0 by oddly formatted schemas.
             j = i
-            while j < n && schema[j].whitespace?
+            while j < n && chars[j].whitespace?
               j += 1
             end
-            fields << name if j < n && schema[j] == ':'
+            fields << name if j < n && chars[j] == ':'
             key_start = -1
           end
         else
