@@ -272,7 +272,7 @@ module Analyzer::Kotlin
       application_yml_path = File.join(path, "main/resources/application.yml")
       if File.exists?(application_yml_path)
         begin
-          config = YAML.parse(File.read(application_yml_path))
+          config = YAML.parse(read_file_content(application_yml_path))
           spring = config["spring"]
           if spring
             resources = spring["resources"] || spring["web"]
@@ -302,7 +302,7 @@ module Analyzer::Kotlin
       application_properties_path = File.join(path, "main/resources/application.properties")
       if File.exists?(application_properties_path)
         begin
-          properties = File.read(application_properties_path)
+          properties = read_file_content(application_properties_path)
           static_locs = properties.match(/spring(\.web)?\.resources\.static-locations\s*=\s*(.*)/)
           if static_locs
             static_locs[2].split(",").each do |loc|
@@ -674,7 +674,7 @@ module Analyzer::Kotlin
     end
 
     private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      document = YAML.parse(File.read(path))
+      document = YAML.parse(read_file_content(path))
       if value = yaml_string_value(document, "server", "servlet", "context-path")
         values["server.servlet.context-path"] = value
       end
@@ -725,7 +725,7 @@ module Analyzer::Kotlin
       properties_path = File.join(root, "src/main/resources/application.properties")
       if File.exists?(properties_path)
         begin
-          File.read(properties_path).each_line do |line|
+          read_file_content(properties_path).each_line do |line|
             if match = line.match(/^\s*spring\.graphql\.path\s*=\s*(\S+)/)
               return normalize_graphql_path(match[1])
             end
@@ -739,7 +739,7 @@ module Analyzer::Kotlin
       [yml_path, yaml_path].each do |path|
         next unless File.exists?(path)
         begin
-          config = YAML.parse(File.read(path))
+          config = YAML.parse(read_file_content(path))
           spring = config["spring"]
           next unless spring
           graphql = spring["graphql"]
