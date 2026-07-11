@@ -298,8 +298,14 @@ module Analyzer::Javascript
       return if open_pos.nil?
       depth = 1
       i = open_pos + 1
-      while i < content.size && depth > 0
-        case content[i]
+      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
+      # string isn't single_byte_optimizable? (any non-ASCII char), making
+      # this depth-scan O(n^2) on a large non-ASCII handler body. Index a
+      # pre-materialized Char array instead — same char-by-char semantics,
+      # O(1) per lookup.
+      chars = content.chars
+      while i < chars.size && depth > 0
+        case chars[i]
         when '{'
           depth += 1
         when '}'
