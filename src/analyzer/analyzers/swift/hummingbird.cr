@@ -28,6 +28,13 @@ module Analyzer::Swift
     TYPE_DECL_PATTERN = /\b(?:struct|class|extension|actor|enum)\s+([A-Za-z_]\w*)/
     alias ScopedPrefixKey = Tuple(String, String)
 
+    # `route_definition?` runs on every scanned line (route detection, param
+    # lookahead, body-boundary checks). One precompiled `Regex.union` scan
+    # (PCRE2 JIT) replaces seven naive `String#includes?` char scans; union
+    # auto-escapes each literal so it is provably equivalent to the
+    # OR-of-substrings it replaces.
+    ROUTE_CALL_RE = Regex.union(".get(", ".post(", ".put(", ".delete(", ".patch(", ".head(", ".on(")
+
     # A route hit discovered by the chain scanner.
     record RouteHit,
       method : String,
@@ -51,7 +58,7 @@ module Analyzer::Swift
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
       stripped_lines = strip_code_lines(lines)
       include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
@@ -283,12 +290,20 @@ module Analyzer::Swift
                                    paren_depth : Int32,
                                    start_col : Int32,
                                    hits : Array(RouteHit))
+      # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
+      # `line[i]` re-walks from byte 0 to locate the char offset, making this
+      # scan O(n^2). Materializing the char array once keeps the dominant
+      # per-character walk O(1)-indexed. The `.` branch below still slices
+      # `line[i..]` for its lookahead match — left as-is, since that regex is
+      # `^`-anchored to "start of the remaining text" and only fires at `.`
+      # positions (bounded by dot count on the line, not every character).
+      chars = line.chars
       i = start_col
       closed = false
       stop = line.size
 
-      while i < line.size
-        char = line[i]
+      while i < chars.size
+        char = chars[i]
 
         if paren_depth > 0
           case char
@@ -458,6 +473,12 @@ module Analyzer::Swift
     # `var body: some RouterMiddleware<Context>` / `func routes() -> some
     # RouterMiddleware<Context>` — the controller body that hosts the DSL.
     DSL_BODY_RE = /\bsome\s+RouterMiddleware\b/
+    # Whole-file DSL-presence gate, evaluated once per line to decide whether
+    # the (expensive) DSL scan runs at all. One precompiled `Regex.union`
+    # scan (PCRE2 JIT) replaces three naive `String#includes?` char scans per
+    # line; union auto-escapes each literal so it is provably equivalent to
+    # the OR-of-substrings it replaces.
+    DSL_PRESENCE_RE = Regex.union("RouterBuilder", "RouterMiddleware", "RouteGroup")
 
     # One nesting level of the DSL. `:builder`/`:group` scopes emit routes;
     # `:handler` (a route's trailing closure) and `:other` (struct/func/etc.
@@ -473,9 +494,7 @@ module Analyzer::Swift
 
     private def collect_dsl_route_hits(stripped_lines : Array(String), original_lines : Array(String)) : Array(RouteHit)
       hits = [] of RouteHit
-      return hits unless stripped_lines.any? do |l|
-                           l.includes?("RouterBuilder") || l.includes?("RouterMiddleware") || l.includes?("RouteGroup")
-                         end
+      return hits unless stripped_lines.any?(&.matches?(DSL_PRESENCE_RE))
 
       stack = [] of DslScope
       pending : DslScope? = nil
@@ -739,7 +758,7 @@ module Analyzer::Swift
 
       files.each do |path|
         base = configured_base_for(path)
-        lines = strip_code_lines(File.read_lines(path, encoding: "utf-8", invalid: :skip))
+        lines = strip_code_lines(read_file_content(path).lines)
         lines.each do |line|
           if (func = line.match(FUNCTION_SIGNATURE_PATTERN)) && line.match(ROUTER_PARAM_PATTERN)
             route_methods_by_base[base] << func[1]
@@ -760,7 +779,7 @@ module Analyzer::Swift
                                                method_set : Set(String),
                                                assignments : Hash(ScopedPrefixKey, String),
                                                base : String)
-      original_lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      original_lines = read_file_content(path).lines
       stripped_lines = strip_code_lines(original_lines)
 
       merge_logical_lines(stripped_lines, original_lines) do |stripped, original|
@@ -974,10 +993,7 @@ module Analyzer::Swift
 
     # Check if a line contains a route definition
     private def route_definition?(line : String) : Bool
-      (line.includes?(".get(") || line.includes?(".post(") ||
-        line.includes?(".put(") || line.includes?(".delete(") ||
-        line.includes?(".patch(") || line.includes?(".head(") ||
-        line.includes?(".on("))
+      line.matches?(ROUTE_CALL_RE)
     end
 
     private def attach_route_callees(lines : Array(String),
@@ -1028,14 +1044,20 @@ module Analyzer::Swift
     end
 
     private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
+      # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
+      # `line[index]` re-walks from byte 0 to locate the char offset, making
+      # this scan O(n^2). Materializing the char array once keeps indexed
+      # access O(1) and the whole scan O(n); the single closing slice below
+      # (`line[args_start...index]`) is unchanged and still O(n) once.
+      chars = line.chars
       depth = 1
       in_string = false
       escaped = false
       quote = '"'
       index = args_start
 
-      while index < line.size
-        char = line[index]
+      while index < chars.size
+        char = chars[index]
 
         if in_string
           if escaped

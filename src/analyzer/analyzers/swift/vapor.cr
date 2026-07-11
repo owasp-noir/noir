@@ -32,9 +32,16 @@ module Analyzer::Swift
     # is router-like.
     ROUTER_EXTENSION_PATTERN = /\bextension\s+(?:RoutesBuilder|Router)\b/
 
+    # `route_definition?` runs on every scanned line (route detection, param
+    # lookahead, body-boundary checks). One precompiled `Regex.union` scan
+    # (PCRE2 JIT) replaces six naive `String#includes?` char scans; union
+    # auto-escapes each literal so it is provably equivalent to the
+    # OR-of-substrings it replaces.
+    ROUTE_CALL_RE = Regex.union(".get(", ".post(", ".put(", ".delete(", ".patch(", ".on(")
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = File.read_lines(path, encoding: "utf-8", invalid: :skip)
+      lines = read_file_content(path).lines
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       handler_bodies = named_handler_bodies(lines)
       prefix_by_receiver = {} of String => String
@@ -153,9 +160,7 @@ module Analyzer::Swift
 
     # Check if a line contains a route definition
     private def route_definition?(line : String) : Bool
-      line.includes?(".get(") || line.includes?(".post(") ||
-        line.includes?(".put(") || line.includes?(".delete(") ||
-        line.includes?(".patch(") || line.includes?(".on(")
+      line.matches?(ROUTE_CALL_RE)
     end
 
     # Check if a line is a route definition but not a parameter access
@@ -316,14 +321,20 @@ module Analyzer::Swift
     end
 
     private def call_arguments(line : String, args_start : Int32) : Tuple(String, Int32)?
+      # `chars` avoids per-index `String#[]`: on non-ASCII lines each direct
+      # `line[index]` re-walks from byte 0 to locate the char offset, making
+      # this scan O(n^2). Materializing the char array once keeps indexed
+      # access O(1) and the whole scan O(n); the single closing slice below
+      # (`line[args_start...index]`) is unchanged and still O(n) once.
+      chars = line.chars
       depth = 1
       in_string = false
       escaped = false
       quote = '"'
       index = args_start
 
-      while index < line.size
-        char = line[index]
+      while index < chars.size
+        char = chars[index]
 
         if in_string
           if escaped
@@ -393,12 +404,17 @@ module Analyzer::Swift
       # String-aware: only truncate at a `//` OUTSIDE a string literal, so a path
       # like "api//v2" or a "https://..." redirect arg isn't cut (which made
       # call_arguments fail and silently drop the route / group prefix).
+      #
+      # This runs on every scanned line, so per-index `line[index]` matters:
+      # on non-ASCII lines it re-walks from byte 0 each call, making the scan
+      # O(n^2). `chars` gives O(1) indexed access, keeping this O(n).
+      chars = line.chars
       in_string = false
       escaped = false
       quote = '"'
       index = 0
-      while index < line.size
-        char = line[index]
+      while index < chars.size
+        char = chars[index]
         if in_string
           if escaped
             escaped = false
@@ -410,7 +426,7 @@ module Analyzer::Swift
         elsif char == '"' || char == '\''
           in_string = true
           quote = char
-        elsif char == '/' && line[index + 1]? == '/'
+        elsif char == '/' && chars[index + 1]? == '/'
           return line[0...index]
         end
         index += 1
