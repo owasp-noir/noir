@@ -202,12 +202,16 @@ module Analyzer::Dart
       in_string = false
       string_quote = '\0'
       i = 0
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = body.chars
 
-      while i < body.size
-        c = body[i]
+      while i < chars.size
+        c = chars[i]
 
         if in_string
-          if c == '\\' && i + 1 < body.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -259,17 +263,21 @@ module Analyzer::Dart
     end
 
     private def method_name_before(body : String, paren_idx : Int32) : String?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this backward scan O(n^2);
+      # index a materialized Array(Char) instead (O(1) per access).
+      chars = body.chars
       back = paren_idx - 1
-      while back >= 0 && body[back].whitespace?
+      while back >= 0 && chars[back].whitespace?
         back -= 1
       end
       name_end = back
-      while back >= 0 && (body[back].alphanumeric? || body[back] == '_')
+      while back >= 0 && (chars[back].alphanumeric? || chars[back] == '_')
         back -= 1
       end
       name_start = back + 1
       return if name_start > name_end
-      candidate = body[name_start..name_end]
+      candidate = chars[name_start..name_end].join
       return if candidate.empty?
       return unless candidate[0].lowercase? || candidate[0] == '_'
       return if RESERVED_DART_NAMES.includes?(candidate)
@@ -315,11 +323,15 @@ module Analyzer::Dart
 
     private def split_top_level_commas(text : String) : Array(String)
       parts = [] of String
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = text.chars
       depth = 0
       start = 0
       i = 0
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         case c
         when '<', '('
           depth += 1
@@ -327,7 +339,7 @@ module Analyzer::Dart
           depth -= 1 if depth > 0
         when ','
           if depth == 0
-            parts << text[start...i]
+            parts << chars[start...i].join
             start = i + 1
           end
         else
@@ -335,7 +347,7 @@ module Analyzer::Dart
         end
         i += 1
       end
-      parts << text[start..]
+      parts << chars[start..].join
       parts
     end
 
@@ -370,15 +382,19 @@ module Analyzer::Dart
     end
 
     private def find_matching_paren(text : String, open_idx : Int32) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = text.chars
       depth = 0
       i = open_idx
       in_string = false
       string_quote = '\0'
 
-      while i < text.size
-        c = text[i]
+      while i < chars.size
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -406,11 +422,12 @@ module Analyzer::Dart
     end
 
     private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
+      chars = text.chars
       i = start
-      while i < text.size && text[i] != '{'
+      while i < chars.size && chars[i] != '{'
         i += 1
       end
-      return if i >= text.size
+      return if i >= chars.size
 
       body_start = i + 1
       depth = 1
@@ -418,10 +435,10 @@ module Analyzer::Dart
       in_string = false
       string_quote = '\0'
 
-      while i < text.size && depth > 0
-        c = text[i]
+      while i < chars.size && depth > 0
+        c = chars[i]
         if in_string
-          if c == '\\' && i + 1 < text.size
+          if c == '\\' && i + 1 < chars.size
             i += 2
             next
           end
@@ -446,7 +463,7 @@ module Analyzer::Dart
       end
 
       return if depth != 0
-      {text[body_start...i], body_start}
+      {chars[body_start...i].join, body_start}
     end
 
     private def strip_dart_comments(text : String) : String
@@ -526,8 +543,11 @@ module Analyzer::Dart
       limit = offset > content.size ? content.size : offset
       count = 1
       i = 0
-      while i < limit
-        count += 1 if content[i] == '\n'
+      # `each_char` walks the UTF-8 buffer once with a reader instead of
+      # re-scanning from byte 0 on every indexed `content[i]` access.
+      content.each_char do |c|
+        break if i >= limit
+        count += 1 if c == '\n'
         i += 1
       end
       count
