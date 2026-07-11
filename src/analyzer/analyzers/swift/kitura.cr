@@ -22,6 +22,13 @@ module Analyzer::Swift
     ROUTER_ASSIGN_PATTERN = /\b(?:let|var)\s+([A-Za-z_]\w*)\s*=\s*Router\s*[(<]/
     ROUTER_PARAM_PATTERN  = /([A-Za-z_]\w*)\s*:\s*Router\b/
 
+    # `route_definition?` runs on every scanned line (route detection, param
+    # lookahead, body-boundary checks). One precompiled `Regex.union` scan
+    # (PCRE2 JIT) replaces six naive `String#includes?` char scans; union
+    # auto-escapes each literal so it is provably equivalent to the
+    # OR-of-substrings it replaces.
+    ROUTE_CALL_RE = Regex.union(".get(", ".post(", ".put(", ".delete(", ".patch(", ".all(")
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = read_file_content(path).lines
@@ -121,9 +128,7 @@ module Analyzer::Swift
 
     # Check if a line contains a route definition
     private def route_definition?(line : String) : Bool
-      (line.includes?(".get(") || line.includes?(".post(") ||
-        line.includes?(".put(") || line.includes?(".delete(") ||
-        line.includes?(".patch(") || line.includes?(".all("))
+      line.matches?(ROUTE_CALL_RE)
     end
 
     # Check if a line is a route definition but not a parameter access
