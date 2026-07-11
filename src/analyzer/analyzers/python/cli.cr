@@ -6,7 +6,8 @@ module Analyzer::Python
   # endpoints: one endpoint per (sub)command, with named options
   # (param_type "flag"), positional arguments ("argument"), and consumed
   # environment variables ("env"). Covers stdlib argparse / getopt /
-  # sys.argv plus click, typer, fire and docopt.
+  # sys.argv plus click, typer, fire, docopt, Abseil (absl-py) flags, and
+  # Cleo commands.
   #
   # Line-scan analyzer (the house style for non-tree-sitter Python adapters,
   # e.g. bottle). Endpoints are merged by URL so options registered across
@@ -45,6 +46,34 @@ module Analyzer::Python
     GETOPT_RE         = /getopt\.getopt\s*\([^,]+,\s*[rf]?["']([^"']*)["']\s*(?:,\s*\[([^\]]*)\])?/
     FIRE_RE           = /\bfire\.Fire\s*\(\s*(\w+)/
 
+    # Abseil (absl-py): flags.DEFINE_* calls register a single flat flag
+    # namespace consumed via FLAGS.<name> after app.run(main) — there is no
+    # subcommand concept, so every flag attaches to the binary's root URL.
+    ABSL_DEFINE_CALL_RE = /\bflags\.DEFINE_(?:string|integer|bool|boolean|float|enum|list|multi_string|multi_integer|multi_enum)\s*\(/
+    ABSL_DEFINE_NAME_RE = /\bflags\.DEFINE_(?:string|integer|bool|boolean|float|enum|list|multi_string|multi_integer|multi_enum)\s*\(\s*[rf]?["']([^"']+)["']/
+
+    # Cleo: a Command subclass declares its subcommand name as a class
+    # attribute, then reads its own arguments/options back out by name
+    # inside its methods (self.argument("x") / self.option("y")) — that
+    # readback call is also the most reliable textual anchor for the
+    # option/argument name itself.
+    CLEO_IMPORT_RE = /(?:^|\n)\s*(?:import\s+cleo\b|from\s+cleo(?:\.\w+)*\s+import\b)/
+    # `^` in Crystal/PCRE without the multiline flag anchors to the start of
+    # the whole subject, not each line — fine for the per-line `line.match`
+    # use in scan_cleo below, but a separate (?:^|\n)-anchored variant is
+    # needed to test this against the full multi-line file content. Both
+    # variants are column-0 anchored (no `\s*` before `class`) so the
+    # entrypoint gate below matches exactly what scan_cleo can extract — a
+    # `class Foo(Command)` nested inside a function/method (indented) is
+    # never resolved by scan_cleo, so it must not satisfy the gate either,
+    # or the file gets treated as a CLI entrypoint with no real command found
+    # (scan_stdlib then fires unconditionally on an unrelated env/argv read).
+    CLEO_COMMAND_CLASS_RE          = /^class\s+(\w+)\s*\(\s*Command\b/
+    CLEO_COMMAND_CLASS_ANYWHERE_RE = /(?:^|\n)class\s+\w+\s*\(\s*Command\b/
+    CLEO_NAME_ATTR_RE              = /^\s*name\s*=\s*[rf]?["']([^"']+)["']/
+    CLEO_ARGUMENT_CALL_RE          = /\bself\.argument\s*\(\s*[rf]?["']([^"']+)["']/
+    CLEO_OPTION_CALL_RE            = /\bself\.option\s*\(\s*[rf]?["']([^"']+)["']/
+
     def analyze
       python_files = get_files_by_extension(".py")
       endpoints = {} of String => Endpoint
@@ -66,6 +95,8 @@ module Analyzer::Python
             scan_argparse(lines, path, binary, root_url, endpoints)
             scan_click(lines, path, root_url, endpoints)
             scan_typer(lines, path, root_url, endpoints)
+            scan_absl(lines, path, root_url, endpoints)
+            scan_cleo(lines, path, root_url, endpoints)
             scan_stdlib(content, lines, path, root_url, endpoints)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
@@ -87,6 +118,8 @@ module Analyzer::Python
       return true if content.includes?("fire.Fire")
       return true if content.includes?("getopt.getopt")
       return true if content.includes?("docopt")
+      return true if content.matches?(ABSL_DEFINE_CALL_RE)
+      return true if content.matches?(CLEO_IMPORT_RE) && content.matches?(CLEO_COMMAND_CLASS_ANYWHERE_RE)
       content.matches?(SYS_ARGV_RE) && content.matches?(MAIN_GUARD_RE)
     end
 
@@ -318,6 +351,94 @@ module Analyzer::Python
         break if index - def_index > 80 # safety bound
       end
       buffer.to_s
+    end
+
+    # absl-py: flags.DEFINE_* has no receiver/scope to attribute — every
+    # declared flag is a global, consumed via FLAGS.<name> anywhere in the
+    # program — so every match simply attaches to the binary's root URL.
+    # Joins a multi-line call (the name may land on its own continuation
+    # line) the same way scan_argparse joins add_argument.
+    private def scan_absl(lines : Array(String), path : String, root_url : String,
+                          endpoints : Hash(String, Endpoint))
+      index = 0
+      while index < lines.size
+        line = lines[index]
+        unless line.matches?(ABSL_DEFINE_CALL_RE)
+          index += 1
+          next
+        end
+        start = index
+        logical = line
+        while parens_unbalanced?(logical) && index + 1 < lines.size && index - start < 10
+          index += 1
+          logical += " " + lines[index]
+        end
+        if m = logical.match(ABSL_DEFINE_NAME_RE)
+          fetch_endpoint(endpoints, root_url, path, start + 1).push_param(Param.new(m[1], "", "flag"))
+        end
+        index += 1
+      end
+    end
+
+    # Cleo: each `class FooCommand(Command):` is a subcommand keyed by its
+    # `name = "..."` class attribute. Scope every self.argument()/
+    # self.option() readback found anywhere in the class body (covers
+    # handle() and any helper methods) to that command's URL — never a
+    # sticky cursor, so a second command class can't inherit stray params.
+    private def scan_cleo(lines : Array(String), path : String, root_url : String,
+                          endpoints : Hash(String, Endpoint))
+      index = 0
+      while index < lines.size
+        line = lines[index]
+        unless m = line.match(CLEO_COMMAND_CLASS_RE)
+          index += 1
+          next
+        end
+        class_indent = line.size - line.lstrip.size
+        body_start = index + 1
+        body_end = body_start
+        while body_end < lines.size
+          candidate = lines[body_end]
+          stripped = candidate.strip
+          if stripped.empty? || stripped.starts_with?("#")
+            body_end += 1
+            next
+          end
+          break if candidate.size - candidate.lstrip.size <= class_indent
+          body_end += 1
+        end
+
+        # Only the class's direct-member indentation (the indentation of its
+        # first non-blank/non-comment body line) counts as a class attribute.
+        # A `name = "..."` local variable inside a nested method body sits
+        # deeper than that and must not hijack the command's URL.
+        name = nil
+        member_indent = nil
+        (body_start...body_end).each do |i|
+          body_line = lines[i]
+          stripped = body_line.strip
+          next if stripped.empty? || stripped.starts_with?("#")
+          indent = body_line.size - body_line.lstrip.size
+          member_indent ||= indent
+          next unless indent == member_indent
+          if nm = body_line.match(CLEO_NAME_ATTR_RE)
+            name = nm[1]
+            break
+          end
+        end
+
+        if name
+          url = "#{root_url}/#{name}"
+          ep = fetch_endpoint(endpoints, url, path, body_start + 1)
+          (body_start...body_end).each do |i|
+            body_line = lines[i]
+            body_line.scan(CLEO_ARGUMENT_CALL_RE) { |am| ep.push_param(Param.new(am[1], "", "argument")) }
+            body_line.scan(CLEO_OPTION_CALL_RE) { |om| ep.push_param(Param.new(om[1], "", "flag")) }
+          end
+        end
+
+        index = body_end
+      end
     end
 
     # stdlib: raw env reads (gated), sys.argv positionals, getopt, fire.

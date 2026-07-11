@@ -2850,9 +2850,9 @@ module NoirTechs
       },
     },
     :python_cli => {
-      :framework => "CLI (argparse / click / typer / fire / docopt / getopt)",
+      :framework => "CLI (argparse / click / typer / fire / docopt / getopt / absl / cleo)",
       :language  => "Python",
-      :similar   => ["python-cli", "python_cli", "argparse", "click", "typer", "fire", "docopt"],
+      :similar   => ["python-cli", "python_cli", "argparse", "click", "typer", "fire", "docopt", "absl", "abseil", "cleo"],
       :supported => {
         :endpoint => true,
         # CLI endpoints carry the synthetic "CLI" verb, not an HTTP method,
