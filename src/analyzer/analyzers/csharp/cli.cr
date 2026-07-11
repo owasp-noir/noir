@@ -7,7 +7,8 @@ module Analyzer::CSharp
   # (param_type "flag"), positional arguments ("argument") and consumed
   # environment variables ("env"). Covers `Main(string[] args)` /
   # GetCommandLineArgs / GetEnvironmentVariable plus System.CommandLine,
-  # CommandLineParser, CliFx and Spectre.Console.Cli.
+  # CommandLineParser, CliFx, Spectre.Console.Cli,
+  # McMaster.Extensions.CommandLineUtils and Cocona.
   #
   # Line-scan analyzer (Go/Ruby/Rust CLI house style) merging endpoints by
   # URL. Subclasses Analyzer directly (there is no C# engine) and reuses
@@ -27,11 +28,25 @@ module Analyzer::CSharp
     NEW_OPTION      = /\bnew\s+Option(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
     NEW_ARGUMENT    = /\bnew\s+Argument(?:<[^>]*>)?\s*\(\s*@?"([^"]+)"/
 
-    # Attribute-driven libs (CommandLineParser / CliFx / Spectre / airline-ish).
+    # Attribute-driven libs (CommandLineParser / CliFx / Spectre / airline-ish
+    # / McMaster.Extensions.CommandLineUtils / Cocona).
     VERB_ATTR   = /\[\s*(?:Verb|Command)\s*\(\s*@?"([^"]+)"/
     ADD_COMMAND = /\.AddCommand(?:<[^>]+>)?\s*\(\s*@?"([^"]+)"/
-    OPTION_ATTR = /\[\s*(?:Option|CommandOption)\s*\(([^\]]*)\)/
+    # Parenthesized body is optional so a bare `[Option]` (McMaster/Cocona,
+    # name taken from the annotated member) is matched too.
+    OPTION_ATTR = /\[\s*(?:Option|CommandOption)\s*(?:\(([^\]]*)\))?\s*\]/
     PARAM_ATTR  = /\[\s*CommandParameter\s*\(([^\]]*)\)/
+
+    # McMaster / Cocona: `[Argument(0)]` / `[Argument(0, "name")]` /
+    # bare `[Argument]` (Cocona lambda params). Body may hold an explicit
+    # quoted name; when absent we fall back to the annotated property or
+    # parameter name (same line or the line right below).
+    ARGUMENT_ATTR = /\[\s*Argument\s*(?:\(([^\]]*)\))?\s*\]/
+    # Trailing "type name" right after a matched attribute's tail (an
+    # optional leftover "]" is skipped first since Option/Argument attr
+    # regexes above don't always consume it).
+    PROPERTY_TRAILING = /\A\s*\]?\s*(?:public\s+)?\S+\s+(\w+)/
+    PROPERTY_NEXTLINE = /\A\s*(?:public\s+)?\S+\s+(\w+)\s*[{;,)]/
 
     # builtin.
     GET_ENV      = /\bEnvironment\.GetEnvironmentVariable\s*\(\s*@?"([^"]+)"/
@@ -43,10 +58,13 @@ module Analyzer::CSharp
     # comment), qualifying a web app as a framework CLI and leaking its env
     # reads. CommandLineParser is matched via its `using CommandLine` /
     # `CommandLine.Parser` namespace forms instead (same shape the cs_cli
-    # detector uses).
-    CLI_LIB_MARKERS = ["System.CommandLine", "CliFx", "Spectre.Console.Cli"]
-    CLP_NAMESPACE   = /\busing\s+CommandLine\b|\bCommandLine\.Parser\b|\bParser\.Default\.ParseArguments\b/
-    WEB_HOST_RE     = /\bWebApplication\.(?:Create(?:Builder|SlimBuilder|EmptyBuilder)?|CreateDefault)\b|\bnew\s+HttpListener\b|\.MapGet\s*\(|\.MapControllers\s*\(|\[\s*ApiController\s*\]|:\s*ControllerBase\b|\bHost\.CreateDefaultBuilder\b/
+    # detector uses). Cocona is matched via its `using Cocona` / `CoconaApp.*`
+    # forms for the same reason ("Cocona" alone is specific enough as a
+    # substring, but we keep the same regex shape for consistency).
+    CLI_LIB_MARKERS  = ["System.CommandLine", "CliFx", "Spectre.Console.Cli", "McMaster.Extensions.CommandLineUtils"]
+    CLP_NAMESPACE    = /\busing\s+CommandLine\b|\bCommandLine\.Parser\b|\bParser\.Default\.ParseArguments\b/
+    COCONA_NAMESPACE = /\busing\s+Cocona\b|\bCoconaApp\.(?:Create|Run)\b/
+    WEB_HOST_RE      = /\bWebApplication\.(?:Create(?:Builder|SlimBuilder|EmptyBuilder)?|CreateDefault)\b|\bnew\s+HttpListener\b|\.MapGet\s*\(|\.MapControllers\s*\(|\[\s*ApiController\s*\]|:\s*ControllerBase\b|\bHost\.CreateDefaultBuilder\b/
 
     def analyze
       assemblies = collect_csproj_names
@@ -65,7 +83,7 @@ module Analyzer::CSharp
           root_url = "cli://#{binary}"
           framework_cli = cli_library?(content)
           emit_builtin = framework_cli || !content.matches?(WEB_HOST_RE)
-          scan(content.lines, path, binary, root_url, endpoints, emit_builtin)
+          scan(content.lines, path, binary, root_url, endpoints, emit_builtin, framework_cli)
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next
@@ -77,7 +95,8 @@ module Analyzer::CSharp
     end
 
     private def cli_library?(content : String) : Bool
-      CLI_LIB_MARKERS.any? { |m| content.includes?(m) } || content.matches?(CLP_NAMESPACE)
+      CLI_LIB_MARKERS.any? { |m| content.includes?(m) } ||
+        content.matches?(CLP_NAMESPACE) || content.matches?(COCONA_NAMESPACE)
     end
 
     private def cli_evidence?(content : String) : Bool
@@ -101,7 +120,8 @@ module Analyzer::CSharp
     end
 
     private def scan(lines : Array(String), path : String, binary : String,
-                     root_url : String, endpoints : Hash(String, Endpoint), emit_builtin : Bool)
+                     root_url : String, endpoints : Hash(String, Endpoint), emit_builtin : Bool,
+                     framework_cli : Bool)
       current_url = root_url            # cursor for the attribute-driven path
       var_urls = {} of String => String # System.CommandLine command variables
 
@@ -151,8 +171,19 @@ module Analyzer::CSharp
           current_url = "#{root_url}/#{m[1]}"
           fetch_endpoint(endpoints, current_url, path, line_no)
         end
-        if m = line.match(OPTION_ATTR)
-          if name = attr_option_name(m[1])
+        # `scan` (not `match`) so several `[Option(...)]` on one line — e.g.
+        # Cocona's inline-lambda `([Option('n')] string name, [Option('a')] int
+        # age)` — all surface, not just the first.
+        line.scan(OPTION_ATTR) do |m|
+          name = m[1]?.try { |body| attr_option_name(body) }
+          # McMaster/Cocona bare short-option form (`[Option('n')]`) or fully
+          # bare `[Option]` carries no literal name; fall back to the annotated
+          # property/parameter name. Restricted to files with a recognized
+          # CLI-lib marker so a stray same-named attribute can't leak a param.
+          if !name && framework_cli
+            name = trailing_member_name(line, m.end, lines, index)
+          end
+          if name
             fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag"))
           end
         end
@@ -160,6 +191,17 @@ module Analyzer::CSharp
           # Spectre [CommandArgument(0, "<name>")] -> argument by label.
           if lbl = m[1].match(/[<\[]([A-Za-z0-9_-]+)[>\]]/)
             fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(lbl[1], "", "argument"))
+          end
+        end
+        if framework_cli
+          # McMaster `[Argument(0)]` / `[Argument(0, "name")]` and Cocona's
+          # bare `[Argument]` lambda-parameter form; `scan` so multiple
+          # positional params declared on one lambda line all surface.
+          line.scan(ARGUMENT_ATTR) do |m|
+            name = attr_argument_name(m[1]?) || trailing_member_name(line, m.end, lines, index)
+            if name
+              fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "argument"))
+            end
           end
         end
 
@@ -202,6 +244,37 @@ module Analyzer::CSharp
         end
       end
       long || short
+    end
+
+    # McMaster `[Argument(0, "name")]` carries an explicit quoted name;
+    # bare `[Argument(0)]` / Cocona's `[Argument]` do not (nil -> caller
+    # falls back to the annotated member name).
+    private def attr_argument_name(body : String?) : String?
+      return nil unless body
+      # Only a space-free double-quoted token is an explicit argument name;
+      # skip McMaster's `Description = "some help text"` named-property form
+      # (mirrors attr_option_name), falling back to the member name otherwise.
+      body.scan(/"([^"]+)"/) do |m|
+        return m[1] unless m[1].includes?(' ')
+      end
+      nil
+    end
+
+    # Fallback for attributes with no literal name (`[Option('n')]`,
+    # `[Argument]`): reads the type+name of the property/parameter the
+    # attribute annotates, either trailing on the same line (skipping a
+    # leftover "]" that Option/Argument attr regexes don't consume) or, if
+    # the attribute is alone on its line, the line right below it.
+    private def trailing_member_name(line : String, match_end : Int32,
+                                     lines : Array(String), index : Int32) : String?
+      tail = line[match_end..]
+      if pm = tail.match(PROPERTY_TRAILING)
+        return pm[1]
+      end
+      if (index + 1) < lines.size && (pm2 = lines[index + 1].match(PROPERTY_NEXTLINE))
+        return pm2[1]
+      end
+      nil
     end
 
     private def collect_csproj_names : Array(Tuple(String, String))

@@ -424,9 +424,9 @@ module NoirTechs
       },
     },
     :cs_cli => {
-      :framework => "CLI (System.CommandLine / CommandLineParser / CliFx / Spectre.Console)",
+      :framework => "CLI (System.CommandLine / CommandLineParser / CliFx / Spectre.Console / McMaster / Cocona)",
       :language  => "C#",
-      :similar   => ["cs-cli", "cs_cli", "csharp-cli", "system.commandline", "commandlineparser", "clifx", "spectre.console"],
+      :similar   => ["cs-cli", "cs_cli", "csharp-cli", "system.commandline", "commandlineparser", "clifx", "spectre.console", "mcmaster", "commandlineutils", "cocona"],
       :supported => {
         :endpoint => true,
         :method   => false,
