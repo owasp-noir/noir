@@ -220,9 +220,16 @@ module Analyzer::Scala
 
       region_end = method_region_end(structure, def_line_start, base_indent)
 
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < region_end; c = structure[i]; ...` scan is O(n) per
+      # char, i.e. O(n^2) overall on non-ASCII source. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = structure.chars
+
       # The `=` that introduces the body: skip type params, parameter lists and
       # default-value `=` (all of which sit inside brackets), and ignore `=>`.
-      eq_index = locate_body_eq(structure, cursor, region_end)
+      eq_index = locate_body_eq(chars, cursor, region_end)
 
       # Find the body separator: the first top-level `{` (brace block) or an
       # end-of-line `:` (Scala 3 indented block).
@@ -232,13 +239,13 @@ module Analyzer::Scala
       depth = 0
       i = search_from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         if depth == 0
           if c == '{'
             sep_index = i
             sep_kind = :brace
             break
-          elsif c == ':' && rest_of_line_blank?(structure, i + 1, region_end)
+          elsif c == ':' && rest_of_line_blank?(chars, i + 1, region_end)
             sep_index = i
             sep_kind = :colon
             break
@@ -256,7 +263,7 @@ module Analyzer::Scala
         # `sep_index` is always set when `sep_kind` is `:brace`/`:colon`; the
         # `if` narrows the type so we avoid `not_nil!`.
         if open_brace = sep_index
-          close = matching_brace(structure, open_brace)
+          close = matching_brace(chars, open_brace)
           body_start = open_brace + 1
           body_end = close || region_end
           {signature: source[def_start..open_brace], body: source[body_start...body_end], body_start: body_start}
@@ -270,7 +277,7 @@ module Analyzer::Scala
         # Single-expression body (`def foo = bar(x)`). Without a `=` there is no
         # value body to parse (e.g. an abstract def).
         return unless eq_index
-        body_start = skip_whitespace(structure, eq_index + 1, region_end)
+        body_start = skip_whitespace(chars, eq_index + 1, region_end)
         {signature: source[def_start..eq_index], body: source[body_start...region_end], body_start: body_start}
       end
     end
@@ -299,17 +306,17 @@ module Analyzer::Scala
     end
 
     # Index of the top-level `=` that begins the method body, or nil.
-    private def locate_body_eq(structure : String, from : Int32, region_end : Int32) : Int32?
+    private def locate_body_eq(chars : Array(Char), from : Int32, region_end : Int32) : Int32?
       depth = 0
       i = from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         if depth == 0
           if c == '='
-            nxt = structure[i + 1]?
+            nxt = chars[i + 1]?
             # Guard the index explicitly: Crystal's `[-1]?` wraps to the last
             # char rather than returning nil.
-            prv = i > 0 ? structure[i - 1]? : nil
+            prv = i > 0 ? chars[i - 1]? : nil
             return i if nxt != '>' && nxt != '=' && prv != '=' && prv != '!' && prv != '<' && prv != '>'
           elsif c == '{'
             # Brace-only body (procedure syntax `def foo { ... }`): no `=`.
@@ -326,12 +333,12 @@ module Analyzer::Scala
     end
 
     # Index of the brace matching the one at `open_index`, or nil.
-    private def matching_brace(structure : String, open_index : Int32) : Int32?
+    private def matching_brace(chars : Array(Char), open_index : Int32) : Int32?
       depth = 0
       i = open_index
-      size = structure.size
+      size = chars.size
       while i < size
-        case structure[i]
+        case chars[i]
         when '{' then depth += 1
         when '}'
           depth -= 1
@@ -342,10 +349,10 @@ module Analyzer::Scala
       nil
     end
 
-    private def rest_of_line_blank?(structure : String, from : Int32, region_end : Int32) : Bool
+    private def rest_of_line_blank?(chars : Array(Char), from : Int32, region_end : Int32) : Bool
       i = from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         break if c == '\n'
         return false unless c == ' ' || c == '\t' || c == '\r'
         i += 1
@@ -353,10 +360,10 @@ module Analyzer::Scala
       true
     end
 
-    private def skip_whitespace(structure : String, from : Int32, region_end : Int32) : Int32
+    private def skip_whitespace(chars : Array(Char), from : Int32, region_end : Int32) : Int32
       i = from
       while i < region_end
-        c = structure[i]
+        c = chars[i]
         break unless c == ' ' || c == '\t' || c == '\n' || c == '\r'
         i += 1
       end
@@ -663,9 +670,15 @@ module Analyzer::Scala
       quote = '\0'
       escape = false
       i = 0
+      # `text[i]`/`text[i, n]` walk the string from byte 0 on every call once
+      # it holds any multi-byte UTF-8 char (no cached char->byte index), so a
+      # `while i <= size - n; text[i]; ...` scan is O(n) per char, i.e. O(n^2)
+      # overall on non-ASCII input. Materialize once and index the array
+      # instead -- same char offsets, O(1) access.
+      chars = text.chars
 
-      while i <= text.size - operator.size
-        char = text[i]
+      while i <= chars.size - operator.size
+        char = chars[i]
 
         if in_string
           if escape
@@ -688,14 +701,23 @@ module Analyzer::Scala
         when ')', ']', '}'
           depth -= 1 if depth > 0
         else
-          # `i` is a CHAR index; char-slice (byte_slice would treat i as a byte
-          # offset and desync the match when a multi-byte char precedes it).
-          return i if depth == 0 && text[i, operator.size]? == operator
+          # `i` is a CHAR index; comparing against the char array (rather than
+          # byte-slicing `text`) avoids desyncing the match when a multi-byte
+          # char precedes it.
+          return i if depth == 0 && chars_match_at?(chars, i, operator)
         end
         i += 1
       end
 
       nil
+    end
+
+    # True when `needle` occurs in `chars` starting at `index`, char-by-char.
+    private def chars_match_at?(chars : Array(Char), index : Int32, needle : String) : Bool
+      needle.each_char_with_index do |ch, offset|
+        return false unless chars[index + offset]? == ch
+      end
+      true
     end
 
     private def normalize_route_default_value(raw_default : String) : String
@@ -827,7 +849,7 @@ module Analyzer::Scala
 
       open_brace = structure.index('{', search_from)
       return unless open_brace
-      close = matching_brace(structure, open_brace)
+      close = matching_brace(structure.chars, open_brace)
       return unless close
 
       {body: source[(open_brace + 1)...close], start: open_brace + 1}
