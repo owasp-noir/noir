@@ -61,7 +61,7 @@ module Analyzer::Java
         constants = string_constants_for(content)
         collect_static_file_endpoints(content, constants).each do |entry|
           endpoint_path, line = entry
-          @result << Endpoint.new(join_paths(context_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
+          @result << Endpoint.new(Helper.join_paths(context_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
         end
       end
 
@@ -82,7 +82,7 @@ module Analyzer::Java
       end
 
       details = Details.new(PathInfo.new(path, route.line + 1))
-      endpoint = Endpoint.new(join_paths(context_path, route.path), route.verb, params, details)
+      endpoint = Endpoint.new(Helper.join_paths(context_path, route.path), route.verb, params, details)
       endpoint.protocol = route.protocol
 
       # 1-hop callees out of the handler lambda body. The Route
@@ -158,7 +158,7 @@ module Analyzer::Java
 
     private def static_mount_path(hosted_path : String) : String
       normalized = normalize_optional_path(hosted_path)
-      normalized.empty? ? "/**" : join_paths(normalized, "**")
+      normalized.empty? ? "/**" : Helper.join_paths(normalized, "**")
     end
 
     private def context_path_for(content : String) : String
@@ -300,12 +300,6 @@ module Analyzer::Java
         after_idx += 1
       end
       after_idx < content.size && content[after_idx] == '('
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

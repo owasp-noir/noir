@@ -336,7 +336,7 @@ module Analyzer::Java
           include_prefix = include_match[1]
           include_target = include_match[2]
           if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
-            process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
+            process_routes_file(included_path, controller_methods, routes_by_key, Helper.join_paths(prefix, include_prefix), seen)
           end
           next
         end
@@ -345,7 +345,7 @@ module Analyzer::Java
         # Example: GET /users/:id controllers.Users.show(id: Long)
         if route_match = stripped_line.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)\s+(.+)/)
           method = route_match[1]
-          route_path = join_paths(prefix, route_match[2])
+          route_path = Helper.join_paths(prefix, route_match[2])
           action = route_match[3]
 
           endpoint = create_endpoint(route_path, method, path, index + 1)
@@ -364,12 +364,6 @@ module Analyzer::Java
       end
 
       seen.delete(path)
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
 
     # Extract path parameters from route pattern

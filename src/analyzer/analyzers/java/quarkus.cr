@@ -76,7 +76,7 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
             line = route.line + 1
             details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint = Endpoint.new(join_paths(configured_base_path, route.path), route.verb, route.params, details)
+            endpoint = Endpoint.new(Helper.join_paths(configured_base_path, route.path), route.verb, route.params, details)
             endpoint.protocol = route.protocol
             route.callees.each do |name, callee_line|
               endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
@@ -165,12 +165,6 @@ module Analyzer::Java
       ""
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     private def path_configs_for(file_list : Array(String)) : Hash(String, QuarkusPathConfig)
       configs = Hash(String, QuarkusPathConfig).new
       project_roots = Set(String).new
@@ -253,7 +247,7 @@ module Analyzer::Java
                                          application_base_path : String) : String
       config = configs[project_root_for(path)]? || QuarkusPathConfig.new
       rest_base = application_base_path.empty? ? config.rest_path : application_base_path
-      join_paths(config.http_root_path, rest_base)
+      Helper.join_paths(config.http_root_path, rest_base)
     end
 
     private def project_root_for(path : String) : String
@@ -286,13 +280,13 @@ module Analyzer::Java
         next if relative_path.empty?
 
         details = Details.new(PathInfo.new(file))
-        endpoint_path = join_paths(config.http_root_path, "/#{relative_path}")
+        endpoint_path = Helper.join_paths(config.http_root_path, "/#{relative_path}")
         endpoints << Endpoint.new(endpoint_path, "GET", details)
 
         if File.basename(relative_path) == config.static_index_page
           directory = File.dirname(relative_path)
           directory_path = directory == "." ? "/" : "/#{directory}/"
-          index_endpoint_path = join_paths(config.http_root_path, directory_path)
+          index_endpoint_path = Helper.join_paths(config.http_root_path, directory_path)
           next if endpoints.any? { |endpoint| endpoint.url == index_endpoint_path && endpoint.method == "GET" }
 
           endpoints << Endpoint.new(index_endpoint_path, "GET", details)
@@ -341,7 +335,7 @@ module Analyzer::Java
 
         route_path = reactive_route_path(body, method_name)
         base_path = route_bases.find { |base| offset >= base.start_offset && offset <= base.end_offset }.try(&.path) || ""
-        endpoint_path = join_paths(http_root_path, join_paths(base_path, route_path))
+        endpoint_path = Helper.join_paths(http_root_path, Helper.join_paths(base_path, route_path))
         line = content[0...offset].count('\n') + 1
         details = Details.new(PathInfo.new(path, line))
         params = reactive_route_params(content, match.end(0) || offset, endpoint_path)

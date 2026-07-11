@@ -292,7 +292,7 @@ module Analyzer::Java
         if !service_routes.empty? && (method_name == "service" || method_name == "serviceUnder")
           base_path = method_name == "serviceUnder" ? endpoint : ""
           service_routes.each do |entry|
-            emit_builder_route(entry[0], join_paths(base_path, entry[1]), details, emitted)
+            emit_builder_route(entry[0], Helper.join_paths(base_path, entry[1]), details, emitted)
           end
           next
         end
@@ -758,7 +758,7 @@ module Analyzer::Java
       prefixes = [] of String
       registration_prefixes.each do |registration_prefix|
         class_prefixes.each do |class_prefix|
-          prefixes << join_paths(registration_prefix, class_prefix)
+          prefixes << Helper.join_paths(registration_prefix, class_prefix)
         end
       end
       prefixes.uniq
@@ -816,7 +816,7 @@ module Analyzer::Java
 
         prefixes.each do |prefix|
           route_paths.each do |route_path|
-            url_path = join_paths(prefix, route_path)
+            url_path = Helper.join_paths(prefix, route_path)
             parameters = collect_method_params(method, content, url_path, constants, current_class, dto_index)
             endpoint = Endpoint.new(url_path, http_method, parameters, details)
             collect_method_callees(method, content, path).each do |(name, callee_path, callee_line)|
@@ -1137,12 +1137,6 @@ module Analyzer::Java
           endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

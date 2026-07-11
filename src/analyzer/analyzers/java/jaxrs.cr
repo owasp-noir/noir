@@ -59,7 +59,7 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
             line = route.line + 1
             details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint_path = route.protocol == "ws" ? route.path : join_paths(application_base_path, route.path)
+            endpoint_path = route.protocol == "ws" ? route.path : Helper.join_paths(application_base_path, route.path)
             endpoint = Endpoint.new(endpoint_path, route.verb, route.params, details)
             endpoint.protocol = route.protocol
             route.callees.each do |name, callee_line|
@@ -150,12 +150,6 @@ module Analyzer::Java
         return base_paths[key]
       end
       ""
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
 
     private def project_root_for(path : String) : String
