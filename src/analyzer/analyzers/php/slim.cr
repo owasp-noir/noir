@@ -17,9 +17,8 @@ module Analyzer::Php
       return endpoints unless path.ends_with?(".php")
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless slim_relevant?(content)
+      content = read_file_content(path)
+      if slim_relevant?(content)
         endpoints = analyze_routes_content(content, "", path, include_callee)
       end
 
