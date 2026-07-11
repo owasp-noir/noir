@@ -32,11 +32,11 @@ module Analyzer::Kotlin
     # added, so the annotation start is matched with a bounded body-join
     # instead of requiring the close paren on the same line.
     PICOCLI_COMMAND_START = /@Command\s*\(/
-    PICOCLI_NAME     = /\bname\s*=\s*"([^"]+)"/
-    PICOCLI_CLASS    = /\bclass\s+(\w+)\b/
-    PICOCLI_OPTION   = /@Option\s*\(([^)]*)\)/
-    PICOCLI_PARAMS   = /@Parameters\b/
-    PICOCLI_PROPERTY = /\b(?:var|val)\s+(\w+)\s*:/
+    PICOCLI_NAME          = /\bname\s*=\s*"([^"]+)"/
+    PICOCLI_CLASS         = /\bclass\s+(\w+)\b/
+    PICOCLI_OPTION        = /@Option\s*\(([^)]*)\)/
+    PICOCLI_PARAMS        = /@Parameters\b/
+    PICOCLI_PROPERTY      = /\b(?:var|val)\s+(\w+)\s*:/
 
     GET_ENV = /\bSystem\.getenv\s*\(\s*"([^"]+)"\s*\)/
 

@@ -76,7 +76,7 @@ module Analyzer::Javascript
     # `defineCommand` call inline. `resolve_citty_var_subcommands` resolves
     # those same-file references so `args:` inside NAME's block attributes to
     # `<root>/<key>` rather than falling back to root.
-    CITTY_DEFINE_ASSIGN_RE  = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*defineCommand\s*\(\s*\{/
+    CITTY_DEFINE_ASSIGN_RE   = /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*defineCommand\s*\(\s*\{/
     CITTY_SUBCOMMANDS_HEADER = /\bsubCommands\s*:\s*\{/
     CITTY_SUBCOMMAND_REF_RE  = /^\s*['"]?([A-Za-z_$][\w$-]*)['"]?\s*:\s*([A-Za-z_$][\w$]*)\s*,?\s*$/
 
@@ -215,8 +215,8 @@ module Analyzer::Javascript
 
         # arg: `arg({ '--name': String, '-n': '--name' })` -> root flags.
         if line.matches?(ARG_CALL_RE)
-          arg_flags(lines, index).each do |name|
-            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag"))
+          arg_flags(lines, index).each do |flag_name|
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(flag_name, "", "flag"))
           end
         end
 
@@ -247,8 +247,8 @@ module Analyzer::Javascript
         # getopts: `getopts(argv, { alias, default, boolean, string })`.
         if line.matches?(GETOPTS_CALL_RE)
           block_end = brace_bounded_end(lines, index, '(', ')')
-          getopts_flags(lines, index, block_end).each do |name|
-            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag"))
+          getopts_flags(lines, index, block_end).each do |opt_name|
+            fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(opt_name, "", "flag"))
           end
         end
 
@@ -530,16 +530,16 @@ module Analyzer::Javascript
     private def getopts_flags(lines : Array(String), start : Int32, block_end : Int32) : Array(String)
       block = lines[start..block_end]
       flags = [] of String
-      if idx = block.index { |l| l.matches?(GETOPTS_ALIAS_HEADER) }
+      if idx = block.index(&.matches?(GETOPTS_ALIAS_HEADER))
         flags.concat(collect_object_values(block, idx))
       end
-      if idx = block.index { |l| l.matches?(GETOPTS_DEFAULT_HEADER) }
+      if idx = block.index(&.matches?(GETOPTS_DEFAULT_HEADER))
         flags.concat(collect_object_keys(block, idx))
       end
-      if idx = block.index { |l| l.matches?(GETOPTS_BOOLEAN_HEADER) }
+      if idx = block.index(&.matches?(GETOPTS_BOOLEAN_HEADER))
         flags.concat(collect_bracket_strings(block, idx))
       end
-      if idx = block.index { |l| l.matches?(GETOPTS_STRING_HEADER) }
+      if idx = block.index(&.matches?(GETOPTS_STRING_HEADER))
         flags.concat(collect_bracket_strings(block, idx))
       end
       flags.uniq

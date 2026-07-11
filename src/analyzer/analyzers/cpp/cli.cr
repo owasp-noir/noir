@@ -64,7 +64,7 @@ module Analyzer::Cpp
     # space before the paren is valid C++ and must not be silently skipped.
     CLI_MARKERS = ["CLI::App", "getopt", "struct option", "cxxopts::", "program_options",
                    "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser"]
-    WEB_RE      = /\b(?:Crow|crow|drogon|httplib|oatpp)\b|Crow::|drogon::|httplib::|oatpp::/
+    WEB_RE = /\b(?:Crow|crow|drogon|httplib|oatpp)\b|Crow::|drogon::|httplib::|oatpp::/
 
     def analyze
       endpoints = {} of String => Endpoint
@@ -181,8 +181,8 @@ module Analyzer::Cpp
         end
 
         # Abseil Flags: ABSL_FLAG(type, name, default, help) — root flags.
-        absl_flag_names(line).each do |name|
-          fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag"))
+        absl_flag_names(line).each do |flag_name|
+          fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(flag_name, "", "flag"))
         end
 
         # raw argv positionals. `scan` so every argv[N] on one line surfaces
@@ -217,7 +217,7 @@ module Analyzer::Cpp
     # add_argument calls are dropped in `scan` rather than mis-attributed.
     private def resolve_argparse_vars(lines : Array(String), path : String, root_url : String,
                                       endpoints : Hash(String, Endpoint)) : Hash(String, String)
-      declared = {} of String => String     # var -> display name
+      declared = {} of String => String          # var -> display name
       links = [] of Tuple(String, String, Int32) # parent_var, child_var, line_no
       parse_vars = [] of String
 
@@ -269,7 +269,7 @@ module Analyzer::Cpp
       names = [] of String
       offset = 0
       while offset <= line.size && (m = line.match(ABSL_FLAG_MARK, offset))
-        args_start = m.end.not_nil!
+        args_start = m.end
         fields = [] of String
         depth = 0
         field_start = args_start

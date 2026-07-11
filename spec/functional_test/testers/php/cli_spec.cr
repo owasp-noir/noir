@@ -77,7 +77,7 @@ wp_cli_tester.perform_tests
 it "does not leak the unrelated helper's $args[7] into the WP-CLI command's params" do
   ep = wp_cli_tester.app.endpoints.find { |e| e.url == "cli://cli_wp_cli_fp/foo bar" }
   ep.should_not be_nil
-  ep.try(&.params.map(&.name).sort).should eq(["arg0", "format"])
+  ep.try(&.params.map(&.name).sort!).should eq(["arg0", "format"])
 end
 
 # Laravel Artisan regression: the idiomatic `{arg : description}` /

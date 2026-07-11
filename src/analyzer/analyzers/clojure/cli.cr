@@ -118,7 +118,7 @@ module Analyzer::Clojure
     # by brace extent rather than line order, then attributes each `:spec`
     # map's options only to the entry that structurally contains it.
     private def collect_babashka_dispatch(content : String, root_url : String, path : String,
-                                           endpoints : Hash(String, Endpoint)) : Nil
+                                          endpoints : Hash(String, Endpoint)) : Nil
       pairs = brace_pairs(content)
 
       entries = [] of {Int32, Int32, String}

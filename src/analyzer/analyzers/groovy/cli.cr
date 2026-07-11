@@ -36,10 +36,10 @@ module Analyzer::Groovy
     # Gated on library-specific constructs only (never a bare `@Parameter`,
     # which is too generic on its own) so unrelated annotations/classes
     # named similarly don't light this up.
-    JC_MARKER      = /\bimport\s+com\.beust\.jcommander\b|\bnew\s+JCommander\s*\(|\bJCommander\.newBuilder\s*\(/
-    JC_PARAMETER   = /@Parameter\s*\(([^)]*)\)/
-    CLASS_DECL     = /\bclass\s+([A-Za-z_]\w*)/
-    VAR_NEW_DECL   = /\b[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s*=\s*new\s+([A-Za-z_]\w*)\s*\(/
+    JC_MARKER        = /\bimport\s+com\.beust\.jcommander\b|\bnew\s+JCommander\s*\(|\bJCommander\.newBuilder\s*\(/
+    JC_PARAMETER     = /@Parameter\s*\(([^)]*)\)/
+    CLASS_DECL       = /\bclass\s+([A-Za-z_]\w*)/
+    VAR_NEW_DECL     = /\b[A-Za-z_]\w*\s+([A-Za-z_]\w*)\s*=\s*new\s+([A-Za-z_]\w*)\s*\(/
     JC_ADD_CMD_STR   = /\.addCommand\s*\(\s*['"]([^'"]+)['"]\s*,\s*new\s+([A-Za-z_]\w*)\s*\(/
     JC_ADD_CMD_VAR   = /\.addCommand\s*\(\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*)\s*\)/
     JC_COMMAND_NAMES = /@Parameters\s*\([^)]*\bcommandNames\s*=\s*\{?\s*['"]([^'"]+)['"]/
@@ -109,11 +109,11 @@ module Analyzer::Groovy
             end
 
             if has_commonscli
-              commons_cli_option_names(line).each do |name|
-                fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "flag"))
+              commons_cli_option_names(line).each do |opt_name|
+                fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(opt_name, "", "flag"))
               end
-              line.scan(COMMONS_CLI_ADD_OPT) do |m|
-                fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
+              line.scan(COMMONS_CLI_ADD_OPT) do |opt_match|
+                fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(opt_match[2], "", "flag"))
               end
             end
 

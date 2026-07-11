@@ -71,7 +71,7 @@ module Analyzer::Perl
               # literals elsewhere in the file don't leak as bogus flags.
               in_describe_options = true if line.includes?("describe_options") && line.includes?("(")
               if in_describe_options
-                line.scan(DESCRIBE_OPT_SPEC) { |m| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag")) }
+                line.scan(DESCRIBE_OPT_SPEC) { |opt_match| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(opt_match[1], "", "flag")) }
               end
               if in_describe_options
                 do_depth += line.count('(') - line.count(')')

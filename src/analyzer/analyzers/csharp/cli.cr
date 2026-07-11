@@ -174,14 +174,14 @@ module Analyzer::CSharp
         # `scan` (not `match`) so several `[Option(...)]` on one line — e.g.
         # Cocona's inline-lambda `([Option('n')] string name, [Option('a')] int
         # age)` — all surface, not just the first.
-        line.scan(OPTION_ATTR) do |m|
-          name = m[1]?.try { |body| attr_option_name(body) }
+        line.scan(OPTION_ATTR) do |opt_match|
+          name = opt_match[1]?.try { |body| attr_option_name(body) }
           # McMaster/Cocona bare short-option form (`[Option('n')]`) or fully
           # bare `[Option]` carries no literal name; fall back to the annotated
           # property/parameter name. Restricted to files with a recognized
           # CLI-lib marker so a stray same-named attribute can't leak a param.
           if !name && framework_cli
-            name = trailing_member_name(line, m.end, lines, index)
+            name = trailing_member_name(line, opt_match.end, lines, index)
           end
           if name
             fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "flag"))
@@ -197,8 +197,8 @@ module Analyzer::CSharp
           # McMaster `[Argument(0)]` / `[Argument(0, "name")]` and Cocona's
           # bare `[Argument]` lambda-parameter form; `scan` so multiple
           # positional params declared on one lambda line all surface.
-          line.scan(ARGUMENT_ATTR) do |m|
-            name = attr_argument_name(m[1]?) || trailing_member_name(line, m.end, lines, index)
+          line.scan(ARGUMENT_ATTR) do |arg_match|
+            name = attr_argument_name(arg_match[1]?) || trailing_member_name(line, arg_match.end, lines, index)
             if name
               fetch_endpoint(endpoints, current_url, path, line_no).push_param(Param.new(name, "", "argument"))
             end
@@ -250,7 +250,7 @@ module Analyzer::CSharp
     # bare `[Argument(0)]` / Cocona's `[Argument]` do not (nil -> caller
     # falls back to the annotated member name).
     private def attr_argument_name(body : String?) : String?
-      return nil unless body
+      return unless body
       # Only a space-free double-quoted token is an explicit argument name;
       # skip McMaster's `Description = "some help text"` named-property form
       # (mirrors attr_option_name), falling back to the member name otherwise.

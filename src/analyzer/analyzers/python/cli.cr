@@ -390,7 +390,7 @@ module Analyzer::Python
       index = 0
       while index < lines.size
         line = lines[index]
-        unless m = line.match(CLEO_COMMAND_CLASS_RE)
+        unless line.matches?(CLEO_COMMAND_CLASS_RE)
           index += 1
           next
         end

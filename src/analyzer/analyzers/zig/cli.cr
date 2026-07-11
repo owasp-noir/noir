@@ -59,7 +59,7 @@ module Analyzer::Zig
     # below is gated on STRONG_MARKERS.
     STRONG_MARKERS = /@import\s*\(\s*"cli"\s*\)|@import\s*\(\s*"clap"\s*\)|\b(?:std\.)?process\.argsAlloc\s*\(|\bclap\.(?:parseParamsComptime|parse)\b|\bcli\.(?:Command|App|Runner)\b/
     ARGS_IMPORT_RE = /@import\s*\(\s*"args"\s*\)/
-    WEB_RE  = /@import\s*\(\s*"(?:zap|jetzig|httpz|tokamak)"\s*\)/
+    WEB_RE         = /@import\s*\(\s*"(?:zap|jetzig|httpz|tokamak)"\s*\)/
 
     def analyze
       endpoints = {} of String => Endpoint
@@ -156,7 +156,7 @@ module Analyzer::Zig
     # the others.
     private def scan_zig_args(lines : Array(String), path : String, root_url : String,
                               endpoints : Hash(String, Endpoint), alias_name : String)
-      named_re  = Regex.new("\\b#{Regex.escape(alias_name)}\\.(?:parseForCurrentProcess|parse)\\s*\\(\\s*([A-Za-z_]\\w*)\\s*[,)]")
+      named_re = Regex.new("\\b#{Regex.escape(alias_name)}\\.(?:parseForCurrentProcess|parse)\\s*\\(\\s*([A-Za-z_]\\w*)\\s*[,)]")
       inline_re = Regex.new("\\b#{Regex.escape(alias_name)}\\.(?:parseForCurrentProcess|parse)\\s*\\(\\s*struct\\s*\\{")
 
       lines.each_with_index do |line, index|
