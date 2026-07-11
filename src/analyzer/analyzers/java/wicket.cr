@@ -960,13 +960,16 @@ module Analyzer::Java
     end
 
     private def find_matching_paren(code : String, open_idx : Int32) : Int32?
+      # Scan by CHARACTER (not index-into-String-per-step): `code[index]` in a
+      # manual `while` loop is O(n) per access on non-ASCII content (Crystal
+      # can't fast-path multi-byte indexing), making the whole scan O(n^2) on
+      # a large non-ASCII file. `each_char_with_index` walks the string once.
       depth = 1
-      index = open_idx + 1
       in_string = false
       escape = false
 
-      while index < code.size
-        char = code[index]
+      code.each_char_with_index do |char, index|
+        next if index <= open_idx
         if in_string
           if escape
             escape = false
@@ -975,7 +978,6 @@ module Analyzer::Java
           elsif char == '"'
             in_string = false
           end
-          index += 1
           next
         end
 
@@ -988,19 +990,19 @@ module Analyzer::Java
           depth -= 1
           return index if depth.zero?
         end
-        index += 1
       end
       nil
     end
 
     private def find_matching_brace(code : String, open_idx : Int32) : Int32?
+      # See `find_matching_paren` above: single forward pass instead of
+      # per-index `code[i]` lookups, which are O(n^2) on non-ASCII content.
       depth = 1
-      index = open_idx + 1
       in_string = false
       escape = false
 
-      while index < code.size
-        char = code[index]
+      code.each_char_with_index do |char, index|
+        next if index <= open_idx
         if in_string
           if escape
             escape = false
@@ -1009,7 +1011,6 @@ module Analyzer::Java
           elsif char == '"'
             in_string = false
           end
-          index += 1
           next
         end
 
@@ -1022,7 +1023,6 @@ module Analyzer::Java
           depth -= 1
           return index if depth.zero?
         end
-        index += 1
       end
       nil
     end
