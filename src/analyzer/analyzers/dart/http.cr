@@ -26,6 +26,11 @@ module Analyzer::Dart
     COOKIE_NAME_RE      = /\.cookies\b.*?\.name\s*==\s*r?["']([^"']+?)["']/
     BODY_READ_RE        = /utf8\s*\.\s*decoder\s*\.\s*bind\s*\([^\)]*\)|\.transform\s*\(\s*utf8\s*\.\s*decoder\s*\)|jsonDecode\s*\(/
 
+    # Whole-file detection gate, evaluated once per `.dart` file. A precompiled
+    # `Regex.union` (PCRE2 JIT) replaces the two OR-ed `String#includes?` scans
+    # it used to run — provably equivalent since union auto-escapes each literal.
+    HTTP_SURFACE_RE = Regex.union("HttpServer", "HttpRequest")
+
     alias MethodContext = NamedTuple(method: String, depth: Int32, params: Array(Param), switch_case: Bool)
     alias PathContext = NamedTuple(path: String, depth: Int32, params: Array(Param), switch_case: Bool)
     alias RouteContext = NamedTuple(endpoints: Array(Endpoint), depth: Int32)
@@ -65,7 +70,7 @@ module Analyzer::Dart
 
     private def http_file?(content : String) : Bool
       return false unless content.match(DART_IO_IMPORT_RE)
-      content.includes?("HttpServer") || content.includes?("HttpRequest")
+      content.matches?(HTTP_SURFACE_RE)
     end
 
     private def scan_file(content : String, path : String, include_callee : Bool) : Array(Endpoint)
