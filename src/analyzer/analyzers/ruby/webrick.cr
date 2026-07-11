@@ -39,6 +39,12 @@ module Analyzer::Ruby
       {v, Regex.union("\"#{v}\"", "'#{v}'", v.upcase, ":#{v}")}
     end
 
+    # `analyze`'s per-file evidence gate OR-ed three String#includes? scans
+    # as a standalone boolean gate. Folded into one precompiled union so it
+    # costs a single PCRE2 match instead of up to three naive substring
+    # scans per file.
+    WEBRICK_EVIDENCE_RE = Regex.union("webrick", "WEBrick", "mount_proc")
+
     # `extract_webrick_params` builds a `/#{Regex.escape(var)}\[...\]/`
     # subscript matcher for each variable name it discovers (the LHS of a
     # `parse_query(...)`/`JSON.parse(...)` assignment). Crystal recompiles an
@@ -60,7 +66,7 @@ module Analyzer::Ruby
         next if ruby_non_production_path?(path)
         content = read_file_content(path)
         # Gate early on webrick signals (avoid unnecessary work + comment-only noise)
-        next unless content.includes?("webrick") || content.includes?("WEBrick") || content.includes?("mount_proc")
+        next unless content.matches?(WEBRICK_EVIDENCE_RE)
         process_webrick_file(path, content, servlet_index, include_callee)
       end
 
