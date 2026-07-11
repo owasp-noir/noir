@@ -168,8 +168,13 @@ module Analyzer::Javascript
       escaped = false
       i = start_pos
 
+      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
+      # string isn't single_byte_optimizable? (any non-ASCII char), making
+      # this O(n^2) on a large non-ASCII handler body. Index a
+      # pre-materialized Char array instead — same semantics, O(1) lookup.
+      chars = content.chars
       while i < end_pos
-        char = content[i]
+        char = chars[i]
 
         if quote
           if escaped
