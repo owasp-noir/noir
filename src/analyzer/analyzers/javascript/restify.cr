@@ -47,11 +47,16 @@ module Analyzer::Javascript
       result
     end
 
+    # Precompiled once — a single PCRE2-JIT scan replaces four naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal, so this is provably
+    # equivalent to the OR-of-includes? it replaces.
+    CLIENT_LIBRARY_RE = Regex.union(
+      "restify-clients", "createJSONClient(", "createStringClient(", "createHttpClient("
+    )
+
     private def client_library_file?(content : String) : Bool
-      content.includes?("restify-clients") ||
-        content.includes?("createJSONClient(") ||
-        content.includes?("createStringClient(") ||
-        content.includes?("createHttpClient(")
+      content.matches?(CLIENT_LIBRARY_RE)
     end
 
     # Process static directories and add endpoints for each file
