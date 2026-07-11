@@ -1,0 +1,10 @@
+{
+  "name": "cittyvardemo",
+  "version": "1.0.0",
+  "bin": {
+    "cittyvardemo": "cli.js"
+  },
+  "dependencies": {
+    "citty": "^0.1.6"
+  }
+}
