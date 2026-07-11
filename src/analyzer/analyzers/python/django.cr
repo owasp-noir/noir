@@ -9,6 +9,15 @@ module Analyzer::Python
     @django_app_config_path_cache = Hash(::String, ::String).new
     @visited_app_config_paths = Set(::String).new
 
+    # `extract_python_keyword_expression` is called with a small, fixed
+    # set of recurring keywords ("route", "regex", "view", "prefix",
+    # "viewset", ...) once per URL-pattern/router-registration match, and
+    # internally re-evaluates the regex once per positional arg. Memoize
+    # the compiled Regex per keyword across the whole scan instead of
+    # rebuilding an identical PCRE2 pattern on every call (mirrors the
+    # @keyword_regex_cache pattern used by the other python analyzers).
+    @keyword_regex_cache = Hash(::String, Regex).new
+
     # Regular expressions for extracting Django URL configurations
     REGEX_ROOT_URLCONF = /\s*ROOT_URLCONF\s*=\s*r?['"]([^'"\\]*)['"]/
     REGEX_INCLUDE_URLS = /\binclude\s*\(\s*r?['"]([^'"\\]*)['"]/
@@ -17,6 +26,17 @@ module Analyzer::Python
     # views. Precompiled — an interpolated literal would be recompiled on
     # every line of every CBV class body.
     REGEX_CBV_METHOD_DEF = /\s+(?:async\s+)?def\s+(#{HTTP_METHODS.join("|")})\s*\(/
+
+    # HTTP_METHODS is a fixed 8-element table (from PythonEngine), so the
+    # decorator-stack scan and the `request.method == "..."` scan below
+    # (each an `HTTP_METHODS.each` loop run per decorator line / per
+    # function-body line) can look up a precompiled regex per method name
+    # instead of interpolating and recompiling one on every iteration.
+    # Purely a lookup-table hoist — the matched text/capture groups are
+    # unchanged, so it doesn't affect the line/offset values computed
+    # elsewhere in this file.
+    DECORATOR_METHOD_NAME_REGEXES = HTTP_METHODS.to_h { |m| {m, /[^a-zA-Z0-9](#{m})[^a-zA-Z0-9]/} }
+    REQUEST_METHOD_NAME_REGEXES   = HTTP_METHODS.to_h { |m| {m, /['"](#{m})['"]/} }
 
     # Map request parameters to their respective fields
     REQUEST_PARAM_FIELD_MAP = {
@@ -247,8 +267,11 @@ module Analyzer::Python
       url_base_path = File.dirname(django_urls.filepath)
       @visited_url_paths[django_urls.filepath] = true
 
-      file = File.open(django_urls.filepath, encoding: "utf-8", invalid: :skip)
-      content = file.gets_to_end
+      # Prefer the detector-cached content over a fresh disk read; falls
+      # back to File.read (same encoding: utf-8, invalid: :skip) when the
+      # file wasn't cached. Byte-identical either way, so the char-offset
+      # -> line-number math further down is unaffected.
+      content = read_file_content(django_urls.filepath)
       original_content = content
       package_map = find_imported_modules(@django_base_path, url_base_path, content)
       import_aliases = extract_python_import_aliases(original_content)
@@ -1138,9 +1161,14 @@ module Analyzer::Python
       string_match ? string_match[1] : nil
     end
 
+    private def keyword_expression_regex(keyword : ::String) : Regex
+      @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
+    end
+
     private def extract_python_keyword_expression(args : Array(::String), keyword : ::String) : ::String?
+      keyword_re = keyword_expression_regex(keyword)
       args.each do |arg|
-        keyword_match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
+        keyword_match = arg.match(keyword_re)
         return keyword_match[1].strip if keyword_match
       end
 
@@ -1269,7 +1297,7 @@ module Analyzer::Python
                 methods.each { |m| restricted_methods << m unless restricted_methods.includes?(m) }
               else
                 HTTP_METHODS.each do |http_method_name|
-                  method_name_match = preceding_definition.downcase.match /[^a-zA-Z0-9](#{http_method_name})[^a-zA-Z0-9]/
+                  method_name_match = preceding_definition.downcase.match DECORATOR_METHOD_NAME_REGEXES[http_method_name]
                   unless method_name_match.nil?
                     suspicious_http_methods << http_method_name.upcase
                   end
@@ -1288,7 +1316,7 @@ module Analyzer::Python
             if line.includes? "request.method"
               suspicious_code = line.split("request.method")[1].strip
               HTTP_METHODS.each do |http_method_name|
-                method_name_match = suspicious_code.downcase.match /['"](#{http_method_name})['"]/
+                method_name_match = suspicious_code.downcase.match REQUEST_METHOD_NAME_REGEXES[http_method_name]
                 unless method_name_match.nil?
                   suspicious_http_methods << http_method_name.upcase
                 end
