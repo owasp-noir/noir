@@ -473,6 +473,12 @@ module Analyzer::Swift
     # `var body: some RouterMiddleware<Context>` / `func routes() -> some
     # RouterMiddleware<Context>` — the controller body that hosts the DSL.
     DSL_BODY_RE = /\bsome\s+RouterMiddleware\b/
+    # Whole-file DSL-presence gate, evaluated once per line to decide whether
+    # the (expensive) DSL scan runs at all. One precompiled `Regex.union`
+    # scan (PCRE2 JIT) replaces three naive `String#includes?` char scans per
+    # line; union auto-escapes each literal so it is provably equivalent to
+    # the OR-of-substrings it replaces.
+    DSL_PRESENCE_RE = Regex.union("RouterBuilder", "RouterMiddleware", "RouteGroup")
 
     # One nesting level of the DSL. `:builder`/`:group` scopes emit routes;
     # `:handler` (a route's trailing closure) and `:other` (struct/func/etc.
@@ -488,9 +494,7 @@ module Analyzer::Swift
 
     private def collect_dsl_route_hits(stripped_lines : Array(String), original_lines : Array(String)) : Array(RouteHit)
       hits = [] of RouteHit
-      return hits unless stripped_lines.any? do |l|
-                           l.includes?("RouterBuilder") || l.includes?("RouterMiddleware") || l.includes?("RouteGroup")
-                         end
+      return hits unless stripped_lines.any?(&.matches?(DSL_PRESENCE_RE))
 
       stack = [] of DslScope
       pending : DslScope? = nil
