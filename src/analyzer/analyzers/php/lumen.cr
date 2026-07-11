@@ -21,9 +21,8 @@ module Analyzer::Php
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
-        next unless lumen_relevant?(content)
+      content = read_file_content(path)
+      if lumen_relevant?(content)
         endpoints = analyze_routes_content(content, "", path, include_callee)
       end
 
