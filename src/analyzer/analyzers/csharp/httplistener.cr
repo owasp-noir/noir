@@ -17,6 +17,24 @@ module Analyzer::CSharp
     METHOD_LITERAL_RE = /@?"([A-Za-z]+)"/
     STRING_LITERAL_RE = /@?"([^"]*)"/
 
+    # The collection name at each `collection_aliases` call site is always
+    # one of these three fixed HttpListener request surfaces, so precompile
+    # each alias-assignment matcher once at load time instead of rebuilding
+    # an interpolated regex literal (a full PCRE2 JIT compile) per source
+    # line of every scanned block.
+    COLLECTION_ALIAS_ASSIGNMENT_PATTERNS = ["QueryString", "Headers", "Cookies"].to_h do |name|
+      {name, /\b(?:var|NameValueCollection|CookieCollection)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*\b#{name}\b/}
+    end
+
+    # `method_signal?`/`path_signal?` re-check every discovered alias
+    # against every source line, and `extract_indexer_params`/
+    # `extract_getter_params` re-check every alias against every emitted
+    # endpoint's block — memoize each alias's compiled boundary regex so a
+    # repeat lookup reuses the same instance instead of recompiling it.
+    @word_boundary_regex_memo = Hash(String, Regex).new
+    @indexer_param_regex_memo = Hash(String, Regex).new
+    @getter_param_regex_memo = Hash(String, Regex).new
+
     private class BranchContext
       property depth : Int32
       property methods : Array(String)
@@ -230,15 +248,19 @@ module Analyzer::CSharp
         text.includes?("RawUrl")
     end
 
+    private def word_boundary_regex(name : String) : Regex
+      @word_boundary_regex_memo[name] ||= /\b#{Regex.escape(name)}\b/
+    end
+
     private def method_signal?(text : String, method_vars : Array(String)) : Bool
       return true if text.includes?("HttpMethod")
-      method_vars.any? { |var| text.matches?(/\b#{Regex.escape(var)}\b/) }
+      method_vars.any? { |var| text.matches?(word_boundary_regex(var)) }
     end
 
     private def path_signal?(text : String, path_vars : Array(String)) : Bool
       return true if path_expression?(text)
       return true if text.includes?(".Url")
-      path_vars.any? { |var| text.matches?(/\b#{Regex.escape(var)}\b/) }
+      path_vars.any? { |var| text.matches?(word_boundary_regex(var)) }
     end
 
     private def extract_methods(line : String, method_vars : Array(String)) : Array(String)
@@ -489,20 +511,29 @@ module Analyzer::CSharp
 
     private def collection_aliases(block : String, collection_name : String) : Array(String)
       aliases = [collection_name]
+      pattern = COLLECTION_ALIAS_ASSIGNMENT_PATTERNS[collection_name]? ||
+                /\b(?:var|NameValueCollection|CookieCollection)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*\b#{collection_name}\b/
       block.each_line do |line|
         next unless line.includes?(collection_name)
 
-        if match = line.match(/\b(?:var|NameValueCollection|CookieCollection)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[^;]*\b#{collection_name}\b/)
+        if match = line.match(pattern)
           aliases << match[1] unless aliases.includes?(match[1])
         end
       end
       aliases
     end
 
+    private def indexer_param_regex(var : String) : Regex
+      @indexer_param_regex_memo[var] ||= /\b#{Regex.escape(var)}\s*\[\s*@?"([^"]+)"/
+    end
+
+    private def getter_param_regex(var : String) : Regex
+      @getter_param_regex_memo[var] ||= /\b#{Regex.escape(var)}\s*\.\s*(?:Get|GetValues|GetFirst)\s*\(\s*@?"([^"]+)"/
+    end
+
     private def extract_indexer_params(block : String, vars : Array(String), param_type : String, params : Array(Param))
       vars.each do |var|
-        escaped = Regex.escape(var)
-        block.scan(/\b#{escaped}\s*\[\s*@?"([^"]+)"/) do |match|
+        block.scan(indexer_param_regex(var)) do |match|
           name = match[1].strip
           params << Param.new(name, "", param_type) unless name.empty?
         end
@@ -511,8 +542,7 @@ module Analyzer::CSharp
 
     private def extract_getter_params(block : String, vars : Array(String), param_type : String, params : Array(Param))
       vars.each do |var|
-        escaped = Regex.escape(var)
-        block.scan(/\b#{escaped}\s*\.\s*(?:Get|GetValues|GetFirst)\s*\(\s*@?"([^"]+)"/) do |match|
+        block.scan(getter_param_regex(var)) do |match|
           name = match[1].strip
           params << Param.new(name, "", param_type) unless name.empty?
         end
