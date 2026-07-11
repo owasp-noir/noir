@@ -8,71 +8,69 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
         next if ruby_non_production_path?(path)
-        File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-          lines = file.each_line.to_a
-          active_route_endpoints = [] of Endpoint
-          active_route_depth = nil.as(Int32?)
-          prefix_stack = [] of NamedTuple(depth: Int32, path: String)
-          depth = 0
-          lines.each_with_index do |line, index|
-            next unless line.valid_encoding?
-            # Skip Ruby comment lines — `sinatra-contrib/lib/sinatra/
-            # namespace.rb` and similar library sources keep DSL
-            # examples (`#     get '/dashboard' do`) inside RDoc
-            # comments. They look identical to real route
-            # registrations to the line-based matcher.
-            stripped = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true).strip
-            next if stripped.empty? || stripped.starts_with?('#')
+        lines = read_file_content(path).each_line.to_a
+        active_route_endpoints = [] of Endpoint
+        active_route_depth = nil.as(Int32?)
+        prefix_stack = [] of NamedTuple(depth: Int32, path: String)
+        depth = 0
+        lines.each_with_index do |line, index|
+          next unless line.valid_encoding?
+          # Skip Ruby comment lines — `sinatra-contrib/lib/sinatra/
+          # namespace.rb` and similar library sources keep DSL
+          # examples (`#     get '/dashboard' do`) inside RDoc
+          # comments. They look identical to real route
+          # registrations to the line-based matcher.
+          stripped = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: true).strip
+          next if stripped.empty? || stripped.starts_with?('#')
 
-            line_delta = sinatra_depth_delta(line)
+          line_delta = sinatra_depth_delta(line)
 
-            if ns = stripped.match(/^namespace\s*\(?\s*['"]([^'"]+)['"]\s*\)?\s*(?:do\b|\{)/)
-              prefix_stack << {depth: depth + 1, path: ns[1]}
+          if ns = stripped.match(/^namespace\s*\(?\s*['"]([^'"]+)['"]\s*\)?\s*(?:do\b|\{)/)
+            prefix_stack << {depth: depth + 1, path: ns[1]}
+          end
+
+          route_endpoints = line_to_endpoints(stripped)
+          unless route_endpoints.empty?
+            route_endpoints.each do |endpoint|
+              endpoint.url = sinatra_prefixed_path(prefix_stack, endpoint.url)
+              details = Details.new(PathInfo.new(path, index + 1))
+              endpoint.details = details
+              attach_route_callees(endpoint, lines, index, path) if include_callee
+              @result << endpoint
             end
 
-            route_endpoints = line_to_endpoints(stripped)
-            unless route_endpoints.empty?
-              route_endpoints.each do |endpoint|
-                endpoint.url = sinatra_prefixed_path(prefix_stack, endpoint.url)
-                details = Details.new(PathInfo.new(path, index + 1))
-                endpoint.details = details
-                attach_route_callees(endpoint, lines, index, path) if include_callee
-                @result << endpoint
-              end
-
-              if line_delta > 0
-                active_route_endpoints = route_endpoints
-                active_route_depth = depth + 1
-              else
-                active_route_endpoints = [] of Endpoint
-                active_route_depth = nil
-              end
-            end
-
-            line_to_params(stripped).each do |param|
-              target_endpoints = if route_endpoints.empty?
-                                   if (route_depth = active_route_depth) && !active_route_endpoints.empty? && depth >= route_depth
-                                     active_route_endpoints
-                                   else
-                                     [] of Endpoint
-                                   end
-                                 else
-                                   route_endpoints
-                                 end
-
-              target_endpoints.each do |endpoint|
-                endpoint.push_param(param)
-              end
-            end
-
-            depth += line_delta
-            while !prefix_stack.empty? && prefix_stack.last[:depth] > depth
-              prefix_stack.pop
-            end
-            if (route_depth = active_route_depth) && depth < route_depth
+            if line_delta > 0
+              active_route_endpoints = route_endpoints
+              active_route_depth = depth + 1
+            else
               active_route_endpoints = [] of Endpoint
               active_route_depth = nil
             end
+          end
+
+          line_to_params(stripped).each do |param|
+            target_endpoints = if route_endpoints.empty?
+                                 if (route_depth = active_route_depth) && !active_route_endpoints.empty? && depth >= route_depth
+                                   active_route_endpoints
+                                 else
+                                   [] of Endpoint
+                                 end
+                               else
+                                 route_endpoints
+                               end
+
+            target_endpoints.each do |endpoint|
+              endpoint.push_param(param)
+            end
+          end
+
+          depth += line_delta
+          while !prefix_stack.empty? && prefix_stack.last[:depth] > depth
+            prefix_stack.pop
+          end
+          if (route_depth = active_route_depth) && depth < route_depth
+            active_route_endpoints = [] of Endpoint
+            active_route_depth = nil
           end
         end
       end
