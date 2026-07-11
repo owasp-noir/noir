@@ -18,16 +18,14 @@ module Analyzer::Php
       return endpoints unless path.ends_with?(".php")
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        content = file.gets_to_end
+      content = read_file_content(path)
 
-        if path.includes?("config") && content.includes?("urlManager")
-          endpoints.concat(analyze_url_manager(path, content))
-        end
+      if path.includes?("config") && content.includes?("urlManager")
+        endpoints.concat(analyze_url_manager(path, content))
+      end
 
-        if path.ends_with?("Controller.php") || content.match(/class\s+\w+Controller\s+extends/)
-          endpoints.concat(analyze_controller(path, content, include_callee))
-        end
+      if path.ends_with?("Controller.php") || content.match(/class\s+\w+Controller\s+extends/)
+        endpoints.concat(analyze_controller(path, content, include_callee))
       end
 
       endpoints
