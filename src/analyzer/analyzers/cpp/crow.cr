@@ -32,6 +32,10 @@ module Analyzer::Cpp
     COOKIE_GET  = /\bget_cookie\s*\(\s*"([^"]+)"/
     BODY_ACCESS = /\b(req|request)\s*\.\s*body\b/
 
+    # Precompiled union for the per-file evidence gate in analyze_file, so it
+    # costs a single PCRE2 match instead of up to four naive substring scans.
+    EVIDENCE_RE = Regex.union("CROW_ROUTE", "CROW_BP_ROUTE", "CROW_WEBSOCKET_ROUTE", "route_dynamic")
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
@@ -53,8 +57,7 @@ module Analyzer::Cpp
 
     private def analyze_file(path : String, include_callee : Bool)
       source = read_file_content(path)
-      return unless source.includes?("CROW_ROUTE") || source.includes?("CROW_BP_ROUTE") ||
-                    source.includes?("CROW_WEBSOCKET_ROUTE") || source.includes?("route_dynamic")
+      return unless source.matches?(EVIDENCE_RE)
 
       # Blank comments so commented-out routes (e.g. inside `/* ... */`) and
       # documentation snippets are not picked up as real endpoints.
