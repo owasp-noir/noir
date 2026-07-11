@@ -99,6 +99,11 @@ module Analyzer::Mobile
     PBXPROJ_ASSIGN_RE = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^;]*)\s*;\s*$/
     # `$(VAR)` / `${VAR}` build-setting reference.
     BUILD_VAR_RE = /\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]/
+    # Presence-only gate for the same reference syntax. One precompiled
+    # `Regex.union` scan (PCRE2 JIT) replaces the OR-ed
+    # `String#includes?("$(")` / `String#includes?("${")` pair used to
+    # short-circuit substitution/resolution below.
+    BUILD_VAR_REF_RE = Regex.union("$(", "${")
 
     # Loads build-setting definitions from the project's .xcconfig and
     # project.pbxproj files, so CFBundleURLSchemes placeholders can be resolved.
@@ -179,7 +184,7 @@ module Analyzer::Mobile
     # bounded depth. Unknown or cyclic references are kept verbatim and
     # filtered by `unresolved_build_var?` before endpoint creation.
     private def substitute_build_vars(value : String, vars : Hash(String, Array(String))) : Array(String)
-      return [value] unless value.includes?("$(") || value.includes?("${")
+      return [value] unless value.matches?(BUILD_VAR_REF_RE)
 
       resolved = [value]
       MAX_BUILD_VAR_SUBSTITUTION_DEPTH.times do
@@ -205,13 +210,13 @@ module Analyzer::Mobile
         break unless changed
 
         resolved = next_values
-        break unless resolved.any? { |candidate| candidate.includes?("$(") || candidate.includes?("${") }
+        break unless resolved.any?(&.matches?(BUILD_VAR_REF_RE))
       end
       resolved
     end
 
     private def unresolved_build_var?(value : String) : Bool
-      value.includes?("$(") || value.includes?("${")
+      value.matches?(BUILD_VAR_REF_RE)
     end
 
     # Associated-domain service prefixes that designate a URL entry point.
