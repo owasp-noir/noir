@@ -779,26 +779,24 @@ module Analyzer::Ruby
       bracket_depth = 0
       brace_depth = 0
 
-      File.open(routes_path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |raw_line|
-          stripped = strip_inline_comment(raw_line).strip
-          next if stripped.empty?
+      read_file_content(routes_path).each_line do |raw_line|
+        stripped = strip_inline_comment(raw_line).strip
+        next if stripped.empty?
 
-          buffer = buffer.empty? ? stripped : "#{buffer} #{stripped}"
-          delta = delimiter_delta(stripped)
-          paren_depth += delta[0]
-          bracket_depth += delta[1]
-          brace_depth += delta[2]
+        buffer = buffer.empty? ? stripped : "#{buffer} #{stripped}"
+        delta = delimiter_delta(stripped)
+        paren_depth += delta[0]
+        bracket_depth += delta[1]
+        brace_depth += delta[2]
 
-          next if paren_depth > 0 || bracket_depth > 0 || brace_depth > 0
-          next if stripped.ends_with?(",")
+        next if paren_depth > 0 || bracket_depth > 0 || brace_depth > 0
+        next if stripped.ends_with?(",")
 
-          lines << buffer
-          buffer = ""
-          paren_depth = 0
-          bracket_depth = 0
-          brace_depth = 0
-        end
+        lines << buffer
+        buffer = ""
+        paren_depth = 0
+        bracket_depth = 0
+        brace_depth = 0
       end
 
       lines << buffer unless buffer.empty?
@@ -1285,76 +1283,73 @@ module Analyzer::Ruby
         return empty
       end
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |controller_file|
-        controller_content = controller_file.gets_to_end
-        param_type = "json" if controller_content.includes?("render json:")
-        callees_by_action = extract_action_callees(controller_content, path) if callees_needed?
+      controller_content = read_file_content(path)
+      param_type = "json" if controller_content.includes?("render json:")
+      callees_by_action = extract_action_callees(controller_content, path) if callees_needed?
 
-        controller_file.rewind
-        this_method = ""
+      this_method = ""
 
-        controller_file.each_line.with_index do |raw_line, index|
-          line = strip_inline_comment(raw_line)
+      controller_content.each_line.with_index do |raw_line, index|
+        line = strip_inline_comment(raw_line)
 
-          if line.includes?("def ")
-            func_name = line.split("def ", 2)[1].split("(")[0].split(";")[0].strip
-            func_name = func_name.lchop("self.").strip
-            unless func_name.empty?
-              this_method = func_name
-              defined_actions << func_name
-              action_lines[func_name] = index + 1
-              method_bodies[this_method] ||= [] of String
-            end
-          end
-
-          unless this_method.empty?
+        if line.includes?("def ")
+          func_name = line.split("def ", 2)[1].split("(")[0].split(";")[0].strip
+          func_name = func_name.lchop("self.").strip
+          unless func_name.empty?
+            this_method = func_name
+            defined_actions << func_name
+            action_lines[func_name] = index + 1
             method_bodies[this_method] ||= [] of String
-            method_bodies[this_method] << line
           end
+        end
 
-          if pm = line.match(/permit\s*\(([^)]*)\)/)
-            pm[1].split(',').each do |raw|
-              name = raw.gsub(/[:\s'"]/, "")
-              next if name.empty? || this_method.empty?
-              # A permit list entry is always a lowercase symbol/string key
-              # (`:title`, `tag_ids`). Splat-of-constant args
-              # (`permit(*PERMITTED_PARAMS)`, `permit(:a, *Filter::KEYS)`)
-              # and the garbage left by naive comma-splitting of nested
-              # `key: [...]` forms survive the quote/colon strip as
-              # `*PERMITTED_PARAMS` / `*FilterKEYS` / `address[city`. Drop
-              # anything that isn't a clean identifier so those don't leak
-              # in as fabricated param names.
-              next unless name.matches?(/\A[a-z_][a-z0-9_]*\z/)
-              params_body_by_action[this_method] ||= [] of Param
-              params_body_by_action[this_method] << Param.new(name, "", param_type)
-              params_query_by_action[this_method] ||= [] of Param
-              params_query_by_action[this_method] << Param.new(name, "", "query")
-            end
-          end
+        unless this_method.empty?
+          method_bodies[this_method] ||= [] of String
+          method_bodies[this_method] << line
+        end
 
-          line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
-            name = (m[1]? || m[2]?).to_s.strip
+        if pm = line.match(/permit\s*\(([^)]*)\)/)
+          pm[1].split(',').each do |raw|
+            name = raw.gsub(/[:\s'"]/, "")
             next if name.empty? || this_method.empty?
+            # A permit list entry is always a lowercase symbol/string key
+            # (`:title`, `tag_ids`). Splat-of-constant args
+            # (`permit(*PERMITTED_PARAMS)`, `permit(:a, *Filter::KEYS)`)
+            # and the garbage left by naive comma-splitting of nested
+            # `key: [...]` forms survive the quote/colon strip as
+            # `*PERMITTED_PARAMS` / `*FilterKEYS` / `address[city`. Drop
+            # anything that isn't a clean identifier so those don't leak
+            # in as fabricated param names.
+            next unless name.matches?(/\A[a-z_][a-z0-9_]*\z/)
             params_body_by_action[this_method] ||= [] of Param
             params_body_by_action[this_method] << Param.new(name, "", param_type)
             params_query_by_action[this_method] ||= [] of Param
             params_query_by_action[this_method] << Param.new(name, "", "query")
           end
+        end
 
-          if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
-            name = hm[1].strip
-            if !name.empty? && !this_method.empty?
-              params_method[this_method] ||= [] of Param
-              params_method[this_method] << Param.new(name, "", "header")
-            end
-          end
+        line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
+          name = (m[1]? || m[2]?).to_s.strip
+          next if name.empty? || this_method.empty?
+          params_body_by_action[this_method] ||= [] of Param
+          params_body_by_action[this_method] << Param.new(name, "", param_type)
+          params_query_by_action[this_method] ||= [] of Param
+          params_query_by_action[this_method] << Param.new(name, "", "query")
+        end
 
-          line.scan(/cookies(?:\.(?:signed|encrypted))?\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |cm|
-            name = (cm[1]? || cm[2]?).to_s.strip
-            next if name.empty? || this_method.empty?
+        if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
+          name = hm[1].strip
+          if !name.empty? && !this_method.empty?
             params_method[this_method] ||= [] of Param
-            params_method[this_method] << Param.new(name, "", "cookie")
+            params_method[this_method] << Param.new(name, "", "header")
           end
+        end
+
+        line.scan(/cookies(?:\.(?:signed|encrypted))?\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |cm|
+          name = (cm[1]? || cm[2]?).to_s.strip
+          next if name.empty? || this_method.empty?
+          params_method[this_method] ||= [] of Param
+          params_method[this_method] << Param.new(name, "", "cookie")
         end
       end
 
