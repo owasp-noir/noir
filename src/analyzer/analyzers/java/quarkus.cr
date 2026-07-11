@@ -203,7 +203,7 @@ module Analyzer::Java
 
     private def read_properties(path : String) : Hash(String, String)
       values = Hash(String, String).new
-      File.each_line(path) do |line|
+      read_file_content(path).each_line do |line|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
 
@@ -232,7 +232,7 @@ module Analyzer::Java
     end
 
     private def yaml_string_value(path : String, *keys : String) : String?
-      value = YAML.parse(File.read(path))
+      value = YAML.parse(read_file_content(path))
       keys.each do |key|
         value = value[key]
       end
