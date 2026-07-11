@@ -276,13 +276,19 @@ module Analyzer::Typescript
     private def collect_v9_chain_routers(content : String, path : String, base_path : String, literal_mask : Array(Bool)) : Array(Router)
       collected = [] of Router
       assignment_pattern = /\b(?:export\s+)?(?:const|let|var)\s+(\w+)(?:\s*:[^=]+)?\s*=\s*/
+      # `find_statement_end`/`skip_whitespace` index by char; materializing
+      # `chars` once per file (instead of once per assignment match) keeps
+      # a non-ASCII file with many top-level declarations from re-walking
+      # `content` from byte 0 on every char access (Crystal has no
+      # char-index cache), which is O(n) per char -> O(n^2) per match.
+      chars = content.chars
 
       content.scan(assignment_pattern) do |match|
         match_start = match.begin(0) || 0
         next if literal_position?(literal_mask, match_start)
 
-        value_start = skip_whitespace(content, match.end(0) || 0)
-        statement_end = find_statement_end(content, value_start)
+        value_start = skip_whitespace(chars, match.end(0) || 0)
+        statement_end = find_statement_end(chars, value_start)
         expression = content[value_start...statement_end]
         next unless v9_router_chain_expression?(expression)
 
@@ -305,14 +311,15 @@ module Analyzer::Typescript
         expression.includes?(".subscription")
     end
 
-    private def find_statement_end(content : String, start : Int32) : Int32
+    private def find_statement_end(chars : Array(Char), start : Int32) : Int32
       depth = 0
       quote : Char? = nil
       escaped = false
       i = start
+      n = chars.size
 
-      while i < content.size
-        char = content[i]
+      while i < n
+        char = chars[i]
 
         if quote
           if escaped
@@ -336,10 +343,10 @@ module Analyzer::Typescript
         when '\n'
           if depth == 0
             next_pos = i + 1
-            while next_pos < content.size && (content[next_pos] == ' ' || content[next_pos] == '\t')
+            while next_pos < n && (chars[next_pos] == ' ' || chars[next_pos] == '\t')
               next_pos += 1
             end
-            return i unless content[next_pos]? == '.'
+            return i unless chars[next_pos]? == '.'
           end
         when ';'
           return i if depth == 0
@@ -348,12 +355,13 @@ module Analyzer::Typescript
         i += 1
       end
 
-      content.size
+      n
     end
 
-    private def skip_whitespace(content : String, pos : Int32) : Int32
+    private def skip_whitespace(chars : Array(Char), pos : Int32) : Int32
       i = pos
-      while i < content.size && content[i].whitespace?
+      n = chars.size
+      while i < n && chars[i].whitespace?
         i += 1
       end
       i
