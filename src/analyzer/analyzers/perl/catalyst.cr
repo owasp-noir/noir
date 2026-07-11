@@ -381,8 +381,31 @@ module Analyzer::Perl
       overrides
     end
 
+    # Crystal recompiles an interpolated regex literal on every evaluation (a
+    # full PCRE2 JIT compile). `config_value` is only ever called with key
+    # "namespace" or "path" (see `collect_controller_configs`, which itself
+    # runs once per file from `analyze`/`analyze_content` and again from
+    # `collect_actions`), so precompile both key's pattern sets once at load
+    # time instead of rebuilding+recompiling five regexes per call.
+    CONFIG_VALUE_PATTERNS = {
+      "namespace" => [
+        /namespace\s*=>\s*q\{([^}]*)\}/,
+        /namespace\s*=>\s*q\(([^)]*)\)/,
+        /namespace\s*=>\s*q\/([^\/]*)\//,
+        /namespace\s*=>\s*'([^']*)'/,
+        /namespace\s*=>\s*"([^"]*)"/,
+      ],
+      "path" => [
+        /path\s*=>\s*q\{([^}]*)\}/,
+        /path\s*=>\s*q\(([^)]*)\)/,
+        /path\s*=>\s*q\/([^\/]*)\//,
+        /path\s*=>\s*'([^']*)'/,
+        /path\s*=>\s*"([^"]*)"/,
+      ],
+    }
+
     private def config_value(statement : String, key : String) : String?
-      patterns = [
+      patterns = CONFIG_VALUE_PATTERNS[key]? || [
         /#{key}\s*=>\s*q\{([^}]*)\}/,
         /#{key}\s*=>\s*q\(([^)]*)\)/,
         /#{key}\s*=>\s*q\/([^\/]*)\//,
