@@ -784,9 +784,9 @@ module NoirTechs
       },
     },
     :perl_cli => {
-      :framework => "CLI (Getopt::Long / Getopt::Std / App::Cmd)",
+      :framework => "CLI (Getopt::Long / Getopt::Std / App::Cmd / Getopt::Long::Descriptive / MooX::Options)",
       :language  => "Perl",
-      :similar   => ["perl-cli", "perl_cli", "getopt::long", "getopt::std", "app::cmd"],
+      :similar   => ["perl-cli", "perl_cli", "getopt::long", "getopt::std", "app::cmd", "getopt::long::descriptive", "moox::options"],
       :supported => {
         :endpoint => true,
         :method   => false,
