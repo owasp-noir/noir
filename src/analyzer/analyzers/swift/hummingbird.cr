@@ -28,6 +28,13 @@ module Analyzer::Swift
     TYPE_DECL_PATTERN = /\b(?:struct|class|extension|actor|enum)\s+([A-Za-z_]\w*)/
     alias ScopedPrefixKey = Tuple(String, String)
 
+    # `route_definition?` runs on every scanned line (route detection, param
+    # lookahead, body-boundary checks). One precompiled `Regex.union` scan
+    # (PCRE2 JIT) replaces seven naive `String#includes?` char scans; union
+    # auto-escapes each literal so it is provably equivalent to the
+    # OR-of-substrings it replaces.
+    ROUTE_CALL_RE = Regex.union(".get(", ".post(", ".put(", ".delete(", ".patch(", ".head(", ".on(")
+
     # A route hit discovered by the chain scanner.
     record RouteHit,
       method : String,
@@ -982,10 +989,7 @@ module Analyzer::Swift
 
     # Check if a line contains a route definition
     private def route_definition?(line : String) : Bool
-      (line.includes?(".get(") || line.includes?(".post(") ||
-        line.includes?(".put(") || line.includes?(".delete(") ||
-        line.includes?(".patch(") || line.includes?(".head(") ||
-        line.includes?(".on("))
+      line.matches?(ROUTE_CALL_RE)
     end
 
     private def attach_route_callees(lines : Array(String),
