@@ -11,14 +11,8 @@ module Analyzer::Crystal
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = [] of String
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |line|
-          lines << line
-        end
-      end
-      lines = mask_crystal_heredocs(lines)
+      lines = mask_crystal_heredocs(read_file_content(path).lines)
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new

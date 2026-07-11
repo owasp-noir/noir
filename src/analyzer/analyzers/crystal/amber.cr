@@ -9,6 +9,11 @@ module Analyzer::Crystal
     NAMESPACE_PATTERN = /^(\s*)namespace\s+["']([^"']*)["']\s+do\b/
     # `resources "/posts", PostController[, only: …][, except: …]`.
     RESOURCES_PATTERN = /^\s*resources\s+["']([^"']+)["']\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*(.*)$/
+    # `serve_static false` / `serve_static(false)` — checked on every source
+    # line, so the two fixed OR-ed `String#includes?` substring scans are
+    # precompiled into a single regex union (one PCRE2 JIT scan per line
+    # instead of two naive substring scans).
+    SERVE_STATIC_DISABLED_RE = Regex.union("serve_static false", "serve_static(false)")
 
     # Amber's `resources` macro expands to the seven RESTful routes below
     # (update is registered for both PUT and PATCH). `resource` (singular)
@@ -36,15 +41,9 @@ module Analyzer::Crystal
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = [] of String
       file_base = configured_base_for(path)
 
-      File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-        file.each_line do |line|
-          lines << line
-        end
-      end
-      lines = mask_crystal_heredocs(lines)
+      lines = mask_crystal_heredocs(read_file_content(path).lines)
 
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
@@ -105,7 +104,7 @@ module Analyzer::Crystal
           end
         end
 
-        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
+        if line.matches?(SERVE_STATIC_DISABLED_RE)
           @static_disabled_bases << file_base
         end
 
@@ -261,23 +260,33 @@ module Analyzer::Crystal
       # Process other public folders
       @public_folders.each do |base, folder|
         next if @static_disabled_bases.includes?(base)
+
+        # `folder` is fixed for this outer iteration, but the interpolated
+        # regex below used to be rebuilt (a full PCRE2 JIT compile) on every
+        # file the folder contains. Precompute it once per folder instead of
+        # once per file, and escape the discovered name since it comes from
+        # arbitrary source text and may contain regex metacharacters.
+        nested_folder = folder.includes?("/")
+        folder_path = nested_folder ? (folder.ends_with?("/") ? folder : "#{folder}/") : ""
+        folder_re = if nested_folder
+                      /\/#{Regex.escape(folder.split("/").last)}\/(.*)/
+                    else
+                      /\/#{Regex.escape(folder)}\/(.*)/
+                    end
+
         get_public_dir_files(base, folder).each do |file|
           # Extract relative path from the custom folder
-          if folder.includes?("/")
+          if nested_folder
             # For absolute paths or paths with directories
-            folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
             if file.starts_with?(folder_path)
               relative_path = file.sub(folder_path, "")
               @result << Endpoint.new("/#{relative_path}", "GET")
-            else
+            elsif file =~ folder_re
               # Try to find the folder component in the path
-              folder_name = folder.split("/").last
-              if file =~ /\/#{folder_name}\/(.*)/
-                relative_path = $1
-                @result << Endpoint.new("/#{relative_path}", "GET")
-              end
+              relative_path = $1
+              @result << Endpoint.new("/#{relative_path}", "GET")
             end
-          elsif file =~ /\/#{folder}\/(.*)/
+          elsif file =~ folder_re
             # For simple folder names (no slashes)
             relative_path = $1
             @result << Endpoint.new("/#{relative_path}", "GET")

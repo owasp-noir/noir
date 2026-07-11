@@ -11,6 +11,11 @@ module Analyzer::Crystal
     # `get "/…", {{namespace}}::Videos, :videos` — substituting it back lets
     # those routes resolve their controller and carry callees.
     MACRO_VAR_PATTERN = /\{\{\s*(\w+)\s*=\s*([A-Za-z_][\w:]*)\s*\}\}/
+    # `serve_static false` / `serve_static(false)` — checked on every source
+    # line, so the two fixed OR-ed `String#includes?` substring scans are
+    # precompiled into a single regex union (one PCRE2 JIT scan per line
+    # instead of two naive substring scans).
+    SERVE_STATIC_DISABLED_RE = Regex.union("serve_static false", "serve_static(false)")
 
     @static_disabled_bases : Set(String) = Set(String).new
     @public_folders : Array(Tuple(String, String)) = [] of Tuple(String, String)
@@ -60,7 +65,7 @@ module Analyzer::Crystal
 
       lines.each_with_index do |line, index|
         # Collect public folder / serve_static info (used by post-pass)
-        if line.includes?("serve_static false") || line.includes?("serve_static(false)")
+        if line.matches?(SERVE_STATIC_DISABLED_RE)
           @static_disabled_bases << file_base
         end
 
@@ -192,20 +197,30 @@ module Analyzer::Crystal
 
       @public_folders.each do |base, folder|
         next if @static_disabled_bases.includes?(base)
+
+        # `folder` is fixed for this outer iteration, but the interpolated
+        # regex below used to be rebuilt (a full PCRE2 JIT compile) on every
+        # file the folder contains. Precompute it once per folder instead of
+        # once per file, and escape the discovered name since it comes from
+        # arbitrary source text and may contain regex metacharacters.
+        nested_folder = folder.includes?("/")
+        folder_path = nested_folder ? (folder.ends_with?("/") ? folder : "#{folder}/") : ""
+        folder_re = if nested_folder
+                      /\/#{Regex.escape(folder.split("/").last)}\/(.*)/
+                    else
+                      /\/#{Regex.escape(folder)}\/(.*)/
+                    end
+
         get_public_dir_files(base, folder).each do |file|
-          if folder.includes?("/")
-            folder_path = folder.ends_with?("/") ? folder : "#{folder}/"
+          if nested_folder
             if file.starts_with?(folder_path)
               relative_path = file.sub(folder_path, "")
               @result << Endpoint.new("/#{relative_path}", "GET")
-            else
-              folder_name = folder.split("/").last
-              if file =~ /\/#{folder_name}\/(.*)/
-                relative_path = $1
-                @result << Endpoint.new("/#{relative_path}", "GET")
-              end
+            elsif file =~ folder_re
+              relative_path = $1
+              @result << Endpoint.new("/#{relative_path}", "GET")
             end
-          elsif file =~ /\/#{folder}\/(.*)/
+          elsif file =~ folder_re
             relative_path = $1
             @result << Endpoint.new("/#{relative_path}", "GET")
           end
