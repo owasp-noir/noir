@@ -102,7 +102,12 @@ module Analyzer::Javascript
     WEB_FRAMEWORK_RE = /(?:require\s*\(\s*|from\s+)['"](?:express|fastify|koa|@hapi\/hapi|@nestjs\/[\w-]+|next|nuxt|hono|@hono\/[\w-]+|restify|@adonisjs\/[\w-]+|elysia|polka|connect|h3|@sveltejs\/[\w-]+|@remix-run\/[\w-]+|apollo-server|@apollo\/server)['"]/
     WEB_LISTEN_RE    = /\.\s*listen\s*\(|\bcreateServer\s*\(/
 
-    CLI_MARKERS = ["commander", "yargs", "cac", "meow", "minimist", "clipanion", "@oclif", "sade", "parseArgs", "Deno.args", "Bun.argv"]
+    # Precompiled once — a single PCRE2-JIT scan replaces up to eleven
+    # naive String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal (including the dots in
+    # "Deno.args"/"Bun.argv"), so it is provably equivalent to the
+    # OR-of-includes? it replaces.
+    CLI_MARKERS_RE = Regex.union("commander", "yargs", "cac", "meow", "minimist", "clipanion", "@oclif", "sade", "parseArgs", "Deno.args", "Bun.argv")
 
     def analyze
       package_names = collect_package_names
@@ -138,7 +143,7 @@ module Analyzer::Javascript
     end
 
     private def cli_evidence?(content : String) : Bool
-      CLI_MARKERS.any? { |m| content.includes?(m) } || content.matches?(ARGV_SLICE) ||
+      content.matches?(CLI_MARKERS_RE) || content.matches?(ARGV_SLICE) ||
         content.matches?(LIB_IMPORT_ONLY_RE)
     end
 
