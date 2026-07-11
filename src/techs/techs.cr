@@ -1212,9 +1212,9 @@ module NoirTechs
       },
     },
     :haskell_cli => {
-      :framework => "CLI (optparse-applicative / cmdargs / GetOpt)",
+      :framework => "CLI (optparse-applicative / cmdargs / GetOpt / turtle)",
       :language  => "Haskell",
-      :similar   => ["haskell-cli", "haskell_cli", "optparse-applicative", "cmdargs"],
+      :similar   => ["haskell-cli", "haskell_cli", "optparse-applicative", "cmdargs", "turtle"],
       :supported => {
         :endpoint => true,
         :method   => false,
