@@ -680,9 +680,15 @@ module Analyzer::Javascript
       idx = line_start_for_index(content, route_decorator_start)
       block_start = idx
 
+      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
+      # string isn't single_byte_optimizable? (any non-ASCII char). This
+      # walks backward line-by-line over the (possibly large) controller
+      # class content once per route decorator, so index a
+      # pre-materialized Char array instead — same semantics, O(1) lookup.
+      chars = content.chars
       while idx > 0
         previous_end = idx - 1
-        while previous_end >= 0 && content[previous_end] == '\n'
+        while previous_end >= 0 && chars[previous_end] == '\n'
           previous_end -= 1
         end
         break if previous_end < 0
@@ -700,7 +706,10 @@ module Analyzer::Javascript
 
     private def line_start_for_index(content : String, index : Int32) : Int32
       pos = index
-      while pos > 0 && content[pos - 1] != '\n'
+      # Same non-ASCII O(n^2) risk as above — index a pre-materialized
+      # Char array instead of re-decoding content[pos - 1] every step.
+      chars = content.chars
+      while pos > 0 && chars[pos - 1] != '\n'
         pos -= 1
       end
       pos
@@ -748,29 +757,35 @@ module Analyzer::Javascript
 
     private def skip_decorators_and_whitespace(content : String, start_pos : Int32) : Int32
       idx = start_pos
+      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
+      # string isn't single_byte_optimizable? (any non-ASCII char), making
+      # this O(n^2) when walked once per route decorator in a large
+      # non-ASCII controller class. Index a pre-materialized Char array
+      # instead — same semantics, O(1) lookup.
+      chars = content.chars
       loop do
-        while idx < content.size && content[idx].whitespace?
+        while idx < chars.size && chars[idx].whitespace?
           idx += 1
         end
-        break if idx >= content.size || content[idx] != '@'
+        break if idx >= chars.size || chars[idx] != '@'
 
         name_end = idx + 1
-        while name_end < content.size && (content[name_end].alphanumeric? || content[name_end] == '_' || content[name_end] == '$')
+        while name_end < chars.size && (chars[name_end].alphanumeric? || chars[name_end] == '_' || chars[name_end] == '$')
           name_end += 1
         end
 
         scan = name_end
-        while scan < content.size && content[scan].whitespace?
+        while scan < chars.size && chars[scan].whitespace?
           scan += 1
         end
 
-        if scan < content.size && content[scan] == '('
+        if scan < chars.size && chars[scan] == '('
           close = Noir::JSRouteExtractor.find_matching_paren(content, scan)
           break unless close
           idx = close + 1
         else
           newline = content.index('\n', scan)
-          idx = newline ? newline + 1 : content.size
+          idx = newline ? newline + 1 : chars.size
         end
       end
       idx
