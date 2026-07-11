@@ -48,6 +48,12 @@ module Analyzer::Java
     RE_HEADER = /getRequestHeaders\s*\(\s*\)\s*\.\s*(?:getFirst|get)\s*\(\s*"([^"]+)"/
     RE_BODY   = /getRequestBody\s*\(\s*\)/
 
+    # `detect_methods` interpolates the discovered `getRequestMethod()`
+    # variable name into 4 regexes; common names (`method`, `m`, ...) recur
+    # across handlers and files, so memoize per name instead of paying a
+    # fresh PCRE2 JIT compile on every handler that assigns to that name.
+    @method_var_regexes = Hash(String, Tuple(Regex, Regex, Regex, Regex)).new
+
     def analyze
       include_callee = callees_needed?
 
@@ -225,11 +231,17 @@ module Analyzer::Java
       end
 
       method_vars.each do |var|
-        escaped = Regex.escape(var)
-        scan_into(text, /\b#{escaped}\s*\.\s*equals(?:IgnoreCase)?\s*\(\s*"([A-Za-z]+)"/, verbs)
-        scan_into(text, /\b#{escaped}\s*==\s*"([A-Za-z]+)"/, verbs)
-        scan_into(text, /"([A-Za-z]+)"\s*\.\s*equals(?:IgnoreCase)?\s*\(\s*#{escaped}\s*\)/, verbs)
-        scan_into(text, /"([A-Za-z]+)"\s*==\s*#{escaped}/, verbs)
+        equals_re, eq_re, equals_rhs_re, eq_rhs_re = @method_var_regexes[var] ||= begin
+          escaped = Regex.escape(var)
+          {/\b#{escaped}\s*\.\s*equals(?:IgnoreCase)?\s*\(\s*"([A-Za-z]+)"/,
+           /\b#{escaped}\s*==\s*"([A-Za-z]+)"/,
+           /"([A-Za-z]+)"\s*\.\s*equals(?:IgnoreCase)?\s*\(\s*#{escaped}\s*\)/,
+           /"([A-Za-z]+)"\s*==\s*#{escaped}/}
+        end
+        scan_into(text, equals_re, verbs)
+        scan_into(text, eq_re, verbs)
+        scan_into(text, equals_rhs_re, verbs)
+        scan_into(text, eq_rhs_re, verbs)
       end
 
       collect_switch_verbs(text, method_vars, verbs)

@@ -53,14 +53,12 @@ module Analyzer::Java
                   if File.exists?(path) && File.extname(path) == ".jsp"
                     next if web_inf_jsp?(relative_path)
 
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      content = file.gets_to_end
-                      params_query = extract_params(content)
-                      details = Details.new(PathInfo.new(path))
-                      result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
-                      extract_form_endpoints(content, details).each do |endpoint|
-                        result << endpoint
-                      end
+                    content = read_file_content(path)
+                    params_query = extract_params(content)
+                    details = Details.new(PathInfo.new(path))
+                    result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
+                    extract_form_endpoints(content, details).each do |endpoint|
+                      result << endpoint
                     end
                   elsif File.exists?(path) && File.extname(path) == ".java"
                     content = read_file_content(path)
@@ -426,19 +424,22 @@ module Analyzer::Java
     end
 
     private def extract_balanced_block(content : String, open_index : Int32) : String
+      # Scan by CHARACTER via `each_char_with_index`, not a manual
+      # `while i < content.size; content[i]` loop: this walks a whole
+      # servlet handler body, and Crystal's String#[] is O(n) per access on
+      # non-ASCII content, making the old indexed loop O(n^2) in the worst
+      # case. One forward pass here keeps it O(n) regardless of encoding.
       depth = 0
-      i = open_index
 
-      while i < content.size
-        case content[i]
+      content.each_char_with_index do |char, i|
+        next if i < open_index
+        case char
         when '{'
           depth += 1
         when '}'
           depth -= 1
           return content[open_index..i] if depth == 0
         end
-
-        i += 1
       end
 
       content[open_index..]

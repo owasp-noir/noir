@@ -8,7 +8,12 @@ module Analyzer::Java
   class Struts2 < Analyzer
     STRUTS_CONFIG_BASENAMES = Set{"struts.xml", "struts-plugin.xml", "struts-deferred.xml"}
     DEFAULT_LOCATORS        = ["action", "actions", "struts", "struts2"]
-    REST_METHODS            = {
+
+    # `struts_java_source?` gates the per-file convention-action scan; one
+    # precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each literal)
+    # replaces 4 separate `String#includes?` passes over the same buffer.
+    STRUTS_JAVA_SOURCE_RE = Regex.union("org.apache.struts2", "com.opensymphony.xwork2", "@Action", "@Namespace")
+    REST_METHODS          = {
       "index"         => {"GET", ""},
       "show"          => {"GET", "/:id"},
       "edit"          => {"GET", "/:id/edit"},
@@ -406,11 +411,7 @@ module Analyzer::Java
     end
 
     private def struts_java_source?(content : String, config : ConventionConfig) : Bool
-      content.includes?("org.apache.struts2") ||
-        content.includes?("com.opensymphony.xwork2") ||
-        content.includes?("@Action") ||
-        content.includes?("@Namespace") ||
-        config.rest_enabled?
+      content.matches?(STRUTS_JAVA_SOURCE_RE) || config.rest_enabled?
     end
 
     private def classes_in(content : String, package_name : String) : Array(JavaClass)
@@ -719,13 +720,18 @@ module Analyzer::Java
     end
 
     private def matching_brace(content : String, open_index : Int32) : Int32?
+      # Scan by CHARACTER via `each_char_with_index`, not a manual
+      # `while index < content.size; content[index]` loop: this walks a
+      # whole class body (can be the entire remainder of a large file), and
+      # Crystal's String#[] is O(n) per access on non-ASCII content, making
+      # the old indexed loop O(n^2) in the worst case. One forward pass here
+      # keeps it O(n) regardless of encoding.
       depth = 0
       in_string : Char? = nil
       escaped = false
 
-      index = open_index
-      while index < content.size
-        char = content[index]
+      content.each_char_with_index do |char, index|
+        next if index < open_index
         if in_string
           if escaped
             escaped = false
@@ -742,7 +748,6 @@ module Analyzer::Java
           depth -= 1
           return index if depth == 0
         end
-        index += 1
       end
       nil
     end

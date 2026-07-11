@@ -95,7 +95,7 @@ module Analyzer::Java
             application_yml_path = File.join(path, "main/resources/application.yml")
             if File.exists?(application_yml_path)
               begin
-                config = YAML.parse(File.read(application_yml_path))
+                config = YAML.parse(read_file_content(application_yml_path))
                 spring = config["spring"]
                 webflux = spring["webflux"]
                 webflux_base_path = webflux["base-path"]
@@ -111,7 +111,7 @@ module Analyzer::Java
             application_properties_path = File.join(path, "main/resources/application.properties")
             if File.exists?(application_properties_path)
               begin
-                properties = File.read(application_properties_path)
+                properties = read_file_content(application_properties_path)
                 base_path = properties.match(/spring\.webflux\.base-path\s*=\s*(.*)/)
                 if base_path
                   webflux_base_path = base_path[1]
@@ -1231,7 +1231,7 @@ module Analyzer::Java
 
     private def read_properties(path : String) : Hash(String, String)
       values = Hash(String, String).new
-      File.each_line(path) do |line|
+      read_file_content(path).each_line do |line|
         stripped = line.strip
         next if stripped.empty? || stripped.starts_with?("#") || stripped.starts_with?("!")
 
@@ -1254,7 +1254,7 @@ module Analyzer::Java
     end
 
     private def yaml_string_value(path : String, *keys : String) : String?
-      value = YAML.parse(File.read(path))
+      value = YAML.parse(read_file_content(path))
       keys.each do |key|
         value = value[key]
       end
