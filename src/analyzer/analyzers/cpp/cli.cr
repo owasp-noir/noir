@@ -68,6 +68,10 @@ module Analyzer::Cpp
       "DEFINE_string", "DEFINE_int", "DEFINE_bool", "ABSL_FLAG", "argparse::ArgumentParser")
     WEB_RE = /\b(?:Crow|crow|drogon|httplib|oatpp)\b|Crow::|drogon::|httplib::|oatpp::/
 
+    # Precompiled union for the per-file test-path skip gate (cpp_test_path?),
+    # matched via String#matches? instead of five naive substring scans.
+    CPP_TEST_PATH_RE = Regex.union("/test/", "/tests/", "_test.", "test_", ".test.")
+
     def analyze
       endpoints = {} of String => Endpoint
 
@@ -97,9 +101,7 @@ module Analyzer::Cpp
     end
 
     private def cpp_test_path?(path : String) : Bool
-      lower = path.downcase
-      lower.includes?("/test/") || lower.includes?("/tests/") ||
-        lower.includes?("_test.") || lower.includes?("test_") || lower.includes?(".test.")
+      path.downcase.matches?(CPP_TEST_PATH_RE)
     end
 
     private def cpp_binary_name(path : String) : String
