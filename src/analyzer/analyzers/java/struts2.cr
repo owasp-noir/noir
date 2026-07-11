@@ -719,13 +719,18 @@ module Analyzer::Java
     end
 
     private def matching_brace(content : String, open_index : Int32) : Int32?
+      # Scan by CHARACTER via `each_char_with_index`, not a manual
+      # `while index < content.size; content[index]` loop: this walks a
+      # whole class body (can be the entire remainder of a large file), and
+      # Crystal's String#[] is O(n) per access on non-ASCII content, making
+      # the old indexed loop O(n^2) in the worst case. One forward pass here
+      # keeps it O(n) regardless of encoding.
       depth = 0
       in_string : Char? = nil
       escaped = false
 
-      index = open_index
-      while index < content.size
-        char = content[index]
+      content.each_char_with_index do |char, index|
+        next if index < open_index
         if in_string
           if escaped
             escaped = false
@@ -742,7 +747,6 @@ module Analyzer::Java
           depth -= 1
           return index if depth == 0
         end
-        index += 1
       end
       nil
     end
