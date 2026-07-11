@@ -36,6 +36,10 @@ module Analyzer::Lua
     APP_VAR_RE       = /(?:^|[^A-Za-z0-9_])(?:local\s+)?([A-Za-z_]\w*)\s*=\s*lapis\.Application(?:\b|:extend|\s*\()/
     APP_PATH_RE      = /(?:^|[^A-Za-z0-9_.])([A-Za-z_]\w*)\.path\s*=\s*(['"])([^'"]*)\2/
     MOON_PATH_RE     = /@path\s*:\s*(['"])([^'"]*)\1/
+    # `moonscript_action?`'s two OR-ed String#includes? scans, folded into
+    # one precompiled union so the boolean gate costs a single PCRE2 match
+    # instead of up to two naive substring scans.
+    MOON_ACTION_MARKER_RE = Regex.union("=>", "respond_to")
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
@@ -342,7 +346,7 @@ module Analyzer::Lua
     # entry, not a route, so it is rejected — guarding the broadened
     # bare-key match against string→string maps in non-route files.
     private def moonscript_action?(region_text : String) : Bool
-      return true if region_text.includes?("=>") || region_text.includes?("respond_to")
+      return true if region_text.matches?(MOON_ACTION_MARKER_RE)
       stripped = region_text.lstrip
       return false if stripped.empty?
       first = stripped[0]
@@ -445,9 +449,13 @@ module Analyzer::Lua
     end
 
     private def first_open_paren_before(content : String, start_index : Int32, end_index : Int32) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
       cursor = start_index
-      while cursor < end_index && cursor < content.size
-        return cursor if content[cursor] == '('
+      while cursor < end_index && cursor < chars.size
+        return cursor if chars[cursor] == '('
         cursor += 1
       end
 
@@ -464,30 +472,38 @@ module Analyzer::Lua
     private def identifier_handler_after(content : String, start_index : Int32, limit : Int32) : String?
       cursor = skip_ws_and_commas(content, start_index)
       return if cursor >= limit
-      return unless identifier_start?(content[cursor])
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
+      return unless identifier_start?(chars[cursor])
 
       ident_start = cursor
       cursor += 1
-      while cursor < limit && cursor < content.size && identifier_part?(content[cursor])
+      while cursor < limit && cursor < chars.size && identifier_part?(chars[cursor])
         cursor += 1
       end
 
       trailing = skip_ws(content, cursor)
-      return if trailing < limit && content[trailing] == '('
+      return if trailing < limit && chars[trailing] == '('
 
-      content[ident_start...cursor]
+      chars[ident_start...cursor].join
     end
 
     private def string_literal_at(content : String, index : Int32) : String?
       return if index >= content.size
-      quote = content[index]
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
+      quote = chars[index]
       return unless quote == '"' || quote == '\''
 
       cursor = index + 1
       escaped = false
       value = String::Builder.new
-      while cursor < content.size
-        char = content[cursor]
+      while cursor < chars.size
+        char = chars[cursor]
         if escaped
           value << char
           escaped = false
@@ -505,16 +521,24 @@ module Analyzer::Lua
     end
 
     private def skip_ws_and_commas(content : String, index : Int32) : Int32
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
       cursor = index
-      while cursor < content.size && (content[cursor].whitespace? || content[cursor] == ',')
+      while cursor < chars.size && (chars[cursor].whitespace? || chars[cursor] == ',')
         cursor += 1
       end
       cursor
     end
 
     private def skip_ws(content : String, index : Int32) : Int32
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
       cursor = index
-      while cursor < content.size && content[cursor].whitespace?
+      while cursor < chars.size && chars[cursor].whitespace?
         cursor += 1
       end
       cursor

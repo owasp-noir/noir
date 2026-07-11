@@ -292,9 +292,13 @@ module Analyzer::Lua
     end
 
     private def first_open_paren_before(content : String, start_index : Int32, end_index : Int32) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = content.chars
       cursor = start_index
-      while cursor < end_index && cursor < content.size
-        return cursor if content[cursor] == '('
+      while cursor < end_index && cursor < chars.size
+        return cursor if chars[cursor] == '('
         cursor += 1
       end
       nil
