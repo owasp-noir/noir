@@ -225,18 +225,24 @@ module Analyzer::Scala
     # lets a literal inside `("a" / b)` stay a path segment while one inside
     # `.example("a")` is rejected.
     private def call_paren_depths(s : String) : Array(Int32)
-      depths = Array(Int32).new(s.size, 0)
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < s.size; c = s[i]; ...` scan is O(n) per char, i.e.
+      # O(n^2) overall on non-ASCII `.in(...)` blocks. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = s.chars
+      depths = Array(Int32).new(chars.size, 0)
       call_depth = 0
       stack = [] of Bool
       in_str = false
       prev_sig = '\0'
       i = 0
-      while i < s.size
+      while i < chars.size
         depths[i] = call_depth
-        c = s[i]
+        c = chars[i]
         if in_str
           if c == '\\'
-            depths[i + 1] = call_depth if i + 1 < s.size
+            depths[i + 1] = call_depth if i + 1 < chars.size
             i += 2
             next
           elsif c == '"'
@@ -299,16 +305,19 @@ module Analyzer::Scala
     end
 
     private def balanced_paren_content(s : String, open_idx : Int32) : Tuple(String, Int32)?
+      # Same non-ASCII O(n^2) risk as `call_paren_depths` above -- index a
+      # materialized char array instead of re-slicing `s` at each position.
+      chars = s.chars
       depth = 0
       i = open_idx
       content_start = open_idx + 1
-      while i < s.size
-        c = s[i]
+      while i < chars.size
+        c = chars[i]
         if c == '('
           depth += 1
         elsif c == ')'
           depth -= 1
-          return {s[content_start...i], i} if depth == 0
+          return {chars[content_start...i].join, i} if depth == 0
         end
         i += 1
       end
@@ -368,18 +377,24 @@ module Analyzer::Scala
     private def substitute_consts(args : String, consts : Hash(String, String)) : String
       io = String::Builder.new
       i = 0
-      size = args.size
+      # Crystal's `String#[](i)` walks the string from byte 0 on every call
+      # once it holds any multi-byte UTF-8 char (no cached char->byte index),
+      # so a `while i < size; c = args[i]; ...` scan is O(n) per char, i.e.
+      # O(n^2) overall on non-ASCII `.in(...)` blocks. Materialize once and
+      # index the array instead -- same char offsets, O(1) access.
+      chars = args.chars
+      size = chars.size
       call_depth = 0
       bracket_depth = 0
       stack = [] of Bool
       in_str = false
       prev_sig = '\0'
       while i < size
-        c = args[i]
+        c = chars[i]
         if in_str
           io << c
           if c == '\\' && i + 1 < size
-            io << args[i + 1]
+            io << chars[i + 1]
             i += 2
             next
           elsif c == '"'
@@ -423,15 +438,15 @@ module Analyzer::Scala
         else
           if c.ascii_letter? || c == '_'
             start = i
-            while i < size && (args[i].ascii_alphanumeric? || args[i] == '_')
+            while i < size && (chars[i].ascii_alphanumeric? || chars[i] == '_')
               i += 1
             end
-            ident = args[start...i]
+            ident = chars[start...i].join
             j = i
-            while j < size && args[j].ascii_whitespace?
+            while j < size && chars[j].ascii_whitespace?
               j += 1
             end
-            following = j < size ? args[j] : '\0'
+            following = j < size ? chars[j] : '\0'
             if call_depth == 0 && bracket_depth == 0 && prev_sig != '.' &&
                following != '(' && following != '.' && (sub = consts[ident]?)
               io << sub
