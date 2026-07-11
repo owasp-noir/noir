@@ -174,12 +174,18 @@ module Analyzer::Javascript
       logger.debug "Error analyzing NestJS file #{path}: #{e.message}"
     end
 
+    # Precompiled once — a single PCRE2-JIT scan replaces five naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal, so this is provably
+    # equivalent to the OR-of-includes? it replaces.
+    NESTJS_BOOTSTRAP_RE = Regex.union(
+      "NestFactory.create",
+      "from '@nestjs/core'", "from \"@nestjs/core\"",
+      "require('@nestjs/core')", "require(\"@nestjs/core\")"
+    )
+
     private def nestjs_bootstrap_source?(content : String) : Bool
-      content.includes?("NestFactory.create") ||
-        content.includes?("from '@nestjs/core'") ||
-        content.includes?("from \"@nestjs/core\"") ||
-        content.includes?("require('@nestjs/core')") ||
-        content.includes?("require(\"@nestjs/core\")")
+      content.matches?(NESTJS_BOOTSTRAP_RE)
     end
 
     # Detect `app.setGlobalPrefix('api', { exclude: [...] })`.
