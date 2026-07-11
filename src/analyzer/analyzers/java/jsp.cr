@@ -53,14 +53,12 @@ module Analyzer::Java
                   if File.exists?(path) && File.extname(path) == ".jsp"
                     next if web_inf_jsp?(relative_path)
 
-                    File.open(path, "r", encoding: "utf-8", invalid: :skip) do |file|
-                      content = file.gets_to_end
-                      params_query = extract_params(content)
-                      details = Details.new(PathInfo.new(path))
-                      result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
-                      extract_form_endpoints(content, details).each do |endpoint|
-                        result << endpoint
-                      end
+                    content = read_file_content(path)
+                    params_query = extract_params(content)
+                    details = Details.new(PathInfo.new(path))
+                    result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
+                    extract_form_endpoints(content, details).each do |endpoint|
+                      result << endpoint
                     end
                   elsif File.exists?(path) && File.extname(path) == ".java"
                     content = read_file_content(path)
