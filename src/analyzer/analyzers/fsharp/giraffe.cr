@@ -42,6 +42,19 @@ module Analyzer::Fsharp
     ROUTE_RE       = /\G(?:routeCix|routexp|routeCi|routex|route)\s+"([^"]+)"/
     ROUTE_CONST_RE = /\G(?:routeCix|routexp|routeCi|routex|route)\s+([A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*)/
 
+    # PCRE2 (Crystal's regex backend) re-validates UTF-8 encoding of the
+    # subject on every `match_at_byte_index` call by default -- an
+    # O(remaining-length) pass, since our scan loop calls it at every
+    # character position that O(n²) rather than O(n). `content` (and
+    # `cleaned`, built from it) is always sourced through
+    # `Analyzer#read_file_content`, which reads with `invalid: :skip`, so
+    # both are guaranteed structurally valid UTF-8 already -- the same
+    # invariant `String#scan` in the standard library relies on when it
+    # sets this same option after its first match. Confirmed empirically:
+    # a 4x-larger synthetic file went from ~16.7s to ~0.014s once this was
+    # applied to the combinator matchers below (~1000x).
+    NO_UTF_CHECK = Regex::MatchOptions::NO_UTF_CHECK
+
     # Mapping of routef format specifiers to noir path-param types.
     ROUTEF_PARAM_TYPES = {
       'i' => "int",
@@ -124,7 +137,7 @@ module Analyzer::Fsharp
 
         # subRoute / subRouteCi / subRoutef "/prefix" (handler)
         # or the Giraffe 6+ Endpoint Routing form: `subRoute "/prefix" [ ... ]`.
-        sub_match = SUB_ROUTE_RE.match_at_byte_index(cleaned, byte_i)
+        sub_match = SUB_ROUTE_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if sub_match
           combinator = sub_match[1]
           raw_prefix = sub_match[2]
@@ -157,7 +170,7 @@ module Analyzer::Fsharp
         # without it every nested route falls back to the full method
         # set. `\s` spans the line break in the common multi-line layout
         # where the verb sits on its own line above `choose [`.
-        verb_choose_match = VERB_CHOOSE_RE.match_at_byte_index(cleaned, byte_i)
+        verb_choose_match = VERB_CHOOSE_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if verb_choose_match && verb_list_method_context?(cleaned, i)
           verb = verb_choose_match[1]
           match_end = verb_choose_match.end(0)
@@ -181,7 +194,7 @@ module Analyzer::Fsharp
         # The verb token wraps a list of routes. When this form is used,
         # the embedded `route` lines do not carry the verb on their own
         # line, so we push a method-only scope until the matching `]`.
-        verb_list_match = VERB_LIST_RE.match_at_byte_index(cleaned, byte_i)
+        verb_list_match = VERB_LIST_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if verb_list_match && verb_list_method_context?(cleaned, i)
           verb = verb_list_match[1]
           match_end = verb_list_match.end(0)
@@ -205,7 +218,7 @@ module Analyzer::Fsharp
         # bound to a record's properties. `{name}` placeholders become
         # `:name` path params. The pattern may also carry trailing regex
         # (e.g. `(/?)`), which is reported verbatim.
-        bind_match = ROUTE_BIND_RE.match_at_byte_index(cleaned, byte_i)
+        bind_match = ROUTE_BIND_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if bind_match && token_boundary?(cleaned, i)
           path_pattern = bind_match[1]
           match_end = bind_match.end(0)
@@ -216,7 +229,7 @@ module Analyzer::Fsharp
 
         # routef / routeCif "/users/%i/%s" — typed format parameters
         # (routeCif is the case-insensitive variant of routef).
-        routef_match = ROUTEF_RE.match_at_byte_index(cleaned, byte_i)
+        routef_match = ROUTEF_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if routef_match && token_boundary?(cleaned, i)
           path_pattern = routef_match[1]
           match_end = routef_match.end(0)
@@ -229,7 +242,7 @@ module Analyzer::Fsharp
         # routex / routeCix / routexp (path reported verbatim). The
         # `routeStartsWith*` prefix guards are intentionally excluded —
         # they filter without defining a complete endpoint.
-        route_match = ROUTE_RE.match_at_byte_index(cleaned, byte_i)
+        route_match = ROUTE_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if route_match && token_boundary?(cleaned, i)
           path_pattern = route_match[1]
           match_end = route_match.end(0)
@@ -243,7 +256,7 @@ module Analyzer::Fsharp
         # where `let index = "/"`. Resolve it against file-level `let`
         # bindings; if the name is unknown, skip without emitting (no
         # phantom endpoint).
-        route_const_match = ROUTE_CONST_RE.match_at_byte_index(cleaned, byte_i)
+        route_const_match = ROUTE_CONST_RE.match_at_byte_index(cleaned, byte_i, options: NO_UTF_CHECK)
         if route_const_match && token_boundary?(cleaned, i)
           ident = route_const_match[1]
           match_end = route_const_match.end(0)
