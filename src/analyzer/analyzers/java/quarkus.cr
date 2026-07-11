@@ -134,14 +134,21 @@ module Analyzer::Java
       base_paths
     end
 
+    # `quarkus_route_source?`/`jaxrs_source?` gate per-file tree-sitter
+    # parses; one precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes
+    # each literal) each replaces the chained `String#includes?` passes
+    # over the same buffer.
+    JAXRS_SOURCE_RE         = Regex.union("jakarta.ws.rs", "javax.ws.rs")
+    QUARKUS_ROUTE_SOURCE_RE = Regex.union(
+      "jakarta.ws.rs", "javax.ws.rs", "org.jboss.resteasy.reactive", "io.quarkus.vertx.web.Route"
+    )
+
     private def quarkus_route_source?(content : String) : Bool
-      jaxrs_source?(content) ||
-        content.includes?("org.jboss.resteasy.reactive") ||
-        content.includes?("io.quarkus.vertx.web.Route")
+      content.matches?(QUARKUS_ROUTE_SOURCE_RE)
     end
 
     private def jaxrs_source?(content : String) : Bool
-      content.includes?("jakarta.ws.rs") || content.includes?("javax.ws.rs")
+      content.matches?(JAXRS_SOURCE_RE)
     end
 
     private def application_base_path_for(path : String,
