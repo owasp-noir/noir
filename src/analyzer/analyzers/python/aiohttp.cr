@@ -91,6 +91,17 @@ module Analyzer::Python
       @alias_route_origin_regex_cache[alias_name] ||= /^\s*#{Regex.escape(alias_name)}\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/
     end
 
+    # Method-first `@<router>.route("GET", "/path")` original-line
+    # matcher (recovers spaces the space-stripped line lost). The router
+    # name is discovered per decorator line, but real files reuse the
+    # same router variable (e.g. `routes`) across every such decorator,
+    # so memoize per name instead of rebuilding it on every match.
+    @route_deco_origin_regex_cache = Hash(::String, Regex).new
+
+    private def route_deco_origin_regex(router_name : ::String) : Regex
+      @route_deco_origin_regex_cache[router_name] ||= /@#{router_name}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/
+    end
+
     # `<var>["key"]` / `<var>.get("key")` access patterns for variables
     # bound to `await request.json()` / `await request.post()`. The
     # variable name is discovered (dynamic but low-cardinality), so the
@@ -179,7 +190,7 @@ module Analyzer::Python
             if aiohttp_route_deco
               method = aiohttp_route_deco[2].upcase
               route_path = aiohttp_route_deco[3]
-              if orig_match = line.match(/@#{aiohttp_route_deco[1]}\s*\.\s*route\s*\(\s*[rf]?['"][A-Za-z*]+['"]\s*,\s*[rf]?['"]([^'"]*)['"]/)
+              if orig_match = line.match(route_deco_origin_regex(aiohttp_route_deco[1]))
                 route_path = orig_match[1]
               end
               expand_aiohttp_methods(method).each do |expanded_method|
