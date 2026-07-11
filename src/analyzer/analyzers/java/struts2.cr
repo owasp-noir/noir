@@ -8,7 +8,12 @@ module Analyzer::Java
   class Struts2 < Analyzer
     STRUTS_CONFIG_BASENAMES = Set{"struts.xml", "struts-plugin.xml", "struts-deferred.xml"}
     DEFAULT_LOCATORS        = ["action", "actions", "struts", "struts2"]
-    REST_METHODS            = {
+
+    # `struts_java_source?` gates the per-file convention-action scan; one
+    # precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each literal)
+    # replaces 4 separate `String#includes?` passes over the same buffer.
+    STRUTS_JAVA_SOURCE_RE = Regex.union("org.apache.struts2", "com.opensymphony.xwork2", "@Action", "@Namespace")
+    REST_METHODS          = {
       "index"         => {"GET", ""},
       "show"          => {"GET", "/:id"},
       "edit"          => {"GET", "/:id/edit"},
@@ -406,11 +411,7 @@ module Analyzer::Java
     end
 
     private def struts_java_source?(content : String, config : ConventionConfig) : Bool
-      content.includes?("org.apache.struts2") ||
-        content.includes?("com.opensymphony.xwork2") ||
-        content.includes?("@Action") ||
-        content.includes?("@Namespace") ||
-        config.rest_enabled?
+      content.matches?(STRUTS_JAVA_SOURCE_RE) || config.rest_enabled?
     end
 
     private def classes_in(content : String, package_name : String) : Array(JavaClass)
