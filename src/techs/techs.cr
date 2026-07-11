@@ -3393,9 +3393,9 @@ module NoirTechs
       },
     },
     :rust_cli => {
-      :framework => "CLI (std::env / clap / structopt / argh)",
+      :framework => "CLI (std::env / clap / structopt / argh / getopts)",
       :language  => "Rust",
-      :similar   => ["rust-cli", "rust_cli", "clap", "structopt", "argh", "bpaf", "pico-args"],
+      :similar   => ["rust-cli", "rust_cli", "clap", "structopt", "argh", "bpaf", "pico-args", "getopts"],
       :supported => {
         :endpoint => true,
         :method   => false,
