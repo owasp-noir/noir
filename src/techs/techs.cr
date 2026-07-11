@@ -1176,9 +1176,9 @@ module NoirTechs
       },
     },
     :groovy_cli => {
-      :framework => "CLI (CliBuilder / picocli)",
+      :framework => "CLI (CliBuilder / picocli / commons-cli / JCommander)",
       :language  => "Groovy",
-      :similar   => ["groovy-cli", "groovy_cli", "clibuilder", "picocli"],
+      :similar   => ["groovy-cli", "groovy_cli", "clibuilder", "picocli", "commons-cli", "jcommander"],
       :supported => {
         :endpoint => true,
         :method   => false,
