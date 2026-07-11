@@ -40,7 +40,14 @@ module Analyzer::Kotlin
 
     GET_ENV = /\bSystem\.getenv\s*\(\s*"([^"]+)"\s*\)/
 
-    LIB_MARKERS      = ["com.github.ajalt.clikt", "kotlinx.cli", "picocli.CommandLine"]
+    # One precompiled `Regex.union` scan (PCRE2 JIT, auto-escapes each
+    # string literal) replaces the three library-marker `String#includes?`
+    # scans OR-ed with the CliktCommand/ArgParser regex fallback below —
+    # this gate runs once per Kotlin file in the scan.
+    LIBRARY_SIGNAL_RE = Regex.union(
+      ["com.github.ajalt.clikt", "kotlinx.cli", "picocli.CommandLine",
+       /:\s*CliktCommand\b/, /\bArgParser\s*\(/] of Regex | String
+    )
     WEB_FRAMEWORK_RE = /\bimport\s+(?:org\.springframework|io\.ktor|org\.http4k)/
 
     def analyze
@@ -53,7 +60,7 @@ module Analyzer::Kotlin
 
         begin
           content = read_file_content(path)
-          next unless LIB_MARKERS.any? { |m| content.includes?(m) } || content.matches?(/:\s*CliktCommand\b|\bArgParser\s*\(/)
+          next unless content.matches?(LIBRARY_SIGNAL_RE)
 
           binary = kotlin_binary_name(content, path)
           root_url = "cli://#{binary}"
