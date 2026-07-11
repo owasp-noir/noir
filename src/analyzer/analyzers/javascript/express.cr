@@ -992,13 +992,18 @@ module Analyzer::Javascript
       collect_static_paths(path, content, static_dirs, :express)
     end
 
+    # Precompiled once — a single PCRE2-JIT scan replaces six naive
+    # String#includes? substring scans over the whole file content.
+    # Regex.union auto-escapes each literal, so this is provably
+    # equivalent to the OR-of-includes? it replaces.
+    EXPRESS_SOURCE_RE = Regex.union(
+      "require('express')", "require(\"express\")",
+      "from 'express'", "from \"express\"",
+      "express()", "express.Router("
+    )
+
     private def express_source?(content : String) : Bool
-      content.includes?("require('express')") ||
-        content.includes?("require(\"express\")") ||
-        content.includes?("from 'express'") ||
-        content.includes?("from \"express\"") ||
-        content.includes?("express()") ||
-        content.includes?("express.Router(")
+      content.matches?(EXPRESS_SOURCE_RE)
     end
 
     # Scan for router mount patterns and store them in CodeLocator
