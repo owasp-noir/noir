@@ -1,6 +1,7 @@
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
+require "./python_helper"
 
 module Analyzer::Python
   class Bottle < PythonEngine
@@ -79,7 +80,7 @@ module Analyzer::Python
                 path,
                 lines,
                 line_index: deco.decorator_line,
-                route_path: join_paths(prefix, deco.path),
+                route_path: Helper.join_paths(prefix, deco.path),
                 extra_params: extra_params,
                 definition_base_path: current_base_path,
                 source: file_content
@@ -177,7 +178,7 @@ module Analyzer::Python
           path,
           lines,
           line_index,
-          join_paths(prefix, route_path),
+          Helper.join_paths(prefix, route_path),
           route_match[2],
           callback_name,
           definition_base_path: definition_base_path,
@@ -223,7 +224,7 @@ module Analyzer::Python
 
           prefixes[child_router] ||= [] of ::String
           parent_prefixes.each do |parent_prefix|
-            composed_prefix = join_paths(parent_prefix, mount_prefix)
+            composed_prefix = Helper.join_paths(parent_prefix, mount_prefix)
             next if prefixes[child_router].includes?(composed_prefix)
 
             prefixes[child_router] << composed_prefix
@@ -438,19 +439,6 @@ module Analyzer::Python
       end
 
       nil
-    end
-
-    private def join_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_path(path) if prefix.empty?
-      return normalize_path(prefix) if path.empty?
-
-      normalize_path("#{prefix}/#{path}")
-    end
-
-    private def normalize_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
     end
 
     # Walk forward from `def_index` collecting lines at strictly greater

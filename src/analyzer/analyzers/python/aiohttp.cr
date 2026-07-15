@@ -1,6 +1,7 @@
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
+require "./python_helper"
 
 module Analyzer::Python
   class Aiohttp < PythonEngine
@@ -157,7 +158,7 @@ module Analyzer::Python
             prefixes = route_table_prefixes[deco.router_name]? || [""]
             if deco.attribute_name == "view"
               prefixes.each do |prefix|
-                class_view_routes[path] << {join_paths(prefix, deco.path), deco.decorator_line, deco.def_name}
+                class_view_routes[path] << {Helper.join_paths(prefix, deco.path), deco.decorator_line, deco.def_name}
               end
               next
             end
@@ -170,7 +171,7 @@ module Analyzer::Python
                   path,
                   lines,
                   def_line,
-                  join_paths(prefix, deco.path),
+                  Helper.join_paths(prefix, deco.path),
                   deco_method,
                   deco.decorator_line,
                   definition_base_path: current_base_path,
@@ -217,7 +218,7 @@ module Analyzer::Python
                 route_path = orig_match[1]
               end
               prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
-                handler_routes[path] << {join_paths(prefix, route_path), method_name.upcase, line_index, handler_name}
+                handler_routes[path] << {Helper.join_paths(prefix, route_path), method_name.upcase, line_index, handler_name}
               end
             end
 
@@ -234,7 +235,7 @@ module Analyzer::Python
                 static_path = orig_match[1]
               end
               prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
-                full_path = static_route_path(join_paths(prefix, static_path))
+                full_path = static_route_path(Helper.join_paths(prefix, static_path))
                 result << Endpoint.new(full_path, "GET", Details.new(PathInfo.new(path, line_index + 1)))
               end
             end
@@ -255,7 +256,7 @@ module Analyzer::Python
               end
               prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
                 expand_aiohttp_methods(method).each do |expanded_method|
-                  handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
+                  handler_routes[path] << {Helper.join_paths(prefix, route_path), expanded_method, line_index, handler_name}
                 end
               end
             end
@@ -273,7 +274,7 @@ module Analyzer::Python
               end
               prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
                 expand_aiohttp_methods(method).each do |expanded_method|
-                  handler_routes[path] << {join_paths(prefix, route_path), expanded_method, line_index, handler_name}
+                  handler_routes[path] << {Helper.join_paths(prefix, route_path), expanded_method, line_index, handler_name}
                 end
               end
             end
@@ -289,7 +290,7 @@ module Analyzer::Python
                 route_path = orig_match[1]
               end
               prefixes_for_receiver(receiver, app_prefixes).each do |prefix|
-                class_view_routes[path] << {join_paths(prefix, route_path), line_index, class_name}
+                class_view_routes[path] << {Helper.join_paths(prefix, route_path), line_index, class_name}
               end
             end
 
@@ -309,7 +310,7 @@ module Analyzer::Python
                 route_path = web_match[2]
                 handler_name = web_match[3]
                 prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
-                  handler_routes[path] << {join_paths(prefix, route_path), method_name.upcase, line_index, handler_name}
+                  handler_routes[path] << {Helper.join_paths(prefix, route_path), method_name.upcase, line_index, handler_name}
                 end
               end
             end
@@ -324,7 +325,7 @@ module Analyzer::Python
                 route_path = view_match[1]
                 class_name = view_match[2].split(".").last
                 prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
-                  class_view_routes[path] << {join_paths(prefix, route_path), line_index, class_name}
+                  class_view_routes[path] << {Helper.join_paths(prefix, route_path), line_index, class_name}
                 end
               end
             end
@@ -722,7 +723,7 @@ module Analyzer::Python
           parent_prefixes = prefixes[parent]? || [""]
           prefixes[child] ||= [] of ::String
           parent_prefixes.each do |parent_prefix|
-            child_prefix = join_paths(parent_prefix, mount_prefix)
+            child_prefix = Helper.join_paths(parent_prefix, mount_prefix)
             unless prefixes[child].includes?(child_prefix)
               prefixes[child] << child_prefix
               changed = true
@@ -871,23 +872,10 @@ module Analyzer::Python
       normalized.split(".").last
     end
 
-    private def join_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_path(path) if prefix.empty?
-      return normalize_path(prefix) if path.empty?
-
-      normalize_path("#{prefix}/#{path}")
-    end
-
     private def static_route_path(path : ::String) : ::String
-      normalized = normalize_path(path)
+      normalized = Helper.normalize_path(path)
       normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
       normalized == "/" ? "/*" : "#{normalized}/*"
-    end
-
-    private def normalize_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
     end
 
     DICT_ACCESSORS = {
