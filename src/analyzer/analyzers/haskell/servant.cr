@@ -108,7 +108,7 @@ module Analyzer::Haskell
 
     private def extract_server_binding_targets(content : String) : Array(NamedTuple(name: String, target: String))
       targets = [] of NamedTuple(name: String, target: String)
-      cleaned = strip_haskell_comments(content)
+      cleaned = Helper.strip_haskell_comments(content)
 
       cleaned.each_line do |line|
         match = line.match(/^\s*([a-z_][A-Za-z0-9_']*)\s*::.*\bServer(?:T)?\b\s*(.*)$/)
@@ -130,7 +130,7 @@ module Analyzer::Haskell
 
     private def extract_type_aliases(content : String) : Array(NamedTuple(name: String, body: String, line: Int32))
       results = [] of NamedTuple(name: String, body: String, line: Int32)
-      cleaned = strip_haskell_comments(content)
+      cleaned = Helper.strip_haskell_comments(content)
       lines = cleaned.lines
 
       i = 0
@@ -187,7 +187,7 @@ module Analyzer::Haskell
     # treats it exactly like a `type X = ...` API.
     private def extract_record_routes(content : String) : Array(NamedTuple(name: String, body: String, line: Int32))
       results = [] of NamedTuple(name: String, body: String, line: Int32)
-      cleaned = strip_haskell_comments(content)
+      cleaned = Helper.strip_haskell_comments(content)
       lines = cleaned.lines
 
       i = 0
@@ -292,82 +292,6 @@ module Analyzer::Haskell
       return true if starts_with_whitespace?(line)
       stripped = line.lstrip
       stripped.starts_with?(":<|>") || stripped.starts_with?(":>")
-    end
-
-    private def strip_haskell_comments(text : String) : String
-      result = String::Builder.new
-      chars = text.chars
-      i = 0
-      brace_depth = 0
-      in_string = false
-
-      while i < chars.size
-        c = chars[i]
-
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            result << c
-            result << chars[i + 1]
-            i += 2
-            next
-          elsif c == '"'
-            in_string = false
-            result << c
-            i += 1
-            next
-          else
-            result << c
-            i += 1
-            next
-          end
-        end
-
-        if brace_depth == 0 && c == '"'
-          in_string = true
-          result << c
-          i += 1
-          next
-        end
-
-        if i + 1 < chars.size && c == '{' && chars[i + 1] == '-'
-          # Replace the comment with whitespace, PRESERVING newlines, so a
-          # multi-line `{- -}` doesn't collapse lines and shift every later
-          # endpoint's reported line number (mirrors scotty.cr).
-          brace_depth += 1
-          result << ' '
-          result << ' '
-          i += 2
-          while i < chars.size && brace_depth > 0
-            if i + 1 < chars.size && chars[i] == '-' && chars[i + 1] == '}'
-              brace_depth -= 1
-              result << ' '
-              result << ' '
-              i += 2
-            elsif i + 1 < chars.size && chars[i] == '{' && chars[i + 1] == '-'
-              brace_depth += 1
-              result << ' '
-              result << ' '
-              i += 2
-            else
-              result << (chars[i] == '\n' ? '\n' : ' ')
-              i += 1
-            end
-          end
-          next
-        end
-
-        if brace_depth == 0 && i + 1 < chars.size && c == '-' && chars[i + 1] == '-'
-          while i < chars.size && chars[i] != '\n'
-            i += 1
-          end
-          next
-        end
-
-        result << c
-        i += 1
-      end
-
-      result.to_s
     end
 
     private def referenced_aliases(body : String, known_names : Array(String)) : Array(String)
