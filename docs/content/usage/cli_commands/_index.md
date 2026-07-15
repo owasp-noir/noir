@@ -24,6 +24,7 @@ noir <command> [arguments] [flags]
 | `noir list formats`    | List supported output formats                           |
 | `noir cache info`      | Show LLM cache directory, entry count, and size         |
 | `noir cache clear`     | Remove every cached AI response                         |
+| `noir cache purge <days>` | Remove cached entries older than N days              |
 | `noir config show`     | Print the active config file                            |
 | `noir config edit`     | Open the config file in `$VISUAL` / `$EDITOR`           |
 | `noir config init`     | Create the default config file (idempotent)             |
@@ -119,6 +120,7 @@ noir list formats     # every supported output format
 ```bash
 noir cache info       # location, entry count, total size
 noir cache clear      # remove every cached AI response
+noir cache purge 30   # remove entries older than 30 days
 ```
 
 In-scan controls stay on `noir scan`: `--cache-disable` skips the cache

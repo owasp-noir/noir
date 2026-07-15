@@ -24,6 +24,7 @@ noir <command> [arguments] [flags]
 | `noir list formats`    | 지원하는 출력 형식 목록                                 |
 | `noir cache info`      | LLM 캐시 디렉토리, 항목 수, 크기 표시                   |
 | `noir cache clear`     | 캐시된 AI 응답 전체 삭제                                |
+| `noir cache purge <days>` | N일보다 오래된 캐시 항목 삭제                         |
 | `noir config show`     | 활성 설정 파일 출력                                     |
 | `noir config edit`     | `$VISUAL` / `$EDITOR` 로 설정 파일 열기                 |
 | `noir config init`     | 기본 설정 파일 생성 (멱등)                              |
@@ -120,6 +121,7 @@ noir list formats     # 지원하는 모든 출력 형식
 ```bash
 noir cache info       # 경로, 항목 수, 총 크기
 noir cache clear      # 캐시된 AI 응답 전체 삭제
+noir cache purge 30   # 30일보다 오래된 항목 삭제
 ```
 
 스캔 도중 캐시 제어는 그대로 `noir scan` 에 있습니다. `--cache-disable`
