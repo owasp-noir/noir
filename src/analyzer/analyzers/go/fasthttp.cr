@@ -115,39 +115,6 @@ module Analyzer::Go
       path.gsub(/\{([a-zA-Z0-9_]+)\??(?::[^{}]+)?\}/) { "{#{$1}}" }
     end
 
-    private def analyze_route_line(line : String, details : Details) : Endpoint
-      # Pattern 1: Direct handler registration with router
-      # router.GET("/path", handler) or router.POST("/path", handler)
-      # Route path must start with "/" to be a valid HTTP endpoint
-      if match = line.match(/(?:router|r|app|server)\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"(\/[^"]*)"\s*,/)
-        path = match[1]
-        method = extract_method_from_router_call(line)
-        return Endpoint.new(path, method, details)
-      end
-
-      # Pattern 2: fasthttprouter patterns
-      # router.GET("/path", handler)
-      # Route path must start with "/" to be a valid HTTP endpoint
-      if match = line.match(/\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"(\/[^"]*)"\s*,/)
-        path = match[1]
-        method = extract_method_from_router_call(line)
-        return Endpoint.new(path, method, details)
-      end
-
-      # Pattern 3: Direct fasthttp.ListenAndServe with switch statements for routes
-      # This would require more complex analysis, for now we focus on router patterns
-
-      Endpoint.new("", "")
-    end
-
-    private def extract_method_from_router_call(line : String) : String
-      if match = line.match(/\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)/)
-        match[0].gsub(".", "").upcase
-      else
-        ""
-      end
-    end
-
     # Cheap pre-filter for `analyze_param_line`, called on EVERY line of
     # every fasthttp file (not just route lines). Union of every literal
     # substring any of the six scans below requires to possibly match —
