@@ -1,6 +1,7 @@
 require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
+require "./python_helper"
 
 module Analyzer::Python
   class Sanic < PythonEngine
@@ -412,7 +413,7 @@ module Analyzer::Python
 
           registration_prefixes.each do |registration_prefix|
             full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions)
-            endpoint_path = static_route_path(join_paths(full_prefix, static_path))
+            endpoint_path = static_route_path(Helper.join_paths(full_prefix, static_path))
             result << Endpoint.new(endpoint_path, "GET", Details.new(PathInfo.new(path, line_index + 1)))
           end
         end
@@ -819,9 +820,9 @@ module Analyzer::Python
                                      group_prefixes : Hash(::String, ::String),
                                      versions : Hash(::String, ::String),
                                      route_version : ::String? = nil) : ::String
-      base = join_paths(group_prefixes[router_name]? || "", join_paths(registration_prefix, prefix))
+      base = Helper.join_paths(group_prefixes[router_name]? || "", Helper.join_paths(registration_prefix, prefix))
       version = route_version || versions[router_name]?
-      version && !version.empty? ? join_paths("/v#{version}", base) : base
+      version && !version.empty? ? Helper.join_paths("/v#{version}", base) : base
     end
 
     private def fetch_file_content(path : ::String) : ::String
@@ -908,7 +909,7 @@ module Analyzer::Python
       # Create endpoints for each method
       methods.each do |http_method|
         # Create endpoint with the prefix
-        full_path = normalize_sanic_path_params(join_paths(prefix, route_path))
+        full_path = normalize_sanic_path_params(Helper.join_paths(prefix, route_path))
         filtered_params = get_filtered_params(http_method, params.dup)
         endpoint = Endpoint.new(full_path, http_method, filtered_params)
         endpoint.protocol = "ws" if route_attr == "websocket"
@@ -928,23 +929,10 @@ module Analyzer::Python
       }
     end
 
-    private def join_paths(prefix : ::String, path : ::String) : ::String
-      return normalize_path(path) if prefix.empty?
-      return normalize_path(prefix) if path.empty?
-
-      normalize_path("#{prefix}/#{path}")
-    end
-
     private def static_route_path(path : ::String) : ::String
-      normalized = normalize_path(path)
+      normalized = Helper.normalize_path(path)
       normalized = normalized[0...-1] if normalized.ends_with?("/") && normalized != "/"
       normalized == "/" ? "/*" : "#{normalized}/*"
-    end
-
-    private def normalize_path(path : ::String) : ::String
-      normalized = path.gsub(/\/+/, "/")
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized
     end
 
     private def normalize_sanic_path_params(path : ::String) : ::String
