@@ -1,4 +1,5 @@
 require "../../engines/perl_engine"
+require "./perl_helper"
 
 module Analyzer::Perl
   class Catalyst < PerlEngine
@@ -720,7 +721,7 @@ module Analyzer::Perl
       namespace = package_name.split(marker, 2)[1]
       return "" if namespace == "Root"
 
-      namespace.split("::").map { |part| underscore(part) }.join("/")
+      namespace.split("::").map { |part| Helper.underscore(part) }.join("/")
     end
 
     private def path_prefix(namespace : String, config : ControllerConfig) : String
@@ -733,10 +734,6 @@ module Analyzer::Perl
 
     private def namespace_path(namespace : String) : String
       namespace.empty? ? "" : "/#{namespace}"
-    end
-
-    private def underscore(name : String) : String
-      name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2").downcase
     end
 
     private def clean_path_prefix(value : String) : String

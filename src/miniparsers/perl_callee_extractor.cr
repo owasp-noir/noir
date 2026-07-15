@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "../analyzer/analyzers/perl/perl_helper"
 require "./callee_extractor_base"
 
 module Noir::PerlCalleeExtractor
@@ -288,12 +289,8 @@ module Noir::PerlCalleeExtractor
     keys = Set(String).new
     segments = controller.split("::")
     keys << segments.map(&.downcase).join("/")
-    keys << segments.map { |segment| underscore(segment) }.join("/")
+    keys << segments.map { |segment| Analyzer::Perl::Helper.underscore(segment) }.join("/")
     keys.to_a
-  end
-
-  private def underscore(name : String) : String
-    name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2").downcase
   end
 
   private def find_keyword(chars : Array(Char), keyword : String, start_index : Int32, limit : Int32) : Int32?

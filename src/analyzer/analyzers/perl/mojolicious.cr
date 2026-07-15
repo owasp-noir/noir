@@ -1,4 +1,5 @@
 require "../../engines/perl_engine"
+require "./perl_helper"
 require "../../../miniparsers/perl_callee_extractor"
 
 module Analyzer::Perl
@@ -493,12 +494,8 @@ module Analyzer::Perl
 
     private def controller_key(controller : String) : String
       controller.gsub("::", "/").split('/').reject(&.empty?).map do |segment|
-        underscore(segment.gsub("-", "_"))
+        Helper.underscore(segment.gsub("-", "_"))
       end.join("/")
-    end
-
-    private def underscore(name : String) : String
-      name.gsub(/([a-z0-9])([A-Z])/, "\\1_\\2").downcase
     end
 
     private def line_offsets(content : String) : Array(Int32)
