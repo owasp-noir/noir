@@ -98,34 +98,40 @@ module Noir::GroovyCalleeExtractor
   end
 
   private def strip_non_code(body : String) : String
+    # Walk a materialized chars array: `String#[](Int)` re-seeks from byte 0
+    # on every access once `body` holds a multi-byte char (O(n) per access,
+    # O(n^2) for this whole-body walk). Char offsets and emitted output are
+    # unchanged.
+    chars = body.chars
+    size = chars.size
     index = 0
     stripped = String::Builder.new
 
-    while index < body.size
-      char = body[index]
+    while index < size
+      char = chars[index]
 
-      if index + 1 < body.size && char == '/' && body[index + 1] == '/'
-        append_blanks_until_line_end(stripped, body, index)
+      if index + 1 < size && char == '/' && chars[index + 1] == '/'
+        append_blanks_until_line_end(stripped, chars, index)
         index += 2
-        while index < body.size && body[index] != '\n'
+        while index < size && chars[index] != '\n'
           index += 1
         end
         next
       end
 
-      if index + 1 < body.size && char == '/' && body[index + 1] == '*'
+      if index + 1 < size && char == '/' && chars[index + 1] == '*'
         end_index = index + 2
-        while end_index + 1 < body.size && !(body[end_index] == '*' && body[end_index + 1] == '/')
+        while end_index + 1 < size && !(chars[end_index] == '*' && chars[end_index + 1] == '/')
           end_index += 1
         end
-        end_index += 2 if end_index + 1 < body.size
-        append_blanks(stripped, body, index, end_index)
+        end_index += 2 if end_index + 1 < size
+        append_blanks(stripped, chars, index, end_index)
         index = end_index
         next
       end
 
-      if literal_end = Noir::GroovyLiteralScanner.skip_literal(body, index)
-        append_blanks(stripped, body, index, literal_end)
+      if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, index)
+        append_blanks(stripped, chars, index, literal_end)
         index = literal_end
         next
       end
@@ -137,18 +143,18 @@ module Noir::GroovyCalleeExtractor
     stripped.to_s
   end
 
-  private def append_blanks_until_line_end(stripped : String::Builder, body : String, start : Int32)
+  private def append_blanks_until_line_end(stripped : String::Builder, chars : Array(Char), start : Int32)
     index = start
-    while index < body.size && body[index] != '\n'
+    while index < chars.size && chars[index] != '\n'
       stripped << ' '
       index += 1
     end
   end
 
-  private def append_blanks(stripped : String::Builder, body : String, start : Int32, finish : Int32)
+  private def append_blanks(stripped : String::Builder, chars : Array(Char), start : Int32, finish : Int32)
     index = start
-    while index < finish && index < body.size
-      stripped << (body[index] == '\n' ? '\n' : ' ')
+    while index < finish && index < chars.size
+      stripped << (chars[index] == '\n' ? '\n' : ' ')
       index += 1
     end
   end
