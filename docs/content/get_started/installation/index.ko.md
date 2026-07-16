@@ -68,7 +68,7 @@ docker pull ghcr.io/owasp-noir/noir:latest
 docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
 ```
 
-이미지 태그는 OCI/Docker 컨벤션을 따라 `v` 프리픽스 없이 발행됩니다. 예: `:0.30.0`, `:0.30`, `:latest`. (v0.29.1까지는 `:vX.Y.Z` 형태를 썼으므로, 핀 박힌 참조가 있다면 업데이트가 필요합니다.) 사용 가능한 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에서 확인할 수 있습니다.
+이미지 태그는 OCI/Docker 컨벤션을 따라 `v` 프리픽스 없이 발행됩니다. 예: `:0.30.0`, `:0.30`, `:latest`. (v0.29.1까지는 `:vX.Y.Z` 형태를 썼으므로, 버전을 고정해 둔 참조가 있다면 업데이트하세요.) 사용 가능한 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에서 확인할 수 있습니다.
 
 ## Nix
 
@@ -107,14 +107,14 @@ nix run github:owasp-noir/noir -- -h
 설치 및 업데이트:
 
 1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.1.0-linux-x86_64`, macOS는 `noir-v1.1.0-osx-arm64.tar.gz`).
-2. **Linux** — 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
+2. **Linux**: 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
 
     ```bash
     chmod +x noir-v*-linux-*
     sudo mv noir-v*-linux-* /usr/local/bin/noir
     ```
 
-3. **macOS** — tarball을 풀고 `lib/` 디렉터리를 바이너리와 함께 유지합니다.
+3. **macOS**: tarball을 풀고 `lib/` 디렉터리를 바이너리와 함께 유지합니다.
 
     ```bash
     # 시스템 전역 설치

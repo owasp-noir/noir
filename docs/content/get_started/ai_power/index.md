@@ -170,8 +170,8 @@ flowchart TB
 #### LLM Adapter Layer
 Provider-agnostic adapters: **General** (OpenAI-compatible APIs), **Ollama** (with server-side context reuse), and **ACP** (agent runtimes like `acp:codex`).
 
-#### Intelligent File Filtering
-For projects with >10 files, the LLM filters the file list to identify likely endpoint files before analysis.
+#### LLM File Filtering
+For projects with more than 10 files, the LLM filters the file list to identify likely endpoint files before analysis.
 
 #### Bundle Analysis
 Groups files into token-limited bundles and processes them concurrently to maximize throughput on large codebases.

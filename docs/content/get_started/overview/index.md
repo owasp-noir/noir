@@ -26,17 +26,17 @@ That inventory feeds three audiences:
 
 **Extract endpoints.** Static analysis pulls endpoints, parameters, headers, and cookies out of source, including the ones nobody documented.
 
-**Cover the stack.** A single binary supports 50+ frameworks across Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, Swift, and more. No plugins or per-language setup.
+**Cover the stack.** A single binary supports 144 frameworks across 23 languages, including Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, and Swift. No plugins or per-language setup.
 
 **Fall back to an LLM.** When a framework isn't natively supported (or when routing is custom enough that static rules don't apply), point Noir at an LLM (OpenAI, Ollama, and so on) and let it fill the gap.
 
 **Feed DAST scanners.** Pipe endpoints straight into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import. The scanner stops missing routes that were never linked from a page.
 
-**Give AI SAST useful context.** The endpoint inventory (entrypoints, source files, parameters, tags, and, with `--include callee`, the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. `--ai-context` goes further and attaches review context per endpoint (guards, callees, sinks, validators, and signals) so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
+**Give AI SAST useful context.** The inventory of entrypoints, source files, parameters, and tags (plus, with `--include callee`, the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. `--ai-context` goes further and attaches review context per endpoint (guards, callees, sinks, validators, and signals) so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
 
 **Export to whatever reads next.** JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL, HTTPie, HTML reports, Postman collections, and similar formats that the next tool in the pipeline expects.
 
-## How Does It Work?
+## How it works
 
 Point Noir at your source code and it automatically:
 

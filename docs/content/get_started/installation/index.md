@@ -14,7 +14,7 @@ next_page_label = "Your First Scan"
 Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.
 {% end %}
 
-Every method below installs the same `noir` binary, so you only need one. They're ordered roughly easiest-first — find the row that matches your platform and package manager, and skip the rest.
+Every method below installs the same `noir` binary, so you only need one. They're ordered roughly easiest-first. Find the section that matches your platform and package manager, and skip the rest.
 
 ## Homebrew (macOS and Linux)
 
@@ -107,14 +107,14 @@ No package manager? Grab a prebuilt binary from [GitHub Releases](https://github
 To install or update:
 
 1. Download the binary for your platform (e.g., `noir-v1.1.0-linux-x86_64` on Linux, or `noir-v1.1.0-osx-arm64.tar.gz` on macOS).
-2. **Linux** — make it executable and move it into your `PATH`:
+2. **Linux**: make it executable and move it into your `PATH`:
 
     ```bash
     chmod +x noir-v*-linux-*
     sudo mv noir-v*-linux-* /usr/local/bin/noir
     ```
 
-3. **macOS** — extract the tarball and keep the bundled `lib/` directory next to the binary:
+3. **macOS**: extract the tarball and keep the bundled `lib/` directory next to the binary:
 
     ```bash
     # system-wide install
@@ -250,7 +250,7 @@ To install or update:
 For custom builds or contributing back to the project.
 
 {% alert_warning() %}
-Requires [Crystal](https://crystal-lang.org/install/) programming language installed.
+Requires the [Crystal](https://crystal-lang.org/install/) programming language.
 {% end %}
 
 To install:
