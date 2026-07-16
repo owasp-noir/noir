@@ -897,14 +897,21 @@ module Analyzer::Python
           match_info_bracket: /#{rp}\.match_info\s*\[\s*['"]([^'"]+)['"]\s*\]/,
           match_info_get: /#{rp}\.match_info\.get\s*\(\s*['"]([^'"]+)['"]/,
           query_bracket: /#{rp}\.(?:rel_url\.)?query\s*\[\s*['"]([^'"]+)['"]\s*\]/,
-          query_get: /#{rp}\.(?:rel_url\.)?query\.get\s*\(\s*['"]([^'"]+)['"]/,
+          # `.get(`, `.getall(`, `.getone(`: aiohttp's query is a
+          # multidict.MultiDict exposing `getall`/`getone` for repeated
+          # keys, reading the same first-arg key as `get`.
+          query_get: /#{rp}\.(?:rel_url\.)?query\.get(?:all|one)?\s*\(\s*['"]([^'"]+)['"]/,
           json_assign: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{rp}\.json\s*\(/,
           json_await: /await\s+#{rp}\.json\s*\(/,
           post_assign: /([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*await\s+#{rp}\.post\s*\(/,
           post_await: /await\s+#{rp}\.post\s*\(/,
           dict: DICT_ACCESSORS.map do |accessor, param_type|
+            # `request.headers` is a CIMultiDict exposing `getall`/`getone`
+            # for repeated keys; `.get(?:all|one)?` reads the same first-arg
+            # key. `request.cookies` has no such methods, so widening it is
+            # inert (no real `cookies.getall(...)` call to match).
             {accessor, param_type,
-             /#{rp}\.#{accessor}\.get\s*\(\s*['"]([^'"]+)['"]/,
+             /#{rp}\.#{accessor}\.get(?:all|one)?\s*\(\s*['"]([^'"]+)['"]/,
              /#{rp}\.#{accessor}\s*\[\s*['"]([^'"]+)['"]\s*\]/}
           end,
         )

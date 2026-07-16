@@ -12,10 +12,15 @@ module Analyzer::Python
     # variants every listener/stream endpoint was silently dropped.
     DECORATOR_REGEX = /@(get|post|put|patch|delete|head|options|route|websocket(?:_listener|_stream)?)\s*\(([^)]*)/
     # Path literal inside a decorator. Litestar accepts both a positional
-    # path and an explicit `path=` keyword argument.
-    DECORATOR_PATH_REGEX    = /^\s*[rf]?['"]([^'"]*)['"]/
-    DECORATOR_PATH_KW_REGEX = /path\s*=\s*[rf]?['"]([^'"]*)['"]/
-    HTTP_METHOD_KW_REGEX    = /http_method\s*=\s*(?:\[([^\]]*)\]|['"]([^'"]+)['"])/
+    # path and an explicit `path=` keyword argument. List forms
+    # (`@get(["/a", "/b"])`, `@get(path=["/a", "/b"])`) and omitted paths
+    # (`@get()`, `@get(sync_to_thread=False)` → default `""` / `/`) are
+    # handled by `extract_decorator_paths`.
+    DECORATOR_PATH_REGEX      = /^\s*[rf]?['"]([^'"]*)['"]/
+    DECORATOR_PATH_KW_REGEX   = /path\s*=\s*[rf]?['"]([^'"]*)['"]/
+    DECORATOR_PATH_LIST_REGEX = /^\s*\[([^\]]*)\]/
+    DECORATOR_PATH_LIST_KW_RE = /path\s*=\s*\[([^\]]*)\]/
+    HTTP_METHOD_KW_REGEX      = /http_method\s*=\s*(?:\[([^\]]*)\]|['"]([^'"]+)['"])/
     # Router(path="/prefix", route_handlers=[...])
     ROUTER_REGEX = /(#{PYTHON_VAR_NAME_REGEX})\s*=\s*Router\s*\(([^)]*)\)/m
     # Path param: {name} or {name:type}. Litestar uses the :type suffix
@@ -110,9 +115,8 @@ module Analyzer::Python
           decorator = match[1].downcase
           body = match[2]
 
-          path_match = body.match(DECORATOR_PATH_REGEX) || body.match(DECORATOR_PATH_KW_REGEX)
-          next unless path_match
-          route_path = path_match[1]
+          # One or more route paths: scalar literal, list, or default "".
+          route_paths = extract_decorator_paths(body)
 
           methods = [] of ::String
           websocket_route = decorator.starts_with?("websocket")
@@ -141,23 +145,17 @@ module Analyzer::Python
             end
           end
 
-          full_path = "#{prefix}#{route_path}"
-          full_path = "/#{full_path}" unless full_path.starts_with?("/")
-          full_path = full_path.gsub(/\/+/, "/")
-          full_path = full_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
-
-          path_params = extract_path_params(full_path)
-
           # Parse the handler body once and share between param and
           # callee extraction — both used to call `parse_code_block`
-          # independently, costing 2 parses per handler.
+          # independently, costing 2 parses per handler. Shared across
+          # multi-path list decorators (same handler, several paths).
           handler_body = if hl = handler_line
                            parse_code_block(lines[hl..])
                          end
-          handler_params = handler_line ? extract_handler_params(lines, handler_line, full_path, handler_body) : [] of Param
 
           # Build once per handler — a decorator can emit multiple
-          # endpoints when @route(http_method=[...]) lists several verbs.
+          # endpoints when @route(http_method=[...]) lists several verbs
+          # and/or when path is a list of strings.
           handler_callees = if handler_body && (hl = handler_line)
                               build_callees_from(
                                 handler_body,
@@ -170,22 +168,50 @@ module Analyzer::Python
                               [] of Callee
                             end
 
-          methods.uniq.each do |method|
-            params = [] of Param
-            path_params.each { |p| params << p }
-            handler_params.each do |p|
-              next if params.any? { |existing| existing.name == p.name && existing.param_type == p.param_type }
-              params << p
-            end
+          route_paths.each do |route_path|
+            full_path = "#{prefix}#{route_path}"
+            full_path = "/#{full_path}" unless full_path.starts_with?("/")
+            full_path = full_path.gsub(/\/+/, "/")
+            full_path = full_path.gsub(TYPED_PATH_PARAM_REGEX) { |_| "{#{$~[1]}}" }
 
-            details = Details.new(PathInfo.new(path, line_index + 1))
-            endpoint = Endpoint.new(full_path, method, params, details)
-            endpoint.protocol = "ws" if websocket_route
-            handler_callees.each { |c| endpoint.push_callee(c) }
-            result << endpoint
+            path_params = extract_path_params(full_path)
+            handler_params = handler_line ? extract_handler_params(lines, handler_line, full_path, handler_body) : [] of Param
+
+            methods.uniq.each do |method|
+              params = [] of Param
+              path_params.each { |p| params << p }
+              handler_params.each do |p|
+                next if params.any? { |existing| existing.name == p.name && existing.param_type == p.param_type }
+                params << p
+              end
+
+              details = Details.new(PathInfo.new(path, line_index + 1))
+              endpoint = Endpoint.new(full_path, method, params, details)
+              endpoint.protocol = "ws" if websocket_route
+              handler_callees.each { |c| endpoint.push_callee(c) }
+              result << endpoint
+            end
           end
         end
       end
+    end
+
+    # Resolve the path argument(s) of a Litestar HTTP/WS decorator body.
+    # Returns at least one path string. An omitted path defaults to `""`
+    # (Litestar joins it with the controller prefix, or yields `/` when
+    # bare) so `@get()` / `@get(sync_to_thread=False)` are not dropped.
+    private def extract_decorator_paths(body : ::String) : Array(::String)
+      if list_match = body.match(DECORATOR_PATH_LIST_REGEX) || body.match(DECORATOR_PATH_LIST_KW_RE)
+        paths = [] of ::String
+        list_match[1].scan(/[rf]?['"]([^'"]*)['"]/) { |m| paths << m[1] }
+        return paths unless paths.empty?
+      end
+
+      if path_match = body.match(DECORATOR_PATH_REGEX) || body.match(DECORATOR_PATH_KW_REGEX)
+        return [path_match[1]]
+      end
+
+      [""]
     end
 
     # Walk forward from the decorator line to locate the first function

@@ -484,7 +484,12 @@ module Analyzer::Python
     # Tuple shape: {noir_param_type, get_re, bracket_re, attribute_re}
     DICT_ACCESSOR_PATTERNS = DICT_ACCESSORS.map do |accessor, param_type|
       {param_type,
-       /request\.#{accessor}\.get\s*\(\s*['"]([^'"]+)['"]/,
+      # `.get(`, `.getall(`, `.getone(`: Bottle's request MultiDicts
+      # (`request.query`, `request.forms`, …) expose `getall`/`getone`
+      # for repeated keys, reading the same first-arg key as `get`.
+      # (The bare `.getall`/`.getone` attribute form stays blocklisted
+      #  by DICT_METHOD_NAMES below, so no key-less double count.)
+       /request\.#{accessor}\.get(?:all|one)?\s*\(\s*['"]([^'"]+)['"]/,
        /request\.#{accessor}\s*\[\s*['"]([^'"]+)['"]\s*\]/,
        /request\.#{accessor}\.([A-Za-z_][A-Za-z0-9_]*)\b/}
     end
