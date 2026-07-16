@@ -7,8 +7,11 @@ module Detector::Specification
   class ZapSitesTree < Detector
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      if (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && valid_yaml?(file_contents)
-        data = YAML.parse(file_contents)
+      # The accepted shape requires a "node" value containing "Sites", so
+      # the literal must appear in the raw document — guard before the full
+      # parse (this detector is non-idempotent and previously parsed every
+      # YAML file of the scan twice).
+      if applicable?(filename) && file_contents.includes?("Sites") && (data = yaml_any?(file_contents))
         begin
           if data[0]["node"].as_s.includes? "Sites"
             check = true

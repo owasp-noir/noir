@@ -36,4 +36,9 @@ describe "Detect Istio VirtualService manifest" do
       YAML
     instance.detect("dr.yaml", src).should be_false
   end
+
+  it "rejects invalid yaml that carries both markers" do
+    src = "apiVersion: networking.istio.io/v1\nkind: VirtualService\nspec: [broken"
+    instance.detect("broken.yaml", src).should be_false
+  end
 end

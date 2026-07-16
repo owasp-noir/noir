@@ -8,8 +8,10 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless valid_json?(file_contents)
+      # Substring guard before the full JSON parse — both must pass, so the
+      # cheaper check goes first.
       return false unless file_contents.includes?("httpTrigger")
+      return false unless valid_json?(file_contents)
 
       CodeLocator.instance.push("azure-functions-spec", filename)
       true

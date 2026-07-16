@@ -34,4 +34,9 @@ describe "Detect Kubernetes Gateway API manifests" do
       YAML
     instance.detect("gateway.yaml", src).should be_false
   end
+
+  it "rejects invalid yaml that carries both markers" do
+    src = "apiVersion: gateway.networking.k8s.io/v1\nkind: HTTPRoute\nspec: [broken"
+    instance.detect("broken.yaml", src).should be_false
+  end
 end

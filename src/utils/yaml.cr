@@ -7,6 +7,15 @@ rescue
   false
 end
 
+# Strict `YAML.parse`-or-nil. Replaces the `valid_yaml?(content)` +
+# `YAML.parse(content)` idiom in detectors, which paid for two full
+# libyaml passes over the same content per file.
+def yaml_any?(content : String) : YAML::Any?
+  YAML.parse(content)
+rescue
+  nil
+end
+
 # Parses YAML, recovering from a stray-tab failure that libyaml (Crystal's
 # YAML backend) is stricter about than most other parsers.
 #
