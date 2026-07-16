@@ -1,5 +1,5 @@
 +++
-title = "Noir v1.0 — Major bump, compat-first"
+title = "Noir v1.0: Major bump, compat-first"
 description = "Why 1.x now, and how the v0 surface stayed intact."
 date = "2026-05-24"
 tags = ["release", "v1"]
@@ -13,7 +13,7 @@ It's been roughly four years since the first commit landed in my personal repo, 
 
 I could have kept extending the 0.x line, but there were two reasons to bump the major.
 
-1. Maturity: around v0.30 the rate of framework-level surprises dropped to where adding a new analyzer no longer threatens existing scans. Analyzer contracts, output schema, on-disk paths — the core interfaces have settled. It started feeling honest to call the line "1.x".
+1. Maturity: around v0.30 the rate of framework-level surprises dropped to where adding a new analyzer no longer threatens existing scans. Analyzer contracts, output schema, on-disk paths: the core interfaces have settled. It started feeling honest to call the line "1.x".
 2. Sub-commands: v0's CLI was flag-only. As ancillary features (cache, rules, config) kept growing, the flag-only shape ran out of expressive room. v1 introduces a verb layer: `noir scan / list / cache / config / rules / completion / version / help`.
 
 Outside those two decisions, almost every change was designed around **v0 compatibility**. v0 call shapes like `noir -b ./app -P -f json` route automatically into the `scan` subcommand, and renamed flags keep their old names as silent aliases. The only thing that breaks explicitly is `--ollama` / `--ollama-model`, both deprecated since 2024.

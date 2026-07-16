@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Nix provides a reproducible development environment with consistent dependencies across machines.
+Nix provides a reproducible development environment: the same dependencies on every machine, isolated from system-wide packages.
 
 ## Installing Nix
 
@@ -62,13 +62,6 @@ After modifying `shard.yml`, regenerate `shards.nix` to keep Nix in sync.
 ```sh
 nix-shell -p crystal2nix --run crystal2nix
 ```
-
-## Benefits
-
-- **Reproducibility**: Same environment across all machines
-- **Isolation**: No interference with system-wide dependencies
-- **Consistency**: All team members use the same tool versions
-- **Easy Setup**: Single command to get started
 
 ## Next Steps
 
