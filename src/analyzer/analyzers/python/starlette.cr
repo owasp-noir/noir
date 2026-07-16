@@ -948,8 +948,11 @@ module Analyzer::Python
     private def request_attr_regexes(request_name : ::String, attr : ::String) : Tuple(Regex, Regex)
       @attr_regex_cache[{request_name, attr}] ||= begin
         rp = Regex.escape(request_name)
+        # `.get(` and `.getlist(`: Starlette's QueryParams / Headers are
+        # multidicts exposing `getlist("key")` for repeated keys, reading
+        # the same first-arg key as `get`.
         {/#{rp}\.#{attr}\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
-         /#{rp}\.#{attr}\.get\(\s*[rf]?['"]([^'"]+)['"]/}
+         /#{rp}\.#{attr}\.get(?:list)?\(\s*[rf]?['"]([^'"]+)['"]/}
       end
     end
 

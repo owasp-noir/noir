@@ -700,20 +700,22 @@ module Analyzer::Python
     end
 
     private def extract_tornado_params(line : ::String, params : Array(Param))
-      # self.get_argument("param_name")
-      if match = line.match /self\.get_argument\(["']([^"']+)["']/
+      # Query args: self.get_argument / get_arguments (multi-value) and the
+      # query-scoped self.get_query_argument / get_query_arguments variants.
+      if match = line.match /self\.get_(?:query_)?arguments?\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "query")
       end
 
-      # self.get_body_argument("param_name")
-      if match = line.match /self\.get_body_argument\(["']([^"']+)["']/
+      # Form args: self.get_body_argument / get_body_arguments (multi-value).
+      if match = line.match /self\.get_body_arguments?\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "form")
       end
 
-      # self.get_cookie("cookie_name")
-      if match = line.match /self\.get_cookie\(["']([^"']+)["']/
+      # Cookies: self.get_cookie and the signed variants
+      # self.get_secure_cookie / get_signed_cookie (renamed in Tornado 6.3).
+      if match = line.match /self\.get_(?:secure_|signed_)?cookie\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "cookie")
       end
@@ -722,12 +724,6 @@ module Analyzer::Python
       if match = line.match /self\.request\.headers\.get\(["']([^"']+)["']/
         param_name = match[1]
         params << Param.new(param_name, "", "header")
-      end
-
-      # self.get_arguments("param_name") — plural form for multi-value query params
-      if match = line.match /self\.get_arguments\(["']([^"']+)["']/
-        param_name = match[1]
-        params << Param.new(param_name, "", "query")
       end
 
       # JSON body parsing: tornado.escape.json_decode or json.loads

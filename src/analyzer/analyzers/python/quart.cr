@@ -36,7 +36,10 @@ module Analyzer::Python
       {
         tuple[1],
         Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
-        Regex.new("request\\.#{field_name}\\.get\\([rf]?['\"]([^'\"]*)['\"]"),
+        # `.get(` and `.getlist(`: Quart mirrors Werkzeug's request
+        # MultiDicts, where `getlist("key")` is the standard accessor for
+        # repeated keys and reads the same first-arg key as `get`.
+        Regex.new("request\\.#{field_name}\\.get(?:list)?\\([rf]?['\"]([^'\"]*)['\"]"),
       }
     end
 

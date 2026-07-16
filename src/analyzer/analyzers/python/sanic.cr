@@ -44,7 +44,10 @@ module Analyzer::Python
     REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field, tuple|
       {"request.#{field}",
        tuple[1],
-       /request\.#{field}(?:\.get)?\(['"']([^'"']+)['"']\)/,
+       # `request.args('x')`, `request.args.get('x')` and
+       # `request.args.getlist('x')`: Sanic's RequestParameters exposes
+       # `getlist` for repeated keys, reading the same first-arg key.
+       /request\.#{field}(?:\.get(?:list)?)?\(['"']([^'"']+)['"']\)/,
        /request\.#{field}\[['"']([^'"']+)['"']\]/}
     end
 

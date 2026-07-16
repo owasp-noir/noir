@@ -27,11 +27,16 @@ module Analyzer::Python
     # (profiling: ~50% of the analyzer). The field names are a fixed set,
     # so precompile the access patterns once here and reuse them.
     # Tuple shape: {noir_param_type, bracket_access_regex, get_access_regex}
+    # The get-access pattern accepts `.get(` and `.getlist(`: Werkzeug's
+    # request MultiDicts (`request.args`, `request.form`, …) expose
+    # `getlist("key")` as the standard accessor for repeated keys
+    # (`?tag=a&tag=b`), and it reads the same first string argument as the
+    # key — so `.get(?:list)?` captures both without a separate pattern.
     REQUEST_PARAM_FIELD_PATTERNS = REQUEST_PARAM_FIELDS.map do |field_name, tuple|
       {
         tuple[1],
         Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
-        Regex.new("request\\.#{field_name}\\.get\\([rf]?['\"]([^'\"]*)['\"]"),
+        Regex.new("request\\.#{field_name}\\.get(?:list)?\\([rf]?['\"]([^'\"]*)['\"]"),
       }
     end
 

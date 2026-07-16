@@ -58,7 +58,10 @@ module Analyzer::Python
         tuple[0],
         tuple[1],
         Regex.new("request\\.#{field_name}\\[[rf]?['\"]([^'\"]*)['\"]\\]"),
-        Regex.new("request\\.#{field_name}\\.get\\([rf]?['\"]([^'\"]*)['\"]"),
+        # `.get(` and `.getlist(`: Django's QueryDict (`request.GET`,
+        # `request.POST`) exposes `getlist("key")` for repeated keys
+        # (`?tag=a&tag=b`), reading the same first-arg key as `get`.
+        Regex.new("request\\.#{field_name}\\.get(?:list)?\\([rf]?['\"]([^'\"]*)['\"]"),
       }
     end
 
