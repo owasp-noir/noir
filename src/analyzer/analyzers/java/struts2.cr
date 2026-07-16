@@ -719,9 +719,15 @@ module Analyzer::Java
     end
 
     private def line_number_for(content : String, offset : Int32) : Int32
-      # Callers pass CHAR offsets (match.begin / String#index); char-slice so
-      # multi-byte chars before `offset` don't under-count newlines.
-      content[0, offset].count('\n') + 1
+      # Callers pass CHAR offsets (match.begin / String#index); convert to a
+      # byte offset so multi-byte chars before `offset` don't under-count
+      # newlines, without the prefix-substring allocation of a char-slice.
+      byte_offset = if content.bytesize == content.size
+                      offset
+                    else
+                      content.char_index_to_byte_index(offset) || content.bytesize
+                    end
+      content.to_slice[0, byte_offset].count('\n'.ord.to_u8) + 1
     end
 
     private def matching_brace(content : String, open_index : Int32) : Int32?

@@ -9,9 +9,13 @@ module Analyzer::Typescript
       getter path : String
       getter parent : String?
       getter block : String
+      # `start_pos` is a CHAR index (used for char-based navigation);
+      # `byte_start_pos` is the same position as a BYTE offset (used for
+      # the byte-indexed literal mask and newline counting).
       getter start_pos : Int32
+      getter byte_start_pos : Int32
 
-      def initialize(@name : String, @path : String, @parent : String?, @block : String, @start_pos : Int32)
+      def initialize(@name : String, @path : String, @parent : String?, @block : String, @start_pos : Int32, @byte_start_pos : Int32)
       end
     end
 
@@ -100,7 +104,11 @@ module Analyzer::Typescript
       file_route_pattern = /createFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*,?\s*\)/
 
       content.scan(file_route_pattern) do |match|
-        next if literal_position?(literal_mask, match.begin(0))
+        # The literal mask is BYTE-indexed — probe it with the match's byte
+        # offset. The previous char-index probe drifted on any file with a
+        # multi-byte char before the route, silently degrading the
+        # in-literal filtering.
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
         if match.size > 0
           route_path = match[1]
@@ -109,7 +117,7 @@ module Analyzer::Typescript
           # Convert TanStack Router path params ($param) to standard format (:param)
           normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path, match.begin(0) || 0, content)
+          endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
           extract_path_parameters(normalized_path, endpoint)
           extract_search_params(content, endpoint)
           attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
@@ -124,7 +132,7 @@ module Analyzer::Typescript
       lazy_file_route_pattern = /createLazyFileRoute\s*\(\s*['"`]([^'"`]+)['"`]\s*,?\s*\)/
 
       content.scan(lazy_file_route_pattern) do |match|
-        next if literal_position?(literal_mask, match.begin(0))
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
         if match.size > 0
           route_path = match[1]
@@ -132,7 +140,7 @@ module Analyzer::Typescript
 
           normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path, match.begin(0) || 0, content)
+          endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
           extract_path_parameters(normalized_path, endpoint)
           extract_search_params(content, endpoint)
           attach_file_route_callees(content, path, match.begin(0) || 0, endpoint) if callees_needed?
@@ -153,10 +161,10 @@ module Analyzer::Typescript
           resolved_path = resolve_code_route_path(route, route_map)
           next if resolved_path.empty?
 
-          endpoint = create_endpoint(resolved_path, "GET", path, route.start_pos, content)
+          endpoint = create_endpoint(resolved_path, "GET", path, route.byte_start_pos, content)
           extract_path_parameters(resolved_path, endpoint)
           extract_search_params_from_route_block(route.block, endpoint)
-          attach_route_block_callees(route.block, path, line_for_pos(content, route.start_pos), endpoint) if callees_needed?
+          attach_route_block_callees(route.block, path, line_for_byte_pos(content, route.byte_start_pos), endpoint) if callees_needed?
           result << endpoint
         end
       end
@@ -165,15 +173,15 @@ module Analyzer::Typescript
       root_route_pattern = /createRootRoute(?:WithContext(?:\s*<[^>]+>)?\s*\(\s*\))?\s*\(\s*\{[^}]*path\s*:\s*['"`]([^'"`]+)['"`][^}]*\}/
 
       content.scan(root_route_pattern) do |match|
-        next if literal_position?(literal_mask, match.begin(0))
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
         if match.size > 0
           route_path = match[1]
           normalized_path = normalize_path(route_path)
 
-          endpoint = create_endpoint(normalized_path, "GET", path, match.begin(0) || 0, content)
+          endpoint = create_endpoint(normalized_path, "GET", path, match.byte_begin(0), content)
           extract_path_parameters(normalized_path, endpoint)
-          attach_route_block_callees(match[0], path, line_for_pos(content, match.begin(0) || 0), endpoint) if callees_needed?
+          attach_route_block_callees(match[0], path, line_for_byte_pos(content, match.byte_begin(0)), endpoint) if callees_needed?
           result << endpoint
         end
       end
@@ -185,7 +193,7 @@ module Analyzer::Typescript
 
       content.scan(assignment_pattern) do |match|
         start_pos = match.begin(0)
-        next if literal_position?(literal_mask, start_pos)
+        next if literal_position?(literal_mask, match.byte_begin(0))
 
         open_paren = match.end(0).try { |idx| content.rindex('(', idx - 1) }
         next unless start_pos && open_paren
@@ -198,7 +206,7 @@ module Analyzer::Typescript
         next unless route_path
 
         parent = extract_parent_route(block)
-        routes << CodeRoute.new(match[1], route_path, parent, block, start_pos)
+        routes << CodeRoute.new(match[1], route_path, parent, block, start_pos, match.byte_begin(0))
       end
 
       routes
@@ -327,9 +335,13 @@ module Analyzer::Typescript
       absolute ? "/#{normalized}" : normalized
     end
 
-    private def create_endpoint(url : String, method : String, file_path : String, start_pos : Int32 = 0, content : String = "") : Endpoint
+    # `byte_start_pos` must be a BYTE offset (`Regex::MatchData#byte_begin`
+    # or `CodeRoute#byte_start_pos`) — the previous version sliced the byte
+    # buffer with a char index, under-counting lines on any file with a
+    # multi-byte char before the route.
+    private def create_endpoint(url : String, method : String, file_path : String, byte_start_pos : Int32 = 0, content : String = "") : Endpoint
       endpoint = Endpoint.new(url, method)
-      line = content.empty? ? 1 : content.to_slice[0, start_pos].count('\n'.ord.to_u8) + 1
+      line = content.empty? ? 1 : line_for_byte_pos(content, byte_start_pos)
       endpoint.details = Details.new(PathInfo.new(file_path, line))
       endpoint
     end
@@ -372,7 +384,7 @@ module Analyzer::Typescript
 
     private def attach_identifier_slot_callees(block : String, path : String, start_line : Int32, endpoint : Endpoint)
       block.scan(/\b(component|loader|beforeLoad|pendingComponent|errorComponent)\s*:\s*([A-Za-z_$][\w$]*)/) do |match|
-        line = start_line + block[0, match.begin(2) || 0].count('\n')
+        line = start_line + block.to_slice[0, match.byte_begin(2)].count('\n'.ord.to_u8)
         endpoint.push_callee(Callee.new(match[2], path: path, line: line))
       end
     end
@@ -381,7 +393,7 @@ module Analyzer::Typescript
       block.scan(/\b(loader|beforeLoad)\s*:\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/) do |match|
         body_start = match.end(0) || 0
         body = block[body_start..]?.try(&.strip) || ""
-        line = start_line + block[0, body_start].count('\n')
+        line = start_line + block.to_slice[0, match.byte_end(0)].count('\n'.ord.to_u8)
         if body.starts_with?("{")
           if close = Noir::JSRouteExtractor.find_matching_brace(body, 0)
             body = body[1...close]
@@ -393,8 +405,21 @@ module Analyzer::Typescript
       end
     end
 
+    # `pos` is a CHAR index (from char-based navigation such as
+    # `String#index`); converted to a byte offset so the newline count is
+    # both correct on non-ASCII content and free of the prefix-substring
+    # allocation the old char-slice made per call.
     private def line_for_pos(content : String, pos : Int32) : Int32
-      content[0, pos].count('\n') + 1
+      byte_pos = if content.bytesize == content.size
+                   pos
+                 else
+                   content.char_index_to_byte_index(pos) || content.bytesize
+                 end
+      line_for_byte_pos(content, byte_pos)
+    end
+
+    private def line_for_byte_pos(content : String, byte_pos : Int32) : Int32
+      content.to_slice[0, byte_pos].count('\n'.ord.to_u8) + 1
     end
 
     private def extract_path_parameters(url : String, endpoint : Endpoint)

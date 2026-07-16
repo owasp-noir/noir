@@ -227,8 +227,16 @@ module Analyzer::Javascript
       i
     end
 
+    # `pos` is a CHAR index; convert to a byte offset so the newline count
+    # stays correct on non-ASCII content while dropping the prefix-substring
+    # allocation the old char-slice made per call.
     private def line_for_pos(content : String, pos : Int32) : Int32
-      content[0...pos].count('\n') + 1
+      byte_pos = if content.bytesize == content.size
+                   pos
+                 else
+                   content.char_index_to_byte_index(pos) || content.bytesize
+                 end
+      content.to_slice[0, byte_pos].count('\n'.ord.to_u8) + 1
     end
 
     # Process static directories and add endpoints for each file
