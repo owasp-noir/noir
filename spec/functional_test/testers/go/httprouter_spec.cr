@@ -30,6 +30,10 @@ expected_endpoints = [
     Param.new("X-API-Key", "", "header"),
     Param.new("session_id", "", "cookie"),
   ]),
+  # server.go: Handle(http.MethodPut, ...) must resolve the constant to PUT
+  Endpoint.new("/hello/:name", "PUT", [
+    Param.new("name", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/httprouter/", {

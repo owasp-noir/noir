@@ -28,6 +28,8 @@ expected_endpoints = [
   Endpoint.new("/multiline", "GET", [
     Param.new("ml_param", "", "query"),
   ]),
+  # server.go: e.File single-file static registration
+  Endpoint.new("/robots.txt", "GET"),
   # handlers.go: PATCH method with path param
   Endpoint.new("/users/:id", "PATCH", [
     Param.new("id", "", "path"),

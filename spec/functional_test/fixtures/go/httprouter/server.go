@@ -63,5 +63,11 @@ func main() {
 		fmt.Fprintf(w, "Key: %s, Session: %s", apiKey, session.Value)
 	})
 
+	// Idiomatic http.MethodX constant form — must resolve to PUT instead
+	// of dropping the Handle call when the method is not a string literal.
+	router.Handle(http.MethodPut, "/hello/:name", func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+		fmt.Fprintf(w, "Hello %s", ps.ByName("name"))
+	})
+
 	http.ListenAndServe(":8080", router)
 }

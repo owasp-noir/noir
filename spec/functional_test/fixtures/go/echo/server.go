@@ -68,5 +68,8 @@ func main() {
 		},
 	)
 
+	// Single-file static registration (must be recognized as a public entry)
+	e.File("/robots.txt", "static/robots.txt")
+
 	e.Logger.Fatal(e.Start(":1323"))
 }
