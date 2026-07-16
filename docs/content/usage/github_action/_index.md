@@ -47,7 +47,7 @@ jobs:
 | `exclude_techs` | Technologies to exclude (`--exclude-techs`) | No | `` |
 | `passive_scan` | Enable passive security scan (`-P/--passive-scan`) | No | `false` |
 | `passive_scan_severity` | Minimum severity for passive scan (`critical`, `high`, `medium`, `low`) | No | `high` |
-| `use_all_taggers` | Enable all taggers for comprehensive analysis (`-T/--use-all-taggers`) | No | `false` |
+| `use_all_taggers` | Enable all taggers (`-T/--use-all-taggers`) | No | `false` |
 | `use_taggers` | Enable specific taggers (`--use-taggers`) | No | `` |
 | `include_path` | Include source file paths in results (`--include-path`) | No | `false` |
 | `verbose` | Verbose output (`--verbose`) | No | `false` |

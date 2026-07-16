@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Use [Azure AI](https://azure.microsoft.com/en-us/products/ai-services) language models through GitHub Models inference endpoint.
+Use [Azure AI](https://azure.microsoft.com/en-us/products/ai-services) language models through the GitHub Models inference endpoint.
 
 ## Setup
 
@@ -32,5 +32,3 @@ Using environment variable:
 export NOIR_AI_KEY=YOUR_API_KEY
 noir scan ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
 ```
-
-Azure AI enables natural language endpoint descriptions, security vulnerability identification, and code quality suggestions.
