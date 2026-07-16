@@ -257,7 +257,7 @@ module Analyzer::Groovy
       while i < chars.size
         c = chars[i]
 
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(body, i)
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
           i = literal_end
           next
         end
@@ -566,7 +566,7 @@ module Analyzer::Groovy
       depth = 1
       i = open_idx + 1
       while i < chars.size && depth > 0
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
           i = literal_end
           next
         end
@@ -674,7 +674,7 @@ module Analyzer::Groovy
       i += 1
 
       while i < chars.size && depth > 0
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
           i = literal_end
           next
         end
@@ -713,7 +713,7 @@ module Analyzer::Groovy
       while i < size
         c = chars[i]
 
-        if literal_end = Noir::GroovyLiteralScanner.skip_literal(text, i)
+        if literal_end = Noir::GroovyLiteralScanner.skip_literal(chars, i)
           append_source_range(result, chars, i, literal_end)
           i = literal_end
           next

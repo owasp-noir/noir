@@ -169,5 +169,30 @@ describe Noir::GroovyLiteralScanner do
         Noir::GroovyLiteralScanner.skip_literal("$foo", 0).should be_nil
       end
     end
+
+    context "Array(Char) source (linear non-ASCII path)" do
+      it "agrees with the String overload across every position of a non-ASCII snippet" do
+        content = %(def greet = "안녕하세요 🎉" ; assert /한글\\/regex/ ; x = '값')
+        chars = content.chars
+        chars.size.times do |i|
+          Noir::GroovyLiteralScanner.skip_literal(chars, i).should eq(
+            Noir::GroovyLiteralScanner.skip_literal(content, i)
+          ), "mismatch at position #{i}"
+        end
+      end
+
+      it "returns char indices for a quoted literal holding multi-byte chars" do
+        content = "x = \"한글 문자열\" tail"
+        result = Noir::GroovyLiteralScanner.skip_literal(content.chars, 4)
+        result.should eq(content.index(" tail"))
+      end
+
+      it "detects slashy strings after keywords with multi-byte context" do
+        content = "리턴값 = 0; return /패턴/"
+        pos = content.index!("/")
+        result = Noir::GroovyLiteralScanner.skip_literal(content.chars, pos)
+        result.should eq(content.size)
+      end
+    end
   end
 end

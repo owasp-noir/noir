@@ -269,29 +269,34 @@ module Noir
     end
 
     private def self.arrow_params(content : String, start_pos : Int32, arrow_idx : Int32) : String
+      # Backward walk over a materialized chars array — `String#[](Int)`
+      # re-seeks from byte 0 per access once `content` holds a multi-byte
+      # char, and `find_open_paren_backward` can walk arbitrarily far left.
+      # One O(n) materialization per candidate handler keeps it linear.
+      chars = content.chars
       left_end = arrow_idx - 1
-      while left_end >= start_pos && content[left_end].whitespace?
+      while left_end >= start_pos && chars[left_end].whitespace?
         left_end -= 1
       end
 
-      if left_end >= start_pos && content[left_end] == ')'
-        if left_open = find_open_paren_backward(content, left_end)
+      if left_end >= start_pos && chars[left_end] == ')'
+        if left_open = find_open_paren_backward(chars, left_end)
           return content[(left_open + 1)...left_end]
         end
       end
 
       left_start = left_end
-      while left_start >= start_pos && identifier_char?(content[left_start])
+      while left_start >= start_pos && identifier_char?(chars[left_start])
         left_start -= 1
       end
       content[(left_start + 1)..left_end]
     end
 
-    private def self.find_open_paren_backward(content : String, close_idx : Int32) : Int32?
+    private def self.find_open_paren_backward(chars : Array(Char), close_idx : Int32) : Int32?
       depth = 0
       i = close_idx
       while i >= 0
-        case content[i]
+        case chars[i]
         when ')'
           depth += 1
         when '('
@@ -760,6 +765,10 @@ module Noir
 
     private def self.split_top_level(content : String, start_pos : Int32, end_pos : Int32, delimiter : Char) : Array(Tuple(String, Int32))
       args = [] of Tuple(String, Int32)
+      # Chars-array walk (see arrow_params) — this scans a whole argument
+      # span at absolute offsets into the file, so per-access String
+      # re-seeking made it O(span x file) on non-ASCII sources.
+      chars = content.chars
       arg_start = start_pos
       depth = 0
       quote : Char? = nil
@@ -767,7 +776,7 @@ module Noir
       i = start_pos
 
       while i < end_pos
-        char = content[i]
+        char = chars[i]
         if quote
           if escaped
             escaped = false
@@ -789,21 +798,24 @@ module Noir
           depth -= 1 if depth > 0
         when delimiter
           if depth == 0
-            args << normalized_arg(content, arg_start, i)
+            args << normalized_arg(content, chars, arg_start, i)
             arg_start = i + 1
           end
         end
         i += 1
       end
 
-      args << normalized_arg(content, arg_start, end_pos)
+      args << normalized_arg(content, chars, arg_start, end_pos)
       args
     end
 
-    private def self.normalized_arg(content : String, start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
-      start_idx = skip_whitespace(content, start_pos)
+    private def self.normalized_arg(content : String, chars : Array(Char), start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
+      start_idx = start_pos
+      while start_idx < chars.size && chars[start_idx].whitespace?
+        start_idx += 1
+      end
       stop_idx = end_pos
-      while stop_idx > start_idx && content[stop_idx - 1].whitespace?
+      while stop_idx > start_idx && chars[stop_idx - 1].whitespace?
         stop_idx -= 1
       end
 
