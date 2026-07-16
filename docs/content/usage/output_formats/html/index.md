@@ -1,12 +1,12 @@
 +++
 title = "HTML Report"
-description = "Generate a comprehensive, visual HTML report of your attack surface scan results."
+description = "Generate a self-contained, interactive HTML report of your attack surface scan results."
 weight = 3
 sort_by = "weight"
 
 +++
 
-Generate a self-contained, interactive HTML file that visualizes scan results. The report ships a redesigned, monochrome "noir" theme — a single file with no external dependencies, so it renders offline and is easy to share with stakeholders or use when reviewing an application's attack surface.
+Generate a self-contained, interactive HTML file that visualizes scan results. The report ships a redesigned, monochrome "noir" theme: a single file with no external dependencies, so it renders offline and is easy to share with stakeholders or use when reviewing an application's attack surface.
 
 ## Basic Usage
 
@@ -22,11 +22,11 @@ The screenshots below are a **real report**, generated from Noir's bundled Kemal
 noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 ```
 
-<img src="./report-light.png" alt="Noir HTML report — light theme" width="1280" height="2445" loading="lazy" decoding="async">
+<img src="./report-light.png" alt="Noir HTML report, light theme" width="1280" height="2445" loading="lazy" decoding="async">
 
 The report includes a built-in **dark theme**. Toggle it from the control in the top-right corner; your choice is remembered across visits (via `localStorage`) and the report also honors your operating system's `prefers-color-scheme` on first open.
 
-<img src="./report-dark.png" alt="Noir HTML report — dark theme" width="1280" height="1080" loading="lazy" decoding="async">
+<img src="./report-dark.png" alt="Noir HTML report, dark theme" width="1280" height="1080" loading="lazy" decoding="async">
 
 ### What's in the report
 
@@ -38,7 +38,7 @@ The report includes a built-in **dark theme**. Toggle it from the control in the
 
 ### Interactive features
 
-The report is interactive out of the box — everything below works from the single HTML file, with no server or network access:
+The report is interactive out of the box: everything below works from the single HTML file, with no server or network access.
 
 - **Light / dark theme toggle** that persists across visits and respects `prefers-color-scheme`.
 - **Collapsible endpoint cards** so you can fold away detail and scan the surface quickly.
@@ -75,7 +75,7 @@ Templates use placeholders that Noir replaces with generated content:
 | `<%= noir_scripts %>` | The interactivity scripts (theme toggle, collapsible cards, search, and filters). |
 
 {% alert_warning() %}
-Don't forget the noir_scripts placeholder — add it to your template, usually right before the closing body tag. Without it the report still renders, but the theme toggle, collapsible cards, search, and filter chips won't work.
+Don't forget the noir_scripts placeholder: add it to your template, usually right before the closing body tag. Without it the report still renders, but the theme toggle, collapsible cards, search, and filter chips won't work.
 {% end %}
 
 ### Example Template

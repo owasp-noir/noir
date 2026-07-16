@@ -8,8 +8,8 @@ sort_by = "weight"
 
 Noir splits "delivering results" into two distinct families:
 
-- **PROBE** — fire HTTP requests at the endpoints noir just discovered (active replay, optionally through a proxy like Burp Suite or ZAP).
-- **EXPORT** — ship the endpoint catalog to an external data store (e.g. Elasticsearch) as data, with no HTTP traffic to the endpoints themselves.
+- **PROBE**: fire HTTP requests at the endpoints noir just discovered (active replay, optionally through a proxy like Burp Suite or ZAP).
+- **EXPORT**: ship the endpoint catalog to an external data store (e.g. Elasticsearch) as data, with no HTTP traffic to the endpoints themselves.
 
 ## Probe
 
@@ -80,7 +80,7 @@ noir scan ./source -u http://localhost:3000 \
 
 ## Export
 
-Push the endpoint catalog to an external data store. Categorically different from probing — no traffic hits the endpoints themselves.
+Push the endpoint catalog to an external data store. Categorically different from probing: no traffic hits the endpoints themselves.
 
 ```bash
 noir scan ./source --export-es http://localhost:9200
@@ -88,7 +88,7 @@ noir scan ./source --export-es http://localhost:9200
 
 ## v0 aliases
 
-The v0.x flag names continue to work — noir maps them silently:
+The v0.x flag names continue to work; noir maps them silently:
 
 | v0 flag | v1 equivalent |
 | --- | --- |

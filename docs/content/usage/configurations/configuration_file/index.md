@@ -16,7 +16,7 @@ Use a `config.yaml` file to set default options for consistent scans.
 | Linux | `~/.config/noir/` |
 | Windows | `%APPDATA%\noir\` |
 
-Settings in config file are defaults and can be overridden via command line. Use `--config-file <path>` to load a config from a non-default location:
+Settings in the config file are defaults; command-line flags override them. Use `--config-file <path>` to load a config from a non-default location:
 
 ```bash
 noir scan . --config-file ./ci/noir.yaml

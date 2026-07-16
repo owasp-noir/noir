@@ -1,6 +1,6 @@
 +++
 title = "CLI Apps"
-description = "How Noir maps the command-line attack surface of CLI applications — subcommands, flags, positional arguments, and consumed environment variables — across 21 languages."
+description = "How Noir maps the command-line attack surface of CLI applications (subcommands, flags, positional arguments, and consumed environment variables) across 21 languages."
 weight = 7
 sort_by = "weight"
 
@@ -68,7 +68,7 @@ Noir detects the built-in argv / flag / environment mechanisms of each language 
 
 ## Output behavior
 
-CLI endpoints stay in the structured inventory — JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML — because they are part of the application's surface. They are **excluded** from HTTP-shaped output and delivery — cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery — because a command invocation is not an HTTP request you send. The HUNT tagger, which classifies HTTP parameter vulnerabilities, also skips CLI inputs.
+CLI endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML) because they are part of the application's surface. They are **excluded** from HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery) because a command invocation is not an HTTP request you send. The HUNT tagger, which classifies HTTP parameter vulnerabilities, also skips CLI inputs.
 
 ## Notes and limitations
 

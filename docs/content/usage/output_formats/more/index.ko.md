@@ -116,17 +116,7 @@ value = ""
 
 ## JSON Lines (JSONL)
 
-```bash
-noir scan . -f jsonl
-```
-
-```jsonl
-{"url":"/","method":"GET","params":[{"name":"x-api-key","type":"header","value":""}]}
-{"url":"/query","method":"POST","params":[{"name":"my_auth","type":"cookie","value":""},{"name":"query","type":"form","value":""}]}
-{"url":"/token","method":"GET","params":[{"name":"client_id","type":"form","value":""}]}
-```
-
-대용량 결과 세트의 스트리밍 처리 및 라인별 분석에 유용합니다.
+JSONL(`-f jsonl`)은 [JSON 및 JSONL](../json/) 페이지에서 JSON과 함께 다룹니다.
 
 ## Postman 컬렉션
 

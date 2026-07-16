@@ -68,7 +68,7 @@ Noir는 각 언어의 내장 argv / flag / 환경 변수 메커니즘과 주요 
 
 ## 출력 동작
 
-CLI 엔드포인트는 애플리케이션 표면의 일부이므로 구조화된 인벤토리 — JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML — 에 유지됩니다. 반면 HTTP 형태의 출력 및 전송 — cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로브 / 프록시 전송 — 에서는 **제외**됩니다. 커맨드 실행은 보내는 HTTP 요청이 아니기 때문입니다. HTTP 파라미터 취약점을 분류하는 HUNT 태거도 CLI 입력은 건너뜁니다.
+CLI 엔드포인트는 애플리케이션 표면의 일부이므로 구조화된 인벤토리(JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML)에 유지됩니다. 반면 HTTP 형태의 출력 및 전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로브 / 프록시 전송)에서는 **제외**됩니다. 커맨드 실행은 보내는 HTTP 요청이 아니기 때문입니다. HTTP 파라미터 취약점을 분류하는 HUNT 태거도 CLI 입력은 건너뜁니다.
 
 ## 참고 및 한계
 
