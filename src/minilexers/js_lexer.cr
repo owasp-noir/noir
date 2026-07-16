@@ -155,15 +155,19 @@ module Noir
       # start_pos = @position
       advance # Skip the opening quote
 
-      string_value = ""
-      while @current_char != quote_char && @current_char != '\0'
-        # Handle escape sequences
-        if @current_char == '\\' && (peek == quote_char || peek == '\\')
+      # String::Builder instead of per-char `String#+` — the concat form
+      # reallocated the whole accumulated value on every char, turning long
+      # literals quadratic.
+      string_value = String.build do |io|
+        while @current_char != quote_char && @current_char != '\0'
+          # Handle escape sequences
+          if @current_char == '\\' && (peek == quote_char || peek == '\\')
+            advance
+          end
+
+          io << @current_char
           advance
         end
-
-        string_value += @current_char
-        advance
       end
 
       # Skip the closing quote
@@ -173,11 +177,11 @@ module Noir
     end
 
     private def tokenize_number
-      number = ""
-
-      while '0' <= @current_char <= '9' || @current_char == '.'
-        number += @current_char
-        advance
+      number = String.build do |io|
+        while '0' <= @current_char <= '9' || @current_char == '.'
+          io << @current_char
+          advance
+        end
       end
 
       add_token(:number, number)
@@ -186,15 +190,19 @@ module Noir
     private def tokenize_template_literal
       advance # Skip the opening backtick
 
-      template_value = ""
-      while @current_char != '`' && @current_char != '\0'
-        # Handle escape sequences
-        if @current_char == '\\' && (peek == '`' || peek == '\\')
+      # Template literals carry the largest payloads (CSS-in-JS, GraphQL,
+      # inline HTML can be tens of KB) — per-char `String#+` made them
+      # quadratic.
+      template_value = String.build do |io|
+        while @current_char != '`' && @current_char != '\0'
+          # Handle escape sequences
+          if @current_char == '\\' && (peek == '`' || peek == '\\')
+            advance
+          end
+
+          io << @current_char
           advance
         end
-
-        template_value += @current_char
-        advance
       end
 
       # Skip the closing backtick
@@ -204,15 +212,15 @@ module Noir
     end
 
     private def tokenize_identifier
-      identifier = ""
-
-      while ('a' <= @current_char <= 'z') ||
-            ('A' <= @current_char <= 'Z') ||
-            ('0' <= @current_char <= '9') ||
-            @current_char == '_' ||
-            @current_char == '$'
-        identifier += @current_char
-        advance
+      identifier = String.build do |io|
+        while ('a' <= @current_char <= 'z') ||
+              ('A' <= @current_char <= 'Z') ||
+              ('0' <= @current_char <= '9') ||
+              @current_char == '_' ||
+              @current_char == '$'
+          io << @current_char
+          advance
+        end
       end
 
       # Check if it's a keyword
@@ -275,29 +283,30 @@ module Noir
     private def tokenize_regex
       advance # Skip opening /
 
-      regex_pattern = ""
       in_char_class = false
 
-      while @current_char != '\0'
-        # Check for end of regex (only if not in character class)
-        break if @current_char == '/' && !in_char_class
+      regex_pattern = String.build do |io|
+        while @current_char != '\0'
+          # Check for end of regex (only if not in character class)
+          break if @current_char == '/' && !in_char_class
 
-        if @current_char == '\\' # Handle escape sequences
-          regex_pattern += @current_char
-          advance
-          regex_pattern += @current_char if @current_char != '\0'
-          advance
-        elsif @current_char == '[' && !in_char_class
-          in_char_class = true
-          regex_pattern += @current_char
-          advance
-        elsif @current_char == ']' && in_char_class
-          in_char_class = false
-          regex_pattern += @current_char
-          advance
-        else
-          regex_pattern += @current_char
-          advance
+          if @current_char == '\\' # Handle escape sequences
+            io << @current_char
+            advance
+            io << @current_char if @current_char != '\0'
+            advance
+          elsif @current_char == '[' && !in_char_class
+            in_char_class = true
+            io << @current_char
+            advance
+          elsif @current_char == ']' && in_char_class
+            in_char_class = false
+            io << @current_char
+            advance
+          else
+            io << @current_char
+            advance
+          end
         end
       end
 
