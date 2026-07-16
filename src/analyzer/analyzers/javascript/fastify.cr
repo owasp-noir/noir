@@ -316,7 +316,14 @@ module Analyzer::Javascript
       return unless close_brace
 
       body = config[(open_brace + 1)...close_brace]
-      {body, start_line + config[0...open_brace].count('\n')}
+      # `open_brace` is a CHAR index; convert for an allocation-free,
+      # non-ASCII-correct newline count over the byte prefix.
+      open_brace_byte = if config.bytesize == config.size
+                          open_brace
+                        else
+                          config.char_index_to_byte_index(open_brace) || config.bytesize
+                        end
+      {body, start_line + config.to_slice[0, open_brace_byte].count('\n'.ord.to_u8)}
     end
 
     private def skip_whitespace(content : String, pos : Int32) : Int32
