@@ -11,7 +11,7 @@ module Detector::Specification
     # Whole-content necessary-condition guard for `nginx_shape?`: a line can
     # only match LOCATION_RE if "location" appears in the raw content — or
     # if a template action is spliced out of the middle of the word
-    # (`loca{{x}}tion`), which the `\{\{` disjunct keeps on the slow path.
+    # (`loc{{x}}ation`), which the `\{\{` disjunct keeps on the slow path.
     # Comment stripping only truncates lines, so it can never assemble the
     # keyword. Skips the per-line walk for the vast majority of `.conf` /
     # `.tmpl` files that carry no location block.
