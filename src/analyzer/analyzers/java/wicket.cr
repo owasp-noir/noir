@@ -803,7 +803,7 @@ module Analyzer::Java
         return key
       end
 
-      return nil unless class_index
+      return unless class_index
 
       source.scan(/\bnew\s+([A-Za-z_][A-Za-z0-9_.]*)\s*(?:<[^;()]*>)?\s*\(/) do |match|
         ref_class = match[1].split('.').last

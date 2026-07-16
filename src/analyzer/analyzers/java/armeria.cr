@@ -205,18 +205,18 @@ module Analyzer::Java
       while found = code.index(".route()", offset)
         if masked_offset?(non_code_mask, base_offset + found)
           offset = found + 8
-          next
-        end
-        build_idx = code.index(".build", found)
-        break unless build_idx
-        open_idx = code.index('(', build_idx)
-        break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
-        if close_idx
-          expressions << code[found..close_idx]
-          offset = close_idx + 1
         else
-          offset = open_idx + 1
+          build_idx = code.index(".build", found)
+          break unless build_idx
+          open_idx = code.index('(', build_idx)
+          break unless open_idx
+          close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+          if close_idx
+            expressions << code[found..close_idx]
+            offset = close_idx + 1
+          else
+            offset = open_idx + 1
+          end
         end
       end
 
@@ -233,16 +233,16 @@ module Analyzer::Java
       while found = code.index(marker, offset)
         if masked_offset?(non_code_mask, base_offset + found)
           offset = found + marker.size
-          next
-        end
-        open_idx = code.index('(', found)
-        break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
-        if close_idx
-          expressions << code[(open_idx + 1)...close_idx]
-          offset = close_idx + 1
         else
-          offset = open_idx + 1
+          open_idx = code.index('(', found)
+          break unless open_idx
+          close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+          if close_idx
+            expressions << code[(open_idx + 1)...close_idx]
+            offset = close_idx + 1
+          else
+            offset = open_idx + 1
+          end
         end
       end
 

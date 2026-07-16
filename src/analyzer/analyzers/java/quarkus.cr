@@ -362,33 +362,30 @@ module Analyzer::Java
       offset = 0
       while idx = content.index("@Route", offset)
         name_end = idx + 6 # length of "@Route"
-        if name_end < content.size
-          ch = content[name_end]
-          if ch.alphanumeric? || ch == '_'
-            offset = name_end
-            next
+        if name_end < content.size && (content[name_end].alphanumeric? || content[name_end] == '_')
+          # Longer annotation name (`@RouteBase`, `@RouteFilter`, …).
+          offset = name_end
+        else
+          cursor = name_end
+          while cursor < content.size && content[cursor].ascii_whitespace?
+            cursor += 1
+          end
+
+          if cursor < content.size && content[cursor] == '('
+            if close_idx = find_matching_delimiter(content, cursor, '(', ')')
+              end_offset = close_idx + 1
+              yield idx, end_offset, content[(cursor + 1)...close_idx]
+              offset = end_offset
+            else
+              # Unbalanced `(` — skip past it without yielding.
+              offset = cursor + 1
+            end
+          else
+            # Bare `@Route` with no argument list.
+            yield idx, cursor, ""
+            offset = cursor
           end
         end
-
-        cursor = name_end
-        while cursor < content.size && content[cursor].ascii_whitespace?
-          cursor += 1
-        end
-
-        body = ""
-        end_offset = cursor
-        if cursor < content.size && content[cursor] == '('
-          close_idx = find_matching_delimiter(content, cursor, '(', ')')
-          unless close_idx
-            offset = cursor + 1
-            next
-          end
-          body = content[(cursor + 1)...close_idx]
-          end_offset = close_idx + 1
-        end
-
-        yield idx, end_offset, body
-        offset = end_offset
       end
     end
 
@@ -470,7 +467,7 @@ module Analyzer::Java
 
       # Bare `regex=` with an unreadable value must not fall through
       # to the method-name path — Quarkus never registers that path.
-      return nil if annotation_body.match(/\bregex\s*=/)
+      return if annotation_body.match(/\bregex\s*=/)
 
       normalize_route_path(dashify(method_name))
     end
