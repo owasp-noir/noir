@@ -242,6 +242,11 @@ module Analyzer::Java
                 implementation.interface_names.each do |interface_name|
                   visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
                     entry_route = entry.route
+                    # Concrete @Override that re-declares its own mapping
+                    # annotation shadows the interface's method-level
+                    # mapping (Spring closest-annotation-wins). The direct
+                    # scan already emitted that route — skip the duplicate.
+                    next if implementation.annotated_method_names.includes?(entry_route.method_name)
                     implementation.paths.each do |implementation_path|
                       inherited_path = join_paths(implementation_path, entry_route.path)
                       parameter_format = nil

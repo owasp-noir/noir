@@ -325,20 +325,20 @@ module Analyzer::Java
       route_bases = reactive_route_bases(content)
       method_callees = include_callee ? reactive_route_method_callees(content, path) : [] of ReactiveMethodCallees
 
-      content.scan(/@Route\b\s*(?:\((.*?)\))?/m) do |match|
-        offset = match.begin(0) || 0
-        body = match[1]? || ""
+      each_reactive_route_annotation(content) do |offset, end_offset, body|
         next if reactive_failure_route?(body)
 
-        method_name = route_method_name_after(content, match.end(0) || offset)
+        method_name = route_method_name_after(content, end_offset)
         next if method_name.empty?
 
         route_path = reactive_route_path(body, method_name)
+        next if route_path.nil?
+
         base_path = route_bases.find { |base| offset >= base.start_offset && offset <= base.end_offset }.try(&.path) || ""
         endpoint_path = Helper.join_paths(http_root_path, Helper.join_paths(base_path, route_path))
         line = content[0...offset].count('\n') + 1
         details = Details.new(PathInfo.new(path, line))
-        params = reactive_route_params(content, match.end(0) || offset, endpoint_path)
+        params = reactive_route_params(content, end_offset, endpoint_path)
 
         reactive_route_methods(body).each do |method|
           next if endpoints.any? { |endpoint| endpoint.url == endpoint_path && endpoint.method == method }
@@ -352,6 +352,44 @@ module Analyzer::Java
       end
 
       endpoints
+    end
+
+    # Locate each `@Route` annotation with a delimiter-balanced argument
+    # scan so values containing `)` (common in `regex=` capture groups)
+    # do not truncate the body. Skips `@RouteBase` via a word-boundary
+    # check after the `@Route` prefix.
+    private def each_reactive_route_annotation(content : String, & : Int32, Int32, String ->)
+      offset = 0
+      while idx = content.index("@Route", offset)
+        name_end = idx + 6 # length of "@Route"
+        if name_end < content.size
+          ch = content[name_end]
+          if ch.alphanumeric? || ch == '_'
+            offset = name_end
+            next
+          end
+        end
+
+        cursor = name_end
+        while cursor < content.size && content[cursor].ascii_whitespace?
+          cursor += 1
+        end
+
+        body = ""
+        end_offset = cursor
+        if cursor < content.size && content[cursor] == '('
+          close_idx = find_matching_delimiter(content, cursor, '(', ')')
+          unless close_idx
+            offset = cursor + 1
+            next
+          end
+          body = content[(cursor + 1)...close_idx]
+          end_offset = close_idx + 1
+        end
+
+        yield idx, end_offset, body
+        offset = end_offset
+      end
     end
 
     private def reactive_route_method_callees(content : String, path : String) : Array(ReactiveMethodCallees)
@@ -413,12 +451,28 @@ module Analyzer::Java
       bases
     end
 
-    private def reactive_route_path(annotation_body : String, method_name : String) : String
+    # Resolve the route path for a `@Route` annotation. Explicit
+    # `path=`/`value=` wins. When only `regex=` is set, Quarkus
+    # registers via `routeWithRegex` and never derives a method-name
+    # path — surface the regex pattern itself (or nil if unreadable)
+    # rather than inventing a literal path. With neither path nor
+    # regex, fall back to Quarkus's dashify of the method name.
+    private def reactive_route_path(annotation_body : String, method_name : String) : String?
       if path = reactive_annotation_path(annotation_body)
         return normalize_route_path(path)
       end
 
-      normalize_route_path(method_name)
+      if regex = reactive_annotation_regex(annotation_body)
+        # Surface the pattern as-is (may start with escapes like `\/…`,
+        # not a filesystem-style path that needs a leading `/`).
+        return regex
+      end
+
+      # Bare `regex=` with an unreadable value must not fall through
+      # to the method-name path — Quarkus never registers that path.
+      return nil if annotation_body.match(/\bregex\s*=/)
+
+      normalize_route_path(dashify(method_name))
     end
 
     private def reactive_annotation_path(annotation_body : String) : String?
@@ -429,6 +483,29 @@ module Analyzer::Java
 
       if match = body.match(/(?:path|value)\s*=\s*(["'][^"']+["'])/m)
         string_literal_value(match[1])
+      end
+    end
+
+    private def reactive_annotation_regex(annotation_body : String) : String?
+      if match = annotation_body.match(/\bregex\s*=\s*(["'][^"']+["'])/m)
+        string_literal_value(match[1])
+      end
+    end
+
+    # Quarkus `ReactiveRoutesProcessor.dashify`: insert '-' before any
+    # interior (not first/last) uppercase char and lower-case every
+    # char. `getItemList` → `get-item-list`.
+    private def dashify(name : String) : String
+      return name if name.empty?
+
+      String.build do |io|
+        last = name.size - 1
+        name.each_char_with_index do |char, index|
+          if index > 0 && index < last && char.ascii_uppercase?
+            io << '-'
+          end
+          io << char.downcase
+        end
       end
     end
 

@@ -26,7 +26,13 @@ module Analyzer::Java
 
     # commons-cli (no subcommands; flags on root).
     ADD_OPTION_LL = /\.addOption\s*\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,/
-    LONG_OPT      = /\.longOpt\s*\(\s*"([^"]+)"/
+    # Current (non-deprecated) `addOption(String opt, boolean hasArg, String
+    # description)` overload used for short-only flags. The `true|false`
+    # literal gate in the 2nd argument position guarantees this never
+    # overlaps with ADD_OPTION_LL above (which requires a quoted string
+    # there), so a given call is matched by exactly one of the two.
+    ADD_OPTION_SHORT = /\.addOption\s*\(\s*"([^"]+)"\s*,\s*(?:true|false)\s*,/
+    LONG_OPT         = /\.longOpt\s*\(\s*"([^"]+)"/
 
     GET_ENV = /\bSystem\.getenv\s*\(\s*"([^"]+)"\s*\)/
 
@@ -54,7 +60,7 @@ module Analyzer::Java
         next unless File.exists?(path)
 
         begin
-          content = read_file_content(path)
+          content = strip_comments(read_file_content(path))
           next unless LIB_MARKERS.any? { |m| content.includes?(m) } || content.matches?(/@Command\b|@Parameter\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/)
 
           binary = java_binary_name(content, path)
@@ -140,6 +146,8 @@ module Analyzer::Java
         # commons-cli (root flags).
         if m = line.match(ADD_OPTION_LL)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[2], "", "flag"))
+        elsif m = line.match(ADD_OPTION_SHORT)
+          fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
         end
         if m = line.match(LONG_OPT)
           fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
@@ -206,6 +214,72 @@ module Analyzer::Java
       return if tokens.empty?
       long = tokens.find(&.starts_with?("--"))
       (long || tokens.first).lstrip('-')
+    end
+
+    # Replaces `//` line comments and `/* */` block comments with spaces
+    # (newlines preserved) so a commented-out @Option/@Parameter/addOption/
+    # etc. call is never mistaken for a live one, while keeping every real
+    # line number stable for PathInfo reporting. String and char literals
+    # are tracked so `//` or `/*` inside a literal (e.g. a URL default value
+    # `"http://x//y"`) is never treated as a comment opener.
+    private def strip_comments(text : String) : String
+      result = String::Builder.new
+      chars = text.chars
+      i = 0
+      in_string = false
+      string_quote = '\0'
+
+      while i < chars.size
+        c = chars[i]
+
+        if in_string
+          if c == '\\' && i + 1 < chars.size
+            result << c
+            result << chars[i + 1]
+            i += 2
+            next
+          end
+          in_string = false if c == string_quote
+          result << c
+          i += 1
+          next
+        end
+
+        if c == '"' || c == '\''
+          in_string = true
+          string_quote = c
+          result << c
+          i += 1
+          next
+        end
+
+        if c == '/' && i + 1 < chars.size && chars[i + 1] == '/'
+          while i < chars.size && chars[i] != '\n'
+            result << ' '
+            i += 1
+          end
+          next
+        end
+
+        if c == '/' && i + 1 < chars.size && chars[i + 1] == '*'
+          result << "  "
+          i += 2
+          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
+            result << (chars[i] == '\n' ? '\n' : ' ')
+            i += 1
+          end
+          if i + 1 < chars.size
+            result << "  "
+            i += 2
+          end
+          next
+        end
+
+        result << c
+        i += 1
+      end
+
+      result.to_s
     end
 
     private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,

@@ -65,7 +65,19 @@ module Noir
 
     INJECTED_PARAM_TYPES = Set{
       "authentication", "httprequest", "httpheaders", "pageable",
-      "principal", "x509authentication",
+      "principal", "x509authentication", "httpparameters", "cookies",
+      "basicauth",
+    }
+
+    # Single-argument reactive/async/optional wrappers that Micronaut
+    # unwraps transparently when binding `@Body` (and implicit-body)
+    # parameters — e.g. `@Body Mono<Book> book` carries the same
+    # wire-level fields as `@Body Book book`. Resolving through these
+    # lets DTO expansion see the real element type instead of the
+    # wrapper's bare name.
+    REACTIVE_BODY_WRAPPER_TYPES = Set{
+      "mono", "single", "maybe", "flowable", "observable", "flux",
+      "publisher", "completablefuture", "optional",
     }
 
     FORM_FILE_PARAM_TYPES = Set{
@@ -848,11 +860,50 @@ module Noir
     private def leaf_type_name(node : LibTreeSitter::TSNode, source : String) : String
       ty = Noir::TreeSitter.node_type(node)
       return Noir::TreeSitter.node_text(node, source) if ty == "type_identifier"
+
+      if ty == "generic_type"
+        if outer = generic_type_outer_name(node, source)
+          if REACTIVE_BODY_WRAPPER_TYPES.includes?(outer.downcase)
+            if inner = generic_type_first_argument_leaf(node, source)
+              return inner unless inner.empty?
+            end
+          end
+        end
+      end
+
       Noir::TreeSitter.each_named_child(node) do |child|
         leaf = leaf_type_name(child, source)
         return leaf unless leaf.empty?
       end
       ""
+    end
+
+    # The bare type name a `generic_type` node is parameterizing, e.g.
+    # `Mono` in `Mono<Book>` or `Optional` in `java.util.Optional<Book>`.
+    private def generic_type_outer_name(node : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "type_identifier"
+          return Noir::TreeSitter.node_text(child, source)
+        when "scoped_type_identifier"
+          return last_segment(Noir::TreeSitter.node_text(child, source))
+        end
+      end
+      nil
+    end
+
+    # The first concrete `type_arguments` entry of a `generic_type`
+    # node, resolved down to its leaf type name (recursing through
+    # further nested wrappers, e.g. `Mono<Optional<Book>>`).
+    private def generic_type_first_argument_leaf(node : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        next unless Noir::TreeSitter.node_type(child) == "type_arguments"
+        Noir::TreeSitter.each_named_child(child) do |arg|
+          leaf = leaf_type_name(arg, source)
+          return leaf unless leaf.empty?
+        end
+      end
+      nil
     end
 
     private def annotation_string_arg(args : LibTreeSitter::TSNode?,

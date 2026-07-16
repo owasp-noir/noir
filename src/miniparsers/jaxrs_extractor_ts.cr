@@ -54,14 +54,15 @@ module Noir
     # to the same param formats. Listing both here keeps the
     # Quarkus analyzer a thin detector layer on top of this extractor.
     PARAM_ANNOTATION_FORMAT = {
-      "QueryParam"  => "query",
-      "HeaderParam" => "header",
-      "CookieParam" => "cookie",
-      "FormParam"   => "form",
-      "RestQuery"   => "query",
-      "RestHeader"  => "header",
-      "RestCookie"  => "cookie",
-      "RestForm"    => "form",
+      "QueryParam"    => "query",
+      "HeaderParam"   => "header",
+      "CookieParam"   => "cookie",
+      "FormParam"     => "form",
+      "FormDataParam" => "form", # Jersey multipart (org.glassfish.jersey.media.multipart)
+      "RestQuery"     => "query",
+      "RestHeader"    => "header",
+      "RestCookie"    => "cookie",
+      "RestForm"      => "form",
     }
 
     # `@PathParam` skip-list — Quarkus's `@RestPath` is a drop-in
@@ -328,6 +329,9 @@ module Noir
       collect_implemented_interface_routes(decl, source, class_path, class_consumes,
         dto_index, bean_index, routes, include_callees, local_class_index,
         local_constants, subresource_sources, current_file, local_visited)
+      collect_superclass_routes(decl, source, class_path, class_consumes,
+        dto_index, bean_index, routes, include_callees, local_class_index,
+        local_constants, subresource_sources, current_file, local_visited)
     end
 
     private def collect_implemented_interface_routes(decl : LibTreeSitter::TSNode,
@@ -362,6 +366,68 @@ module Noir
             class_path, class_consumes, dto_index, bean_index, routes, include_callees,
             subresource_sources, visited, method_excludes)
         end
+      end
+    end
+
+    # Inherit HTTP-verb methods from an abstract/concrete superclass
+    # (`extends SuperClass`). JAX-RS only inherits *method*-level
+    # annotations from a superclass — never the superclass's class-level
+    # `@Path` — so the subclass's own `class_path` is used as `base_path`
+    # without re-joining any superclass path. Methods the subclass
+    # already re-annotates are excluded to avoid double emission.
+    private def collect_superclass_routes(decl : LibTreeSitter::TSNode,
+                                          source : String,
+                                          class_path : String,
+                                          class_consumes : String?,
+                                          dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                          bean_index : Hash(String, Array(Param)),
+                                          routes : Array(Route),
+                                          include_callees : Bool,
+                                          class_index : Hash(String, LibTreeSitter::TSNode),
+                                          constants : Hash(String, String),
+                                          subresource_sources : Hash(String, SourceEntry),
+                                          current_file : String?,
+                                          visited : Set(String))
+      return unless Noir::TreeSitter.node_type(decl) == "class_declaration"
+
+      super_name = extended_class_name(decl, source)
+      return unless super_name
+
+      method_excludes = jaxrs_annotated_method_names(decl, source)
+      if super_decl = class_index[super_name]?
+        collect_class_routes(super_decl, source, dto_index, bean_index, routes, include_callees,
+          base_path: class_path, inherited_consumes: class_consumes,
+          class_index: class_index, constants: constants, subresource_sources: subresource_sources,
+          current_file: current_file, visited: visited, method_excludes: method_excludes)
+      elsif source_entry = subresource_sources[super_name]?
+        super_source_path, super_source = source_entry
+        collect_cross_file_superclass(super_name, super_source_path, super_source,
+          class_path, class_consumes, dto_index, bean_index, routes, include_callees,
+          subresource_sources, visited, method_excludes)
+      end
+    end
+
+    private def collect_cross_file_superclass(super_name : String,
+                                              super_path : String,
+                                              super_source : String,
+                                              class_path : String,
+                                              class_consumes : String?,
+                                              dto_index : Hash(String, Array(TreeSitterJavaParameterExtractor::FieldInfo)),
+                                              bean_index : Hash(String, Array(Param)),
+                                              routes : Array(Route),
+                                              include_callees : Bool,
+                                              subresource_sources : Hash(String, SourceEntry),
+                                              visited : Set(String),
+                                              method_excludes : Set(String))
+      Noir::TreeSitter.parse_java(super_source) do |root|
+        classes = collect_classes(root, super_source)
+        super_decl = classes[super_name]?
+        next unless super_decl
+        constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, super_source)
+        collect_class_routes(super_decl, super_source, dto_index, bean_index, routes, include_callees,
+          base_path: class_path, inherited_consumes: class_consumes,
+          class_index: classes, constants: constants, subresource_sources: subresource_sources,
+          current_file: super_path, visited: visited, method_excludes: method_excludes)
       end
     end
 
@@ -503,6 +569,28 @@ module Noir
       end
       names.uniq!
       names
+    end
+
+    # Single superclass from `extends SuperClass` (or `extends SuperClass
+    # implements ...`). Returns the simple type name, or nil when the
+    # class does not extend anything.
+    private def extended_class_name(class_decl : LibTreeSitter::TSNode, source : String) : String?
+      header = Noir::TreeSitter.node_text(class_decl, source)
+      if body_start = header.index('{')
+        header = header[...body_start]
+      end
+
+      match = header.match(/\bextends\s+([A-Za-z_][\w.$]*(?:\s*<[^;{]*>)?)/)
+      return unless match
+
+      type_name = strip_generic_arguments(match[1].strip)
+      return if type_name.empty?
+      type_name = type_name.split(/\s+/).first? || type_name
+      if idx = type_name.rindex('.')
+        type_name[(idx + 1)..]
+      else
+        type_name
+      end
     end
 
     private def split_top_level_commas(text : String) : Array(String)

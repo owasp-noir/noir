@@ -79,8 +79,15 @@ module Noir
       getter verbs : Array(String)
       getter params : Array(Param)
       getter line : Int32
+      # Method names on the concrete controller that already carry a
+      # direct Spring mapping annotation (@GetMapping / @RequestMapping /
+      # meta-mapping, …). Interface-derived routes for these names must
+      # be skipped: Spring's merged-annotation lookup stops at the
+      # concrete override once it supplies its own mapping.
+      getter annotated_method_names : Set(String)
 
-      def initialize(@class_name, @interface_names, @paths, @verbs, @params, @line)
+      def initialize(@class_name, @interface_names, @paths, @verbs, @params, @line,
+                     @annotated_method_names = Set(String).new)
       end
     end
 
@@ -280,7 +287,9 @@ module Noir
           paths = mapping.paths
           paths = [""] if paths.empty?
           implementations << ControllerInterfaceImplementation.new(
-            class_name, interface_names, paths, mapping.verbs, mapping.params, Noir::TreeSitter.node_start_row(node)
+            class_name, interface_names, paths, mapping.verbs, mapping.params,
+            Noir::TreeSitter.node_start_row(node),
+            spring_mapping_method_names(node, source, meta_mappings)
           )
         end
       end
@@ -288,6 +297,35 @@ module Noir
       Noir::TreeSitter.each_named_child(node) do |child|
         walk_controller_interface_implementations(child, source, implementations, constants, meta_mappings, depth + 1)
       end
+    end
+
+    # Method names in `class_decl` whose declarations carry a Spring
+    # mapping annotation (direct or meta). Used to suppress inherited
+    # interface routes that the concrete override re-annotates.
+    private def spring_mapping_method_names(class_decl : LibTreeSitter::TSNode,
+                                            source : String,
+                                            meta_mappings : Hash(String, ClassMapping)) : Set(String)
+      names = Set(String).new
+      return names unless body = Noir::TreeSitter.field(class_decl, "body")
+
+      Noir::TreeSitter.each_named_child(body) do |member|
+        next unless Noir::TreeSitter.node_type(member) == "method_declaration"
+
+        method_name = ""
+        if name_node = Noir::TreeSitter.field(member, "name")
+          method_name = Noir::TreeSitter.node_text(name_node, source)
+        end
+        next if method_name.empty?
+
+        each_annotation(member, source) do |ann_name, _args_node, _line|
+          if ANNOTATION_VERBS.has_key?(ann_name) || meta_mappings.has_key?(ann_name)
+            names << method_name
+            break
+          end
+        end
+      end
+
+      names
     end
 
     private def class_simple_name(class_decl : LibTreeSitter::TSNode, source : String) : String

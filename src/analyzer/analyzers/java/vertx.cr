@@ -13,10 +13,23 @@ module Analyzer::Java
     REGEX_ROUTER_ROUTE_HANDLER = /router\.(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
     REGEX_ROUTE_METHOD_HANDLER = /\.route\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*this::([\w$]+)\s*\)/i
     REGEX_ROUTE_ANY_HANDLER    = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
+    # Bare `route(path).handler(...)` — candidate set for lambda/terminal
+    # handlers; method-ref form is handled by REGEX_ROUTE_ANY_HANDLER.
+    REGEX_ROUTE_HANDLER_OPEN   = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\(/i
     REGEX_ROUTE_SUB_ROUTER     = /(\w+)\.route\s*\(([^)]*)\)\s*\.subRouter\s*\(/i
     REGEX_MOUNTSUBPATH         = /(\w+)\.mountSubRouter\s*\(([^)]*)\)/i
     REGEX_STATIC_HANDLER_ROUTE = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\([^;]*StaticHandler\.create\s*\(/im
-    HTTP_METHODS               = %w[GET POST PUT DELETE PATCH HEAD OPTIONS CONNECT TRACE]
+    # Outbound client types — same verb names as Router, never server routes.
+    REGEX_CLIENT_TYPE_DECL  = /\b(?:WebClient|HttpClient|WebClientSession)\s+(\w+)\b/
+    REGEX_WEBCLIENT_ASSIGN  = /\b(\w+)\s*=\s*WebClient\s*\.\s*(?:create|wrap)\s*\(/
+    REGEX_HTTPCLIENT_ASSIGN = /\b(\w+)\s*=\s*\w+\s*\.\s*createHttpClient\s*\(/
+    # Unambiguous query accessors on RoutingContext (not getParam/pathParam).
+    REGEX_QUERY_PARAM      = /\.\s*queryParam\s*\(\s*["']([^"']+)["']\s*\)/
+    REGEX_QUERY_PARAMS_GET = /\.\s*queryParams\s*\(\s*\)\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/
+    HTTP_METHODS           = %w[GET POST PUT DELETE PATCH HEAD OPTIONS CONNECT TRACE]
+    # Response-terminating RoutingContext/response calls used to distinguish
+    # real route handlers from pass-through middleware lambdas (`.next()`).
+    TERMINAL_HANDLER_MARKERS = [".end(", ".json(", ".redirect(", ".sendFile(", ".fail("]
 
     private struct RouteCandidate
       getter router_name : String
@@ -67,7 +80,15 @@ module Analyzer::Java
 
                     callees_by_route = include_callee ? extract_method_reference_callees(content, path) : {} of String => Array(Callee)
                     constants = path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new
-                    route_candidates = extract_route_candidates(content, constants)
+                    client_names = client_receivers(content)
+                    route_candidates = extract_route_candidates(content, constants, client_names)
+                    # Only resolve handler bodies when unambiguous query accessors appear.
+                    query_params_by_route = if content.includes?("queryParam")
+                                              method_bodies = extract_method_bodies(content)
+                                              extract_query_params_by_route(content, constants, method_bodies, client_names)
+                                            else
+                                              {} of String => Array(String)
+                                            end
                     mounts = extract_mounts(content, constants)
                     mounted_routers = Set(String).new
                     mounts.each { |mount| mounted_routers << mount.child_router }
@@ -76,6 +97,7 @@ module Analyzer::Java
                       next if mounted_routers.includes?(route.router_name)
 
                       found = build_endpoint(route.endpoint, route.method, details)
+                      attach_query_params(found, query_params_by_route, route.method, route.endpoint)
                       attach_callees(found, callees_by_route, route.method, route.endpoint)
                       @result << found
                     end
@@ -88,6 +110,7 @@ module Analyzer::Java
                       child_routes.each do |child|
                         endpoint = Helper.join_paths(mount.endpoint, child.endpoint)
                         found = build_endpoint(endpoint, child.method, details)
+                        attach_query_params(found, query_params_by_route, child.method, child.endpoint)
                         attach_callees(found, callees_by_route, child.method, child.endpoint)
                         @result << found
                       end
@@ -108,13 +131,16 @@ module Analyzer::Java
       @result
     end
 
-    private def extract_route_candidates(content : String, constants : Hash(String, String)) : Array(RouteCandidate)
+    private def extract_route_candidates(content : String, constants : Hash(String, String), client_names : Set(String)) : Array(RouteCandidate)
       candidates = [] of RouteCandidate
 
-      # Find direct router method calls like router.get("/path", handler)
+      # Find direct router method calls like router.get("/path", handler).
+      # Skip receivers known to be outbound HTTP clients (WebClient etc.).
       content.scan(REGEX_ROUTER_ROUTE) do |match|
         next if match.size < 4
         router_name = match[1]
+        next if client_names.includes?(router_name)
+
         method = match[2].upcase
         endpoint = resolve_route_path_arg(first_top_level_arg(match[3]), constants)
 
@@ -128,6 +154,8 @@ module Analyzer::Java
       content.scan(REGEX_ROUTE_METHOD) do |match|
         next if match.size < 4
         router_name = match[1]
+        next if client_names.includes?(router_name)
+
         endpoint = resolve_route_path_arg(first_top_level_arg(match[2]), constants)
         method = match[3].upcase
 
@@ -141,6 +169,8 @@ module Analyzer::Java
       content.scan(REGEX_ROUTE_HTTP_METHOD) do |match|
         next if match.size < 3
         router_name = match[1]
+        next if client_names.includes?(router_name)
+
         args = split_top_level_args(match[2])
         next unless args.size >= 2
 
@@ -154,17 +184,47 @@ module Analyzer::Java
       end
 
       # A Vert.x Route without `.method(...)` or `route(HttpMethod, ...)`
-      # matches all HTTP methods. Only capture explicit method-reference
-      # handlers here to avoid promoting common middleware routes such as
-      # BodyHandler into standalone endpoints.
+      # matches all HTTP methods. Method-reference handlers are always
+      # treated as real endpoints; inline lambdas are promoted only when
+      # the body terminates the response and is not pass-through middleware
+      # (see terminal_handler_body?).
       content.scan(REGEX_ROUTE_ANY_HANDLER) do |match|
         next if match.size < 3
         router_name = match[1]
+        next if client_names.includes?(router_name)
+
         args = split_top_level_args(match[2])
         next unless args.size == 1
 
         endpoint = resolve_route_path_arg(args[0], constants)
         next if endpoint.nil? || endpoint.empty?
+
+        candidates << RouteCandidate.new(router_name, "ANY", endpoint)
+      end
+
+      content.scan(REGEX_ROUTE_HANDLER_OPEN) do |match|
+        next if match.size < 3
+        router_name = match[1]
+        next if client_names.includes?(router_name)
+
+        args = split_top_level_args(match[2])
+        next unless args.size == 1
+
+        endpoint = resolve_route_path_arg(args[0], constants)
+        next if endpoint.nil? || endpoint.empty?
+
+        open_idx = (match.end || 1) - 1
+        close_idx = find_matching_paren(content, open_idx)
+        next unless close_idx
+
+        handler_arg = content[(open_idx + 1)...close_idx].strip
+        # Method refs are already captured by REGEX_ROUTE_ANY_HANDLER.
+        next if handler_arg.matches?(/\Athis::[\w$]+\s*\z/)
+        # BodyHandler/StaticHandler/etc. — no lambda arrow.
+        next unless handler_arg.includes?("->")
+
+        body = lambda_body_of(handler_arg)
+        next unless body && terminal_handler_body?(body)
 
         candidates << RouteCandidate.new(router_name, "ANY", endpoint)
       end
@@ -222,6 +282,265 @@ module Analyzer::Java
       # spelling but never carry a slash-prefixed first argument, so the
       # leading-slash gate filters them out without a type-tracking pass.
       candidates.select { |candidate| vertx_route_path?(candidate.endpoint) }.uniq!
+    end
+
+    # Identifiers declared/assigned as outbound Vert.x HTTP clients. Their
+    # `.get/.post/...` calls share Router's method spelling but are not
+    # server-side routes. Default remains "treat as router" for any name
+    # not proven to be a client (preserves factory-returned routers).
+    private def client_receivers(content : String) : Set(String)
+      names = Set(String).new
+      content.scan(REGEX_CLIENT_TYPE_DECL) { |match| names << match[1] }
+      content.scan(REGEX_WEBCLIENT_ASSIGN) { |match| names << match[1] }
+      content.scan(REGEX_HTTPCLIENT_ASSIGN) { |match| names << match[1] }
+      names
+    end
+
+    # Classic Router path params are `:name` only. `{name}` is OpenAPI-style
+    # and is a literal segment on the classic API — do not classify as path.
+    private def extract_path_parameters(path : String, endpoint : Endpoint)
+      path.scan(/:(\w+)/) do |match|
+        next unless match.size > 1
+        param_name = match[1]
+        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+          endpoint.push_param(Param.new(param_name, "", "path"))
+        end
+      end
+    end
+
+    private def extract_method_bodies(content : String) : Hash(String, String)
+      bodies = {} of String => String
+      begin
+        Noir::TreeSitter.parse_java(content) do |root|
+          walk_method_declarations(root) do |method|
+            name_node = Noir::TreeSitter.field(method, "name")
+            next unless name_node
+
+            method_name = Noir::TreeSitter.node_text(name_node, content)
+            next if bodies.has_key?(method_name)
+
+            body = Noir::TreeSitter.field(method, "body")
+            next unless body
+
+            bodies[method_name] = Noir::TreeSitter.node_text(body, content)
+          end
+        end
+      rescue
+        # Kotlin / non-Java sources fall back to empty; inline lambdas still work.
+      end
+      bodies
+    end
+
+    # Map route_key(method, path) -> query param names from the route's handler.
+    private def extract_query_params_by_route(content : String,
+                                              constants : Hash(String, String),
+                                              method_bodies : Hash(String, String),
+                                              client_names : Set(String)) : Hash(String, Array(String))
+      result = {} of String => Array(String)
+
+      content.scan(REGEX_ROUTER_ROUTE) do |match|
+        next if match.size < 4
+        next if client_names.includes?(match[1])
+
+        method = match[2].upcase
+        endpoint = resolve_route_path_arg(first_top_level_arg(match[3]), constants)
+        next if !method.in?(HTTP_METHODS)
+        next if endpoint.nil? || endpoint.empty? || !vertx_route_path?(endpoint)
+
+        if body = resolve_handler_after(content, match.end || 0, method_bodies)
+          params = scan_query_params(body)
+          result[route_key(method, endpoint)] = params unless params.empty?
+        end
+      end
+
+      content.scan(REGEX_ROUTER_ROUTE_HANDLER) do |match|
+        next if match.size < 4
+        method = match[1].upcase
+        endpoint = match[2]
+        handler_name = match[3]
+        next if endpoint.empty? || handler_name.empty?
+        next unless vertx_route_path?(endpoint)
+
+        if body = method_bodies[handler_name]?
+          params = scan_query_params(body)
+          result[route_key(method, endpoint)] = params unless params.empty?
+        end
+      end
+
+      content.scan(REGEX_ROUTE_METHOD) do |match|
+        next if match.size < 4
+        next if client_names.includes?(match[1])
+
+        endpoint = resolve_route_path_arg(first_top_level_arg(match[2]), constants)
+        method = match[3].upcase
+        next if !method.in?(HTTP_METHODS)
+        next if endpoint.nil? || endpoint.empty? || !vertx_route_path?(endpoint)
+
+        open_idx = (match.end || 1) - 1
+        close_idx = find_matching_paren(content, open_idx)
+        next unless close_idx
+
+        handler_arg = content[(open_idx + 1)...close_idx]
+        if body = resolve_handler_arg(handler_arg, method_bodies)
+          params = scan_query_params(body)
+          result[route_key(method, endpoint)] = params unless params.empty?
+        end
+      end
+
+      content.scan(REGEX_ROUTE_HTTP_METHOD) do |match|
+        next if match.size < 3
+        next if client_names.includes?(match[1])
+
+        args = split_top_level_args(match[2])
+        next unless args.size >= 2
+
+        method = resolve_http_method_arg(args[0])
+        endpoint = resolve_route_path_arg(args[1], constants)
+        next if method.nil? || !method.in?(HTTP_METHODS)
+        next if endpoint.nil? || endpoint.empty? || !vertx_route_path?(endpoint)
+
+        if body = resolve_handler_after(content, match.end || 0, method_bodies)
+          params = scan_query_params(body)
+          result[route_key(method, endpoint)] = params unless params.empty?
+        end
+      end
+
+      content.scan(REGEX_ROUTE_ANY_HANDLER) do |match|
+        next if match.size < 4
+        args = split_top_level_args(match[2])
+        next unless args.size == 1
+
+        endpoint = resolve_route_path_arg(args[0], constants)
+        handler_name = match[3]
+        next if endpoint.nil? || endpoint.empty? || handler_name.empty?
+        next unless vertx_route_path?(endpoint)
+
+        if body = method_bodies[handler_name]?
+          params = scan_query_params(body)
+          result[route_key("ANY", endpoint)] = params unless params.empty?
+        end
+      end
+
+      content.scan(REGEX_ROUTE_HANDLER_OPEN) do |match|
+        next if match.size < 3
+        next if client_names.includes?(match[1])
+
+        args = split_top_level_args(match[2])
+        next unless args.size == 1
+
+        endpoint = resolve_route_path_arg(args[0], constants)
+        next if endpoint.nil? || endpoint.empty? || !vertx_route_path?(endpoint)
+
+        open_idx = (match.end || 1) - 1
+        close_idx = find_matching_paren(content, open_idx)
+        next unless close_idx
+
+        handler_arg = content[(open_idx + 1)...close_idx]
+        if body = resolve_handler_arg(handler_arg, method_bodies)
+          # Only associate query params with ANY routes we would emit
+          # (terminal lambda) or method-ref bodies already handled above.
+          next if handler_arg.strip.matches?(/\Athis::[\w$]+\s*\z/)
+          next unless handler_arg.includes?("->")
+          next unless terminal_handler_body?(body)
+
+          params = scan_query_params(body)
+          result[route_key("ANY", endpoint)] = params unless params.empty?
+        end
+      end
+
+      result
+    end
+
+    private def resolve_handler_after(content : String, start : Int32, method_bodies : Hash(String, String)) : String?
+      i = start
+      while i < content.size && content[i].ascii_whitespace?
+        i += 1
+      end
+      rest = content[i..]
+      return unless m = rest.match(/\A\.\s*handler\s*\(/i)
+
+      open_idx = i + (m.end || 1) - 1
+      close_idx = find_matching_paren(content, open_idx)
+      return unless close_idx
+
+      resolve_handler_arg(content[(open_idx + 1)...close_idx], method_bodies)
+    end
+
+    private def resolve_handler_arg(handler_arg : String, method_bodies : Hash(String, String)) : String?
+      arg = handler_arg.strip
+      if m = arg.match(/\Athis::([\w$]+)\s*\z/)
+        return method_bodies[m[1]]?
+      end
+      lambda_body_of(arg)
+    end
+
+    private def lambda_body_of(handler_arg : String) : String?
+      return unless arrow = handler_arg.index("->")
+
+      handler_arg[(arrow + 2)..].strip
+    end
+
+    private def scan_query_params(body : String) : Array(String)
+      params = [] of String
+      body.scan(REGEX_QUERY_PARAM) do |match|
+        name = match[1]
+        params << name unless params.includes?(name)
+      end
+      body.scan(REGEX_QUERY_PARAMS_GET) do |match|
+        name = match[1]
+        params << name unless params.includes?(name)
+      end
+      params
+    end
+
+    private def terminal_handler_body?(body : String) : Bool
+      return false if body.includes?(".next(")
+
+      TERMINAL_HANDLER_MARKERS.any? { |marker| body.includes?(marker) }
+    end
+
+    private def attach_query_params(endpoint : Endpoint, query_params_by_route : Hash(String, Array(String)), method : String, route : String)
+      names = query_params_by_route[route_key(method, route)]?
+      return unless names
+
+      names.each do |name|
+        unless endpoint.params.any? { |p| p.name == name && p.param_type == "query" }
+          endpoint.push_param(Param.new(name, "", "query"))
+        end
+      end
+    end
+
+    private def find_matching_paren(code : String, open_idx : Int32) : Int32?
+      depth = 1
+      in_string = false
+      quote = '\0'
+      escape = false
+
+      code.each_char_with_index do |char, idx|
+        next if idx <= open_idx
+
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            in_string = false
+          end
+        else
+          case char
+          when '"', '\''
+            in_string = true
+            quote = char
+          when '('
+            depth += 1
+          when ')'
+            depth -= 1
+            return idx if depth.zero?
+          end
+        end
+      end
+      nil
     end
 
     # Vert.x Web requires path-string routes to begin with `/` (regex
@@ -389,24 +708,6 @@ module Analyzer::Java
       endpoint = Endpoint.new(path, method, details)
       extract_path_parameters(path, endpoint)
       endpoint
-    end
-
-    private def extract_path_parameters(path : String, endpoint : Endpoint)
-      path.scan(/:(\w+)/) do |match|
-        next unless match.size > 1
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
-      end
-
-      path.scan(/\{(\w+)\}/) do |match|
-        next unless match.size > 1
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-          endpoint.push_param(Param.new(param_name, "", "path"))
-        end
-      end
     end
 
     private def extract_method_reference_callees(content : String, path : String) : Hash(String, Array(Callee))

@@ -101,13 +101,25 @@ module Analyzer::Java
         content = read_file_content(path)
         next unless servlet_source?(content)
 
-        methods = extract_servlet_http_methods(content)
-        next if methods.empty?
+        base_path = configured_base_for(path)
+        package_name = java_package_name(content)
 
-        if class_name = java_class_name(content)
-          base_path = configured_base_for(path)
+        # One .java file can declare multiple HttpServlet subclasses (each
+        # mapped separately via web.xml). Scope method extraction to each
+        # class body so later classes are not dropped or given the first
+        # class's params.
+        content.scan(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b[^{]*\bextends\s+HttpServlet\b/) do |match|
+          class_name = match[1]
+          class_end = match.end(0) || 0
+          brace_index = content.index('{', class_end)
+          next unless brace_index
+
+          class_body = extract_balanced_block(content, brace_index)
+          methods = extract_servlet_http_methods(class_body)
+          next if methods.empty?
+
           servlet_methods[{base_path, class_name}] = methods
-          if package_name = java_package_name(content)
+          if package_name
             servlet_methods[{base_path, "#{package_name}.#{class_name}"}] = methods
           end
         end
@@ -195,11 +207,20 @@ module Analyzer::Java
       endpoints = [] of Endpoint
       return endpoints unless content.includes?("@WebServlet")
 
-      methods = extract_servlet_http_methods(content)
-      return endpoints if methods.empty?
-
-      content_without_comments(content).scan(/@WebServlet\s*(?:\((.*?)\))?\s*(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w+/m) do |match|
+      # Work on comment-stripped content so match offsets align with the
+      # class-body slice we feed to extract_servlet_http_methods. Multiple
+      # @WebServlet classes in one file each get their own method/params set.
+      cleaned = content_without_comments(content)
+      cleaned.scan(/@WebServlet\s*(?:\((.*?)\))?\s*(?:public\s+|protected\s+|private\s+)?(?:final\s+|abstract\s+)?class\s+\w+/m) do |match|
         annotation_body = match[1]? || ""
+        class_end = match.end(0) || 0
+        brace_index = cleaned.index('{', class_end)
+        next unless brace_index
+
+        class_body = extract_balanced_block(cleaned, brace_index)
+        methods = extract_servlet_http_methods(class_body)
+        next if methods.empty?
+
         extract_servlet_url_patterns(annotation_body).each do |pattern|
           methods.each do |method, params|
             add_endpoint(endpoints, pattern, method, params, details)
@@ -258,6 +279,40 @@ module Analyzer::Java
             add_endpoint(endpoints, normalize_servlet_pattern(pattern), method, params, details)
           end
         end
+      end
+
+      # Root welcome-file alias: a request to `/` is served by the first
+      # matching root-level welcome JSP. Only handle simple filenames (no
+      # path separators) so we do not invent per-directory `/sub/` aliases.
+      welcome_files = doc.xpath_nodes("//*[local-name()='welcome-file-list']/*[local-name()='welcome-file']")
+        .map(&.content.strip)
+        .reject(&.empty?)
+
+      welcome_files.each do |welcome_file|
+        next if welcome_file.includes?("/") || welcome_file.includes?("\\")
+        next unless welcome_file.ends_with?(".jsp")
+
+        expected_path = "/#{welcome_file}"
+        matched = false
+
+        all_files.each do |jsp_path|
+          next unless File.extname(jsp_path) == ".jsp"
+          next unless configured_base_for(jsp_path) == base_path
+
+          relative_path = get_relative_path(base_path, jsp_path)
+          next if web_inf_jsp?(relative_path)
+          next unless jsp_request_path(relative_path) == expected_path
+
+          jsp_content = read_file_content(jsp_path)
+          params = extract_params(jsp_content)
+          add_endpoint(endpoints, "/", "GET", params, details)
+          matched = true
+          break
+        rescue File::NotFoundError
+          logger.debug "File not found: #{jsp_path}"
+        end
+
+        break if matched
       end
 
       endpoints

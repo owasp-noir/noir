@@ -24,6 +24,7 @@ module Analyzer::Java
     JAVA_EXTENSION = "java"
     PACKAGE_MARKER = "com.sun.net.httpserver"
     CREATE_CONTEXT = "createContext"
+    SET_HANDLER    = "setHandler"
     HANDLE_METHOD  = "handle"
     HTTP_METHODS   = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"]
     # Verbs that carry a request body — the body param is attached only
@@ -93,7 +94,7 @@ module Analyzer::Java
           next unless name_node
           next unless Noir::TreeSitter.node_text(name_node, content) == CREATE_CONTEXT
 
-          handle_create_context(node, content, path, constants, class_index, method_index, include_callee)
+          handle_create_context(node, content, path, constants, class_index, method_index, root, include_callee)
         end
       end
     rescue e
@@ -106,6 +107,7 @@ module Analyzer::Java
                                       constants : Hash(String, String),
                                       class_index : Hash(String, LibTreeSitter::TSNode),
                                       method_index : Hash(String, LibTreeSitter::TSNode),
+                                      root : LibTreeSitter::TSNode,
                                       include_callee : Bool)
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -123,7 +125,14 @@ module Analyzer::Java
 
       line = Noir::TreeSitter.node_start_row(call) + 1
       handler_arg = arg_nodes[1]?
-      body = handler_arg ? resolve_handler_body(handler_arg, content, class_index, method_index) : nil
+      # Single-arg `createContext(path)` — look for a later
+      # `ctx.setHandler(...)` on the assigned HttpContext variable.
+      if handler_arg.nil?
+        if ctx_var = context_variable_for_create(call, content, root)
+          handler_arg = find_set_handler_arg(ctx_var, call, content, root)
+        end
+      end
+      body = handler_arg ? resolve_handler_body(handler_arg, content, class_index, method_index, root) : nil
 
       methods = ["GET"]
       header_params = [] of String
@@ -158,7 +167,11 @@ module Analyzer::Java
     private def resolve_handler_body(handler : LibTreeSitter::TSNode,
                                      content : String,
                                      class_index : Hash(String, LibTreeSitter::TSNode),
-                                     method_index : Hash(String, LibTreeSitter::TSNode)) : LibTreeSitter::TSNode?
+                                     method_index : Hash(String, LibTreeSitter::TSNode),
+                                     root : LibTreeSitter::TSNode,
+                                     depth : Int32 = 0) : LibTreeSitter::TSNode?
+      return if depth > 8
+
       case Noir::TreeSitter.node_type(handler)
       when "lambda_expression"
         Noir::TreeSitter.field(handler, "body")
@@ -178,11 +191,158 @@ module Analyzer::Java
           method ? Noir::TreeSitter.field(method, "body") : nil
         end
       when "method_reference"
-        # `App::handle`, `this::serve`, `ClassName::method`.
-        method_name = Noir::TreeSitter.node_text(handler, content).split("::").last.strip
-        method_node = method_index[method_name]?
+        # `App::handle`, `this::serve`, `ClassName::method`. Prefer the
+        # qualifier's class body when the left-hand side names a known
+        # class so same-named methods in different classes don't collide
+        # via the flat method_index.
+        parts = Noir::TreeSitter.node_text(handler, content).split("::", 2)
+        method_name = parts.last.strip.gsub(/\A<[^>]+>\s*/, "")
+        return if method_name.empty?
+
+        method_node : LibTreeSitter::TSNode? = nil
+        if parts.size == 2
+          qualifier = parts[0].strip
+          if !qualifier.empty? && qualifier != "this" && !qualifier.includes?("(")
+            class_name = simple_name(qualifier)
+            if class_node = class_index[class_name]?
+              method_node = find_method_in_class(class_node, content, method_name)
+            end
+          end
+        end
+        method_node ||= method_index[method_name]?
         method_node ? Noir::TreeSitter.field(method_node, "body") : nil
+      when "identifier"
+        # `HttpHandler h = exchange -> {...}; createContext("/x", h)`.
+        name = Noir::TreeSitter.node_text(handler, content)
+        return if name.empty?
+        if init = find_local_handler_initializer(handler, name, content, root)
+          resolve_handler_body(init, content, class_index, method_index, root, depth + 1)
+        end
       end
+    end
+
+    # Local-variable declaration whose name matches `name` and whose
+    # initializer is a resolvable handler expression. Scoped to the
+    # enclosing method when one can be found; returns nil unless exactly
+    # one candidate is present.
+    private def find_local_handler_initializer(ref : LibTreeSitter::TSNode,
+                                               name : String,
+                                               content : String,
+                                               root : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      scope = enclosing_method_body(ref, root) || root
+      matches = [] of LibTreeSitter::TSNode
+
+      walk(scope) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "local_variable_declaration"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          next unless Noir::TreeSitter.node_type(child) == "variable_declarator"
+          name_node = Noir::TreeSitter.field(child, "name")
+          value = Noir::TreeSitter.field(child, "value")
+          next unless name_node && value
+          next unless Noir::TreeSitter.node_text(name_node, content) == name
+
+          case Noir::TreeSitter.node_type(value)
+          when "lambda_expression", "object_creation_expression", "method_reference"
+            matches << value
+          end
+        end
+      end
+
+      matches.size == 1 ? matches.first : nil
+    end
+
+    # Variable that the `createContext` call was assigned to, if any —
+    # `HttpContext ctx = server.createContext(...)` or `ctx = ...`.
+    private def context_variable_for_create(call : LibTreeSitter::TSNode,
+                                            content : String,
+                                            root : LibTreeSitter::TSNode) : String?
+      call_start = LibTreeSitter.ts_node_start_byte(call)
+      call_end = LibTreeSitter.ts_node_end_byte(call)
+      scope = enclosing_method_body(call, root) || root
+      found : String? = nil
+
+      walk(scope) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "variable_declarator"
+          value = Noir::TreeSitter.field(node, "value")
+          next unless value
+          next unless LibTreeSitter.ts_node_start_byte(value) == call_start &&
+                      LibTreeSitter.ts_node_end_byte(value) == call_end
+          if name_node = Noir::TreeSitter.field(node, "name")
+            found = Noir::TreeSitter.node_text(name_node, content)
+          end
+        when "assignment_expression"
+          left = Noir::TreeSitter.field(node, "left")
+          right = Noir::TreeSitter.field(node, "right")
+          next unless left && right
+          next unless LibTreeSitter.ts_node_start_byte(right) == call_start &&
+                      LibTreeSitter.ts_node_end_byte(right) == call_end
+          if Noir::TreeSitter.node_type(left) == "identifier"
+            found = Noir::TreeSitter.node_text(left, content)
+          end
+        end
+      end
+
+      found
+    end
+
+    # First `var.setHandler(handlerExpr)` call after `createContext` in
+    # the same enclosing method (or whole file when no method is found).
+    private def find_set_handler_arg(var_name : String,
+                                     after : LibTreeSitter::TSNode,
+                                     content : String,
+                                     root : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      after_end = LibTreeSitter.ts_node_end_byte(after)
+      scope = enclosing_method_body(after, root) || root
+      found : LibTreeSitter::TSNode? = nil
+
+      walk(scope) do |node|
+        next if found
+        next unless Noir::TreeSitter.node_type(node) == "method_invocation"
+        next if LibTreeSitter.ts_node_start_byte(node) < after_end
+
+        name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node
+        next unless Noir::TreeSitter.node_text(name_node, content) == SET_HANDLER
+
+        object = Noir::TreeSitter.field(node, "object")
+        next unless object
+        next unless Noir::TreeSitter.node_text(object, content) == var_name
+
+        args = Noir::TreeSitter.field(node, "arguments")
+        next unless args
+        if handler = argument_nodes(args)[0]?
+          found = handler
+        end
+      end
+
+      found
+    end
+
+    # Smallest method_declaration body that fully encloses `node`, used to
+    # scope local-var / setHandler lookups without a parent-pointer API.
+    private def enclosing_method_body(node : LibTreeSitter::TSNode,
+                                      root : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
+      target_start = LibTreeSitter.ts_node_start_byte(node)
+      target_end = LibTreeSitter.ts_node_end_byte(node)
+      best : LibTreeSitter::TSNode? = nil
+      best_span = UInt32::MAX
+
+      walk(root) do |candidate|
+        next unless Noir::TreeSitter.node_type(candidate) == "method_declaration"
+        c_start = LibTreeSitter.ts_node_start_byte(candidate)
+        c_end = LibTreeSitter.ts_node_end_byte(candidate)
+        next unless c_start <= target_start && c_end >= target_end
+        span = c_end - c_start
+        if span < best_span
+          best_span = span
+          best = candidate
+        end
+      end
+
+      method_node = best
+      return unless method_node
+      Noir::TreeSitter.field(method_node, "body")
     end
 
     private def anonymous_class_body(node : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
