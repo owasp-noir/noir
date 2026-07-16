@@ -254,12 +254,17 @@ module Noir
                                        verb : String,
                                        parameter_format : String?,
                                        class_fields : Hash(String, Array(FieldInfo)),
-                                       target_line : Int32? = nil) : Array(Param)
+                                       target_line : Int32? = nil,
+                                       constants : Hash(String, String)? = nil) : Array(Param)
       method = find_method(root, source, class_name, method_name, target_line)
       return [] of Param unless method
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      # `constants` is file-scoped and identical for every route in a
+      # file. Callers that emit many routes per file (spring.cr) build it
+      # once and pass it in; the nil default keeps every other analyzer's
+      # call site working by recomputing it here.
+      resolved_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       model_attributes = model_attribute_suppliers(root, source, class_name)
-      collect_method_params(method, source, verb, parameter_format, class_fields, constants, class_name, model_attributes)
+      collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes)
     end
 
     # Find `@*Mapping` annotation on (class_name, method_name) and
@@ -851,6 +856,16 @@ module Noir
             ann_kind = :cookie
             ann_node = ann
             break
+          when "RequestPart"
+            # `@RequestPart` doesn't change binding semantics (a part
+            # still binds like an implicit form/query value, or expands
+            # a DTO's fields) — only capture the annotation node so the
+            # name-resolution walk below can pick up an explicit
+            # `@RequestPart("doc")` / `value = "doc"` part name instead
+            # of falling back to the Java variable name. Deliberately
+            # doesn't set `ann_kind` or `break`: the implicit-binding
+            # format inference further down stays untouched.
+            ann_node = ann
           end
         end
       end
@@ -868,6 +883,19 @@ module Noir
       end
 
       effective_format = parameter_format
+      # A carried-over "json"/"header"/"cookie" format came from a
+      # *previous* parameter's own annotation (`@RequestBody`,
+      # `@RequestHeader`, `@CookieValue`) and describes how that
+      # parameter was bound — it says nothing about how Spring binds
+      # *this*, un-annotated one. Drop it here so the un-annotated
+      # branch below recomputes the correct verb-based format ("form"
+      # on POST, "query" otherwise) instead of mislabeling this
+      # parameter with the previous one's transport. "query" is left
+      # sticky on purpose: it already matches the implicit-binding
+      # default and existing fixtures rely on the carry-over.
+      if ann_kind.nil? && (effective_format == "json" || effective_format == "header" || effective_format == "cookie")
+        effective_format = nil
+      end
       case ann_kind
       when :body
         effective_format = effective_format.nil? ? "json" : effective_format
@@ -932,7 +960,7 @@ module Noir
         sink << Param.new(parameter_name, default_value || "", effective_format)
       elsif SERVLET_REQUEST_TYPES.includes?(type_name)
         scan_servlet_body(method, source, arg_name, effective_format, sink)
-      elsif fields = class_fields[type_name]?
+      elsif fields = class_fields[type_name]? || class_fields[collection_element_type(type_name)]?
         # `@RequestBody` is deserialised by Jackson, which populates every
         # non-static instance field by reflection (and via
         # all-args/`@Builder` constructors) regardless of setter
@@ -988,6 +1016,26 @@ module Noir
         base = base[(idx + 1)..]
       end
       base.downcase
+    end
+
+    # Case-preserving counterpart to `simple_param_base`: strips the same
+    # single-argument collection/`Optional` wrapper and array/varargs
+    # brackets, but keeps the original casing so the result can be used
+    # as a `class_fields` DTO-index lookup key (which is indexed by the
+    # class's exact simple name, e.g. "ItemDto", not "itemdto"). Lets
+    # `@RequestBody List<ItemDto> items` / `@RequestBody ItemDto[] items`
+    # resolve to the same field set as a bare `@RequestBody ItemDto item`.
+    private def collection_element_type(type_name : String) : String
+      base = type_name.strip
+      if match = base.match(/\A(?:java\.util\.)?(?:List|Set|Collection|Iterable|Optional)\s*<\s*(.+?)\s*>\z/)
+        base = match[1].strip
+      end
+      base = base.gsub(/\[\s*\]/, "")
+      base = base.rstrip(". ")
+      if idx = base.rindex('.')
+        base = base[(idx + 1)..]
+      end
+      base
     end
 
     # Resolve either a string literal, a local Java constant, or a

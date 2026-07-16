@@ -31,7 +31,7 @@ module Analyzer::Java
       },
       nest_methods: Set{"path"},
       transparent_methods: Set{"before", "after", "afterAfter"},
-      query_methods: Set{"queryParams", "queryParamOrDefault", "queryParamsValues"},
+      query_methods: Set{"queryParams", "queryParamOrDefault", "queryParamsValues", "queryMap"},
       header_methods: Set{"headers"},
       cookie_methods: Set{"cookie"},
       body_methods: Set{"body", "bodyAsBytes"},

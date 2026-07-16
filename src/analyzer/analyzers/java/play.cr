@@ -201,9 +201,9 @@ module Analyzer::Java
       params = [] of String
       method_pattern = case kind
                        when :header
-                         "(?:header|getHeaders\\(\\)\\s*\\.\\s*get)"
+                         "(?:header|getHeader|(?:headers|getHeaders)\\(\\)\\s*\\.\\s*get)"
                        when :cookie
-                         "(?:cookie|cookies\\(\\)\\s*\\.\\s*get)"
+                         "(?:cookie|getCookie|cookies\\(\\)\\s*\\.\\s*get)"
                        else
                          return params
                        end

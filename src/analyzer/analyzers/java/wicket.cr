@@ -44,12 +44,14 @@ module Analyzer::Java
     alias PageMountIndex = Hash(ScopedClassKey, Array(String))
     alias RestRouteIndex = Hash(ScopedClassKey, Array(RestRoute))
     alias RestMountIndex = Hash(ScopedClassKey, RestMount)
+    alias ClassFileIndex = Hash(ScopedClassKey, FileInfo)
 
     @include_callee : Bool = false
 
     def analyze
       @include_callee = callees_needed?
       files = java_files_with_content
+      class_index = build_class_file_index(files)
       page_mounts = PageMountIndex.new { |hash, key| hash[key] = [] of String }
       rest_routes = RestRouteIndex.new { |hash, key| hash[key] = [] of RestRoute }
       rest_mounts = RestMountIndex.new
@@ -63,7 +65,7 @@ module Analyzer::Java
 
       files.each do |file|
         collect_mount_path_annotations(file, page_mounts, seen)
-        collect_mount_calls(file, page_mounts, rest_routes, seen)
+        collect_mount_calls(file, page_mounts, rest_routes, class_index, seen)
         collect_mapper_mounts(file, page_mounts, seen)
         collect_local_page_mount_helpers(file, page_mounts, seen)
         collect_rest_lambda_mounts(file, seen)
@@ -88,6 +90,12 @@ module Analyzer::Java
         content = read_file_content(path)
         next unless WICKET_MARKERS.any? { |marker| content.includes?(marker) }
 
+        # Blank // and /* */ comments (preserving newlines / offsets) so
+        # regex mount scanners never treat commented-out mountPage /
+        # @MountPath / etc. as live. String literals stay intact so
+        # values like "http://" are not misread as comment openers.
+        content = strip_comments(content)
+
         files << {
           path:      path,
           content:   content,
@@ -97,6 +105,17 @@ module Analyzer::Java
       end
 
       files
+    end
+
+    private def build_class_file_index(files : Array(FileInfo)) : ClassFileIndex
+      index = ClassFileIndex.new
+      files.each do |file|
+        file[:content].scan(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b/) do |match|
+          key = scoped_class_key(file, match[1])
+          index[key] ||= file
+        end
+      end
+      index
     end
 
     private def scoped_class_key(file : FileInfo, class_name : String) : ScopedClassKey
@@ -140,6 +159,7 @@ module Analyzer::Java
     private def collect_mount_calls(file : FileInfo,
                                     page_mounts : PageMountIndex,
                                     rest_routes : RestRouteIndex,
+                                    class_index : ClassFileIndex,
                                     seen : Set(String))
       {"mountPage", "mountPackage", "mountResource"}.each do |method_name|
         scan_method_calls(file[:content], method_name) do |args, offset|
@@ -152,7 +172,7 @@ module Analyzer::Java
           normalized = normalize_mount_path(mount_path)
 
           if method_name == "mountResource"
-            if resource_key = rest_resource_class_key(args, file[:base], rest_routes)
+            if resource_key = rest_resource_class_key(args, file[:base], rest_routes, class_index)
               if routes = rest_routes[resource_key]?
                 routes.each do |route|
                   add_endpoint(join_mount_paths(normalized, route[:path]), route[:file_path], route[:line], seen, route[:method], route[:callees], route[:params])
@@ -770,7 +790,39 @@ module Analyzer::Java
       ""
     end
 
-    private def rest_resource_class_key(source : String, base : String, rest_routes : RestRouteIndex) : ScopedClassKey?
+    # Resolve the rest resource class referenced by a mountResource(...)
+    # argument list. Direct `new RestClass(...)` / `RestClass.class` hits
+    # are preferred; when the mount wires a named ResourceReference
+    # subclass instead, one-hop-resolve through that reference class's
+    # body — same base only, so multi_base isolation is preserved.
+    private def rest_resource_class_key(source : String,
+                                        base : String,
+                                        rest_routes : RestRouteIndex,
+                                        class_index : ClassFileIndex? = nil) : ScopedClassKey?
+      if key = rest_resource_class_key_direct(source, base, rest_routes)
+        return key
+      end
+
+      return unless class_index
+
+      source.scan(/\bnew\s+([A-Za-z_][A-Za-z0-9_.]*)\s*(?:<[^;()]*>)?\s*\(/) do |match|
+        ref_class = match[1].split('.').last
+        ref_key = scoped_class_key(base, ref_class)
+        next unless ref_file = class_index[ref_key]?
+
+        # No further hops: only re-scan the reference class body for a
+        # direct rest resource class (avoids cross-base / multi-hop drift).
+        if key = rest_resource_class_key_direct(ref_file[:content], base, rest_routes)
+          return key
+        end
+      end
+
+      nil
+    end
+
+    private def rest_resource_class_key_direct(source : String,
+                                               base : String,
+                                               rest_routes : RestRouteIndex) : ScopedClassKey?
       source.scan(/\bnew\s+([A-Za-z_][A-Za-z0-9_.]*)\s*(?:<[^;()]*>)?\s*\(/) do |match|
         class_name = match[1].split('.').last
         key = scoped_class_key(base, class_name)
@@ -1029,6 +1081,71 @@ module Analyzer::Java
 
     private def line_for_offset(content : String, offset : Int32) : Int32
       content[0...offset].count('\n') + 1
+    end
+
+    # Blank `//` line comments and `/* */` block comments while preserving
+    # every newline so `line_for_offset` stays correct. String and char
+    # literals are tracked so `//` or `/*` inside a literal (e.g.
+    # `"http://x//y"`) is never treated as a comment opener. Mirrors
+    # `Analyzer::Java::Cli#strip_comments`.
+    private def strip_comments(text : String) : String
+      result = String::Builder.new
+      chars = text.chars
+      i = 0
+      in_string = false
+      string_quote = '\0'
+
+      while i < chars.size
+        c = chars[i]
+
+        if in_string
+          if c == '\\' && i + 1 < chars.size
+            result << c
+            result << chars[i + 1]
+            i += 2
+            next
+          end
+          in_string = false if c == string_quote
+          result << c
+          i += 1
+          next
+        end
+
+        if c == '"' || c == '\''
+          in_string = true
+          string_quote = c
+          result << c
+          i += 1
+          next
+        end
+
+        if c == '/' && i + 1 < chars.size && chars[i + 1] == '/'
+          while i < chars.size && chars[i] != '\n'
+            result << ' '
+            i += 1
+          end
+          next
+        end
+
+        if c == '/' && i + 1 < chars.size && chars[i + 1] == '*'
+          result << "  "
+          i += 2
+          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
+            result << (chars[i] == '\n' ? '\n' : ' ')
+            i += 1
+          end
+          if i + 1 < chars.size
+            result << "  "
+            i += 2
+          end
+          next
+        end
+
+        result << c
+        i += 1
+      end
+
+      result.to_s
     end
   end
 end

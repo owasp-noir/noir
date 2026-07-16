@@ -7,7 +7,11 @@ require "../../../miniparsers/java_route_extractor_ts"
 
 module Analyzer::Java
   class Armeria < Analyzer
-    REGEX_SERVER_CODE_BLOCK = /Server\s*\.builder\(\s*\)\s*\.[^;]*build\(\)\s*\./
+    # Anchor only — the chain body is bounded by a depth-aware scan so
+    # semicolons inside lambda/anonymous-class bodies do not truncate
+    # the match, and a trailing `.` after `build()` is not required
+    # (`Server s = Server.builder()...build();`).
+    REGEX_SERVER_BUILDER = /Server\s*\.builder\(\s*\)/
     alias RouteEntry = Tuple(String, String)
     alias ScopedClassKey = Tuple(String, String)
 
@@ -53,33 +57,42 @@ module Analyzer::Java
                       analyze_annotated_service(path, content, base, annotated_service_prefixes)
                     end
 
-                    # Server.builder()-style routes (regex-scoped — the
-                    # builder chain isn't worth a dedicated TS walk yet).
+                    # Server.builder()-style routes (regex-anchored, then
+                    # depth-scanned — the builder chain isn't worth a
+                    # dedicated TS walk yet).
                     details = Details.new(PathInfo.new(path))
                     # Both the string-constant table (a full tree-sitter
                     # parse) and the non-code mask (a char walk) are only
-                    # needed once a `Server.builder()...build()` chain is
-                    # actually present. Most files are annotated services
-                    # with no builder chain at all, so build both lazily
-                    # on the first match to avoid parsing every file twice.
+                    # needed once a `Server.builder()` anchor is present.
+                    # Most files are annotated services with no builder
+                    # chain at all, so build both lazily on the first match
+                    # to avoid parsing every file twice.
                     #
                     # The mask marks char offsets inside string literals or
                     # comments, letting us drop builder chains that only
                     # appear in documentation (e.g. a Kotlin `@Description`
-                    # value or a Java text block) — a real FP source.
+                    # value or a Java text block) — a real FP source. The
+                    # same mask is reused when scanning the extracted block
+                    # so commented-out `.service`/`.route()` calls inside an
+                    # otherwise-live chain are not reported.
                     non_code_mask = nil.as(Array(Bool)?)
                     constants = nil.as(Hash(String, String)?)
-                    content.scan(REGEX_SERVER_CODE_BLOCK) do |server_codeblock_match|
-                      start = server_codeblock_match.begin(0)
-                      if start
-                        mask = (non_code_mask ||= build_non_code_mask(content))
-                        next if start < mask.size && mask[start]
-                      end
-                      server_codeblock = server_codeblock_match[0]
+                    content.scan(REGEX_SERVER_BUILDER) do |builder_match|
+                      start = builder_match.begin(0)
+                      next unless start
+                      after_builder = builder_match.end(0)
+                      next unless after_builder
+
+                      mask = (non_code_mask ||= build_non_code_mask(content))
+                      next if start < mask.size && mask[start]
+
+                      finish = scan_server_builder_statement_end(content, after_builder, mask)
+                      next unless finish && finish >= start
+                      server_codeblock = content[start..finish]
 
                       resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
-                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base)
-                      collect_builder_routes(server_codeblock, resolved_constants, details)
+                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base, mask, start)
+                      collect_builder_routes(server_codeblock, resolved_constants, details, mask, start)
                     end
                   end
                 rescue File::NotFoundError
@@ -116,14 +129,16 @@ module Analyzer::Java
 
     private def collect_builder_routes(server_codeblock : String,
                                        constants : Hash(String, String),
-                                       details : Details)
+                                       details : Details,
+                                       non_code_mask : Array(Bool)? = nil,
+                                       block_start : Int32 = 0)
       emitted = Set(Tuple(String, String)).new
 
-      route_chain_expressions(server_codeblock).each do |expr|
+      route_chain_expressions(server_codeblock, non_code_mask, block_start).each do |expr|
         collect_route_expression(expr, constants, details, emitted)
       end
 
-      call_argument_expressions(server_codeblock, ".withRoute").each do |expr|
+      call_argument_expressions(server_codeblock, ".withRoute", non_code_mask, block_start).each do |expr|
         collect_route_expression(expr, constants, details, emitted)
       end
     end
@@ -181,40 +196,53 @@ module Analyzer::Java
       @result << Endpoint.new(path, method, details)
     end
 
-    private def route_chain_expressions(code : String) : Array(String)
+    private def route_chain_expressions(code : String,
+                                        non_code_mask : Array(Bool)? = nil,
+                                        base_offset : Int32 = 0) : Array(String)
       expressions = [] of String
       offset = 0
 
       while found = code.index(".route()", offset)
-        build_idx = code.index(".build", found)
-        break unless build_idx
-        open_idx = code.index('(', build_idx)
-        break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
-        if close_idx
-          expressions << code[found..close_idx]
-          offset = close_idx + 1
+        if masked_offset?(non_code_mask, base_offset + found)
+          offset = found + 8
         else
-          offset = open_idx + 1
+          build_idx = code.index(".build", found)
+          break unless build_idx
+          open_idx = code.index('(', build_idx)
+          break unless open_idx
+          close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+          if close_idx
+            expressions << code[found..close_idx]
+            offset = close_idx + 1
+          else
+            offset = open_idx + 1
+          end
         end
       end
 
       expressions
     end
 
-    private def call_argument_expressions(code : String, marker : String) : Array(String)
+    private def call_argument_expressions(code : String,
+                                          marker : String,
+                                          non_code_mask : Array(Bool)? = nil,
+                                          base_offset : Int32 = 0) : Array(String)
       expressions = [] of String
       offset = 0
 
       while found = code.index(marker, offset)
-        open_idx = code.index('(', found)
-        break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
-        if close_idx
-          expressions << code[(open_idx + 1)...close_idx]
-          offset = close_idx + 1
+        if masked_offset?(non_code_mask, base_offset + found)
+          offset = found + marker.size
         else
-          offset = open_idx + 1
+          open_idx = code.index('(', found)
+          break unless open_idx
+          close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+          if close_idx
+            expressions << code[(open_idx + 1)...close_idx]
+            offset = close_idx + 1
+          else
+            offset = open_idx + 1
+          end
         end
       end
 
@@ -248,11 +276,16 @@ module Analyzer::Java
                                        constants : Hash(String, String),
                                        details : Details,
                                        service_with_routes_index : Hash(ScopedClassKey, Array(RouteEntry)),
-                                       base : String)
+                                       base : String,
+                                       non_code_mask : Array(Bool)? = nil,
+                                       block_start : Int32 = 0)
       emitted = Set(Tuple(String, String)).new
       offset = 0
       while found = server_codeblock.index(".service", offset)
         offset = found + 8
+        if masked_offset?(non_code_mask, block_start + found)
+          next
+        end
         suffix = server_codeblock[found..]
         method_name =
           if suffix.starts_with?(".serviceIf")
@@ -601,6 +634,61 @@ module Analyzer::Java
       tail = expr[start..]?.to_s.strip
       args << tail unless tail.empty?
       args
+    end
+
+    # True when absolute_offset falls inside a string/comment per mask.
+    private def masked_offset?(mask : Array(Bool)?, absolute_offset : Int32) : Bool
+      return false unless mask
+      absolute_offset >= 0 && absolute_offset < mask.size && mask[absolute_offset]
+    end
+
+    # From the char after `Server.builder()`, walk forward tracking
+    # paren/brace/bracket depth while skipping string/comment offsets via
+    # `mask`. The statement ends at the first `;` at depth 0 — so
+    # semicolons inside lambda bodies do not truncate the chain, and
+    # both `.build().start()` and assignment-form `.build();` work.
+    private def scan_server_builder_statement_end(content : String,
+                                                  from : Int32,
+                                                  mask : Array(Bool)) : Int32?
+      paren = 0
+      brace = 0
+      bracket = 0
+      i = from
+      n = content.size
+
+      while i < n
+        if i < mask.size && mask[i]
+          i += 1
+          next
+        end
+
+        case content[i]
+        when '('
+          paren += 1
+        when ')'
+          paren -= 1 if paren > 0
+        when '{'
+          brace += 1
+        when '}'
+          brace -= 1 if brace > 0
+        when '['
+          bracket += 1
+        when ']'
+          bracket -= 1 if bracket > 0
+        when ';'
+          if paren == 0 && brace == 0 && bracket == 0
+            return i > from ? i - 1 : nil
+          end
+        end
+        i += 1
+      end
+
+      # No terminating `;` (truncated input) — accept the balanced rest.
+      if paren == 0 && brace == 0 && bracket == 0 && from < n
+        return n - 1
+      end
+
+      nil
     end
 
     # Marks character offsets that fall inside a string literal or a

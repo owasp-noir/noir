@@ -661,7 +661,12 @@ module Analyzer::Java
       end
 
       key = "#{method} #{normalized}"
-      return if @result.any? { |endpoint| "#{endpoint.method} #{endpoint.url}" == key }
+      # Dedup by "METHOD url" against an O(1) key set rather than a linear
+      # scan of the whole accumulated result — add_route is the only writer
+      # to @result, so the set mirrors it exactly. Keeps route registration
+      # O(n) instead of O(n^2) in the total struts2 endpoint count.
+      seen_keys = (@seen_route_keys ||= Set(String).new)
+      return unless seen_keys.add?(key)
 
       endpoint = Endpoint.new(normalized, method, route_params, Details.new(PathInfo.new(file_path, line)))
       callees.each { |callee| endpoint.push_callee(callee) }

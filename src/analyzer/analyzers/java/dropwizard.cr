@@ -8,11 +8,22 @@ module Analyzer::Java
   # Dropwizard ships Jersey under the hood, so JAX-RS resource
   # classes are the routing surface. This analyzer drives the shared
   # `TreeSitterJaxRsExtractor` against files in project roots that
-  # carry the `io.dropwizard` marker. Resource classes are often pure
-  # JAX-RS and do not import Dropwizard directly.
+  # carry a Dropwizard framework-bootstrap reference. Resource
+  # classes are often pure JAX-RS and do not import Dropwizard
+  # directly.
   class Dropwizard < Analyzer
-    JAVA_EXTENSION    = "java"
-    DROPWIZARD_MARKER = "io.dropwizard"
+    JAVA_EXTENSION = "java"
+
+    # A bare `io.dropwizard` substring also matches Dropwizard's
+    # standalone utility modules (io.dropwizard.util.Duration,
+    # io.dropwizard.validation.*, io.dropwizard.jackson.*) that ship
+    # explicitly for use outside the Dropwizard web framework/server
+    # stack. Restrict project classification to actual bootstrap
+    # symbols (the `Application` base class, the `Bootstrap`/
+    # `Environment` setup types, and the `AssetsBundle` helper) so a
+    # plain JAX-RS/RESTEasy project that merely borrows one of those
+    # helpers isn't misclassified as a Dropwizard project.
+    DROPWIZARD_BOOTSTRAP_MARKER_RE = /io\.dropwizard\.(?:core\.)?(?:Application\b|setup\.(?:Bootstrap|Environment)\b)|io\.dropwizard\.assets\.AssetsBundle\b/
 
     private struct DropwizardPathConfig
       getter application_context_path : String
@@ -45,7 +56,7 @@ module Analyzer::Java
         content = read_file_content(path)
 
         path_config = path_configs[project_root]? || DropwizardPathConfig.new
-        if content.includes?(DROPWIZARD_MARKER)
+        if content.includes?("AssetsBundle")
           extract_asset_bundle_endpoints(content, path_config.application_context_path, path).each do |endpoint|
             @result << endpoint
           end
@@ -118,7 +129,7 @@ module Analyzer::Java
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
-        roots << project_root_for(path) if content.includes?(DROPWIZARD_MARKER)
+        roots << project_root_for(path) if content.matches?(DROPWIZARD_BOOTSTRAP_MARKER_RE)
       end
 
       roots
