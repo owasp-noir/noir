@@ -254,12 +254,17 @@ module Noir
                                        verb : String,
                                        parameter_format : String?,
                                        class_fields : Hash(String, Array(FieldInfo)),
-                                       target_line : Int32? = nil) : Array(Param)
+                                       target_line : Int32? = nil,
+                                       constants : Hash(String, String)? = nil) : Array(Param)
       method = find_method(root, source, class_name, method_name, target_line)
       return [] of Param unless method
-      constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
+      # `constants` is file-scoped and identical for every route in a
+      # file. Callers that emit many routes per file (spring.cr) build it
+      # once and pass it in; the nil default keeps every other analyzer's
+      # call site working by recomputing it here.
+      resolved_constants = constants || TreeSitterJavaRouteExtractor.extract_string_constants_from(root, source)
       model_attributes = model_attribute_suppliers(root, source, class_name)
-      collect_method_params(method, source, verb, parameter_format, class_fields, constants, class_name, model_attributes)
+      collect_method_params(method, source, verb, parameter_format, class_fields, resolved_constants, class_name, model_attributes)
     end
 
     # Find `@*Mapping` annotation on (class_name, method_name) and

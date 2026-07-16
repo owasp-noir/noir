@@ -177,6 +177,19 @@ module Analyzer::Java
               visible_meta_mappings = visible_meta_annotation_mappings(path, content, package_name, meta_annotation_index)
               imports = java_imports(content)
 
+              # The file's String-constant table is identical for every
+              # route in the file, so build it once here and thread it into
+              # the per-route parameter walks (and the WebSocket branches
+              # below) instead of rebuilding it — a full recursive tree walk
+              # — on every emitted route.
+              file_constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+
+              # The method-declaration index used to resolve callee call
+              # sites is likewise file-scoped; build it once (only when
+              # callees are requested) and reuse it across every route in
+              # the file rather than rebuilding it per route.
+              file_decl_index = include_callee ? Noir::JavaCalleeExtractor.build_method_decl_index(root, content) : nil
+
               Noir::TreeSitterJavaRouteExtractor.extract_routes_from(root, content, visible_meta_mappings).each do |route|
                 is_feign_client = feign_clients.includes?(route.class_name)
                 is_http_exchange_client = http_exchange_clients.includes?(route.class_name)
@@ -190,7 +203,7 @@ module Analyzer::Java
                 # "json" rather than inheriting "form".
 
                 parameters = Noir::TreeSitterJavaParameterExtractor.extract_method_parameters_from(
-                  root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line
+                  root, content, route.class_name, route.method_name, route.verb, parameter_format, dto_index, route.line, constants: file_constants
                 )
                 merge_route_condition_params(parameters, route.params)
 
@@ -215,7 +228,7 @@ module Analyzer::Java
                 # other analyzer's first-cut honest scope.
                 if include_callee && !(route.class_name.empty? || route.method_name.empty?)
                   Noir::JavaCalleeExtractor.callees_in_method(
-                    root, content, path, route.class_name, route.method_name, route.line
+                    root, content, path, route.class_name, route.method_name, route.line, decl_index: file_decl_index
                   ).each do |entry|
                     name, callee_path, callee_line = entry
                     endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -263,7 +276,7 @@ module Analyzer::Java
                       # empty interface method.
                       if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)
                         Noir::JavaCalleeExtractor.callees_in_method(
-                          root, content, path, implementation.class_name, entry_route.method_name
+                          root, content, path, implementation.class_name, entry_route.method_name, decl_index: file_decl_index
                         ).each do |callee_entry|
                           name, callee_path, callee_line = callee_entry
                           endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
@@ -277,7 +290,7 @@ module Analyzer::Java
               end
 
               if has_websocket_bindings
-                constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+                constants = file_constants
                 collect_stomp_endpoints(content, constants).each do |entry|
                   endpoint_path, line = entry
                   endpoint = Endpoint.new(join_paths(configured_base_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
@@ -287,7 +300,7 @@ module Analyzer::Java
               end
 
               if has_message_mapping_bindings
-                constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+                constants = file_constants
                 collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes).each do |entry|
                   verb, destination, line = entry
                   endpoint = Endpoint.new(destination, verb, Details.new(PathInfo.new(path, line)))
@@ -297,7 +310,7 @@ module Analyzer::Java
               end
 
               if has_resource_handler_bindings
-                constants = Noir::TreeSitterJavaRouteExtractor.extract_string_constants_from(root, content)
+                constants = file_constants
                 collect_resource_handler_endpoints(content, constants).each do |entry|
                   endpoint_path, line = entry
                   @result << Endpoint.new(join_paths(configured_base_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))

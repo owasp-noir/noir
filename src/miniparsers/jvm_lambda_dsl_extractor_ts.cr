@@ -489,13 +489,19 @@ module Noir
       bodies
     end
 
-    private def walk_method_declarations(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+    private def walk_method_declarations(node : LibTreeSitter::TSNode, depth : Int32 = 0, &block : LibTreeSitter::TSNode ->)
+      # Bound recursion like the sibling `walk`/`scan_handler` walkers in
+      # this file. Real code never nests method declarations anywhere near
+      # MAX_AST_DEPTH, so this is output-preserving; it only stops runaway
+      # recursion on pathologically deep input (see extractor_recursion_depth_spec).
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       if Noir::TreeSitter.node_type(node) == "method_declaration"
         block.call(node)
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_method_declarations(child, &block)
+        walk_method_declarations(child, depth + 1, &block)
       end
     end
 

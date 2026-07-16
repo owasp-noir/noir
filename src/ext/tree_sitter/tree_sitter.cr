@@ -62,6 +62,24 @@ lib LibTreeSitter
   fun ts_node_start_point(node : TSNode) : TSPoint
   fun ts_node_end_point(node : TSNode) : TSPoint
   fun ts_node_is_null(node : TSNode) : Bool
+  fun ts_node_is_named(node : TSNode) : Bool
+
+  # ----- Tree cursor -----
+  # Visits children in O(1) amortised per step (goto_next_sibling),
+  # versus `ts_node_named_child(node, i)` which re-walks the sibling
+  # list from the start on every call (O(index)). Layout mirrors
+  # `TSTreeCursor` in api.h exactly: {tree, id, context[3]}.
+  struct TSTreeCursor
+    tree : Void*
+    id : Void*
+    context : LibC::UInt[3]
+  end
+
+  fun ts_tree_cursor_new(node : TSNode) : TSTreeCursor
+  fun ts_tree_cursor_delete(cursor : TSTreeCursor*)
+  fun ts_tree_cursor_current_node(cursor : TSTreeCursor*) : TSNode
+  fun ts_tree_cursor_goto_first_child(cursor : TSTreeCursor*) : Bool
+  fun ts_tree_cursor_goto_next_sibling(cursor : TSTreeCursor*) : Bool
 
   # ----- Query API -----
   struct TSQueryCapture
@@ -266,11 +284,50 @@ module Noir::TreeSitter
     LibTreeSitter.ts_node_is_null(child) ? nil : child
   end
 
+  # Above this many named children, switch from indexed access to a
+  # tree cursor. `ts_node_named_child(node, i)` is O(i) (it re-walks the
+  # sibling list each call), so the indexed loop is O(n^2) in the child
+  # count; a cursor walks each child in O(1) amortised but costs one
+  # allocation to set up. Small nodes stay on the allocation-free
+  # indexed path; wide nodes (large class bodies, `program` roots on big
+  # files) take the cursor and avoid the quadratic. Both paths yield the
+  # exact same named children in the same order.
+  NAMED_CHILD_CURSOR_THRESHOLD = 8
+
   # Iterates named children without allocating an array.
+  #
+  # The cursor path lives in a separate `@[NoInline]` method on purpose:
+  # these extractors recurse through `each_named_child`'s block, so any
+  # local this method reserves (notably the 32-byte `TSTreeCursor` and
+  # the `ensure` machinery) is paid at every recursion level. Keeping the
+  # cursor out of this frame preserves the tiny original frame for the
+  # common narrow-node path, so deeply nested inputs don't overflow the
+  # stack (guarded by spec/unit_test/miniparser/extractor_recursion_depth_spec).
   def self.each_named_child(node : LibTreeSitter::TSNode, &)
     count = LibTreeSitter.ts_node_named_child_count(node)
-    count.times do |i|
-      yield LibTreeSitter.ts_node_named_child(node, i.to_u32)
+    return if count == 0
+
+    if count <= NAMED_CHILD_CURSOR_THRESHOLD
+      count.times do |i|
+        yield LibTreeSitter.ts_node_named_child(node, i.to_u32)
+      end
+    else
+      each_named_child_via_cursor(node) { |child| yield child }
+    end
+  end
+
+  @[NoInline]
+  private def self.each_named_child_via_cursor(node : LibTreeSitter::TSNode, &)
+    cursor = LibTreeSitter.ts_tree_cursor_new(node)
+    begin
+      has_child = LibTreeSitter.ts_tree_cursor_goto_first_child(pointerof(cursor))
+      while has_child
+        child = LibTreeSitter.ts_tree_cursor_current_node(pointerof(cursor))
+        yield child if LibTreeSitter.ts_node_is_named(child)
+        has_child = LibTreeSitter.ts_tree_cursor_goto_next_sibling(pointerof(cursor))
+      end
+    ensure
+      LibTreeSitter.ts_tree_cursor_delete(pointerof(cursor))
     end
   end
 

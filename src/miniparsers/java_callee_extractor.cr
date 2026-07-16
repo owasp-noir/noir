@@ -43,7 +43,8 @@ module Noir::JavaCalleeExtractor
                         file_path : String,
                         class_name : String,
                         method_name : String,
-                        target_line : Int32? = nil) : Array(Tuple(String, String, Int32))
+                        target_line : Int32? = nil,
+                        decl_index : Hash(String, Int32?)? = nil) : Array(Tuple(String, String, Int32))
     sink = [] of Tuple(String, String, Int32)
     return sink if class_name.empty? || method_name.empty?
 
@@ -52,7 +53,11 @@ module Noir::JavaCalleeExtractor
     body = Noir::TreeSitter.field(method_node, "body")
     return sink unless body
 
-    decl_index = build_method_decl_index(root, source)
+    # The method-declaration index is file-scoped; callers that resolve
+    # callees for many routes in one file (spring.cr) build it once and
+    # pass it in. The nil default recomputes it, preserving every other
+    # call site.
+    resolved_decl_index = decl_index || build_method_decl_index(root, source)
 
     walk(body) do |n|
       node_type = Noir::TreeSitter.node_type(n)
@@ -60,7 +65,7 @@ module Noir::JavaCalleeExtractor
       name = callee_text(n, source)
       next if name.empty?
       row = Noir::TreeSitter.node_start_row(n)
-      resolved_line = resolve_same_file_line(n, source, decl_index)
+      resolved_line = resolve_same_file_line(n, source, resolved_decl_index)
       sink << {name, file_path, resolved_line || (row + 1)}
     end
     sink
@@ -217,8 +222,8 @@ module Noir::JavaCalleeExtractor
   # which overload to point at. Conservative by design — overloads,
   # qualified non-`this` calls, and missing declarations all stay at
   # call site.
-  private def build_method_decl_index(root : LibTreeSitter::TSNode,
-                                      source : String) : Hash(String, Int32?)
+  def build_method_decl_index(root : LibTreeSitter::TSNode,
+                              source : String) : Hash(String, Int32?)
     index = {} of String => Int32?
     walk(root) do |n|
       next unless Noir::TreeSitter.node_type(n) == "method_declaration"
