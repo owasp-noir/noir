@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -28,10 +29,12 @@ func setupAdditionalRoutes(r *gin.Engine) {
 		c.JSON(http.StatusOK, nil)
 	})
 
-	// Multiple query params
+	// Multiple query params — DefaultQuery with a nested call in the
+	// default-value argument must still extract the param name.
 	r.GET("/search", func(c *gin.Context) {
 		_ = c.Query("q")
-		_ = c.DefaultQuery("page", "1")
+		n := 1
+		_ = c.DefaultQuery("page", strconv.Itoa(n))
 		_ = c.Query("limit")
 		c.JSON(http.StatusOK, nil)
 	})

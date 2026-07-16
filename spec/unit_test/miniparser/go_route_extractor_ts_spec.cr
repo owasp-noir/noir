@@ -15,6 +15,7 @@ describe Noir::TreeSitterGoRouteExtractor do
     # and the `authorized := r.Group("/")` + path-without-slash case.
     triples.should eq([
       {"DELETE", "/mixed-delete"},
+      {"GET", "/"},
       {"GET", "/admin"},
       {"GET", "/group/users"},
       {"GET", "/group/v1/migration"},

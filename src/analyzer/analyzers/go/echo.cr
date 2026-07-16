@@ -36,7 +36,7 @@ module Analyzer::Go
                   if File.exists?(path)
                     content = file_contents[path]? || read_file_content(path)
                     dir = File.dirname(path)
-                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Static"])
+                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Static", "File"])
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
@@ -68,6 +68,11 @@ module Analyzer::Go
 
                     # `e.Static("/url", "./dir")` — same shape as Gin/Fiber/etc.
                     Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+                      public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
+                    end
+
+                    # `e.File("/url", "disk/path")` — single-file static route.
+                    Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content, method_name: "File").each do |sp|
                       public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
                     end
 

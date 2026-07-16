@@ -103,9 +103,17 @@ module Analyzer::Go
                         end
                       end
 
-                      ["Query", "PostForm", "GetHeader", "Param", "FormValue"].each do |pattern|
-                        if line.includes?("#{pattern}(")
-                          add_param_to_endpoint(get_param(line), last_endpoint)
+                      # Bind* helpers already contribute a single generic body
+                      # param below. Skip the accessor loop on those lines so
+                      # `BindQuery(&input)` does not also fabricate a bogus
+                      # query param named "&input" via the `Query(` substring.
+                      is_bind_line = line.matches?(/\.Bind(?:JSON|Query|Header|Form|Protobuf|And\w+)?\s*\(/)
+
+                      unless is_bind_line
+                        ["Query", "PostForm", "GetHeader", "Param", "FormValue"].each do |pattern|
+                          if line.includes?("#{pattern}(")
+                            add_param_to_endpoint(get_param(line), last_endpoint)
+                          end
                         end
                       end
 
@@ -122,7 +130,7 @@ module Analyzer::Go
                       # indicator — the bound struct's fields are not
                       # statically resolvable here. `And\w+` catches
                       # `BindAndValidate`.
-                      if line.matches?(/\.Bind(?:JSON|Query|Header|Form|Protobuf|And\w+)?\s*\(/)
+                      if is_bind_line
                         add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
                       end
                     end

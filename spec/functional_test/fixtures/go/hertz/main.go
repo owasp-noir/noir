@@ -48,6 +48,14 @@ func main() {
 		_ = ctx.FormValue("name")
 	})
 
+	// BindQuery binds a struct from query params. Must surface a single
+	// generic body/json indicator — not a fabricated query param named
+	// "&input" from the accessor-loop matching Query( inside BindQuery(.
+	h.GET("/search", func(c context.Context, ctx *app.RequestContext) {
+		var input map[string]string
+		_ = ctx.BindQuery(&input)
+	})
+
 	h.Static("/public", "./public")
 
 	h.Spin()

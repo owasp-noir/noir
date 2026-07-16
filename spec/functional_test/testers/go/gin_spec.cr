@@ -58,6 +58,12 @@ expected_endpoints = [
   Endpoint.new("/inventory", "POST", [
     Param.new("body", "", "json"),
   ]),
+  # server.go: root route registered with an empty path directly on the
+  # engine (unresolved/empty base_prefix) must surface as "/" instead of
+  # vanishing.
+  Endpoint.new("/", "GET"),
+  # server.go: StaticFile single-file registration
+  Endpoint.new("/favicon.ico", "GET"),
 ]
 
 FunctionalTester.new("fixtures/go/gin/", {

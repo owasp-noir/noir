@@ -116,6 +116,17 @@ module Analyzer::Go
                       public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
                     end
 
+                    # StaticFile / StaticFileFS register a single file URL —
+                    # emit the route directly. Do not feed them through
+                    # resolve_public_dirs (directory glob), which drops "/"
+                    # prefixes and skips common media extensions like .ico.
+                    ["StaticFile", "StaticFileFS"].each do |mn|
+                      Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content, method_name: mn).each do |sp|
+                        sf_details = Details.new(PathInfo.new(path, sp.line + 1))
+                        result << Endpoint.new(sp.url_prefix, "GET", sf_details)
+                      end
+                    end
+
                     lines.each_with_index do |line, index|
                       # Skip lines inside an expanded router-builder body — its
                       # routes (and any params) are emitted, with the call-site
@@ -205,12 +216,19 @@ module Analyzer::Go
     end
 
     private def add_gin_param_patterns(line : String, target : Endpoint)
-      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
-        if line.includes?("#{pattern}(")
-          add_param_to_endpoint(get_param(line), target)
+      # Bind*/ShouldBind* already contribute a single generic body param.
+      # Skip the accessor loop on those lines so `ShouldBindQuery(&x)` does
+      # not also fabricate a bogus query param named "&x".
+      is_bind_line = line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+
+      unless is_bind_line
+        ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
+          if line.includes?("#{pattern}(")
+            add_param_to_endpoint(get_param(line), target)
+          end
         end
       end
-      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+      if is_bind_line
         add_param_to_endpoint(Param.new("body", "", "json"), target)
       end
       # Read accessor only: `.Cookie("name")`. The `.Cookie(` anchor excludes
@@ -225,13 +243,17 @@ module Analyzer::Go
 
     private def add_gin_param_patterns_to_many(line : String, targets : Array(Endpoint))
       return if targets.empty?
-      ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
-        if line.includes?("#{pattern}(")
-          p = get_param(line)
-          targets.each { |t| add_param_to_endpoint(p, t) }
+      is_bind_line = line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+
+      unless is_bind_line
+        ["Query", "PostForm", "GetHeader", "Param"].each do |pattern|
+          if line.includes?("#{pattern}(")
+            p = get_param(line)
+            targets.each { |t| add_param_to_endpoint(p, t) }
+          end
         end
       end
-      if line.matches?(/\.(?:Should)?Bind(?:JSON|XML|YAML|TOML|Query|Header|Uri|With)?\s*\(/)
+      if is_bind_line
         b = Param.new("body", "", "json")
         targets.each { |t| add_param_to_endpoint(b, t) }
       end
@@ -361,20 +383,11 @@ module Analyzer::Go
         param_type = "path"
       end
 
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(")")
-        if second.size > 1
-          if line.includes?("DefaultQuery") || line.includes?("DefaultPostForm")
-            param_name = second[0].split(",")[0].gsub("\"", "")
-            rtn = Param.new(param_name, "", param_type)
-          else
-            param_name = second[0].gsub("\"", "")
-            rtn = Param.new(param_name, "", param_type)
-          end
-
-          return rtn
-        end
+      # Capture only the accessor's first string-literal argument. Naive
+      # split("(")/split(")") desyncs when DefaultQuery/DefaultPostForm's
+      # default-value argument contains nested calls (e.g. strconv.Itoa(n)).
+      if match = line.match(/(?:Query|PostForm|GetHeader|Param)\s*\(\s*"([^"]*)"/)
+        return Param.new(match[1], "", param_type)
       end
 
       Param.new("", "", "")

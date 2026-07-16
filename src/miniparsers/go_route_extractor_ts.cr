@@ -1508,7 +1508,7 @@ module Noir
       end
 
       case name
-      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
+      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "ALL",
            "Get", "Post", "Put", "Delete", "Patch", "Head", "Options"
         return ChiCall::Verb
       end
@@ -2164,7 +2164,7 @@ module Noir
       base_prefix = closure_prefix_for(closure_groups, LibTreeSitter.ts_node_start_byte(call), router_name) ||
                     groups[router_name]? || ""
       base_prefix = join_paths(base_prefix, chain_prefix) unless chain_prefix.empty?
-      resolved = base_prefix.empty? ? raw_path : join_paths(base_prefix, raw_path)
+      resolved = base_prefix.empty? ? (raw_path.empty? ? "/" : raw_path) : join_paths(base_prefix, raw_path)
 
       # Fiber's `app.All(...)` is the same "match any method" intent
       # as Gin's `r.Any(...)` and Echo's `e.Any(...)`. Normalize so
@@ -2273,6 +2273,13 @@ module Noir
           elsif path_lit.nil?
             path_lit = decode_string_literal(arg, source)
           end
+        when "selector_expression"
+          # The idiomatic constant form `router.Handle(http.MethodPut,
+          # "/x", h)` — resolve via the shared http.MethodX helper.
+          if method_lit.nil?
+            candidate = decode_method_token(arg, source)
+            method_lit = candidate unless candidate.empty?
+          end
         else
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
         end
@@ -2330,6 +2337,13 @@ module Noir
             method_lit = decode_string_literal(arg, source)
           elsif path_lit.nil?
             path_lit = decode_string_literal(arg, source)
+          end
+        when "selector_expression"
+          # The idiomatic constant form `app.HandleMany(http.MethodGet,
+          # "/x", h)` — resolve via the shared http.MethodX helper.
+          if method_lit.nil?
+            candidate = decode_method_token(arg, source)
+            method_lit = candidate unless candidate.empty?
           end
         else
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
@@ -2466,6 +2480,7 @@ module Noir
       query_params = [] of String
       saw_registration = false
       saw_methods = false
+      build_only = false
       registration_line = Noir::TreeSitter.node_start_row(call)
       router_name = nil
 
@@ -2543,7 +2558,12 @@ module Noir
               end
             end
           end
-        when "Host", "Schemes", "Headers", "HeadersRegexp", "Name", "MatcherFunc", "BuildOnly"
+        when "BuildOnly"
+          # gorilla/mux guarantees a BuildOnly route never matches a real
+          # request — it exists solely to reverse-build URLs elsewhere.
+          # Suppress the whole chain rather than emit a phantom endpoint.
+          build_only = true
+        when "Host", "Schemes", "Headers", "HeadersRegexp", "Name", "MatcherFunc"
           # Metadata/matcher chain; keep peeling.
         else
           return empty
@@ -2562,6 +2582,7 @@ module Noir
         end
       end
 
+      return empty if build_only
       return empty unless router_name && raw_path && saw_registration
       return empty if handler_text.empty?
       verbs << (saw_methods ? "GET" : "ANY") if verbs.empty?

@@ -73,6 +73,17 @@ func main() {
 		},
 	)
 
+	// Root route registered directly on the engine with an empty path.
+	// Regression guard: base_prefix=="" and raw_path=="" must resolve to
+	// "/" instead of vanishing entirely.
+	r.GET("", func(c *gin.Context) {
+		c.JSON(http.StatusOK, "root")
+	})
+
+	// Single-file static registration — must emit the URL prefix as a
+	// GET endpoint (not via directory globbing).
+	r.StaticFile("/favicon.ico", "./favicon.ico")
+
 	r.Static("/public", "public")
 	r.Run() // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
 }
