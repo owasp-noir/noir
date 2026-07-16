@@ -204,32 +204,38 @@ module Analyzer::Specification
     # a delimiter inside them can't shift the depth. Works for `{}` and `[]`
     # (the array form of `additional_bindings`).
     private def find_matching_delimiter(content : String, open_pos : Int32, open_char : Char, close_char : Char) : Int32?
+      # This walks whole message/service bodies per character, and Crystal's
+      # `String#[](Int)` is O(n) per access on non-ASCII content (no cached
+      # char->byte index) — materialize once and index the array instead.
+      # `String#index` below returns CHAR indices, so positions stay
+      # consistent; the returned index is a CHAR index.
+      chars = content.chars
       depth = 0
       pos = open_pos
       in_string = false
-      while pos < content.size
-        ch = content[pos]
+      while pos < chars.size
+        ch = chars[pos]
         if in_string
           # A quote closes the string only when preceded by an EVEN number of
           # backslashes (`\\"` toggles, `\"` does not).
           if ch == '"'
             bs = 0
             bp = pos - 1
-            while bp >= 0 && content[bp] == '\\'
+            while bp >= 0 && chars[bp] == '\\'
               bs += 1
               bp -= 1
             end
             in_string = false if bs.even?
           end
-        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '/'
+        elsif ch == '/' && pos + 1 < chars.size && chars[pos + 1] == '/'
           # Line comment: skip to EOL so a stray delimiter can't shift state.
           nl = content.index('\n', pos)
-          pos = nl.nil? ? content.size : nl
+          pos = nl.nil? ? chars.size : nl
           next
-        elsif ch == '/' && pos + 1 < content.size && content[pos + 1] == '*'
+        elsif ch == '/' && pos + 1 < chars.size && chars[pos + 1] == '*'
           # Block comment: skip to the closing */.
           close = content.index("*/", pos + 2)
-          pos = close.nil? ? content.size : close + 2
+          pos = close.nil? ? chars.size : close + 2
           next
         elsif ch == '"'
           in_string = true
