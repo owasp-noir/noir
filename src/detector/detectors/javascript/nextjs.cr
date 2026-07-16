@@ -2,6 +2,11 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Nextjs < Detector
+    # Single-pass union of the four Next.js import forms (`require("next")`,
+    # `require("next/...")`, `from "next"`, `from "next/..."`) — previously
+    # four separate whole-file scans per JS/TS source.
+    NEXT_IMPORT = /require\(['"]next(?:\/[^'"]+)?['"]\)|from\s+['"]next(?:\/[^'"]+)?['"]/
+
     def detect(filename : String, file_contents : String) : Bool
       # Check for Next.js config files
       if filename.ends_with?("next.config.js") ||
@@ -44,10 +49,7 @@ module Detector::Javascript
       if (filename.ends_with?(".js") || filename.ends_with?(".jsx") ||
          filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
          filename.ends_with?(".mjs")) &&
-         (file_contents.match(/require\(['"]next['"]\)/) ||
-         file_contents.match(/require\(['"]next\/[^'"]+['"]\)/) ||
-         file_contents.match(/from\s+['"]next['"]/) ||
-         file_contents.match(/from\s+['"]next\/[^'"]+['"]/))
+         file_contents.matches?(NEXT_IMPORT)
         return true
       end
 

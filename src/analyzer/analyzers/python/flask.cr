@@ -1632,8 +1632,18 @@ module Analyzer::Python
     # `path=` is given, so the caller falls back to the Namespace's own
     # `path=`/name. This is the authoritative mount point in flask-restx
     # and overrides the namespace definition's default.
+    # Memoized `<api>.add_namespace(<ns>, ...)` patterns — the interpolated
+    # literal used to recompile on every occurrence, while the
+    # (api instance, namespace var) pairs of an app are a small set.
+    @@add_namespace_res = {} of ::String => Regex
+    @@add_namespace_mutex = Mutex.new
+
     private def extract_add_namespace_path(ns_line : ::String, api_instance_name : ::String, ns_var : ::String) : ::String?
-      call_match = ns_line.match /#{Regex.escape(api_instance_name)}\.add_namespace\(#{Regex.escape(ns_var)},(.*)\)/
+      call_re = @@add_namespace_mutex.synchronize do
+        @@add_namespace_res["#{api_instance_name} #{ns_var}"] ||=
+          /#{Regex.escape(api_instance_name)}\.add_namespace\(#{Regex.escape(ns_var)},(.*)\)/
+      end
+      call_match = ns_line.match(call_re)
       return unless call_match
       args = call_match[1]
       if kw = args.match /path=[rf]?['"]([^'"]*)['"]/

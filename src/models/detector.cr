@@ -56,13 +56,25 @@ class Detector
     true
   end
 
+  # Per-gem regex memos for `gemfile_dependency?`/`gemspec_dependency?`.
+  # The interpolated literals used to recompile on every call — the Ruby
+  # CLI detector alone probes 8 gems against every Gemfile/gemspec, and
+  # each framework detector adds its own. Gem-name cardinality is a tiny
+  # static set, so cache the compiled patterns process-wide.
+  @@gemfile_dependency_res = {} of String => Regex
+  @@gemspec_dependency_res = {} of String => Regex
+  @@dependency_res_mutex = Mutex.new
+
   # Tolerant matcher for a Gemfile `gem "<name>"` line. Accepts both the
   # bare and parenthesized call forms with arbitrary spacing — `gem 'x'`,
   # `gem "x"`, `gem('x')`, `gem( "x" )` — and a trailing version
   # constraint, while still requiring the closing quote right after the
   # name so `gem 'sinatra'` never matches `gem 'sinatra-contrib'`.
   def gemfile_dependency?(file_contents : String, gem_name : String) : Bool
-    file_contents.matches?(/\bgem\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/)
+    re = @@dependency_res_mutex.synchronize do
+      @@gemfile_dependency_res[gem_name] ||= /\bgem\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/
+    end
+    file_contents.matches?(re)
   end
 
   # Tolerant matcher for a gemspec runtime dependency on `<name>`, in
@@ -71,7 +83,10 @@ class Detector
   # `spec.add_runtime_dependency "railties"`, neither of which the old
   # `"add_dependency 'sinatra'"` substring markers matched.
   def gemspec_dependency?(file_contents : String, gem_name : String) : Bool
-    file_contents.matches?(/\badd(?:_runtime)?_dependency\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/)
+    re = @@dependency_res_mutex.synchronize do
+      @@gemspec_dependency_res[gem_name] ||= /\badd(?:_runtime)?_dependency\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/
+    end
+    file_contents.matches?(re)
   end
 
   getter name, logger

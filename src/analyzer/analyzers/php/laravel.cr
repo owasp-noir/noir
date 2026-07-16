@@ -738,12 +738,26 @@ module Analyzer::Php
       nil
     end
 
+    # Hoisted patterns for `extract_resource_route_calls` /
+    # `extract_resource_action_filter` — both call sites pass literal
+    # names ("resource"/"apiResource", "only"/"except"), and the previous
+    # `Regex.new` interpolation recompiled the pattern on every call
+    # (per file, and per resource statement respectively).
+    RESOURCE_CALL_RES = {
+      "resource"    => Regex.new("Route::resource\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
+      "apiResource" => Regex.new("Route::apiResource\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
+    }
+    ACTION_FILTER_RES = {
+      "only"   => Regex.new("->\\s*only\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
+      "except" => Regex.new("->\\s*except\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE),
+    }
+
     private def extract_resource_route_calls(content : String,
                                              method_name : String,
                                              skip_ranges : Array(Range(Int32, Int32)),
                                              lexer : Noir::PhpLexer) : Array(ResourceRouteCall)
       calls = [] of ResourceRouteCall
-      regex = Regex.new("Route::#{method_name}\\s*\\(\\s*['\"]([^'\"]+)['\"]", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE)
+      regex = RESOURCE_CALL_RES[method_name]
       pos = 0
 
       while route_match = content.match(regex, pos)
@@ -775,7 +789,7 @@ module Analyzer::Php
     end
 
     private def extract_resource_action_filter(statement : String, filter_name : String) : Array(String)?
-      match = statement.match(Regex.new("->\\s*#{filter_name}\\s*\\((.*?)\\)", Regex::Options::IGNORE_CASE | Regex::Options::MULTILINE))
+      match = statement.match(ACTION_FILTER_RES[filter_name])
       return unless match
 
       actions = [] of String

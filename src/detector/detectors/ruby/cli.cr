@@ -22,6 +22,17 @@ module Detector::Ruby
     CLAMP_SUBCLASS   = /<\s*Clamp::Command\b/
     DRY_CLI_SUBCLASS = /<\s*Dry::CLI::Command\b/
 
+    # Single-pass union of every source marker above (the two thor require
+    # forms were bare `includes?` probes; `Regex.union` escapes string
+    # arguments literally). The previous chain scanned the whole file up to
+    # 11 times on non-CLI Ruby sources — the common case.
+    CLI_MARKER = Regex.union(
+      REQUIRE_OPTPARSE, OPTION_PARSER, THOR_SUBCLASS,
+      "require \"thor\"", "require 'thor'",
+      GLI_APP, SLOP_USE, TTY_OPTION, COMMANDER_USE, ARGV_INDEX,
+      OPTIMIST_USE, CLAMP_SUBCLASS, DRY_CLI_SUBCLASS,
+    )
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
       if base == "Gemfile" || filename.ends_with?(".gemspec")
@@ -29,15 +40,7 @@ module Detector::Ruby
       end
 
       return false unless filename.ends_with?(".rb")
-      return true if file_contents.matches?(REQUIRE_OPTPARSE) || file_contents.matches?(OPTION_PARSER)
-      return true if file_contents.matches?(THOR_SUBCLASS) || file_contents.includes?("require \"thor\"") || file_contents.includes?("require 'thor'")
-      return true if file_contents.matches?(GLI_APP) || file_contents.matches?(SLOP_USE) ||
-                     file_contents.matches?(TTY_OPTION) || file_contents.matches?(COMMANDER_USE)
-      return true if file_contents.matches?(ARGV_INDEX)
-      return true if file_contents.matches?(OPTIMIST_USE) || file_contents.matches?(CLAMP_SUBCLASS) ||
-                     file_contents.matches?(DRY_CLI_SUBCLASS)
-
-      false
+      file_contents.matches?(CLI_MARKER)
     end
 
     def applicable?(filename : String) : Bool
