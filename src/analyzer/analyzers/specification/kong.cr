@@ -10,7 +10,7 @@ module Analyzer::Specification
         next unless File.exists?(path)
 
         details = Details.new(PathInfo.new(path))
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        content = read_file_content(path)
         begin
           process_doc(YAML.parse(content), details)
         rescue e

@@ -55,7 +55,7 @@ module Analyzer::Specification
 
       spec_files.each do |file|
         begin
-          content = File.read(file, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(file)
         rescue File::NotFoundError
           @logger.debug "Smithy spec not found during analysis, skipping: #{file}"
           next

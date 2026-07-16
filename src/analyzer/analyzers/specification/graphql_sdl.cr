@@ -19,7 +19,7 @@ module Analyzer::Specification
       sdl_files.each do |sdl_file|
         next unless File.exists?(sdl_file)
         begin
-          content = File.read(sdl_file, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(sdl_file)
           GraphqlSdlParser.parse(content, sdl_file).each { |ep| @result << ep }
         rescue e
           @logger.debug "GraphQL SDL: failed to parse #{sdl_file}"

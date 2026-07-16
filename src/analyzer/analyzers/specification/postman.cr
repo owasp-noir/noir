@@ -10,7 +10,7 @@ module Analyzer::Specification
       if postman_files.is_a?(Array(String))
         postman_files.each do |postman_file|
           if File.exists?(postman_file)
-            content = File.read(postman_file, encoding: "utf-8", invalid: :skip)
+            content = read_file_content(postman_file)
             json_obj = JSON.parse(content)
 
             begin

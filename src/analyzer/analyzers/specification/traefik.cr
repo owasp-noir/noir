@@ -12,7 +12,7 @@ module Analyzer::Specification
         files.each do |path|
           next unless File.exists?(path)
           details = Details.new(PathInfo.new(path))
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
 
           begin
             if path.ends_with?(".toml")

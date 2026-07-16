@@ -424,7 +424,7 @@ module Analyzer::Specification
         oas3_jsons.each do |oas3_json|
           if File.exists?(oas3_json)
             details = Details.new(PathInfo.new(oas3_json))
-            content = File.read(oas3_json, encoding: "utf-8", invalid: :skip)
+            content = read_file_content(oas3_json)
             json_obj = JSON.parse(content)
 
             base_path = @url
@@ -444,7 +444,7 @@ module Analyzer::Specification
         oas3_yamls.each do |oas3_yaml|
           if File.exists?(oas3_yaml)
             details = Details.new(PathInfo.new(oas3_yaml))
-            content = File.read(oas3_yaml, encoding: "utf-8", invalid: :skip)
+            content = read_file_content(oas3_yaml)
             yaml_obj = parse_yaml(content)
 
             base_path = @url
