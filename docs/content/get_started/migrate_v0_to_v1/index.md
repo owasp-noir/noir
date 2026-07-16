@@ -1,6 +1,6 @@
 +++
 title = "Migrating from v0 to v1"
-description = "What changed between Noir 0.x and 1.0 — flags, config keys, behavior, and the compatibility shims that keep v0 scripts running."
+description = "What changed between Noir 0.x and 1.0: flags, config keys, behavior, and the compatibility shims that keep v0 scripts running."
 weight = 5
 sort_by = "weight"
 
@@ -14,7 +14,7 @@ This guide is built for skimming. Start with the short version below, then jump 
 
 ## The short version
 
-v1.0 is **compatibility-first**. v0 call shapes like `noir -b ./app -P -f json` route automatically into the `scan` subcommand, and every renamed flag keeps its old name as a silent alias. The only things that explicitly broke are `--ollama` / `--ollama-model` (deprecated since 2024 — use `--ai-provider ollama [--ai-model NAME]` instead).
+v1.0 is **compatibility-first**. v0 call shapes like `noir -b ./app -P -f json` route automatically into the `scan` subcommand, and every renamed flag keeps its old name as a silent alias. The only things that explicitly broke are `--ollama` / `--ollama-model` (deprecated since 2024; use `--ai-provider ollama [--ai-model NAME]` instead).
 
 If you just want to upgrade and keep going, you can stop reading here. The rest of this page is for users adapting their docs, dashboards, or downstream tooling to the v1 surface.
 
@@ -45,7 +45,7 @@ The pre-v1 terminal flags still route to the equivalent verb:
 
 `noir -v` / `noir --version` continue to print the version string.
 
-## Deliver flag rename — PROBE / EXPORT
+## Deliver flag rename: PROBE / EXPORT
 
 `noir scan -h` in v0 used a single `DELIVER` section. v1 splits it into **PROBE** (active HTTP replay against the discovered endpoints) and **EXPORT** (shipping the catalog to an external data store). The split makes it obvious that `--probe-match` / `--probe-skip` / `--probe-header` only affect probing, not the JSON/SARIF on stdout.
 
@@ -58,12 +58,12 @@ The pre-v1 terminal flags still route to the equivalent verb:
 | `--use-filters VAL` | `--probe-skip VAL` |
 | `--send-es URL` | `--export-es URL` |
 
-All v0 names continue to parse — they're rewritten to the v1 spelling before the OptionParser runs, so existing CI scripts and Dockerfiles need no changes. The v1 `noir scan -h` doesn't list the legacy names so new users see only the canonical surface.
+All v0 names continue to parse; they're rewritten to the v1 spelling before the OptionParser runs, so existing CI scripts and Dockerfiles need no changes. The v1 `noir scan -h` doesn't list the legacy names so new users see only the canonical surface.
 
 New in v1:
 
-* `--export-opensearch URL` — speaks the same HTTP protocol as Elasticsearch.
-* `--export-webhook URL` — POSTs the endpoint catalog as a single JSON document (`{endpoints, endpoint_count, noir_version}`) to any HTTP receiver (Slack incoming webhooks, Discord, Zapier/n8n, custom internal endpoints).
+* `--export-opensearch URL`: speaks the same HTTP protocol as Elasticsearch.
+* `--export-webhook URL`: POSTs the endpoint catalog as a single JSON document (`{endpoints, endpoint_count, noir_version}`) to any HTTP receiver (Slack incoming webhooks, Discord, Zapier/n8n, custom internal endpoints).
 
 ## Config file (`~/.config/noir/config.yaml`)
 
@@ -78,7 +78,7 @@ v0 used the same flat shape as the CLI flags, so the YAML keys followed the v0 f
 | `use_matchers` | `probe_match` |
 | `use_filters` | `probe_skip` |
 
-v0 config files load unchanged — `ConfigInitializer` runs a legacy-key migration before merging into the option set. `noir config show` against a v0 config also prints a one-line note listing every v0 key it migrated, so you know what changed.
+v0 config files load unchanged; `ConfigInitializer` runs a legacy-key migration before merging into the option set. `noir config show` against a v0 config also prints a one-line note listing every v0 key it migrated, so you know what changed.
 
 If both spellings are present in the same file (mid-migration), the v1 key wins.
 
@@ -97,7 +97,7 @@ These don't change flag names, just what scans emit. Each is documented in detai
 
 ## Things that explicitly broke
 
-* `--ollama URL` / `--ollama-model NAME` — both deprecated since 2024. Use `--ai-provider ollama [--ai-model NAME]` instead. The CLI prints a one-line migration hint if either flag is passed.
+* `--ollama URL` / `--ollama-model NAME`: both deprecated since 2024. Use `--ai-provider ollama [--ai-model NAME]` instead. The CLI prints a one-line migration hint if either flag is passed.
 
 That's the entire breaking surface.
 

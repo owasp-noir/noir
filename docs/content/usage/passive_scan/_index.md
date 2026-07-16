@@ -1,6 +1,6 @@
 +++
 title = "Passive Security Scanning"
-description = "Learn how to use Noir's passive scanning feature to identify potential security vulnerabilities in your code without actively exploiting them. This guide covers how to run a passive scan and interpret the results."
+description = "Rule-based checks that flag potential security issues in source code without sending any traffic."
 weight = 5
 sort_by = "weight"
 

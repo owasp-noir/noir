@@ -24,5 +24,3 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-key=xai-...
 ```
 
-xAI enables endpoint analysis, security vulnerability identification, and code improvement suggestions.
-

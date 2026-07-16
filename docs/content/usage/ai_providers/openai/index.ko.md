@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir를 [OpenAI](https://openai.com)와 통합하여 GPT-5.5 같은 언어 모델로 코드 분석 및 엔드포인트 탐지를 수행할 수 있습니다.
+Noir를 [OpenAI](https://openai.com)에 연결해 GPT-5.5 같은 모델로 LLM 기반 코드 분석과 엔드포인트 탐지를 수행할 수 있습니다.
 
 ## 설정
 
@@ -21,5 +21,3 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-model=gpt-5.5 \
      --ai-key=sk-...
 ```
-
-OpenAI를 통해 자연어 엔드포인트 설명, 보안 취약점 식별, 코드 품질 개선 제안을 받을 수 있습니다.

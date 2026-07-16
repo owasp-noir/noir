@@ -156,7 +156,7 @@ end
 
 핵심 포인트:
 
-- **언어 엔진을 상속**. `get_route_path`, `add_param_to_endpoint`, `collect_package_groups`, `resolve_public_dirs` 등을 무료로 사용 가능.
+- **언어 엔진을 상속**. `get_route_path`, `add_param_to_endpoint`, `collect_package_groups`, `resolve_public_dirs` 등을 별도 구현 없이 그대로 사용.
 - **재정의 가능한 메서드 오버라이드**. 프레임워크 파싱이 다르면 `get_static_path`, `get_route_path` 등 재정의 (Mux, GoZero 참조).
 - **`parallel_file_scan` 사용**. 채널 + worker pool 을 재구현하지 말 것.
 

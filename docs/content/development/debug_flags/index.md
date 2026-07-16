@@ -67,7 +67,6 @@ Override the file filtering prompt
 
 Notes and caveats
 
-- Hidden flags may be removed or changed without notice.
 - Output may vary across runs depending on prompt content and LLM behavior.
 - Use single quotes for literal strings if your shell expands characters unexpectedly, or read prompts from files.
 - Ensure LLM environment is configured (API keys, etc.) if your workflow relies on optimization steps.

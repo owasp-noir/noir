@@ -205,6 +205,4 @@ mindmap
 
 ## Tips
 
-- The root node is always labeled `API`.
-- HTTP methods, endpoint paths, and parameters are all represented in the mindmap.
 - For large APIs, collapse or expand branches in Mermaid-compatible viewers.

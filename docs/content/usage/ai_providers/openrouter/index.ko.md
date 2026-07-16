@@ -28,9 +28,3 @@ noir scan ./myapp \
 export NOIR_AI_KEY=sk-or-...
 noir scan ./myapp --ai-provider=openrouter --ai-model=openai/gpt-5.5
 ```
-
-OpenRouter의 주요 이점:
-*   여러 제공업체의 100개 이상 모델 지원
-*   모든 모델을 위한 통합 API
-*   자동 폴백 및 로드 밸런싱
-*   비용 효율적인 모델 선택

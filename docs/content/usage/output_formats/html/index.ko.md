@@ -22,11 +22,11 @@ noir scan . -f html -o report.html
 noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 ```
 
-<img src="./report-light.png" alt="Noir HTML 리포트 — 라이트 테마" width="1280" height="2445" loading="lazy" decoding="async">
+<img src="./report-light.png" alt="Noir HTML 리포트, 라이트 테마" width="1280" height="2445" loading="lazy" decoding="async">
 
 리포트에는 **다크 테마**가 내장되어 있습니다. 우측 상단의 컨트롤로 전환할 수 있으며, 선택한 테마는 `localStorage`에 저장되어 다음에 열 때도 유지됩니다. 처음 열 때는 운영체제의 `prefers-color-scheme` 설정을 따릅니다.
 
-<img src="./report-dark.png" alt="Noir HTML 리포트 — 다크 테마" width="1280" height="1080" loading="lazy" decoding="async">
+<img src="./report-dark.png" alt="Noir HTML 리포트, 다크 테마" width="1280" height="1080" loading="lazy" decoding="async">
 
 ### 리포트 구성
 

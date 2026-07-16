@@ -33,8 +33,6 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-model=gemma4
 ```
 
-Ollama provides local AI analysis for vulnerability detection, code improvements, and endpoint functionality descriptions.
-
 > **v0 → v1 migration:** The standalone `--ollama` / `--ollama-model`
 > flags were removed in v1.0. Use the unified `--ai-provider ollama
 > --ai-model NAME` form (shown above).

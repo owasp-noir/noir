@@ -1,12 +1,12 @@
 +++
 title = "Output Formats"
-description = "Noir supports a wide range of output formats to help you make the most of your scan results. This section provides an overview of the available formats, including JSON, YAML, TOML, OpenAPI Specification (OAS), and more."
+description = "The output formats Noir can emit: JSON, YAML, TOML, OpenAPI (OAS), SARIF, HTML, and more."
 weight = 2
 sort_by = "weight"
 
 +++
 
-Noir is built to be a versatile tool that can fit into any workflow. A key part of this flexibility is the ability to output scan results in a variety of formats. Whether you need a machine-readable format for automation or a human-readable one for manual review, Noir has you covered.
+Scan results can come out in whatever shape the next step needs: machine-readable for automation, human-readable for review. Pick a format with `-f`.
 
 ## Choosing the Right Format
 
@@ -26,13 +26,11 @@ Noir is built to be a versatile tool that can fit into any workflow. A key part 
 
 ## Available Formats
 
-*   **[HTTP Client Commands](curl/)**: Generate executable cURL, HTTPie, and PowerShell commands for testing endpoints — plus [ADB](curl/#adb-android) (Android) and [simctl](curl/#simctl-ios) (iOS) commands for launching mobile deep links, intents, and content providers.
-*   **[JSON and JSONL](json/)**: A widely used format that's perfect for integrating with other tools and scripts.
-*   **[YAML](yaml/)**: A human-readable format that's great for configuration files and manual inspection.
-*   **[OpenAPI Specification (OAS)](openapi/)**: Generate an OpenAPI document from your code to easily create API documentation or set up security testing.
-*   **[SARIF](sarif/)**: Industry-standard format for security tool output with native CI/CD platform integration.
-*   **[HTML Report](html/)**: Generate a comprehensive, visual HTML report of your scan results.
-*   **[Mermaid Chart](mermaid/)**: Generate diagrams for visualizing your API structure.
-*   **[Additional Formats](more/)**: Discover additional formats including TOML, JSONL, Postman collections, Markdown tables, and specialized filters.
-
-By choosing the right output format, you can streamline your development process and make it easier to act on the insights provided by Noir.
+*   **[HTTP Client Commands](curl/)**: Executable cURL, HTTPie, and PowerShell commands for testing endpoints, plus [ADB](curl/#adb-android) (Android) and [simctl](curl/#simctl-ios) (iOS) commands for launching mobile deep links, intents, and content providers.
+*   **[JSON and JSONL](json/)**: For piping into other tools and scripts.
+*   **[YAML](yaml/)**: Easier than JSON to read during manual review.
+*   **[OpenAPI Specification (OAS)](openapi/)**: An OpenAPI document generated from your code, for API documentation or import into security tools.
+*   **[SARIF](sarif/)**: The standard format CI/CD security dashboards ingest.
+*   **[HTML Report](html/)**: A self-contained, interactive HTML report.
+*   **[Mermaid Chart](mermaid/)**: Diagrams of the API structure.
+*   **[Additional Formats](more/)**: TOML, JSONL, Postman collections, Markdown tables, and output filters.

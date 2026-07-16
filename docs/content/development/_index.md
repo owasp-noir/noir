@@ -10,10 +10,10 @@ toc = true
 
 +++
 
-This section provides resources for developers who want to contribute to the OWASP Noir project. Whether you're building from source, setting up your development environment, or preparing a release, you'll find the information you need here.
+Guides for contributing to Noir: building from source, the analyzer architecture, debug flags, and the release process.
 
-*   **[How to Build](how_to_build/)**: Learn how to set up your development environment, build the project, and run tests.
+*   **[How to Build](how_to_build/)**: Set up a development environment, build the project, and run the tests.
 *   **[Analyzer Architecture](analyzer_architecture/)**: The 3-layer design (engine → route extractor → framework adapter), and a step-by-step guide for adding a new detector/analyzer.
-*   **[Build with Nix Env](nix_environment/)**: Set up a reproducible development environment using Nix and Docker.
-*   **[Debug with hidden flags](debug_flags/)**: Discover developer-only flags for advanced debugging and experimentation.
-*   **[How to Release](how_to_release/)**: Maintainer guide for creating and publishing new releases of Noir.
+*   **[Build with Nix Env](nix_environment/)**: A reproducible development environment with Nix and Docker.
+*   **[Debug with hidden flags](debug_flags/)**: Developer-only flags for debugging and experimentation.
+*   **[How to Release](how_to_release/)**: Maintainer guide for creating and publishing releases.

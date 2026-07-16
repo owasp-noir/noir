@@ -116,17 +116,7 @@ Configuration-style output that's easy to skim in a terminal or paste into a pro
 
 ## JSON Lines (JSONL)
 
-```bash
-noir scan . -f jsonl
-```
-
-```jsonl
-{"url":"/","method":"GET","params":[{"name":"x-api-key","type":"header","value":""}]}
-{"url":"/query","method":"POST","params":[{"name":"my_auth","type":"cookie","value":""},{"name":"query","type":"form","value":""}]}
-{"url":"/token","method":"GET","params":[{"name":"client_id","type":"form","value":""}]}
-```
-
-Useful for streaming large result sets and line-by-line processing.
+JSONL (`-f jsonl`) is covered together with JSON on the [JSON and JSONL](../json/) page.
 
 ## Postman Collection
 

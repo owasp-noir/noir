@@ -21,5 +21,3 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-model=grok-4.5 \
      --ai-key=xai-...
 ```
-
-xAI를 통해 엔드포인트 분석, 보안 취약점 식별, 코드 개선 제안을 받을 수 있습니다.

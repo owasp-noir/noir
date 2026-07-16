@@ -1,6 +1,6 @@
 +++
 title = "개발"
-description = "빌드 지침, 개발 환경 설정, 디버깅 도구, 릴리스 절차를 포함하여 OWASP Noir에 기여하는 개발자를 위한 리소스입니다."
+description = "OWASP Noir에 기여하는 개발자를 위한 리소스: 빌드, 개발 환경 설정, 디버깅 도구, 릴리스 절차."
 weight = 10
 sort_by = "weight"
 
@@ -10,10 +10,10 @@ toc = true
 
 +++
 
-이 섹션은 OWASP Noir 프로젝트에 기여하고자 하는 개발자를 위한 리소스를 제공합니다. 소스에서 빌드하거나, 개발 환경을 설정하거나, 릴리스를 준비하는 경우 여기에서 필요한 정보를 찾을 수 있습니다.
+Noir에 기여할 때 필요한 가이드를 모았습니다. 소스 빌드, 분석기 아키텍처, 디버그 플래그, 릴리스 절차를 다룹니다.
 
-*   **[빌드 방법](how_to_build/)**: 개발 환경 설정, 프로젝트 빌드, 테스트 실행 방법을 알아보세요.
+*   **[빌드 방법](how_to_build/)**: 개발 환경 설정, 프로젝트 빌드, 테스트 실행.
 *   **[분석기 아키텍처](analyzer_architecture/)**: 3-layer 구조(engine → route extractor → framework adapter) 와 새 detector/analyzer 를 추가하는 단계별 가이드.
-*   **[Nix 환경으로 빌드](nix_environment/)**: Nix와 Docker를 사용하여 재현 가능한 개발 환경을 설정하세요.
-*   **[숨겨진 플래그로 디버그](debug_flags/)**: 고급 디버깅과 실험을 위한 개발자 전용 플래그를 알아보세요.
-*   **[릴리스 방법](how_to_release/)**: Noir의 새로운 릴리스 생성 및 게시를 위한 관리자 가이드입니다.
+*   **[Nix 환경으로 빌드](nix_environment/)**: Nix와 Docker로 만드는 재현 가능한 개발 환경.
+*   **[숨겨진 플래그로 디버그](debug_flags/)**: 디버깅과 실험을 위한 개발자 전용 플래그.
+*   **[릴리스 방법](how_to_release/)**: 새 릴리스를 만들고 게시하는 관리자용 가이드.

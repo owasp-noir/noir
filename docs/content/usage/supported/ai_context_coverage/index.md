@@ -14,7 +14,7 @@ Use `--ai-context` to enable it:
 noir scan . --ai-context
 ```
 
-Pass a comma-separated bucket list to narrow the output to just the categories you care about. The filter applies at the data layer, so JSON / SARIF / YAML / Postman / OAS all see the same selection — not just the plain-text renderer.
+Pass a comma-separated bucket list to narrow the output to just the categories you care about. The filter applies at the data layer, so JSON / SARIF / YAML / Postman / OAS all see the same selection, not just the plain-text renderer.
 
 ```bash
 noir scan . --ai-context=guards,sinks       # only auth + likely-dangerous sinks

@@ -45,7 +45,7 @@ jobs:
 | `exclude_techs` | 제외할 기술 스택 지정 (`--exclude-techs`) | 아니오 | `` |
 | `passive_scan` | 수동(패시브) 보안 점검 활성화 (`-P/--passive-scan`) | 아니오 | `false` |
 | `passive_scan_severity` | 수동 점검 최소 심각도 (`critical`, `high`, `medium`, `low`) | 아니오 | `high` |
-| `use_all_taggers` | 모든 태거 활성화(광범위 분석) (`-T/--use-all-taggers`) | 아니오 | `false` |
+| `use_all_taggers` | 모든 태거 활성화 (`-T/--use-all-taggers`) | 아니오 | `false` |
 | `use_taggers` | 특정 태거만 활성화 (`--use-taggers`) | 아니오 | `` |
 | `include_path` | 결과에 소스 파일 경로 포함 (`--include-path`) | 아니오 | `false` |
 | `verbose` | 상세 출력 (`--verbose`) | 아니오 | `false` |

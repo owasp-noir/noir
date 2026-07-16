@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Noir's AI-powered analysis can be used with a variety of different Large Language Model (LLM) providers. Whether you want to use a powerful cloud-based model or a local model for privacy and offline use, Noir has you covered.
+Noir's LLM analysis works with any of the providers below: cloud APIs, local runtimes for offline or private use, and ACP agents.
 
 ## Provider Comparison
 
@@ -36,5 +36,3 @@ Noir's AI-powered analysis can be used with a variety of different Large Languag
     *   [LM Studio](lmstudio/)
 *   **ACP Agent Providers**:
     *   [ACP (Codex/Gemini/Claude/Custom)](acp/)
-
-By following these guides, you can easily integrate the power of AI into your code analysis workflow.

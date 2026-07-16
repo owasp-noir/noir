@@ -6,10 +6,10 @@ sort_by = "weight"
 
 +++
 
-Noir의 결과 전송은 성격이 다른 두 family로 나뉘어 있어요.
+Noir의 결과 전송은 성격이 다른 두 family로 나뉩니다.
 
-- **PROBE** — discovered endpoint를 실제 HTTP 요청으로 쏴봅니다 (active replay, 필요 시 Burp Suite나 ZAP 같은 proxy를 경유).
-- **EXPORT** — endpoint 카탈로그를 Elasticsearch 같은 외부 스토어로 data 형태로 적재합니다. endpoint 자체에는 HTTP 트래픽이 가지 않아요.
+- **PROBE**: discovered endpoint를 실제 HTTP 요청으로 쏴봅니다 (active replay, 필요 시 Burp Suite나 ZAP 같은 proxy를 경유).
+- **EXPORT**: endpoint 카탈로그를 Elasticsearch 같은 외부 스토어로 data 형태로 적재합니다. endpoint 자체에는 HTTP 트래픽이 가지 않습니다.
 
 ## Probe
 
@@ -47,7 +47,7 @@ noir scan ./source -u http://localhost:3000 \
 
 ### Match / skip
 
-proxy로 흘려보낼 endpoint를 좁힐 수 있어요. 패턴은 URL 부분 문자열, HTTP 메서드(대소문자 무시), 또는 `method:URL` 조합을 받습니다.
+proxy로 흘려보낼 endpoint를 좁힐 수 있습니다. 패턴은 URL 부분 문자열, HTTP 메서드(대소문자 무시), 또는 `method:URL` 조합을 받습니다.
 
 ```bash
 # API endpoint만
@@ -80,7 +80,7 @@ noir scan ./source -u http://localhost:3000 \
 
 ## Export
 
-Endpoint 카탈로그를 외부 스토어로 push 합니다. probe와는 성격이 다르므로 endpoint 자체에 트래픽이 가진 않아요.
+Endpoint 카탈로그를 외부 스토어로 push 합니다. probe와는 성격이 다르므로 endpoint 자체에 트래픽이 가지 않습니다.
 
 ```bash
 noir scan ./source --export-es http://localhost:9200
@@ -88,7 +88,7 @@ noir scan ./source --export-es http://localhost:9200
 
 ## v0 aliases
 
-v0.x flag 이름은 그대로 작동합니다. Noir 내부에서 silent하게 매핑해줘요.
+v0.x flag 이름은 그대로 작동합니다. Noir가 내부에서 조용히 매핑합니다.
 
 | v0 flag | v1 등가 |
 | --- | --- |

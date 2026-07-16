@@ -1,18 +1,16 @@
 +++
 title = "Supported Technologies"
-description = "This section provides a comprehensive overview of the technologies that Noir supports, including programming languages, frameworks, and API specifications."
+description = "The technologies Noir supports: programming languages, frameworks, and API specifications."
 weight = 1
 sort_by = "weight"
 
 +++
 
-Noir is designed to be a versatile tool that can work with a wide variety of technologies. To help you understand what you can use Noir with, this section provides detailed information on our supported:
+What Noir can analyze:
 
-*   **Languages and Frameworks**: See which programming languages and web frameworks Noir can analyze to discover endpoints and their parameters.
-*   **Specifications**: Learn about the API and data specification formats that Noir can parse, such as OpenAPI (Swagger), RAML, and HAR.
-*   **Callee Coverage**: Check which frameworks can emit best-effort 1-hop handler callees for AI SAST and code review workflows.
-*   **AI Context**: Aggregate per-endpoint guards, sinks, validators, and signals into an AI-review-ready context object with `--ai-context`.
-*   **Mobile Apps**: Learn how Noir extracts Android and iOS deep-link entry points (custom schemes, intents, universal links) and links them to the code that handles them.
-*   **CLI Apps**: See how Noir maps the command-line attack surface of CLI programs — subcommands, flags, positional arguments, and consumed environment variables — across 21 languages.
-
-By understanding what Noir supports, you can better integrate it into your existing development and security workflows.
+*   **[Languages and Frameworks](language_and_frameworks/)**: The programming languages and web frameworks Noir extracts endpoints and parameters from.
+*   **[Specifications](specification/)**: API and data specification formats Noir can parse, such as OpenAPI (Swagger), RAML, and HAR.
+*   **[Callee Coverage](callee_coverage/)**: Frameworks that emit best-effort 1-hop handler callees for AI SAST and code review.
+*   **[AI Context](ai_context_coverage/)**: Per-endpoint guards, sinks, validators, and signals, aggregated into an AI-review-ready context object with `--ai-context`.
+*   **[Mobile Apps](mobile/)**: How Noir extracts Android and iOS deep-link entry points (custom schemes, intents, universal links) and links them to the handling code.
+*   **[CLI Apps](cli/)**: How Noir maps the command-line attack surface (subcommands, flags, positional arguments, consumed environment variables) across 21 languages.
