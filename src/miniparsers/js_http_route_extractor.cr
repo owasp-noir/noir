@@ -529,19 +529,40 @@ module Noir
       end
     end
 
+    # Memoized per-ref scan patterns. These interpolated literals used to be
+    # recompiled on every call — once per scanned if-condition — while ref
+    # cardinality per file is tiny ("req.method", "req.url", a destructured
+    # local), so compile each (pattern, ref) pair once process-wide.
+    @@ref_scan_res = {} of String => Regex
+    @@ref_scan_mutex = Mutex.new
+
+    private def self.memo_ref_regex(kind : String, ref : String, & : String -> Regex) : Regex
+      @@ref_scan_mutex.synchronize do
+        @@ref_scan_res["#{kind}:#{ref}"] ||= yield ref_pattern(ref)
+      end
+    end
+
     private def self.extract_methods(condition : String, refs : Array(String)) : Array(String)
       methods = [] of String
       refs.each do |ref|
-        ref_re = ref_pattern(ref)
-        condition.scan(/#{ref_re}(?:\s*\.\s*toUpperCase\s*\(\s*\))?\s*(?:===|==)\s*['"]([A-Za-z]+)['"]/i) do |match|
+        eq_re = memo_ref_regex("m-eq", ref) do |ref_re|
+          /#{ref_re}(?:\s*\.\s*toUpperCase\s*\(\s*\))?\s*(?:===|==)\s*['"]([A-Za-z]+)['"]/i
+        end
+        condition.scan(eq_re) do |match|
           method = normalize_method(match[1])
           methods << method unless method.empty?
         end
-        condition.scan(/['"]([A-Za-z]+)['"]\s*(?:===|==)\s*#{ref_re}(?:\s*\.\s*toUpperCase\s*\(\s*\))?/i) do |match|
+        rev_re = memo_ref_regex("m-rev", ref) do |ref_re|
+          /['"]([A-Za-z]+)['"]\s*(?:===|==)\s*#{ref_re}(?:\s*\.\s*toUpperCase\s*\(\s*\))?/i
+        end
+        condition.scan(rev_re) do |match|
           method = normalize_method(match[1])
           methods << method unless method.empty?
         end
-        condition.scan(/\[\s*([^\]]+)\]\s*\.\s*includes\s*\(\s*#{ref_re}\s*\)/i) do |match|
+        inc_re = memo_ref_regex("m-inc", ref) do |ref_re|
+          /\[\s*([^\]]+)\]\s*\.\s*includes\s*\(\s*#{ref_re}\s*\)/i
+        end
+        condition.scan(inc_re) do |match|
           match[1].scan(/['"]([A-Za-z]+)['"]/) do |method_match|
             method = normalize_method(method_match[1])
             methods << method unless method.empty?
@@ -555,20 +576,31 @@ module Noir
     private def self.extract_paths(condition : String, refs : Array(String)) : Array(String)
       paths = [] of String
       refs.each do |ref|
-        ref_re = ref_pattern(ref)
-        condition.scan(/#{ref_re}\s*(?:===|==)\s*['"`]([^'"`]+)['"`]/) do |match|
+        eq_re = memo_ref_regex("p-eq", ref) do |ref_re|
+          /#{ref_re}\s*(?:===|==)\s*['"`]([^'"`]+)['"`]/
+        end
+        condition.scan(eq_re) do |match|
           path = normalize_path(match[1])
           paths << path unless path.empty?
         end
-        condition.scan(/['"`]([^'"`]+)['"`]\s*(?:===|==)\s*#{ref_re}/) do |match|
+        rev_re = memo_ref_regex("p-rev", ref) do |ref_re|
+          /['"`]([^'"`]+)['"`]\s*(?:===|==)\s*#{ref_re}/
+        end
+        condition.scan(rev_re) do |match|
           path = normalize_path(match[1])
           paths << path unless path.empty?
         end
-        condition.scan(/#{ref_re}\s*\.\s*startsWith\s*\(\s*['"`]([^'"`]+)['"`]/) do |match|
+        starts_re = memo_ref_regex("p-starts", ref) do |ref_re|
+          /#{ref_re}\s*\.\s*startsWith\s*\(\s*['"`]([^'"`]+)['"`]/
+        end
+        condition.scan(starts_re) do |match|
           path = normalize_path(match[1])
           paths << path unless path.empty?
         end
-        condition.scan(/\[\s*([^\]]+)\]\s*\.\s*includes\s*\(\s*#{ref_re}\s*\)/) do |match|
+        inc_re = memo_ref_regex("p-inc", ref) do |ref_re|
+          /\[\s*([^\]]+)\]\s*\.\s*includes\s*\(\s*#{ref_re}\s*\)/
+        end
+        condition.scan(inc_re) do |match|
           match[1].scan(/['"`]([^'"`]+)['"`]/) do |path_match|
             path = normalize_path(path_match[1])
             paths << path unless path.empty?
@@ -581,7 +613,10 @@ module Noir
 
     private def self.expression_matches_ref?(expression : String, refs : Array(String)) : Bool
       refs.any? do |ref|
-        expression.matches?(/^\s*#{ref_pattern(ref)}\s*$/)
+        expr_re = memo_ref_regex("expr", ref) do |ref_re|
+          /^\s*#{ref_re}\s*$/
+        end
+        expression.matches?(expr_re)
       end
     end
 

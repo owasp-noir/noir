@@ -89,10 +89,21 @@ module Detector::Specification
       !!(text && !text.empty?)
     end
 
+    # Word-bounded guard markers. The accepted shapes require actual
+    # `routes` / `uri`(`uris`) / `upstream_id` or `plugins` keys, which
+    # always appear word-bounded in the raw document (`"uri":` / `uri:`),
+    # so `\b` keeps the guard a necessary condition while no longer
+    # tripping on substrings — the bare `includes?("uri")` matched
+    # "security" and made large OpenAPI JSON specs pay a full redundant
+    # parse here on every scan (this detector is non-idempotent).
+    ROUTES_MARKER  = /\broutes\b/
+    URI_MARKER     = /\buris?\b/
+    PAYLOAD_MARKER = /\bupstream_id\b|\bplugins\b/
+
     private def apisix_candidate?(content : String) : Bool
-      content.includes?("routes") &&
-        (content.includes?("uri") || content.includes?("uris")) &&
-        (content.includes?("upstream_id") || content.includes?("plugins"))
+      content.matches?(ROUTES_MARKER) &&
+        content.matches?(URI_MARKER) &&
+        content.matches?(PAYLOAD_MARKER)
     end
   end
 end
