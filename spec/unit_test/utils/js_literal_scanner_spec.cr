@@ -199,4 +199,63 @@ describe Noir::JSLiteralScanner do
       idx.should be_nil
     end
   end
+
+  describe "edge cases pinned across the linear-scan rewrite" do
+    it "treats slash after identifier as division inside paren content" do
+      result = Noir::JSLiteralScanner.extract_paren_content("(a / b / c)", 1)
+      result = result.should_not be_nil
+      result.content.should eq("a / b / c")
+      result.end_pos.should eq(10)
+    end
+
+    it "skips regex with escaped slash and flags after an operator" do
+      result = Noir::JSLiteralScanner.extract_paren_content("(x = /a\\/b/gi)", 1)
+      result = result.should_not be_nil
+      result.content.should eq("x = /a\\/b/gi")
+      result.end_pos.should eq(13)
+    end
+
+    it "keeps the historical past-the-end position for unterminated strings" do
+      result = Noir::JSLiteralScanner.extract_paren_content("('ab", 1)
+      result = result.should_not be_nil
+      result.content.should eq("'ab")
+      result.end_pos.should eq(5)
+    end
+
+    it "matches braces across a keyword-context regex containing a brace" do
+      idx = Noir::JSLiteralScanner.find_matching_brace("{ return /}/ }", 0)
+      idx.should eq(13)
+    end
+
+    it "returns nil for a brace opened before an unterminated string" do
+      idx = Noir::JSLiteralScanner.find_matching_brace("{ \"ab", 0)
+      idx.should be_nil
+    end
+  end
+
+  describe "non-ASCII content (char-index API)" do
+    it "extracts paren content containing multi-byte chars" do
+      result = Noir::JSLiteralScanner.extract_paren_content("(한글 'x(y)' z)", 1)
+      result = result.should_not be_nil
+      result.content.should eq("한글 'x(y)' z")
+      result.end_pos.should eq(12)
+    end
+
+    it "strips comments containing multi-byte chars" do
+      res = Noir::JSLiteralScanner.try_skip_literal("// 한글\nx", 0, "")
+      res = res.should_not be_nil
+      res[:content].should eq("")
+      res[:pos].should eq(5)
+    end
+
+    it "finds matching brace past a multi-byte comment" do
+      idx = Noir::JSLiteralScanner.find_matching_brace("{ // 주석 }\n}", 0)
+      idx.should eq(10)
+    end
+
+    it "ignores parens inside strings holding emoji" do
+      idx = Noir::JSLiteralScanner.find_matching_paren("(f(\"🎉)\") )", 0)
+      idx.should eq(9)
+    end
+  end
 end

@@ -884,15 +884,16 @@ module Analyzer::Swift
     # is labeled, e.g. `to:`/`atPath:`).
     private def first_positional_arg(args : String) : String?
       depth = 0
-      slice = ""
-      args.each_char do |char|
-        case char
-        when '(', '[', '<' then depth += 1
-        when ')', ']', '>' then depth -= 1
-        when ','
-          break if depth == 0
+      slice = String.build do |io|
+        args.each_char do |char|
+          case char
+          when '(', '[', '<' then depth += 1
+          when ')', ']', '>' then depth -= 1
+          when ','
+            break if depth == 0
+          end
+          io << char
         end
-        slice += char
       end
       slice = slice.strip
       return if slice.empty?
