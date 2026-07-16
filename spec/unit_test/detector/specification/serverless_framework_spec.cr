@@ -50,4 +50,12 @@ describe "Detect Serverless Framework config" do
   it "ignores unrelated filenames" do
     instance.detect("config.yml", yaml).should be_false
   end
+
+  it "rejects invalid yaml" do
+    instance.detect("serverless.yml", "service: my-api\nfunctions: [broken").should be_false
+  end
+
+  it "rejects invalid json" do
+    instance.detect("serverless.json", %({"service":"my-api",)).should be_false
+  end
 end

@@ -8,8 +8,12 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless valid_yaml_documents?(file_contents)
+      # Substring guard first: the full `YAML.parse_all` below only runs on
+      # the rare manifest that actually mentions the Gateway API, instead of
+      # on every YAML file of the scan (this detector is non-idempotent, so
+      # there is no early-exit). Both checks must pass, so the order is free.
       return false unless route_present?(file_contents)
+      return false unless valid_yaml_documents?(file_contents)
 
       CodeLocator.instance.push("k8s-gateway-api-spec", filename)
       true

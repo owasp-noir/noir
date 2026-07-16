@@ -8,16 +8,14 @@ module Detector::Specification
     def detect(filename : String, file_contents : String) : Bool
       return false unless file_contents.includes?("virtual_hosts") && file_contents.includes?("domains")
 
-      if (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && valid_yaml?(file_contents)
-        data = YAML.parse(file_contents)
-        if find_virtual_hosts_yaml(data)
+      if filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+        if (data = yaml_any?(file_contents)) && find_virtual_hosts_yaml(data)
           locator = CodeLocator.instance
           locator.push("envoy-yaml", filename)
           return true
         end
-      elsif filename.ends_with?(".json") && valid_json?(file_contents)
-        data = JSON.parse(file_contents)
-        if find_virtual_hosts_json(data)
+      elsif filename.ends_with?(".json")
+        if (data = json_any?(file_contents)) && find_virtual_hosts_json(data)
           locator = CodeLocator.instance
           locator.push("envoy-json", filename)
           return true

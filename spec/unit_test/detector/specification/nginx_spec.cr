@@ -50,6 +50,13 @@ describe "Detect Nginx config" do
     instance.detect("config.conf", "key = value\nfoo = bar\n").should be_false
   end
 
+  it "detects location assembled by template-action removal" do
+    # `strip_template_actions` splices `loca{{ … }}tion` back together, so
+    # the SHAPE_GUARD fast path must not reject template files on the raw
+    # (marker-less) content.
+    instance.detect("weird.tmpl", "loca{{ .X }}tion /v1 { proxy_pass http://up; }\n").should be_true
+  end
+
   it "rejects nginx-looking words inside comments" do
     instance.detect("comment.conf", <<-CONF).should be_false
       # server {

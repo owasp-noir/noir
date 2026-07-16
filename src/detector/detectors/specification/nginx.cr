@@ -8,6 +8,14 @@ module Detector::Specification
     # repositories that render Nginx configs from templates.
     EXTENSIONS  = {".conf", ".tmpl", ".template"}
     LOCATION_RE = /^\s*location\s+(?:(?:=|~\*|~|\^~)\s+)?\S+/
+    # Whole-content necessary-condition guard for `nginx_shape?`: a line can
+    # only match LOCATION_RE if "location" appears in the raw content — or
+    # if a template action is spliced out of the middle of the word
+    # (`loca{{x}}tion`), which the `\{\{` disjunct keeps on the slow path.
+    # Comment stripping only truncates lines, so it can never assemble the
+    # keyword. Skips the per-line walk for the vast majority of `.conf` /
+    # `.tmpl` files that carry no location block.
+    SHAPE_GUARD = /location|\{\{/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
@@ -32,6 +40,8 @@ module Detector::Specification
     end
 
     private def nginx_shape?(content : String) : Bool
+      return false unless content.matches?(SHAPE_GUARD)
+
       # Include fragments often contain only `location` blocks, so scan
       # executable directives instead of requiring a top-level server/http block.
       content.each_line do |raw|

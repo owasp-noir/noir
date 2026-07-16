@@ -11,19 +11,11 @@ module Detector::Specification
 
       base = File.basename(filename)
       if base.ends_with?(".json")
-        return false unless valid_json?(file_contents)
-        begin
-          return false unless serverless_doc?(JSON.parse(file_contents))
-        rescue
-          return false
-        end
+        return false unless data = json_any?(file_contents)
+        return false unless serverless_doc?(data)
       else
-        return false unless valid_yaml?(file_contents)
-        begin
-          return false unless serverless_doc?(YAML.parse(file_contents))
-        rescue
-          return false
-        end
+        return false unless data = yaml_any?(file_contents)
+        return false unless serverless_doc?(data)
       end
 
       CodeLocator.instance.push("serverless-framework-spec", filename)

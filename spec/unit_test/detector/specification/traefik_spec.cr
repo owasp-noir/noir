@@ -47,4 +47,18 @@ describe "Detect Traefik dynamic config" do
   it "rejects unrelated yaml" do
     instance.detect("app.yaml", "version: '3.9'\nservices:\n  app:\n    image: test").should be_false
   end
+
+  it "rejects marker-bearing yaml that is not a traefik config" do
+    content = <<-YAML
+      network:
+        routers:
+          - model: home
+      YAML
+
+    instance.detect("inventory.yaml", content).should be_false
+  end
+
+  it "rejects invalid yaml even when it carries a traefik label" do
+    instance.detect("broken.yaml", "labels:\n  - traefik.http.routers.api.rule: [broken").should be_false
+  end
 end
