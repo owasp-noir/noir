@@ -17,7 +17,7 @@ module Analyzer::Specification
       burp_files.each do |path|
         next unless File.exists?(path)
         begin
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           process_file(content, path)
         rescue e
           @logger.debug "Failed to parse Burp sitemap #{path}: #{e.message}"

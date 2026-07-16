@@ -11,7 +11,7 @@ module Analyzer::Specification
         sites_trees.each do |sites_tree|
           if File.exists?(sites_tree)
             details = Details.new(PathInfo.new(sites_tree))
-            content = File.read(sites_tree, encoding: "utf-8", invalid: :skip)
+            content = read_file_content(sites_tree)
             yaml_obj = YAML.parse(content)
 
             begin

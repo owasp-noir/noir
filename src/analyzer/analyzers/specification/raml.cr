@@ -18,7 +18,7 @@ module Analyzer::Specification
       if raml_specs.is_a?(Array(String))
         raml_specs.each do |raml_spec|
           next unless File.exists?(raml_spec)
-          content = File.read(raml_spec, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(raml_spec)
 
           # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe
           # endpoints. Fragments — Library, Trait, ResourceType, DataType,
@@ -538,7 +538,7 @@ module Analyzer::Specification
       return {node: node, source_dir: source_dir} unless File.exists?(expanded)
 
       {
-        node:       YAML.parse(File.read(expanded, encoding: "utf-8", invalid: :skip)),
+        node:       YAML.parse(read_file_content(expanded)),
         source_dir: File.dirname(expanded),
       }
     rescue

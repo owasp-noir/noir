@@ -330,7 +330,7 @@ module Analyzer::Specification
     private def process_json(swagger_json : String)
       return unless File.exists?(swagger_json)
       details = Details.new(PathInfo.new(swagger_json))
-      content = File.read(swagger_json, encoding: "utf-8", invalid: :skip)
+      content = read_file_content(swagger_json)
       json_obj = JSON.parse(content)
       base_path = ""
       begin
@@ -397,7 +397,7 @@ module Analyzer::Specification
     private def process_yaml(swagger_yaml : String)
       return unless File.exists?(swagger_yaml)
       details = Details.new(PathInfo.new(swagger_yaml))
-      content = File.read(swagger_yaml, encoding: "utf-8", invalid: :skip)
+      content = read_file_content(swagger_yaml)
       yaml_obj = parse_yaml(content)
       base_path = ""
       begin

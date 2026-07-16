@@ -21,7 +21,7 @@ module Analyzer::Specification
         yaml_files.each do |path|
           next unless File.exists?(path)
           details = Details.new(PathInfo.new(path))
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           begin
             process_yaml(YAML.parse(content), details)
           rescue e
@@ -36,7 +36,7 @@ module Analyzer::Specification
         json_files.each do |path|
           next unless File.exists?(path)
           details = Details.new(PathInfo.new(path))
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           begin
             process_json(JSON.parse(content), details)
           rescue e

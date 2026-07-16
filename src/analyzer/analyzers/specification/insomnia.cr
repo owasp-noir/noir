@@ -13,7 +13,7 @@ module Analyzer::Specification
       if json_files.is_a?(Array(String))
         json_files.each do |path|
           next unless File.exists?(path)
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           begin
             process_v4(JSON.parse(content), path)
           rescue e
@@ -27,7 +27,7 @@ module Analyzer::Specification
       if yaml_files.is_a?(Array(String))
         yaml_files.each do |path|
           next unless File.exists?(path)
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           begin
             process_v5(YAML.parse(content), path)
           rescue e

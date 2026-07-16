@@ -28,7 +28,7 @@ module Analyzer::Specification
         jsons.each do |path|
           next unless File.exists?(path)
           details = Details.new(PathInfo.new(path))
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           process_json(JSON.parse(content), details, path)
         rescue e
           @logger.debug "Exception parsing AsyncAPI #{path}"
@@ -40,7 +40,7 @@ module Analyzer::Specification
         yamls.each do |path|
           next unless File.exists?(path)
           details = Details.new(PathInfo.new(path))
-          content = File.read(path, encoding: "utf-8", invalid: :skip)
+          content = read_file_content(path)
           process_yaml(YAML.parse(content), details, path)
         rescue e
           @logger.debug "Exception parsing AsyncAPI #{path}"
