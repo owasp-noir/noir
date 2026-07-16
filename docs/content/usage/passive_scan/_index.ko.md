@@ -1,61 +1,61 @@
 +++
 title = "패시브 보안 스캔"
-description = "Noir의 패시브 스캔 기능을 사용하여 적극적으로 익스플로잇하지 않고 코드에서 잠재적인 보안 취약점을 식별하는 방법을 알아보세요. 이 가이드는 패시브 스캔을 실행하고 결과를 해석하는 방법을 다룹니다."
+description = "트래픽을 보내지 않고 소스 코드에서 잠재적 보안 이슈를 잡아내는 룰 기반 점검."
 weight = 5
 sort_by = "weight"
 
 +++
 
-Noir에는 미리 정의된 규칙 세트를 기반으로 코드에서 잠재적인 보안 문제를 분석하는 패시브 스캔 기능이 포함되어 있습니다. 애플리케이션에 테스트 페이로드를 보내는 활성 스캔과 달리, 패시브 스캔은 소스 코드만 검사하므로 개발 프로세스 초기에 취약점을 식별하는 안전한 방법입니다.
+미리 정의된 룰로 코드의 잠재적 보안 문제를 찾습니다. 실제 공격 트래픽은 보내지 않으며, 정규 표현식과 문자열 매칭으로 흔한 보안 위험을 식별합니다.
 
-Noir의 패시브 스캔은 정규 표현식과 문자열 매칭을 사용하여 일반적인 보안 위험을 나타내는 패턴을 찾는 방식으로 작동합니다. 기본 규칙 세트와 함께 제공되지만, 더 타겟팅된 스캔을 위해 자신만의 사용자 정의 규칙을 제공할 수도 있습니다.
+## 사용법
 
-## 패시브 스캔 실행 방법
-
-패시브 스캔을 수행하려면 Noir를 실행할 때 `-P` 또는 `--passive-scan` 플래그를 사용하세요:
+패시브 스캔 실행:
 
 ```bash
 noir scan <BASE_PATH> -P
 ```
 
-사용자 정의 규칙 세트를 사용하고 싶다면 `--passive-scan-path` 플래그로 규칙 파일 경로를 지정할 수 있습니다:
+사용자 정의 룰 사용:
 
 ```bash
 noir scan <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
 ```
 
-## 패시브 스캔 결과 이해하기
+### 심각도 필터링
 
-패시브 스캔을 실행하면 Noir는 발견된 각 엔드포인트에 대해 잠재적인 보안 문제를 식별하고 관련 태그를 추가합니다. 이러한 태그는 다음과 같은 것들을 포함할 수 있습니다:
+`--passive-scan-severity`로 표시할 심각도 기준을 지정합니다:
 
-*   **인증 문제**: 약한 인증 메커니즘이나 누락된 인증
-*   **입력 유효성 검사**: SQL 인젝션, XSS, 기타 인젝션 취약점에 대한 잠재적 위험
-*   **정보 노출**: 민감한 정보가 로그나 응답에 노출될 가능성
-*   **보안 설정 오류**: 안전하지 않은 구성이나 설정
+- `critical`: critical만
+- `high`: high와 critical (기본값)
+- `medium`: medium 이상
+- `low`: 전체
 
-## 기본 규칙
+예시:
 
-Noir는 다음과 같은 일반적인 보안 문제를 탐지하는 기본 규칙 세트와 함께 제공됩니다:
+```bash
+# critical만
+noir scan <BASE_PATH> -P --passive-scan-severity critical
 
-*   하드코딩된 API 키 및 비밀번호
-*   SQL 인젝션 취약점
-*   크로스 사이트 스크립팅(XSS) 위험
-*   보안되지 않은 직접 객체 참조
-*   잘못된 인증 및 세션 관리
+# medium 이상
+noir scan <BASE_PATH> -P --passive-scan-severity medium
 
-## 사용자 정의 규칙
-
-더 구체적인 보안 요구 사항이 있는 경우 자신만의 패시브 스캔 규칙을 만들 수 있습니다. 규칙은 YAML 형식으로 정의되며 정규 표현식과 메타데이터를 포함합니다.
-
-사용자 정의 규칙 예제:
-
-```yaml
-rules:
-  - id: "custom-api-key-check"
-    description: "API 키가 하드코딩되어 있는지 확인"
-    pattern: "api[_-]?key\\s*[:=]\\s*['\"][^'\"]+['\"]"
-    severity: "high"
-    category: "credential"
+# 전체
+noir scan <BASE_PATH> -P --passive-scan-severity low
 ```
 
-패시브 스캔은 코드의 보안 자세를 이해하고 추가 검토나 테스트가 필요한 영역을 식별하는 훌륭한 방법입니다.
+## 출력 형식
+
+예시 출력:
+
+```
+★ Passive Results:
+[critical][hahwul-test][secret] use x-api-key
+  ├── extract:   env.request.headers["x-api-key"].as(String)
+  └── file: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr:4
+```
+
+**출력 구성:**
+*   `[critical][hahwul-test][secret]`: 심각도, 룰 이름, 이슈 유형
+*   `extract`: 매칭된 코드 라인
+*   `file`: 파일 경로와 줄 번호

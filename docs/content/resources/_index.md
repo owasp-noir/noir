@@ -1,6 +1,6 @@
 +++
 title = "Resources"
-description = "Find additional resources for OWASP Noir, including the changelog, FAQ, and contact information."
+description = "Additional resources for OWASP Noir: FAQ, troubleshooting, artwork, and contact information."
 weight = 12
 sort_by = "weight"
 
@@ -12,9 +12,9 @@ toc = true
 
 Supplementary references for OWASP Noir: FAQ, troubleshooting, artwork, and how to get in touch.
 
-*   **[FAQ](faq/)**: Find answers to frequently asked questions.
+*   **[FAQ](faq/)**: Frequently asked questions and answers.
 *   **[Troubleshooting](troubleshooting/)**: Solutions for common issues when using Noir.
-*   **[Artwork](artwork/)**: Access official logos, mascots, and visual resources.
-*   **[Contact](contact/)**: Learn how to get in touch with the Noir team.
+*   **[Artwork](artwork/)**: Official logos, mascots, and visual resources.
+*   **[Contact](contact/)**: How to reach the Noir team.
 
 For information on debugging flags and release procedures, please see the [Development](../development/) section.

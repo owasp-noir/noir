@@ -1,18 +1,16 @@
 +++
 title = "지원되는 기술"
-description = "이 섹션은 프로그래밍 언어, 프레임워크 및 API 명세를 포함하여 Noir가 지원하는 기술에 대한 포괄적인 개요를 제공합니다."
+description = "Noir가 지원하는 기술: 프로그래밍 언어, 프레임워크, API 명세."
 weight = 1
 sort_by = "weight"
 
 +++
 
-Noir는 다양한 기술과 함께 작동할 수 있는 다재다능한 도구로 설계되었습니다. Noir를 사용할 수 있는 기술을 이해하는 데 도움이 되도록, 이 섹션은 지원되는 다음 항목에 대한 자세한 정보를 제공합니다:
+Noir가 분석할 수 있는 대상:
 
-*   **언어 및 프레임워크**: Noir가 엔드포인트와 매개변수를 발견하기 위해 분석할 수 있는 프로그래밍 언어와 웹 프레임워크를 확인하세요.
-*   **명세**: OpenAPI(Swagger), RAML, HAR와 같이 Noir가 구문 분석할 수 있는 API 및 데이터 명세 형식에 대해 알아보세요.
-*   **Callee 커버리지**: AI SAST와 코드 리뷰 워크플로를 위해 best-effort 1-hop handler callee를 내보낼 수 있는 프레임워크를 확인하세요.
-*   **AI 컨텍스트**: `--ai-context`로 각 엔드포인트의 guard, sink, validator, signal을 AI 리뷰용 컨텍스트 객체 하나로 집계합니다.
-*   **모바일 앱**: Android·iOS 앱의 딥링크 진입점(커스텀 스킴, 인텐트, 유니버설 링크)을 추출하고 이를 처리하는 코드와 연결하는 방식을 알아보세요.
-*   **CLI 앱**: 21개 언어에 걸쳐 CLI 프로그램의 커맨드라인 공격 표면(서브커맨드, 플래그, 위치 인자, 사용되는 환경 변수)을 Noir가 어떻게 매핑하는지 확인하세요.
-
-Noir가 지원하는 것을 이해함으로써 기존 개발 및 보안 워크플로에 더 잘 통합할 수 있습니다.
+*   **[언어 및 프레임워크](language_and_frameworks/)**: Noir가 엔드포인트와 파라미터를 추출하는 프로그래밍 언어와 웹 프레임워크.
+*   **[명세](specification/)**: OpenAPI(Swagger), RAML, HAR 등 Noir가 파싱할 수 있는 API·데이터 명세 형식.
+*   **[Callee 커버리지](callee_coverage/)**: AI SAST와 코드 리뷰를 위해 best-effort 1-hop handler callee를 내보내는 프레임워크.
+*   **[AI 컨텍스트](ai_context_coverage/)**: `--ai-context`로 각 엔드포인트의 guard, sink, validator, signal을 AI 리뷰용 컨텍스트 객체 하나로 집계.
+*   **[모바일 앱](mobile/)**: Android·iOS 앱의 딥링크 진입점(커스텀 스킴, 인텐트, 유니버설 링크)을 추출해 이를 처리하는 코드와 연결하는 방식.
+*   **[CLI 앱](cli/)**: 21개 언어에 걸쳐 CLI 프로그램의 커맨드라인 공격 표면(서브커맨드, 플래그, 위치 인자, 사용되는 환경 변수)을 매핑하는 방식.
