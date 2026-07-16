@@ -369,10 +369,18 @@ module Analyzer::Typescript
       attach_route_block_callees(block, path, line_for_pos(content, config_open), endpoint)
     end
 
+    # Integer `String#[](Int)` re-seeks from byte 0 on non-ASCII content, so
+    # indexing whole-file offsets here would be O(n) per char (O(n²) across a
+    # scan). Walk with a `Char::Reader` from the equivalent byte offset
+    # instead; `pos` and the return value stay CHAR indices.
     private def skip_whitespace(content : String, pos : Int32) : Int32
+      return pos if pos >= content.size
+      byte_pos = content.bytesize == content.size ? pos : (content.char_index_to_byte_index(pos) || content.bytesize)
+      reader = Char::Reader.new(content, byte_pos)
       i = pos
-      while i < content.size && content[i].whitespace?
+      while i < content.size && reader.current_char.whitespace?
         i += 1
+        reader.next_char
       end
       i
     end

@@ -764,10 +764,14 @@ module Analyzer::Java
     end
 
     private def matching_open_paren(content : String, close_index : Int32) : Int32?
+      # Same non-ASCII O(n) `String#[]` concern as `matching_brace` above:
+      # materialize once and index the array instead of re-indexing
+      # `content` per character. Returned index stays a CHAR index.
+      chars = content.chars
       depth = 0
       index = close_index
       while index >= 0
-        case content[index]
+        case chars[index]
         when ')'
           depth += 1
         when '('
@@ -780,13 +784,17 @@ module Analyzer::Java
     end
 
     private def matching_close_paren(content : String, open_index : Int32) : Int32?
+      # Same non-ASCII O(n) `String#[]` concern as `matching_brace` above:
+      # materialize once and index the array instead of re-indexing
+      # `content` per character. Returned index stays a CHAR index.
+      chars = content.chars
       depth = 0
       in_string : Char? = nil
       escaped = false
 
       index = open_index
-      while index < content.size
-        char = content[index]
+      while index < chars.size
+        char = chars[index]
         if in_string
           if escaped
             escaped = false

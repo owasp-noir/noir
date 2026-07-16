@@ -186,7 +186,11 @@ module Analyzer::Php
     end
 
     private def find_matching_bracket(content : String, open_pos : Int32) : Int32?
-      return unless open_pos < content.size && content[open_pos] == '['
+      # Integer `String#[](Int)` is O(n) on non-ASCII content (one multi-byte
+      # char defeats the single-byte optimization), so this char-by-char walk
+      # would be O(n²); materialize once and index the array instead.
+      chars = content.chars
+      return unless open_pos < chars.size && chars[open_pos] == '['
 
       depth = 0
       in_string = false
@@ -194,8 +198,8 @@ module Analyzer::Php
       escaped = false
       pos = open_pos
 
-      while pos < content.size
-        char = content[pos]
+      while pos < chars.size
+        char = chars[pos]
         if in_string
           if escaped
             escaped = false

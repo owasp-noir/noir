@@ -389,31 +389,39 @@ module Analyzer::Fsharp
     end
 
     private def route_handler_body(text : String, offset : Int32) : Tuple(String, Int32)?
-      body_start = route_pattern_end(text, offset)
+      # Integer `String#[](Int)` is O(n) on non-ASCII source (one multi-byte
+      # char defeats the single-byte optimization), so the char walks in the
+      # helpers below would be O(n²); materialize once here and thread the
+      # array through them instead.
+      chars = text.chars
+      body_start = route_pattern_end(chars, offset)
       return unless body_start
 
       route_line_start = line_start_for_offset(text, offset)
-      base_indent = indentation_at(text, route_line_start)
+      base_indent = indentation_at(chars, route_line_start)
       body_end = route_handler_end(text, body_start, base_indent)
       return if body_end <= body_start
 
       {text[body_start...body_end], body_start}
     end
 
-    private def route_pattern_end(text : String, offset : Int32) : Int32?
+    # Walks a materialized `Array(Char)` (built once by `route_handler_body`)
+    # so each access is O(1) — integer `String#[]` would be O(n) on non-ASCII
+    # source, making this walk O(n²).
+    private def route_pattern_end(chars : Array(Char), offset : Int32) : Int32?
       i = offset
-      while i < text.size && identifier_char?(text[i])
+      while i < chars.size && identifier_char?(chars[i])
         i += 1
       end
 
-      while i < text.size && text[i].whitespace?
+      while i < chars.size && chars[i].whitespace?
         i += 1
       end
 
-      return unless i < text.size
+      return unless i < chars.size
 
-      if text[i] == '"'
-        string_end = find_string_end(text, i)
+      if chars[i] == '"'
+        string_end = find_string_end(chars, i)
         return unless string_end
         return string_end + 1
       end
@@ -421,9 +429,9 @@ module Analyzer::Fsharp
       # Path supplied as a constant reference (`route Urls.index`): skip
       # the qualified identifier so the handler body that follows is
       # still available for callee extraction.
-      if identifier_char?(text[i])
+      if identifier_char?(chars[i])
         j = i
-        while j < text.size && (identifier_char?(text[j]) || text[j] == '.' || text[j] == '\'')
+        while j < chars.size && (identifier_char?(chars[j]) || chars[j] == '.' || chars[j] == '\'')
           j += 1
         end
         return j
@@ -432,12 +440,14 @@ module Analyzer::Fsharp
       nil
     end
 
-    private def find_string_end(text : String, quote_index : Int32) : Int32?
+    # Scans the shared `Array(Char)` threaded down from `route_handler_body`
+    # (via `route_pattern_end`) — see the O(n²) rationale there.
+    private def find_string_end(chars : Array(Char), quote_index : Int32) : Int32?
       i = quote_index + 1
       escaping = false
 
-      while i < text.size
-        char = text[i]
+      while i < chars.size
+        char = chars[i]
         if escaping
           escaping = false
         elsif char == '\\'
@@ -490,11 +500,13 @@ module Analyzer::Fsharp
       line_start_raw ? line_start_raw + 1 : 0
     end
 
-    private def indentation_at(text : String, line_start : Int32) : Int32
+    # Indexes the shared `Array(Char)` threaded down from
+    # `route_handler_body` — see the O(n²) rationale there.
+    private def indentation_at(chars : Array(Char), line_start : Int32) : Int32
       count = 0
       i = line_start
-      while i < text.size
-        char = text[i]
+      while i < chars.size
+        char = chars[i]
         if char == ' '
           count += 1
         elsif char == '\t'

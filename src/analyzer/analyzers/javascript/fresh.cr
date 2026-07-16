@@ -130,6 +130,11 @@ module Analyzer::Javascript
       if property = handler_block.match(HANDLER_PROPERTY_RES[verb])
         body_start = property.end(0) || 0
         body = handler_block[body_start..]? || ""
+        # NOTE(perf): `extract_handler_object` knows the block's origin offset,
+        # but `String#index` deliberately stays: it returns the FIRST occurrence
+        # of the block text, which for a byte-identical object literal appearing
+        # earlier in the file differs from the origin — passing the origin down
+        # would change the emitted callee lines in that (reachable) case.
         block_start = content.index(handler_block) || 0
         absolute_body_start = block_start + body_start
         start_line = content[0, absolute_body_start].count('\n') + 1
@@ -160,15 +165,20 @@ module Analyzer::Javascript
     end
 
     private def top_level_comma(source : String) : Int32?
+      # Integer `String#[](Int)` is O(n) on non-ASCII source (one multi-byte
+      # char defeats the single-byte optimization), so this walk — and the
+      # inner quote skip — would be O(n²); materialize once and index the
+      # array instead.
+      chars = source.chars
       depth = 0
       i = 0
-      while i < source.size
-        case source[i]
+      while i < chars.size
+        case chars[i]
         when '\'', '"', '`'
-          quote = source[i]
+          quote = chars[i]
           i += 1
-          while i < source.size && source[i] != quote
-            i += source[i] == '\\' ? 2 : 1
+          while i < chars.size && chars[i] != quote
+            i += chars[i] == '\\' ? 2 : 1
           end
         when '(', '[', '{'
           depth += 1

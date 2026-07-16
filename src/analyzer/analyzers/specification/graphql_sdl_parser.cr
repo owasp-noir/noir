@@ -51,7 +51,10 @@ module Analyzer::Specification
       if match = content.match(/\bschema\b\s*(?:@[\w]+(?:\([^)]*\))?\s*)*\{/m)
         brace_pos = content.index('{', match.begin(0) || 0)
         return mapping if brace_pos.nil?
-        body = extract_brace_block(content, brace_pos)
+        # Cluster entry point: `extract_brace_block` walks by CHAR index, so
+        # hand it a materialized char array instead of letting it re-index
+        # the String (`String#[](Int)` is O(n) per access on non-ASCII).
+        body = extract_brace_block(content, content.chars, brace_pos)
         return mapping if body.nil?
 
         body.scan(/\b(query|mutation|subscription)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)/) do |m|
@@ -77,6 +80,11 @@ module Analyzer::Specification
       root_alternation = root_names.values.uniq!.map { |n| Regex.escape(n) }.join("|")
       pattern = Regex.new("\\b(?:extend\\s+)?type\\s+(#{root_alternation})\\b(?:\\s+implements\\s+[^{]+)?\\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\\([^)]*\\))?\\s*)*\\{")
 
+      # Cluster entry point: materialize the char array once for every
+      # `extract_brace_block` walk in the scan below — `String#[](Int)` is
+      # O(n) per access on non-ASCII content.
+      sanitized_chars = sanitized.chars
+
       sanitized.scan(pattern) do |match|
         type_name = match[1]
         root_op_name = root_names.find { |_, custom| custom == type_name }
@@ -86,7 +94,7 @@ module Analyzer::Specification
         start_pos = match.begin(0) || 0
         brace_pos = sanitized.index('{', start_pos)
         next if brace_pos.nil?
-        body = extract_brace_block(sanitized, brace_pos)
+        body = extract_brace_block(sanitized, sanitized_chars, brace_pos)
         next if body.nil?
 
         body_start_in_sanitized = brace_pos + 1
@@ -103,10 +111,16 @@ module Analyzer::Specification
                              endpoints : Array(Endpoint))
       operation_keyword = ROOT_OPERATIONS[root_kind]
 
+      # Cluster entry point for `body`: the low-level walkers below index by
+      # CHAR position, so materialize the char array once and index it —
+      # `String#[](Int)` is O(n) per access on non-ASCII content. `body` is
+      # kept only for `\G`-anchored regex matches and output slices.
+      body_chars = body.chars
+
       pos = 0
-      while pos < body.size
-        pos = skip_field_padding(body, pos)
-        break if pos >= body.size
+      while pos < body_chars.size
+        pos = skip_field_padding(body_chars, pos)
+        break if pos >= body_chars.size
 
         field_match = body.match(/\G([A-Za-z_][A-Za-z0-9_]*)/, pos)
         break if field_match.nil?
@@ -115,11 +129,11 @@ module Analyzer::Specification
         field_line = field_line.try { |ln| ln + line_offset }
         cursor = pos + field_match[0].size
 
-        cursor = skip_ws(body, cursor)
+        cursor = skip_ws(body_chars, cursor)
         args = [] of NamedTuple(name: String, type: String)
-        if cursor < body.size && body[cursor] == '('
-          args_block = extract_paren_block(body, cursor)
-          close = matching_close_index(body, cursor, '(', ')')
+        if cursor < body_chars.size && body_chars[cursor] == '('
+          args_block = extract_paren_block(body, body_chars, cursor)
+          close = matching_close_index(body_chars, cursor, '(', ')')
           if args_block && close
             args = parse_arguments(args_block)
             # Jump past the *matching* close paren, not the first ')': an
@@ -129,25 +143,25 @@ module Analyzer::Specification
             # misreading later argument names as fields.
             cursor = close + 1
           else
-            cursor = advance_to_next_field(body, cursor)
+            cursor = advance_to_next_field(body_chars, cursor)
             pos = cursor
             next
           end
         end
 
-        cursor = skip_ws(body, cursor)
-        if cursor >= body.size || body[cursor] != ':'
-          pos = advance_to_next_field(body, cursor)
+        cursor = skip_ws(body_chars, cursor)
+        if cursor >= body_chars.size || body_chars[cursor] != ':'
+          pos = advance_to_next_field(body_chars, cursor)
           next
         end
         cursor += 1
-        cursor = skip_ws(body, cursor)
+        cursor = skip_ws(body_chars, cursor)
 
-        return_type, after_type = read_type_reference(body, cursor)
+        return_type, after_type = read_type_reference(body, body_chars, cursor)
         cursor = after_type
-        directives, after_directives = read_directives(body, cursor)
+        directives, after_directives = read_directives(body, body_chars, cursor)
         cursor = after_directives
-        pos = advance_to_next_field(body, cursor)
+        pos = advance_to_next_field(body_chars, cursor)
 
         emit_endpoint(file_path, field_line, field_name, args, return_type, directives,
           operation_keyword, type_name, root_kind, default_path, tag_source, input_types, endpoints)
@@ -199,12 +213,17 @@ module Analyzer::Specification
       input_types = Hash(String, Array(InputField)).new
       pattern = /\binput\s+([A-Za-z_][A-Za-z0-9_]*)\b\s*(?:@[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?\s*)*\{/
 
+      # Cluster entry point: materialize the char array once for every
+      # `extract_brace_block` walk in the scan below — `String#[](Int)` is
+      # O(n) per access on non-ASCII content.
+      sanitized_chars = sanitized.chars
+
       sanitized.scan(pattern) do |match|
         type_name = match[1]
         start_pos = match.begin(0) || 0
         brace_pos = sanitized.index('{', start_pos)
         next if brace_pos.nil?
-        body = extract_brace_block(sanitized, brace_pos)
+        body = extract_brace_block(sanitized, sanitized_chars, brace_pos)
         next if body.nil?
 
         input_types[type_name] = parse_input_fields(body)
@@ -334,20 +353,24 @@ module Analyzer::Specification
       end
     end
 
-    private def extract_brace_block(content : String, open_pos : Int32) : String?
-      extract_paired_block(content, open_pos, '{', '}')
+    private def extract_brace_block(content : String, chars : Array(Char), open_pos : Int32) : String?
+      extract_paired_block(content, chars, open_pos, '{', '}')
     end
 
-    private def extract_paren_block(content : String, open_pos : Int32) : String?
-      extract_paired_block(content, open_pos, '(', ')')
+    private def extract_paren_block(content : String, chars : Array(Char), open_pos : Int32) : String?
+      extract_paired_block(content, chars, open_pos, '(', ')')
     end
 
-    private def extract_paired_block(content : String, open_pos : Int32,
+    # Walks `chars` (materialized once at the cluster entry point) instead of
+    # indexing `content` per character — `String#[](Int)` is O(n) per access
+    # on non-ASCII content. `content` is kept only for the single one-shot
+    # output slice below; all positions are CHAR indices.
+    private def extract_paired_block(content : String, chars : Array(Char), open_pos : Int32,
                                      open_ch : Char, close_ch : Char) : String?
       depth = 0
       pos = open_pos
-      while pos < content.size
-        ch = content[pos]
+      while pos < chars.size
+        ch = chars[pos]
         case ch
         when open_ch
           depth += 1
@@ -366,12 +389,14 @@ module Analyzer::Specification
     # pairs counted), or nil when unbalanced. Unlike `String#index(close_ch)`
     # it skips over inner pairs — needed so a field/directive argument list
     # is not cut short at the first `)` belonging to a nested directive.
-    private def matching_close_index(content : String, open_pos : Int32,
+    # Walks the materialized char array (O(1) per access) instead of
+    # re-indexing the String; returned index is a CHAR index.
+    private def matching_close_index(chars : Array(Char), open_pos : Int32,
                                      open_ch : Char, close_ch : Char) : Int32?
       depth = 0
       pos = open_pos
-      while pos < content.size
-        ch = content[pos]
+      while pos < chars.size
+        ch = chars[pos]
         if ch == open_ch
           depth += 1
         elsif ch == close_ch
@@ -383,69 +408,81 @@ module Analyzer::Specification
       nil
     end
 
-    private def skip_ws(content : String, pos : Int32) : Int32
-      while pos < content.size && content[pos].ascii_whitespace?
+    # Walks the materialized char array (see cluster entry points) — O(1)
+    # per access where `String#[](Int)` is O(n) on non-ASCII content.
+    private def skip_ws(chars : Array(Char), pos : Int32) : Int32
+      while pos < chars.size && chars[pos].ascii_whitespace?
         pos += 1
       end
       pos
     end
 
-    private def skip_field_padding(content : String, pos : Int32) : Int32
-      while pos < content.size && (content[pos].ascii_whitespace? || content[pos] == ',')
+    # Walks the materialized char array (see cluster entry points) — O(1)
+    # per access where `String#[](Int)` is O(n) on non-ASCII content.
+    private def skip_field_padding(chars : Array(Char), pos : Int32) : Int32
+      while pos < chars.size && (chars[pos].ascii_whitespace? || chars[pos] == ',')
         pos += 1
       end
       pos
     end
 
-    private def advance_to_next_field(content : String, pos : Int32) : Int32
-      while pos < content.size && content[pos] != '\n' && content[pos] != ','
+    # Walks the materialized char array (see cluster entry points) — O(1)
+    # per access where `String#[](Int)` is O(n) on non-ASCII content.
+    private def advance_to_next_field(chars : Array(Char), pos : Int32) : Int32
+      while pos < chars.size && chars[pos] != '\n' && chars[pos] != ','
         pos += 1
       end
-      pos += 1 if pos < content.size
+      pos += 1 if pos < chars.size
       pos
     end
 
     private def parse_arguments(block : String) : Array(NamedTuple(name: String, type: String))
       args = [] of NamedTuple(name: String, type: String)
+      # Cluster entry point for `block`: materialize the char array once and
+      # index it — `String#[](Int)` is O(n) per access on non-ASCII content.
+      # `block` is kept only for `\G`-anchored regex matches and slicing.
+      chars = block.chars
       pos = 0
-      while pos < block.size
-        pos = skip_field_padding(block, pos)
-        break if pos >= block.size
+      while pos < chars.size
+        pos = skip_field_padding(chars, pos)
+        break if pos >= chars.size
 
         name_match = block.match(/\G([A-Za-z_][A-Za-z0-9_]*)/, pos)
         break if name_match.nil?
         name = name_match[1]
         cursor = pos + name_match[0].size
 
-        cursor = skip_ws(block, cursor)
-        if cursor >= block.size || block[cursor] != ':'
-          pos = advance_past_arg(block, cursor)
+        cursor = skip_ws(chars, cursor)
+        if cursor >= chars.size || chars[cursor] != ':'
+          pos = advance_past_arg(chars, cursor)
           next
         end
         cursor += 1
-        cursor = skip_ws(block, cursor)
+        cursor = skip_ws(chars, cursor)
 
-        type_str, after_type = read_type_reference(block, cursor)
+        type_str, after_type = read_type_reference(block, chars, cursor)
         cursor = after_type
 
-        cursor = skip_ws(block, cursor)
-        if cursor < block.size && block[cursor] == '='
-          cursor = skip_default_value(block, cursor + 1)
+        cursor = skip_ws(chars, cursor)
+        if cursor < chars.size && chars[cursor] == '='
+          cursor = skip_default_value(chars, cursor + 1)
         end
 
-        _, after_directives = read_directives(block, cursor)
+        _, after_directives = read_directives(block, chars, cursor)
         cursor = after_directives
 
         args << {name: name, type: type_str}
-        pos = advance_past_arg(block, cursor)
+        pos = advance_past_arg(chars, cursor)
       end
       args
     end
 
-    private def advance_past_arg(content : String, pos : Int32) : Int32
+    # Walks the materialized char array (see cluster entry points) — O(1)
+    # per access where `String#[](Int)` is O(n) on non-ASCII content.
+    private def advance_past_arg(chars : Array(Char), pos : Int32) : Int32
       depth = 0
-      while pos < content.size
-        ch = content[pos]
+      while pos < chars.size
+        ch = chars[pos]
         case ch
         when '(', '[', '{'
           depth += 1
@@ -461,11 +498,14 @@ module Analyzer::Specification
       pos
     end
 
-    private def read_type_reference(content : String, pos : Int32) : Tuple(String, Int32)
+    # Walks `chars` (materialized once at the cluster entry point) instead of
+    # indexing `content` per character; `content` is kept only for the single
+    # one-shot output slice below. Positions are CHAR indices.
+    private def read_type_reference(content : String, chars : Array(Char), pos : Int32) : Tuple(String, Int32)
       start = pos
       depth = 0
-      while pos < content.size
-        ch = content[pos]
+      while pos < chars.size
+        ch = chars[pos]
         if ch == '['
           depth += 1
           pos += 1
@@ -473,7 +513,7 @@ module Analyzer::Specification
           depth -= 1
           pos += 1
           if depth <= 0
-            pos += 1 if pos < content.size && content[pos] == '!'
+            pos += 1 if pos < chars.size && chars[pos] == '!'
             break
           end
         elsif ch == '!' || ch == '_' || ch.ascii_alphanumeric?
@@ -487,12 +527,15 @@ module Analyzer::Specification
       {content[start...pos].strip, pos}
     end
 
-    private def read_directives(content : String, pos : Int32) : Tuple(Array(NamedTuple(name: String, args: String)), Int32)
+    # Walks `chars` (materialized once at the cluster entry point) instead of
+    # indexing `content` per character; `content` is kept for the
+    # `\G`-anchored regex matches and the paren-block slice only.
+    private def read_directives(content : String, chars : Array(Char), pos : Int32) : Tuple(Array(NamedTuple(name: String, args: String)), Int32)
       directives = [] of NamedTuple(name: String, args: String)
       last_committed = pos
       loop do
-        scan_pos = skip_ws(content, pos)
-        break if scan_pos >= content.size || content[scan_pos] != '@'
+        scan_pos = skip_ws(chars, pos)
+        break if scan_pos >= chars.size || chars[scan_pos] != '@'
         scan_pos += 1
         name_match = content.match(/\G([A-Za-z_][A-Za-z0-9_]*)/, scan_pos)
         break if name_match.nil?
@@ -500,11 +543,11 @@ module Analyzer::Specification
         scan_pos += name_match[0].size
 
         args_repr = ""
-        if scan_pos < content.size && content[scan_pos] == '('
-          args_block = extract_paren_block(content, scan_pos)
+        if scan_pos < chars.size && chars[scan_pos] == '('
+          args_block = extract_paren_block(content, chars, scan_pos)
           if args_block
             args_repr = "(#{args_block.strip})"
-            close = matching_close_index(content, scan_pos, '(', ')')
+            close = matching_close_index(chars, scan_pos, '(', ')')
             scan_pos = close ? close + 1 : scan_pos + 1
           end
         end
@@ -516,13 +559,15 @@ module Analyzer::Specification
       {directives, last_committed}
     end
 
-    private def skip_default_value(content : String, pos : Int32) : Int32
-      pos = skip_ws(content, pos)
-      return pos if pos >= content.size
+    # Walks the materialized char array (see cluster entry points) — O(1)
+    # per access where `String#[](Int)` is O(n) on non-ASCII content.
+    private def skip_default_value(chars : Array(Char), pos : Int32) : Int32
+      pos = skip_ws(chars, pos)
+      return pos if pos >= chars.size
       depth = 0
       in_string = false
-      while pos < content.size
-        ch = content[pos]
+      while pos < chars.size
+        ch = chars[pos]
         if in_string
           if ch == '"'
             in_string = false
