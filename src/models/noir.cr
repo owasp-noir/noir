@@ -201,10 +201,14 @@ class NoirRunner
     @logger.sub "➔ Updating status codes."
     final = [] of Endpoint
 
-    exclude_codes = [] of Int32
+    # A Set dedupes repeated codes (--exclude-codes 404,404,500) for free and
+    # gives O(1) membership; empty tokens (a trailing comma) are skipped.
+    exclude_codes = Set(Int32).new
     unless @options["exclude_codes"].to_s.empty?
       @options["exclude_codes"].to_s.split(",").each do |code|
-        exclude_codes << code.strip.to_i
+        stripped = code.strip
+        next if stripped.empty?
+        exclude_codes << stripped.to_i
       end
     end
 
