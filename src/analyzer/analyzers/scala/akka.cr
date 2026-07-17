@@ -211,66 +211,73 @@ module Analyzer::Scala
 
     # Extract parameters from a code block
     private def extract_params_from_block(endpoint : Endpoint, block : String)
-      # Extract single parameter: parameter("name") { ... }
-      block.scan(/parameter\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "query"))
-      end
-
-      # Extract symbol parameters: parameter('name) { ... }
-      block.scan(/parameter\s*\(\s*'(\w+)/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
-      end
-
-      # Extract Symbol("name") parameters.
-      block.scan(/parameter\s*\(\s*Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        param_name = match[1]
-        unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-          endpoint.push_param(Param.new(param_name, "", "query"))
-        end
-      end
-
-      # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
-      if params_match = block.match(/parameters\s*\(([^)]+)\)/)
-        params_content = params_match[1]
-        params_content.scan(/['"](\w+)['"]/) do |match|
-          param_name = match[1]
-          # Avoid duplicating parameters already added
-          unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
-            endpoint.push_param(Param.new(param_name, "", "query"))
-          end
+      # Extract query parameters
+      if block.includes?("parameter") || block.includes?("Symbol")
+        # Extract single parameter: parameter("name") { ... }
+        block.scan(/parameter\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          endpoint.push_param(Param.new(match[1], "", "query"))
         end
 
-        params_content.scan(/'(\w+)/) do |match|
+        # Extract symbol parameters: parameter('name) { ... }
+        block.scan(/parameter\s*\(\s*'(\w+)/) do |match|
           param_name = match[1]
           unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
             endpoint.push_param(Param.new(param_name, "", "query"))
           end
         end
 
-        params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        # Extract Symbol("name") parameters.
+        block.scan(/parameter\s*\(\s*Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
           param_name = match[1]
           unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
             endpoint.push_param(Param.new(param_name, "", "query"))
+          end
+        end
+
+        # Extract multiple parameters: parameters("name", "age") or parameters("name", "age".optional)
+        if params_match = block.match(/parameters\s*\(([^)]+)\)/)
+          params_content = params_match[1]
+          params_content.scan(/['"](\w+)['"]/) do |match|
+            param_name = match[1]
+            # Avoid duplicating parameters already added
+            unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+              endpoint.push_param(Param.new(param_name, "", "query"))
+            end
+          end
+
+          params_content.scan(/'(\w+)/) do |match|
+            param_name = match[1]
+            unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+              endpoint.push_param(Param.new(param_name, "", "query"))
+            end
+          end
+
+          params_content.scan(/Symbol\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+            param_name = match[1]
+            unless endpoint.params.any? { |p| p.name == param_name && p.param_type == "query" }
+              endpoint.push_param(Param.new(param_name, "", "query"))
+            end
           end
         end
       end
 
       # Extract request body: entity(as[User]) { ... }
-      if entity_match = block.match(/entity\s*\(\s*as\[([^\]]+)\]/)
-        endpoint.push_param(Param.new("body", entity_match[1], "json"))
+      if block.includes?("entity")
+        if entity_match = block.match(/entity\s*\(\s*as\[([^\]]+)\]/)
+          endpoint.push_param(Param.new("body", entity_match[1], "json"))
+        end
       end
 
       # Extract headers: headerValueByName("Authorization") { ... }
-      block.scan(/headerValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "header"))
-      end
+      if block.includes?("headerValue") || block.includes?("HeaderValue")
+        block.scan(/headerValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          endpoint.push_param(Param.new(match[1], "", "header"))
+        end
 
-      # Extract optional headers: optionalHeaderValueByName("X-API-Key") { ... }
-      block.scan(/optionalHeaderValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "header"))
+        # Extract optional headers: optionalHeaderValueByName("X-API-Key") { ... }
+        block.scan(/optionalHeaderValueByName\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+          endpoint.push_param(Param.new(match[1], "", "header"))
+        end
       end
     end
 
