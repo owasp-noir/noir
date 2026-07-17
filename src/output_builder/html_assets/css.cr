@@ -19,7 +19,7 @@ module HtmlReportAssets
       --on-fill: #f7f7f8;
       --hover: #f0f0f2;
       --selection: rgba(17, 17, 20, 0.12);
-      --accent: #047857;
+      --accent: #ee2a22;
       --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
       /* semantic method hues (AA on --bg / tint backgrounds) */
@@ -64,7 +64,7 @@ module HtmlReportAssets
       --on-fill: #0b0b10;
       --hover: #131319;
       --selection: rgba(237, 237, 240, 0.16);
-      --accent: #34d399;
+      --accent: #ff6a5e;
       --m-get: #34d399;
       --m-get-soft: rgba(52, 211, 153, 0.09);
       --m-get-line: rgba(52, 211, 153, 0.34);
@@ -137,8 +137,6 @@ module HtmlReportAssets
       flex-shrink: 0;
       display: block;
     }
-    .brand-mark rect.block { fill: var(--ink); }
-    .brand-mark rect.visor { fill: var(--accent); }
     .brand-text { display: flex; flex-direction: column; min-width: 0; }
     .brand-eyebrow {
       font-family: var(--font-mono);
