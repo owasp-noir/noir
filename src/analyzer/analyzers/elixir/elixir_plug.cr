@@ -108,55 +108,70 @@ module Analyzer::Elixir
       # Extract parameters from the block content
       (start_index..end_index).each do |i|
         line = lines[i]
+        has_conn = line.includes?("conn.")
+        has_header = line.includes?("get_req_header")
+        next unless has_conn || has_header
 
-        # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
-        line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "query:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "query")
-            seen_params << param_key
+        if has_conn
+          # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
+          if line.includes?("query_params")
+            line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "query:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "query")
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract params (could be query for GET or form for POST/PUT/PATCH)
-        line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_type = (method == "GET") ? "query" : "form"
-          param_key = "#{param_type}:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", param_type)
-            seen_params << param_key
+          # Extract params (could be query for GET or form for POST/PUT/PATCH)
+          if line.includes?("params[")
+            line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_type = (method == "GET") ? "query" : "form"
+              param_key = "#{param_type}:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", param_type)
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
-        line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "form:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "form")
-            seen_params << param_key
+          # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
+          if line.includes?("body_params")
+            line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "form:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "form")
+                seen_params << param_key
+              end
+            end
+          end
+
+          # Extract cookie parameters (conn.cookies["cookie_name"])
+          if line.includes?("cookies")
+            line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "cookie:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "cookie")
+                seen_params << param_key
+              end
+            end
           end
         end
 
         # Extract header parameters (get_req_header(conn, "header-name"))
-        line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
-          param_name = match[1]
-          param_key = "header:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "header")
-            seen_params << param_key
-          end
-        end
-
-        # Extract cookie parameters (conn.cookies["cookie_name"])
-        line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "cookie:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "cookie")
-            seen_params << param_key
+        if has_header
+          line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
+            param_name = match[1]
+            param_key = "header:#{param_name}"
+            unless seen_params.includes?(param_key)
+              params << Param.new(param_name, "", "header")
+              seen_params << param_key
+            end
           end
         end
       end
@@ -234,22 +249,24 @@ module Analyzer::Elixir
         end
       end
 
-      # Match match statements with method patterns
-      # match "/path", via: [:get, :post]
-      if via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
-        path = via_match[1]
-        if plug_route_path?(path)
-          via_match[2].scan(/:(\w+)/) do |method_match|
-            endpoints << Endpoint.new(path, method_match[1].upcase)
+      # Match match statements only when the token is present.
+      if line.includes?("match")
+        # match "/path", via: [:get, :post]
+        if via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
+          path = via_match[1]
+          if plug_route_path?(path)
+            via_match[2].scan(/:(\w+)/) do |method_match|
+              endpoints << Endpoint.new(path, method_match[1].upcase)
+            end
           end
         end
-      end
 
-      # Match simple match statements (defaults to GET)
-      unless line.includes?("via:")
-        line.scan(/(?:^|[^.\w])match\s+["\']([^"\']+)["\']/) do |match|
-          path = match[1]
-          endpoints << Endpoint.new(path, "GET") if plug_route_path?(path)
+        # Match simple match statements (defaults to GET)
+        unless line.includes?("via:")
+          line.scan(/(?:^|[^.\w])match\s+["\']([^"\']+)["\']/) do |match|
+            path = match[1]
+            endpoints << Endpoint.new(path, "GET") if plug_route_path?(path)
+          end
         end
       end
 

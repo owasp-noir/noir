@@ -141,7 +141,11 @@ module Analyzer::Elixir
           next
         end
 
-        update_elixir_string_bindings(string_bindings, line)
+        # Bindings only change on assignments / `\\` defaults — skip the
+        # multi-regex update on every other line of a large router.
+        if line.includes?('=') || line.includes?("\\\\")
+          update_elixir_string_bindings(string_bindings, line)
+        end
 
         if !scope_stack.empty?
           if end_match = line.match(/^(\s*)end\b/)
@@ -154,16 +158,19 @@ module Analyzer::Elixir
           end
         end
 
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
-        end
+        # Scope openers always contain the `scope` token.
+        if line.includes?("scope")
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
+            index += 1
+            next
+          end
 
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          scope_stack << {prefix: string_bindings[match[2]]? || "", module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            scope_stack << {prefix: string_bindings[match[2]]? || "", module_prefix: match[3]? || "", indent: match[1].size}
+            index += 1
+            next
+          end
         end
 
         scope_prefix = current_scope_prefix(scope_stack)
@@ -184,7 +191,7 @@ module Analyzer::Elixir
         # and can open a `do` block that nests child resources under a
         # `/:parent_id` member segment. Both need the whole logical
         # statement, so assemble it before extracting routes.
-        if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
+        if line.includes?("resources") && line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
           statement, consumed = assemble_statement(lines, index)
           res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, base, string_bindings)
           res_endpoints.each do |endpoint|
@@ -235,20 +242,29 @@ module Analyzer::Elixir
     private def update_elixir_string_bindings(bindings : Hash(String, String),
                                               line : String,
                                               keyword_overrides : Hash(String, String)) : Nil
-      code = strip_trailing_comment(line).strip
+      # Callers already cheap-gate on `=` / `\\`; still bail when the
+      # stripped line has neither so nested macro expansion stays cheap.
+      return unless line.includes?('=') || line.includes?("\\\\")
 
-      if match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*["']([^"']+)["']\s*\)/)
-        key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
-        bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
-      elsif match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*([A-Z]\w*(?:\.[A-Z]\w*)*)\s*\)/)
-        key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
-        bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+      code = strip_trailing_comment(line).strip
+      return if code.empty?
+
+      if code.includes?("Keyword.get")
+        if match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*["']([^"']+)["']\s*\)/)
+          key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
+          bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+        elsif match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*([A-Z]\w*(?:\.[A-Z]\w*)*)\s*\)/)
+          key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
+          bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+        end
       elsif match = code.match(/^(\w+)\s*=\s*["']([^"']+)["']/)
         bindings[match[1]] = match[2]
       end
 
-      code.scan(/(\w+)\s*\\\\\s*([A-Z]\w*(?:\.[A-Z]\w*)*)/) do |default_match|
-        bindings[default_match[1]] = default_match[2]
+      if code.includes?("\\\\")
+        code.scan(/(\w+)\s*\\\\\s*([A-Z]\w*(?:\.[A-Z]\w*)*)/) do |default_match|
+          bindings[default_match[1]] = default_match[2]
+        end
       end
     end
 
@@ -346,7 +362,7 @@ module Analyzer::Elixir
 
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
       lines = content.lines
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       endpoints_by_action = endpoints_for_controller(controller_name, controller_path)
 
       index = 0
@@ -505,21 +521,29 @@ module Analyzer::Elixir
     end
 
     private def route_macro_invocation(line : String, current_module : String?) : RouteMacroInvocation?
+      # No macros collected → nothing to expand. Cheap reject for the
+      # common case (projects without custom route macros).
+      return if @route_macros.empty?
+
       code = strip_trailing_comment(line).strip
       return if code.empty?
 
-      if use_match = code.match(/^use\s+([A-Z]\w*(?:\.[A-Z]\w*)*)(?:\s*,\s*(.*))?$/)
-        route_macro = @route_macros["#{use_match[1]}.__using__"]?
-        return unless route_macro
+      if code.starts_with?("use ")
+        if use_match = code.match(/^use\s+([A-Z]\w*(?:\.[A-Z]\w*)*)(?:\s*,\s*(.*))?$/)
+          route_macro = @route_macros["#{use_match[1]}.__using__"]?
+          return unless route_macro
 
-        keyword_args = parse_keyword_args(use_match[2]? || "")
-        return RouteMacroInvocation.new(route_macro, [] of String, keyword_args)
+          keyword_args = parse_keyword_args(use_match[2]? || "")
+          return RouteMacroInvocation.new(route_macro, [] of String, keyword_args)
+        end
+        return
       end
 
       call_match = code.match(/^(?:(?<module>[A-Z]\w*(?:\.[A-Z]\w*)*)\.)?(?<name>[a-z_]\w*[!?]?)\s*(?:\((?<args>.*)\)|(?<bare>.*))?$/)
       return unless call_match
 
       name = call_match["name"]
+      # Most lines fail this lookup; check bare name first (O(1) hash).
       module_name = call_match["module"]?
       route_macro = if module_name
                       @route_macros["#{module_name}.#{name}"]?
@@ -643,7 +667,9 @@ module Analyzer::Elixir
           next
         end
 
-        update_elixir_string_bindings(bindings, line, invocation.keyword_args)
+        if line.includes?('=') || line.includes?("\\\\")
+          update_elixir_string_bindings(bindings, line, invocation.keyword_args)
+        end
 
         if !scope_stack.empty?
           if end_match = line.match(/^(\s*)end\b/)
@@ -656,26 +682,28 @@ module Analyzer::Elixir
           end
         end
 
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
-        end
-
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          unless prefix = bindings[match[2]]?
+        if line.includes?("scope")
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
             index += 1
             next
           end
-          scope_stack << {prefix: prefix, module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
+
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            unless prefix = bindings[match[2]]?
+              index += 1
+              next
+            end
+            scope_stack << {prefix: prefix, module_prefix: match[3]? || "", indent: match[1].size}
+            index += 1
+            next
+          end
         end
 
         scope_prefix = Noir::URLPath.join(outer_scope_prefix, current_scope_prefix(scope_stack))
         scope_module = combine_scope_modules(outer_scope_module, current_scope_module(scope_stack))
 
-        if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
+        if line.includes?("resources") && line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
           statement, consumed = assemble_statement(route_macro.body_lines, index)
           res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, base, bindings)
           res_endpoints.each do |endpoint|
@@ -775,55 +803,73 @@ module Analyzer::Elixir
       # Extract parameters from the function block content
       (start_index..end_index).each do |i|
         line = lines[i]
+        # Most action lines are business logic with no param accessors.
+        # Five PCRE scans only run when a conn accessor or header helper
+        # is present.
+        has_conn = line.includes?("conn.")
+        has_header = line.includes?("get_req_header")
+        next unless has_conn || has_header
 
-        # Extract query parameters (conn.query_params["param"])
-        line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "query:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "query")
-            seen_params << param_key
+        if has_conn
+          # Extract query parameters (conn.query_params["param"])
+          if line.includes?("query_params")
+            line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "query:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "query")
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract params (could be query for GET or form for POST/PUT/PATCH)
-        line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_type = (method == "GET") ? "query" : "form"
-          param_key = "#{param_type}:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", param_type)
-            seen_params << param_key
+          # Extract params (could be query for GET or form for POST/PUT/PATCH)
+          if line.includes?("params[")
+            line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_type = (method == "GET") ? "query" : "form"
+              param_key = "#{param_type}:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", param_type)
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract body parameters (conn.body_params["param"])
-        line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "form:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "form")
-            seen_params << param_key
+          # Extract body parameters (conn.body_params["param"])
+          if line.includes?("body_params")
+            line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "form:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "form")
+                seen_params << param_key
+              end
+            end
+          end
+
+          # Extract cookie parameters (conn.cookies["cookie_name"])
+          if line.includes?("cookies")
+            line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "cookie:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "cookie")
+                seen_params << param_key
+              end
+            end
           end
         end
 
         # Extract header parameters (get_req_header(conn, "header-name"))
-        line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
-          param_name = match[1]
-          param_key = "header:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "header")
-            seen_params << param_key
-          end
-        end
-
-        # Extract cookie parameters (conn.cookies["cookie_name"])
-        line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "cookie:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "cookie")
-            seen_params << param_key
+        if has_header
+          line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
+            param_name = match[1]
+            param_key = "header:#{param_name}"
+            unless seen_params.includes?(param_key)
+              params << Param.new(param_name, "", "header")
+              seen_params << param_key
+            end
           end
         end
       end
@@ -911,8 +957,12 @@ module Analyzer::Elixir
     # attribute sigil) so the path-parameter extractor recognises
     # it and the URL template reads cleanly. Mirrors the Python
     # f-string, Ruby `#{}`, PHP `$var`, and Crystal `#{}` fixes.
+    ELIXIR_INTERPOLATION_RE = /\#\{([^}]+)\}/
+
     private def normalize_elixir_interpolation(path : String) : String
-      path.gsub(/\#\{([^}]+)\}/) do |_|
+      # Most route literals have no `#{…}`; skip the PCRE gsub then.
+      return path unless path.includes?("\#{")
+      path.gsub(ELIXIR_INTERPOLATION_RE) do |_|
         token = $~[1].strip.lstrip('@')
         "{#{token}}"
       end
@@ -941,54 +991,59 @@ module Analyzer::Elixir
       endpoints = Array(Endpoint).new
 
       # Standard HTTP methods - extract controller and action info
-      add_standard_route(endpoints, line, "get", "GET", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "post", "POST", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "patch", "PATCH", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "put", "PUT", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "delete", "DELETE", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "options", "OPTIONS", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "head", "HEAD", scope_prefix, scope_module, base, string_bindings)
-
-      # Socket routes
-      line.scan(/(?:^|[^.\w])socket\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-        tmp = Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
-        tmp.protocol = "ws"
-        endpoints << tmp
+      STANDARD_ROUTE_METHODS.each do |verb, http_method|
+        add_standard_route(endpoints, line, verb, http_method, scope_prefix, scope_module, base, string_bindings)
       end
 
-      # LiveView routes
-      line.scan(/(?:^|[^.\w])live\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
-      end
-
-      # Phoenix.LiveDashboard and forwarded plugs expose mounted HTTP surfaces.
-      line.scan(/(?:^|[^.\w])live_dashboard\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
-      end
-
-      line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "FORWARD")
-      end
-
-      if via_match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*:(\w+[!?]?)[^\]]*via:\s*\[([^\]]+)\]/)
-        path = scoped_route_path(scope_prefix, via_match[1])
-        controller = scoped_controller(scope_module, via_match[2])
-        controller_action = via_match[3]
-        via_match[4].scan(/:(\w+)/) do |method_match|
-          http_method = method_match[1].upcase
-          @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(controller, controller_action)
-          endpoints << Endpoint.new(path, http_method)
+      # Socket / LiveView / dashboard / forward / match — each gated by a
+      # cheap substring so the common `get "/…"` lines skip the rest.
+      if line.includes?("socket")
+        line.scan(/(?:^|[^.\w])socket\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
+          tmp = Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+          tmp.protocol = "ws"
+          endpoints << tmp
         end
       end
 
-      if match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?:(\w+|\*)\s*,\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|unquote\(\s*\w+\s*\))\s*,\s*:(\w+[!?]?)/)
-        http_methods = match_route_methods(match[1])
-        path = scoped_route_path(scope_prefix, match[2])
-        controller_action = match[4]
-        controller = resolve_unquoted_ref(match[3], string_bindings)
-        http_methods.each do |http_method|
-          @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(scoped_controller(scope_module, controller), controller_action) if controller
-          endpoints << Endpoint.new(path, http_method)
+      if line.includes?("live")
+        line.scan(/(?:^|[^.\w])live\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
+          endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+        end
+
+        if line.includes?("live_dashboard")
+          line.scan(/(?:^|[^.\w])live_dashboard\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
+            endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+          end
+        end
+      end
+
+      if line.includes?("forward")
+        line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
+          endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "FORWARD")
+        end
+      end
+
+      if line.includes?("match")
+        if via_match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*:(\w+[!?]?)[^\]]*via:\s*\[([^\]]+)\]/)
+          path = scoped_route_path(scope_prefix, via_match[1])
+          controller = scoped_controller(scope_module, via_match[2])
+          controller_action = via_match[3]
+          via_match[4].scan(/:(\w+)/) do |method_match|
+            http_method = method_match[1].upcase
+            @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(controller, controller_action)
+            endpoints << Endpoint.new(path, http_method)
+          end
+        end
+
+        if match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?:(\w+|\*)\s*,\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|unquote\(\s*\w+\s*\))\s*,\s*:(\w+[!?]?)/)
+          http_methods = match_route_methods(match[1])
+          path = scoped_route_path(scope_prefix, match[2])
+          controller_action = match[4]
+          controller = resolve_unquoted_ref(match[3], string_bindings)
+          http_methods.each do |http_method|
+            @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(scoped_controller(scope_module, controller), controller_action) if controller
+            endpoints << Endpoint.new(path, http_method)
+          end
         end
       end
 
