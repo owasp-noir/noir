@@ -170,6 +170,11 @@ module Analyzer::Ruby
 
     private def grape_api_file?(content : String, grape_classes : Set(String)) : Bool
       return true if content.includes?("Grape::API")
+      # With no Grape classes anywhere in the project, the per-line membership
+      # loop below can only ever miss, so skip it. This is the common case when
+      # the whole-tree scan runs over a non-Grape repo (e.g. a Rails app, where
+      # every controller is a `class X < ApplicationController`).
+      return false if grape_classes.empty?
       return false unless content.includes?("class ") && content.includes?("<")
       content.each_line do |raw_line|
         next unless m = raw_line.match(GRAPE_CLASS_DEF)
