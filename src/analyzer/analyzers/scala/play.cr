@@ -193,7 +193,11 @@ module Analyzer::Scala
       in_multiline_string = false
       builder = String::Builder.new(content.bytesize)
       first = true
-      content.each_line do |line|
+      # Split on '\n' (not each_line, which chomps a trailing '\r'): a CRLF
+      # source must keep its '\r' bytes so `structure` stays byte-aligned 1:1
+      # with `content` — every downstream `content[start...end]` slice relies
+      # on that invariant.
+      content.split('\n').each do |line|
         if first
           first = false
         else
