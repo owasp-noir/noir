@@ -475,14 +475,18 @@ module Noir::ZigCalleeExtractor
     count
   end
 
-  # Byte-offset line counter for `Regex::MatchData#begin` positions. Avoids
-  # the `text.chars` allocation every endpoint emission used to pay for.
-  # `\n` is single-byte ASCII, so a raw byte walk is both correct and
+  # Line counter for `Regex::MatchData#begin` positions. Avoids the
+  # `text.chars` allocation every endpoint emission used to pay for. `#begin`
+  # is a CHAR index, so convert it to a byte offset before the byte walk —
+  # otherwise a multi-byte char before the match (e.g. inside a preserved
+  # string literal) makes the char index under-shoot the true byte position
+  # and the reported line number comes out too small (regression class of #2297).
+  # `\n` is single-byte ASCII, so the byte walk itself stays correct and
   # allocation-free relative to `Array(Char)`.
   def line_at(text : String, offset : Int32) : Int32
+    limit = text.char_index_to_byte_index(offset) || text.bytesize
     count = 1
     i = 0
-    limit = offset > text.bytesize ? text.bytesize : offset
     text.each_byte do |b|
       break if i >= limit
       count += 1 if b == 0x0A_u8
@@ -492,9 +496,9 @@ module Noir::ZigCalleeExtractor
   end
 
   private def newlines_before(text : String, offset : Int32) : Int32
+    limit = text.char_index_to_byte_index(offset) || text.bytesize
     count = 0
     i = 0
-    limit = offset > text.bytesize ? text.bytesize : offset
     text.each_byte do |b|
       break if i >= limit
       count += 1 if b == 0x0A_u8
