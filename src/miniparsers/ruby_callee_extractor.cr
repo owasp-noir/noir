@@ -90,6 +90,20 @@ module Noir::RubyCalleeExtractor
   end
 
   def strip_comment(line : String, preserve_strings : Bool = false) : String
+    # Fast path: the per-char rebuild below only ever diverges from the input
+    # when the line carries a `#` comment (either mode) or, with
+    # `preserve_strings: false`, a string literal whose interior is blanked.
+    # With `preserve_strings: true` a `#`-free line maps to itself; with
+    # `preserve_strings: false` it must also be quote-free. When none of the
+    # relevant trigger bytes are present, skip the String::Builder allocation
+    # entirely. `#`/`'`/`"` are single-byte ASCII that can never appear inside
+    # a UTF-8 multibyte sequence, so raw byte_index scans (memchr) are both
+    # correct and allocation-free. This is the hot path — every Ruby analyzer
+    # runs strip_comment on every line, most of which need no rewrite.
+    return line unless line.byte_index(0x23_u8) ||                       # '#'
+                       (!preserve_strings && (line.byte_index(0x27_u8) || # '\''
+                                              line.byte_index(0x22_u8)))  # '"'
+
     stripped = String::Builder.new
     in_string = false
     escaped = false
