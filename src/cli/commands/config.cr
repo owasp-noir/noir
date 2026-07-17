@@ -12,14 +12,25 @@ module Noir::CLI::ConfigCommand
 
   def self.run(argv : Array(String))
     action = nil
-    argv.each do |a|
+    override_path = nil
+    i = 0
+    while i < argv.size
+      a = argv[i]
       case a
       when "-h", "--help"
         print_help
         exit
+      when "--config-file"
+        # Honor the global --config-file flag inside the subcommand so
+        # `noir config show --config-file X` reads X, not the default path.
+        override_path = argv[i + 1]?
+        i += 1
+      when .starts_with?("--config-file=")
+        override_path = a.split("=", 2)[1]
       else
         action ||= a
       end
+      i += 1
     end
 
     if action.nil?
@@ -28,10 +39,10 @@ module Noir::CLI::ConfigCommand
     end
 
     case action
-    when "show" then show
-    when "edit" then edit
+    when "show" then show(override_path)
+    when "edit" then edit(override_path)
     when "init" then init
-    when "path" then puts config_path
+    when "path" then puts config_path(override_path)
     else
       Noir::CLI.die("Unknown config action: #{action}. Valid: #{ACTIONS.join(", ")}.")
     end
@@ -60,8 +71,8 @@ module Noir::CLI::ConfigCommand
       HELP
   end
 
-  def self.show
-    path = config_path
+  def self.show(override_path : String? = nil)
+    path = config_path(override_path)
     unless File.exists?(path)
       Noir::CLI.die("Config file does not exist: #{path}\nRun `noir config init` to create it.")
     end
@@ -111,23 +122,30 @@ module Noir::CLI::ConfigCommand
     end
   end
 
-  def self.edit
+  def self.edit(override_path : String? = nil)
+    path = config_path(override_path)
+
     # `edit` launches an interactive terminal editor. In a non-interactive
     # context (CI, piped stdin, background job) that editor would block
     # forever waiting for input that never arrives, hanging the pipeline.
     # Fail fast with a useful pointer instead.
     unless STDIN.tty?
-      Noir::CLI.die("`noir config edit` needs an interactive terminal. Edit #{config_path} directly, or use `noir config show`.")
+      Noir::CLI.die("`noir config edit` needs an interactive terminal. Edit #{path} directly, or use `noir config show`.")
     end
 
     # Ensure the file exists before launching the editor so users always
-    # land on something well-formed rather than a brand-new empty buffer.
-    unless File.exists?(config_path)
+    # land on something well-formed rather than a brand-new empty buffer. Only
+    # the default path is auto-created (via ConfigInitializer); a custom
+    # --config-file that doesn't exist is an error, not a place to scaffold.
+    unless File.exists?(path)
+      if override_path && !override_path.empty?
+        Noir::CLI.die("Config file does not exist: #{path}")
+      end
       ConfigInitializer.new.setup
-      if File.exists?(config_path)
-        STDERR.puts "Created default config at #{config_path}"
+      if File.exists?(path)
+        STDERR.puts "Created default config at #{path}"
       else
-        Noir::CLI.die("Failed to create config file at #{config_path}.")
+        Noir::CLI.die("Failed to create config file at #{path}.")
       end
     end
 
@@ -142,7 +160,7 @@ module Noir::CLI::ConfigCommand
       Noir::CLI.die("No editor configured. Set $VISUAL or $EDITOR (or install vi).")
     end
     command = editor_argv.first
-    args = editor_argv[1..] + [config_path]
+    args = editor_argv[1..] + [path]
     status = Process.run(
       command,
       args: args,
@@ -156,7 +174,8 @@ module Noir::CLI::ConfigCommand
     end
   end
 
-  def self.config_path : String
+  def self.config_path(override : String? = nil) : String
+    return File.expand_path(override) if override && !override.empty?
     File.expand_path(File.join(get_home, "config.yaml"))
   end
 
