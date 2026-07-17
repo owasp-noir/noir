@@ -35,27 +35,31 @@ module Analyzer::Crystal
 
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      lines = mask_crystal_heredocs(File.read_lines(path))
+      # Cache-first: prefer detector-warmed CodeLocator content. Valid
+      # UTF-8 is byte-identical to the previous File.read_lines path;
+      # invalid bytes now skip (matching every other Crystal analyzer)
+      # instead of raising.
+      lines = mask_crystal_heredocs(read_file_content(path).lines)
       file_base = configured_base_for(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Pre-scan: build mount_map (variable_name => mount_path) and resolve
       # compile-time macro variables used in controller references.
+      # Cheap substring gates skip the PCRE2 scan on the vast majority of
+      # lines that can't be mounts/routers/macro-vars.
       mount_map = {} of String => String
       router_vars = Set(String).new
       macro_vars = {} of String => String
 
       lines.each do |line|
-        if match = line.match(ROUTER_PATTERN)
+        if line.includes?("Kemal::Router") && (match = line.match(ROUTER_PATTERN))
           router_vars << match[1]
         end
-        if match = line.match(MOUNT_PATTERN)
+        if line.includes?("mount") && (match = line.match(MOUNT_PATTERN))
           mount_map[match[2]] = match[1]
         end
-        if include_callee
-          if match = line.match(MACRO_VAR_PATTERN)
-            macro_vars[match[1]] = match[2]
-          end
+        if include_callee && line.includes?("{{") && (match = line.match(MACRO_VAR_PATTERN))
+          macro_vars[match[1]] = match[2]
         end
       end
 
@@ -233,6 +237,10 @@ module Analyzer::Crystal
     def line_to_param(content : String) : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
 
+      # Most source lines never touch params; bail before the chain of
+      # includes?/split probes when none of the accessor prefixes appear.
+      return Param.new("", "", "") unless content.includes?("env.") || content.includes?("cookies.")
+
       if content.includes? "env.params.query["
         param = content.split("env.params.query[")[1].split("]")[0].gsub("\"", "").gsub("'", "")
         return Param.new(param, "", "query")
@@ -267,59 +275,9 @@ module Analyzer::Crystal
     end
 
     def line_to_endpoint(content : String) : Endpoint
-      content = Noir::CrystalCalleeExtractor.strip_comment(content)
-
-      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "HEAD")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "OPTIONS")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-          endpoint.protocol = "ws"
-          return endpoint
-        end
-      end
-
-      Endpoint.new("", "")
+      # Shared engine helper: precompiled per-verb patterns + includes?
+      # gates. Replaces 8 sequential unguarded .scan calls per source line.
+      match_crystal_simple_route(Noir::CrystalCalleeExtractor.strip_comment(content))
     end
   end
 end

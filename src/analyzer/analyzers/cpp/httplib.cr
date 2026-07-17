@@ -210,6 +210,12 @@ module Analyzer::Cpp
     private def collect_params(body : String) : Array(Param)
       params = [] of Param
       body.each_line do |line|
+        next unless line.includes?("param") ||
+                    line.includes?("value") ||
+                    line.includes?("header") ||
+                    line.includes?("path_params") ||
+                    line.includes?("body")
+
         line.scan(QUERY_ACCESSORS) { |m| add_param(params, Param.new(m[1], "", "query")) }
         line.scan(HEADER_ACCESSORS) { |m| add_param(params, Param.new(m[1], "", "header")) }
         line.scan(PATH_PARAM_ACCESS) { |m| add_param(params, Param.new(m[1], "", "path")) }

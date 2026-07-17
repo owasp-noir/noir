@@ -121,10 +121,12 @@ module Analyzer::Lua
     # `local x = require("a.b.c")` → { "x" => "a.b.c" }.
     private def detect_requires(cleaned : String) : Hash(String, String)
       map = {} of String => String
-      cleaned.scan(REQUIRE_RE) do |match|
-        name = match[1]
-        next if name == "local"
-        map[name] = match[3]
+      if cleaned.includes?("require")
+        cleaned.scan(REQUIRE_RE) do |match|
+          name = match[1]
+          next if name == "local"
+          map[name] = match[3]
+        end
       end
       map
     end
@@ -137,9 +139,13 @@ module Analyzer::Lua
     # leaking as phantom endpoints.
     private def detect_route_vars(cleaned : String) : Set(String)
       vars = Set(String).new
-      cleaned.scan(APP_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
-      cleaned.scan(ROUTER_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
-      cleaned.scan(USE_RECEIVER_RE) { |m| vars << m[1] }
+      if cleaned.includes?("lor")
+        cleaned.scan(APP_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
+        cleaned.scan(ROUTER_VAR_RE) { |m| vars << m[1] unless m[1] == "local" }
+      end
+      if cleaned.includes?("use")
+        cleaned.scan(USE_RECEIVER_RE) { |m| vars << m[1] }
+      end
       vars
     end
 

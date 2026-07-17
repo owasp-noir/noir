@@ -75,10 +75,11 @@ module Analyzer::Zig
       resource = resource_for(path)
       return if resource.nil?
 
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
+      stripped = prepared[:non_code]
       # Strings preserved — `params.get("foo")` reads need the literal name.
-      comment_stripped = Noir::ZigCalleeExtractor.strip_comments(content)
-      table = Noir::ZigCalleeExtractor.function_table(content, path)
+      comment_stripped = prepared[:comments]
+      table = Noir::ZigCalleeExtractor.function_table_from(prepared[:non_code_chars], path)
       by_name = {} of String => Noir::ZigCalleeExtractor::FunctionInfo
       table.each { |info| by_name[info[:name]] ||= info }
 
@@ -89,7 +90,7 @@ module Analyzer::Zig
         method, suffix, has_id = spec
 
         url = build_url(resource, suffix)
-        line = Noir::ZigCalleeExtractor.line_at(stripped.chars, match.begin(0) || 0)
+        line = Noir::ZigCalleeExtractor.line_at(stripped, match.begin(0) || 0)
         details = Details.new(PathInfo.new(path, line))
 
         params = [] of Param
@@ -127,7 +128,7 @@ module Analyzer::Zig
         import_rel = m[3]
         action = m[4]
 
-        line = Noir::ZigCalleeExtractor.line_at(text.chars, m.begin(0) || 0)
+        line = Noir::ZigCalleeExtractor.line_at(text, m.begin(0) || 0)
         endpoint = Endpoint.new(url, method, path_params(url), Details.new(PathInfo.new(path, line)))
 
         if include_callee

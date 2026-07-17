@@ -22,7 +22,7 @@ module Analyzer::Php
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       content = read_file_content(path)
       if hyperf_relevant?(content)

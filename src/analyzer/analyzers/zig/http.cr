@@ -59,9 +59,11 @@ module Analyzer::Zig
     end
 
     private def process_file(path : String, content : String, include_callee : Bool)
-      text = Noir::ZigCalleeExtractor.strip_comments(content)
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
-      chars = stripped.chars
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
+      text = prepared[:comments]
+      stripped = prepared[:non_code]
+      chars = prepared[:non_code_chars]
+      text_chars = text.chars
       test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(stripped)
       target_vars = aliases_for(text, ".head.target")
       method_vars = aliases_for(text, ".head.method")
@@ -81,10 +83,10 @@ module Analyzer::Zig
         next if seen.includes?(key)
         seen << key
 
-        emit_range(path, text, chars, hit[:offset], hit[:url], method, branch[:body_open] + 1, branch[:body_close], include_callee)
+        emit_range(path, text, text_chars, chars, hit[:offset], hit[:url], method, branch[:body_open] + 1, branch[:body_close], include_callee)
       end
 
-      collect_target_switch_routes(text, stripped, chars, target_vars).each do |route|
+      collect_target_switch_routes(text, text_chars, stripped, chars, target_vars).each do |route|
         offset = route[:offset]
         next if Noir::ZigCalleeExtractor.in_test_block?(offset, test_blocks)
         route_method_contexts = method_contexts.select do |context|
@@ -97,7 +99,7 @@ module Analyzer::Zig
           next if seen.includes?(key)
           seen << key
 
-          emit_range(path, text, chars, offset, route[:url], method, route[:body_start], route[:body_end], include_callee)
+          emit_range(path, text, text_chars, chars, offset, route[:url], method, route[:body_start], route[:body_end], include_callee)
         else
           route_method_contexts.each do |context|
             method = context[:method]
@@ -105,7 +107,7 @@ module Analyzer::Zig
             next if seen.includes?(key)
             seen << key
 
-            emit_range(path, text, chars, offset, route[:url], method, context[:body_open] + 1, context[:body_close], include_callee)
+            emit_range(path, text, text_chars, chars, offset, route[:url], method, context[:body_open] + 1, context[:body_close], include_callee)
           end
         end
       end
@@ -156,7 +158,7 @@ module Analyzer::Zig
       hits
     end
 
-    private def collect_target_switch_routes(text : String, stripped : String, chars : Array(Char), target_vars : Set(String)) : Array(RouteBlock)
+    private def collect_target_switch_routes(text : String, text_chars : Array(Char), stripped : String, chars : Array(Char), target_vars : Set(String)) : Array(RouteBlock)
       routes = [] of RouteBlock
 
       stripped.scan(SWITCH_RE) do |m|
@@ -166,7 +168,7 @@ module Analyzer::Zig
         switch_close = Noir::ZigCalleeExtractor.find_matching(chars, switch_open, '{', '}')
         next if switch_close.nil?
 
-        switch_body = slice(text.chars, switch_open + 1, switch_close)
+        switch_body = slice(text_chars, switch_open + 1, switch_close)
         switch_body.scan(TARGET_PRONG_RE) do |pm|
           url = unescape_string(pm[1])
           next unless url.starts_with?("/")
@@ -278,8 +280,8 @@ module Analyzer::Zig
       end
     end
 
-    private def emit_range(path : String, text : String, chars : Array(Char), offset : Int32, url : String, method : String, body_start : Int32, body_end : Int32, include_callee : Bool)
-      line = Noir::ZigCalleeExtractor.line_at(text.chars, offset)
+    private def emit_range(path : String, text : String, text_chars : Array(Char), chars : Array(Char), offset : Int32, url : String, method : String, body_start : Int32, body_end : Int32, include_callee : Bool)
+      line = Noir::ZigCalleeExtractor.line_at(text, offset)
       endpoint = Endpoint.new(url, method, extract_path_params(url), Details.new(PathInfo.new(path, line)))
 
       if include_callee

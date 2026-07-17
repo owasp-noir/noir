@@ -55,7 +55,7 @@ module Noir::ZigCalleeExtractor
   VENDORED_FRAMEWORK_RE = %r{/(?:deps|dep|lib|libs|vendor|vendored|pkg|pkgs|zig-pkg|packages|third_party|third-party|modules|subprojects|external|\.deps)/(?:zap|httpz|http\.zig|tokamak|jetzig|zmpl|zmd)/}
 
   def vendored_framework_path?(path : String) : Bool
-    !VENDORED_FRAMEWORK_RE.match(path.gsub('\\', '/')).nil?
+    path.gsub('\\', '/').matches?(VENDORED_FRAMEWORK_RE)
   end
 
   # `test { … }` / `test "name" { … }` block opener. Route registrations inside
@@ -96,8 +96,42 @@ module Noir::ZigCalleeExtractor
 
   # ---- public entry points (String overloads) -----------------------------
 
+  # Shared prep for framework analyzers that need both comment-stripped text
+  # (string contents preserved for route paths) and non-code-stripped text /
+  # chars (for brace matching + test-block ranges). Builds `source.chars`
+  # once and reuses it for both walks — previously every analyzer paid for
+  # two independent `source.chars` + two strip passes.
+  alias Prepared = NamedTuple(comments: String, non_code: String, non_code_chars: Array(Char))
+
+  def prepare(source : String) : Prepared
+    need_comments = strip_comments_needed?(source)
+    need_non_code = strip_non_code_needed?(source)
+
+    if !need_comments && !need_non_code
+      return {
+        comments:       source,
+        non_code:       source,
+        non_code_chars: source.chars,
+      }
+    end
+
+    chars = source.chars
+    comments = need_comments ? chars_to_string(strip_comments(chars)) : source
+    non_code_chars = need_non_code ? strip_non_code(chars) : chars
+    non_code = need_non_code ? chars_to_string(non_code_chars) : source
+    {
+      comments:       comments,
+      non_code:       non_code,
+      non_code_chars: non_code_chars,
+    }
+  end
+
   def strip_non_code(source : String) : String
-    String.build { |io| strip_non_code(source.chars).each { |c| io << c } }
+    # Fast path: nothing to blank when the source has no comment, multiline
+    # string, char-literal, or double-quoted string markers. `/`/`\`/`'`/`"`
+    # are single-byte ASCII, so byte_index (memchr) is allocation-free.
+    return source unless strip_non_code_needed?(source)
+    chars_to_string(strip_non_code(source.chars))
   end
 
   # Like `strip_non_code` but keeps the contents of double-quoted string
@@ -105,13 +139,23 @@ module Noir::ZigCalleeExtractor
   # this form to read the URL while still ignoring routes that sit in a
   # comment, a `\\` multiline doc-string, or a char literal.
   def strip_comments(source : String) : String
-    String.build { |io| strip_comments(source.chars).each { |c| io << c } }
+    # Fast path: with no `//`, `\\`, or `'` there is nothing to blank
+    # (double-quoted strings are preserved as-is).
+    return source unless strip_comments_needed?(source)
+    chars_to_string(strip_comments(source.chars))
   end
 
   def function_table(source : String, file_path : String) : Array(FunctionInfo)
     chars = source.chars
     stripped = strip_non_code(chars)
-    stripped_str = String.build { |io| stripped.each { |c| io << c } }
+    function_table_from(stripped, file_path)
+  end
+
+  # Same as `function_table` but reuses an already-stripped char array from
+  # `prepare` / `strip_non_code`, so callers that already paid for a strip
+  # don't re-walk the file.
+  def function_table_from(stripped : Array(Char), file_path : String) : Array(FunctionInfo)
+    stripped_str = chars_to_string(stripped)
     table = [] of FunctionInfo
 
     stripped_str.scan(FUNCTION_REGEX) do |match|
@@ -145,8 +189,12 @@ module Noir::ZigCalleeExtractor
   # wins; callers that need struct scoping should filter `function_table`
   # by offset instead.
   def function_bodies(source : String, file_path : String) : Hash(String, FunctionBody)
+    function_bodies_from(function_table(source, file_path), file_path)
+  end
+
+  def function_bodies_from(table : Array(FunctionInfo), file_path : String) : Hash(String, FunctionBody)
     bodies = {} of String => FunctionBody
-    function_table(source, file_path).each do |info|
+    table.each do |info|
       next if bodies.has_key?(info[:name])
       bodies[info[:name]] = {body: info[:body], path: file_path, start_line: info[:start_line]}
     end
@@ -160,7 +208,7 @@ module Noir::ZigCalleeExtractor
     # Blank comments/strings so a call-shaped token inside them is never
     # surfaced. Idempotent on the already-stripped bodies the analyzers pass
     # in (spaces stay spaces, newlines and length are preserved so line
-    # math is unaffected).
+    # math is unaffected). Fast-path skip when the body has no markers.
     body = strip_non_code(body)
 
     body.scan(CALL_REGEX) do |match|
@@ -427,14 +475,55 @@ module Noir::ZigCalleeExtractor
     count
   end
 
-  private def newlines_before(text : String, offset : Int32) : Int32
-    count = 0
+  # Line counter for `Regex::MatchData#begin` positions. Avoids the
+  # `text.chars` allocation every endpoint emission used to pay for. `#begin`
+  # is a CHAR index, so convert it to a byte offset before the byte walk —
+  # otherwise a multi-byte char before the match (e.g. inside a preserved
+  # string literal) makes the char index under-shoot the true byte position
+  # and the reported line number comes out too small (regression class of #2297).
+  # `\n` is single-byte ASCII, so the byte walk itself stays correct and
+  # allocation-free relative to `Array(Char)`.
+  def line_at(text : String, offset : Int32) : Int32
+    limit = text.char_index_to_byte_index(offset) || text.bytesize
+    count = 1
     i = 0
-    text.each_char do |ch|
-      break if i >= offset
-      count += 1 if ch == '\n'
+    text.each_byte do |b|
+      break if i >= limit
+      count += 1 if b == 0x0A_u8
       i += 1
     end
     count
+  end
+
+  private def newlines_before(text : String, offset : Int32) : Int32
+    limit = text.char_index_to_byte_index(offset) || text.bytesize
+    count = 0
+    i = 0
+    text.each_byte do |b|
+      break if i >= limit
+      count += 1 if b == 0x0A_u8
+      i += 1
+    end
+    count
+  end
+
+  private def chars_to_string(chars : Array(Char)) : String
+    String.build(chars.size) do |io|
+      chars.each { |c| io << c }
+    end
+  end
+
+  # Markers that force a full `strip_comments` walk. `//` is the line/doc
+  # comment opener; `\\` is the multiline string opener; `'` opens a char
+  # literal. A lone `/` (route paths) does NOT force a walk.
+  private def strip_comments_needed?(source : String) : Bool
+    source.includes?("//") || source.includes?("\\\\") || source.includes?("'")
+  end
+
+  # Markers that force a full `strip_non_code` walk. Adds `"` (string
+  # contents blanked) on top of the comment/char/multiline markers.
+  private def strip_non_code_needed?(source : String) : Bool
+    source.includes?("//") || source.includes?("\\\\") ||
+      source.includes?("'") || source.includes?("\"")
   end
 end

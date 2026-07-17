@@ -113,10 +113,12 @@ module Analyzer::Lua
     private def detect_app_vars(cleaned : String) : Array(String)
       vars = Set(String).new
       vars << "app"
-      cleaned.scan(APP_VAR_RE) do |match|
-        name = match[1]
-        next if name == "local"
-        vars << name
+      if cleaned.includes?("lapis.Application")
+        cleaned.scan(APP_VAR_RE) do |match|
+          name = match[1]
+          next if name == "local"
+          vars << name
+        end
       end
       vars.to_a
     end
@@ -132,10 +134,12 @@ module Analyzer::Lua
     private def detect_app_paths(cleaned : String, app_vars : Array(String)) : Hash(String, String)
       known = app_vars.to_set
       paths = {} of String => String
-      cleaned.scan(APP_PATH_RE) do |match|
-        var = match[1]
-        next unless known.includes?(var)
-        paths[var] = match[3]
+      if cleaned.includes?(".path")
+        cleaned.scan(APP_PATH_RE) do |match|
+          var = match[1]
+          next unless known.includes?(var)
+          paths[var] = match[3]
+        end
       end
       paths
     end
@@ -149,7 +153,7 @@ module Analyzer::Lua
     # is the universal convention) and prefix the file's MoonScript
     # class actions with it.
     private def detect_moonscript_prefix(cleaned : String) : String
-      if match = cleaned.match(MOON_PATH_RE)
+      if cleaned.includes?("@path") && (match = cleaned.match(MOON_PATH_RE))
         match[2]
       else
         ""
@@ -277,6 +281,7 @@ module Analyzer::Lua
                                   cleaned : String,
                                   include_callee : Bool,
                                   handler_bodies : Hash(String, Noir::LuaCalleeExtractor::FunctionBody))
+      return unless cleaned.includes?("]") && cleaned.includes?("=")
       pattern = /\[\s*(['"])([^'"]+)\1\s*\]\s*=/
       cleaned.scan(pattern) do |match|
         url = match[2]
@@ -304,6 +309,7 @@ module Analyzer::Lua
     # regardless of what follows the `:` and inspect the action region to
     # recover the HTTP verbs (from a `respond_to` block) and callees.
     private def emit_moonscript_routes(path : String, content : String, cleaned : String, include_callee : Bool, moon_prefix : String)
+      return unless path.ends_with?(".moon")
       # Bracketed named routes `[name: "/path"]:` are unambiguous Lapis
       # syntax, so we accept any action body. Bare `"/path":` keys are
       # only treated as routes when the path is rooted and the body

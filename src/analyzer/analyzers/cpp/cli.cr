@@ -70,7 +70,10 @@ module Analyzer::Cpp
 
     # Precompiled union for the per-file test-path skip gate (cpp_test_path?),
     # matched via String#matches? instead of five naive substring scans.
-    CPP_TEST_PATH_RE = Regex.union("/test/", "/tests/", "_test.", "test_", ".test.")
+    CPP_TEST_PATH_RE = Regex.new(
+      Regex.union("/test/", "/tests/", "_test.", "test_", ".test.").source,
+      Regex::Options::IGNORE_CASE
+    )
 
     def analyze
       endpoints = {} of String => Endpoint
@@ -101,7 +104,7 @@ module Analyzer::Cpp
     end
 
     private def cpp_test_path?(path : String) : Bool
-      path.downcase.matches?(CPP_TEST_PATH_RE)
+      path.matches?(CPP_TEST_PATH_RE)
     end
 
     private def cpp_binary_name(path : String) : String

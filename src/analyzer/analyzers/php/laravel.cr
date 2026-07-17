@@ -60,12 +60,14 @@ module Analyzer::Php
       # Match any `.php` under a `routes/` directory at any depth. Larger
       # apps group routes in subdirectories — snipe-it keeps per-resource
       # files in `routes/web/hardware.php`, `routes/web/users.php`, etc.
-      File.dirname(path).split('/').includes?("routes")
+      # Prefer substring checks over allocating a dirname split array.
+      path.includes?("/routes/") || path.includes?("\\routes\\") ||
+        File.basename(File.dirname(path)) == "routes"
     end
 
     private def analyze_routes_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       begin
         content = read_file_content(path)
         # `use App\Http\Controllers\...;` imports map the short class

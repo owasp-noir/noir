@@ -15,27 +15,31 @@ module Analyzer::Php
 
       endpoints = [] of Endpoint
       relative_path = get_relative_path(php_base_path_for(path), path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       content = read_file_content(path)
       params_query = [] of Param
       params_body = [] of Param
       methods = [] of String
 
-      content.each_line do |line|
-        if line.matches?(ALLOW_PATTERNS_RE)
-          superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
-          superglobal_matches.each do |match|
-            apply_param_reference(match[1], match[2], params_query, params_body, methods)
-          end
+      # Pure-PHP still emits a GET pseudo-endpoint per file even when no
+      # superglobals are present. Only the per-line param walk is gated.
+      if content.includes?("$_") || content.includes?("filter_input")
+        content.each_line do |line|
+          if line.matches?(ALLOW_PATTERNS_RE)
+            superglobal_matches = line.scan(/\$_(GET|POST|REQUEST|SERVER|COOKIE|FILES)\s*\[\s*['"]([^'"]+)['"]\s*\]/)
+            superglobal_matches.each do |match|
+              apply_param_reference(match[1], match[2], params_query, params_body, methods)
+            end
 
-          filter_input_matches = line.scan(/filter_input\s*\(\s*INPUT_(GET|POST|REQUEST|SERVER|COOKIE)\s*,\s*['"]([^'"]+)['"]/)
-          filter_input_matches.each do |match|
-            apply_param_reference(match[1], match[2], params_query, params_body, methods)
+            filter_input_matches = line.scan(/filter_input\s*\(\s*INPUT_(GET|POST|REQUEST|SERVER|COOKIE)\s*,\s*['"]([^'"]+)['"]/)
+            filter_input_matches.each do |match|
+              apply_param_reference(match[1], match[2], params_query, params_body, methods)
+            end
           end
+        rescue
+          next
         end
-      rescue
-        next
       end
 
       # For the pure-PHP analyzer we are parameter-driven (not route-driven).

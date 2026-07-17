@@ -11,6 +11,10 @@ module Analyzer::Elixir
     # Store mapping of route -> controller/action for parameter extraction
     @route_map : Hash(RouteMapKey, ControllerAction) = Hash(RouteMapKey, ControllerAction).new
     @route_macros : Hash(String, RouteMacro) = Hash(String, RouteMacro).new
+    # Reverse index built once after route discovery:
+    #   base -> normalized controller key -> action -> endpoints
+    # Replaces the previous per-controller O(|routes|) scan of `@result`.
+    @controller_endpoint_index = Hash(String, Hash(String, Hash(String, Array(Endpoint)))).new
 
     # `get`/`post`/… → its precompiled route regex. `add_standard_route` runs
     # once per verb per line of every `.ex` file; `Regex.new` there recompiled
@@ -29,6 +33,19 @@ module Analyzer::Elixir
     STANDARD_ROUTE_PATTERNS = STANDARD_ROUTE_METHODS.keys.to_h do |verb|
       {verb, Regex.new("(?:^|[^.\\w])#{verb}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Z]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))(?=\\s*[,)]|\\s*$)(?:\\s*,\\s*:(\\w+[!?]?))?")}
     end
+
+    # File-level gate for the route-extraction pass. Controllers, schemas,
+    # views, and most application modules never declare Phoenix routes, but
+    # `analyze_file` used to line-scan every `.ex` file anyway. Match the
+    # DSL shape (verb + optional paren + string/`unquote`/atom) so common
+    # non-route uses like `Map.get(` or `forget` do not force a full scan.
+    # Custom route macros collected in the first pass are checked by name
+    # separately in `may_contain_phoenix_routes?`.
+    PHOENIX_ROUTE_EVIDENCE_RE = /
+      \b(?:get|post|put|patch|delete|options|head|match|resources|scope|socket|live|live_dashboard|forward)
+      \s*(?:\(\s*)?(?:["']|unquote\b|:)
+      |\bdefmacro\s+
+    /x
 
     struct ControllerAction
       property controller : String
@@ -70,10 +87,21 @@ module Analyzer::Elixir
       # First pass: collect routes via the engine's parallel file scan.
       super
 
+      # Build the controller→action reverse index once so the param pass
+      # is O(|controllers| + |routes|) rather than O(|controllers|·|routes|).
+      build_controller_endpoint_index
+
       # Second pass: extract parameters from controller files
       extract_controller_params
 
       @result
+    end
+
+    # Phoenix routers and controllers are always `.ex` modules. `.exs`
+    # scripts never register routes, so skip the extension the engine
+    # includes for Plug.
+    protected def elixir_source_files : Array(String)
+      get_files_by_extension(".ex")
     end
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -90,6 +118,10 @@ module Analyzer::Elixir
       # (same "utf-8"/`invalid: :skip` decoding as the `File.open` this
       # replaced) instead of re-reading the file from disk here.
       content = read_file_content(path)
+      # Controllers/schemas/views dominate a Phoenix tree and never carry
+      # route macros. Skip the per-line walk when nothing in the file can
+      # produce an endpoint (evidence regex + known custom macro names).
+      return endpoints unless may_contain_phoenix_routes?(content)
       lines = content.lines
       current_module = extract_module_name(content)
 
@@ -98,12 +130,12 @@ module Analyzer::Elixir
         line = lines[index]
 
         if line.includes?("\"\"\"")
-          line.scan(/"""/).size.times { in_triple_double = !in_triple_double }
+          count_substring(line, "\"\"\"").times { in_triple_double = !in_triple_double }
           index += 1
           next
         end
         if line.includes?("'''")
-          line.scan(/'''/).size.times { in_triple_single = !in_triple_single }
+          count_substring(line, "'''").times { in_triple_single = !in_triple_single }
           index += 1
           next
         end
@@ -124,7 +156,11 @@ module Analyzer::Elixir
           next
         end
 
-        update_elixir_string_bindings(string_bindings, line)
+        # Bindings only change on assignments / `\\` defaults — skip the
+        # multi-regex update on every other line of a large router.
+        if line.includes?('=') || line.includes?("\\\\")
+          update_elixir_string_bindings(string_bindings, line)
+        end
 
         if !scope_stack.empty?
           if end_match = line.match(/^(\s*)end\b/)
@@ -137,16 +173,19 @@ module Analyzer::Elixir
           end
         end
 
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
-        end
+        # Scope openers always contain the `scope` token.
+        if line.includes?("scope")
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
+            index += 1
+            next
+          end
 
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          scope_stack << {prefix: string_bindings[match[2]]? || "", module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            scope_stack << {prefix: string_bindings[match[2]]? || "", module_prefix: match[3]? || "", indent: match[1].size}
+            index += 1
+            next
+          end
         end
 
         scope_prefix = current_scope_prefix(scope_stack)
@@ -167,7 +206,7 @@ module Analyzer::Elixir
         # and can open a `do` block that nests child resources under a
         # `/:parent_id` member segment. Both need the whole logical
         # statement, so assemble it before extracting routes.
-        if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
+        if line.includes?("resources") && line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
           statement, consumed = assemble_statement(lines, index)
           res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, base, string_bindings)
           res_endpoints.each do |endpoint|
@@ -218,20 +257,29 @@ module Analyzer::Elixir
     private def update_elixir_string_bindings(bindings : Hash(String, String),
                                               line : String,
                                               keyword_overrides : Hash(String, String)) : Nil
-      code = strip_trailing_comment(line).strip
+      # Callers already cheap-gate on `=` / `\\`; still bail when the
+      # stripped line has neither so nested macro expansion stays cheap.
+      return unless line.includes?('=') || line.includes?("\\\\")
 
-      if match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*["']([^"']+)["']\s*\)/)
-        key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
-        bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
-      elsif match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*([A-Z]\w*(?:\.[A-Z]\w*)*)\s*\)/)
-        key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
-        bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+      code = strip_trailing_comment(line).strip
+      return if code.empty?
+
+      if code.includes?("Keyword.get")
+        if match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*["']([^"']+)["']\s*\)/)
+          key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
+          bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+        elsif match = code.match(/^(\w+)\s*=\s*Keyword\.get\([^,]+,\s*:\w+\s*,\s*([A-Z]\w*(?:\.[A-Z]\w*)*)\s*\)/)
+          key = code.match(/Keyword\.get\([^,]+,\s*:(\w+)/).try(&.[1])
+          bindings[match[1]] = key.try { |name| keyword_overrides[name]? } || match[2]
+        end
       elsif match = code.match(/^(\w+)\s*=\s*["']([^"']+)["']/)
         bindings[match[1]] = match[2]
       end
 
-      code.scan(/(\w+)\s*\\\\\s*([A-Z]\w*(?:\.[A-Z]\w*)*)/) do |default_match|
-        bindings[default_match[1]] = default_match[2]
+      if code.includes?("\\\\")
+        code.scan(/(\w+)\s*\\\\\s*([A-Z]\w*(?:\.[A-Z]\w*)*)/) do |default_match|
+          bindings[default_match[1]] = default_match[2]
+        end
       end
     end
 
@@ -252,7 +300,12 @@ module Analyzer::Elixir
     # callee extractor's `strip_comment`, which discards quotes. A `#`
     # only opens a comment outside a string, so a `#` inside a quoted
     # path won't truncate the statement.
+    #
+    # No `#` → return the original slice (zero allocation). The common
+    # path for route / controller lines.
     private def strip_trailing_comment(line : String) : String
+      return line unless line.includes?('#')
+
       in_string = false
       escaped = false
       quote = '\0'
@@ -278,17 +331,22 @@ module Analyzer::Elixir
     def extract_controller_params
       # Find all controller files and extract parameters. Pulls from the
       # detector-built file_map so subtree pruning and --exclude-path
-      # apply to this pass too.
+      # apply to this pass too. Files are already registered in
+      # CodeLocator; skip the redundant `File.exists?` syscall.
       controller_files = get_files_by_extension(".ex").select do |path|
         next false unless path.ends_with?("_controller.ex")
+        next false if elixir_test_path?(path)
         base_paths.any? { |base| path_under_root?(path, base) }
       end
 
       controller_files.each do |controller_path|
-        next unless File.exists?(controller_path)
-
         begin
           content = read_file_content(controller_path)
+          # Action heads always bind `conn` (see the signature matcher
+          # below). Controllers that never mention it cannot contribute
+          # params, callees, or code-path attachments — skip them.
+          next unless content.includes?("conn")
+
           controller_name = File.basename(controller_path, ".ex")
           controller_module = extract_controller_module(content) || controller_name
 
@@ -300,20 +358,85 @@ module Analyzer::Elixir
       end
     end
 
+    # Walk `@result` + `@route_map` once and group endpoints under every
+    # normalized controller key that `controller_refs_match?` would accept.
+    # Short mapped names (`UserController`) index under their last segment
+    # so an FQ lookup (`MyAppWeb.UserController`) still finds them; FQ
+    # mapped names only index under the full normalized form (matching
+    # the asymmetric equality rule in `controller_refs_match?`).
+    private def build_controller_endpoint_index : Nil
+      @controller_endpoint_index.clear
+
+      @result.each do |endpoint|
+        route_key = endpoint_route_map_key(endpoint)
+        next unless mapping = @route_map[route_key]?
+
+        base = route_key[0]
+        action = mapping.action
+        mapped = mapping.controller
+        norm = normalize_controller_ref(mapped)
+
+        by_base = @controller_endpoint_index[base] ||=
+          Hash(String, Hash(String, Array(Endpoint))).new
+        by_controller = by_base[norm] ||=
+          Hash(String, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
+        by_controller[action] << endpoint
+
+        # Short mappings are already a single segment after normalize.
+        # Nothing further to index. FQ mappings stay under the full key
+        # only — `controller_refs_match?` requires full equality for them.
+      end
+    end
+
+    # True when this source can contribute routes in the second pass.
+    # Combines the fixed DSL evidence regex with names of custom route
+    # macros discovered in `collect_route_macros`, including `use Mod`
+    # expansion sites for `defmacro __using__`.
+    private def may_contain_phoenix_routes?(content : String) : Bool
+      return true if content.matches?(PHOENIX_ROUTE_EVIDENCE_RE)
+
+      @route_macros.each_key do |key|
+        if key.ends_with?(".__using__")
+          mod = key[0, key.size - ".__using__".size]
+          return true if content.includes?("use #{mod}")
+        else
+          # Bare macro name only; FQ keys duplicate the same body.
+          next if key.includes?('.')
+          return true if content.includes?(key)
+        end
+      end
+
+      false
+    end
+
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
       lines = content.lines
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       endpoints_by_action = endpoints_for_controller(controller_name, controller_path)
+      return if endpoints_by_action.empty?
 
       index = 0
       while index < lines.size
         line = lines[index]
+
+        # `def`/`defp` is a rare token relative to body lines. Cheap
+        # substring gate before the two regexes.
+        unless line.includes?("def")
+          index += 1
+          next
+        end
 
         if line.matches?(/^\s*defp\s/) || !(name_match = line.match(/^\s*def\s+(\w+)\(/))
           index += 1
           next
         end
         action_name = name_match[1]
+
+        matching_endpoints = endpoints_by_action[action_name]?
+        if matching_endpoints.nil? || matching_endpoints.empty?
+          index += 1
+          next
+        end
 
         # A controller action's first argument is always the connection,
         # but the head can pattern-match it (`def edit(conn = %{assigns:
@@ -329,12 +452,6 @@ module Analyzer::Elixir
           next
         end
 
-        matching_endpoints = endpoints_by_action[action_name]? || [] of Endpoint
-        if matching_endpoints.empty?
-          index += 1
-          next
-        end
-
         # Find the end of the function block once per controller action.
         block_end = find_function_end(lines, body_start)
         if block_end == -1
@@ -344,11 +461,17 @@ module Analyzer::Elixir
 
         callees = include_callee ? callees_from_function_block(lines, body_start, block_end, controller_path) : nil
 
+        # `conn.params` type depends on the HTTP method (query vs form).
+        # Cache the extraction per distinct method so a multi-verb action
+        # (resources `update` → PUT+PATCH) only walks the body once per
+        # type, not once per endpoint.
+        params_by_method = {} of String => Array(Param)
+
         matching_endpoints.each do |endpoint|
           append_code_path(endpoint.details, PathInfo.new(controller_path, index + 1))
 
-          # Extract parameters from the function block
-          params = extract_params_from_function_block(lines, body_start, block_end, endpoint.method)
+          params = params_by_method[endpoint.method] ||=
+            extract_params_from_function_block(lines, body_start, block_end, endpoint.method)
           params.each { |param| endpoint.push_param(param) }
 
           attach_elixir_callees(endpoint, callees) if callees
@@ -382,7 +505,7 @@ module Analyzer::Elixir
         # The block opens at the first top-level `do` once the argument
         # list's parentheses are balanced; the paren guard keeps a `do`
         # buried in a default value or atom inside the args from firing.
-        if paren <= 0 && code.matches?(/\bdo\b(?!:)/)
+        if paren <= 0 && code.includes?("do") && code.matches?(/\bdo\b(?!:)/)
           return {buffer, i}
         end
         i += 1
@@ -393,15 +516,24 @@ module Analyzer::Elixir
     private def collect_route_macros : Nil
       @route_macros.clear
 
-      get_files_by_extension(".ex").each do |path|
-        next unless File.exists?(path)
+      files = get_files_by_extension(".ex").reject { |path| elixir_test_path?(path) }
+      mutex = Mutex.new
 
+      # Macro bodies are independent per file; merge under a mutex.
+      # Parallelism matters on large Phoenix trees where most files are
+      # rejected by the `defmacro` substring gate after a single read.
+      parallel_analyze(files) do |path|
         begin
           content = read_file_content(path)
+          # Vast majority of `.ex` files never define macros. Cheap
+          # substring gate before line-splitting and signature assembly.
+          next unless content.includes?("defmacro")
+
           module_name = extract_module_name(content)
           lines = content.lines
-          index = 0
+          local = [] of Tuple(String, RouteMacro)
 
+          index = 0
           while index < lines.size
             line = lines[index]
             stripped = line.strip
@@ -431,10 +563,16 @@ module Analyzer::Elixir
               body_lines
             )
 
-            @route_macros[name] = route_macro
-            @route_macros["#{module_name}.#{name}"] = route_macro if module_name
+            local << {name, route_macro}
+            local << {"#{module_name}.#{name}", route_macro} if module_name
 
             index = macro_end + 1
+          end
+
+          unless local.empty?
+            mutex.synchronize do
+              local.each { |key, mc| @route_macros[key] = mc }
+            end
           end
         rescue e
           logger.debug "Error collecting Phoenix route macros from #{path}: #{e}"
@@ -456,21 +594,29 @@ module Analyzer::Elixir
     end
 
     private def route_macro_invocation(line : String, current_module : String?) : RouteMacroInvocation?
+      # No macros collected → nothing to expand. Cheap reject for the
+      # common case (projects without custom route macros).
+      return if @route_macros.empty?
+
       code = strip_trailing_comment(line).strip
       return if code.empty?
 
-      if use_match = code.match(/^use\s+([A-Z]\w*(?:\.[A-Z]\w*)*)(?:\s*,\s*(.*))?$/)
-        route_macro = @route_macros["#{use_match[1]}.__using__"]?
-        return unless route_macro
+      if code.starts_with?("use ")
+        if use_match = code.match(/^use\s+([A-Z]\w*(?:\.[A-Z]\w*)*)(?:\s*,\s*(.*))?$/)
+          route_macro = @route_macros["#{use_match[1]}.__using__"]?
+          return unless route_macro
 
-        keyword_args = parse_keyword_args(use_match[2]? || "")
-        return RouteMacroInvocation.new(route_macro, [] of String, keyword_args)
+          keyword_args = parse_keyword_args(use_match[2]? || "")
+          return RouteMacroInvocation.new(route_macro, [] of String, keyword_args)
+        end
+        return
       end
 
       call_match = code.match(/^(?:(?<module>[A-Z]\w*(?:\.[A-Z]\w*)*)\.)?(?<name>[a-z_]\w*[!?]?)\s*(?:\((?<args>.*)\)|(?<bare>.*))?$/)
       return unless call_match
 
       name = call_match["name"]
+      # Most lines fail this lookup; check bare name first (O(1) hash).
       module_name = call_match["module"]?
       route_macro = if module_name
                       @route_macros["#{module_name}.#{name}"]?
@@ -594,7 +740,9 @@ module Analyzer::Elixir
           next
         end
 
-        update_elixir_string_bindings(bindings, line, invocation.keyword_args)
+        if line.includes?('=') || line.includes?("\\\\")
+          update_elixir_string_bindings(bindings, line, invocation.keyword_args)
+        end
 
         if !scope_stack.empty?
           if end_match = line.match(/^(\s*)end\b/)
@@ -607,26 +755,28 @@ module Analyzer::Elixir
           end
         end
 
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
-        end
-
-        if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
-          unless prefix = bindings[match[2]]?
+        if line.includes?("scope")
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?["']([^"']+)["'](?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            scope_stack << {prefix: match[2], module_prefix: match[3]? || "", indent: match[1].size}
             index += 1
             next
           end
-          scope_stack << {prefix: prefix, module_prefix: match[3]? || "", indent: match[1].size}
-          index += 1
-          next
+
+          if match = line.match(/^(\s*)scope\s*(?:\(\s*)?unquote\(\s*(\w+)\s*\)(?:\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*))?/)
+            unless prefix = bindings[match[2]]?
+              index += 1
+              next
+            end
+            scope_stack << {prefix: prefix, module_prefix: match[3]? || "", indent: match[1].size}
+            index += 1
+            next
+          end
         end
 
         scope_prefix = Noir::URLPath.join(outer_scope_prefix, current_scope_prefix(scope_stack))
         scope_module = combine_scope_modules(outer_scope_module, current_scope_module(scope_stack))
 
-        if line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
+        if line.includes?("resources") && line.matches?(/(?:^|[^.\w])resources\s*(?:\(\s*)?["']/)
           statement, consumed = assemble_statement(route_macro.body_lines, index)
           res_endpoints, nested_prefix = resources_from_statement(statement, scope_prefix, scope_module, base, bindings)
           res_endpoints.each do |endpoint|
@@ -656,15 +806,27 @@ module Analyzer::Elixir
       endpoints_by_action = Hash(String, Array(Endpoint)).new { |hash, key| hash[key] = [] of Endpoint }
       base = configured_base_for(controller_path)
 
-      @result.each do |endpoint|
-        route_key = endpoint_route_map_key(endpoint)
-        # Keep param extraction scoped to the controller's own base so a
-        # monorepo's sibling services don't borrow each other's params.
-        next unless route_key[0] == base
-        next unless mapping = @route_map[route_key]?
-        next unless controller_refs_match?(controller_name, mapping.controller)
+      by_base = @controller_endpoint_index[base]?
+      return endpoints_by_action unless by_base
 
-        endpoints_by_action[mapping.action] << endpoint
+      # Lookup under the full normalized name and, when it has a module
+      # prefix, under the last segment so short mapped controllers
+      # (`UserController`) still match an FQ module extract.
+      # Index keys already mirror `controller_refs_match?`: short mappings
+      # live under a single segment, FQ mappings only under the full form.
+      norm = normalize_controller_ref(controller_name)
+      keys = [norm]
+      if norm.includes?('.')
+        keys << (norm.split('.').last || norm)
+      end
+
+      keys.uniq.each do |key|
+        next unless by_controller = by_base[key]?
+        by_controller.each do |action, endpoints|
+          endpoints.each do |endpoint|
+            endpoints_by_action[action] << endpoint
+          end
+        end
       end
 
       endpoints_by_action
@@ -726,55 +888,73 @@ module Analyzer::Elixir
       # Extract parameters from the function block content
       (start_index..end_index).each do |i|
         line = lines[i]
+        # Most action lines are business logic with no param accessors.
+        # Five PCRE scans only run when a conn accessor or header helper
+        # is present.
+        has_conn = line.includes?("conn.")
+        has_header = line.includes?("get_req_header")
+        next unless has_conn || has_header
 
-        # Extract query parameters (conn.query_params["param"])
-        line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "query:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "query")
-            seen_params << param_key
+        if has_conn
+          # Extract query parameters (conn.query_params["param"])
+          if line.includes?("query_params")
+            line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "query:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "query")
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract params (could be query for GET or form for POST/PUT/PATCH)
-        line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_type = (method == "GET") ? "query" : "form"
-          param_key = "#{param_type}:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", param_type)
-            seen_params << param_key
+          # Extract params (could be query for GET or form for POST/PUT/PATCH)
+          if line.includes?("params[")
+            line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_type = (method == "GET") ? "query" : "form"
+              param_key = "#{param_type}:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", param_type)
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract body parameters (conn.body_params["param"])
-        line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "form:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "form")
-            seen_params << param_key
+          # Extract body parameters (conn.body_params["param"])
+          if line.includes?("body_params")
+            line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "form:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "form")
+                seen_params << param_key
+              end
+            end
+          end
+
+          # Extract cookie parameters (conn.cookies["cookie_name"])
+          if line.includes?("cookies")
+            line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "cookie:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "cookie")
+                seen_params << param_key
+              end
+            end
           end
         end
 
         # Extract header parameters (get_req_header(conn, "header-name"))
-        line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
-          param_name = match[1]
-          param_key = "header:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "header")
-            seen_params << param_key
-          end
-        end
-
-        # Extract cookie parameters (conn.cookies["cookie_name"])
-        line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "cookie:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "cookie")
-            seen_params << param_key
+        if has_header
+          line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
+            param_name = match[1]
+            param_key = "header:#{param_name}"
+            unless seen_params.includes?(param_key)
+              params << Param.new(param_name, "", "header")
+              seen_params << param_key
+            end
           end
         end
       end
@@ -803,12 +983,25 @@ module Analyzer::Elixir
       extract_module_name(content)
     end
 
+    MODULE_NAME_RE = /^\s*defmodule\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+do\b/m
+
     private def extract_module_name(content : String) : String?
-      content.each_line do |line|
-        if match = line.match(/^\s*defmodule\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+do\b/)
-          return match[1]
-        end
+      # Single multiline search for the first `defmodule` instead of
+      # allocating an iterator over every line of large modules.
+      content.match(MODULE_NAME_RE).try(&.[1])
+    end
+
+    # Count non-overlapping occurrences of `needle` without allocating a
+    # MatchData array (`String#scan(…​).size`).
+    private def count_substring(text : String, needle : String) : Int32
+      return 0 if needle.empty?
+      count = 0
+      i = 0
+      while j = text.index(needle, i)
+        count += 1
+        i = j + needle.size
       end
+      count
     end
 
     private def normalize_controller_ref(controller : String) : String
@@ -862,8 +1055,12 @@ module Analyzer::Elixir
     # attribute sigil) so the path-parameter extractor recognises
     # it and the URL template reads cleanly. Mirrors the Python
     # f-string, Ruby `#{}`, PHP `$var`, and Crystal `#{}` fixes.
+    ELIXIR_INTERPOLATION_RE = /\#\{([^}]+)\}/
+
     private def normalize_elixir_interpolation(path : String) : String
-      path.gsub(/\#\{([^}]+)\}/) do |_|
+      # Most route literals have no `#{…}`; skip the PCRE gsub then.
+      return path unless path.includes?("\#{")
+      path.gsub(ELIXIR_INTERPOLATION_RE) do |_|
         token = $~[1].strip.lstrip('@')
         "{#{token}}"
       end
@@ -892,54 +1089,59 @@ module Analyzer::Elixir
       endpoints = Array(Endpoint).new
 
       # Standard HTTP methods - extract controller and action info
-      add_standard_route(endpoints, line, "get", "GET", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "post", "POST", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "patch", "PATCH", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "put", "PUT", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "delete", "DELETE", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "options", "OPTIONS", scope_prefix, scope_module, base, string_bindings)
-      add_standard_route(endpoints, line, "head", "HEAD", scope_prefix, scope_module, base, string_bindings)
-
-      # Socket routes
-      line.scan(/(?:^|[^.\w])socket\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-        tmp = Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
-        tmp.protocol = "ws"
-        endpoints << tmp
+      STANDARD_ROUTE_METHODS.each do |verb, http_method|
+        add_standard_route(endpoints, line, verb, http_method, scope_prefix, scope_module, base, string_bindings)
       end
 
-      # LiveView routes
-      line.scan(/(?:^|[^.\w])live\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
-        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
-      end
-
-      # Phoenix.LiveDashboard and forwarded plugs expose mounted HTTP surfaces.
-      line.scan(/(?:^|[^.\w])live_dashboard\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
-      end
-
-      line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "FORWARD")
-      end
-
-      if via_match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*:(\w+[!?]?)[^\]]*via:\s*\[([^\]]+)\]/)
-        path = scoped_route_path(scope_prefix, via_match[1])
-        controller = scoped_controller(scope_module, via_match[2])
-        controller_action = via_match[3]
-        via_match[4].scan(/:(\w+)/) do |method_match|
-          http_method = method_match[1].upcase
-          @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(controller, controller_action)
-          endpoints << Endpoint.new(path, http_method)
+      # Socket / LiveView / dashboard / forward / match — each gated by a
+      # cheap substring so the common `get "/…"` lines skip the rest.
+      if line.includes?("socket")
+        line.scan(/(?:^|[^.\w])socket\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
+          tmp = Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+          tmp.protocol = "ws"
+          endpoints << tmp
         end
       end
 
-      if match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?:(\w+|\*)\s*,\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|unquote\(\s*\w+\s*\))\s*,\s*:(\w+[!?]?)/)
-        http_methods = match_route_methods(match[1])
-        path = scoped_route_path(scope_prefix, match[2])
-        controller_action = match[4]
-        controller = resolve_unquoted_ref(match[3], string_bindings)
-        http_methods.each do |http_method|
-          @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(scoped_controller(scope_module, controller), controller_action) if controller
-          endpoints << Endpoint.new(path, http_method)
+      if line.includes?("live")
+        line.scan(/(?:^|[^.\w])live\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*(.+?)\s*/) do |match|
+          endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+        end
+
+        if line.includes?("live_dashboard")
+          line.scan(/(?:^|[^.\w])live_dashboard\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
+            endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "GET")
+          end
+        end
+      end
+
+      if line.includes?("forward")
+        line.scan(/(?:^|[^.\w])forward\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
+          endpoints << Endpoint.new(scoped_route_path(scope_prefix, match[1]), "FORWARD")
+        end
+      end
+
+      if line.includes?("match")
+        if via_match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*,\s*:(\w+[!?]?)[^\]]*via:\s*\[([^\]]+)\]/)
+          path = scoped_route_path(scope_prefix, via_match[1])
+          controller = scoped_controller(scope_module, via_match[2])
+          controller_action = via_match[3]
+          via_match[4].scan(/:(\w+)/) do |method_match|
+            http_method = method_match[1].upcase
+            @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(controller, controller_action)
+            endpoints << Endpoint.new(path, http_method)
+          end
+        end
+
+        if match = line.match(/(?:^|[^.\w])match\s*(?:\(\s*)?:(\w+|\*)\s*,\s*['"]([^'"]+)['"]\s*,\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|unquote\(\s*\w+\s*\))\s*,\s*:(\w+[!?]?)/)
+          http_methods = match_route_methods(match[1])
+          path = scoped_route_path(scope_prefix, match[2])
+          controller_action = match[4]
+          controller = resolve_unquoted_ref(match[3], string_bindings)
+          http_methods.each do |http_method|
+            @route_map[route_map_key(base, http_method, path)] = ControllerAction.new(scoped_controller(scope_module, controller), controller_action) if controller
+            endpoints << Endpoint.new(path, http_method)
+          end
         end
       end
 

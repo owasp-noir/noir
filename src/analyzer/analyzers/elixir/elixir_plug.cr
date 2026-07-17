@@ -3,15 +3,11 @@ require "../../engines/elixir_engine"
 module Analyzer::Elixir
   class Plug < ElixirEngine
     def analyze_file(path : String) : Array(Endpoint)
+      # Extension and `*_test.exs` filtering live in ElixirEngine's
+      # `parallel_file_scan`; Plug only needs the remaining .ex/.exs
+      # split (.exs scripts still carry Plug.Router modules).
       ext = File.extname(path)
       return [] of Endpoint unless ext == ".ex" || ext == ".exs"
-      # Elixir convention: `*_test.exs` files are ExUnit test
-      # modules. They register routes (often via inline
-      # `Plug.Router`-using modules or `defmodule TestRouter do ... use
-      # Phoenix.Router`) purely to exercise the framework; the routes
-      # never serve real traffic. Phoenix's own repo and any
-      # `phx.gen.auth` scaffold's tests trip this hard.
-      return [] of Endpoint if test_only_path?(path)
 
       endpoints = [] of Endpoint
       # `read_file_content` reuses the detector's already-cached bytes
@@ -37,13 +33,26 @@ module Analyzer::Elixir
     # this distinguishes the two even though both share `get`/`post`
     # route macros.
     private def phoenix_router?(content : String) : Bool
-      content.includes?("Phoenix.Router") ||
-        content.matches?(/\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b/)
+      return true if content.includes?("Phoenix.Router")
+      # Cheap reject before the `:router` atom regex — most Plug modules
+      # never mention `use ` with a router tag.
+      return false unless content.includes?(":router")
+      content.matches?(/\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b/)
     end
+
+    # File-level gate: Plug.Router only registers absolute paths via the
+    # verb/`match`/`forward` macros. Files with none of those tokens
+    # cannot contribute endpoints (models, views, plain modules).
+    PLUG_ROUTE_EVIDENCE_RE = /
+      \b(?:get|post|put|patch|delete|head|options|forward|match)
+      \s*(?:\(\s*)?["']
+    /x
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      return endpoints unless content.matches?(PLUG_ROUTE_EVIDENCE_RE)
+
+      include_callee = callees_needed?
 
       # Find all route blocks and extract params
       lines = content.lines
@@ -58,11 +67,11 @@ module Analyzer::Elixir
       in_triple_single = false
       lines.each_with_index do |line, index|
         if line.includes?("\"\"\"")
-          line.scan(/"""/).size.times { in_triple_double = !in_triple_double }
+          count_substring(line, "\"\"\"").times { in_triple_double = !in_triple_double }
           next
         end
         if line.includes?("'''")
-          line.scan(/'''/).size.times { in_triple_single = !in_triple_single }
+          count_substring(line, "'''").times { in_triple_single = !in_triple_single }
           next
         end
         next if in_triple_double || in_triple_single
@@ -88,14 +97,6 @@ module Analyzer::Elixir
       endpoints
     end
 
-    # ExUnit's filename convention is rigid: every test module sits in
-    # a file named `*_test.exs`, and `mix test` ignores anything else.
-    # Skipping by suffix is safe because production code never adopts
-    # that name.
-    private def test_only_path?(path : String) : Bool
-      File.basename(path).ends_with?("_test.exs")
-    end
-
     def extract_params_from_block(lines : Array(String), start_index : Int32, method : String, block_end : Int32? = nil) : Array(Param)
       params = Array(Param).new
       seen_params = Set(String).new # Track seen params for O(1) lookup
@@ -107,55 +108,70 @@ module Analyzer::Elixir
       # Extract parameters from the block content
       (start_index..end_index).each do |i|
         line = lines[i]
+        has_conn = line.includes?("conn.")
+        has_header = line.includes?("get_req_header")
+        next unless has_conn || has_header
 
-        # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
-        line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "query:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "query")
-            seen_params << param_key
+        if has_conn
+          # Extract query parameters (conn.query_params["param"] or conn.params["param"] for GET)
+          if line.includes?("query_params")
+            line.scan(/conn\.query_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "query:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "query")
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract params (could be query for GET or form for POST/PUT/PATCH)
-        line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_type = (method == "GET") ? "query" : "form"
-          param_key = "#{param_type}:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", param_type)
-            seen_params << param_key
+          # Extract params (could be query for GET or form for POST/PUT/PATCH)
+          if line.includes?("params[")
+            line.scan(/conn\.params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_type = (method == "GET") ? "query" : "form"
+              param_key = "#{param_type}:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", param_type)
+                seen_params << param_key
+              end
+            end
           end
-        end
 
-        # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
-        line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "form:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "form")
-            seen_params << param_key
+          # Extract body parameters (conn.body_params["param"] for POST/PUT/PATCH)
+          if line.includes?("body_params")
+            line.scan(/conn\.body_params\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "form:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "form")
+                seen_params << param_key
+              end
+            end
+          end
+
+          # Extract cookie parameters (conn.cookies["cookie_name"])
+          if line.includes?("cookies")
+            line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
+              param_name = match[1]
+              param_key = "cookie:#{param_name}"
+              unless seen_params.includes?(param_key)
+                params << Param.new(param_name, "", "cookie")
+                seen_params << param_key
+              end
+            end
           end
         end
 
         # Extract header parameters (get_req_header(conn, "header-name"))
-        line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
-          param_name = match[1]
-          param_key = "header:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "header")
-            seen_params << param_key
-          end
-        end
-
-        # Extract cookie parameters (conn.cookies["cookie_name"])
-        line.scan(/conn\.cookies\[["']([^"']+)["']\]/) do |match|
-          param_name = match[1]
-          param_key = "cookie:#{param_name}"
-          unless seen_params.includes?(param_key)
-            params << Param.new(param_name, "", "cookie")
-            seen_params << param_key
+        if has_header
+          line.scan(/get_req_header\(conn,\s*["']([^"']+)["']\)/) do |match|
+            param_name = match[1]
+            param_key = "header:#{param_name}"
+            unless seen_params.includes?(param_key)
+              params << Param.new(param_name, "", "header")
+              seen_params << param_key
+            end
           end
         end
       end
@@ -233,22 +249,24 @@ module Analyzer::Elixir
         end
       end
 
-      # Match match statements with method patterns
-      # match "/path", via: [:get, :post]
-      if via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
-        path = via_match[1]
-        if plug_route_path?(path)
-          via_match[2].scan(/:(\w+)/) do |method_match|
-            endpoints << Endpoint.new(path, method_match[1].upcase)
+      # Match match statements only when the token is present.
+      if line.includes?("match")
+        # match "/path", via: [:get, :post]
+        if via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*\[([^\]]+)\]/)
+          path = via_match[1]
+          if plug_route_path?(path)
+            via_match[2].scan(/:(\w+)/) do |method_match|
+              endpoints << Endpoint.new(path, method_match[1].upcase)
+            end
           end
         end
-      end
 
-      # Match simple match statements (defaults to GET)
-      unless line.includes?("via:")
-        line.scan(/(?:^|[^.\w])match\s+["\']([^"\']+)["\']/) do |match|
-          path = match[1]
-          endpoints << Endpoint.new(path, "GET") if plug_route_path?(path)
+        # Match simple match statements (defaults to GET)
+        unless line.includes?("via:")
+          line.scan(/(?:^|[^.\w])match\s+["\']([^"\']+)["\']/) do |match|
+            path = match[1]
+            endpoints << Endpoint.new(path, "GET") if plug_route_path?(path)
+          end
         end
       end
 
@@ -259,6 +277,19 @@ module Analyzer::Elixir
     # doesn't begin with `/` is a misfire on some other string literal.
     private def plug_route_path?(path : String) : Bool
       path.starts_with?('/')
+    end
+
+    # Count non-overlapping occurrences of `needle` without allocating a
+    # MatchData array (`String#scan(…​).size`).
+    private def count_substring(text : String, needle : String) : Int32
+      return 0 if needle.empty?
+      count = 0
+      i = 0
+      while j = text.index(needle, i)
+        count += 1
+        i = j + needle.size
+      end
+      count
     end
   end
 end

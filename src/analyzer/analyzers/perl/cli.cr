@@ -58,19 +58,19 @@ module Analyzer::Perl
               # in the file don't leak as bogus flags.
               in_getoptions = true if line.includes?("GetOptions") && line.includes?("(")
               if in_getoptions
-                line.scan(GETOPT_KEY) { |m| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag")) }
-              end
-              if in_getoptions
+                if line.includes?("=>")
+                  line.scan(GETOPT_KEY) { |m| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag")) }
+                end
                 go_depth += line.count('(') - line.count(')')
                 in_getoptions = false if go_depth <= 0
               end
-              if m = line.match(GETOPTS)
+              if line.includes?("getopt") && (m = line.match(GETOPTS))
                 parse_getopt_short(m[1], fetch_endpoint(endpoints, root_url, path, line_no))
               end
-              if m = line.match(ARGV_IDX)
+              if line.includes?("ARGV") && (m = line.match(ARGV_IDX))
                 fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{m[1]}", "", "argument"))
               end
-              if emit_env
+              if emit_env && line.includes?("ENV")
                 line.scan(ENV_READ) { |em| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(em[1], "", "env")) }
               end
               # Only treat `[ 'spec' => ... ]` array-refs as option specs
@@ -78,13 +78,13 @@ module Analyzer::Perl
               # literals elsewhere in the file don't leak as bogus flags.
               in_describe_options = true if line.includes?("describe_options") && line.includes?("(")
               if in_describe_options
-                line.scan(DESCRIBE_OPT_SPEC) { |opt_match| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(opt_match[1], "", "flag")) }
-              end
-              if in_describe_options
+                if line.includes?("[")
+                  line.scan(DESCRIBE_OPT_SPEC) { |opt_match| fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(opt_match[1], "", "flag")) }
+                end
                 do_depth += line.count('(') - line.count(')')
                 in_describe_options = false if do_depth <= 0
               end
-              if uses_moox_options
+              if uses_moox_options && line.includes?("option")
                 if m = line.match(MOOX_OPTION)
                   fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
                 end

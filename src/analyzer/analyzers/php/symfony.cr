@@ -9,9 +9,17 @@ module Analyzer::Php
       end
     end
 
+    # Symfony route configs also live in YAML under config/routes*.
+    # Extend the engine's default `.php`-only source set.
+    protected def php_source_files : Array(String)
+      get_files_by_extension(".php") +
+        get_files_by_extension(".yaml") +
+        get_files_by_extension(".yml")
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Analyze PHP controller files
       if path.ends_with?(".php")
@@ -32,6 +40,12 @@ module Analyzer::Php
       endpoints = [] of Endpoint
 
       content = read_file_content(path)
+      # Controllers/services without route attributes dominate a Symfony
+      # tree. Skip the annotation/attribute scans when neither form is
+      # present (`@Route` or `#[Route`).
+      return endpoints unless content.includes?("Route")
+      return endpoints unless content.includes?("@Route") || content.includes?("#[Route")
+
       class_prefixes = extract_class_route_prefixes(content)
 
       # Look for route annotations (@Route) - more flexible pattern
@@ -265,64 +279,74 @@ module Analyzer::Php
       params = [] of Param
       seen_params = Set(String).new
 
+      # Every accessor below is `$request->…`. Bodies that never touch
+      # the request object cannot contribute params.
+      return params unless method_body.includes?("$request")
+
       # Extract query parameters: $request->query->get('param')
-      query_matches = method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      query_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "query")
-          seen_params.add(param_name)
+      if method_body.includes?("query->get")
+        method_body.scan(/\$request->query->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "query")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract request body/form parameters: $request->request->get('param')
-      request_matches = method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      request_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "form")
-          seen_params.add(param_name)
+      if method_body.includes?("request->get")
+        method_body.scan(/\$request->request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "form")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract header parameters: $request->headers->get('param')
-      header_matches = method_body.scan(/\$request->headers->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      header_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "header")
-          seen_params.add(param_name)
+      if method_body.includes?("headers->get")
+        method_body.scan(/\$request->headers->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "header")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract cookie parameters: $request->cookies->get('param')
-      cookie_matches = method_body.scan(/\$request->cookies->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      cookie_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "cookie")
-          seen_params.add(param_name)
+      if method_body.includes?("cookies->get")
+        method_body.scan(/\$request->cookies->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "cookie")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract file parameters: $request->files->get('param')
-      file_matches = method_body.scan(/\$request->files->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      file_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "file")
-          seen_params.add(param_name)
+      if method_body.includes?("files->get")
+        method_body.scan(/\$request->files->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "file")
+            seen_params.add(param_name)
+          end
         end
       end
 
       # Extract generic request parameters: $request->get('param')
       # This is ambiguous (could be query or body), so we mark it as query by default
-      generic_matches = method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/)
-      generic_matches.each do |match|
-        param_name = match[1]
-        unless seen_params.includes?(param_name)
-          params << Param.new(param_name, "", "query")
-          seen_params.add(param_name)
+      if method_body.includes?("->get")
+        method_body.scan(/\$request->get\s*\(\s*['"]([^'"]+)['"]\s*(?:,\s*[^)]+)?\)/) do |match|
+          param_name = match[1]
+          unless seen_params.includes?(param_name)
+            params << Param.new(param_name, "", "query")
+            seen_params.add(param_name)
+          end
         end
       end
 

@@ -51,7 +51,7 @@ module Noir
     def initialize(source : String)
       @chars = source.chars
       @size = @chars.size
-      @masked = Array(Char).new(@size)
+      @masked = @chars.dup
       @spans = [] of Tuple(Symbol, Int32, Int32)
       @tokens = nil
       @skip_ranges = nil
@@ -84,7 +84,6 @@ module Noir
         elsif c == '@' || c == '$'
           i = dispatch_prefixed_string(i)
         else
-          @masked << c
           i += 1
         end
       end
@@ -105,7 +104,6 @@ module Noir
       if j < @size && @chars[j] == '"'
         mask_string(start, j, verbatim, interpolated)
       else
-        @masked << @chars[start]
         start + 1
       end
     end
@@ -113,7 +111,7 @@ module Noir
     private def mask_line_comment(start : Int32) : Int32
       i = start
       while i < @size && @chars[i] != '\n'
-        @masked << ' '
+        @masked[i] = ' '
         i += 1
       end
       @spans << {:comment, start, i}
@@ -123,17 +121,17 @@ module Noir
     private def mask_block_comment(start : Int32) : Int32
       # Blank the `/*` opener first, then scan for `*/` from after it so `/*/`
       # is not mis-read as self-closing.
-      @masked << ' '
-      @masked << ' '
+      @masked[start] = ' '
+      @masked[start + 1] = ' '
       i = start + 2
       while i < @size
         if @chars[i] == '*' && i + 1 < @size && @chars[i + 1] == '/'
-          @masked << ' '
-          @masked << ' '
+          @masked[i] = ' '
+          @masked[i + 1] = ' '
           i += 2
           break
         end
-        @masked << (@chars[i] == '\n' ? '\n' : ' ')
+        @masked[i] = ' ' unless @chars[i] == '\n'
         i += 1
       end
       @spans << {:comment, start, i}
@@ -143,12 +141,12 @@ module Noir
     # `start` points at the opening `'`. Masks a char literal, honouring a
     # single backslash escape (`'\''`, `'\\'`, `'\}'`).
     private def mask_char_literal(start : Int32) : Int32
-      @masked << ' '
+      @masked[start] = ' '
       i = start + 1
       escaped = false
       while i < @size
         c = @chars[i]
-        @masked << (c == '\n' ? '\n' : ' ')
+        @masked[i] = ' ' unless c == '\n'
         if escaped
           escaped = false
         elsif c == '\\'
@@ -167,7 +165,7 @@ module Noir
     # `quote_pos` is the opening `"`. Dispatches to raw / verbatim / regular
     # masking and records one `:string` span spanning the whole literal.
     private def mask_string(start : Int32, quote_pos : Int32, verbatim : Bool, interpolated : Bool) : Int32
-      (start...quote_pos).each { @masked << ' ' }
+      (start...quote_pos).each { |idx| @masked[idx] = ' ' }
 
       unless verbatim
         run = 0
@@ -180,14 +178,14 @@ module Noir
           return mask_raw_string(start, quote_pos, run)
         end
         if run == 2
-          @masked << ' '
-          @masked << ' '
+          @masked[quote_pos] = ' '
+          @masked[quote_pos + 1] = ' '
           @spans << {:string, start, quote_pos + 2}
           return quote_pos + 2
         end
       end
 
-      @masked << ' ' # opening quote
+      @masked[quote_pos] = ' ' # opening quote
       i = quote_pos + 1
       interp_depth = 0
       escaped = false
@@ -203,7 +201,7 @@ module Noir
           next
         end
 
-        @masked << (c == '\n' ? '\n' : ' ')
+        @masked[i] = ' ' unless c == '\n'
         if escaped
           escaped = false
           i += 1
@@ -213,7 +211,7 @@ module Noir
         if verbatim
           if c == '"'
             if i + 1 < @size && @chars[i + 1] == '"'
-              @masked << ' ' # the doubled (escaped) quote
+              @masked[i + 1] = ' ' # the doubled (escaped) quote
               i += 2
               next
             end
@@ -230,14 +228,14 @@ module Noir
 
         if interpolated && c == '{'
           if i + 1 < @size && @chars[i + 1] == '{'
-            @masked << ' '
+            @masked[i + 1] = ' '
             i += 2
             next
           end
           interp_depth += 1
         elsif interpolated && c == '}'
           if i + 1 < @size && @chars[i + 1] == '}'
-            @masked << ' '
+            @masked[i + 1] = ' '
             i += 2
             next
           end
@@ -259,7 +257,7 @@ module Noir
     # by the first run of `fence` quotes. Content (including `"`, `{`, `}`) is
     # literal and fully masked.
     private def mask_raw_string(start : Int32, quote_pos : Int32, fence : Int32) : Int32
-      fence.times { @masked << ' ' }
+      fence.times { |k| @masked[quote_pos + k] = ' ' }
       i = quote_pos + fence
       while i < @size
         if @chars[i] == '"'
@@ -270,15 +268,15 @@ module Noir
             j += 1
           end
           if run >= fence
-            fence.times { @masked << ' ' }
+            fence.times { |k| @masked[i + k] = ' ' }
             i += fence
             @spans << {:string, start, i}
             return i
           end
-          run.times { @masked << ' ' }
+          run.times { |k| @masked[i + k] = ' ' }
           i += run
         else
-          @masked << (@chars[i] == '\n' ? '\n' : ' ')
+          @masked[i] = ' ' unless @chars[i] == '\n'
           i += 1
         end
       end
@@ -300,7 +298,7 @@ module Noir
       end
 
       if run >= 3 # raw nested string: close on the next run of `run` quotes
-        run.times { @masked << ' ' }
+        run.times { |k| @masked[quote_pos + k] = ' ' }
         i = quote_pos + run
         while i < @size
           if @chars[i] == '"'
@@ -309,13 +307,13 @@ module Noir
               r += 1
             end
             if r >= run
-              run.times { @masked << ' ' }
+              run.times { |k| @masked[i + k] = ' ' }
               return i + run
             end
-            r.times { @masked << ' ' }
+            r.times { |k| @masked[i + k] = ' ' }
             i += r
           else
-            @masked << (@chars[i] == '\n' ? '\n' : ' ')
+            @masked[i] = ' ' unless @chars[i] == '\n'
             i += 1
           end
         end
@@ -323,21 +321,21 @@ module Noir
       end
 
       if run == 2 && !verbatim # empty "" string
-        @masked << ' '
-        @masked << ' '
+        @masked[quote_pos] = ' '
+        @masked[quote_pos + 1] = ' '
         return quote_pos + 2
       end
 
-      @masked << ' ' # opening quote
+      @masked[quote_pos] = ' ' # opening quote
       i = quote_pos + 1
       escaped = false
       while i < @size
         c = @chars[i]
-        @masked << (c == '\n' ? '\n' : ' ')
+        @masked[i] = ' ' unless c == '\n'
         if verbatim
           if c == '"'
             if i + 1 < @size && @chars[i + 1] == '"'
-              @masked << ' ' # doubled (escaped) quote
+              @masked[i + 1] = ' ' # doubled (escaped) quote
               i += 2
               next
             end
@@ -419,22 +417,10 @@ module Noir
     # `masked_lines[i]` (structure) while emitting `lines[i]` (real text).
     def masked_lines : Array(String)
       @masked_lines ||= begin
-        # Mirror `String#lines` (chomp: drop the trailing empty segment when the
-        # source ends in `\n`) so masked_lines[i] aligns 1:1 with content.lines[i].
-        out = [] of String
-        line_start = 0
-        i = 0
-        while i < @size
-          if @chars[i] == '\n'
-            # Chomp the `\r` of a `\r\n` so each line matches `String#lines`.
-            finish = i > line_start && @chars[i - 1] == '\r' ? i - 1 : i
-            out << @masked[line_start...finish].join
-            line_start = i + 1
-          end
-          i += 1
+        masked_str = String.build(@size) do |io|
+          @masked.each { |c| io << c }
         end
-        out << @masked[line_start...@size].join if line_start < @size
-        out
+        masked_str.lines
       end
     end
 

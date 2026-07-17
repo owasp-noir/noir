@@ -52,13 +52,15 @@ module Noir::SwiftCalleeExtractor
                                 in_multiline_string : Bool) : Tuple(String, Int32, Bool)
     in_string = false
     escaped = false
+    chars = line.chars
+    size = chars.size
     index = 0
     stripped = String::Builder.new
 
-    while index < line.size
-      char = line[index]
-      next_char = line[index + 1]?
-      third_char = line[index + 2]?
+    while index < size
+      char = chars[index]
+      next_char = chars[index + 1]?
+      third_char = chars[index + 2]?
 
       if block_comment_depth > 0
         if char == '/' && next_char == '*'
@@ -100,10 +102,10 @@ module Noir::SwiftCalleeExtractor
           in_string = true
         end
         stripped << ' '
-      elsif char == '/' && line[index + 1]? == '/'
-        append_spaces(stripped, line.size - index)
+      elsif char == '/' && chars[index + 1]? == '/'
+        append_spaces(stripped, size - index)
         return {stripped.to_s, block_comment_depth, in_multiline_string}
-      elsif char == '/' && line[index + 1]? == '*'
+      elsif char == '/' && chars[index + 1]? == '*'
         block_comment_depth += 1
         append_spaces(stripped, 2)
         index += 2

@@ -32,25 +32,35 @@ module Noir::PhpCalleeExtractor
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
-    line.scan(CLASS_PROPERTY_CALL_REGEX) do |match|
-      name = normalize_object_call(match[1])
-      next if skip_callee?(name)
+    # All four call patterns require `(` after the callee name. Pure
+    # assignment / property lines cannot produce a callee.
+    return unless line.includes?('(')
 
-      entries << {name, file_path, line_number}
-    end
+    if line.includes?("::") || line.includes?("->")
+      line.scan(CLASS_PROPERTY_CALL_REGEX) do |match|
+        name = normalize_object_call(match[1])
+        next if skip_callee?(name)
 
-    line.scan(OBJECT_CALL_REGEX) do |match|
-      name = normalize_object_call(match[1])
-      next if skip_callee?(name)
+        entries << {name, file_path, line_number}
+      end
 
-      entries << {name, file_path, line_number}
-    end
+      if line.includes?("->")
+        line.scan(OBJECT_CALL_REGEX) do |match|
+          name = normalize_object_call(match[1])
+          next if skip_callee?(name)
 
-    line.scan(STATIC_CALL_REGEX) do |match|
-      name = normalize_static_call(match[1])
-      next if skip_callee?(name)
+          entries << {name, file_path, line_number}
+        end
+      end
 
-      entries << {name, file_path, line_number}
+      if line.includes?("::")
+        line.scan(STATIC_CALL_REGEX) do |match|
+          name = normalize_static_call(match[1])
+          next if skip_callee?(name)
+
+          entries << {name, file_path, line_number}
+        end
+      end
     end
 
     line.scan(BARE_CALL_REGEX) do |match|

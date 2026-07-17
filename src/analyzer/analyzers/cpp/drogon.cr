@@ -626,6 +626,8 @@ module Analyzer::Cpp
       params = [] of Param
 
       lines.each do |line|
+        next unless line.includes?("->")
+
         if match = line.match(/->\s*getParameter\s*\(\s*"([^"]+)"/)
           add_unique_param(params, Param.new(match[1], "", "query"))
         end

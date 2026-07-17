@@ -32,7 +32,7 @@ module Analyzer::Perl
     alias ControllerCalleeIndex = Hash(ControllerActionKey, Array(Noir::PerlCalleeExtractor::Entry))
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       controller_callees = include_callee ? index_controller_callees : ControllerCalleeIndex.new
 
       parallel_file_scan do |path|
@@ -42,7 +42,7 @@ module Analyzer::Perl
     end
 
     def analyze_file(path : String) : Array(Endpoint)
-      analyze_file(path, any_to_bool(@options["include_callee"]?), ControllerCalleeIndex.new)
+      analyze_file(path, callees_needed?, ControllerCalleeIndex.new)
     end
 
     private def analyze_file(path : String,
@@ -117,8 +117,12 @@ module Analyzer::Perl
         next if File.directory?(path)
         ext = File.extname(path)
         next unless ext == ".pl" || ext == ".pm" || ext == ".psgi" || ext == ".t"
-
+        next if perl_test_path?(path, ext)
+        # Controllers always declare `package …::Controller::…`; skip the
+        # full strip/scan on files that can't contribute action callees.
         content = read_file_content(path)
+        next unless content.includes?("::Controller::") || content.includes?("package")
+
         base_path = configured_base_for(path)
         Noir::PerlCalleeExtractor.controller_action_callees(content, path).each do |key, entries|
           callees[{base_path, key}] ||= entries
@@ -141,23 +145,34 @@ module Analyzer::Perl
                           path_vars : Hash(String, String)) : Array(Endpoint)
       result = [] of Endpoint
 
-      # Mojolicious::Lite: `get '/path' => ...`
-      if m = line.match(LITE_VERB_RE)
-        url = m[2]
-        result << build_endpoint(url, m[1]) unless disallowed_route_url?(url)
-      end
+      # Routes always carry a quoted path (including empty `''`). Most
+      # source lines don't — skip all five PCRE2 scans for them.
+      return result unless line.includes?("'") || line.includes?("\"")
 
-      # Mojolicious::Lite: `any '/path'` or `any [GET => 'POST'] => '/path'`
-      if m = line.match(LITE_ANY_RE)
-        url = m[2]
-        unless disallowed_route_url?(url)
-          methods_str = m[1]?
-          full = normalize_placeholders(url)
-          methods_for_any(methods_str).each do |verb|
-            result << Endpoint.new(full, verb)
+      leading = line.lstrip
+      # Mojolicious::Lite keywords sit at statement start.
+      if lite_route_lead?(leading)
+        # Mojolicious::Lite: `get '/path' => ...`
+        if m = line.match(LITE_VERB_RE)
+          url = m[2]
+          result << build_endpoint(url, m[1]) unless disallowed_route_url?(url)
+        end
+
+        # Mojolicious::Lite: `any '/path'` or `any [GET => 'POST'] => '/path'`
+        if m = line.match(LITE_ANY_RE)
+          url = m[2]
+          unless disallowed_route_url?(url)
+            methods_str = m[1]?
+            full = normalize_placeholders(url)
+            methods_for_any(methods_str).each do |verb|
+              result << Endpoint.new(full, verb)
+            end
           end
         end
       end
+
+      # Full-app DSL always uses `->verb(…)`.
+      return result unless line.includes?("->")
 
       # Full app: `$r->get('/path')` etc.
       if m = line.match(FULL_VERB_RE)
@@ -206,6 +221,16 @@ module Analyzer::Perl
       end
 
       result
+    end
+
+    # True when the (already lstripped) line could be a Mojolicious::Lite
+    # route keyword. Avoids running LITE_* regexes on ordinary statements.
+    private def lite_route_lead?(leading : String) : Bool
+      leading.starts_with?("get") || leading.starts_with?("post") ||
+        leading.starts_with?("put") || leading.starts_with?("patch") ||
+        leading.starts_with?("delete") || leading.starts_with?("del") ||
+        leading.starts_with?("options") || leading.starts_with?("head") ||
+        leading.starts_with?("websocket") || leading.starts_with?("any")
     end
 
     # `$ua->get('http://example.com/foo')` is a `Mojo::UserAgent` HTTP
@@ -411,26 +436,38 @@ module Analyzer::Perl
 
     private def extract_params_from_line(line : String, method : String) : Array(Param)
       params = [] of Param
+      # Param accessors all go through `->…param` / header / cookie.
+      return params unless line.includes?("->")
 
-      line.scan(/->\s*req\s*->\s*query_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "query")
+      if line.includes?("query_params")
+        line.scan(/->\s*req\s*->\s*query_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "query")
+        end
       end
 
-      line.scan(/->\s*req\s*->\s*body_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "form")
+      if line.includes?("body_params")
+        line.scan(/->\s*req\s*->\s*body_params\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "form")
+        end
       end
 
-      line.scan(/->\s*req\s*->\s*headers\s*->\s*header\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "header")
+      if line.includes?("header")
+        line.scan(/->\s*req\s*->\s*headers\s*->\s*header\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "header")
+        end
       end
 
-      line.scan(/->\s*(?:req\s*->\s*)?cookie\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        params << Param.new(m[1], "", "cookie")
+      if line.includes?("cookie")
+        line.scan(/->\s*(?:req\s*->\s*)?cookie\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          params << Param.new(m[1], "", "cookie")
+        end
       end
 
-      line.scan(/->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
-        params << Param.new(m[1], "", param_type)
+      if line.includes?("param")
+        line.scan(/->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |m|
+          param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
+          params << Param.new(m[1], "", param_type)
+        end
       end
 
       params
@@ -500,6 +537,9 @@ module Analyzer::Perl
 
     private def line_offsets(content : String) : Array(Int32)
       offsets = [0]
+      # Character offsets — `extract_sub_after` / `source.chars` index by
+      # Unicode character, not UTF-8 byte. A byte walk breaks on non-ASCII
+      # POD/comments (real Mojolicious apps hit this constantly).
       content.each_char_with_index do |char, index|
         offsets << index + 1 if char == '\n'
       end

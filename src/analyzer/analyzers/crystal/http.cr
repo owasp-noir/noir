@@ -70,16 +70,20 @@ module Analyzer::Crystal
     def line_to_param(content : String) : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
 
-      if match = content.match(/context\.request\.query_params\[[^\]]*["']([^"'\]]+)["']/)
+      # HTTP::Server param accessors all live under `context.request.`;
+      # skip four PCRE2 scans when the prefix is absent.
+      return Param.new("", "", "") unless content.includes?("context.request.")
+
+      if content.includes?("query_params") && (match = content.match(/context\.request\.query_params\[[^\]]*["']([^"'\]]+)["']/))
         return Param.new(match[1], "", "query")
       end
-      if match = content.match(/context\.request\.form_params\[[^\]]*["']([^"'\]]+)["']/)
+      if content.includes?("form_params") && (match = content.match(/context\.request\.form_params\[[^\]]*["']([^"'\]]+)["']/))
         return Param.new(match[1], "", "form")
       end
-      if match = content.match(/context\.request\.headers\[[^\]]*["']([^"'\]]+)["']/)
+      if content.includes?("headers") && (match = content.match(/context\.request\.headers\[[^\]]*["']([^"'\]]+)["']/))
         return Param.new(match[1], "", "header")
       end
-      if match = content.match(/context\.request\.cookies\[[^\]]*["']([^"'\]]+)["']/)
+      if content.includes?("cookies") && (match = content.match(/context\.request\.cookies\[[^\]]*["']([^"'\]]+)["']/))
         return Param.new(match[1], "", "cookie")
       end
 
@@ -92,16 +96,23 @@ module Analyzer::Crystal
     def line_to_endpoint(content : String, in_path_case : Bool = false) : Endpoint
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
 
-      # method + path combined on same line (supports the common "if method && path" pattern)
-      if match = content.match(METHOD_THEN_PATH_RE)
-        return Endpoint.new(normalize_crystal_interpolation(match[2]), match[1])
-      end
-      if match = content.match(PATH_THEN_METHOD_RE)
-        return Endpoint.new(normalize_crystal_interpolation(match[1]), match[2])
+      # No string literal ⇒ no path to extract. Also skip heavy combined
+      # method/path regexes unless the request objects appear.
+      has_quote = content.includes?('"') || content.includes?("'")
+      return Endpoint.new("", "") unless has_quote
+
+      if content.includes?("request.method") && content.includes?("request.path")
+        # method + path combined on same line (supports the common "if method && path" pattern)
+        if match = content.match(METHOD_THEN_PATH_RE)
+          return Endpoint.new(normalize_crystal_interpolation(match[2]), match[1])
+        end
+        if match = content.match(PATH_THEN_METHOD_RE)
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), match[2])
+        end
       end
 
       # if/elsif explicit path match (common in handlers)
-      if match = content.match(PATH_COMPARE_RE)
+      if content.includes?("request.path") && (match = content.match(PATH_COMPARE_RE))
         p = match[1]
         if valid_crystal_route_path?(p)
           return Endpoint.new(normalize_crystal_interpolation(p), "GET")
@@ -111,7 +122,7 @@ module Analyzer::Crystal
       # `when "/path"` — only when we have positively entered a `case ...request.path` block.
       # This avoids matching unrelated `case` / `when` statements that contain path-like strings
       # (e.g. `case status; when "/foo" ...` or documentation strings that leak past heredoc mask).
-      if in_path_case
+      if in_path_case && content.includes?("when")
         if match = content.match(WHEN_RE)
           p = match[1]
           if valid_crystal_route_path?(p)
