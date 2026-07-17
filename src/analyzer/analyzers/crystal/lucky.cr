@@ -12,7 +12,7 @@ module Analyzer::Crystal
 
       lines = mask_crystal_heredocs(read_file_content(path).lines)
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       last_endpoint = Endpoint.new("", "")
 
       # Lucky's `param name : Type` macro declares a query parameter at the
@@ -174,8 +174,19 @@ module Analyzer::Crystal
       logger.debug e
     end
 
+    # Lucky uniquely registers TRACE routes. Shared engine verbs cover the
+    # rest; this is stitched in via `match_crystal_simple_route(..., extra:)`.
+    TRACE_ROUTE_PATTERN = /(?:^|[^.\w])trace\s*(?:\(\s*)?['"](.+?)['"]/
+    LUCKY_EXTRA_ROUTES  = [{"TRACE", TRACE_ROUTE_PATTERN}] of Tuple(String, Regex)
+
     def line_to_param(content : String) : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
+      # Most source lines never touch params; bail before the includes?/split
+      # chain when none of the Lucky accessor prefixes appear.
+      return Param.new("", "", "") unless content.includes?("params.") ||
+                                          content.includes?("request.") ||
+                                          content.includes?("cookies")
 
       if content.includes? "params.from_query[\""
         param = content.split("params.from_query[\"")[1].split("\"]")[0].gsub("\"", "").gsub("'", "")
@@ -216,53 +227,12 @@ module Analyzer::Crystal
     end
 
     def line_to_endpoint(content : String) : Endpoint
-      content = Noir::CrystalCalleeExtractor.strip_comment(content)
-
-      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])trace\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "TRACE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-          endpoint.protocol = "ws"
-          return endpoint
-        end
-      end
-
-      Endpoint.new("", "")
+      # Shared engine helper + Lucky's TRACE. Replaces 7 sequential
+      # unguarded .scan calls per source line.
+      match_crystal_simple_route(
+        Noir::CrystalCalleeExtractor.strip_comment(content),
+        extra: LUCKY_EXTRA_ROUTES
+      )
     end
   end
 end
