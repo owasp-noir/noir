@@ -1308,48 +1308,54 @@ module Analyzer::Ruby
           method_bodies[this_method] << line
         end
 
-        if pm = line.match(/permit\s*\(([^)]*)\)/)
-          pm[1].split(',').each do |raw|
-            name = raw.gsub(/[:\s'"]/, "")
+        # Every param source below is a `[ ... ]` subscript except `permit(...)`.
+        # A line with neither a '[' nor the literal 'permit' cannot match any of
+        # them, so skip the four regex ops — this runs on every line of every
+        # controller in the app.
+        if line.includes?('[') || line.includes?("permit")
+          if pm = line.match(/permit\s*\(([^)]*)\)/)
+            pm[1].split(',').each do |raw|
+              name = raw.gsub(/[:\s'"]/, "")
+              next if name.empty? || this_method.empty?
+              # A permit list entry is always a lowercase symbol/string key
+              # (`:title`, `tag_ids`). Splat-of-constant args
+              # (`permit(*PERMITTED_PARAMS)`, `permit(:a, *Filter::KEYS)`)
+              # and the garbage left by naive comma-splitting of nested
+              # `key: [...]` forms survive the quote/colon strip as
+              # `*PERMITTED_PARAMS` / `*FilterKEYS` / `address[city`. Drop
+              # anything that isn't a clean identifier so those don't leak
+              # in as fabricated param names.
+              next unless name.matches?(/\A[a-z_][a-z0-9_]*\z/)
+              params_body_by_action[this_method] ||= [] of Param
+              params_body_by_action[this_method] << Param.new(name, "", param_type)
+              params_query_by_action[this_method] ||= [] of Param
+              params_query_by_action[this_method] << Param.new(name, "", "query")
+            end
+          end
+
+          line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
+            name = (m[1]? || m[2]?).to_s.strip
             next if name.empty? || this_method.empty?
-            # A permit list entry is always a lowercase symbol/string key
-            # (`:title`, `tag_ids`). Splat-of-constant args
-            # (`permit(*PERMITTED_PARAMS)`, `permit(:a, *Filter::KEYS)`)
-            # and the garbage left by naive comma-splitting of nested
-            # `key: [...]` forms survive the quote/colon strip as
-            # `*PERMITTED_PARAMS` / `*FilterKEYS` / `address[city`. Drop
-            # anything that isn't a clean identifier so those don't leak
-            # in as fabricated param names.
-            next unless name.matches?(/\A[a-z_][a-z0-9_]*\z/)
             params_body_by_action[this_method] ||= [] of Param
             params_body_by_action[this_method] << Param.new(name, "", param_type)
             params_query_by_action[this_method] ||= [] of Param
             params_query_by_action[this_method] << Param.new(name, "", "query")
           end
-        end
 
-        line.scan(/params\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
-          name = (m[1]? || m[2]?).to_s.strip
-          next if name.empty? || this_method.empty?
-          params_body_by_action[this_method] ||= [] of Param
-          params_body_by_action[this_method] << Param.new(name, "", param_type)
-          params_query_by_action[this_method] ||= [] of Param
-          params_query_by_action[this_method] << Param.new(name, "", "query")
-        end
-
-        if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
-          name = hm[1].strip
-          if !name.empty? && !this_method.empty?
-            params_method[this_method] ||= [] of Param
-            params_method[this_method] << Param.new(name, "", "header")
+          if hm = line.match(/request\.headers\[\s*['"]([^'"]+)['"]\s*\]/)
+            name = hm[1].strip
+            if !name.empty? && !this_method.empty?
+              params_method[this_method] ||= [] of Param
+              params_method[this_method] << Param.new(name, "", "header")
+            end
           end
-        end
 
-        line.scan(/cookies(?:\.(?:signed|encrypted))?\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |cm|
-          name = (cm[1]? || cm[2]?).to_s.strip
-          next if name.empty? || this_method.empty?
-          params_method[this_method] ||= [] of Param
-          params_method[this_method] << Param.new(name, "", "cookie")
+          line.scan(/cookies(?:\.(?:signed|encrypted))?\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |cm|
+            name = (cm[1]? || cm[2]?).to_s.strip
+            next if name.empty? || this_method.empty?
+            params_method[this_method] ||= [] of Param
+            params_method[this_method] << Param.new(name, "", "cookie")
+          end
         end
       end
 
