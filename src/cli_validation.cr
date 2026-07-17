@@ -43,6 +43,28 @@ module Noir::CliValidation
     validate_passive_scan_paths!(options)
     validate_ai_provider_pair!(options)
     warn_about_unused_delivery_flags(options)
+    warn_about_contradictory_probe_filters(options)
+  end
+
+  # A value listed in both --probe-match and --probe-skip is contradictory:
+  # skip wins in the Deliver pipeline, so the matcher is silently defeated.
+  # Surface the overlap instead of quietly filtering it out.
+  def self.warn_about_contradictory_probe_filters(options : Hash(String, YAML::Any))
+    match = string_array(options["probe_match"]?)
+    skip = string_array(options["probe_skip"]?)
+    return if match.empty? || skip.empty?
+
+    overlap = (match & skip).uniq
+    return if overlap.empty?
+
+    STDERR.puts "WARNING: value(s) #{overlap.map(&.inspect).join(", ")} appear in both --probe-match and --probe-skip; --probe-skip takes precedence, so those matches are dropped.".colorize(:yellow)
+  end
+
+  private def self.string_array(value : YAML::Any?) : Array(String)
+    return [] of String if value.nil?
+    raw = value.raw
+    return [] of String unless raw.is_a?(Array)
+    raw.map(&.to_s)
   end
 
   # `--ai-provider` and `--ai-model` need each other to take effect.
@@ -170,7 +192,11 @@ module Noir::CliValidation
   end
 
   def self.validate_base_paths!(options : Hash(String, YAML::Any))
-    base_paths = options["base"].as_a.map(&.to_s)
+    # Dedupe repeated paths (`noir scan ./app ./app`, or the same dir via
+    # both a positional and -b) so the detector doesn't load, parse and
+    # analyze the identical tree twice. `uniq` preserves first-seen order.
+    base_paths = options["base"].as_a.map(&.to_s).uniq
+    options["base"] = YAML::Any.new(base_paths.map { |p| YAML::Any.new(p) })
     if base_paths.empty?
       raise Error.new(<<-MSG)
         No path to scan was given.
@@ -199,11 +225,22 @@ module Noir::CliValidation
     raise Error.new("Invalid output format '#{format}'. Valid formats: #{VALID_OUTPUT_FORMATS.join(", ")}")
   end
 
+  # Upper bound for --concurrency. A user asking for hundreds of thousands
+  # of fibers doesn't get more throughput — it just exhausts file
+  # descriptors / sockets and can take the process down. Cap at a value far
+  # above any useful setting and warn rather than silently honoring it.
+  MAX_CONCURRENCY = 256
+
   def self.validate_concurrency!(options : Hash(String, YAML::Any))
     raw_value = options["concurrency"].to_s
     value = raw_value.to_i?
     if value.nil? || value < 1
       raise Error.new("Invalid concurrency '#{raw_value}'. Concurrency must be an integer greater than or equal to 1.")
+    end
+
+    if value > MAX_CONCURRENCY
+      STDERR.puts "WARNING: --concurrency #{value} exceeds the safe maximum; clamping to #{MAX_CONCURRENCY}.".colorize(:yellow)
+      value = MAX_CONCURRENCY
     end
 
     options["concurrency"] = YAML::Any.new(value)

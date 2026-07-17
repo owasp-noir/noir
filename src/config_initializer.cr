@@ -182,7 +182,17 @@ class ConfigInitializer
   # on very large boxes. Users who want a specific value still get it
   # via `--concurrency N` or `concurrency:` in the config file — those
   # paths overwrite this default.
+  #
+  # NOIR_CONCURRENCY lets container/CI pipelines pin the worker count to
+  # the pod's CPU allocation without threading a flag through every noir
+  # invocation. An explicit --concurrency / config value still wins, since
+  # those overwrite this default afterwards.
   def default_concurrency : String
+    if env_value = ENV["NOIR_CONCURRENCY"]?
+      if parsed = env_value.strip.to_i?
+        return parsed.to_s if parsed >= 1
+      end
+    end
     System.cpu_count.clamp(4, 32).to_s
   end
 
