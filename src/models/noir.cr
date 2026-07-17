@@ -335,7 +335,14 @@ class NoirRunner
     when "toml"
       builder.print_toml @endpoints, diff_app
     else
-      # Print diff output
+      # Diff mode only implements plain/json/yaml/toml. Any other explicit
+      # format (only-url, curl, sarif, oas3, …) was silently rendered as the
+      # decorated text diff, corrupting automation pipelines that expected the
+      # requested format. Warn (to STDERR) so the mismatch is visible.
+      fmt = options["format"].to_s
+      unless fmt.empty? || fmt == "plain"
+        @logger.warning "Diff mode does not support -f #{fmt}; showing the text diff instead. Supported diff formats: plain, json, yaml, toml."
+      end
       builder.print @endpoints, diff_app
     end
   end
