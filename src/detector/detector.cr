@@ -447,10 +447,20 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       # patterns without "/" are matched against the basename.
       # Partition once up front so the per-file loop only walks the two
       # already-classified lists — no substring check per file.
+      # Normalize Windows-style backslashes to '/' before classifying, so a
+      # pattern like `src\legacy` is treated as a path pattern (and matches)
+      # instead of an unmatchable basename.
       exclude_path_raw = options["exclude_path"]?.to_s
-        .split(",").map(&.strip).reject(&.empty?)
+        .split(",").map(&.strip.gsub('\\', '/')).reject(&.empty?)
       path_patterns, basename_patterns = exclude_path_raw.partition(&.includes?('/'))
       exclude_path_active = !exclude_path_raw.empty?
+      # macOS/Windows default filesystems are case-insensitive, so
+      # `--exclude-path MyFile.go` should also exclude `myfile.go` there. Fold
+      # case only on those platforms — folding on Linux would wrongly drop
+      # case-distinct files that legitimately coexist.
+      exclude_case_insensitive = {% if flag?(:darwin) || flag?(:windows) %} true {% else %} false {% end %}
+      exclude_basename_patterns = exclude_case_insensitive ? basename_patterns.map(&.downcase) : basename_patterns
+      exclude_path_patterns = exclude_case_insensitive ? path_patterns.map(&.downcase) : path_patterns
       skipped_exclude_path = 0
 
       base_paths.each do |base_path|
@@ -510,13 +520,23 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               total_files += 1
 
               if exclude_path_active
-                if basename_patterns.any? { |pat| File.match?(pat, entry) }
+                entry_cmp = exclude_case_insensitive ? entry.downcase : entry
+                if exclude_basename_patterns.any? { |pat| File.match?(pat, entry_cmp) }
                   skipped_exclude_path += 1
                   next
                 end
-                if !path_patterns.empty?
+                if !exclude_path_patterns.empty?
                   rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
-                  if path_patterns.any? { |pat| File.match?(pat, rel_path) }
+                  {% if flag?(:windows) %} rel_path = rel_path.gsub('\\', '/') {% end %}
+                  rel_cmp = exclude_case_insensitive ? rel_path.downcase : rel_path
+                  # File.match? handles glob patterns (`tests/*`, `**/dir/**`);
+                  # the equality / prefix checks add plain-directory exclusion
+                  # so `--exclude-path src/legacy` drops everything under it,
+                  # not just a file literally named `src/legacy`.
+                  if exclude_path_patterns.any? do |pat|
+                       dir_pat = pat.rstrip('/')
+                       File.match?(pat, rel_cmp) || rel_cmp == dir_pat || rel_cmp.starts_with?("#{dir_pat}/")
+                     end
                     skipped_exclude_path += 1
                     next
                   end
