@@ -50,8 +50,11 @@ module Analyzer::Perl
         next unless catalyst_source_file?(path)
 
         content = read_file_content(path)
-        file_actions = collect_actions(content, path)
-        file_configs = collect_controller_configs(sanitize_perl_lines(content.lines))
+        # One sanitize + one config collect per file. Previously
+        # `collect_actions` re-sanitized and re-parsed configs for the
+        # action walk, then the outer call did both again for composition.
+        lines = sanitize_perl_lines(content.lines)
+        file_actions, file_configs = collect_actions_and_configs(content, lines, path)
         actions_mutex.synchronize do
           actions.concat(file_actions)
           file_configs.each { |pkg, cfg| configs[pkg] = cfg }
@@ -70,8 +73,8 @@ module Analyzer::Perl
     end
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
-      actions = collect_actions(content, file_path)
-      configs = collect_controller_configs(sanitize_perl_lines(content.lines))
+      lines = sanitize_perl_lines(content.lines)
+      actions, configs = collect_actions_and_configs(content, lines, file_path)
       analyze_actions(compose_actions(actions, configs))
     end
 
@@ -215,9 +218,12 @@ module Analyzer::Perl
       sources
     end
 
-    private def collect_actions(content : String, file_path : String) : Array(RouteAction)
-      raw_lines = content.lines
-      lines = sanitize_perl_lines(raw_lines)
+    # Single-pass collect of route actions + controller configs from
+    # already-sanitized lines. Callers must not re-run `sanitize_perl_lines`
+    # or `collect_controller_configs` for the same file.
+    private def collect_actions_and_configs(content : String,
+                                            lines : Array(String),
+                                            file_path : String) : Tuple(Array(RouteAction), Hash(String, ControllerConfig))
       # Count braces over a string/comment/regex-stripped (line-aligned) view so
       # an unbalanced brace inside a literal can't truncate/extend a sub body.
       code_lines = code_only_lines(lines)
@@ -229,8 +235,13 @@ module Analyzer::Perl
 
       while index < lines.size
         line = lines[index]
-        if package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/)
+        if line.includes?("package") && (package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/))
           package_name = package_match[1]
+        end
+
+        unless line.includes?("sub")
+          index += 1
+          next
         end
 
         sub_match = line.match(/^\s*sub\s+([A-Za-z_][A-Za-z0-9_]*)\b(.*)$/)
@@ -281,7 +292,7 @@ module Analyzer::Perl
         index += 1
       end
 
-      actions
+      {actions, package_configs}
     end
 
     private def collect_controller_configs(lines : Array(String)) : Hash(String, ControllerConfig)
@@ -295,7 +306,7 @@ module Analyzer::Perl
 
       while index < lines.size
         line = lines[index]
-        if package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/)
+        if line.includes?("package") && (package_match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/))
           package_name = package_match[1]
         end
 
@@ -303,7 +314,7 @@ module Analyzer::Perl
         # `with 'Role'` / `with ('A', 'B')` / multi-line `with\n  'A',\n  'B';`
         # — Moose role application. Roles are composition sources whose
         # chained actions belong to the consuming controller.
-        if stripped.matches?(/^with\b/)
+        if stripped.starts_with?("with") && stripped.matches?(/^with\b/)
           statement, index = accumulate_statement(lines, index)
           (roles[package_name] ||= [] of String).concat(extract_quoted_packages(statement))
           next
