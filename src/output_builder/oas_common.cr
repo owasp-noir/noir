@@ -17,12 +17,19 @@ module OutputBuilderOasCommon
     path = path.gsub(/\{\/:(\w+)\}/, "/:\\1")
     path = path.gsub(/\{\/([^{}]+)\}/, "/\\1")
 
+    # Bracket-style path params (`.NET` / Rails-ish `/users/[id]`) → `{id}`.
+    path = path.gsub(/\[(\w+)\]/, "{\\1}")
+
     # Convert typed placeholders before the generic :param pass; otherwise
     # `<int:id>` becomes `<int{id}>` and can no longer be normalized.
     path = path.gsub(/<[^:>]+:(\w+)>/, "{\\1}")
     path = path.gsub(/<(\w+)>/, "{\\1}")
     path = path.gsub(/\*(\w+)/, "{\\1}")
     path = path.gsub(/:(\w+)/, "{\\1}")
+
+    # Bare wildcard segments (`/api/*`, `/files/**`) have no name and are not
+    # a valid OAS path template char; collapse a run of `*` to a named var.
+    path = path.gsub(/\*+/, "{wildcard}")
 
     path.starts_with?("/") ? path : "/#{path}"
   end

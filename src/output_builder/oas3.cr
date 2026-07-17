@@ -44,6 +44,11 @@ class OutputBuilderOas3 < OutputBuilder
 
       oas_path = normalize_oas_path(endpoint.url)
       path_template_names(oas_path).each do |name|
+        # A path template variable must win over a same-named query/header/
+        # cookie parameter. Emitting both `in: path` and `in: query` for the
+        # same name is redundant and trips strict OAS validators, so drop the
+        # non-path duplicate before adding the path parameter.
+        parameters.reject! { |p| p["name"].as_s == name && p["in"].as_s != "path" }
         append_unique_parameter(parameters, openapi_parameter(name, "path", true))
       end
 
