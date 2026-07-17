@@ -141,6 +141,12 @@ module Analyzer::Ruby
     private def line_to_params(content : String) : Array(Param)
       params = [] of Param
 
+      # Every pattern below is a subscript read (`...[ ... ]`) except
+      # `params.fetch(...)`. A line carrying neither a `[` nor `fetch` cannot
+      # match any of the six regexes, so skip them wholesale — this runs on
+      # every line of every `.rb` file the whole-tree Sinatra scan walks.
+      return params unless content.includes?('[') || content.includes?("fetch")
+
       content.scan(/param\[\s*(?::(\w+)|['"]([^'"]+)['"])\s*\]/) do |m|
         name = (m[1]? || m[2]?).to_s.strip
         params << Param.new(name, "", "query") unless name.empty? || SINATRA_RESERVED_PARAMS.includes?(name)
@@ -203,12 +209,21 @@ module Analyzer::Ruby
     # (`/gollum/last_commit_info` surfaced as `/last_commit_info`). Modifier
     # forms (`forbid unless x`, `return if y`) sit mid-line, never at a
     # statement boundary, so they are correctly left uncounted.
+    # One `end` (-1) is the only closer; `do` (+1) and any statement-position
+    # keyword block (+1) are the openers. The three matchers are folded into a
+    # single ordered-alternation scan so each line takes one regex pass instead
+    # of three — this is the hottest per-line call in the whole-tree scan. The
+    # `\bend\b`/`\bdo\b` alternatives capture exactly "end"/"do"; the keyword
+    # alternative captures its `;`/leading-space prefix too, so the closer is
+    # identified by an exact-string test and everything else is an opener.
+    SINATRA_DEPTH_TOKEN_RE = /\bend\b|\bdo\b|(?:^|;)\s*(?:if|unless|case|begin|while|until|for|class|module|def)\b/
+
     private def sinatra_depth_delta(line : String) : Int32
       structure = Noir::RubyCalleeExtractor.strip_comment(line, preserve_strings: false)
       delta = structure.count('{') - structure.count('}')
-      structure.scan(/\bdo\b/) { delta += 1 }
-      structure.scan(/(?:^|;)\s*(?:if|unless|case|begin|while|until|for|class|module|def)\b/) { delta += 1 }
-      structure.scan(/\bend\b/) { delta -= 1 }
+      structure.scan(SINATRA_DEPTH_TOKEN_RE) do |m|
+        delta += m[0] == "end" ? -1 : 1
+      end
       delta
     end
   end
