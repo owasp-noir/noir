@@ -79,8 +79,14 @@ module Analyzer::Crystal
     # parameter extractor picks it up and the URL template reads
     # cleanly. Mirrors the Python f-string, Ruby `#{}`, and PHP
     # `$var` fixes earlier this pass.
+    #
+    # Most route literals have no interpolation; skip the PCRE2
+    # gsub when the `#\{` marker is absent.
+    INTERPOLATION_RE = /\#\{([^}]+)\}/
+
     protected def normalize_crystal_interpolation(path : String) : String
-      path.gsub(/\#\{([^}]+)\}/) { |_| "{#{$~[1].strip}}" }
+      return path unless path.includes?("\#{")
+      path.gsub(INTERPOLATION_RE) { |_| "{#{$~[1].strip}}" }
     end
 
     # A genuine Kemal/Lucky/Amber route path always begins with `/`
@@ -193,7 +199,11 @@ module Analyzer::Crystal
         next unless File.exists?(path) && File.extname(path) == ".cr"
         next if crystal_dependency_path?(path)
         begin
-          collect_actions_into(index, File.read_lines(path), path)
+          # Cache-first: detector already warmed CodeLocator for most
+          # .cr files. `read_file_content` prefers the cache and falls
+          # back to File.read(utf-8, invalid: :skip); String#lines
+          # chomps by default, matching File.read_lines for valid UTF-8.
+          collect_actions_into(index, read_file_content(path).lines, path)
         rescue e
           logger.debug "crystal action index #{path}: #{e}"
         end
@@ -224,6 +234,14 @@ module Analyzer::Crystal
     # module, dropping every method defined after them. Indentation is the
     # one signal those constructs can't corrupt: a namespace stays open
     # until a line dedents to or past the column where it was declared.
+    #
+    # Precompiled: this loop runs once per line of every .cr file when
+    # building the cross-file action index (`--include-callee` /
+    # `--ai-context`). The shapes never change, so hoist the two PCRE2
+    # patterns to class constants.
+    NAMESPACE_DECL_RE = /^(?:abstract\s+)?(?:module|class|struct)\s+([A-Z]\w*(?:::[A-Z]\w*)*)/
+    DEF_DECL_RE       = /^(?:(?:private|protected)\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)/
+
     protected def collect_actions_into(index : ActionIndex, lines : Array(String), path : String) : Nil
       base_path = configured_base_for(path)
       namespace_stack = [] of NamedTuple(name: String, indent: Int32)
@@ -240,12 +258,18 @@ module Analyzer::Crystal
           namespace_stack.pop
         end
 
-        if ns = content.match(/^(?:abstract\s+)?(?:module|class|struct)\s+([A-Z]\w*(?:::[A-Z]\w*)*)/)
+        # Cheap keyword gates before PCRE2: most body lines are neither
+        # namespace decls nor method defs.
+        if (content.starts_with?("module") || content.starts_with?("class") ||
+           content.starts_with?("struct") || content.starts_with?("abstract")) &&
+           (ns = content.match(NAMESPACE_DECL_RE))
           namespace_stack << {name: ns[1], indent: indent}
           next
         end
 
-        if def_match = content.match(/^(?:(?:private|protected)\s+)?def\s+(?:self\.)?([A-Za-z_]\w*[!?=]?)/)
+        if (content.starts_with?("def") || content.starts_with?("private") ||
+           content.starts_with?("protected")) &&
+           (def_match = content.match(DEF_DECL_RE))
           next if namespace_stack.empty?
           if method_body = extract_crystal_def_block(lines, i)
             body, body_start_line = method_body
@@ -338,15 +362,84 @@ module Analyzer::Crystal
       {body_lines.join("\n"), body_start_line}
     end
 
+    # Precompiled block-structure probes used by extract_crystal_do_block /
+    # extract_crystal_def_block on every body line. Constant shapes — load
+    # once, match many times. Cheap `includes?` gates reject the common
+    # non-structural body lines before any PCRE2 scan.
+    DO_WORD_RE      = /\bdo\b/
+    END_WORD_RE     = /\bend\b/
+    STRUCT_OPEN_RE  = /(?:^|=[^=>])\s*(?:if|unless|case|begin|while|until|for|class|module|def|macro)\b/
+    CLOSES_BLOCK_RE = /^end\b/
+
     protected def crystal_do_block_open_delta(line : String) : Int32
       return 0 if line.empty?
-      return 1 if line.match(/\bdo\b/) && !line.match(/\bend\b/)
-      return 1 if line.match(/(?:^|=[^=>])\s*(if|unless|case|begin|while|until|for|class|module|def|macro)\b/) && !line.match(/\bend\b/)
+
+      has_end = line.includes?("end")
+      if line.includes?("do") && line.matches?(DO_WORD_RE) && !(has_end && line.matches?(END_WORD_RE))
+        return 1
+      end
+
+      # Structural keyword open — only scan when a candidate keyword is present.
+      if (line.includes?("if") || line.includes?("unless") || line.includes?("case") ||
+         line.includes?("begin") || line.includes?("while") || line.includes?("until") ||
+         line.includes?("for") || line.includes?("class") || line.includes?("module") ||
+         line.includes?("def") || line.includes?("macro")) &&
+         line.matches?(STRUCT_OPEN_RE) &&
+         !(has_end && line.matches?(END_WORD_RE))
+        return 1
+      end
+
       0
     end
 
     private def crystal_closes_block?(line : String) : Bool
-      !!line.match(/^end\b/)
+      line.starts_with?("end") && line.matches?(CLOSES_BLOCK_RE)
+    end
+
+    # Shared `verb "/path"` matchers for Kemal/Lucky/Grip-style DSLs.
+    # One combined PCRE2 scan replaces the previous 7–8 sequential
+    # per-verb `.scan` calls that ran on every source line. Leftmost
+    # match wins, which matches real one-verb-per-line route DSLs and
+    # the prior first-matching-verb behaviour for those lines. Optional
+    # `extra` covers framework-only verbs (Lucky's `trace`).
+    HTTP_ROUTE_VERBS = %w[get post put delete patch head options]
+
+    # Group 1 = verb (or `ws`), group 2 = path. `ws` is folded in so a
+    # single scan covers WebSocket routes too; the caller maps `ws` →
+    # GET + protocol=ws.
+    SIMPLE_ROUTE_RE = /(?:^|[^.\w])(get|post|put|delete|patch|head|options|ws)\s*(?:\(\s*)?['"](.+?)['"]/
+
+    # Match the first `verb "/path"` / `verb("/path")` on a comment-stripped
+    # line. Quote gate skips the PCRE2 scan on lines with no string
+    # literal. Returns an empty endpoint when nothing matches.
+    protected def match_crystal_simple_route(content : String,
+                                             *,
+                                             include_ws : Bool = true,
+                                             extra : Array(Tuple(String, Regex)) = [] of Tuple(String, Regex)) : Endpoint
+      return Endpoint.new("", "") unless content.includes?('"') || content.includes?("'")
+
+      if match = content.match(SIMPLE_ROUTE_RE)
+        verb = match[1]
+        path = normalize_crystal_interpolation(match[2])
+        if verb == "ws"
+          if include_ws
+            endpoint = Endpoint.new(path, "GET")
+            endpoint.protocol = "ws"
+            return endpoint
+          end
+        else
+          return Endpoint.new(path, verb.upcase)
+        end
+      end
+
+      extra.each do |method, pattern|
+        next unless content.includes?(method.downcase)
+        if match = content.match(pattern)
+          return Endpoint.new(normalize_crystal_interpolation(match[1]), method)
+        end
+      end
+
+      Endpoint.new("", "")
     end
   end
 end
