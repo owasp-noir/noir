@@ -5,6 +5,7 @@ require "../utils/http_symbols"
 require "../utils/curl_command"
 require "./html_assets/css"
 require "./html_assets/js"
+require "./html_assets/logo"
 require "html"
 
 class OutputBuilderHtml < OutputBuilder
@@ -82,10 +83,7 @@ class OutputBuilderHtml < OutputBuilder
       <header class="report-header">
         <div class="container">
           <div class="brand">
-            <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <rect class="block" x="2" y="4" width="20" height="16"></rect>
-              <rect class="visor" x="5" y="10" width="14" height="3"></rect>
-            </svg>
+            <img class="brand-mark" src="data:image/png;base64,#{HtmlReportAssets::LOGO_PNG_BASE64}" alt="" width="38" height="38">
             <span class="brand-text">
               <span class="brand-eyebrow">OWASP</span>
               <span class="brand-title">Noir</span>
