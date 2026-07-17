@@ -26,7 +26,13 @@ class OutputBuilderOnlyTag < OutputBuilder
     # tagger), so two tags with the same `name` but different `tagger`
     # or `description` would otherwise both be printed even though the
     # output line only shows the name.
-    tags.uniq(&.name).each do |tag|
+    unique = tags.uniq(&.name)
+    if unique.empty?
+      # Tags only exist when a tagger ran (-T/--use-taggers or AI context).
+      @logger.info "No tags found. Run with -T/--use-taggers to populate tags."
+      return
+    end
+    unique.each do |tag|
       ob_puts tag.name.colorize(:light_green).toggle(@is_color)
     end
   end
