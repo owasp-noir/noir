@@ -153,6 +153,11 @@ module Noir::PerlCalleeExtractor
 
   # Public String overload kept for callers outside this module.
   def strip_non_code(source : String) : String
+    # Fast path: nothing to blank when the source has no comment, short
+    # string, or quote-like (`q`/`qq`/`qw`/`qr`/`qx`) markers. Preserves
+    # byte-identical output for the common "already plain code" case used
+    # by brace-depth walks.
+    return source unless strip_non_code_needed?(source)
     strip_non_code(source.chars)
   end
 
@@ -187,11 +192,22 @@ module Noir::PerlCalleeExtractor
   end
 
   # Public String overload kept for callers outside this module.
+  # Walk characters up to `index` counting newlines — the previous
+  # `source[0...limit].count('\n')` allocated a full substring on every
+  # call (handler body extraction, named-sub indexing). `index` is a
+  # character offset (matches `source.chars` / `String#size` indexing),
+  # not a UTF-8 byte offset.
   def line_number_for(source : String, index : Int32) : Int32
     return 1 if index <= 0
 
-    limit = index > source.size ? source.size : index
-    source[0...limit].count('\n') + 1
+    count = 1
+    i = 0
+    source.each_char do |ch|
+      break if i >= index
+      count += 1 if ch == '\n'
+      i += 1
+    end
+    count
   end
 
   def line_number_for(chars : Array(Char), index : Int32) : Int32
@@ -279,10 +295,24 @@ module Noir::PerlCalleeExtractor
   end
 
   private def package_name(source : String) : String?
+    return unless source.includes?("package")
     stripped = strip_non_code(source)
     if match = stripped.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_:]*)\s*;/m)
       match[1]
     end
+  end
+
+  # Markers that force a full `strip_non_code` walk. Quote-like ops are
+  # matched via the common `q…` spellings; a lone `q` inside an identifier
+  # (`require`) is intentionally not enough — the char walk still handles
+  # rare `q /foo/` forms if another marker already forced the walk, and
+  # pure-code files without quotes/comments skip it entirely.
+  private def strip_non_code_needed?(source : String) : Bool
+    source.includes?('#') || source.includes?('\'') || source.includes?('"') ||
+      source.includes?("qq") || source.includes?("qw") || source.includes?("qr") ||
+      source.includes?("qx") || source.includes?("q{") || source.includes?("q(") ||
+      source.includes?("q[") || source.includes?("q/") || source.includes?("q!") ||
+      source.includes?("q|") || source.includes?("q ")
   end
 
   private def controller_keys(controller : String) : Array(String)
