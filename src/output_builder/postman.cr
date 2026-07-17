@@ -78,13 +78,17 @@ class OutputBuilderPostman < OutputBuilder
             "value" => JSON::Any.new(param.value),
           } of String => JSON::Any)
         elsif param.param_type == "cookie"
-          # Find existing Cookie header or create new one
-          existing_cookie = headers.find { |h| h["key"].as_s == "Cookie" }
+          # Find existing Cookie header or create new one. Header names are
+          # case-insensitive (RFC 7230), so match `cookie`/`COOKIE` too —
+          # otherwise a header-type param named `cookie` and the cookie-type
+          # Cookie header would both be emitted. (Mirrors the Content-Type
+          # case-insensitive match elsewhere in this builder.)
+          existing_cookie = headers.find { |h| h["key"].as_s.downcase == "cookie" }
           if existing_cookie
             # Append to existing cookie value
             current_val = existing_cookie["value"].as_s
             # We need to rebuild since JSON::Any is immutable
-            headers.reject! { |h| h["key"].as_s == "Cookie" }
+            headers.reject! { |h| h["key"].as_s.downcase == "cookie" }
             headers << JSON::Any.new({
               "key"   => JSON::Any.new("Cookie"),
               "value" => JSON::Any.new("#{current_val}; #{param.name}=#{param.value}"),

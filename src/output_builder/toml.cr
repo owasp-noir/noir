@@ -22,7 +22,7 @@ class OutputBuilderToml < OutputBuilder
       data.each do |key, value|
         case value.raw
         when String, Int64, Float64, Bool
-          full_key = prefix.empty? ? key : "#{prefix}.#{key}"
+          full_key = prefix.empty? ? toml_key(key) : "#{prefix}.#{toml_key(key)}"
           io << "#{full_key} = #{toml_value(value)}\n"
         end
       end
@@ -30,7 +30,7 @@ class OutputBuilderToml < OutputBuilder
       # Then, output arrays of tables
       data.each do |key, value|
         if value.raw.is_a?(Array)
-          full_key = prefix.empty? ? key : "#{prefix}.#{key}"
+          full_key = prefix.empty? ? toml_key(key) : "#{prefix}.#{toml_key(key)}"
           value.as_a.each do |item|
             if item.raw.is_a?(Hash)
               io << "\n[[#{full_key}]]\n"
@@ -43,7 +43,7 @@ class OutputBuilderToml < OutputBuilder
       # Finally, output nested tables (hashes that aren't in arrays)
       data.each do |key, value|
         if value.raw.is_a?(Hash)
-          full_key = prefix.empty? ? key : "#{prefix}.#{key}"
+          full_key = prefix.empty? ? toml_key(key) : "#{prefix}.#{toml_key(key)}"
           io << "\n[#{full_key}]\n"
           io << generate_table_content(value.as_h)
         end
@@ -57,22 +57,30 @@ class OutputBuilderToml < OutputBuilder
       data.each do |key, value|
         case value.raw
         when String, Int64, Float64, Bool
-          io << "#{key} = #{toml_value(value)}\n"
+          io << "#{toml_key(key)} = #{toml_value(value)}\n"
         when Array
-          io << "#{key} = ["
+          io << "#{toml_key(key)} = ["
           items = value.as_a.map { |item| toml_value(item) }
           io << items.join(", ")
           io << "]\n"
         when Hash
           # Nested inline table
-          io << "#{key} = { "
-          pairs = value.as_h.map { |k, v| "#{k} = #{toml_value(v)}" }
+          io << "#{toml_key(key)} = { "
+          pairs = value.as_h.map { |k, v| "#{toml_key(k)} = #{toml_value(v)}" }
           io << pairs.join(", ")
           io << " }\n"
         end
       end
     end
     result
+  end
+
+  # TOML bare keys allow only [A-Za-z0-9_-]. A key with a dot, space, or
+  # quote would otherwise be read as a dotted table path (config.file →
+  # [config].file) and corrupt the document, so quote anything non-bare.
+  private def toml_key(key : String) : String
+    return key if key.matches?(/\A[A-Za-z0-9_-]+\z/)
+    %("#{key.gsub("\\", "\\\\").gsub("\"", "\\\"")}")
   end
 
   private def toml_value(value : JSON::Any) : String
@@ -91,7 +99,7 @@ class OutputBuilderToml < OutputBuilder
       items = raw.map { |item| toml_value(item) }
       "[#{items.join(", ")}]"
     when Hash
-      pairs = raw.map { |k, v| "#{k} = #{toml_value(v)}" }
+      pairs = raw.map { |k, v| "#{toml_key(k)} = #{toml_value(v)}" }
       "{ #{pairs.join(", ")} }"
     else
       %("#{raw}")
