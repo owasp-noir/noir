@@ -1,6 +1,15 @@
 module LLM::NativeToolCalling
   DEFAULT_ALLOWLIST = ["openai", "xai", "github"]
 
+  # Providers for which native tool-calling is actually wired up. Used to
+  # validate --ai-native-tools-allowlist so a typo (e.g. `opena`) surfaces
+  # a warning instead of silently never matching.
+  KNOWN_PROVIDERS = ["openai", "xai", "github", "azure", "ollama", "vllm", "lmstudio"]
+
+  def self.known_provider?(provider : String) : Bool
+    KNOWN_PROVIDERS.includes?(canonical_provider(provider))
+  end
+
   def self.default_allowlist : Array(String)
     DEFAULT_ALLOWLIST.clone
   end

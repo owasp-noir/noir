@@ -121,6 +121,20 @@ module Noir::CLI::ScanCommand
       Noir::CLI.die("-u/--url must use http:// or https:// (got '#{url}').")
     end
 
+    # Validate an explicit port at parse time. A non-numeric port
+    # (`-u http://host:por`) otherwise survives until the first probe and
+    # crashes deep in the socket layer with an opaque error.
+    begin
+      parsed = URI.parse(url)
+      if port = parsed.port
+        unless (1..65535).includes?(port)
+          Noir::CLI.die("-u/--url port #{port} is out of range (1-65535) in '#{url}'.")
+        end
+      end
+    rescue ex : URI::Error
+      Noir::CLI.die("-u/--url has an invalid port in '#{url}' (#{ex.message}). The port must be numeric, e.g. http://host:8080.")
+    end
+
     # Strip `?query` and `#fragment` from the base URL — they're
     # only valid at the end of a URL, so concatenating an endpoint
     # path after them produces a malformed URL

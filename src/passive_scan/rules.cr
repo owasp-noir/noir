@@ -15,11 +15,14 @@ module NoirPassiveScan
         if passive_rule.valid?
           rules << passive_rule
         else
-          logger.debug_sub "Invalid rule in #{file}"
+          # Surface at warning level: a silently-skipped custom rule looks
+          # identical to "rule applied" to the user, so a typo'd rule file
+          # yields invisible zero coverage.
+          logger.warning "Skipped invalid passive rule: #{file}"
         end
       rescue e : Exception
-        # Log or handle the error if deserialization fails
-        logger.debug_sub "Failed to load rule from #{file}: #{e.message}"
+        # Deserialization failure (malformed YAML / missing fields).
+        logger.warning "Failed to load passive rule #{file}: #{e.message}"
       end
     end
 

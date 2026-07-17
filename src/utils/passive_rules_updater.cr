@@ -6,6 +6,11 @@ require "../models/logger.cr"
 module PassiveRulesUpdater
   REPO_URL = "https://github.com/owasp-noir/noir-passive-rules.git"
 
+  # Force git into non-interactive mode so a missing/expired credential
+  # never drops the scan into an invisible username/password prompt that
+  # blocks forever (CI, automation). git exits with an error instead.
+  GIT_ENV = {"GIT_TERMINAL_PROMPT" => "0", "GCM_INTERACTIVE" => "never"}
+
   # Default location for the image-baked ruleset. Resolves via
   # `bundled_rules_path` so specs (and adventurous packagers) can
   # point at a different prefix with NOIR_BUNDLED_RULES_PATH.
@@ -82,7 +87,7 @@ module PassiveRulesUpdater
     begin
       # Fetch latest updates from remote
       result = Process.run("git", args: ["fetch", "--quiet"], chdir: rules_path,
-        output: Process::Redirect::Close, error: Process::Redirect::Close)
+        env: GIT_ENV, output: Process::Redirect::Close, error: Process::Redirect::Close)
 
       unless result.success?
         logger.debug "Failed to fetch updates for passive rules"
@@ -92,7 +97,7 @@ module PassiveRulesUpdater
       # Check if local is behind remote
       output = IO::Memory.new
       result = Process.run("git", args: ["rev-list", "--count", "HEAD..origin/main"],
-        chdir: rules_path, output: output, error: Process::Redirect::Close)
+        chdir: rules_path, env: GIT_ENV, output: output, error: Process::Redirect::Close)
 
       if result.success?
         behind_count = output.to_s.strip.to_i? || 0
@@ -129,7 +134,7 @@ module PassiveRulesUpdater
   # Update the passive rules repository
   private def self.update_rules(rules_path : String, logger : NoirLogger) : Bool
     result = Process.run("git", args: ["pull", "--quiet"], chdir: rules_path,
-      output: Process::Redirect::Close, error: Process::Redirect::Close)
+      env: GIT_ENV, output: Process::Redirect::Close, error: Process::Redirect::Close)
     result.success?
   rescue ex : Exception
     logger.debug "Error updating passive rules: #{ex.message}"
@@ -154,10 +159,11 @@ module PassiveRulesUpdater
 
   # Notify user that updates are available
   private def self.notify_user_update_available(behind_count : Int32, logger : NoirLogger)
+    rules_path = user_rules_path
     logger.warning "Passive rules are #{behind_count} commits behind the latest version."
-    logger.sub "├── Run 'git pull' in ~/.config/noir/passive_rules/ to update"
-    logger.sub "├── Or use 'git clone #{REPO_URL} ~/.config/noir/passive_rules/' to get the latest rules"
-    logger.sub "├── Or run 'noir -b . -P --passive-scan-auto-update' to auto-update on startup"
+    logger.sub "├── Run 'git pull' in #{rules_path} to update"
+    logger.sub "├── Or use 'git clone #{REPO_URL} #{rules_path}' to get the latest rules"
+    logger.sub "├── Or run 'noir scan . -P --passive-scan-auto-update' to auto-update on startup"
   end
 
   # Initialize passive rules if they don't exist
@@ -187,7 +193,7 @@ module PassiveRulesUpdater
 
       # Clone the repository
       result = Process.run("git", args: ["clone", "--quiet", REPO_URL, rules_path],
-        output: Process::Redirect::Close, error: Process::Redirect::Close)
+        env: GIT_ENV, output: Process::Redirect::Close, error: Process::Redirect::Close)
 
       if result.success?
         logger.success "Passive rules initialized successfully."
@@ -201,13 +207,17 @@ module PassiveRulesUpdater
         false
       end
     rescue ex : Exception
-      logger.debug "Error initializing passive rules: #{ex.message}"
+      # Surface the failure: without rules a `-P` scan silently reports
+      # "clean", which is a false-negative security outcome. A warning at
+      # normal log level makes the missing-ruleset state visible.
+      logger.warning "Failed to initialize passive rules: #{ex.message}"
+      logger.sub "➔ Passive scan will run with no rules. Fix connectivity/permissions or clone manually: git clone #{REPO_URL} #{rules_path}"
 
       # Create empty directory as fallback
       begin
         Dir.mkdir_p(rules_path) unless Dir.exists?(rules_path)
-      rescue
-        # Ignore errors creating fallback directory
+      rescue err
+        logger.warning "Could not create passive rules directory at #{rules_path}: #{err.message}"
       end
 
       false

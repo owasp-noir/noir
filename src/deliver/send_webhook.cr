@@ -40,14 +40,16 @@ class SendWebhook < Deliver
     Crest::Request.execute(
       method: :post,
       url: webhook_url,
-      tls: OpenSSL::SSL::Context::Client.insecure,
+      tls: tls_context,
       user_agent: "Noir/#{Noir::VERSION}",
       form: body,
       headers: webhook_headers,
       json: true
     )
   rescue e
-    @logger.debug "Exception of webhook Delivery"
+    # Surface the failure at warning level: a swallowed debug line let the
+    # user believe the catalog was delivered when the POST never landed.
+    @logger.warning "Webhook delivery to #{webhook_url} failed: #{e.message}"
     @logger.debug_sub e
   end
 end

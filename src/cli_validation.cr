@@ -2,6 +2,7 @@ require "colorize"
 require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
+require "./llm/native_tool_calling"
 
 module Noir::CliValidation
   class Error < Exception
@@ -42,7 +43,46 @@ module Noir::CliValidation
     validate_tech_names!(options)
     validate_passive_scan_paths!(options)
     validate_ai_provider_pair!(options)
+    validate_ai_native_tools_allowlist!(options)
     warn_about_unused_delivery_flags(options)
+    warn_about_contradictory_probe_filters(options)
+  end
+
+  # `--ai-native-tools-allowlist` entries that don't canonicalize to a
+  # provider Noir supports for native tool-calling will never match and the
+  # feature just stays off. Warn so a typo like `opena` is visible instead
+  # of silently disabling tool-calling.
+  def self.validate_ai_native_tools_allowlist!(options : Hash(String, YAML::Any))
+    raw = options["ai_native_tools_allowlist"]?.try(&.to_s) || ""
+    return if raw.empty?
+
+    unknown = raw.split(",").map(&.strip).reject(&.empty?).reject do |provider|
+      LLM::NativeToolCalling.known_provider?(provider)
+    end
+    return if unknown.empty?
+
+    STDERR.puts "WARNING: --ai-native-tools-allowlist: unrecognized provider(s) #{unknown.map(&.inspect).join(", ")}. Native tool-calling supports: #{LLM::NativeToolCalling::KNOWN_PROVIDERS.join(", ")}. These entries will never match.".colorize(:yellow)
+  end
+
+  # A value listed in both --probe-match and --probe-skip is contradictory:
+  # skip wins in the Deliver pipeline, so the matcher is silently defeated.
+  # Surface the overlap instead of quietly filtering it out.
+  def self.warn_about_contradictory_probe_filters(options : Hash(String, YAML::Any))
+    match = string_array(options["probe_match"]?)
+    skip = string_array(options["probe_skip"]?)
+    return if match.empty? || skip.empty?
+
+    overlap = (match & skip).uniq
+    return if overlap.empty?
+
+    STDERR.puts "WARNING: value(s) #{overlap.map(&.inspect).join(", ")} appear in both --probe-match and --probe-skip; --probe-skip takes precedence, so those matches are dropped.".colorize(:yellow)
+  end
+
+  private def self.string_array(value : YAML::Any?) : Array(String)
+    return [] of String if value.nil?
+    raw = value.raw
+    return [] of String unless raw.is_a?(Array)
+    raw.map(&.to_s)
   end
 
   # `--ai-provider` and `--ai-model` need each other to take effect.
@@ -63,9 +103,28 @@ module Noir::CliValidation
     return if provider.empty?
 
     is_acp = provider.downcase.starts_with?("acp:")
-    return if is_acp || !model.empty?
+    if is_acp
+      validate_acp_target!(provider)
+      return
+    end
+    return unless model.empty?
 
     raise Error.new("--ai-provider '#{provider}' needs a companion --ai-model. Pass it with --ai-model, e.g. `noir scan ./app --ai-provider #{provider} --ai-model gpt-4 --ai-key …`. (ACP providers like `acp:claude` or `acp:codex` are the exception and don't need --ai-model.)")
+  end
+
+  # ACP targets Noir knows how to launch. Kept in sync with
+  # `LLM::ACPClient::KNOWN_TARGETS` (the actual exec sink). Anything else
+  # would be run as an arbitrary local process, so a `--ai-provider "acp:<cmd>"`
+  # from an untrusted config file is refused here — a clean pre-flight error
+  # instead of the sink's mid-scan raise. See issue: acp arbitrary exec.
+  ACP_KNOWN_TARGETS = %w[codex gemini claude claude-code]
+
+  def self.validate_acp_target!(provider : String)
+    target = (provider.split(":", 2)[1]?.try(&.strip.downcase)) || ""
+    return if ACP_KNOWN_TARGETS.includes?(target)
+    return if ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
+
+    raise Error.new("--ai-provider '#{provider}': unsupported ACP target. Allowed acp: targets are #{ACP_KNOWN_TARGETS.join(", ")}. Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config).")
   end
 
   # `--passive-scan-path PATH` accepts multiple entries (repeatable),
@@ -170,7 +229,11 @@ module Noir::CliValidation
   end
 
   def self.validate_base_paths!(options : Hash(String, YAML::Any))
-    base_paths = options["base"].as_a.map(&.to_s)
+    # Dedupe repeated paths (`noir scan ./app ./app`, or the same dir via
+    # both a positional and -b) so the detector doesn't load, parse and
+    # analyze the identical tree twice. `uniq` preserves first-seen order.
+    base_paths = options["base"].as_a.map(&.to_s).uniq!
+    options["base"] = YAML::Any.new(base_paths.map { |p| YAML::Any.new(p) })
     if base_paths.empty?
       raise Error.new(<<-MSG)
         No path to scan was given.
@@ -199,11 +262,22 @@ module Noir::CliValidation
     raise Error.new("Invalid output format '#{format}'. Valid formats: #{VALID_OUTPUT_FORMATS.join(", ")}")
   end
 
+  # Upper bound for --concurrency. A user asking for hundreds of thousands
+  # of fibers doesn't get more throughput — it just exhausts file
+  # descriptors / sockets and can take the process down. Cap at a value far
+  # above any useful setting and warn rather than silently honoring it.
+  MAX_CONCURRENCY = 256
+
   def self.validate_concurrency!(options : Hash(String, YAML::Any))
     raw_value = options["concurrency"].to_s
     value = raw_value.to_i?
     if value.nil? || value < 1
       raise Error.new("Invalid concurrency '#{raw_value}'. Concurrency must be an integer greater than or equal to 1.")
+    end
+
+    if value > MAX_CONCURRENCY
+      STDERR.puts "WARNING: --concurrency #{value} exceeds the safe maximum; clamping to #{MAX_CONCURRENCY}.".colorize(:yellow)
+      value = MAX_CONCURRENCY
     end
 
     options["concurrency"] = YAML::Any.new(value)

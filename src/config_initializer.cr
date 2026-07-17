@@ -1,6 +1,7 @@
 require "file"
 require "log"
 require "yaml"
+require "colorize"
 require "./utils/home.cr"
 require "./llm/native_tool_calling"
 
@@ -21,6 +22,7 @@ class ConfigInitializer
     nolog
     no_spinner
     probe # legacy `send_req` is migrated to `probe` before this coercion runs
+    tls_skip_verify
     all_taggers
     status_codes
     passive_scan
@@ -138,11 +140,18 @@ class ConfigInitializer
       BOOLEAN_CONFIG_KEYS.each do |key|
         value = symbolized_hash[key]?
         next if value.nil?
+        next if value.raw.is_a?(Bool) # already a real YAML bool
 
-        case value.to_s
-        when "yes"
+        case value.to_s.downcase
+        when "yes", "true"
           symbolized_hash[key] = YAML::Any.new(true)
-        when "no"
+        when "no", "false"
+          symbolized_hash[key] = YAML::Any.new(false)
+        else
+          # A malformed boolean value (a misspelling, wrong word, etc.) used
+          # to fall through to any_to_bool's silent `false`, so the feature
+          # stayed off with no hint why. Surface it instead of guessing.
+          STDERR.puts "WARNING: config key '#{key}' has invalid boolean value #{value.to_s.inspect}; expected true/false/yes/no. Treating as false.".colorize(:yellow)
           symbolized_hash[key] = YAML::Any.new(false)
         end
       end
@@ -182,7 +191,17 @@ class ConfigInitializer
   # on very large boxes. Users who want a specific value still get it
   # via `--concurrency N` or `concurrency:` in the config file — those
   # paths overwrite this default.
+  #
+  # NOIR_CONCURRENCY lets container/CI pipelines pin the worker count to
+  # the pod's CPU allocation without threading a flag through every noir
+  # invocation. An explicit --concurrency / config value still wins, since
+  # those overwrite this default afterwards.
   def default_concurrency : String
+    if env_value = ENV["NOIR_CONCURRENCY"]?
+      if parsed = env_value.strip.to_i?
+        return parsed.to_s if parsed >= 1
+      end
+    end
     System.cpu_count.clamp(4, 32).to_s
   end
 
@@ -223,6 +242,7 @@ class ConfigInitializer
       "url"                          => YAML::Any.new(""),
       "probe_skip"                   => YAML::Any.new([] of YAML::Any),
       "probe_match"                  => YAML::Any.new([] of YAML::Any),
+      "tls_skip_verify"              => YAML::Any.new(false),
       "all_taggers"                  => YAML::Any.new(false),
       "use_taggers"                  => YAML::Any.new(""),
       "diff"                         => YAML::Any.new(""),

@@ -1,21 +1,45 @@
 def banner(io : IO = STDERR)
-  art = [
-    "           ùç  Y  wù           ",
-    "        ™w£ Í  ±  Í £w2        ",
-    "       ù£   Ï  Ï  Ï   £ù       ",
-    "      ù£    Ï  Ï  Ï  ± £ù      ",
-    "         Ï  Ï  Ï  Ï  Ï         ",
-    "     2YV±ÏÏÏÏÏÏÏÏÏÏÏÏÏ3ÍY2     ",
-    "         Ï  Ï  Ï  Ï  Ï         ",
-    "      ù£ ±  Ï  Ï  Ï  ± £ç      ",
-    "       ù£   Ï  Ï  Ï   £ç       ",
-    "        2w£ Í  ±  Í £©2        ",
-    "           ùw  Y  wù           ",
-  ]
+  # The default art uses extended/box-drawing glyphs that mojibake on a
+  # non-UTF-8 Windows console (CP949, …). Ship an ASCII-only variant on
+  # Windows so the banner renders cleanly there. Both variants are 11 lines
+  # to stay aligned with the `side` text column below.
+  # Pre-declare so the macro-branch assignments are visible below.
+  art = [] of String
+  divider = ""
+  {% if flag?(:windows) %}
+    art = [
+      "          .   |   .          ",
+      "       .  |   |   |  .       ",
+      "      .   |   |   |   .      ",
+      "      |   |   |   |   |      ",
+      "          |   |   |          ",
+      "    #=====================#  ",
+      "          |   |   |          ",
+      "      |   |   |   |   |      ",
+      "      '   |   |   |   '      ",
+      "       '  |   |   |  '       ",
+      "          '   |   '          ",
+    ]
+    divider = "-" * 34
+  {% else %}
+    art = [
+      "           ùç  Y  wù           ",
+      "        ™w£ Í  ±  Í £w2        ",
+      "       ù£   Ï  Ï  Ï   £ù       ",
+      "      ù£    Ï  Ï  Ï  ± £ù      ",
+      "         Ï  Ï  Ï  Ï  Ï         ",
+      "     2YV±ÏÏÏÏÏÏÏÏÏÏÏÏÏ3ÍY2     ",
+      "         Ï  Ï  Ï  Ï  Ï         ",
+      "      ù£ ±  Ï  Ï  Ï  ± £ç      ",
+      "       ù£   Ï  Ï  Ï   £ç       ",
+      "        2w£ Í  ±  Í £©2        ",
+      "           ùw  Y  wù           ",
+    ]
+    divider = "─" * 34
+  {% end %}
 
   name = "N O I R".colorize(:white).mode(:bold).to_s
   version = "v#{Noir::VERSION}".colorize(:light_yellow).to_s
-  divider = "─" * 34
 
   side = [
     "",

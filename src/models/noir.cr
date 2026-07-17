@@ -162,6 +162,13 @@ class NoirRunner
     elsif ai_context_enabled?
       @logger.success "Running AI-context taggers."
       NoirTaggers.run_tagger @endpoints, @options, "all"
+    elsif @options["format"].to_s == "only-tag"
+      # `-f only-tag` has nothing to print unless a tagger populated tags.
+      # Without this, the format silently produced empty output unless the
+      # user also passed -T/--use-taggers — an easy trap. Imply all taggers
+      # when no explicit tagger option was given.
+      @logger.success "Running all taggers (implied by -f only-tag)."
+      NoirTaggers.run_tagger @endpoints, @options, "all"
     end
 
     if ai_context_enabled?
@@ -194,10 +201,14 @@ class NoirRunner
     @logger.sub "➔ Updating status codes."
     final = [] of Endpoint
 
-    exclude_codes = [] of Int32
+    # A Set dedupes repeated codes (--exclude-codes 404,404,500) for free and
+    # gives O(1) membership; empty tokens (a trailing comma) are skipped.
+    exclude_codes = Set(Int32).new
     unless @options["exclude_codes"].to_s.empty?
       @options["exclude_codes"].to_s.split(",").each do |code|
-        exclude_codes << code.strip.to_i
+        stripped = code.strip
+        next if stripped.empty?
+        exclude_codes << stripped.to_i
       end
     end
 
@@ -250,10 +261,17 @@ class NoirRunner
   end
 
   def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
+    # Verify TLS by default; --tls-skip-verify opts into the insecure
+    # context for self-signed internal hosts (see Deliver#tls_context).
+    tls = if any_to_bool(@options["tls_skip_verify"]?)
+            OpenSSL::SSL::Context::Client.insecure
+          else
+            OpenSSL::SSL::Context::Client.new
+          end
     Crest::Request.execute(
       method: method,
       url: url,
-      tls: OpenSSL::SSL::Context::Client.insecure,
+      tls: tls,
       user_agent: "Noir/#{Noir::VERSION}",
       params: params,
       form: form,
@@ -321,7 +339,14 @@ class NoirRunner
     when "toml"
       builder.print_toml @endpoints, diff_app
     else
-      # Print diff output
+      # Diff mode only implements plain/json/yaml/toml. Any other explicit
+      # format (only-url, curl, sarif, oas3, …) was silently rendered as the
+      # decorated text diff, corrupting automation pipelines that expected the
+      # requested format. Warn (to STDERR) so the mismatch is visible.
+      fmt = options["format"].to_s
+      unless fmt.empty? || fmt == "plain"
+        @logger.warning "Diff mode does not support -f #{fmt}; showing the text diff instead. Supported diff formats: plain, json, yaml, toml."
+      end
       builder.print @endpoints, diff_app
     end
   end
@@ -336,7 +361,7 @@ class NoirRunner
       builder.print @endpoints, @passive_results
     when "jsonl"
       builder = OutputBuilderJsonl.new @options
-      builder.print @endpoints
+      builder.print @endpoints, @passive_results
     when "toml"
       builder = OutputBuilderToml.new @options
       builder.print @endpoints, @passive_results

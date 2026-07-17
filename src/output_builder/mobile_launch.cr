@@ -18,9 +18,11 @@ module MobileLaunch
     return true if tech == "ios"
     return false unless tech == "well_known_applinks"
 
-    # Apple App Site Association entry unless an Android Digital Asset Links
-    # file backs it.
-    endpoint.details.code_paths.none? { |pi| File.basename(pi.path) == "assetlinks.json" }
+    # Classify as iOS only on an affirmative Apple apple-app-site-association
+    # backing file. The old `none? { assetlinks.json }` was vacuously true for
+    # an empty code_paths list (which optimization can produce), so an Android
+    # App-Links association with no code_paths leaked into the iOS simctl list.
+    endpoint.details.code_paths.any? { |pi| File.basename(pi.path) == "apple-app-site-association" }
   end
 
   # App Links / Universal Links from `.well-known` files are bare path
@@ -34,6 +36,21 @@ module MobileLaunch
 
   def shell_quote(str : String) : String
     "'#{str.gsub("'", "'\\''")}'"
+  end
+
+  # Characters the on-device shell would interpret (word-splitting, control
+  # operators, globs, expansions). `&` is the important one: an OAuth-style
+  # deep link `myapp://cb?code=x&state=y` otherwise backgrounds at `&`.
+  DEVICE_SHELL_METACHARS = /[\s&;|<>()$`"'\\*?\[\]{}#!~]/
+
+  # `adb shell ARGS...` runs ARGS through a SECOND shell on the device: the
+  # host shell strips one quote layer, leaving raw metacharacters exposed to
+  # the device shell. When a value carries such a character, quote twice so
+  # both shells strip a layer and the device receives the literal value.
+  # Metachar-free values (the common case) keep a single clean quote layer.
+  def device_shell_quote(str : String) : String
+    return shell_quote(str) unless str.matches?(DEVICE_SHELL_METACHARS)
+    shell_quote(shell_quote(str))
   end
 
   def plural(count : Int32) : String

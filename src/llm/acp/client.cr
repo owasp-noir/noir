@@ -25,6 +25,27 @@ module LLM
     GEMINI_ARGS = ["--experimental-acp"]
     CLAUDE_ARGS = ["@zed-industries/claude-agent-acp"]
 
+    # ACP targets Noir knows how to launch. Anything outside this set would
+    # be executed as an arbitrary local process (`--ai-provider "acp:rm -rf /"`
+    # → command "rm", args ["-rf", "/"]), which is a code-execution hole when
+    # the provider string comes from an untrusted config file. Custom targets
+    # are refused unless the operator explicitly opts in.
+    KNOWN_TARGETS = %w[codex gemini claude claude-code]
+
+    class UnsupportedACPTargetError < Exception; end
+
+    # Escape hatch for power users running their own ACP agent binary. Off by
+    # default so a poisoned `.noir.yml` can't silently spawn a process.
+    def self.custom_command_allowed? : Bool
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
+    end
+
+    # True when the provider resolves to a built-in target, or the operator
+    # opted into custom commands. Used for a friendly CLI-time pre-flight.
+    def self.allowed_target?(provider : String) : Bool
+      KNOWN_TARGETS.includes?(extract_target(provider).downcase) || custom_command_allowed?
+    end
+
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
       @command, @args = self.class.resolve_command(provider)
       @session_lock = Mutex.new
@@ -61,6 +82,12 @@ module LLM
       when "claude", "claude-code"
         {"npx", CLAUDE_ARGS.clone}
       else
+        unless custom_command_allowed?
+          raise UnsupportedACPTargetError.new(
+            "Unsupported ACP provider target #{target.inspect}. Allowed acp: targets are #{KNOWN_TARGETS.join(", ")}. " \
+            "Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config)."
+          )
+        end
         parts = target.split
         command = parts.first || "acp"
         args = parts.size > 1 ? parts[1..-1] : [] of String

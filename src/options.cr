@@ -14,8 +14,15 @@ end
 # When `reset_if` equals the current value — e.g. an untouched default list —
 # the accumulation starts fresh so the first user value replaces the default
 # rather than appending to it.
-private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, value : String, reset_if : String? = nil)
+private def append_to_csv_option(hash : Hash(String, YAML::Any), key : String, value : String, reset_if : String? = nil, reset_seen : Set(String)? = nil)
   existing = (hash[key]? || YAML::Any.new("")).to_s
+  if reset_seen && !reset_seen.includes?(key)
+    # First CLI occurrence of this flag replaces any config-file value
+    # outright (CLI wins over config, not "config,cli"); later occurrences on
+    # the same command line then accumulate.
+    existing = ""
+    reset_seen << key
+  end
   existing = "" if reset_if && existing == reset_if
   combined = existing.empty? ? value : "#{existing},#{value}"
   hash[key] = YAML::Any.new(combined)
@@ -164,8 +171,18 @@ def normalize_ai_context_flag(args : Array(String)) : Array(String)
     arg = args[i]
     if arg == "--ai-context"
       if i + 1 < args.size && ai_context_feature_list?(args[i + 1])
-        result << "--ai-context=#{args[i + 1]}"
-        i += 2
+        # Greedily absorb space-separated continuations of a comma list:
+        # `--ai-context guards, sinks` shell-splits into "guards," + "sinks",
+        # and without this the trailing "sinks" was mistaken for a positional
+        # scan path ("Base path does not exist: sinks").
+        features = [args[i + 1]]
+        j = i + 2
+        while features.last.ends_with?(",") && j < args.size && ai_context_feature_list?(args[j])
+          features << args[j]
+          j += 1
+        end
+        result << "--ai-context=#{features.join.rstrip(",")}"
+        i = j
       else
         result << "--ai-context="
         i += 1
@@ -224,6 +241,10 @@ def run_options_parser
   noir_options["config_file"] = YAML::Any.new(override_config_path) if override_config_path
 
   extracted_args = extract_hidden_prompt_flags(noir_options)
+
+  # Tracks CSV flags whose first CLI occurrence must override (not append to)
+  # a config-file value. See append_to_csv_option.
+  csv_reset_seen = Set(String).new
 
   OptionParser.parse(extracted_args) do |parser|
     parser.banner = base_help
@@ -373,6 +394,9 @@ def run_options_parser
     parser.on "--probe-skip VAL", "Skip endpoints matching pattern (repeatable)" do |v|
       append_to_yaml_array(noir_options, "probe_skip", v)
     end
+    parser.on "--tls-skip-verify", "Skip TLS cert verification for probe/export/webhook (insecure; for self-signed hosts)" do
+      noir_options["tls_skip_verify"] = YAML::Any.new(true)
+    end
 
     # EXPORT — ship the endpoint catalog to an external data store.
     # Categorically different from probing: no HTTP traffic to the
@@ -436,7 +460,7 @@ def run_options_parser
       # first `--ai-native-tools-allowlist openai` would land
       # appended onto the default list ("openai,anthropic,gemini,…
       # ,openai") instead of replacing it.
-      append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv)
+      append_to_csv_option(noir_options, "ai_native_tools_allowlist", v, reset_if: LLM::NativeToolCalling.default_allowlist_csv, reset_seen: csv_reset_seen)
     end
     parser.on "--ai-max-token N", "Max tokens per request" do |v|
       validated = positive_int_or_die!("--ai-max-token", v)
@@ -565,6 +589,13 @@ def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
   type, value = if idx = spec.index('=')
                   {spec[0...idx], spec[(idx + 1)..]}
                 else
+                  # `--pvalue query` (no '=') sets the literal value "query"
+                  # for all types. Since `query` is itself a type name, this
+                  # is almost always a forgotten '=' (meant `query=<value>`).
+                  # Warn but honor the literal so scripted usage still works.
+                  if PVALUE_TYPE_KEYS.has_key?(spec)
+                    STDERR.puts "WARNING: --pvalue #{spec.inspect} has no '=', so #{spec.inspect} is used as a literal value for all param types. Did you mean --pvalue #{spec}=<value>?".colorize(:yellow)
+                  end
                   {"any", spec}
                 end
 

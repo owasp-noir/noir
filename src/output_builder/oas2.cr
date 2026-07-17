@@ -77,6 +77,14 @@ class OutputBuilderOas2 < OutputBuilder
             "properties" => JSON::Any.new(json_properties),
           } of String => JSON::Any),
         } of String => JSON::Any)
+      elsif !json_properties.empty? && has_form
+        # OAS2 forbids `body` and `formData` in the same operation, so the
+        # JSON body is dropped in favor of the concrete formData fields. Rather
+        # than losing the JSON field names entirely, surface each as a query
+        # parameter (query + formData are allowed together) so they survive.
+        json_properties.each_key do |name|
+          append_unique_parameter(parameters, swagger_parameter(name, "query", false))
+        end
       end
 
       if has_form
