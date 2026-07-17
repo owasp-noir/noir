@@ -100,9 +100,9 @@ module Noir::RubyCalleeExtractor
     # a UTF-8 multibyte sequence, so raw byte_index scans (memchr) are both
     # correct and allocation-free. This is the hot path — every Ruby analyzer
     # runs strip_comment on every line, most of which need no rewrite.
-    return line unless line.byte_index(0x23_u8) ||                       # '#'
+    return line unless line.byte_index(0x23_u8) ||                        # '#'
                        (!preserve_strings && (line.byte_index(0x27_u8) || # '\''
-                                              line.byte_index(0x22_u8)))  # '"'
+                       line.byte_index(0x22_u8)))                         # '"'
 
     stripped = String::Builder.new
     in_string = false
