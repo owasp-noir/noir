@@ -46,10 +46,28 @@ module Noir::CLI::Router
     if !head.starts_with?("-") && KNOWN_COMMANDS.includes?(head)
       rest = argv[1..]
       route(head, rest)
+    elsif likely_mistyped_command?(head)
+      # A bare word that is neither a known command nor an existing path is
+      # almost certainly a mistyped subcommand. Pre-fix this fell through to
+      # scan and surfaced the misleading "Base path does not exist: <word>".
+      Noir::CLI.die("Unknown command or non-existent path: '#{head}'.\n" \
+                    "Run 'noir help' to see commands, or 'noir scan #{head}' to scan a path.")
     else
-      # v0 compat: bare flags or unknown positional → default to scan.
+      # v0 compat: bare flags or an existing positional path → default to scan.
       ScanCommand.run(argv)
     end
+  end
+
+  # True for a first token that looks like a mistyped subcommand: not a flag,
+  # not a known command, has no path separator/extension, and doesn't exist on
+  # disk. Real scan targets (`./app`, `app.rb`, an existing dir) are excluded
+  # so the v0 `noir <path>` shorthand keeps working.
+  private def self.likely_mistyped_command?(head : String) : Bool
+    return false if head.starts_with?("-")
+    return false if KNOWN_COMMANDS.includes?(head)
+    return false if head.includes?("/") || head.includes?(".")
+    return false if File.exists?(head)
+    true
   end
 
   private def self.route(command : String, args : Array(String))
