@@ -9,11 +9,15 @@ class SendReq < Deliver
     wg = WaitGroup.new
     tls = tls_context
     failures = Atomic(Int32).new(0)
+    # Bound in-flight requests to --concurrency so a large endpoint set can't
+    # spawn thousands of sockets at once and hit "Too many open files".
+    sem = Channel(Nil).new(concurrency_limit)
 
     applied_endpoints.each do |endpoint|
       next if endpoint.non_http? # can't HTTP-probe an app deep link or CLI command
       requestable_http_methods(endpoint.method).each do |request_method|
         wg.add(1)
+        sem.send(nil) # acquire a slot (blocks once `concurrency_limit` are in flight)
         spawn do
           begin
             if endpoint.params.size > 0
@@ -50,6 +54,7 @@ class SendReq < Deliver
             @logger.debug "Exception during request delivery"
             @logger.debug_sub e
           ensure
+            sem.receive # release the slot
             wg.done
           end
         end

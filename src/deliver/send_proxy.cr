@@ -9,6 +9,8 @@ class SendWithProxy < Deliver
     applied_endpoints = apply_all(endpoints)
     wg = WaitGroup.new
     failures = Atomic(Int32).new(0)
+    # Bound in-flight requests to --concurrency (see send_req.cr).
+    sem = Channel(Nil).new(concurrency_limit)
     # Proxy delivery targets an intercepting proxy (Burp/ZAP) that presents
     # its own certificate, so verification is intentionally off here
     # regardless of --tls-skip-verify — otherwise every replayed request
@@ -19,6 +21,7 @@ class SendWithProxy < Deliver
       next if endpoint.non_http? # can't replay an app deep link or CLI command through an HTTP proxy
       requestable_http_methods(endpoint.method).each do |request_method|
         wg.add(1)
+        sem.send(nil) # acquire a slot (blocks once concurrency_limit are in flight)
         spawn do
           begin
             if !endpoint.params.empty?
@@ -59,6 +62,7 @@ class SendWithProxy < Deliver
             @logger.debug "Exception during proxy delivery"
             @logger.debug_sub e
           ensure
+            sem.receive # release the slot
             wg.done
           end
         end

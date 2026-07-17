@@ -142,6 +142,14 @@ class Deliver
     # After inheriting the class, write an action code here.
   end
 
+  # Max concurrent in-flight probe requests. Bounds the fiber/socket fan-out
+  # so a large endpoint set can't exhaust file descriptors. Backed by the
+  # validated --concurrency value (already clamped to a sane ceiling).
+  protected def concurrency_limit : Int32
+    n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
+    n > 0 ? n : 16
+  end
+
   # TLS context for outbound delivery. Verifying (secure) by default; the
   # old behaviour skipped verification unconditionally, silently exposing
   # the endpoint catalog to MITM on the way to a webhook / Elasticsearch.
