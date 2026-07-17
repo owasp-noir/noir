@@ -36,6 +36,24 @@ describe LLM::ACPClient do
       command.should eq("npx")
       args.should eq(["@zed-industries/claude-agent-acp"])
     end
+
+    it "refuses an arbitrary command target (no code execution)" do
+      ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+      expect_raises(LLM::ACPClient::UnsupportedACPTargetError, /Unsupported ACP provider target/) do
+        LLM::ACPClient.resolve_command("acp:rm -rf /")
+      end
+    end
+
+    it "allows a custom command only with the explicit opt-in" do
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      begin
+        command, args = LLM::ACPClient.resolve_command("acp:my-agent --flag")
+        command.should eq("my-agent")
+        args.should eq(["--flag"])
+      ensure
+        ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+      end
+    end
   end
 
   describe ".default_model" do
