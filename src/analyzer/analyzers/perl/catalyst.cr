@@ -615,30 +615,40 @@ module Analyzer::Perl
 
     private def extract_params_from_body(body : String, method : String) : Array(Param)
       params = [] of Param
+      # Action bodies without request accessors skip six PCRE2 scans.
+      return params unless body.includes?("->") && (body.includes?("req") || body.includes?("request"))
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:query_params|query_parameters|parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "query")
+      if body.includes?("param")
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:query_params|query_parameters|parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "query")
+        end
+
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:body_params|body_parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "form")
+        end
+
+        body.scan(/->\s*(?:req|request)\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |match|
+          param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
+          params << Param.new(match[1], "", param_type)
+        end
       end
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:body_params|body_parameters)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "form")
+      if body.includes?("body_data") || body.includes?("->data") || body.includes?("-> data")
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:body_data|data)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "json")
+        end
       end
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:body_data|data)\s*->\s*\{?\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "json")
+      if body.includes?("header")
+        body.scan(/->\s*(?:req|request)\s*->\s*(?:header|headers\s*->\s*header)\s*\(\s*['"]([^'"]+)['"]/) do |match|
+          params << Param.new(match[1], "", "header")
+        end
       end
 
-      body.scan(/->\s*(?:req|request)\s*->\s*(?:header|headers\s*->\s*header)\s*\(\s*['"]([^'"]+)['"]/) do |match|
-        params << Param.new(match[1], "", "header")
-      end
-
-      body.scan(/->\s*(?:req|request)\s*->\s*cookies?\s*(?:->\s*\{|\(\s*)\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
-        params << Param.new(match[1], "", "cookie")
-      end
-
-      body.scan(/->\s*(?:req|request)\s*->\s*param\s*\(\s*['"]([^'"]+)['"]/) do |match|
-        param_type = (method == "GET" || method == "HEAD" || method == "OPTIONS") ? "query" : "form"
-        params << Param.new(match[1], "", param_type)
+      if body.includes?("cookie")
+        body.scan(/->\s*(?:req|request)\s*->\s*cookies?\s*(?:->\s*\{|\(\s*)\s*['"]?([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
+          params << Param.new(match[1], "", "cookie")
+        end
       end
 
       params
