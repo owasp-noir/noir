@@ -997,7 +997,7 @@ module Analyzer::Elixir
       return 0 if needle.empty?
       count = 0
       i = 0
-      while (j = text.index(needle, i))
+      while j = text.index(needle, i)
         count += 1
         i = j + needle.size
       end

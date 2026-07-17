@@ -56,7 +56,7 @@ module Noir::ElixirCalleeExtractor
     return true if name.empty?
 
     # Last segment after `.` without allocating a split array.
-    last = if (dot = name.rindex('.'))
+    last = if dot = name.rindex('.')
              name[dot + 1..]
            else
              name
