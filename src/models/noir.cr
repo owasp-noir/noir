@@ -343,7 +343,7 @@ class NoirRunner
       builder.print @endpoints, @passive_results
     when "jsonl"
       builder = OutputBuilderJsonl.new @options
-      builder.print @endpoints
+      builder.print @endpoints, @passive_results
     when "toml"
       builder = OutputBuilderToml.new @options
       builder.print @endpoints, @passive_results
