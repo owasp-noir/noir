@@ -24,7 +24,7 @@ module Analyzer::Php
       # neither explicit route definitions nor implicit controller classes.
       return endpoints unless is_route || is_controller
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       content = read_file_content(path)
 

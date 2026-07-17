@@ -15,7 +15,7 @@ module Analyzer::Php
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       content = read_file_content(path)
       if slim_relevant?(content)
@@ -36,8 +36,11 @@ module Analyzer::Php
     # Slim. Any file that reaches this analyzer via detection is usually in
     # a Slim project, but project-wide scans still feed unrelated PHP here.
     private def slim_relevant?(content : String) : Bool
-      content.matches?(RELEVANCE_MARKER_RE) ||
-        !!content.match(/\$\w+->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i)
+      return true if content.matches?(RELEVANCE_MARKER_RE)
+      # Verb/map/group registrations are always `$var->method(`. Skip the
+      # heavier verb regex when no `->` call shape is present.
+      return false unless content.includes?("->")
+      !!content.match(/\$\w+->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i)
     end
 
     private def analyze_routes_content(content : String,

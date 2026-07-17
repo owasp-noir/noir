@@ -19,7 +19,7 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       content = read_file_content(path)
       if lumen_relevant?(content)
@@ -33,6 +33,8 @@ module Analyzer::Php
     # every unrelated `.php` file feeding into the analyzer.
     private def lumen_relevant?(content : String) : Bool
       return true if content.includes?("Laravel\\Lumen")
+      # Cheap reject: every Lumen route registration goes through `$router`.
+      return false unless content.includes?("$router")
       !!content.match(/\$router\s*->\s*(?:get|post|put|patch|delete|options|head|group|addRoute)\s*\(/i)
     end
 

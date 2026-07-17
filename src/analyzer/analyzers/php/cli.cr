@@ -52,27 +52,46 @@ module Analyzer::Php
     WP_ASSOC_ARG_BRACKET = /\$assoc_args\s*\[\s*['"]([^'"]+)['"]\s*\]/
     WP_FLAG_VALUE        = /get_flag_value\s*\(\s*\$assoc_args\s*,\s*['"]([^'"]+)['"]/
 
+    # Cheap file-level reject before the precise multi-regex evidence
+    # check. Every accepted CLI shape contains at least one of these
+    # literals.
+    CLI_HINT_RE = Regex.union(
+      "Symfony\\Component\\Console",
+      "extends Command",
+      "AsCommand",
+      "getopt",
+      "$argv",
+      "League\\CLImate",
+      "Minicli\\",
+      "$signature",
+      "Robo\\Tasks",
+      "WP_CLI",
+    )
+
     def analyze
       endpoints = {} of String => Endpoint
 
       get_files_by_extension(".php").each do |path|
         next if File.directory?(path)
         next if PhpEngine.test_path?(path)
-        next unless File.exists?(path)
 
         begin
           content = read_file_content(path)
+          next unless content.matches?(CLI_HINT_RE)
           next unless cli_evidence?(content)
 
           binary = php_binary_name(path)
           root_url = "cli://#{binary}"
           emit_env = !content.matches?(WEB_FRAMEWORK_RE)
+          has_artisan = content.matches?(ARTISAN_SIGNATURE)
+          has_robo = content.matches?(ROBO_MARKER)
+          has_wp = content.matches?(WP_MARKER)
           lines = content.lines
 
           scan(lines, path, root_url, endpoints, emit_env)
-          scan_artisan(lines, path, root_url, endpoints) if content.matches?(ARTISAN_SIGNATURE)
-          scan_robo(lines, path, root_url, endpoints) if content.matches?(ROBO_MARKER)
-          scan_wp_cli(lines, path, root_url, endpoints) if content.matches?(WP_MARKER)
+          scan_artisan(lines, path, root_url, endpoints) if has_artisan
+          scan_robo(lines, path, root_url, endpoints) if has_robo
+          scan_wp_cli(lines, path, root_url, endpoints) if has_wp
         rescue e
           logger.debug "Error analyzing #{path}: #{e}"
           next

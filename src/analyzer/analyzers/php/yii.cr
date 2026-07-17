@@ -16,7 +16,7 @@ module Analyzer::Php
       endpoints = [] of Endpoint
 
       return endpoints unless path.ends_with?(".php")
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       content = read_file_content(path)
 
@@ -24,7 +24,9 @@ module Analyzer::Php
         endpoints.concat(analyze_url_manager(path, content))
       end
 
-      if path.ends_with?("Controller.php") || content.match(/class\s+\w+Controller\s+extends/)
+      if path.ends_with?("Controller.php") ||
+         (content.includes?("Controller") && content.includes?("extends") &&
+         !!content.match(/class\s+\w+Controller\s+extends/))
         endpoints.concat(analyze_controller(path, content, include_callee))
       end
 
