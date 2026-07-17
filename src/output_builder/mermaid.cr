@@ -91,9 +91,14 @@ class OutputBuilderMermaid < OutputBuilder
       # Remove curly braces and prefix with 'param_'
       sanitized = "param_#{segment.gsub(/[{}\s]/, "")}"
     else
-      # Replace invalid characters with underscore
-      sanitized = segment.gsub(/[^a-zA-Z0-9_]/, "_")
-      # If starts with a number, prepend 'path_'
+      # Replace mermaid-unsafe characters with underscore, but keep Unicode
+      # letters/digits (\p{L}/\p{N}) intact. The old ASCII-only class turned
+      # a Korean/CJK/accented segment like `사용자` into `___`, destroying the
+      # label; \p{L}\p{N} preserves it while still stripping spaces and
+      # syntax chars ([], (), :) that would break the bare mindmap node.
+      sanitized = segment.gsub(/[^\p{L}\p{N}_]/, "_")
+      # If starts with an ASCII digit, prepend 'path_' (mindmap node ids
+      # can't lead with a digit).
       if sanitized =~ /^\d/
         sanitized = "path_#{sanitized}"
       end
