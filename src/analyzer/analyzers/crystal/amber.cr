@@ -45,7 +45,7 @@ module Analyzer::Crystal
 
       lines = mask_crystal_heredocs(read_file_content(path).lines)
 
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
       last_endpoint = Endpoint.new("", "")
 
@@ -297,8 +297,21 @@ module Analyzer::Crystal
       logger.debug e
     end
 
+    # Amber prefers `verb "/path", Controller, :action`. One combined
+    # PCRE2 scan replaces the previous 8 sequential controller-form
+    # scans; on miss, the shared simple-route helper covers the
+    # controller-less fallback (another single scan). Was 16 unguarded
+    # `.scan` calls per source line.
+    CONTROLLER_ROUTE_RE = /(?:^|[^.\w])(get|post|put|delete|patch|head|options|ws)\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:\w+/
+
     def line_to_param(content : String) : Param
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
+
+      # Most source lines never touch params; bail before the includes?/split
+      # chain when none of the Amber accessor prefixes appear.
+      return Param.new("", "", "") unless content.includes?("params") ||
+                                          content.includes?("request.") ||
+                                          content.includes?("context.request")
 
       # Amber uses params object for accessing parameters
       if content.includes? "params["
@@ -347,112 +360,22 @@ module Analyzer::Crystal
 
     def line_to_endpoint(content : String) : Endpoint
       content = Noir::CrystalCalleeExtractor.strip_comment(content)
+      return Endpoint.new("", "") unless content.includes?('"') || content.includes?("'")
 
-      # Amber route definitions with controller and action
-      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "HEAD")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "OPTIONS")
-        end
-      end
-
-      # WebSocket support in Amber
-      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]\s*,\s*\w+,\s*:(\w+)/) do |match|
-        if match.size > 1
-          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
+      # Controller-action form first (Amber's primary DSL).
+      if match = content.match(CONTROLLER_ROUTE_RE)
+        verb = match[1]
+        path = normalize_crystal_interpolation(match[2])
+        if verb == "ws"
+          endpoint = Endpoint.new(path, "GET")
           endpoint.protocol = "ws"
           return endpoint
         end
+        return Endpoint.new(path, verb.upcase)
       end
 
-      # Also support simple route definitions without controller (fallback)
-      content.scan(/(?:^|[^.\w])get\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])post\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "POST")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])put\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PUT")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])delete\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "DELETE")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])patch\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "PATCH")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])head\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "HEAD")
-        end
-      end
-
-      content.scan(/(?:^|[^.\w])options\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          return Endpoint.new(normalize_crystal_interpolation(match[1]), "OPTIONS")
-        end
-      end
-
-      # WebSocket support in Amber
-      content.scan(/(?:^|[^.\w])ws\s*(?:\(\s*)?['"](.+?)['"]/) do |match|
-        if match.size > 1
-          endpoint = Endpoint.new(normalize_crystal_interpolation(match[1]), "GET")
-          endpoint.protocol = "ws"
-          return endpoint
-        end
-      end
-
-      Endpoint.new("", "")
+      # Simple `verb "/path"` fallback (shared engine helper).
+      match_crystal_simple_route(content)
     end
   end
 end
