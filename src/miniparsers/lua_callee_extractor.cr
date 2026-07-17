@@ -352,6 +352,7 @@ module Noir::LuaCalleeExtractor
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
+    return if line.blank?
     candidates = [] of Tuple(Int32, String)
 
     scan_candidates(line, RECEIVER_CALL_REGEX, candidates)
