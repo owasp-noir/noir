@@ -216,8 +216,8 @@ module PassiveRulesUpdater
       # Create empty directory as fallback
       begin
         Dir.mkdir_p(rules_path) unless Dir.exists?(rules_path)
-      rescue fallback_ex
-        logger.warning "Could not create passive rules directory at #{rules_path}: #{fallback_ex.message}"
+      rescue err
+        logger.warning "Could not create passive rules directory at #{rules_path}: #{err.message}"
       end
 
       false

@@ -41,7 +41,7 @@ class SendElasticSearch < Deliver
   rescue e
     # Surface the failure at warning level so an indexing outage isn't
     # mistaken for a successful export.
-    @logger.warning "Elasticsearch delivery to #{uri.to_s} failed: #{e.message}"
+    @logger.warning "Elasticsearch delivery to #{uri} failed: #{e.message}"
     @logger.debug_sub e
   end
 end

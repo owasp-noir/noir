@@ -232,7 +232,7 @@ module Noir::CliValidation
     # Dedupe repeated paths (`noir scan ./app ./app`, or the same dir via
     # both a positional and -b) so the detector doesn't load, parse and
     # analyze the identical tree twice. `uniq` preserves first-seen order.
-    base_paths = options["base"].as_a.map(&.to_s).uniq
+    base_paths = options["base"].as_a.map(&.to_s).uniq!
     options["base"] = YAML::Any.new(base_paths.map { |p| YAML::Any.new(p) })
     if base_paths.empty?
       raise Error.new(<<-MSG)
