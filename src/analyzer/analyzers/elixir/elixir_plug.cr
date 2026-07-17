@@ -3,15 +3,11 @@ require "../../engines/elixir_engine"
 module Analyzer::Elixir
   class Plug < ElixirEngine
     def analyze_file(path : String) : Array(Endpoint)
+      # Extension and `*_test.exs` filtering live in ElixirEngine's
+      # `parallel_file_scan`; Plug only needs the remaining .ex/.exs
+      # split (.exs scripts still carry Plug.Router modules).
       ext = File.extname(path)
       return [] of Endpoint unless ext == ".ex" || ext == ".exs"
-      # Elixir convention: `*_test.exs` files are ExUnit test
-      # modules. They register routes (often via inline
-      # `Plug.Router`-using modules or `defmodule TestRouter do ... use
-      # Phoenix.Router`) purely to exercise the framework; the routes
-      # never serve real traffic. Phoenix's own repo and any
-      # `phx.gen.auth` scaffold's tests trip this hard.
-      return [] of Endpoint if test_only_path?(path)
 
       endpoints = [] of Endpoint
       # `read_file_content` reuses the detector's already-cached bytes
@@ -86,14 +82,6 @@ module Analyzer::Elixir
       end
 
       endpoints
-    end
-
-    # ExUnit's filename convention is rigid: every test module sits in
-    # a file named `*_test.exs`, and `mix test` ignores anything else.
-    # Skipping by suffix is safe because production code never adopts
-    # that name.
-    private def test_only_path?(path : String) : Bool
-      File.basename(path).ends_with?("_test.exs")
     end
 
     def extract_params_from_block(lines : Array(String), start_index : Int32, method : String, block_end : Int32? = nil) : Array(Param)

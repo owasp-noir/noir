@@ -36,13 +36,35 @@ module Analyzer::Elixir
       opens - closes
     end
 
-    # No extension filter: Phoenix uses `.ex` only, Plug also accepts
-    # `.exs`, so each analyzer filters inside `analyze_file`.
+    # ExUnit's filename convention is rigid: every test module sits in
+    # a file named `*_test.exs`, and `mix test` ignores anything else.
+    # Production code never adopts that name, so the suffix check is
+    # safe for every Elixir analyzer (Phoenix/Plug/Bandit).
+    def self.test_path?(path : String) : Bool
+      File.basename(path).ends_with?("_test.exs")
+    end
+
+    protected def elixir_test_path?(path : String) : Bool
+      ElixirEngine.test_path?(path)
+    end
+
+    # Phoenix uses `.ex` only; Plug also accepts `.exs`. Pull both from
+    # the extension index instead of walking the whole `file_map` (which
+    # includes every language in a monorepo) and re-filtering inside
+    # each analyzer.
+    protected def elixir_source_files : Array(String)
+      get_files_by_extension(".ex") + get_files_by_extension(".exs")
+    end
+
+    # Walk only Elixir sources concurrently. Extension + ExUnit-test
+    # filtering lives here so framework adapters don't re-check every
+    # path the monorepo file map yields.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
+        parallel_analyze(elixir_source_files) do |path|
           next if File.directory?(path)
           next unless File.exists?(path)
+          next if elixir_test_path?(path)
 
           begin
             block.call(path)
