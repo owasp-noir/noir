@@ -1,4 +1,5 @@
 require "colorize"
+require "openssl"
 require "./logger"
 require "../utils/utils"
 require "../utils/http_symbols"
@@ -139,6 +140,19 @@ class Deliver
 
   def run
     # After inheriting the class, write an action code here.
+  end
+
+  # TLS context for outbound delivery. Verifying (secure) by default; the
+  # old behaviour skipped verification unconditionally, silently exposing
+  # the endpoint catalog to MITM on the way to a webhook / Elasticsearch.
+  # `--tls-skip-verify` restores the insecure context for self-signed
+  # internal endpoints.
+  protected def tls_context : OpenSSL::SSL::Context::Client
+    if any_to_bool(@options["tls_skip_verify"]?)
+      OpenSSL::SSL::Context::Client.insecure
+    else
+      OpenSSL::SSL::Context::Client.new
+    end
   end
 
   private def matches_pattern?(endpoint : Endpoint, pattern : String) : Bool

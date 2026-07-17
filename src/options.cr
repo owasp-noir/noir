@@ -373,6 +373,9 @@ def run_options_parser
     parser.on "--probe-skip VAL", "Skip endpoints matching pattern (repeatable)" do |v|
       append_to_yaml_array(noir_options, "probe_skip", v)
     end
+    parser.on "--tls-skip-verify", "Skip TLS cert verification for probe/export/webhook (insecure; for self-signed hosts)" do
+      noir_options["tls_skip_verify"] = YAML::Any.new(true)
+    end
 
     # EXPORT — ship the endpoint catalog to an external data store.
     # Categorically different from probing: no HTTP traffic to the

@@ -32,14 +32,16 @@ class SendElasticSearch < Deliver
     Crest::Request.execute(
       method: :post,
       url: uri.to_s,
-      tls: OpenSSL::SSL::Context::Client.insecure,
+      tls: tls_context,
       user_agent: "Noir/#{Noir::VERSION}",
       form: body,
       headers: es_headers,
       json: true
     )
   rescue e
-    @logger.debug "Exception of ES Delivery"
+    # Surface the failure at warning level so an indexing outage isn't
+    # mistaken for a successful export.
+    @logger.warning "Elasticsearch delivery to #{uri.to_s} failed: #{e.message}"
     @logger.debug_sub e
   end
 end

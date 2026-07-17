@@ -250,10 +250,17 @@ class NoirRunner
   end
 
   def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
+    # Verify TLS by default; --tls-skip-verify opts into the insecure
+    # context for self-signed internal hosts (see Deliver#tls_context).
+    tls = if any_to_bool(@options["tls_skip_verify"]?)
+            OpenSSL::SSL::Context::Client.insecure
+          else
+            OpenSSL::SSL::Context::Client.new
+          end
     Crest::Request.execute(
       method: method,
       url: url,
-      tls: OpenSSL::SSL::Context::Client.insecure,
+      tls: tls,
       user_agent: "Noir/#{Noir::VERSION}",
       params: params,
       form: form,

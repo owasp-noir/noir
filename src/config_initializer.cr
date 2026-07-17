@@ -21,6 +21,7 @@ class ConfigInitializer
     nolog
     no_spinner
     probe # legacy `send_req` is migrated to `probe` before this coercion runs
+    tls_skip_verify
     all_taggers
     status_codes
     passive_scan
@@ -233,6 +234,7 @@ class ConfigInitializer
       "url"                          => YAML::Any.new(""),
       "probe_skip"                   => YAML::Any.new([] of YAML::Any),
       "probe_match"                  => YAML::Any.new([] of YAML::Any),
+      "tls_skip_verify"              => YAML::Any.new(false),
       "all_taggers"                  => YAML::Any.new(false),
       "use_taggers"                  => YAML::Any.new(""),
       "diff"                         => YAML::Any.new(""),
