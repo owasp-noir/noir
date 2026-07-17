@@ -127,36 +127,47 @@ module Analyzer::Scala
             cookies = [] of String
             body_type : String? = nil
 
-            # Extract headers: request.headers.get("Header-Name") or request.headers("Header-Name")
-            method_body.scan(/request\s*\.\s*headers(?:\s*\.\s*get)?\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-              headers << header_match[1] unless headers.includes?(header_match[1])
+            if method_body.includes?("headers")
+              # Extract headers: request.headers.get("Header-Name") or request.headers("Header-Name")
+              method_body.scan(/request\s*\.\s*headers(?:\s*\.\s*get)?\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+                headers << header_match[1] unless headers.includes?(header_match[1])
+              end
+
+              # Also match implicit request patterns: headers.get("Header-Name")
+              method_body.scan(/headers\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
+                headers << header_match[1] unless headers.includes?(header_match[1])
+              end
             end
 
-            # Also match implicit request patterns: headers.get("Header-Name")
-            method_body.scan(/headers\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |header_match|
-              headers << header_match[1] unless headers.includes?(header_match[1])
-            end
+            if method_body.includes?("cookies")
+              # Extract cookies: request.cookies.get("cookie-name")
+              method_body.scan(/request\s*\.\s*cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
+                cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              end
 
-            # Extract cookies: request.cookies.get("cookie-name")
-            method_body.scan(/request\s*\.\s*cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
-              cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
-            end
-
-            # Also match: cookies.get("cookie-name")
-            method_body.scan(/cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
-              cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              # Also match: cookies.get("cookie-name")
+              method_body.scan(/cookies\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/) do |cookie_match|
+                cookies << cookie_match[1] unless cookies.includes?(cookie_match[1])
+              end
             end
 
             # Extract body type: request.body.asJson, request.body.asFormUrlEncoded, parse.json, parse.form
             body_source = "#{method_signature}\n#{method_body}"
-            if body_source.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson|\.body\s*\.\s*asOpt|\.body\s*\.\s*as\s*\[/)
-              body_type = "json"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*(?:form|multipartFormData|tolerantFormUrlEncoded)/)
-              body_type = "form"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*asXml|parse\s*\.\s*(?:xml|tolerantXml)/)
-              body_type = "xml"
-            elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*(?:text|raw|tolerantText)/)
-              body_type = "body"
+            if body_source.includes?("body") || body_source.includes?("parse") ||
+               body_source.includes?("xml") || body_source.includes?("Xml") ||
+               body_source.includes?("json") || body_source.includes?("Json") ||
+               body_source.includes?("form") || body_source.includes?("Form") ||
+               body_source.includes?("multipart") || body_source.includes?("text") ||
+               body_source.includes?("raw")
+              if body_source.match(/request\s*\.\s*body\s*\.\s*asJson|parse\s*\.\s*json|Json\s*\.\s*parse|\.body\s*\.\s*asJson|\.body\s*\.\s*asOpt|\.body\s*\.\s*as\s*\[/)
+                body_type = "json"
+              elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:FormUrlEncoded|MultipartFormData)|parse\s*\.\s*(?:form|multipartFormData|tolerantFormUrlEncoded)/)
+                body_type = "form"
+              elsif body_source.match(/request\s*\.\s*body\s*\.\s*asXml|parse\s*\.\s*(?:xml|tolerantXml)/)
+                body_type = "xml"
+              elsif body_source.match(/request\s*\.\s*body\s*\.\s*as(?:Text|Raw|Bytes)|parse\s*\.\s*(?:text|raw|tolerantText)/)
+                body_type = "body"
+              end
             end
 
             full_method_name = package_name.empty? ? "#{class_name}.#{method_name}" : "#{package_name}.#{class_name}.#{method_name}"
@@ -180,12 +191,16 @@ module Analyzer::Scala
     private def blank_non_code(content : String) : String
       block_depth = 0
       in_multiline_string = false
-      builder = String::Builder.new
-      lines = content.split('\n')
-      lines.each_with_index do |line, index|
+      builder = String::Builder.new(content.bytesize)
+      first = true
+      content.each_line do |line|
+        if first
+          first = false
+        else
+          builder << '\n'
+        end
         stripped, block_depth, in_multiline_string = Noir::ScalaCalleeExtractor.strip_non_code_with_state(line, block_depth, in_multiline_string)
         builder << stripped
-        builder << '\n' unless index == lines.size - 1
       end
       builder.to_s
     end
