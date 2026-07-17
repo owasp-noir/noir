@@ -17,15 +17,22 @@ module Analyzer::Php
 
     abstract def analyze_file(path : String) : Array(Endpoint)
 
-    # Walk the project tree concurrently and invoke the block for each
-    # readable, non-directory file. PHP analyzers apply their own
-    # extension/pathname filters inside the block because Symfony matches
-    # `.php` *and* YAML route files, Laravel checks `routes/*.php`, etc.
+    # Default source set for PHP framework adapters: every registered
+    # `.php` file. Symfony overrides this to also include YAML route
+    # configs (`.yaml` / `.yml`). Prefer the extension index over
+    # walking the whole monorepo `file_map`.
+    protected def php_source_files : Array(String)
+      get_files_by_extension(".php")
+    end
+
+    # Walk PHP sources concurrently. Extension + test-path filtering
+    # lives here so adapters don't re-check every monorepo path.
+    # Paths come from CodeLocator; skip the redundant `File.exists?`
+    # syscall (missing files error on read and are logged).
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
+        parallel_analyze(php_source_files) do |path|
           next if File.directory?(path)
-          next unless File.exists?(path)
           next if PhpEngine.test_path?(path)
 
           begin
@@ -86,10 +93,18 @@ module Analyzer::Php
     # Rewrite each shape to `{name}` so the path-parameter
     # extractor picks it up and the URL template reads cleanly.
     # Same posture as the Python f-string and Ruby `#{}` fixes.
+    INTERPOLATION_DOLLAR_BRACE_RE = /\$\{([A-Za-z_]\w*)\}/
+    INTERPOLATION_BRACE_DOLLAR_RE = /\{\$([A-Za-z_]\w*)\}/
+    INTERPOLATION_DOLLAR_RE       = /\$([A-Za-z_]\w*)/
+
     protected def normalize_php_interpolation(path : String) : String
-      path = path.gsub(/\$\{([A-Za-z_]\w*)\}/) { |_| "{#{$~[1]}}" }
-      path = path.gsub(/\{\$([A-Za-z_]\w*)\}/) { |_| "{#{$~[1]}}" }
-      path = path.gsub(/\$([A-Za-z_]\w*)/) { |_| "{#{$~[1]}}" }
+      # Most route literals have no interpolation; skip three PCRE
+      # gsub passes when `$` is absent.
+      return path unless path.includes?('$')
+
+      path = path.gsub(INTERPOLATION_DOLLAR_BRACE_RE) { |_| "{#{$~[1]}}" }
+      path = path.gsub(INTERPOLATION_BRACE_DOLLAR_RE) { |_| "{#{$~[1]}}" }
+      path = path.gsub(INTERPOLATION_DOLLAR_RE) { |_| "{#{$~[1]}}" }
       path
     end
 
@@ -127,7 +142,18 @@ module Analyzer::Php
     protected def php_line_number_for_index(content : String, index : Int32) : Int32
       return 1 if index <= 0
 
-      content[0...index].count('\n') + 1
+      # Count newlines without allocating `content[0...index]` (O(n)
+      # copy per call). Byte scan is correct because `\n` is ASCII and
+      # never appears inside a UTF-8 multi-byte sequence.
+      bytes = content.to_slice
+      byte_end = content.char_index_to_byte_index(index) || bytes.size
+      count = 1
+      i = 0
+      while i < byte_end
+        count += 1 if bytes[i] == BYTE_NEWLINE
+        i += 1
+      end
+      count
     end
 
     # ASCII byte values for the structural delimiters scanned below.
