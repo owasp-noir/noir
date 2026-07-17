@@ -148,9 +148,9 @@ class ConfigInitializer
         when "no", "false"
           symbolized_hash[key] = YAML::Any.new(false)
         else
-          # A typo like `passive_scan: ture` used to fall through to
-          # any_to_bool's silent `false`, so the feature stayed off with no
-          # hint why. Surface the malformed value instead of guessing.
+          # A malformed boolean value (a misspelling, wrong word, etc.) used
+          # to fall through to any_to_bool's silent `false`, so the feature
+          # stayed off with no hint why. Surface it instead of guessing.
           STDERR.puts "WARNING: config key '#{key}' has invalid boolean value #{value.to_s.inspect}; expected true/false/yes/no. Treating as false.".colorize(:yellow)
           symbolized_hash[key] = YAML::Any.new(false)
         end
