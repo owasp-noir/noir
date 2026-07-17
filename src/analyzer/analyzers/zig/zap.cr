@@ -83,9 +83,14 @@ module Analyzer::Zig
       aliases_by_file = Hash(String, Array(String)).new
       files.each do |path|
         content = read_file_content(path)
-        text = Noir::ZigCalleeExtractor.strip_comments(content)
+        need_import = content.includes?("@import")
+        need_paths = content.matches?(PATH_OR_INIT_RE)
+        next unless need_import || need_paths
 
-        if content.includes?("@import")
+        prepared = Noir::ZigCalleeExtractor.prepare(content)
+        text = prepared[:comments]
+
+        if need_import
           dir = File.dirname(path)
           text.scan(IMPORT_RE) do |m|
             resolved = File.expand_path(File.join(dir, m[2]))
@@ -94,13 +99,13 @@ module Analyzer::Zig
           end
         end
 
-        next unless content.matches?(PATH_OR_INIT_RE)
+        next unless need_paths
 
         # Path literals/bindings inside `test { … }` blocks are unit-test
         # fixtures (the zap framework's own `test_auth.zig` binds `.path =
         # "/test"`); excluding them keeps those phantom paths off real
         # endpoint structs that happen to share a type name.
-        test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(Noir::ZigCalleeExtractor.strip_non_code(content))
+        test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(prepared[:non_code])
 
         text.scan(INIT_RE) do |m|
           next if Noir::ZigCalleeExtractor.in_test_block?(m.begin(0) || 0, test_blocks)
@@ -141,19 +146,20 @@ module Analyzer::Zig
     end
 
     private def process_file(path : String, content : String, bindings : PathBindings, include_callee : Bool)
-      comment_stripped = Noir::ZigCalleeExtractor.strip_comments(content)
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
+      comment_stripped = prepared[:comments]
       # Comments + all literals blanked once; reused for struct-region brace
       # matching and the `@This()` file-struct scan.
-      stripped = Noir::ZigCalleeExtractor.strip_non_code(content)
-      all_fns = Noir::ZigCalleeExtractor.function_table(content, path)
+      stripped = prepared[:non_code]
+      code_chars = prepared[:non_code_chars]
+      all_fns = Noir::ZigCalleeExtractor.function_table_from(code_chars, path)
 
-      explicit = explicit_struct_regions(stripped)
-      emit_endpoint_structs(path, content, stripped, comment_stripped, bindings, explicit, all_fns, include_callee)
-      emit_router_routes(path, content, comment_stripped, all_fns, include_callee)
+      explicit = explicit_struct_regions(stripped, code_chars)
+      emit_endpoint_structs(path, content, stripped, code_chars, comment_stripped, bindings, explicit, all_fns, include_callee)
+      emit_router_routes(path, comment_stripped, code_chars, all_fns, include_callee)
     end
 
-    private def explicit_struct_regions(stripped : String) : Array(StructRegion)
-      chars = stripped.chars
+    private def explicit_struct_regions(stripped : String, chars : Array(Char)) : Array(StructRegion)
       regions = [] of StructRegion
       stripped.scan(STRUCT_DECL_RE) do |m|
         name = m[1]
@@ -165,9 +171,7 @@ module Analyzer::Zig
       regions
     end
 
-    private def emit_endpoint_structs(path, content, stripped, comment_stripped, bindings, explicit, all_fns, include_callee)
-      code_chars = stripped.chars
-
+    private def emit_endpoint_structs(path, content, stripped, code_chars, comment_stripped, bindings, explicit, all_fns, include_callee)
       # Explicit `const X = struct { … }` endpoints.
       explicit.each do |region|
         verbs = verb_methods_in(all_fns, region.start, region.stop) do |off|
@@ -306,12 +310,12 @@ module Analyzer::Zig
     end
 
     # `router.handle_func("/p", …)` / `handle_func_unbound("/p", handler)`.
-    private def emit_router_routes(path, content, comment_stripped, all_fns, include_callee)
+    private def emit_router_routes(path, comment_stripped, code_chars, all_fns, include_callee)
       # Paths are read from `comment_stripped` (string contents kept), but the
       # `(`/`)` matching must run on the string-blanked char array — a paren
       # inside a string argument would otherwise corrupt the argument span.
       # Both strips share offsets, so `close` indexes `comment_stripped` too.
-      code_chars = Noir::ZigCalleeExtractor.strip_non_code(content).chars
+      # `code_chars` is the non-code strip already produced by `prepare`.
       comment_stripped.scan(HANDLE_FUNC_RE) do |m|
         open_paren = (m.end(0) || 0) - 1
         close = Noir::ZigCalleeExtractor.find_matching(code_chars, open_paren, '(', ')')
