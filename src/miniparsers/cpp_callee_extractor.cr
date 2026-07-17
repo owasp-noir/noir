@@ -139,18 +139,23 @@ module Noir::CppCalleeExtractor
   # macro/route scanners run without matching commented-out (or documentation)
   # code. ASCII-oriented, matching the rest of the offset handling here.
   def strip_comments(source : String) : String
+    unless source.includes?("//") || source.includes?("/*")
+      return source
+    end
+
     bytes = source.to_slice.dup
     size = bytes.size
+    ptr = bytes.to_unsafe
     i = 0
 
     while i < size
-      char = bytes[i].unsafe_chr
+      char = ptr[i].unsafe_chr
 
       if char == '"' || char == '\''
         quote = char
         i += 1
         while i < size
-          c = bytes[i].unsafe_chr
+          c = ptr[i].unsafe_chr
           if c == '\\'
             i += 2
             next
@@ -160,23 +165,23 @@ module Noir::CppCalleeExtractor
           i += 1
         end
         i += 1
-      elsif char == '/' && i + 1 < size && bytes[i + 1].unsafe_chr == '/'
-        while i < size && bytes[i].unsafe_chr != '\n'
-          bytes[i] = ' '.ord.to_u8
+      elsif char == '/' && i + 1 < size && ptr[i + 1].unsafe_chr == '/'
+        while i < size && ptr[i].unsafe_chr != '\n'
+          ptr[i] = ' '.ord.to_u8
           i += 1
         end
-      elsif char == '/' && i + 1 < size && bytes[i + 1].unsafe_chr == '*'
-        bytes[i] = ' '.ord.to_u8
-        bytes[i + 1] = ' '.ord.to_u8
+      elsif char == '/' && i + 1 < size && ptr[i + 1].unsafe_chr == '*'
+        ptr[i] = ' '.ord.to_u8
+        ptr[i + 1] = ' '.ord.to_u8
         i += 2
         while i < size
-          if bytes[i].unsafe_chr == '*' && i + 1 < size && bytes[i + 1].unsafe_chr == '/'
-            bytes[i] = ' '.ord.to_u8
-            bytes[i + 1] = ' '.ord.to_u8
+          if ptr[i].unsafe_chr == '*' && i + 1 < size && ptr[i + 1].unsafe_chr == '/'
+            ptr[i] = ' '.ord.to_u8
+            ptr[i + 1] = ' '.ord.to_u8
             i += 2
             break
           end
-          bytes[i] = ' '.ord.to_u8 unless bytes[i].unsafe_chr == '\n'
+          ptr[i] = ' '.ord.to_u8 unless ptr[i].unsafe_chr == '\n'
           i += 1
         end
       else
@@ -188,6 +193,7 @@ module Noir::CppCalleeExtractor
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
+    return unless line.includes?('(')
     candidates = [] of Tuple(Int32, String)
 
     line.scan(SCOPED_CALL_REGEX) do |match|
@@ -223,18 +229,20 @@ module Noir::CppCalleeExtractor
   end
 
   private def strip_non_code_with_state(line : String, in_block_comment : Bool) : Tuple(String, Bool)
-    chars = line.chars
+    bytesize = line.bytesize
+    ptr = line.to_unsafe
     in_string = false
     in_char = false
     escaped = false
     index = 0
-    stripped = String::Builder.new
+    stripped = String::Builder.new(bytesize)
 
-    while index < chars.size
-      char = chars[index]
+    while index < bytesize
+      byte = ptr[index]
+      char = byte.unsafe_chr
 
       if in_block_comment
-        if char == '*' && chars[index + 1]? == '/'
+        if char == '*' && index + 1 < bytesize && ptr[index + 1].unsafe_chr == '/'
           in_block_comment = false
           index += 1
         end
@@ -258,13 +266,13 @@ module Noir::CppCalleeExtractor
         in_string = true
       elsif char == '\''
         in_char = true
-      elsif char == '/' && chars[index + 1]? == '/'
+      elsif char == '/' && index + 1 < bytesize && ptr[index + 1].unsafe_chr == '/'
         break
-      elsif char == '/' && chars[index + 1]? == '*'
+      elsif char == '/' && index + 1 < bytesize && ptr[index + 1].unsafe_chr == '*'
         in_block_comment = true
         index += 1
       else
-        stripped << char
+        stripped.write_byte(byte)
       end
 
       index += 1
