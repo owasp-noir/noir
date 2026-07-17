@@ -33,6 +33,10 @@ module Noir::ElixirCalleeExtractor
   end
 
   private def scan_line(line : String, file_path : String, line_number : Int32, entries : Array(Entry))
+    # Both call patterns require either `(` or whitespace before an
+    # argument-like token. Lines with neither cannot produce a callee.
+    return unless line.includes?('(') || line.includes?(' ') || line.includes?('\t')
+
     line.scan(QUALIFIED_CALL_REGEX) do |match|
       name = match[1]
       next if skip_callee?(name)
@@ -51,7 +55,12 @@ module Noir::ElixirCalleeExtractor
   private def skip_callee?(name : String) : Bool
     return true if name.empty?
 
-    last = name.split('.').last
+    # Last segment after `.` without allocating a split array.
+    last = if (dot = name.rindex('.'))
+             name[dot + 1..]
+           else
+             name
+           end
     RESERVED.includes?(last)
   end
 

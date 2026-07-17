@@ -8,7 +8,6 @@ module Analyzer::Elixir
   class Cli < Analyzer
     SWITCHES   = /switches:\s*\[([^\]]*)\]/
     SWITCH_KEY = /([a-z_]\w*):/
-    ARGV       = /\bSystem\.argv\b/
     GET_ENV    = /\bSystem\.(?:get_env|fetch_env!?)\s*\(\s*"([^"]+)"/
 
     MARKERS = /\bOptionParser\.(?:parse|parse!|next)\b|\bSystem\.argv\b|\bOptimus\.new!?\b/
@@ -16,33 +15,43 @@ module Analyzer::Elixir
 
     def analyze
       endpoints = {} of String => Endpoint
-      [".ex", ".exs"].each do |ext|
-        get_files_by_extension(ext).each do |path|
-          next if File.directory?(path)
-          next if cli_test_path?(path)
-          next unless File.exists?(path)
-          begin
-            content = read_file_content(path)
-            next unless content.matches?(MARKERS)
-            root_url = "cli://#{cli_binary_name(path)}"
-            emit_env = !content.matches?(WEB_RE)
+      files = get_files_by_extension(".ex") + get_files_by_extension(".exs")
 
-            # Every `switches: [...]` keyword list (a file may dispatch several
-            # OptionParser.parse calls). Endpoint is created lazily so a bare
-            # `System.argv` file with no switches/env emits nothing.
+      files.each do |path|
+        next if File.directory?(path)
+        next if cli_test_path?(path)
+        begin
+          content = read_file_content(path)
+          # Cheap reject before the full MARKERS regex: every alternative
+          # contains one of these literals.
+          next unless content.includes?("OptionParser") ||
+                      content.includes?("System.argv") ||
+                      content.includes?("Optimus")
+          next unless content.matches?(MARKERS)
+
+          root_url = "cli://#{cli_binary_name(path)}"
+          emit_env = !content.matches?(WEB_RE)
+
+          # Every `switches: [...]` keyword list (a file may dispatch several
+          # OptionParser.parse calls). Endpoint is created lazily so a bare
+          # `System.argv` file with no switches/env emits nothing.
+          if content.includes?("switches:")
             content.scan(SWITCHES) do |m|
               m[1].scan(SWITCH_KEY) { |sm| fetch_endpoint(endpoints, root_url, path, 1).push_param(Param.new(sm[1], "", "flag")) }
             end
-
-            content.each_line.with_index do |line, index|
-              if emit_env
-                line.scan(GET_ENV) { |em| fetch_endpoint(endpoints, root_url, path, index + 1).push_param(Param.new(em[1], "", "env")) }
-              end
-            end
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-            next
           end
+
+          # Env extraction is the only per-line work; skip the line walk
+          # entirely for web modules or files with no System env reads.
+          if emit_env && (content.includes?("get_env") || content.includes?("fetch_env"))
+            content.each_line.with_index do |line, index|
+              next unless line.includes?("get_env") || line.includes?("fetch_env")
+              line.scan(GET_ENV) { |em| fetch_endpoint(endpoints, root_url, path, index + 1).push_param(Param.new(em[1], "", "env")) }
+            end
+          end
+        rescue e
+          logger.debug "Error analyzing #{path}: #{e}"
+          next
         end
       end
       endpoints.each_value { |ep| @result << ep }
