@@ -11,6 +11,10 @@ module Analyzer::Elixir
     # Store mapping of route -> controller/action for parameter extraction
     @route_map : Hash(RouteMapKey, ControllerAction) = Hash(RouteMapKey, ControllerAction).new
     @route_macros : Hash(String, RouteMacro) = Hash(String, RouteMacro).new
+    # Reverse index built once after route discovery:
+    #   base -> normalized controller key -> action -> endpoints
+    # Replaces the previous per-controller O(|routes|) scan of `@result`.
+    @controller_endpoint_index = Hash(String, Hash(String, Hash(String, Array(Endpoint)))).new
 
     # `get`/`post`/… → its precompiled route regex. `add_standard_route` runs
     # once per verb per line of every `.ex` file; `Regex.new` there recompiled
@@ -83,10 +87,21 @@ module Analyzer::Elixir
       # First pass: collect routes via the engine's parallel file scan.
       super
 
+      # Build the controller→action reverse index once so the param pass
+      # is O(|controllers| + |routes|) rather than O(|controllers|·|routes|).
+      build_controller_endpoint_index
+
       # Second pass: extract parameters from controller files
       extract_controller_params
 
       @result
+    end
+
+    # Phoenix routers and controllers are always `.ex` modules. `.exs`
+    # scripts never register routes, so skip the extension the engine
+    # includes for Plug.
+    protected def elixir_source_files : Array(String)
+      get_files_by_extension(".ex")
     end
 
     def analyze_file(path : String) : Array(Endpoint)
@@ -115,12 +130,12 @@ module Analyzer::Elixir
         line = lines[index]
 
         if line.includes?("\"\"\"")
-          line.scan(/"""/).size.times { in_triple_double = !in_triple_double }
+          count_substring(line, "\"\"\"").times { in_triple_double = !in_triple_double }
           index += 1
           next
         end
         if line.includes?("'''")
-          line.scan(/'''/).size.times { in_triple_single = !in_triple_single }
+          count_substring(line, "'''").times { in_triple_single = !in_triple_single }
           index += 1
           next
         end
@@ -316,7 +331,8 @@ module Analyzer::Elixir
     def extract_controller_params
       # Find all controller files and extract parameters. Pulls from the
       # detector-built file_map so subtree pruning and --exclude-path
-      # apply to this pass too.
+      # apply to this pass too. Files are already registered in
+      # CodeLocator; skip the redundant `File.exists?` syscall.
       controller_files = get_files_by_extension(".ex").select do |path|
         next false unless path.ends_with?("_controller.ex")
         next false if elixir_test_path?(path)
@@ -324,8 +340,6 @@ module Analyzer::Elixir
       end
 
       controller_files.each do |controller_path|
-        next unless File.exists?(controller_path)
-
         begin
           content = read_file_content(controller_path)
           # Action heads always bind `conn` (see the signature matcher
@@ -341,6 +355,36 @@ module Analyzer::Elixir
         rescue e
           logger.debug "Error reading controller file #{controller_path}: #{e}"
         end
+      end
+    end
+
+    # Walk `@result` + `@route_map` once and group endpoints under every
+    # normalized controller key that `controller_refs_match?` would accept.
+    # Short mapped names (`UserController`) index under their last segment
+    # so an FQ lookup (`MyAppWeb.UserController`) still finds them; FQ
+    # mapped names only index under the full normalized form (matching
+    # the asymmetric equality rule in `controller_refs_match?`).
+    private def build_controller_endpoint_index : Nil
+      @controller_endpoint_index.clear
+
+      @result.each do |endpoint|
+        route_key = endpoint_route_map_key(endpoint)
+        next unless mapping = @route_map[route_key]?
+
+        base = route_key[0]
+        action = mapping.action
+        mapped = mapping.controller
+        norm = normalize_controller_ref(mapped)
+
+        by_base = @controller_endpoint_index[base] ||=
+          Hash(String, Hash(String, Array(Endpoint))).new
+        by_controller = by_base[norm] ||=
+          Hash(String, Array(Endpoint)).new { |h, k| h[k] = [] of Endpoint }
+        by_controller[action] << endpoint
+
+        # Short mappings are already a single segment after normalize.
+        # Nothing further to index. FQ mappings stay under the full key
+        # only — `controller_refs_match?` requires full equality for them.
       end
     end
 
@@ -369,6 +413,7 @@ module Analyzer::Elixir
       lines = content.lines
       include_callee = callees_needed?
       endpoints_by_action = endpoints_for_controller(controller_name, controller_path)
+      return if endpoints_by_action.empty?
 
       index = 0
       while index < lines.size
@@ -387,6 +432,12 @@ module Analyzer::Elixir
         end
         action_name = name_match[1]
 
+        matching_endpoints = endpoints_by_action[action_name]?
+        if matching_endpoints.nil? || matching_endpoints.empty?
+          index += 1
+          next
+        end
+
         # A controller action's first argument is always the connection,
         # but the head can pattern-match it (`def edit(conn = %{assigns:
         # …}, _params)`, `def show(%Plug.Conn{} = conn, params)`) and a
@@ -401,12 +452,6 @@ module Analyzer::Elixir
           next
         end
 
-        matching_endpoints = endpoints_by_action[action_name]? || [] of Endpoint
-        if matching_endpoints.empty?
-          index += 1
-          next
-        end
-
         # Find the end of the function block once per controller action.
         block_end = find_function_end(lines, body_start)
         if block_end == -1
@@ -416,11 +461,17 @@ module Analyzer::Elixir
 
         callees = include_callee ? callees_from_function_block(lines, body_start, block_end, controller_path) : nil
 
+        # `conn.params` type depends on the HTTP method (query vs form).
+        # Cache the extraction per distinct method so a multi-verb action
+        # (resources `update` → PUT+PATCH) only walks the body once per
+        # type, not once per endpoint.
+        params_by_method = {} of String => Array(Param)
+
         matching_endpoints.each do |endpoint|
           append_code_path(endpoint.details, PathInfo.new(controller_path, index + 1))
 
-          # Extract parameters from the function block
-          params = extract_params_from_function_block(lines, body_start, block_end, endpoint.method)
+          params = params_by_method[endpoint.method] ||=
+            extract_params_from_function_block(lines, body_start, block_end, endpoint.method)
           params.each { |param| endpoint.push_param(param) }
 
           attach_elixir_callees(endpoint, callees) if callees
@@ -465,10 +516,13 @@ module Analyzer::Elixir
     private def collect_route_macros : Nil
       @route_macros.clear
 
-      get_files_by_extension(".ex").each do |path|
-        next unless File.exists?(path)
-        next if elixir_test_path?(path)
+      files = get_files_by_extension(".ex").reject { |path| elixir_test_path?(path) }
+      mutex = Mutex.new
 
+      # Macro bodies are independent per file; merge under a mutex.
+      # Parallelism matters on large Phoenix trees where most files are
+      # rejected by the `defmacro` substring gate after a single read.
+      parallel_analyze(files) do |path|
         begin
           content = read_file_content(path)
           # Vast majority of `.ex` files never define macros. Cheap
@@ -477,8 +531,9 @@ module Analyzer::Elixir
 
           module_name = extract_module_name(content)
           lines = content.lines
-          index = 0
+          local = [] of Tuple(String, RouteMacro)
 
+          index = 0
           while index < lines.size
             line = lines[index]
             stripped = line.strip
@@ -508,10 +563,16 @@ module Analyzer::Elixir
               body_lines
             )
 
-            @route_macros[name] = route_macro
-            @route_macros["#{module_name}.#{name}"] = route_macro if module_name
+            local << {name, route_macro}
+            local << {"#{module_name}.#{name}", route_macro} if module_name
 
             index = macro_end + 1
+          end
+
+          unless local.empty?
+            mutex.synchronize do
+              local.each { |key, mc| @route_macros[key] = mc }
+            end
           end
         rescue e
           logger.debug "Error collecting Phoenix route macros from #{path}: #{e}"
@@ -745,15 +806,27 @@ module Analyzer::Elixir
       endpoints_by_action = Hash(String, Array(Endpoint)).new { |hash, key| hash[key] = [] of Endpoint }
       base = configured_base_for(controller_path)
 
-      @result.each do |endpoint|
-        route_key = endpoint_route_map_key(endpoint)
-        # Keep param extraction scoped to the controller's own base so a
-        # monorepo's sibling services don't borrow each other's params.
-        next unless route_key[0] == base
-        next unless mapping = @route_map[route_key]?
-        next unless controller_refs_match?(controller_name, mapping.controller)
+      by_base = @controller_endpoint_index[base]?
+      return endpoints_by_action unless by_base
 
-        endpoints_by_action[mapping.action] << endpoint
+      # Lookup under the full normalized name and, when it has a module
+      # prefix, under the last segment so short mapped controllers
+      # (`UserController`) still match an FQ module extract.
+      # Index keys already mirror `controller_refs_match?`: short mappings
+      # live under a single segment, FQ mappings only under the full form.
+      norm = normalize_controller_ref(controller_name)
+      keys = [norm]
+      if norm.includes?('.')
+        keys << (norm.split('.').last || norm)
+      end
+
+      keys.uniq.each do |key|
+        next unless by_controller = by_base[key]?
+        by_controller.each do |action, endpoints|
+          endpoints.each do |endpoint|
+            endpoints_by_action[action] << endpoint
+          end
+        end
       end
 
       endpoints_by_action
@@ -910,12 +983,25 @@ module Analyzer::Elixir
       extract_module_name(content)
     end
 
+    MODULE_NAME_RE = /^\s*defmodule\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+do\b/m
+
     private def extract_module_name(content : String) : String?
-      content.each_line do |line|
-        if match = line.match(/^\s*defmodule\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+do\b/)
-          return match[1]
-        end
+      # Single multiline search for the first `defmodule` instead of
+      # allocating an iterator over every line of large modules.
+      content.match(MODULE_NAME_RE).try(&.[1])
+    end
+
+    # Count non-overlapping occurrences of `needle` without allocating a
+    # MatchData array (`String#scan(…​).size`).
+    private def count_substring(text : String, needle : String) : Int32
+      return 0 if needle.empty?
+      count = 0
+      i = 0
+      while (j = text.index(needle, i))
+        count += 1
+        i = j + needle.size
       end
+      count
     end
 
     private def normalize_controller_ref(controller : String) : String
