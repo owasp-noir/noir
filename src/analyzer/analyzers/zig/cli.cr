@@ -88,35 +88,40 @@ module Analyzer::Zig
 
           lines.each_with_index do |line, index|
             line_no = index + 1
-            if m = line.match(CLAP_FLAG)
-              fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
-            elsif m = line.match(CLAP_ARG)
-              fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1].downcase, "", "argument"))
+            # Cheap substring gates before the per-line PCRE2 scans — most
+            # source lines never touch clap param strings, yazap builders, or
+            # argv/env accessors.
+            if line.includes?("\\\\")
+              if m = line.match(CLAP_FLAG)
+                fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1], "", "flag"))
+              elsif m = line.match(CLAP_ARG)
+                fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1].downcase, "", "argument"))
+              end
             end
-            if m = line.match(CLI_LONG)
+            if line.includes?("long_name") && (m = line.match(CLI_LONG))
               fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(m[1].lstrip('-'), "", "flag"))
             end
-            if m = line.match(ARGS_IDX)
+            if line.includes?("args") && (m = line.match(ARGS_IDX))
               fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new("arg#{m[1]}", "", "argument")) unless m[1] == "0"
             end
             # Update the receiver->URL map for this line BEFORE resolving
             # addArg below, so the map always reflects the state as of the
             # current line (not a whole-file precompute that a later
             # reassignment could retroactively overwrite).
-            if m = line.match(YAZAP_ROOT_RE)
+            if line.includes?("rootCommand") && (m = line.match(YAZAP_ROOT_RE))
               yazap_cmd_urls[m[1]] = root_url
-            elsif m = line.match(YAZAP_SUBCMD_RE)
+            elsif line.includes?("createCommand") && (m = line.match(YAZAP_SUBCMD_RE))
               cmd_url = "#{root_url}/#{m[2]}"
               yazap_cmd_urls[m[1]] = cmd_url
               fetch_endpoint(endpoints, cmd_url, path, line_no)
             end
-            if m = line.match(YAZAP_ADD_ARG_RE)
+            if line.includes?("addArg") && (m = line.match(YAZAP_ADD_ARG_RE))
               url = yazap_cmd_urls[m[1]]? || root_url
               ep = fetch_endpoint(endpoints, url, path, line_no)
               param_type = m[2] == "positional" ? "argument" : "flag"
               ep.push_param(Param.new(m[3], "", param_type))
             end
-            if emit_env
+            if emit_env && (line.includes?("getEnvVarOwned") || line.includes?("getenv"))
               line.scan(GET_ENV) do |em|
                 name = em[1]? || em[2]?
                 fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(name, "", "env")) if name
