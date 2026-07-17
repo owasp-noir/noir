@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Generate a self-contained, interactive HTML file that visualizes scan results. The report ships a redesigned, monochrome "noir" theme: a single file with no external dependencies, so it renders offline and is easy to share with stakeholders or use when reviewing an application's attack surface.
+Generate a self-contained, interactive HTML file that visualizes scan results. The report ships a dark-tech "noir" theme with semantic color: neutral chrome and mono type, with restrained hues reserved for meaning, so HTTP methods and finding severities stand out at a glance. It is a single file with no external dependencies, so it renders offline and is easy to share with stakeholders or use when reviewing an application's attack surface.
 
 ## Basic Usage
 
@@ -22,29 +22,36 @@ The screenshots below are a **real report**, generated from Noir's bundled Kemal
 noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 ```
 
-<img src="./report-light.png" alt="Noir HTML report, light theme" width="1280" height="2445" loading="lazy" decoding="async">
+<img src="./report-light.png" alt="Noir HTML report, light theme" width="1280" height="2752" loading="lazy" decoding="async">
 
 The report includes a built-in **dark theme**. Toggle it from the control in the top-right corner; your choice is remembered across visits (via `localStorage`) and the report also honors your operating system's `prefers-color-scheme` on first open.
 
-<img src="./report-dark.png" alt="Noir HTML report, dark theme" width="1280" height="1080" loading="lazy" decoding="async">
+<img src="./report-dark.png" alt="Noir HTML report, dark theme" width="1280" height="1100" loading="lazy" decoding="async">
+
+For large scans, switch to the **compact table view** from the Cards / Table control: the same endpoints re-flow into dense aligned rows so you can sweep hundreds of paths quickly.
+
+<img src="./report-table.png" alt="Noir HTML report, compact table view" width="1280" height="1622" loading="lazy" decoding="async">
 
 ### What's in the report
 
 - **Dashboard Summary**: A high-level overview of total endpoints, HTTP methods, parameters, and passive scan findings.
-- **Endpoint Details**: Every discovered endpoint as a collapsible card, with a grayscale method badge (outline = safe read, gray = mutate, solid = destroy) and a protocol badge for non-HTTP endpoints such as WebSockets.
+- **Endpoint Details**: Every discovered endpoint as a collapsible card with a semantically colored method badge (GET emerald, POST amber, PUT blue, PATCH violet, DELETE red) and a protocol badge for non-HTTP endpoints such as WebSockets.
+- **Path Groups**: Endpoints are grouped by their first path segment (or host for absolute URLs), with collapsible group headers and per-group counts.
 - **Parameter Breakdown**: Per-endpoint tables listing each parameter, its type (query, form, json, header, cookie, path), and value.
-- **Passive Scan Results**: When passive scanning is enabled (`-P`), findings are displayed with descriptions, severity badges, and the matched code snippet.
+- **Passive Scan Results**: When passive scanning is enabled (`-P`), findings are displayed with descriptions, color-coded severity badges, and the matched code snippet.
 - **Source Code Links**: The file path and line number where each endpoint was defined.
 
 ### Interactive features
 
 The report is interactive out of the box: everything below works from the single HTML file, with no server or network access.
 
-- **Light / dark theme toggle** that persists across visits and respects `prefers-color-scheme`.
-- **Collapsible endpoint cards** so you can fold away detail and scan the surface quickly.
+- **Light / dark theme toggle** that persists across visits and respects `prefers-color-scheme`. Both themes use the same semantic hues, tuned for contrast.
+- **Cards / table view toggle**: collapsible cards for detail, or a compact aligned table for scanning large surfaces. Your choice persists across visits.
+- **Path grouping controls**: collapse groups you have already reviewed, or flatten the whole list with the Grouped toggle. Group counts update live as you filter.
 - **Live search** to filter endpoints by path, method, parameter, or tag, with a live "shown / total" count.
-- **Method and severity filter chips** to narrow the endpoint and passive-finding lists.
-- **Print-friendly**: printing forces every card open and hides the controls, and the report honors `prefers-reduced-motion`.
+- **Method and severity filter chips** to narrow the endpoint and passive-finding lists; pressed chips take on their method or severity color.
+- **Copy buttons** on every endpoint: copy the URL, or copy a ready-to-run curl command built from the endpoint's method, parameters, headers, and cookies.
+- **Print-friendly**: printing forces every card and group open and hides the controls, and the report honors `prefers-reduced-motion`.
 
 ## Customizing the Template
 
@@ -69,13 +76,13 @@ Templates use placeholders that Noir replaces with generated content:
 | `<%= noir_head %>` | The contents of the `<head>` tag, including default CSS, metadata, and the pre-paint theme initializer. |
 | `<%= noir_header %>` | The header section containing the title, brand mark, and theme toggle. |
 | `<%= noir_summary %>` | The summary dashboard (cards showing counts). |
-| `<%= noir_endpoints %>` | The main section listing all discovered endpoints, including the search box and method filter chips. |
+| `<%= noir_endpoints %>` | The main section listing all discovered endpoints, including the search box, filter chips, view toggle, and path groups. |
 | `<%= noir_passive_scans %>` | The section listing passive scan results. |
 | `<%= noir_footer %>` | The footer section. |
-| `<%= noir_scripts %>` | The interactivity scripts (theme toggle, collapsible cards, search, and filters). |
+| `<%= noir_scripts %>` | The interactivity scripts (theme toggle, collapsible cards and groups, search, filters, view switching, and copy buttons). |
 
 {% alert_warning() %}
-Don't forget the noir_scripts placeholder: add it to your template, usually right before the closing body tag. Without it the report still renders, but the theme toggle, collapsible cards, search, and filter chips won't work.
+Don't forget the noir_scripts placeholder: add it to your template, usually right before the closing body tag. Without it the report still renders, but the theme toggle, collapsible cards, search, filters, view switching, and copy buttons won't work.
 {% end %}
 
 ### Example Template
