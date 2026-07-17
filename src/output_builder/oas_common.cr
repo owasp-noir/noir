@@ -158,8 +158,13 @@ module OutputBuilderOasCommon
   private def swagger_url_parts(raw_url : String) : NamedTuple(host: String?, base_path: String, schemes: Array(String))
     return {host: nil, base_path: "/", schemes: %w[http https]} if raw_url.empty?
 
-    uri = URI.parse(raw_url)
-    schemes = if scheme = uri.scheme
+    # A scheme-less `-u example.com` makes URI.parse read the whole value as a
+    # path (host=nil), so the Swagger `host` field was dropped. Prepend a
+    # scheme for parsing so the authority resolves into uri.host; the emitted
+    # scheme list still defaults to http+https since the user gave none.
+    had_scheme = raw_url.includes?("://")
+    uri = URI.parse(had_scheme ? raw_url : "http://#{raw_url}")
+    schemes = if had_scheme && (scheme = uri.scheme)
                 [scheme]
               else
                 %w[http https]
