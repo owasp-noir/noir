@@ -27,17 +27,17 @@ module Analyzer::CSharp
         next unless content.includes?("ICarterModule")
 
         lines = content.lines
-        each_add_routes_block(lines) do |block_lines, block_start_index|
+        masked_lines = Noir::CSharpLexer.new(content).masked_lines
+        each_add_routes_block(lines, masked_lines) do |block_lines, block_start_index|
           group_prefixes = extract_map_group_prefixes(block_lines)
-          analyze_add_routes_block(block_lines, block_start_index, file, lines, group_prefixes, include_callee)
+          analyze_add_routes_block(block_lines, block_start_index, file, lines, masked_lines, group_prefixes, include_callee)
         end
       end
 
       @result
     end
 
-    private def each_add_routes_block(lines : Array(String), &)
-      masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
+    private def each_add_routes_block(lines : Array(String), masked_lines : Array(String), &)
       i = 0
       while i < lines.size
         line = lines[i]
@@ -89,7 +89,7 @@ module Analyzer::CSharp
       {collected, index}
     end
 
-    private def analyze_add_routes_block(block_lines : Array(String), block_start_index : Int32, file : String, file_lines : Array(String), group_prefixes : Hash(String, String), include_callee : Bool)
+    private def analyze_add_routes_block(block_lines : Array(String), block_start_index : Int32, file : String, file_lines : Array(String), masked_lines : Array(String), group_prefixes : Hash(String, String), include_callee : Bool)
       map_regex = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/m
       chained_group_map_regex = /MapGroup\s*\(\s*"([^"]+)"\s*\)\s*\.Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/m
       map_methods_block_regex = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/m
@@ -114,7 +114,7 @@ module Analyzer::CSharp
 
           if route && http_method
             extra_params = extract_params_from_block(block)
-            extra_params.concat(extract_bind_params_from_file(block, file_lines))
+            extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
             endpoint = build_endpoint_from_route(route, http_method, file, absolute_index + 1, extra_params)
             if endpoint
               attach_csharp_callees(endpoint, block, file, absolute_index + 1, include_callee)
@@ -145,7 +145,7 @@ module Analyzer::CSharp
 
           if route && methods.size > 0
             extra_params = extract_params_from_block(block)
-            extra_params.concat(extract_bind_params_from_file(block, file_lines))
+            extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
             methods.each do |method|
               endpoint = build_endpoint_from_route(route, method, file, absolute_index + 1, extra_params)
               if endpoint
@@ -261,11 +261,10 @@ module Analyzer::CSharp
       params.uniq(&.name)
     end
 
-    private def extract_bind_params_from_file(block : String, lines : Array(String)) : Array(Param)
+    private def extract_bind_params_from_file(block : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
       return [] of Param unless block.includes?("Bind(") || block.includes?("BindAsync(")
 
       params = [] of Param
-      masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
       lines.each_with_index do |line, index|
         next unless line.includes?("Bind(") || line.includes?("BindAsync(")
         next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
