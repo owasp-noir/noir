@@ -55,12 +55,18 @@ module Analyzer::Zig
     end
 
     private def process_file(path : String, content : String, include_callee : Bool)
-      text = Noir::ZigCalleeExtractor.strip_comments(content)
-      bodies = include_callee ? Noir::ZigCalleeExtractor.function_bodies(content, path) : {} of String => Noir::ZigCalleeExtractor::FunctionBody
+      prepared = Noir::ZigCalleeExtractor.prepare(content)
+      text = prepared[:comments]
       # Routes registered inside `test { … }` blocks are test fixtures (and, in
       # an httpz framework source vendored as a loose file, its own self-tests),
-      # not runtime endpoints.
-      test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(Noir::ZigCalleeExtractor.strip_non_code(content))
+      # not runtime endpoints. Reuse the non-code strip from `prepare`.
+      test_blocks = Noir::ZigCalleeExtractor.test_block_ranges(prepared[:non_code])
+      bodies = if include_callee
+                 table = Noir::ZigCalleeExtractor.function_table_from(prepared[:non_code_chars], path)
+                 Noir::ZigCalleeExtractor.function_bodies_from(table, path)
+               else
+                 {} of String => Noir::ZigCalleeExtractor::FunctionBody
+               end
 
       group_prefixes = resolve_group_prefixes(text)
 
@@ -115,7 +121,7 @@ module Analyzer::Zig
 
     private def emit(path, text, offset, url, method, handler, bodies, include_callee)
       params = extract_path_params(url)
-      line = Noir::ZigCalleeExtractor.line_at(text.chars, offset)
+      line = Noir::ZigCalleeExtractor.line_at(text, offset)
       details = Details.new(PathInfo.new(path, line))
       endpoint = Endpoint.new(url, method, params, details)
 
