@@ -492,4 +492,241 @@ describe "OutputBuilderHtml" do
     output.should contain("data-filter-severity=\"high\"")
     output.should contain("data-filter-severity=\"medium\"")
   end
+
+  it "renders the card/table view toggle with persistence hooks" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/test", "GET")])
+    output = builder.io.to_s
+
+    output.should contain("data-action=\"set-view\"")
+    output.should contain("data-view-mode=\"cards\"")
+    output.should contain("data-view-mode=\"table\"")
+    output.should contain("table-head")
+    output.should contain("noir-view")
+  end
+
+  it "renders copy buttons with a precomputed curl command" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/users", "POST")
+    endpoint.push_param(Param.new("username", "test", "json"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("data-action=\"copy-url\"")
+    output.should contain("data-action=\"copy-curl\"")
+    output.should contain("data-url=\"/api/users\"")
+    output.should contain("curl -i -X &#39;POST&#39; &#39;/api/users&#39;")
+    output.should contain("Content-Type: application/json")
+  end
+
+  it "expands synthetic ANY methods inside the curl attribute" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/wildcard", "ANY")])
+    output = builder.io.to_s
+
+    output.should contain("curl -i -X &#39;GET&#39; &#39;/wildcard&#39;")
+    output.should contain("curl -i -X &#39;DELETE&#39; &#39;/wildcard&#39;")
+    output.should_not contain("curl -i -X &#39;ANY&#39;")
+  end
+
+  it "omits copy-as-curl for non-HTTP endpoints" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("myapp://profile", "GET")
+    endpoint.protocol = "mobile-scheme"
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    # The copy-curl selector always appears in the shared script, so assert
+    # on markup-only forms: the button title and the data attribute.
+    output.should contain("title=\"Copy URL\"")
+    output.should_not contain("title=\"Copy as curl\"")
+    output.should_not contain("data-curl=")
+  end
+
+  it "groups endpoints by first path segment with counts" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("/users/1", "GET"),
+      Endpoint.new("/users/2", "POST"),
+      Endpoint.new("/admin", "GET"),
+    ])
+    output = builder.io.to_s
+
+    output.should contain("data-group-key=\"/users\"")
+    output.should contain("data-group-key=\"/admin\"")
+    output.should contain("class=\"group-header\"")
+    output.should contain("data-group-count")
+    output.should contain("data-action=\"toggle-group-collapse\"")
+    output.should contain("class=\"chip group-toggle\"")
+    output.should contain("noir-group")
+  end
+
+  it "skips grouping when all endpoints share one group" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/users/a", "GET"), Endpoint.new("/users/b", "POST")])
+    output = builder.io.to_s
+
+    # CSS/JS always reference group selectors; assert on markup-only forms.
+    output.should_not contain("class=\"group-header\"")
+    output.should_not contain("class=\"chip group-toggle\"")
+  end
+
+  it "skips grouping when every endpoint is its own group" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("/a", "GET"),
+      Endpoint.new("/b", "GET"),
+      Endpoint.new("/c", "GET"),
+    ])
+    output = builder.io.to_s
+
+    output.should_not contain("class=\"group-header\"")
+    output.should_not contain("class=\"chip group-toggle\"")
+  end
+
+  it "groups absolute URLs by authority and first path segment" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("https://api.example.com/v1/users", "GET"),
+      Endpoint.new("https://api.example.com/v1/orders", "GET"),
+      Endpoint.new("/local/x", "GET"),
+    ])
+    output = builder.io.to_s
+
+    output.should contain("data-group-key=\"https://api.example.com/v1\"")
+    output.should contain("data-group-key=\"/local\"")
+  end
+
+  it "renders semantic method and severity styles" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    high = YAML.parse <<-YAML
+      id: high-rule
+      info:
+        name: "High Rule"
+        author: ["a"]
+        severity: "high"
+        description: "d"
+        reference: ["https://example.com"]
+      matchers-condition: "or"
+      matchers:
+        - type: "regex"
+          patterns: ["x"]
+          condition: "or"
+      category: "secret"
+      techs: ["*"]
+      YAML
+    info = YAML.parse <<-YAML
+      id: info-rule
+      info:
+        name: "Info Rule"
+        author: ["a"]
+        severity: "info"
+        description: "d"
+        reference: ["https://example.com"]
+      matchers-condition: "or"
+      matchers:
+        - type: "regex"
+          patterns: ["x"]
+          condition: "or"
+      category: "misconfig"
+      techs: ["*"]
+      YAML
+
+    results = [
+      PassiveScanResult.new(PassiveScan.new(high), "a.cr", 1, "x"),
+      PassiveScanResult.new(PassiveScan.new(info), "b.cr", 2, "y"),
+    ]
+
+    builder.print([Endpoint.new("/test", "GET")], results)
+    output = builder.io.to_s
+
+    output.should contain("--m-get")
+    output.should contain("--m-delete")
+    output.should contain("--sev-medium")
+    output.should contain("severity-high")
+    output.should contain("severity-info")
+  end
 end
