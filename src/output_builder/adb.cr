@@ -63,7 +63,7 @@ class OutputBuilderAdb < OutputBuilder
   # reviewer flips it to insert/update/delete as needed.
   private def provider_command(endpoint : Endpoint) : String
     baked = bake_endpoint(endpoint.url, endpoint.params)
-    "adb shell content query --uri #{shell_quote(baked[:url])}"
+    "adb shell content query --uri #{device_shell_quote(baked[:url])}"
   end
 
   # Explicit IPC component (`intent://package/Component`). The `intent://`
@@ -81,15 +81,15 @@ class OutputBuilderAdb < OutputBuilder
 
     parts = ["adb", "shell", "am", verb]
     if action = meta["action"]?
-      parts << "-a" << shell_quote(action)
+      parts << "-a" << device_shell_quote(action)
     end
     # `-n package/Component` names the explicit target. A component-less
     # `intent://package` can't be named, so fall back to limiting the launch
     # to the package (`-p`).
     if component.includes?('/')
-      parts << "-n" << shell_quote(component)
+      parts << "-n" << device_shell_quote(component)
     else
-      parts << "-p" << shell_quote(component)
+      parts << "-p" << device_shell_quote(component)
     end
     append_categories(parts, meta)
     append_extras(parts, endpoint)
@@ -103,13 +103,13 @@ class OutputBuilderAdb < OutputBuilder
     baked = bake_endpoint(endpoint.url, endpoint.params)
     action = meta["action"]? || DEFAULT_ACTION
 
-    parts = ["adb", "shell", "am", "start", "-a", shell_quote(action)]
+    parts = ["adb", "shell", "am", "start", "-a", device_shell_quote(action)]
     append_categories(parts, meta)
-    parts << "-d" << shell_quote(baked[:url])
+    parts << "-d" << device_shell_quote(baked[:url])
     # Constrain the launch to the declaring app when it's known, so the link
     # isn't grabbed by another handler or the disambiguation chooser.
     if package = meta["package"]?
-      parts << "-p" << shell_quote(package) unless package.empty?
+      parts << "-p" << device_shell_quote(package) unless package.empty?
     end
     append_extras(parts, endpoint)
     parts.join(" ")
@@ -119,7 +119,7 @@ class OutputBuilderAdb < OutputBuilder
   # as `-c` so a launch that needs e.g. BROWSABLE matches the declared filter.
   private def append_categories(parts : Array(String), meta : Hash(String, String))
     if category = meta["category"]?
-      parts << "-c" << shell_quote(category) unless category.empty?
+      parts << "-c" << device_shell_quote(category) unless category.empty?
     end
   end
 
@@ -130,7 +130,7 @@ class OutputBuilderAdb < OutputBuilder
   private def append_extras(parts : Array(String), endpoint : Endpoint)
     endpoint.params.each do |param|
       next unless param.param_type == "extra"
-      parts << "--es" << shell_quote(param.name) << shell_quote(param.value)
+      parts << "--es" << device_shell_quote(param.name) << device_shell_quote(param.value)
     end
   end
 
