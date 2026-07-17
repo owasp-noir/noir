@@ -312,7 +312,15 @@ module Noir::PerlCalleeExtractor
       source.includes?("qq") || source.includes?("qw") || source.includes?("qr") ||
       source.includes?("qx") || source.includes?("q{") || source.includes?("q(") ||
       source.includes?("q[") || source.includes?("q/") || source.includes?("q!") ||
-      source.includes?("q|") || source.includes?("q ")
+      source.includes?("q|") || source.includes?("q ") ||
+      # `q` accepts any non-word delimiter, e.g. angle-bracket `q<...>`, which
+      # the full walker blanks; missing it here let `q<foo(bar)>` slip through
+      # the fast path and emit a spurious callee. Cover the remaining common
+      # bracket/punctuation delimiters (widening the gate only ever routes
+      # more input through the exact walk — it can never drop a callee).
+      source.includes?("q<") || source.includes?("q~") ||
+      source.includes?("q,") || source.includes?("q:") ||
+      source.includes?("q.") || source.includes?("q;")
   end
 
   private def controller_keys(controller : String) : Array(String)
