@@ -30,6 +30,19 @@ module Analyzer::Elixir
       {verb, Regex.new("(?:^|[^.\\w])#{verb}\\s*(?:\\(\\s*)?['\"]([^'\"]+)['\"]\\s*,\\s*([A-Z]\\w*(?:\\.[A-Za-z_]\\w*)*|unquote\\(\\s*\\w+\\s*\\))(?=\\s*[,)]|\\s*$)(?:\\s*,\\s*:(\\w+[!?]?))?")}
     end
 
+    # File-level gate for the route-extraction pass. Controllers, schemas,
+    # views, and most application modules never declare Phoenix routes, but
+    # `analyze_file` used to line-scan every `.ex` file anyway. Match the
+    # DSL shape (verb + optional paren + string/`unquote`/atom) so common
+    # non-route uses like `Map.get(` or `forget` do not force a full scan.
+    # Custom route macros collected in the first pass are checked by name
+    # separately in `may_contain_phoenix_routes?`.
+    PHOENIX_ROUTE_EVIDENCE_RE = /
+      \b(?:get|post|put|patch|delete|options|head|match|resources|scope|socket|live|live_dashboard|forward)
+      \s*(?:\(\s*)?(?:["']|unquote\b|:)
+      |\bdefmacro\s+
+    /x
+
     struct ControllerAction
       property controller : String
       property action : String
@@ -90,6 +103,10 @@ module Analyzer::Elixir
       # (same "utf-8"/`invalid: :skip` decoding as the `File.open` this
       # replaced) instead of re-reading the file from disk here.
       content = read_file_content(path)
+      # Controllers/schemas/views dominate a Phoenix tree and never carry
+      # route macros. Skip the per-line walk when nothing in the file can
+      # produce an endpoint (evidence regex + known custom macro names).
+      return endpoints unless may_contain_phoenix_routes?(content)
       lines = content.lines
       current_module = extract_module_name(content)
 
@@ -281,6 +298,7 @@ module Analyzer::Elixir
       # apply to this pass too.
       controller_files = get_files_by_extension(".ex").select do |path|
         next false unless path.ends_with?("_controller.ex")
+        next false if elixir_test_path?(path)
         base_paths.any? { |base| path_under_root?(path, base) }
       end
 
@@ -289,6 +307,11 @@ module Analyzer::Elixir
 
         begin
           content = read_file_content(controller_path)
+          # Action heads always bind `conn` (see the signature matcher
+          # below). Controllers that never mention it cannot contribute
+          # params, callees, or code-path attachments — skip them.
+          next unless content.includes?("conn")
+
           controller_name = File.basename(controller_path, ".ex")
           controller_module = extract_controller_module(content) || controller_name
 
@@ -298,6 +321,27 @@ module Analyzer::Elixir
           logger.debug "Error reading controller file #{controller_path}: #{e}"
         end
       end
+    end
+
+    # True when this source can contribute routes in the second pass.
+    # Combines the fixed DSL evidence regex with names of custom route
+    # macros discovered in `collect_route_macros`, including `use Mod`
+    # expansion sites for `defmacro __using__`.
+    private def may_contain_phoenix_routes?(content : String) : Bool
+      return true if content.matches?(PHOENIX_ROUTE_EVIDENCE_RE)
+
+      @route_macros.each_key do |key|
+        if key.ends_with?(".__using__")
+          mod = key[0, key.size - ".__using__".size]
+          return true if content.includes?("use #{mod}")
+        else
+          # Bare macro name only; FQ keys duplicate the same body.
+          next if key.includes?('.')
+          return true if content.includes?(key)
+        end
+      end
+
+      false
     end
 
     def extract_params_from_controller(content : String, controller_name : String, controller_path : String)
@@ -395,9 +439,14 @@ module Analyzer::Elixir
 
       get_files_by_extension(".ex").each do |path|
         next unless File.exists?(path)
+        next if elixir_test_path?(path)
 
         begin
           content = read_file_content(path)
+          # Vast majority of `.ex` files never define macros. Cheap
+          # substring gate before line-splitting and signature assembly.
+          next unless content.includes?("defmacro")
+
           module_name = extract_module_name(content)
           lines = content.lines
           index = 0

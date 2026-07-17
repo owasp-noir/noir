@@ -33,13 +33,26 @@ module Analyzer::Elixir
     # this distinguishes the two even though both share `get`/`post`
     # route macros.
     private def phoenix_router?(content : String) : Bool
-      content.includes?("Phoenix.Router") ||
-        content.matches?(/\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b/)
+      return true if content.includes?("Phoenix.Router")
+      # Cheap reject before the `:router` atom regex — most Plug modules
+      # never mention `use ` with a router tag.
+      return false unless content.includes?(":router")
+      content.matches?(/\buse\s+[A-Z]\w*(?:\.[A-Z]\w*)*\s*,\s*:router\b/)
     end
+
+    # File-level gate: Plug.Router only registers absolute paths via the
+    # verb/`match`/`forward` macros. Files with none of those tokens
+    # cannot contribute endpoints (models, views, plain modules).
+    PLUG_ROUTE_EVIDENCE_RE = /
+      \b(?:get|post|put|patch|delete|head|options|forward|match)
+      \s*(?:\(\s*)?["']
+    /x
 
     def analyze_content(content : String, file_path : String) : Array(Endpoint)
       endpoints = Array(Endpoint).new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      return endpoints unless content.matches?(PLUG_ROUTE_EVIDENCE_RE)
+
+      include_callee = callees_needed?
 
       # Find all route blocks and extract params
       lines = content.lines
