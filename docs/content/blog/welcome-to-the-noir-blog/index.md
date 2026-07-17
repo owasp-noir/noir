@@ -13,11 +13,11 @@ It's a small experimental section sitting alongside the documentation, meant to 
 
 ## What you'll find here
 
-- **Release deep dives.** What landed in the last few versions, why it matters, and the trade-offs we picked along the way.
-- **Performance and accuracy investigations.** When a benchmark or a false-positive sweep produces a story worth telling, we'll write it up.
-- **Framework coverage notes.** Adding support for a new Rust/Python/JVM framework usually surfaces interesting parsing edge cases; those go here.
-- **Design rationale.** Decisions about the analyzer pipeline, optimizer passes, AI context shape, and so on.
-- **Tips.** Practical know-how for getting more out of Noir in everyday use.
+- **Release deep dives**: what landed in recent versions, the background, and the trade-offs we picked.
+- **Performance and accuracy investigations**: when a benchmark or a false-positive sweep turns up something worth writing about, we'll post it.
+- **Framework coverage notes**: the parsing edge cases we run into while adding support for a new Rust/Python/JVM framework.
+- **Design rationale**: why the analyzer pipeline, optimizer passes, and AI context ended up shaped the way they are.
+- **Tips**: practical know-how for getting more out of Noir in everyday use.
 
 ## How it fits the rest of the docs
 
@@ -27,6 +27,6 @@ It's a small experimental section sitting alongside the documentation, meant to 
 
 ## Cadence
 
-There's no schedule. Posts land when there's something worth saying. Follow the steady drumbeat through the GitHub [release feed](https://github.com/owasp-noir/noir/releases), and check back here for the longer reads.
+There's no schedule. Posts go up when there's something to write about. For regular updates, follow the GitHub [releases](https://github.com/owasp-noir/noir/releases); check back here once in a while for the longer reads.
 
 If you'd like to contribute a post (write about how you use Noir, share a CI integration, or unpack a framework's routing model), open a PR with a draft. Authors get a card next to the post.
