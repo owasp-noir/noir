@@ -285,7 +285,12 @@ module Analyzer::Elixir
     # callee extractor's `strip_comment`, which discards quotes. A `#`
     # only opens a comment outside a string, so a `#` inside a quoted
     # path won't truncate the statement.
+    #
+    # No `#` → return the original slice (zero allocation). The common
+    # path for route / controller lines.
     private def strip_trailing_comment(line : String) : String
+      return line unless line.includes?('#')
+
       in_string = false
       escaped = false
       quote = '\0'
@@ -369,6 +374,13 @@ module Analyzer::Elixir
       while index < lines.size
         line = lines[index]
 
+        # `def`/`defp` is a rare token relative to body lines. Cheap
+        # substring gate before the two regexes.
+        unless line.includes?("def")
+          index += 1
+          next
+        end
+
         if line.matches?(/^\s*defp\s/) || !(name_match = line.match(/^\s*def\s+(\w+)\(/))
           index += 1
           next
@@ -442,7 +454,7 @@ module Analyzer::Elixir
         # The block opens at the first top-level `do` once the argument
         # list's parentheses are balanced; the paren guard keeps a `do`
         # buried in a default value or atom inside the args from firing.
-        if paren <= 0 && code.matches?(/\bdo\b(?!:)/)
+        if paren <= 0 && code.includes?("do") && code.matches?(/\bdo\b(?!:)/)
           return {buffer, i}
         end
         i += 1
