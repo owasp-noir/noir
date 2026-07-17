@@ -1,6 +1,7 @@
 require "file"
 require "log"
 require "yaml"
+require "colorize"
 require "./utils/home.cr"
 require "./llm/native_tool_calling"
 
@@ -139,11 +140,18 @@ class ConfigInitializer
       BOOLEAN_CONFIG_KEYS.each do |key|
         value = symbolized_hash[key]?
         next if value.nil?
+        next if value.raw.is_a?(Bool) # already a real YAML bool
 
-        case value.to_s
-        when "yes"
+        case value.to_s.downcase
+        when "yes", "true"
           symbolized_hash[key] = YAML::Any.new(true)
-        when "no"
+        when "no", "false"
+          symbolized_hash[key] = YAML::Any.new(false)
+        else
+          # A typo like `passive_scan: ture` used to fall through to
+          # any_to_bool's silent `false`, so the feature stayed off with no
+          # hint why. Surface the malformed value instead of guessing.
+          STDERR.puts "WARNING: config key '#{key}' has invalid boolean value #{value.to_s.inspect}; expected true/false/yes/no. Treating as false.".colorize(:yellow)
           symbolized_hash[key] = YAML::Any.new(false)
         end
       end

@@ -2,6 +2,7 @@ require "colorize"
 require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
+require "./llm/native_tool_calling"
 
 module Noir::CliValidation
   class Error < Exception
@@ -42,8 +43,25 @@ module Noir::CliValidation
     validate_tech_names!(options)
     validate_passive_scan_paths!(options)
     validate_ai_provider_pair!(options)
+    validate_ai_native_tools_allowlist!(options)
     warn_about_unused_delivery_flags(options)
     warn_about_contradictory_probe_filters(options)
+  end
+
+  # `--ai-native-tools-allowlist` entries that don't canonicalize to a
+  # provider Noir supports for native tool-calling will never match and the
+  # feature just stays off. Warn so a typo like `opena` is visible instead
+  # of silently disabling tool-calling.
+  def self.validate_ai_native_tools_allowlist!(options : Hash(String, YAML::Any))
+    raw = options["ai_native_tools_allowlist"]?.try(&.to_s) || ""
+    return if raw.empty?
+
+    unknown = raw.split(",").map(&.strip).reject(&.empty?).reject do |provider|
+      LLM::NativeToolCalling.known_provider?(provider)
+    end
+    return if unknown.empty?
+
+    STDERR.puts "WARNING: --ai-native-tools-allowlist: unrecognized provider(s) #{unknown.map(&.inspect).join(", ")}. Native tool-calling supports: #{LLM::NativeToolCalling::KNOWN_PROVIDERS.join(", ")}. These entries will never match.".colorize(:yellow)
   end
 
   # A value listed in both --probe-match and --probe-skip is contradictory:

@@ -568,6 +568,13 @@ def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
   type, value = if idx = spec.index('=')
                   {spec[0...idx], spec[(idx + 1)..]}
                 else
+                  # `--pvalue query` (no '=') sets the literal value "query"
+                  # for all types. Since `query` is itself a type name, this
+                  # is almost always a forgotten '=' (meant `query=<value>`).
+                  # Warn but honor the literal so scripted usage still works.
+                  if PVALUE_TYPE_KEYS.has_key?(spec)
+                    STDERR.puts "WARNING: --pvalue #{spec.inspect} has no '=', so #{spec.inspect} is used as a literal value for all param types. Did you mean --pvalue #{spec}=<value>?".colorize(:yellow)
+                  end
                   {"any", spec}
                 end
 
