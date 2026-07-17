@@ -152,11 +152,13 @@ module Noir::HaskellCalleeExtractor
   # (`==`, `>=`, `<=`, `/=`, `!=`, `=>`, `=<<`). Returns nil when the line has no
   # standalone definition `=` (e.g. it is only a comparison expression).
   private def definition_equals_index(line : String) : Int32?
+    chars = line.chars
+    size = chars.size
     index = 0
-    while index < line.size
-      if line[index] == '='
-        prev = index > 0 ? line[index - 1] : ' '
-        nxt = index + 1 < line.size ? line[index + 1] : ' '
+    while index < size
+      if chars[index] == '='
+        prev = index > 0 ? chars[index - 1] : ' '
+        nxt = index + 1 < size ? chars[index + 1] : ' '
         adjacent = {'=', '<', '>', '/', '!'}
         return index unless adjacent.includes?(prev) || nxt == '=' || nxt == '>' || nxt == '<'
       end
