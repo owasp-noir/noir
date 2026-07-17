@@ -51,8 +51,8 @@ module Noir
     def initialize(source : String)
       @chars = source.chars
       @size = @chars.size
-      @masked = Array(Char).new(@size)
-      @code = Array(Char).new(@size)
+      @masked = @chars.dup
+      @code = @chars.dup
       @spans = [] of Tuple(Symbol, Int32, Int32)
       @tokens = nil
       @skip_ranges = nil
@@ -70,9 +70,9 @@ module Noir
     end
 
     # Emit one source character to both views.
-    private def emit(struct_c : Char, code_c : Char)
-      @masked << struct_c
-      @code << code_c
+    private def emit(index : Int32, struct_c : Char, code_c : Char)
+      @masked[index] = struct_c
+      @code[index] = code_c
     end
 
     private def scan
@@ -92,7 +92,6 @@ module Noir
         elsif c == '\'' && char_literal?(i)
           i = mask_char_literal(i)
         else
-          emit(c, c)
           i += 1
         end
       end
@@ -101,7 +100,7 @@ module Noir
     private def mask_line_comment(start : Int32) : Int32
       i = start
       while i < @size && @chars[i] != '\n'
-        emit(' ', ' ')
+        emit(i, ' ', ' ')
         i += 1
       end
       @spans << {:comment, start, i}
@@ -117,17 +116,17 @@ module Noir
         nxt = i + 1 < @size ? @chars[i + 1] : '\0'
         if c == '/' && nxt == '*'
           depth += 1
-          emit(' ', ' ')
-          emit(' ', ' ')
+          emit(i, ' ', ' ')
+          emit(i + 1, ' ', ' ')
           i += 2
         elsif c == '*' && nxt == '/'
           depth -= 1
-          emit(' ', ' ')
-          emit(' ', ' ')
+          emit(i, ' ', ' ')
+          emit(i + 1, ' ', ' ')
           i += 2
           break if depth == 0
         else
-          emit((c == '\n' ? '\n' : ' '), (c == '\n' ? '\n' : ' '))
+          emit(i, (c == '\n' ? '\n' : ' '), (c == '\n' ? '\n' : ' '))
           i += 1
         end
       end
@@ -138,20 +137,20 @@ module Noir
     # `start` points at the first of `"""`. Triple-quoted strings are raw and
     # may span lines; close on the next `"""`. Blanked in BOTH views.
     private def mask_triple_string(start : Int32) : Int32
-      emit(' ', ' ')
-      emit(' ', ' ')
-      emit(' ', ' ')
+      emit(start, ' ', ' ')
+      emit(start + 1, ' ', ' ')
+      emit(start + 2, ' ', ' ')
       i = start + 3
       while i < @size
         if @chars[i] == '"' && i + 2 < @size && @chars[i + 1] == '"' && @chars[i + 2] == '"'
-          emit(' ', ' ')
-          emit(' ', ' ')
-          emit(' ', ' ')
+          emit(i, ' ', ' ')
+          emit(i + 1, ' ', ' ')
+          emit(i + 2, ' ', ' ')
           i += 3
           break
         end
         ch = @chars[i] == '\n' ? '\n' : ' '
-        emit(ch, ch)
+        emit(i, ch, ch)
         i += 1
       end
       @spans << {:string, start, i}
@@ -161,17 +160,17 @@ module Noir
     # Regular `"…"` string. Blanked in the structural view; PRESERVED (quotes
     # and content) in the code view so route literals stay readable.
     private def mask_string(start : Int32) : Int32
-      emit(' ', '"')
+      emit(start, ' ', '"')
       i = start + 1
       escaped = false
       while i < @size
         c = @chars[i]
         if c == '\n'
-          emit('\n', '\n')
+          emit(i, '\n', '\n')
           i += 1
           break # unterminated single-line string
         end
-        emit(' ', c)
+        emit(i, ' ', c)
         if escaped
           escaped = false
         elsif c == '\\'
@@ -200,7 +199,7 @@ module Noir
 
     private def mask_char_literal(start : Int32) : Int32
       len = @chars[start + 1] == '\\' ? 4 : 3
-      len.times { emit(' ', ' ') }
+      len.times { |k| emit(start + k, ' ', ' ') }
       @spans << {:string, start, start + len}
       start + len
     end
@@ -263,29 +262,23 @@ module Noir
 
     # Structural masked source split into lines (1:1 with `String#lines`).
     def masked_lines : Array(String)
-      @masked_lines ||= split_lines(@masked)
+      @masked_lines ||= begin
+        masked_str = String.build(@size) do |io|
+          @masked.each { |c| io << c }
+        end
+        masked_str.lines
+      end
     end
 
     # Code masked source split into lines (1:1 with `String#lines`). Comments,
     # triple-quote bodies and char literals are blanked; regular strings kept.
     def code_lines : Array(String)
-      @code_lines ||= split_lines(@code)
-    end
-
-    private def split_lines(buf : Array(Char)) : Array(String)
-      out = [] of String
-      line_start = 0
-      i = 0
-      while i < @size
-        if @chars[i] == '\n'
-          finish = i > line_start && @chars[i - 1] == '\r' ? i - 1 : i
-          out << buf[line_start...finish].join
-          line_start = i + 1
+      @code_lines ||= begin
+        code_str = String.build(@size) do |io|
+          @code.each { |c| io << c }
         end
-        i += 1
+        code_str.lines
       end
-      out << buf[line_start...@size].join if line_start < @size
-      out
     end
 
     # ---- token stream ------------------------------------------------------
