@@ -53,6 +53,13 @@ module Noir::CrystalCalleeExtractor
   end
 
   def strip_comment(line : String) : String
+    # Fast path: the per-char walk only ever diverges from the input when
+    # the line carries a `#` comment. `#` is single-byte ASCII and cannot
+    # appear inside a UTF-8 multibyte sequence, so a raw byte_index
+    # (memchr) is both correct and allocation-free. This is the hot path —
+    # every Crystal analyzer runs strip_comment on every source line.
+    return line unless line.byte_index(0x23_u8) # '#'
+
     in_string = false
     escaped = false
     quote = '\0'
