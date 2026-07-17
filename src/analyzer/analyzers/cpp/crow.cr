@@ -67,7 +67,10 @@ module Analyzer::Cpp
       bp_prefixes = source.includes?("CROW_BP_ROUTE") ? blueprint_prefixes(source) : nil
 
       lines.each_with_index do |line, index|
-        next if line.lstrip.starts_with?("//")
+        next unless line.includes?("CROW_ROUTE") ||
+                    line.includes?("CROW_BP_ROUTE") ||
+                    line.includes?("route_dynamic") ||
+                    line.includes?("CROW_WEBSOCKET_ROUTE")
 
         websocket = false
         if bp_match = line.match(BP_ROUTE_REGEX)
@@ -167,9 +170,11 @@ module Analyzer::Cpp
 
     private def line_start_offsets(source : String) : Array(Int32)
       offsets = [0]
+      ptr = source.to_unsafe
+      bytesize = source.bytesize
       index = 0
-      while index < source.bytesize
-        offsets << index + 1 if source.byte_at(index) == '\n'.ord
+      while index < bytesize
+        offsets << index + 1 if ptr[index] == 10
         index += 1
       end
       offsets
