@@ -57,7 +57,10 @@ module Analyzer::Php
     # literals.
     CLI_HINT_RE = Regex.union(
       "Symfony\\Component\\Console",
-      "extends Command",
+      # Mirror cli_evidence?'s /extends\s+Command/ — a literal single space
+      # would let this superset gate reject a `extends<TAB>Command` file that
+      # the precise check would accept.
+      /extends\s+Command/,
       "AsCommand",
       "getopt",
       "$argv",
