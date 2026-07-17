@@ -67,11 +67,11 @@ module Analyzer::Elixir
       in_triple_single = false
       lines.each_with_index do |line, index|
         if line.includes?("\"\"\"")
-          line.scan(/"""/).size.times { in_triple_double = !in_triple_double }
+          count_substring(line, "\"\"\"").times { in_triple_double = !in_triple_double }
           next
         end
         if line.includes?("'''")
-          line.scan(/'''/).size.times { in_triple_single = !in_triple_single }
+          count_substring(line, "'''").times { in_triple_single = !in_triple_single }
           next
         end
         next if in_triple_double || in_triple_single
@@ -277,6 +277,19 @@ module Analyzer::Elixir
     # doesn't begin with `/` is a misfire on some other string literal.
     private def plug_route_path?(path : String) : Bool
       path.starts_with?('/')
+    end
+
+    # Count non-overlapping occurrences of `needle` without allocating a
+    # MatchData array (`String#scan(…​).size`).
+    private def count_substring(text : String, needle : String) : Int32
+      return 0 if needle.empty?
+      count = 0
+      i = 0
+      while (j = text.index(needle, i))
+        count += 1
+        i = j + needle.size
+      end
+      count
     end
   end
 end
