@@ -112,6 +112,14 @@ module Noir::CLI::ConfigCommand
   end
 
   def self.edit
+    # `edit` launches an interactive terminal editor. In a non-interactive
+    # context (CI, piped stdin, background job) that editor would block
+    # forever waiting for input that never arrives, hanging the pipeline.
+    # Fail fast with a useful pointer instead.
+    unless STDIN.tty?
+      Noir::CLI.die("`noir config edit` needs an interactive terminal. Edit #{config_path} directly, or use `noir config show`.")
+    end
+
     # Ensure the file exists before launching the editor so users always
     # land on something well-formed rather than a brand-new empty buffer.
     unless File.exists?(config_path)
@@ -124,10 +132,20 @@ module Noir::CLI::ConfigCommand
     end
 
     editor = pick_editor
-    command = "#{editor} #{Process.quote(config_path)}"
+    # Split the editor string into argv WITHOUT a shell so a poisoned
+    # $EDITOR/$VISUAL can't inject commands: `EDITOR="rm -rf /; vi"` used to
+    # run under `shell: true` and execute `rm -rf /`. Parsing to argv means
+    # metacharacters (`;`, `|`, `$()`) are passed literally, never evaluated,
+    # while still supporting editors carrying flags (e.g. `code --wait`).
+    editor_argv = Process.parse_arguments(editor)
+    if editor_argv.empty?
+      Noir::CLI.die("No editor configured. Set $VISUAL or $EDITOR (or install vi).")
+    end
+    command = editor_argv.first
+    args = editor_argv[1..] + [config_path]
     status = Process.run(
       command,
-      shell: true,
+      args: args,
       input: Process::Redirect::Inherit,
       output: Process::Redirect::Inherit,
       error: Process::Redirect::Inherit,
