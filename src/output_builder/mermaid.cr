@@ -58,6 +58,10 @@ class OutputBuilderMermaid < OutputBuilder
       # group it as cli -> tool -> serve instead of leaving the scheme as
       # a mangled `cli_` segment.
       path = path.sub("cli://", "cli/") if endpoint.cli?
+      # A realtime event surface (`ws://chatHub/SendMessage`) is not an HTTP
+      # path: group it as ws -> chatHub -> SendMessage instead of leaving the
+      # scheme as a mangled `ws_` segment.
+      path = path.sub("wss://", "wss/").sub("ws://", "ws/") if endpoint.realtime?
       # Remove query parameters if any
       if path.includes?("?")
         path = path.split("?")[0]
