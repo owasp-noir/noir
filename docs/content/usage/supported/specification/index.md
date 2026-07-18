@@ -22,6 +22,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Apisix | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | Apisix | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ☑️ | ✗ |
 | App Links / Universal Links (server-side) | JSON | ☑️ | ✗ | ☑️ | ✗ | ✗ | ✗ | ✗ |
+| Appwrite (appwrite.json) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Asyncapi | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Asyncapi | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Azure Functions | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
@@ -32,6 +33,8 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Caido | JSON | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ☑️ |
 | Cloudflare Workers (wrangler) | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Cloudflare Workers (wrangler) | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Directus (schema snapshot) | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
+| Directus (schema snapshot) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | Envoy | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Envoy | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | GraphQL | GRAPHQL | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
@@ -40,6 +43,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | HTTP / REST Client (.http/.rest) | HTTP | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | HTTP / REST Client (.http/.rest) | REST | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| Hasura (metadata) | YAML | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ✗ | ✗ |
 | Insomnia | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Insomnia | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Istio VirtualService | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
@@ -56,11 +60,17 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | OpenAPI 3.0 | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenAPI 3.0 | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenRPC | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
+| Payload CMS (collection config) | TS | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
+| Payload CMS (collection config) | JS | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | Postman Collection | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | RAML | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Serverless Framework | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Serverless Framework | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Smithy | SMITHY | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| Strapi (content-type schema) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
+| Strapi (content-type schema) | TS | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
+| Strapi (content-type schema) | JS | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
+| Supabase / PostgREST (migrations) | SQL | ☑️ | ☑️ | ☑️ | ✗ | ☑️ | ☑️ | ✗ |
 | Terraform | TF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Terraform | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Traefik Dynamic Config | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |

@@ -1,0 +1,9 @@
+- comment: Fetch a movie by its id
+  definition:
+    query:
+      collection_name: allowed-queries
+      query_name: getMovie
+  methods:
+    - GET
+  name: getMovie
+  url: movie/:id

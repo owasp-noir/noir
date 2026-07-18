@@ -1,0 +1,24 @@
+{
+  "projectId": "noir_tables",
+  "projectName": "Noir Tables",
+  "tablesDB": [
+    {
+      "$id": "shop",
+      "name": "Shop",
+      "enabled": true
+    }
+  ],
+  "tables": [
+    {
+      "$id": "orders",
+      "databaseId": "shop",
+      "name": "Orders",
+      "enabled": true,
+      "rowSecurity": true,
+      "columns": [
+        { "key": "sku", "type": "string", "required": true, "array": false, "size": 64 },
+        { "key": "quantity", "type": "integer", "required": true, "array": false }
+      ]
+    }
+  ]
+}
