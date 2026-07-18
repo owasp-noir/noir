@@ -1,0 +1,8 @@
+{
+  "name": "acme/drupal-fixture",
+  "description": "A fixture Drupal site for noir functional tests.",
+  "type": "project",
+  "require": {
+    "drupal/core-recommended": "^10.2"
+  }
+}
