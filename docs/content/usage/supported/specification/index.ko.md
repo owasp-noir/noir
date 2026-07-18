@@ -58,6 +58,8 @@ sort_by = "weight"
 | Serverless Framework | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Serverless Framework | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Smithy | SMITHY | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| Terraform | TF | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Terraform | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Traefik Dynamic Config | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Traefik Dynamic Config | TOML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |

@@ -1,0 +1,9 @@
+{
+  "resource": {
+    "aws_apigatewayv2_route": {
+      "health": {
+        "route_key": "GET /health"
+      }
+    }
+  }
+}
