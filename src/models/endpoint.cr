@@ -33,12 +33,34 @@ struct Endpoint
     CLI_PROTOCOLS.includes?(@protocol)
   end
 
+  # Realtime / event-driven entry points (SignalR hubs, Socket.IO
+  # namespaces, Phoenix channels, Action Cable channels). A realtime
+  # endpoint models one callable event/action/message handler on a
+  # long-lived socket, addressed as `ws://<hub-or-namespace-or-channel-
+  # or-topic>/<event>` (bare `ws://<surface>` when no discrete event is
+  # discoverable). The method is the synthetic verb "SEND" — the
+  # allow-listed messaging verb the optimizer keeps (matching Spring's
+  # `@MessageMapping → SEND`) — and the protocol is "ws", so the existing
+  # WebsocketTagger tags them with no changes. Message/argument fields are
+  # params (param_type "json").
+  #
+  # Keyed on the `ws://` / `wss://` URL scheme rather than the protocol so
+  # AsyncAPI's bare-channel `ws` endpoints and HAR's normalized
+  # `https://…` + `protocol=ws` handshakes (both real, resolvable HTTP
+  # surfaces) stay HTTP-shaped, while these abstract source-analyzed
+  # surfaces — which can't be exercised as plain HTTP requests — are kept
+  # out of HTTP-shaped output and preserved verbatim by the optimizer.
+  def realtime? : Bool
+    @url.starts_with?("ws://") || @url.starts_with?("wss://")
+  end
+
   # True for endpoints whose URL is not an HTTP path and must be preserved
-  # verbatim — mobile deep-link schemes and CLI command surfaces. The
-  # optimizer skips URL normalization for these, and the HTTP output
-  # builders / active deliverers skip them entirely.
+  # verbatim — mobile deep-link schemes, CLI command surfaces and realtime
+  # `ws://` event surfaces. The optimizer skips URL normalization for
+  # these, and the HTTP output builders / active deliverers skip them
+  # entirely.
   def non_http? : Bool
-    mobile? || cli?
+    mobile? || cli? || realtime?
   end
 
   # Free-form metadata for non-HTTP entry points (mobile deep-link

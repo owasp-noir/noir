@@ -761,10 +761,13 @@ class EndpointOptimizer
 
     endpoints.each do |endpoint|
       # CLI command URLs are kept verbatim — a `cli://tool/serve` segment is
-      # not a path-parameter template. Mobile deep links are NOT skipped here:
-      # their `myapp://host/:id` URLs legitimately carry path params that this
-      # pass extracts.
-      if endpoint.cli?
+      # not a path-parameter template. Realtime `ws://` event URLs are kept
+      # verbatim too — a Phoenix topic like `ws://room:lobby/new_msg` carries
+      # a literal `:lobby` that this pass would otherwise misread as an
+      # Express-style `:name` path parameter. Mobile deep links are NOT
+      # skipped here: their `myapp://host/:id` URLs legitimately carry path
+      # params that this pass extracts.
+      if endpoint.cli? || endpoint.realtime?
         final << endpoint
         next
       end
