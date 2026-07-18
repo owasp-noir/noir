@@ -149,7 +149,7 @@ module Analyzer::Asp
           saw_form_read = true
         when "cookies" then cookies << Param.new(name, "", "cookie")
         when "servervariables"
-          header = server_variable_header(name)
+          header = http_header_name(name)
           headers << Param.new(header, "", "header") if header
         else
           # Bare `Request("x")` searches QueryString, then Form, then
@@ -185,15 +185,6 @@ module Analyzer::Asp
 
       post_params = unique_params(body + cookies + headers)
       urls.each { |url| @result << Endpoint.new(url, "POST", post_params, details) }
-    end
-
-    # Only `HTTP_*` server variables carry inbound request data; the rest
-    # (REMOTE_ADDR, SCRIPT_NAME, ...) are server state.
-    private def server_variable_header(name : String) : String?
-      return unless name.downcase.starts_with?("http_")
-
-      header = name[5..].gsub("_", "-").downcase
-      header.empty? ? nil : header
     end
 
     # `default.asp` / `index.asp` answer the bare directory URL too.

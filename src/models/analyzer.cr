@@ -185,6 +185,20 @@ class Analyzer
     normalized.starts_with?("/") ? normalized : "/#{normalized}"
   end
 
+  # `HTTP_X_FORWARDED_FOR` -> `x-forwarded-for`.
+  #
+  # CGI-style server-variable collections (`Request.ServerVariables` in
+  # ASP/WebForms, `cgi.*` in CFML) expose inbound headers under an
+  # `HTTP_`-prefixed, underscore-separated name. Everything without that
+  # prefix (REMOTE_ADDR, SCRIPT_NAME, ...) is server state, not a
+  # request parameter, and returns nil.
+  def http_header_name(name : String) : String?
+    return unless name.downcase.starts_with?("http_")
+
+    header = name[5..].gsub("_", "-").downcase
+    header.empty? ? nil : header
+  end
+
   # 1-based line number for a character offset into `content`.
   #
   # Counts newlines over the raw byte buffer rather than slicing
