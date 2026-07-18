@@ -38,8 +38,14 @@ jobs:
         with:
           base_path: '.'
 
+      # Pass outputs via env vars, never inline `'${{ ... }}'` into the
+      # shell. `endpoints` is JSON derived from the scanned code, so on an
+      # untrusted PR a crafted value could break out of the quotes and inject
+      # commands into the runner.
       - name: Display results
-        run: echo '${{ steps.noir.outputs.endpoints }}' | jq .
+        env:
+          NOIR_ENDPOINTS: ${{ steps.noir.outputs.endpoints }}
+        run: echo "$NOIR_ENDPOINTS" | jq .
 ```
 
 ### Advanced Example
@@ -67,12 +73,15 @@ jobs:
           verbose: 'true'
 
       - name: Process Results
+        env:
+          NOIR_ENDPOINTS: ${{ steps.noir.outputs.endpoints }}
+          NOIR_PASSIVE: ${{ steps.noir.outputs.passive_results }}
         run: |
           echo "🔍 Endpoints discovered:"
-          echo '${{ steps.noir.outputs.endpoints }}' | jq '.endpoints | length'
+          echo "$NOIR_ENDPOINTS" | jq '.endpoints | length'
 
           echo "🚨 Security issues found:"
-          echo '${{ steps.noir.outputs.passive_results }}' | jq '. | length'
+          echo "$NOIR_PASSIVE" | jq '. | length'
 
       - name: Save detailed results
         uses: actions/upload-artifact@v4
