@@ -1,0 +1,4 @@
+# CLI v3 writes tables.yaml as an index of includes; the real
+# definitions live in the per-table siblings next to it.
+- "!include public_movies.yaml"
+- "!include public_directors.yaml"

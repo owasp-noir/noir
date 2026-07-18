@@ -2439,6 +2439,21 @@ module NoirTechs
         },
       },
     },
+    :appwrite => {
+      :format    => ["JSON"],
+      :similar   => ["appwrite", "appwrite-config", "appwrite_config", "appwrite.json"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :aws_cdk => {
       :format    => ["TS", "JS", "PY"],
       :similar   => ["aws cdk", "aws-cdk-lib", "@aws-cdk", "cdk", "aws_cdk"],
@@ -2509,6 +2524,36 @@ module NoirTechs
           :query  => false,
           :path   => false,
           :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
+    :directus => {
+      :format    => ["YAML", "JSON"],
+      :similar   => ["directus", "directus-snapshot", "directus_snapshot", "directus schema"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
+    :hasura => {
+      :format    => ["YAML"],
+      :similar   => ["hasura", "hasura-metadata", "hasura_metadata", "hasura graphql engine"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => true,
           :header => false,
           :cookie => false,
         },
@@ -3363,6 +3408,21 @@ module NoirTechs
         },
       },
     },
+    :payload_cms => {
+      :format    => ["TS", "JS"],
+      :similar   => ["payload", "payloadcms", "payload-cms", "payload_cms", "payload cms"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :serverless_framework => {
       :format    => ["YAML", "JSON"],
       :similar   => ["serverless framework", "serverless.yml", "serverless.yaml", "serverless.json", "aws lambda"],
@@ -3374,6 +3434,36 @@ module NoirTechs
           :path   => false,
           :body   => false,
           :header => false,
+          :cookie => false,
+        },
+      },
+    },
+    :strapi => {
+      :format    => ["JSON", "TS", "JS"],
+      :similar   => ["strapi", "strapi5", "strapi-cms", "strapi_cms", "strapi v4", "strapi v5"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
+    :supabase => {
+      :format    => ["SQL"],
+      :similar   => ["supabase", "postgrest", "supabase-migrations", "supabase_migrations", "pgrst"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
           :cookie => false,
         },
       },

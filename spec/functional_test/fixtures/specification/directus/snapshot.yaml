@@ -1,0 +1,84 @@
+version: 1
+directus: 10.13.0
+vendor: postgres
+collections:
+  - collection: posts
+    meta:
+      collection: posts
+      singleton: false
+      hidden: false
+    schema:
+      name: posts
+  - collection: site_settings
+    meta:
+      collection: site_settings
+      singleton: true
+      hidden: false
+    schema:
+      name: site_settings
+  # A folder groups collections in the admin UI. It has no table, so
+  # Directus exposes no /items route for it.
+  - collection: content
+    meta:
+      collection: content
+      singleton: false
+    schema: null
+  # System collections are always present and are not project surface.
+  - collection: directus_users
+    meta:
+      collection: directus_users
+      singleton: false
+    schema:
+      name: directus_users
+fields:
+  - collection: posts
+    field: id
+    type: integer
+    meta:
+      readonly: true
+      special: null
+    schema:
+      name: id
+      has_auto_increment: true
+      is_primary_key: true
+  - collection: posts
+    field: title
+    type: string
+    meta:
+      readonly: false
+      special: null
+    schema:
+      name: title
+  - collection: posts
+    field: views
+    type: integer
+    meta:
+      readonly: false
+      special: null
+    schema:
+      name: views
+  - collection: posts
+    field: published
+    type: boolean
+    meta:
+      readonly: false
+      special: null
+    schema:
+      name: published
+  # An o2m alias is a relational pointer, not a writable column.
+  - collection: posts
+    field: comments
+    type: alias
+    meta:
+      readonly: false
+      special:
+        - o2m
+  - collection: site_settings
+    field: site_name
+    type: string
+    meta:
+      readonly: false
+      special: null
+    schema:
+      name: site_name
+relations: []

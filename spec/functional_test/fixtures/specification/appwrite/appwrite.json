@@ -1,0 +1,42 @@
+{
+  "projectId": "noir_demo",
+  "projectName": "Noir Demo",
+  "databases": [
+    {
+      "$id": "blog",
+      "name": "Blog",
+      "enabled": true
+    }
+  ],
+  "collections": [
+    {
+      "$id": "posts",
+      "databaseId": "blog",
+      "name": "Posts",
+      "enabled": true,
+      "documentSecurity": true,
+      "attributes": [
+        { "key": "title", "type": "string", "status": "available", "required": true, "array": false, "size": 255 },
+        { "key": "views", "type": "integer", "status": "available", "required": false, "array": false },
+        { "key": "published", "type": "boolean", "status": "available", "required": false, "array": false },
+        { "key": "tags", "type": "string", "status": "available", "required": false, "array": true, "size": 64 }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "$id": "sendNewsletter",
+      "name": "Send Newsletter",
+      "runtime": "node-18.0",
+      "execute": ["any"]
+    }
+  ],
+  "buckets": [
+    {
+      "$id": "avatars",
+      "name": "Avatars",
+      "enabled": true,
+      "fileSecurity": true
+    }
+  ]
+}
