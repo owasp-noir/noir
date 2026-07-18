@@ -7,6 +7,7 @@ All notable changes to [Noir](https://github.com/owasp-noir/noir) will be docume
 ### Added
 - New specification analyzer: `.http` / `.rest` request files (VS Code REST Client and JetBrains HTTP Client), extracting endpoints, methods, and query/path/body/header parameters. `{{var}}` placeholders resolve from in-file `@name = value` definitions and are otherwise surfaced as path parameters; JetBrains `> {% ... %}` response-handler blocks are skipped.
 - Python: Django Ninja analyzer. Resolves the URLconf mount prefix (`path("api/", api.urls)` / `re_path(...)`), `@api.<verb>` / `@api.api_operation([...])` operations, `add_router(...)` (router objects, module-attribute references, and dotted-string module paths), path-param converters (`{int:item_id}`), `ninja.Schema` request bodies, and `Query`/`Path`/`Body`/`Form`/`File`/`Header`/`Cookie` parameters, with callee extraction.
+- **Terraform analyzer**: extracts HTTP endpoints from Terraform / OpenTofu configurations (`.tf` HCL and `.tf.json`) that declare AWS API Gateway routes — API Gateway v2 (`aws_apigatewayv2_route` route keys) and API Gateway v1 REST resource/method graphs, resolved module-wide across files.
 
 ### Fixed
 - macOS release binaries are now shipped as portable `.tar.gz` archives with bundled OpenSSL libraries, instead of a bare executable linked against Homebrew `openssl@1.1` that failed to launch on clean machines (`dyld: libssl.1.1.dylib not found`).
