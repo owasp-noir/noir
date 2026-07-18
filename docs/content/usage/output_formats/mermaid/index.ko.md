@@ -16,7 +16,7 @@ noir scan . -f mermaid
 
 ## 출력 예제
 
-마인드맵은 트리 구조로 구성됩니다. 루트 노드가 API 전체를 나타내고, 가지가 URL 경로 세그먼트, 잎이 HTTP 메서드와 파라미터(타입별로 `body`, `headers`, `cookies`로 분류)입니다.
+마인드맵은 트리 구조입니다. 루트 노드는 API 전체, 가지는 URL 경로 세그먼트이며, 각 HTTP 메서드는 자신이 담당하는 경로 아래에 놓입니다. 메서드 아래 파라미터는 요청에서 전달되는 위치별로 `query`, `body`, `headers`, `cookies`, `path` 그룹으로 나뉩니다. 경로 파라미터는 `param_*` 가지로도 표시되며(`/users/{user_id}` → `param_user_id` 세그먼트), WebSocket 경로에는 `websocket` 태그가 붙습니다.
 
 <details>
     <summary>Mermaid 출력</summary>
@@ -25,89 +25,34 @@ noir scan . -f mermaid
 mindmap
   root((API))
     GET
-    about
+    account
       GET
-      GET
-      POST
-        body
-          data
-          id
-    gems
-      GET
-    gems_json
-      GET
+        headers
+          authorization
         cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        cookies
-          cookie
-        body
-          query
-          sort
-    gems_yml
+          session
+    search
       GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      PUT
-        cookies
-          cookie
-        body
-          query
-          sort
-    path_111
-      PUT
-    pets
-      GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        body
-          name
-      param_petId
-        GET
-          body
-            petId
-        PUT
-          body
-            breed
-            name
-            petId
-    shards
-      GET
+        query
+          page
+          q
     users
       POST
         body
           email
           name
-      param_userId
+      param_user_id
         GET
-          headers
-            Authorization
-          body
-            userId
-    v1
-      pets
-        GET
-        POST
-        param_petId
-          GET
-            body
-              petId
-          PUT
-            body
-              petId
-    zz
-      GET
-      DELETE
+          query
+            verbose
+          path
+            user_id
+        DELETE
+          path
+            user_id
+    ws
+      feed
+        GET websocket
 ```
 
 </details>
@@ -118,89 +63,34 @@ mindmap
 mindmap
   root((API))
     GET
-    about
+    account
       GET
-      GET
-      POST
-        body
-          data
-          id
-    gems
-      GET
-    gems_json
-      GET
+        headers
+          authorization
         cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        cookies
-          cookie
-        body
-          query
-          sort
-    gems_yml
+          session
+    search
       GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      PUT
-        cookies
-          cookie
-        body
-          query
-          sort
-    path_111
-      PUT
-    pets
-      GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        body
-          name
-      param_petId
-        GET
-          body
-            petId
-        PUT
-          body
-            breed
-            name
-            petId
-    shards
-      GET
+        query
+          page
+          q
     users
       POST
         body
           email
           name
-      param_userId
+      param_user_id
         GET
-          headers
-            Authorization
-          body
-            userId
-    v1
-      pets
-        GET
-        POST
-        param_petId
-          GET
-            body
-              petId
-          PUT
-            body
-              petId
-    zz
-      GET
-      DELETE
+          query
+            verbose
+          path
+            user_id
+        DELETE
+          path
+            user_id
+    ws
+      feed
+        GET websocket
 {% end %}
 
 ## 팁

@@ -33,6 +33,7 @@ SPEC_FRIENDLY_NAMES = {
   "ios"                  => "iOS (Info.plist)",
   "well_known_applinks"  => "App Links / Universal Links (server-side)",
   "har"                  => "HAR",
+  "http_file"            => "HTTP / REST Client (.http/.rest)",
   "mitmproxy"            => "mitmproxy Flow",
   "oas2"                 => "OpenAPI 2.0 (Swagger)",
   "oas3"                 => "OpenAPI 3.0",

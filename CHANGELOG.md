@@ -5,6 +5,7 @@ All notable changes to [Noir](https://github.com/owasp-noir/noir) will be docume
 ## Unreleased
 
 ### Added
+- New specification analyzer: `.http` / `.rest` request files (VS Code REST Client and JetBrains HTTP Client), extracting endpoints, methods, and query/path/body/header parameters. `{{var}}` placeholders resolve from in-file `@name = value` definitions and are otherwise surfaced as path parameters; JetBrains `> {% ... %}` response-handler blocks are skipped.
 - **Terraform analyzer**: extracts HTTP endpoints from Terraform / OpenTofu configurations (`.tf` HCL and `.tf.json`) that declare AWS API Gateway routes — API Gateway v2 (`aws_apigatewayv2_route` route keys) and API Gateway v1 REST resource/method graphs, resolved module-wide across files.
 
 ### Fixed
