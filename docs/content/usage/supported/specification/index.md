@@ -38,6 +38,8 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | GraphQL SDL | GRAPHQL_SDL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Grpc | PROTOBUF | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
+| HTTP / REST Client (.http/.rest) | HTTP | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
+| HTTP / REST Client (.http/.rest) | REST | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Insomnia | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Insomnia | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | Istio VirtualService | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
