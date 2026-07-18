@@ -17,7 +17,7 @@ module Detector::Erlang
 
       return true if file_contents.includes?("cowboy_router:compile")
       return true if file_contents.includes?("cowboy:start_clear") || file_contents.includes?("cowboy:start_tls")
-      return true if file_contents.matches?(/-behaviou?r\s*\(\s*cowboy_(?:handler|rest|loop|websocket)\s*\)/)
+      return true if file_contents.matches?(/-(?:behaviour|behavior)\s*\(\s*cowboy_(?:handler|rest|loop|websocket)\s*\)/)
       return true if file_contents.includes?("cowboy_req:")
 
       false

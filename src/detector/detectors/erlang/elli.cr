@@ -11,7 +11,7 @@ module Detector::Erlang
 
       return false unless filename.ends_with?(".erl") || filename.ends_with?(".hrl")
 
-      return true if file_contents.matches?(/-behaviou?r\s*\(\s*elli_handler\s*\)/)
+      return true if file_contents.matches?(/-(?:behaviour|behavior)\s*\(\s*elli_handler\s*\)/)
       return true if file_contents.includes?("elli_request:")
       return true if file_contents.includes?("elli:start_link")
 
