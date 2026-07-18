@@ -963,6 +963,8 @@ module NoirTechs
           :header => true,
           :cookie => true,
         },
+        :static_path => false,
+        :websocket   => false,
       },
     },
     :go_hertz => {
@@ -979,6 +981,8 @@ module NoirTechs
           :header => true,
           :cookie => true,
         },
+        :static_path => false,
+        :websocket   => false,
       },
     },
     :go_iris => {
@@ -995,6 +999,8 @@ module NoirTechs
           :header => true,
           :cookie => true,
         },
+        :static_path => false,
+        :websocket   => false,
       },
     },
     :go_restful => {
@@ -1011,6 +1017,8 @@ module NoirTechs
           :header => true,
           :cookie => false,
         },
+        :static_path => false,
+        :websocket   => false,
       },
     },
     :go_chi => {
@@ -2135,7 +2143,7 @@ module NoirTechs
     :zig_http => {
       :framework => "std.http.Server",
       :language  => "Zig",
-      :similar   => ["zig-http", "zig_http", "std-http-server", "std.http.server", "std.http.Server"],
+      :similar   => ["zig-http", "zig_http", "std-http-server", "std.http.server"],
       :supported => {
         :endpoint => true,
         :method   => true,
@@ -2562,7 +2570,7 @@ module NoirTechs
       },
     },
     :php_pure => {
-      :framework => "",
+      :framework => "Pure",
       :language  => "PHP",
       :similar   => ["php", "php-pure", "php_pure"],
       :supported => {
@@ -3784,9 +3792,14 @@ module NoirTechs
       return key.to_s if key.to_s == w
     end
 
-    # Fall back to alias lookup
+    # Fall back to alias lookup. Compare case-insensitively on both sides so
+    # mixed-case aliases (e.g. "BaseHTTPRequestHandler", "WEBrick::HTTPServer")
+    # still resolve — downcasing only the user input left them permanently dead.
+    lowered = w.downcase
     TECHS.each do |key, value|
-      if value[:similar].includes?(w.downcase)
+      similar = value[:similar]
+      next unless similar.is_a?(Array)
+      if similar.any? { |alias_name| alias_name.downcase == lowered }
         return key.to_s
       end
     end
