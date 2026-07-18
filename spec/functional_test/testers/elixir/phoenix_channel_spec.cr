@@ -32,5 +32,5 @@ phoenix_channel_tester.perform_tests
 # and must not surface as an endpoint.
 it "does not emit an endpoint for a catch-all handle_in clause" do
   urls = phoenix_channel_tester.app.endpoints.map(&.url)
-  urls.count { |u| u.starts_with?("ws://room:*/") }.should eq 2
+  urls.count(&.starts_with?("ws://room:*/")).should eq 2
 end
