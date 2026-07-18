@@ -55,6 +55,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | OpenAPI 2.0 (Swagger) | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenAPI 3.0 | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | OpenAPI 3.0 | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
+| OpenRPC | JSON | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Postman Collection | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ |
 | RAML | YAML | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Serverless Framework | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |

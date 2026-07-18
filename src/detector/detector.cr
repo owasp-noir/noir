@@ -286,6 +286,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Specification::Netlify,
     Specification::Nginx,
     Specification::OData,
+    Specification::OpenRpc,
     Specification::Postman,
     Specification::RAML,
     Specification::ServerlessFramework,
@@ -422,9 +423,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     "insomnia",
     "oas2",
     "oas3",
+    "openrpc",
     "postman",
   }
-  generic_json_spec_marker = /"(?:openapi|swagger|asyncapi|_postman_id|__export_format|_type|routes|uri|uris|upstream_id|plugins|log|entries|host|method|path|raw|is_tls|port|apps|http|virtual_hosts|domains|AWSTemplateFormatVersion)"|schema\.(?:getpostman|postman)\.com|AWS::Serverless-2016-10-31/
+  generic_json_spec_marker = /"(?:openapi|swagger|asyncapi|openrpc|_postman_id|__export_format|_type|routes|uri|uris|upstream_id|plugins|log|entries|host|method|path|raw|is_tls|port|apps|http|virtual_hosts|domains|AWSTemplateFormatVersion)"|schema\.(?:getpostman|postman)\.com|AWS::Serverless-2016-10-31/
 
   channel = Channel(Tuple(String, String, Array(Int32))).new(Analyzer::DEFAULT_CONTENT_CHANNEL_CAPACITY)
   locator = CodeLocator.instance

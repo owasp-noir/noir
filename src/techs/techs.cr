@@ -2560,6 +2560,21 @@ module NoirTechs
         },
       },
     },
+    :openrpc => {
+      :format    => ["JSON"],
+      :similar   => ["openrpc", "open-rpc", "open_rpc", "jsonrpc", "json-rpc", "json_rpc"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+      },
+    },
     :grpc => {
       :format    => ["PROTOBUF"],
       :similar   => ["grpc", "protobuf", "proto", "grpc-gateway"],
