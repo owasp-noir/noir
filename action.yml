@@ -120,26 +120,41 @@ runs:
   using: composite
   steps:
     # Resolve the ghcr.io tag from the ref the user pinned the action
-    # to. `@v1.0.0` → `1.0.0`, `@main` → `main`, no ref → `latest`.
-    # Mirrors the matching released image so locking the action to a
-    # tag locks the runtime too — no more `FROM noir:1.0.0` hardcoded
-    # in a sibling Dockerfile that the maintainer must keep bumping.
+    # to, mirroring the matching released image so locking the action to
+    # a tag locks the runtime too. `@v1.1.0` → `1.1.0`, `@v1` → `1`,
+    # `@main` → `main`, no ref → `latest`; commit-SHA / unknown refs
+    # degrade to `latest`. Full rules live in resolve-image-tag.sh so the
+    # mapping can be unit-tested without the Actions runtime.
     - name: Resolve Noir image tag
       id: resolve
       shell: bash
+      env:
+        NOIR_ACTION_REF: ${{ github.action_ref }}
       run: |
-        REF="${{ github.action_ref }}"
-        TAG="${REF#v}"
-        TAG="${TAG:-latest}"
-        echo "image=ghcr.io/owasp-noir/noir:${TAG}" >> "$GITHUB_OUTPUT"
-        echo "Using Noir image: ghcr.io/owasp-noir/noir:${TAG}"
+        tag="$(bash "$GITHUB_ACTION_PATH/github-action/resolve-image-tag.sh" "$NOIR_ACTION_REF")"
+        echo "image=ghcr.io/owasp-noir/noir:${tag}" >> "$GITHUB_OUTPUT"
+        echo "Using Noir image: ghcr.io/owasp-noir/noir:${tag}"
 
     # Pull explicitly so the next step's log only shows "running
     # noir", not the registry round-trip. Easier triage for registry
-    # vs runtime failures.
+    # vs runtime failures. Fall back to :latest when the resolved image
+    # isn't published (e.g. a branch ref with no built image) so the
+    # action degrades instead of hard-failing on `docker pull`.
     - name: Pull Noir image
+      id: pull
       shell: bash
-      run: docker pull "${{ steps.resolve.outputs.image }}"
+      env:
+        NOIR_IMAGE: ${{ steps.resolve.outputs.image }}
+      run: |
+        image="$NOIR_IMAGE"
+        if docker pull "$image"; then
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+        else
+          fallback="ghcr.io/owasp-noir/noir:latest"
+          echo "::warning title=OWASP Noir::Could not pull ${image}; falling back to ${fallback}"
+          docker pull "$fallback"
+          echo "image=$fallback" >> "$GITHUB_OUTPUT"
+        fi
 
     # Run the entrypoint inside the pre-built image. INPUT_* env vars
     # match the keys exposed via `with:`; the entrypoint reads them in
@@ -187,7 +202,7 @@ runs:
           -e INPUT_DIFF_PATH="${{ inputs.diff_path }}" \
           -e INPUT_NO_LOG="${{ inputs.no_log }}" \
           --entrypoint /entrypoint.sh \
-          "${{ steps.resolve.outputs.image }}"
+          "${{ steps.pull.outputs.image }}"
 
         # The container wrote to /github/workspace/.noir-output (its
         # view of $GITHUB_OUTPUT); promote that into the composite
