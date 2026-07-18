@@ -1,5 +1,5 @@
 ##= BUILDER =##
-FROM crystallang/crystal:1.20.3-alpine AS builder
+FROM crystallang/crystal:1.21.0-alpine AS builder
 WORKDIR /noir
 COPY . .
 
