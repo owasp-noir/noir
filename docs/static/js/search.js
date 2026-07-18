@@ -18,6 +18,21 @@
   var base = (window.NOIR_BASE || "").replace(/\/+$/, "");
   var T = window.NOIR_I18N || {};
 
+  /* Path component of base_url — "/noir" for https://owasp-noir.github.io/noir,
+     "" for the bare host `hwaro serve` hands out. hwaro bakes this prefix into
+     the urls it writes to search.json, so results are already root-absolute and
+     ready to use; prepending base again produced /noir/noir/… 404s in
+     production while staying invisible on a path-less local server. The prefix
+     is only added when an entry is genuinely missing it. */
+  var basePath = base.replace(/^[a-z][a-z0-9+.-]*:\/\/[^\/]*/i, "").replace(/\/+$/, "");
+
+  function resolve(url) {
+    if (!url) return "#";
+    if (url.charAt(0) !== "/" || !basePath) return url;
+    if (url === basePath || url.indexOf(basePath + "/") === 0) return url;
+    return basePath + url;
+  }
+
   function load() {
     if (data || loading) return Promise.resolve(data || []);
     loading = true;
@@ -79,8 +94,7 @@
     }
 
     results.innerHTML = hits.map(function (h, n) {
-      var url = h.item.url || h.item.permalink || "#";
-      if (url.charAt(0) === "/" && base) url = base + url;
+      var url = resolve(h.item.url || h.item.permalink);
       return '<a class="search-result" role="option" aria-selected="false" data-i="' + n + '" href="' + escapeHtml(url) + '">' +
         "<strong>" + mark(h.item.title || "Untitled", q) + "</strong>" +
         "<span>" + mark(snippet(h.item.content, q), q) + "</span>" +

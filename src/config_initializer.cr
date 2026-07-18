@@ -123,7 +123,7 @@ class ConfigInitializer
     # A missing file (e.g. a --config-file path that setup deliberately
     # didn't scaffold) or an empty one is a legitimate "no overrides"
     # state — fall back to defaults quietly. Only a file with real but
-    # unparseable content is worth warning about below.
+    # unparsable content is worth warning about below.
     raw = File.exists?(@config_file) ? File.read(@config_file) : ""
     return default_options if raw.strip.empty?
 

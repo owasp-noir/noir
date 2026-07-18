@@ -1351,6 +1351,21 @@ module NoirTechs
         },
       },
     },
+    :http_file => {
+      :format    => ["HTTP", "REST"],
+      :similar   => ["http_file", "rest-client", "rest_client", "http-client", "http_client", ".http", ".rest"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => false,
+        },
+      },
+    },
     :mitmproxy => {
       :format    => ["TNETSTRING"],
       :similar   => ["mitmproxy", "mitm", "mitmdump", "flow", "flows"],

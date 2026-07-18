@@ -9,6 +9,11 @@ on:
       - shard.lock
       - Dockerfile
       - "**/*.cr"
+      # The GitHub Action runtime (composite wrapper + container entrypoint)
+      # ships from this repo too, so changes to it must exercise the
+      # test-action job below.
+      - action.yml
+      - github-action/**
   push:
     branches: [main]
   workflow_dispatch:
@@ -65,6 +70,33 @@ jobs:
           platforms: ${{ matrix.arch }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+  test-action:
+    # End-to-end coverage for the GitHub Action runtime. The composite
+    # action `docker pull`s a pre-built published image and build-docker
+    # above never runs the container, so entrypoint.sh would otherwise ship
+    # untested. Build the image from the current tree and drive the
+    # entrypoint exactly as action.yml does, asserting the output contract.
+    name: GitHub Action entrypoint (e2e)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Unit-test image tag resolver
+        run: bash github-action/test-resolve-image-tag.sh
+      - name: Setup Docker buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Build action image from current tree
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile
+          load: true
+          platforms: linux/amd64
+          tags: noir-action:ci
+          cache-from: type=gha,scope=action-ci
+          cache-to: type=gha,mode=max,scope=action-ci
+      - name: Run entrypoint end-to-end
+        run: bash github-action/test-entrypoint.sh noir-action:ci
   lint:
     runs-on: ubuntu-latest
     steps:

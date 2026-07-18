@@ -45,7 +45,8 @@ describe "OutputBuilderMermaid" do
     output.should contain("        email")
     output.should contain("        username")
     output.should contain("    GET")
-    output.should contain("      body")
+    # A query param lands in its own `query` group, not lumped into `body`.
+    output.should contain("      query")
     output.should contain("        limit")
   end
 
@@ -97,9 +98,12 @@ describe "OutputBuilderMermaid" do
     output.should contain("      body")
     output.should contain("        param1")
     output.should contain("        param2")
+    # The path parameter shows up twice, on purpose and complementarily:
+    # as a `param_*` segment node (its position in the URL hierarchy)...
     output.should contain("  param_user_id")
     output.should contain("    GET")
-    output.should contain("      body")
+    # ...and, named, inside the endpoint's own `path` group (not `body`).
+    output.should contain("      path")
     output.should contain("        user_id")
     output.should contain("public")
     output.should contain("  images")
@@ -110,7 +114,10 @@ describe "OutputBuilderMermaid" do
     output.should contain("      cookies")
     output.should contain("        session_id")
     output.should contain("socket")
-    output.should contain("  GET [websocket]")
+    # A bare ` websocket` word, not `[websocket]`: brackets are mindmap
+    # node-shape syntax and would hide the "GET" method on render.
+    output.should contain("  GET websocket")
+    output.should_not contain("[websocket]")
   end
 
   it "prints with endpoints and passive results" do
@@ -164,7 +171,7 @@ describe "OutputBuilderMermaid" do
     output.should contain("root((API))")
     output.should contain("test")
     output.should contain("  GET")
-    output.should contain("    body")
+    output.should contain("    query")
     output.should contain("      test_param")
 
     # Verify passive scan findings are rendered as a branch
@@ -172,5 +179,63 @@ describe "OutputBuilderMermaid" do
     output.should contain("test_rule")
     output.should contain("high")
     output.should contain("test_cr_10")
+  end
+
+  it "normalizes framework path-parameter notations to param_* segments" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMermaid.new(options)
+    builder.io = IO::Memory.new
+
+    # Every framework spells path parameters differently; all four must
+    # collapse to a `param_*` segment so the notation never leaks into the
+    # node id (`:id` used to become `_id`, `*` used to become `_`).
+    e1 = Endpoint.new("/items/:id", "GET")       # colon (Sinatra/Rails/Express)
+    e2 = Endpoint.new("/files/*", "GET")         # bare splat / wildcard
+    e3 = Endpoint.new("/blob/*path", "GET")      # named splat
+    e4 = Endpoint.new("/users/{user_id}", "GET") # brace (OpenAPI)
+
+    builder.print([e1, e2, e3, e4])
+    output = builder.io.to_s
+
+    # Each is a second-level segment (6-space indent) under its parent.
+    output.should contain("      param_id")
+    output.should contain("      param_wildcard")
+    output.should contain("      param_path")
+    output.should contain("      param_user_id")
+  end
+
+  it "keeps same-named params in separate location groups (no overwrite)" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMermaid.new(options)
+    builder.io = IO::Memory.new
+
+    # A `token` in the query string and a `token` in the JSON body are two
+    # distinct attack-surface inputs. The old single "body" bucket keyed by
+    # name collapsed them into one node; each must now survive under its
+    # own location group.
+    endpoint = Endpoint.new("/auth", "POST")
+    endpoint.push_param(Param.new("token", "", "query"))
+    endpoint.push_param(Param.new("token", "", "json"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("      query")
+    output.should contain("      body")
+    output.should contain("        token")
+    # Both groups plus the two members => exactly two `token` leaf nodes.
+    output.scan("token").size.should eq(2)
   end
 end
