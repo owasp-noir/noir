@@ -157,6 +157,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"netlify", Specification::Netlify},
     {"nginx", Specification::Nginx},
     {"odata", Specification::OData},
+    {"openrpc", Specification::OpenRpc},
     {"postman", Specification::Postman},
     {"raml", Specification::RAML},
     {"serverless_framework", Specification::ServerlessFramework},

@@ -37,6 +37,7 @@ SPEC_FRIENDLY_NAMES = {
   "mitmproxy"            => "mitmproxy Flow",
   "oas2"                 => "OpenAPI 2.0 (Swagger)",
   "oas3"                 => "OpenAPI 3.0",
+  "openrpc"              => "OpenRPC",
   "graphql"              => "GraphQL",
   "graphql_sdl"          => "GraphQL SDL",
   "raml"                 => "RAML",
