@@ -4,6 +4,9 @@ All notable changes to [Noir](https://github.com/owasp-noir/noir) will be docume
 
 ## Unreleased
 
+### Added
+- New specification analyzer: `.http` / `.rest` request files (VS Code REST Client and JetBrains HTTP Client), extracting endpoints, methods, and query/path/body/header parameters. `{{var}}` placeholders resolve from in-file `@name = value` definitions and are otherwise surfaced as path parameters; JetBrains `> {% ... %}` response-handler blocks are skipped.
+
 ### Fixed
 - macOS release binaries are now shipped as portable `.tar.gz` archives with bundled OpenSSL libraries, instead of a bare executable linked against Homebrew `openssl@1.1` that failed to launch on clean machines (`dyld: libssl.1.1.dylib not found`).
 
