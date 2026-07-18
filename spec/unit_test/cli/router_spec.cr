@@ -2,6 +2,7 @@ require "../../spec_helper"
 require "colorize"
 require "../../../src/cli/common"
 require "../../../src/cli/legacy"
+require "../../../src/cli/router"
 
 # These specs exercise the slim, side-effect-free portions of the v1 CLI
 # routing layer — terminal-flag rewriting, command lookup, and the
@@ -134,6 +135,34 @@ describe "Noir::CLI::KNOWN_COMMANDS" do
     %w[scan list cache config rules completion version help].each do |verb|
       Noir::CLI::KNOWN_COMMANDS.includes?(verb).should be_true
     end
+  end
+end
+
+describe "Noir::CLI::Router.strip_global_flags" do
+  # The thin subcommands (list/cache/config/rules/completion/version/help)
+  # treat their first positional as the action/subject, so a leading
+  # `--no-color` was misread as one ("Unknown cache action: --no-color").
+  # The router consumes the global flags itself and strips them before
+  # handing argv to those parsers.
+  it "drops --no-color so a thin subcommand sees its real action" do
+    Noir::CLI::Router.strip_global_flags(["--no-color"]).should eq([] of String)
+    Noir::CLI::Router.strip_global_flags(["info", "--no-color"]).should eq(["info"])
+    Noir::CLI::Router.strip_global_flags(["--no-color", "info"]).should eq(["info"])
+  end
+
+  it "drops --no-spinner as well" do
+    Noir::CLI::Router.strip_global_flags(["--no-spinner", "techs"]).should eq(["techs"])
+  end
+
+  it "strips every occurrence and preserves the order of the rest" do
+    Noir::CLI::Router.strip_global_flags(
+      ["--no-color", "purge", "--no-spinner", "7"]
+    ).should eq(["purge", "7"])
+  end
+
+  it "leaves argv without global flags untouched" do
+    argv = ["purge", "7"]
+    Noir::CLI::Router.strip_global_flags(argv).should eq(argv)
   end
 end
 

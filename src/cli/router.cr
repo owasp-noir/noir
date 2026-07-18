@@ -70,16 +70,32 @@ module Noir::CLI::Router
     true
   end
 
+  # Router-consumed global flags. `apply_global_color_flag!` already
+  # acted on `--no-color`, and `--no-spinner` only means anything to a
+  # scan's loading spinner. Neither is meaningful to the thin
+  # subcommands, whose "first positional = action/subject" parsers would
+  # otherwise misread a leading `--no-color` as the action itself
+  # (`Unknown cache action: --no-color`). They're stripped before those
+  # commands parse. `scan` is deliberately excluded: its own OptionParser
+  # re-reads both flags to thread color/spinner state through
+  # NoirRunner, so scan keeps the full argv.
+  GLOBAL_FLAGS = ["--no-color", "--no-spinner"]
+
+  # Pure helper (no exit/die) so the strip rule stays unit-testable.
+  def self.strip_global_flags(args : Array(String)) : Array(String)
+    args.reject { |arg| GLOBAL_FLAGS.includes?(arg) }
+  end
+
   private def self.route(command : String, args : Array(String))
     case command
     when "scan"       then ScanCommand.run(args)
-    when "list"       then ListCommand.run(args)
-    when "cache"      then CacheCommand.run(args)
-    when "config"     then ConfigCommand.run(args)
-    when "rules"      then RulesCommand.run(args)
-    when "completion" then CompletionCommand.run(args)
-    when "version"    then VersionCommand.run(args)
-    when "help"       then HelpCommand.run(args)
+    when "list"       then ListCommand.run(strip_global_flags(args))
+    when "cache"      then CacheCommand.run(strip_global_flags(args))
+    when "config"     then ConfigCommand.run(strip_global_flags(args))
+    when "rules"      then RulesCommand.run(strip_global_flags(args))
+    when "completion" then CompletionCommand.run(strip_global_flags(args))
+    when "version"    then VersionCommand.run(strip_global_flags(args))
+    when "help"       then HelpCommand.run(strip_global_flags(args))
     else
       # KNOWN_COMMANDS guards this branch — should never be reached.
       Noir::CLI.die("Unknown command: #{command}")

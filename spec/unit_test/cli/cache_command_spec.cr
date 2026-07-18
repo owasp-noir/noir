@@ -209,6 +209,42 @@ describe Noir::CLI::CacheCommand do
     end
   end
 
+  describe ".format_bytes" do
+    it "prints raw bytes below 1 KiB" do
+      Noir::CLI::CacheCommand.format_bytes(0_i64).should eq("0 B")
+      Noir::CLI::CacheCommand.format_bytes(1023_i64).should eq("1023 B")
+    end
+
+    it "scales into KB / MB / GB" do
+      Noir::CLI::CacheCommand.format_bytes(1024_i64).should eq("1.0 KB")
+      Noir::CLI::CacheCommand.format_bytes(1500_i64).should eq("1.5 KB")
+      Noir::CLI::CacheCommand.format_bytes(1048576_i64).should eq("1.0 MB")
+      Noir::CLI::CacheCommand.format_bytes(1073741824_i64).should eq("1.0 GB")
+    end
+
+    it "rolls over to the next unit at a rounding boundary instead of printing 1024.0" do
+      # 1 MiB - 1 byte rounds to 1024.0 KB in one decimal; it must
+      # display as 1.0 MB, not 1024.0 KB. Same one level up for GB.
+      Noir::CLI::CacheCommand.format_bytes(1048575_i64).should eq("1.0 MB")
+      Noir::CLI::CacheCommand.format_bytes(1073741823_i64).should eq("1.0 GB")
+    end
+  end
+
+  describe ".format_age" do
+    it "renders sub-minute / minute / hour / day granularity" do
+      Noir::CLI::CacheCommand.format_age(Time.utc - 5.seconds).should eq("5s")
+      Noir::CLI::CacheCommand.format_age(Time.utc - 3.minutes).should eq("3m")
+      Noir::CLI::CacheCommand.format_age(Time.utc - 2.hours).should eq("2h")
+      Noir::CLI::CacheCommand.format_age(Time.utc - 4.days).should eq("4d")
+    end
+
+    it "clamps a future-dated entry to 0s instead of a negative age" do
+      # Clock skew / NTP jump / manual touch can leave a cache mtime in
+      # the future. The display must not read "-3599s".
+      Noir::CLI::CacheCommand.format_age(Time.utc + 1.hour).should eq("0s")
+    end
+  end
+
   describe ".print_help" do
     it "lists every supported action and the scan-time flags" do
       io = IO::Memory.new
