@@ -222,8 +222,9 @@ module Analyzer::Cfml
       end
 
       content.scan(CGI_HEADER_RE) do |match|
-        header = match[1].sub(/\Ahttp_/i, "").gsub("_", "-").downcase
-        headers << Param.new(header, "", "header") unless header.empty?
+        if header = http_header_name(match[1])
+          headers << Param.new(header, "", "header")
+        end
       end
 
       @result << Endpoint.new(url, "GET", unique_params(query + cookies + headers), details)
