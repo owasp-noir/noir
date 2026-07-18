@@ -149,6 +149,42 @@ class Analyzer
     end
   end
 
+  # Order-preserving dedup of params by (name, param_type). Analyzers
+  # that accumulate every reference they see (rather than every route)
+  # collect the same key many times over.
+  def unique_params(params : Array(Param)) : Array(Param)
+    seen = Set(Tuple(String, String)).new
+    params.select { |param| seen.add?({param.name, param.param_type}) }
+  end
+
+  # URL for a file-path-routed stack — plain PHP, JSP, CFML, Classic ASP,
+  # WebForms — where the file's location under the web root *is* the
+  # route.
+  #
+  # The root is the configured scan base unless one of `markers` names a
+  # document root deeper in the tree. The *last* occurrence wins: for
+  # `app/wwwroot/x/htdocs/y.asp` the deepest marker is the real root,
+  # whereas testing markers in list order would pick whichever name
+  # happened to be listed first.
+  #
+  # Keep `markers` unambiguous. Generic names like `public/` or `www/`
+  # collide with build output (`docs/public/`) — the false positive
+  # `FileHelper#get_public_files` documents.
+  def web_root_path(path : String, markers : Array(String)) : String
+    relative = get_relative_path(configured_base_for(path), path).gsub(File::SEPARATOR, "/")
+
+    best = -1
+    markers.each do |marker|
+      if index = relative.rindex(marker)
+        candidate = index + marker.size
+        best = candidate if candidate > best
+      end
+    end
+
+    normalized = best >= 0 ? relative[best..] : relative
+    normalized.starts_with?("/") ? normalized : "/#{normalized}"
+  end
+
   # 1-based line number for a character offset into `content`.
   #
   # Counts newlines over the raw byte buffer rather than slicing

@@ -1,0 +1,4 @@
+<script runat="server" language="vbscript">
+sub Application_onStart
+end sub
+</script>
