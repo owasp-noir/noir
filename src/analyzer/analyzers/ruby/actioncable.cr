@@ -27,7 +27,7 @@ module Analyzer::Ruby
     # An instance method definition (Ruby CLI house-style regex).
     DEF_RE = /^\s*def\s+([a-z_]\w*[?!]?)\s*(?:[(\s]|$)/
 
-    # Action Cable lifecycle callbacks — never client-invokable actions.
+    # Action Cable lifecycle callbacks — never client-invocable actions.
     NON_ACTION_METHODS = Set{"subscribed", "unsubscribed", "initialize"}
 
     # The generated `ApplicationCable::Channel` base (`class Channel <

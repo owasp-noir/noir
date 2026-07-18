@@ -35,7 +35,7 @@ module Analyzer::Javascript
     EVENT_HANDLER = /\b(\w+)\.on\(\s*["']([^"']+)["']/
 
     # Socket.IO / EventEmitter reserved events that are lifecycle signals,
-    # not client-invokable application messages.
+    # not client-invocable application messages.
     RESERVED_EVENTS = Set{
       "connection", "connect", "connect_error", "disconnect", "disconnecting",
       "error", "new_namespace", "newListener", "removeListener",

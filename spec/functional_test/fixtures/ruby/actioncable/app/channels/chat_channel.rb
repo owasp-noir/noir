@@ -7,7 +7,7 @@ class ChatChannel < ApplicationCable::Channel
     stop_all_streams
   end
 
-  # Client-invokable actions (called via perform("speak", ...)).
+  # Client-invocable actions (called via perform("speak", ...)).
   def speak(data)
     ActionCable.server.broadcast("chat", message: data["message"])
   end
@@ -18,7 +18,7 @@ class ChatChannel < ApplicationCable::Channel
 
   private
 
-  # Private helpers are not client-invokable actions.
+  # Private helpers are not client-invocable actions.
   def sanitize(text)
     text.strip
   end

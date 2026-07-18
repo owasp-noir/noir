@@ -38,7 +38,7 @@ module Analyzer::CSharp
     # properties/fields are skipped.
     PUBLIC_METHOD = /^\s*public\s+((?:(?:static|async|virtual|override|sealed|new|unsafe)\s+)*)(?:[\w<>\[\],.?]+\s+)+(\w+)\s*\(/
 
-    # Lifecycle / infrastructure methods that are never client-invokable
+    # Lifecycle / infrastructure methods that are never client-invocable
     # events even when declared `public`.
     NON_EVENT_METHODS = Set{
       "OnConnectedAsync", "OnDisconnectedAsync", "OnConnected",

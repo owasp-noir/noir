@@ -27,7 +27,7 @@ public class ChatHub : Hub
         await Task.Delay(count, cancellationToken);
     }
 
-    // Lifecycle override — never a client-invokable event.
+    // Lifecycle override — never a client-invocable event.
     public override async Task OnConnectedAsync()
     {
         await base.OnConnectedAsync();

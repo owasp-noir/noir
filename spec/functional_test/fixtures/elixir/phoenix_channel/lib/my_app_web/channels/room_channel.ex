@@ -5,7 +5,7 @@ defmodule MyAppWeb.RoomChannel do
     {:ok, socket}
   end
 
-  # Client-invokable events.
+  # Client-invocable events.
   def handle_in("new_msg", %{"body" => body}, socket) do
     broadcast!(socket, "new_msg", %{body: body})
     {:noreply, socket}
