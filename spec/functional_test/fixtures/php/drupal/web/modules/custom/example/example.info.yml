@@ -1,0 +1,5 @@
+name: Example
+type: module
+description: 'Fixture module for noir Drupal analyzer tests.'
+package: Custom
+core_version_requirement: ^10

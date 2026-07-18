@@ -1,0 +1,8 @@
+{
+  "name": "acme/magento-fixture",
+  "description": "A fixture Magento project for noir functional tests.",
+  "type": "project",
+  "require": {
+    "magento/product-community-edition": "2.4.6"
+  }
+}

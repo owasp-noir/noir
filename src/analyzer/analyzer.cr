@@ -168,14 +168,17 @@ def initialize_analyzers(logger : NoirLogger)
     {"php_pure", Php::Php},
     {"php_cakephp", Php::CakePHP},
     {"php_codeigniter", Php::CodeIgniter},
+    {"php_drupal", Php::Drupal},
     {"php_hyperf", Php::Hyperf},
     {"php_laminas", Php::Laminas},
     {"php_laravel", Php::Laravel},
     {"php_lumen", Php::Lumen},
+    {"php_magento", Php::Magento},
     {"php_mautic", Php::Mautic},
     {"php_slim", Php::Slim},
     {"php_symfony", Php::Symfony},
     {"php_thinkphp", Php::ThinkPHP},
+    {"php_wordpress", Php::Wordpress},
     {"php_yii", Php::Yii},
     {"python_aiohttp", Python::Aiohttp},
     {"python_cli", Python::Cli},
@@ -256,6 +259,9 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
     "php_mautic",
     "php_slim",
     "php_thinkphp",
+    "php_wordpress",
+    "php_drupal",
+    "php_magento",
     "php_yii",
   }
 
@@ -289,6 +295,18 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   # analyzer doesn't also scan the framework's internals.
   if filtered.includes?("zig_httpz") && (filtered.includes?("zig_jetzig") || filtered.includes?("zig_tokamak"))
     filtered.reject!("zig_httpz")
+  end
+
+  # Drupal and Magento are both built on Symfony components, so their
+  # composer.json pulls in `symfony/*` and the Symfony detector fires on
+  # every Drupal/Magento project. Those apps do not expose Symfony-native
+  # routes (Drupal uses `*.routing.yml`, Magento uses `webapi.xml` /
+  # `routes.xml`), and the Symfony YAML analyzer would otherwise
+  # double-parse Drupal routing files that happen to sit under a `config`
+  # path. Keep the specific CMS analyzer and drop the redundant Symfony
+  # entry so endpoints aren't extracted twice under a misleading tech tag.
+  if filtered.includes?("php_symfony") && (filtered.includes?("php_drupal") || filtered.includes?("php_magento"))
+    filtered.reject!("php_symfony")
   end
 
   filtered
