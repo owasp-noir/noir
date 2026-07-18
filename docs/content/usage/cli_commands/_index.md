@@ -144,6 +144,16 @@ to `$HOME/.config/noir` on Unix and `%APPDATA%\noir` on Windows.
 `$EDITOR`, then a platform default (`vi` on Unix, `notepad` on Windows).
 The config file is created first if it does not exist yet.
 
+To target a config file other than the default, pass `--config-file
+PATH` to `show`, `edit`, or `path`:
+
+```bash
+noir config show --config-file ./ci/noir.yaml   # print a specific file
+noir config path --config-file ./ci/noir.yaml   # resolve its absolute path
+```
+
+`init` always creates the default file and ignores `--config-file`.
+
 ## Rules
 
 `noir rules` manages the passive-scan rules repository.

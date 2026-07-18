@@ -41,7 +41,15 @@ module Noir::CLI::ConfigCommand
     case action
     when "show" then show(override_path)
     when "edit" then edit(override_path)
-    when "init" then init
+    when "init"
+      # `init` only ever creates the DEFAULT config file — it has no
+      # override_path parameter (auto-scaffolding at a user-supplied
+      # path would mask a typo). Passing --config-file here is a no-op,
+      # so say so instead of silently ignoring it.
+      if override_path && !override_path.empty?
+        STDERR.puts "NOTE: `noir config init` always creates the default config file; --config-file #{override_path} is ignored.".colorize(:yellow)
+      end
+      init
     when "path" then puts config_path(override_path)
     else
       Noir::CLI.die("Unknown config action: #{action}. Valid: #{ACTIONS.join(", ")}.")
@@ -62,6 +70,11 @@ module Noir::CLI::ConfigCommand
         #{cyan.call("init")}                   Create the default config file (idempotent)
         #{cyan.call("path")}                   Print the resolved config file path
 
+      #{green.call("OPTIONS:")}
+        #{cyan.call("--config-file PATH")}     Operate on PATH instead of the default config file.
+                               Applies to show, edit, and path; init always
+                               creates the default file and ignores this flag.
+
       The config directory is controlled by NOIR_HOME (defaults to
       $HOME/.config/noir on Unix and %APPDATA%\\noir on Windows).
 
@@ -73,9 +86,20 @@ module Noir::CLI::ConfigCommand
 
   def self.show(override_path : String? = nil)
     path = config_path(override_path)
-    unless File.exists?(path)
+
+    if override_path && !override_path.empty?
+      # A custom --config-file is validated the way the scan path does:
+      # a missing file or a directory is a user error. Crucially, don't
+      # print the `noir config init` hint here — init only ever creates
+      # the DEFAULT config, so following that advice can't fix a custom
+      # path. Reading a directory would also crash `File.read` with a
+      # raw backtrace, so reject it explicitly.
+      Noir::CLI.die("Config file does not exist: #{path}") unless File.exists?(path)
+      Noir::CLI.die("--config-file is not a file: #{path}") if File.directory?(path)
+    elsif !File.exists?(path)
       Noir::CLI.die("Config file does not exist: #{path}\nRun `noir config init` to create it.")
     end
+
     content = File.read(path)
     puts content
     warn_about_legacy_keys(content)
@@ -124,6 +148,13 @@ module Noir::CLI::ConfigCommand
 
   def self.edit(override_path : String? = nil)
     path = config_path(override_path)
+
+    # A custom --config-file pointing at a directory would otherwise be
+    # handed straight to the editor (or crash on the create path). Reject
+    # it up front, matching `show` and the scan-path validator.
+    if override_path && !override_path.empty? && File.directory?(path)
+      Noir::CLI.die("--config-file is not a file: #{path}")
+    end
 
     # `edit` launches an interactive terminal editor. In a non-interactive
     # context (CI, piped stdin, background job) that editor would block

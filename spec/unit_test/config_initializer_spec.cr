@@ -77,6 +77,16 @@ describe ConfigInitializer do
     end
   end
 
+  it "uses defaults for an empty config file" do
+    # An empty config.yaml is a legitimate "no overrides" state, not a
+    # parse error — read_config returns defaults without churning
+    # through the (would-raise) YAML path.
+    with_noir_home("") do |options|
+      options.has_key?("color").should be_true
+      options["color"].should be_true
+    end
+  end
+
   describe "v0 -> v1 deliver/probe key migration" do
     # A v0.x `config.yaml` that hard-coded the old deliver keys must
     # keep working after the rename to PROBE/EXPORT internal keys.
@@ -143,6 +153,57 @@ describe ConfigInitializer do
         options["probe"].as_bool.should be_true
         options.has_key?("send_req").should be_false
       end
+    end
+  end
+
+  describe "generate_config_file" do
+    it "documents only_techs and tls_skip_verify (both are live config keys)" do
+      body = ConfigInitializer.new.generate_config_file
+      body.should contain("only_techs:")
+      body.should contain("tls_skip_verify:")
+    end
+
+    it "omits the removed analyze_feign key" do
+      # The --analyze-feign flag was dropped when Feign analysis became
+      # unconditional; the config key is dead and no longer emitted.
+      ConfigInitializer.new.generate_config_file.should_not contain("analyze_feign")
+    end
+
+    it "emits only keys that exist in default_options" do
+      # Guards against a template line drifting from the option set —
+      # a key in the generated file that noir doesn't recognize would
+      # silently do nothing for the user who set it.
+      ci = ConfigInitializer.new
+      defaults = ci.default_options
+      YAML.parse(ci.generate_config_file).as_h.each_key do |key|
+        defaults.has_key?(key.to_s).should be_true
+      end
+    end
+  end
+
+  describe "setup" do
+    it "creates the default config file with 0600 permissions" do
+      # The file carries an ai_key field (real provider API keys), so it
+      # must not be world-readable on a shared box.
+      {% unless flag?(:windows) %}
+        dir = File.tempname("noir-perm-spec-")
+        Dir.mkdir(dir)
+        saved = ENV["NOIR_HOME"]?
+        ENV["NOIR_HOME"] = dir
+        begin
+          ConfigInitializer.new.setup
+          path = File.join(dir, "config.yaml")
+          File.exists?(path).should be_true
+          (File.info(path).permissions.value & 0o777).should eq(0o600)
+        ensure
+          if s = saved
+            ENV["NOIR_HOME"] = s
+          else
+            ENV.delete("NOIR_HOME")
+          end
+          FileUtils.rm_rf(dir)
+        end
+      {% end %}
     end
   end
 

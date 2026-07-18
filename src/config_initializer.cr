@@ -31,7 +31,6 @@ class ConfigInitializer
     ai_agent
     cache_disable
     cache_clear
-    analyze_feign
   ]
 
   # Keys whose value should always end up as an Array(YAML::Any) so
@@ -103,22 +102,34 @@ class ConfigInitializer
     # surfaced by CliValidation later; auto-creating a default
     # template at the user-supplied path would silently mask the
     # typo with a generated file.
+    #
+    # Written 0600: the file carries an `ai_key` field documented as
+    # where real provider API keys go, so it should never be created
+    # world-readable on a shared box (matches ssh/aws-cli/gh).
     return if @is_override
-    File.write(@config_file, generate_config_file) unless File.exists?(@config_file)
+    File.write(@config_file, generate_config_file, perm: 0o600) unless File.exists?(@config_file)
   rescue e
-    # Silent failures here made permission/disk-full problems during startup
-    # hard to diagnose. Log at debug level so --debug surfaces the cause
-    # without noising up normal runs.
-    Log.debug { "ConfigInitializer.setup failed: #{e.message} (#{e.class})" }
+    # A silently-swallowed failure here (unwritable NOIR_HOME, disk full)
+    # left the config on defaults with no hint why. The old Log.debug
+    # never surfaced — nothing calls Log.setup — so report it on stderr
+    # the way the invalid-boolean warning in read_config already does.
+    STDERR.puts "WARNING: could not initialize noir config at #{@config_file} (#{e.message}); continuing with defaults.".colorize(:yellow)
   end
 
   def read_config
     # Ensure the config file is set up
     setup
 
+    # A missing file (e.g. a --config-file path that setup deliberately
+    # didn't scaffold) or an empty one is a legitimate "no overrides"
+    # state — fall back to defaults quietly. Only a file with real but
+    # unparseable content is worth warning about below.
+    raw = File.exists?(@config_file) ? File.read(@config_file) : ""
+    return default_options if raw.strip.empty?
+
     # Read the config file, or use the default config if reading fails
     begin
-      parsed_yaml = YAML.parse(File.read(@config_file)).as_h
+      parsed_yaml = YAML.parse(raw).as_h
       symbolized_hash = parsed_yaml.transform_keys(&.to_s)
 
       # Migrate v0 deliver/probe keys to their v1 equivalents before
@@ -176,10 +187,11 @@ class ConfigInitializer
       final_options = default_options.merge(symbolized_hash) { |_, _, new_val| new_val }
       final_options
     rescue e
-      # Falling back silently made malformed-YAML bugs hard to track down.
-      # Log the cause at debug level and keep the existing default-options
-      # fallback so behavior is unchanged.
-      Log.debug { "ConfigInitializer.read_config failed, using defaults: #{e.message} (#{e.class})" }
+      # A malformed config used to revert every setting to defaults with
+      # no explanation (the old Log.debug never surfaced — nothing calls
+      # Log.setup). Surface the cause on stderr, matching the
+      # invalid-boolean warning above, then keep the default fallback.
+      STDERR.puts "WARNING: could not parse config #{@config_file} (#{e.message}); using defaults.".colorize(:yellow)
       default_options
     end
   end
@@ -261,7 +273,6 @@ class ConfigInitializer
       "ai_max_token"                 => YAML::Any.new(0),
       "cache_disable"                => YAML::Any.new(false),
       "cache_clear"                  => YAML::Any.new(false),
-      "analyze_feign"                => YAML::Any.new(false),
     }
 
     noir_options
@@ -301,6 +312,10 @@ class ConfigInitializer
 
       # Technologies to exclude
       exclude_techs: "#{options["exclude_techs"]}"
+
+      # Restrict detection to these technologies only (comma-separated;
+      # empty = detect everything). The inverse of exclude_techs.
+      only_techs: "#{options["only_techs"]}"
 
       # File paths to exclude (comma-separated glob patterns, e.g. "*.test.js,*_test.go")
       exclude_path: "#{options["exclude_path"]}"
@@ -361,6 +376,9 @@ class ConfigInitializer
       set_pvalue_form:
       set_pvalue_json:
       set_pvalue_path:
+
+      # Skip TLS certificate verification when probing HTTPS endpoints
+      tls_skip_verify: #{options["tls_skip_verify"]}
 
       # The status codes to use
       status_codes: #{options["status_codes"]}
