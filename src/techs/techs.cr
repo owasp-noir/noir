@@ -32,6 +32,7 @@ module NoirTechs
     "swift_hummingbird", "swift_kitura", "swift_vapor",
     "ts_nestjs", "ts_tanstack_router", "ts_trpc",
     "zig_jetzig", "zig_zap", "zig_http", "zig_httpz", "zig_tokamak",
+    "r_plumber",
   ]
 
   AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
@@ -51,6 +52,7 @@ module NoirTechs
     "scala_akka", "scala_http4s", "scala_play", "scala_scalatra", "scala_tapir",
     "swift_hummingbird", "swift_kitura", "swift_vapor",
     "ts_nestjs",
+    "r_plumber",
   ]
 
   TECHS = {
@@ -841,6 +843,24 @@ module NoirTechs
       :framework => "Wisp",
       :language  => "Gleam",
       :similar   => ["wisp", "gleam-wisp", "gleam_wisp"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :r_plumber => {
+      :framework => "Plumber",
+      :language  => "R",
+      :similar   => ["plumber", "r-plumber", "r_plumber"],
       :supported => {
         :endpoint => true,
         :method   => true,

@@ -203,6 +203,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_starlette", Python::Starlette},
     {"python_tornado", Python::Tornado},
     {"python_http_server", Python::HttpServer},
+    {"r_plumber", R::Plumber},
     {"ruby_cli", Ruby::Cli},
     {"ruby_actioncable", Ruby::ActionCable},
     {"ruby_grape", Ruby::Grape},
