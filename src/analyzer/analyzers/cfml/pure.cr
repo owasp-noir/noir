@@ -119,7 +119,7 @@ module Analyzer::Cfml
       return unless raw.matches?(REMOTE_HINT_RE)
 
       content = strip_cfml_comments(raw)
-      base_url = request_path(path)
+      base_url = web_root_path(path, WEBROOT_MARKERS)
       # A method may legally carry both spellings (`remote function x()
       # access="remote"`); emit it once.
       seen = Set(String).new
@@ -200,7 +200,7 @@ module Analyzer::Cfml
     # `.cfm` — the file itself is the route; request-scope reads are the params.
     private def analyze_page(path : String)
       content = mask_client_scripts(strip_cfml_comments(read_file_content(path)))
-      url = request_path(path)
+      url = web_root_path(path, WEBROOT_MARKERS)
       details = Details.new(PathInfo.new(path, 1))
 
       query = [] of Param
@@ -233,11 +233,6 @@ module Analyzer::Cfml
       @result << Endpoint.new(url, "POST", unique_params(body + cookies + headers), details)
     end
 
-    private def unique_params(params : Array(Param)) : Array(Param)
-      seen = Set(Tuple(String, String)).new
-      params.select { |param| seen.add?({param.name, param.param_type}) }
-    end
-
     private def mask_client_scripts(content : String) : String
       return content unless content.includes?("<script") || content.includes?("<SCRIPT")
 
@@ -265,30 +260,6 @@ module Analyzer::Cfml
           io << (char == '\n' || keep[index] ? char : ' ')
         end
       end
-    end
-
-    # URL path relative to the web root: a conventional webroot directory
-    # name when one is present, else the configured scan base.
-    private def request_path(path : String) : String
-      relative = strip_webroot_marker(get_relative_path(configured_base_for(path), path))
-      relative.starts_with?("/") ? relative : "/#{relative}"
-    end
-
-    # Strip at the *last* marker occurrence: for `app/wwwroot/x/htdocs/y.cfm`
-    # the deepest one is the real root, and scanning markers in list order
-    # would otherwise pick whichever name happened to be listed first.
-    private def strip_webroot_marker(relative : String) : String
-      normalized = relative.gsub(File::SEPARATOR, "/")
-      best = -1
-
-      WEBROOT_MARKERS.each do |marker|
-        if index = normalized.rindex(marker)
-          candidate = index + marker.size
-          best = candidate if candidate > best
-        end
-      end
-
-      best >= 0 ? normalized[best..] : normalized
     end
 
     # TestBox names suites `<Something>Test.cfc` / `<Something>Spec.cfc`.

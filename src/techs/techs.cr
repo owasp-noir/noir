@@ -173,6 +173,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :asp_classic => {
+      :framework => "Classic ASP (VBScript)",
+      :language  => "ASP",
+      :similar   => ["asp", "classic-asp", "classic_asp", "asp-classic", "asp_classic", "vbscript"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :cfml_pure => {
       :framework => "ColdFusion (CFML)",
       :language  => "CFML",

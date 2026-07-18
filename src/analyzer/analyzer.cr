@@ -22,6 +22,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"cpp_httplib", Cpp::Httplib},
     {"cpp_oatpp", Cpp::Oatpp},
     {"cfml_pure", Cfml::Pure},
+    {"asp_classic", Asp::Classic},
     {"clojure_cli", Clojure::Cli},
     {"clojure_compojure", Clojure::Compojure},
     {"clojure_pedestal", Clojure::Pedestal},
