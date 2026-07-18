@@ -149,6 +149,29 @@ class Analyzer
     end
   end
 
+  # 1-based line number for a character offset into `content`.
+  #
+  # Counts newlines over the raw byte buffer rather than slicing
+  # `content[0...index]`, which would be an O(n) copy per call. The scan
+  # is correct because `\n` is ASCII and never appears inside a UTF-8
+  # multi-byte sequence.
+  #
+  # `PhpEngine#php_line_number_for_index` predates this and is identical;
+  # it should fold into this helper when PHP is next touched.
+  def line_number_for_index(content : String, char_index : Int32) : Int32
+    return 1 if char_index <= 0
+
+    bytes = content.to_slice
+    byte_end = content.char_index_to_byte_index(char_index) || bytes.size
+    line = 1
+    index = 0
+    while index < byte_end
+      line += 1 if bytes[index] == '\n'.ord.to_u8
+      index += 1
+    end
+    line
+  end
+
   getter result, base_path, base_paths, url, logger
 end
 

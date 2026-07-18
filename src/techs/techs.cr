@@ -173,6 +173,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :cfml_pure => {
+      :framework => "ColdFusion (CFML)",
+      :language  => "CFML",
+      :similar   => ["cfml", "coldfusion", "cfml-pure", "cfml_pure", "lucee", "boxlang"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => false,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :clojure_cli => {
       :framework => "CLI (clojure.tools.cli / cli-matic / environ / babashka.cli)",
       :language  => "Clojure",
