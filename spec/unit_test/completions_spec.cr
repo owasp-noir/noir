@@ -242,4 +242,66 @@ describe "Completion Script Generation" do
       script.should contain("str:has-prefix $verb -")
     end
   end
+
+  # Regressions for the shell-completion exploration (bash/zsh/fish/elvish
+  # driven through real shells). Each of these was a blind spot the older
+  # "does the string contain flag X" specs did not cover.
+  describe "exploration fixes" do
+    it "exposes --tls-skip-verify in every shell (matches `noir scan --help`)" do
+      generate_zsh_completion_script.should contain("--tls-skip-verify")
+      generate_bash_completion_script.should contain("--tls-skip-verify")
+      generate_fish_completion_script.should contain("-l tls-skip-verify")
+      generate_elvish_completion_script.should contain("--tls-skip-verify")
+    end
+
+    it "offers the documented --ai-context=all value" do
+      generate_zsh_completion_script.should contain("guards sinks validators signals callee all")
+      generate_bash_completion_script.should contain("guards sinks validators signals callee all")
+      generate_fish_completion_script.should contain("guards sinks validators signals callee all")
+    end
+
+    it "zsh completes scan positional paths (base paths)" do
+      # The scan _arguments block must accept `*` positionals as files.
+      generate_zsh_completion_script.should contain("'*:path:_files'")
+    end
+
+    it "bash falls back to filesystem completion for non-flag scan args" do
+      script = generate_bash_completion_script
+      # A leading '-' means a flag; otherwise complete files/dirs.
+      script.should contain("if [[ ${cur} == -* ]]; then")
+      script.should contain("compgen -f -- \"${cur}\"")
+    end
+
+    it "bash completes --flag=value (equals) forms for enum flags" do
+      script = generate_bash_completion_script
+      script.should contain("if [[ ${prev} == \"=\" ]]; then")
+      script.should contain("${COMP_WORDS[COMP_CWORD-2]}")
+    end
+
+    it "bash subcommands return unconditionally so scan flags never leak" do
+      # `noir cache clear <TAB>` (CWORD != 2) must not fall through to the
+      # scan-flag block. Each subcommand case returns after its `if`.
+      collapsed = generate_bash_completion_script.gsub(/\s+/, " ")
+      %w[
+        techs\ taggers\ formats
+        info\ clear\ purge
+        show\ edit\ init\ path
+        list\ update\ path
+        zsh\ bash\ fish\ elvish
+      ].each do |values|
+        collapsed.should contain("#{values}\" -- \"${cur}\") ) fi return 0")
+      end
+    end
+
+    it "fish guards scan flags so they don't leak into subcommands" do
+      script = generate_fish_completion_script
+      script.should contain("function __fish_noir_scan_context")
+      script.should contain("-n __fish_noir_scan_context")
+    end
+
+    it "fish completes `noir help <cmd>` with the subcommand list" do
+      generate_fish_completion_script.should contain(
+        "-n '__fish_noir_using_command help' -a 'scan list cache config rules completion version help'")
+    end
+  end
 end

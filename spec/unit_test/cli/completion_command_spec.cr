@@ -28,6 +28,12 @@ describe Noir::CLI::CompletionCommand do
       Noir::CLI::CompletionCommand.parse_argv(["--help"]).help.should be_true
       Noir::CLI::CompletionCommand.parse_argv(["zsh", "--help"]).help.should be_true
     end
+
+    it "lowercases the shell name so `ZSH`/`Fish` still dispatch" do
+      Noir::CLI::CompletionCommand.parse_argv(["ZSH"]).shell.should eq("zsh")
+      Noir::CLI::CompletionCommand.parse_argv(["Fish"]).shell.should eq("fish")
+      Noir::CLI::CompletionCommand.parse_argv(["ELVISH"]).shell.should eq("elvish")
+    end
   end
 
   describe ".print_help" do
@@ -38,9 +44,20 @@ describe Noir::CLI::CompletionCommand do
       %w[zsh bash fish elvish].each { |shell| out.should contain(shell) }
       # Install hints should match the actual filenames noir produces.
       out.should contain("_noir")
-      out.should contain("bash_completion.d/noir")
+      out.should contain("bash-completion/completions/noir")
       out.should contain("noir.fish")
       out.should contain("noir.elv")
+    end
+
+    it "gives copy-pasteable install hints that work on macOS / fresh homes" do
+      io = IO::Memory.new
+      Noir::CLI::CompletionCommand.print_help(io)
+      out = io.to_s
+      # Every install path is preceded by an mkdir -p so copy-paste never
+      # fails on a directory that doesn't exist yet (finding: bash on macOS
+      # + elvish's lib dir on a fresh $HOME).
+      out.should contain("mkdir -p ~/.local/share/bash-completion/completions")
+      out.should contain("mkdir -p ~/.config/elvish/lib")
     end
   end
 

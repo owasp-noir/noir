@@ -19,7 +19,8 @@ module Noir::CLI::CompletionCommand
       when "-h", "--help"
         help = true
       else
-        shell ||= a
+        # Shell names are matched case-insensitively (`ZSH` == `zsh`).
+        shell ||= a.downcase
       end
     end
     Parsed.new(shell: shell, help: help)
@@ -57,10 +58,14 @@ module Noir::CLI::CompletionCommand
         #{cyan.call("fish")}                   Generate Fish completion script
         #{cyan.call("elvish")}                 Generate Elvish completion script
 
-      Pipe the output to your shell's completion path, e.g.:
+      Pipe the output to your shell's completion path — these create the
+      target dir first so they work on a fresh macOS/Linux setup:
         noir completion zsh    > "${fpath[1]}/_noir"
-        noir completion bash   > /etc/bash_completion.d/noir
+        mkdir -p ~/.local/share/bash-completion/completions
+        noir completion bash   > ~/.local/share/bash-completion/completions/noir
+        mkdir -p ~/.config/fish/completions
         noir completion fish   > ~/.config/fish/completions/noir.fish
+        mkdir -p ~/.config/elvish/lib
         noir completion elvish > ~/.config/elvish/lib/noir.elv
                                 # then `use noir` from ~/.config/elvish/rc.elv
       HELP
