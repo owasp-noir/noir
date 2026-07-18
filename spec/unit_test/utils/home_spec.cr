@@ -7,6 +7,26 @@ describe "get_home test" do
     ENV.delete("NOIR_HOME")
   end
 
+  it "treats an exported-but-empty NOIR_HOME the same as unset" do
+    # `NOIR_HOME=""` (an unfilled container env template, a shell bug) used
+    # to resolve rules/config/cache to a *relative* `passive_rules` under the
+    # cwd. It must fall back to the OS default instead.
+    prev = ENV["NOIR_HOME"]?
+    ENV["NOIR_HOME"] = ""
+    begin
+      {% unless flag?(:windows) %}
+        get_home.should eq("#{ENV["HOME"]}/.config/noir")
+      {% end %}
+      get_home.should_not eq("")
+    ensure
+      if prev
+        ENV["NOIR_HOME"] = prev
+      else
+        ENV.delete("NOIR_HOME")
+      end
+    end
+  end
+
   it "returns default config directory on Windows" do
     {% if flag?(:windows) %}
       ENV.delete("NOIR_HOME")

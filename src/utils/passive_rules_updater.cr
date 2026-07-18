@@ -25,6 +25,24 @@ module PassiveRulesUpdater
     ENV["NOIR_BUNDLED_RULES_PATH"]? || DEFAULT_BUNDLED_RULES_PATH
   end
 
+  # `Dir.exists?` / `Dir.empty?` don't return false when an ancestor of the
+  # queried path can't be stat'd (a chmod 000 parent, a revoked mount) — they
+  # raise `File::AccessDeniedError`. Every rules-path existence/emptiness check
+  # runs through these guards so a permissions problem degrades to "no usable
+  # rules here" (scan then warns; the `noir rules` CLI dies cleanly) instead of
+  # surfacing an unhandled Crystal stack trace to the user.
+  private def self.dir_exists?(path : String) : Bool
+    Dir.exists?(path)
+  rescue File::Error
+    false
+  end
+
+  private def self.dir_populated?(path : String) : Bool
+    Dir.exists?(path) && !Dir.empty?(path)
+  rescue File::Error
+    false
+  end
+
   # The user-managed rules path: where `noir rules update` clones to,
   # where `noir rules path` reports, and the canonical writable
   # location an end-user owns. Kept out of `effective_rules_path` so
@@ -39,8 +57,8 @@ module PassiveRulesUpdater
   # fallback in `initialize_rules` something concrete to populate).
   def self.effective_rules_path : String
     user = user_rules_path
-    return user if Dir.exists?(user) && !Dir.empty?(user)
-    return bundled_rules_path if Dir.exists?(bundled_rules_path) && !Dir.empty?(bundled_rules_path)
+    return user if dir_populated?(user)
+    return bundled_rules_path if dir_populated?(bundled_rules_path)
     user
   end
 
@@ -48,9 +66,8 @@ module PassiveRulesUpdater
   # provided their own. Callers use this to skip the git-clone fallback
   # (which costs network + a git binary the image doesn't ship).
   def self.bundled_rules_available? : Bool
-    user = user_rules_path
-    return false if Dir.exists?(user) && !Dir.empty?(user)
-    Dir.exists?(bundled_rules_path) && !Dir.empty?(bundled_rules_path)
+    return false if dir_populated?(user_rules_path)
+    dir_populated?(bundled_rules_path)
   end
 
   # Check if the passive rules directory is a git repository and needs updates
@@ -62,7 +79,7 @@ module PassiveRulesUpdater
     # from upstream because the bundled rules are pinned to the image
     # tag — users who want fresher rules switch image tags or run
     # `noir rules update` to materialise the user path.
-    if !Dir.exists?(rules_path) || Dir.empty?(rules_path)
+    if !dir_populated?(rules_path)
       if bundled_rules_available?
         logger.debug "Passive rules: image-baked ruleset in use; skipping upstream update check."
         return true
@@ -70,14 +87,14 @@ module PassiveRulesUpdater
     end
 
     # Return early if directory doesn't exist
-    unless Dir.exists?(rules_path)
+    unless dir_exists?(rules_path)
       logger.debug "Passive rules directory does not exist: #{rules_path}"
       return false
     end
 
     # Check if it's a git repository
     git_dir = File.join(rules_path, ".git")
-    unless Dir.exists?(git_dir)
+    unless dir_exists?(git_dir)
       logger.debug "Passive rules directory is not a git repository"
       return check_revision_file(rules_path, logger)
     end
@@ -171,7 +188,7 @@ module PassiveRulesUpdater
     rules_path = user_rules_path
 
     # Return true if directory already exists and is not empty
-    if Dir.exists?(rules_path) && !Dir.empty?(rules_path)
+    if dir_populated?(rules_path)
       return true
     end
 
@@ -203,7 +220,7 @@ module PassiveRulesUpdater
         logger.sub "➔ You can manually clone it with: git clone #{REPO_URL} #{rules_path}"
 
         # Create empty directory as fallback
-        Dir.mkdir_p(rules_path) unless Dir.exists?(rules_path)
+        Dir.mkdir_p(rules_path) unless dir_exists?(rules_path)
         false
       end
     rescue ex : Exception
@@ -215,7 +232,7 @@ module PassiveRulesUpdater
 
       # Create empty directory as fallback
       begin
-        Dir.mkdir_p(rules_path) unless Dir.exists?(rules_path)
+        Dir.mkdir_p(rules_path) unless dir_exists?(rules_path)
       rescue err
         logger.warning "Could not create passive rules directory at #{rules_path}: #{err.message}"
       end
