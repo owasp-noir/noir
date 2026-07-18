@@ -18,6 +18,34 @@ describe "Similar to tech" do
   it "False case" do
     NoirTechs.similar_to_tech("Noir").should_not eq "ruby_rails"
   end
+
+  # Regression: mixed-case aliases used to be dead because only the user input
+  # was lowercased while the stored alias was compared verbatim. The comparison
+  # is now case-insensitive on both sides.
+  it "resolves mixed-case aliases regardless of typed casing" do
+    NoirTechs.similar_to_tech("BaseHTTPRequestHandler").should eq "python_http_server"
+    NoirTechs.similar_to_tech("basehttprequesthandler").should eq "python_http_server"
+    NoirTechs.similar_to_tech("WEBrick::HTTPServer").should eq "ruby_webrick"
+    NoirTechs.similar_to_tech("abstractservlet").should eq "ruby_webrick"
+  end
+end
+
+describe "Supported metadata schema" do
+  # Every framework-level tech (one with a :framework key) should declare
+  # :static_path and :websocket explicitly so `noir list techs` renders a
+  # consistent shape across siblings instead of silently omitting lines.
+  it "declares static_path and websocket for every framework tech" do
+    missing = [] of String
+    NoirTechs.techs.each do |key, info|
+      next unless info.has_key?(:framework)
+      supported = info[:supported]?
+      next unless supported.is_a?(Hash)
+      unless supported.has_key?(:static_path) && supported.has_key?(:websocket)
+        missing << key.to_s
+      end
+    end
+    missing.should be_empty
+  end
 end
 
 describe "Get Techs" do
