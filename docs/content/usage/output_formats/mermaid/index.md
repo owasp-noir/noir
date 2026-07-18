@@ -16,7 +16,7 @@ noir scan . -f mermaid
 
 ## Example Output
 
-The mindmap is a tree: the root node represents the API, branches are URL path segments, and leaves show HTTP methods with their parameters (grouped by type: `body`, `headers`, `cookies`).
+The mindmap is a tree: the root node is the API, branches are URL path segments, and each HTTP method hangs off the path it serves. Parameters under a method are grouped by where they travel in the request — `query`, `body`, `headers`, `cookies`, and `path`. Path parameters also surface as `param_*` branches (so `/users/{user_id}` becomes a `param_user_id` segment), and WebSocket routes are tagged `websocket`.
 
 <details>
     <summary>Mermaid Output</summary>
@@ -25,89 +25,34 @@ The mindmap is a tree: the root node represents the API, branches are URL path s
 mindmap
   root((API))
     GET
-    about
+    account
       GET
-      GET
-      POST
-        body
-          data
-          id
-    gems
-      GET
-    gems_json
-      GET
+        headers
+          authorization
         cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        cookies
-          cookie
-        body
-          query
-          sort
-    gems_yml
+          session
+    search
       GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      PUT
-        cookies
-          cookie
-        body
-          query
-          sort
-    path_111
-      PUT
-    pets
-      GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        body
-          name
-      param_petId
-        GET
-          body
-            petId
-        PUT
-          body
-            breed
-            name
-            petId
-    shards
-      GET
+        query
+          page
+          q
     users
       POST
         body
           email
           name
-      param_userId
+      param_user_id
         GET
-          headers
-            Authorization
-          body
-            userId
-    v1
-      pets
-        GET
-        POST
-        param_petId
-          GET
-            body
-              petId
-          PUT
-            body
-              petId
-    zz
-      GET
-      DELETE
+          query
+            verbose
+          path
+            user_id
+        DELETE
+          path
+            user_id
+    ws
+      feed
+        GET websocket
 ```
 
 </details>
@@ -118,89 +63,34 @@ Paste the raw output into the [Mermaid live editor](https://mermaid.live/) to re
 mindmap
   root((API))
     GET
-    about
+    account
       GET
-      GET
-      POST
-        body
-          data
-          id
-    gems
-      GET
-    gems_json
-      GET
+        headers
+          authorization
         cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        cookies
-          cookie
-        body
-          query
-          sort
-    gems_yml
+          session
+    search
       GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      PUT
-        cookies
-          cookie
-        body
-          query
-          sort
-    path_111
-      PUT
-    pets
-      GET
-        cookies
-          cookie
-        body
-          query
-          sort
-      POST
-        body
-          name
-      param_petId
-        GET
-          body
-            petId
-        PUT
-          body
-            breed
-            name
-            petId
-    shards
-      GET
+        query
+          page
+          q
     users
       POST
         body
           email
           name
-      param_userId
+      param_user_id
         GET
-          headers
-            Authorization
-          body
-            userId
-    v1
-      pets
-        GET
-        POST
-        param_petId
-          GET
-            body
-              petId
-          PUT
-            body
-              petId
-    zz
-      GET
-      DELETE
+          query
+            verbose
+          path
+            user_id
+        DELETE
+          path
+            user_id
+    ws
+      feed
+        GET websocket
 {% end %}
 
 ## Tips
