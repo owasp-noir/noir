@@ -179,6 +179,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"python_aiohttp", Python::Aiohttp},
     {"python_cli", Python::Cli},
     {"python_django", Python::Django},
+    {"python_django_ninja", Python::DjangoNinja},
     {"python_fastapi", Python::FastAPI},
     {"python_bottle", Python::Bottle},
     {"python_falcon", Python::Falcon},
