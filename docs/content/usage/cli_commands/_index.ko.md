@@ -147,6 +147,16 @@ noir config path      # 해석된 경로 출력
 Windows: `notepad`) 순서로 에디터를 결정합니다. 설정 파일이 없으면
 먼저 기본 파일을 만든 뒤 엽니다.
 
+기본 파일이 아닌 다른 설정 파일을 대상으로 하려면 `show`, `edit`,
+`path` 에 `--config-file PATH` 를 넘기면 됩니다:
+
+```bash
+noir config show --config-file ./ci/noir.yaml   # 특정 파일 출력
+noir config path --config-file ./ci/noir.yaml   # 절대 경로 해석
+```
+
+`init` 은 항상 기본 파일을 생성하며 `--config-file` 은 무시합니다.
+
 ## Rules
 
 `noir rules` 는 passive-scan 룰 저장소를 관리합니다.
