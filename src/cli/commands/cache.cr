@@ -134,17 +134,29 @@ module Noir::CLI::CacheCommand
     io.puts msg
   end
 
-  private def self.format_bytes(bytes : Int64) : String
+  # Public so the unit ladder (B/KB/MB/GB) can be exercised directly,
+  # matching the testability philosophy the rest of this module follows.
+  #
+  # The unit decision compares against the *rounded* value, not the raw
+  # one: just below a 1024 boundary the raw value stays under 1024 while
+  # rounding to one decimal lands on 1024.0, which printed as e.g.
+  # "1024.0 KB" instead of rolling over to "1.0 MB".
+  def self.format_bytes(bytes : Int64) : String
     return "#{bytes} B" if bytes < 1024
     kb = bytes / 1024.0
-    return "#{kb.round(1)} KB" if kb < 1024
+    return "#{kb.round(1)} KB" if kb.round(1) < 1024
     mb = kb / 1024.0
-    return "#{mb.round(1)} MB" if mb < 1024
+    return "#{mb.round(1)} MB" if mb.round(1) < 1024
     "#{(mb / 1024.0).round(2)} GB"
   end
 
-  private def self.format_age(t : Time) : String
+  # Public for the same reason as `format_bytes`. Clamps to 0 for a
+  # future-dated `t` (clock skew, an NTP jump, a manually `touch`'d
+  # file) so the display never shows a negative "-3599s ago" that reads
+  # like a parsing bug.
+  def self.format_age(t : Time) : String
     seconds = (Time.utc - t.to_utc).total_seconds.to_i64
+    seconds = 0_i64 if seconds < 0
     return "#{seconds}s" if seconds < 60
     minutes = seconds // 60
     return "#{minutes}m" if minutes < 60

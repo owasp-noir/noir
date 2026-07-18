@@ -77,9 +77,17 @@ module Noir::CLI::ScanCommand
 
     begin
       outcome = LLM::Cache.clear
-      msg = "CACHE: Cleared #{outcome.deleted} entries."
-      msg += " (#{outcome.failed} failed)" if outcome.failed > 0
-      STDERR.puts msg
+      # Suppress the status line under --no-log ("Show only results"):
+      # every other scan log line respects it, and this one would
+      # otherwise leak into a result stream a script expects to be
+      # clean. The clear itself still happens — only the message is
+      # gated. The runner's logger isn't built yet at this point, so
+      # gate on the raw option rather than routing through it.
+      unless noir_options["nolog"] == true
+        msg = "CACHE: Cleared #{outcome.deleted} entries."
+        msg += " (#{outcome.failed} failed)" if outcome.failed > 0
+        STDERR.puts msg
+      end
     rescue
       # Cache may not be initialized yet; best-effort clear.
     end
