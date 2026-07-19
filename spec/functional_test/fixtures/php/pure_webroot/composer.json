@@ -1,0 +1,6 @@
+{
+  "name": "acme/webroot-app",
+  "require": {
+    "php": ">=8.1"
+  }
+}

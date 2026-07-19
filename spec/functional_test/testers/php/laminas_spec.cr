@@ -39,6 +39,10 @@ expected_endpoints = [
     Param.new("id", "", "path"),
     Param.new("force", "", "query"),
   ]),
+  # The front controller under the document root. php_pure resolves URLs
+  # against `public/` now, so this is the one genuinely servable `.php`
+  # file in the tree — the rest (config/, src/) is correctly skipped (#2358).
+  Endpoint.new("/index.php", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/laminas/", {

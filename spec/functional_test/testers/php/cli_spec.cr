@@ -16,6 +16,10 @@ endpoints = [
     Param.new("username", "", "argument"),
     Param.new("admin", "", "flag"),
   ]),
+  # php_pure's per-file GET pseudo-endpoint, same as cli_robo_fp below.
+  # This directory has no composer.json, so php_pure reads it as a plain-PHP
+  # tree where the directory itself is the document root (#2358).
+  Endpoint.new("/src/CreateUserCommand.php", "GET"),
 ]
 
 FunctionalTester.new("fixtures/php/cli_symfony/", {
@@ -91,6 +95,9 @@ artisan_endpoints = [
     Param.new("user", "", "argument"),
     Param.new("queue", "", "flag"),
   ]),
+  # See the cli_symfony note: no composer.json here either, so php_pure
+  # emits its per-file pseudo-endpoint.
+  Endpoint.new("/SendMail.php", "GET"),
 ]
 
 artisan_tester = FunctionalTester.new("fixtures/php/cli_artisan_fp/", {
