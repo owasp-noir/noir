@@ -137,6 +137,82 @@ def detector_mobile_detector?(name : String) : Bool
   MOBILE_DETECTOR_NAMES.includes?(name)
 end
 
+# Filenames that detectors match by exact basename (often with path
+# constraints like "must sit at the project root"). These must not share
+# an extension-only cache bucket — e.g. `vercel.json` is not "any .json".
+DETECTOR_SPECIAL_BASENAMES = Set{
+  "package.json", "tsconfig.json", "composer.json", "composer.lock",
+  "vercel.json", "now.json", "netlify.toml", "wrangler.toml",
+  "Gemfile", "Gemfile.lock", "Package.swift", "Cargo.toml", "go.mod",
+  "mix.exs", "pubspec.yaml", "pubspec.lock", "shard.yml", "shard.lock",
+  "build.sbt", "pom.xml", "AndroidManifest.xml", "config.toml",
+  "rebar.config", "erlang.mk", "project.clj", "deps.edn", "stack.yaml",
+  "package.yaml", "gleam.toml", "manifest.toml", "paket.dependencies",
+  "Caddyfile", "Dockerfile", "Makefile", "Rakefile", "serverless.yml",
+  "serverless.yaml", "app.yaml", "openapi.yaml", "openapi.json",
+  "swagger.json", "swagger.yaml",
+}
+
+# Build a lookup that turns a path into the list of detector indices
+# whose `applicable?` returns true — without re-walking every detector
+# on every file. Most detectors only inspect extension / basename, so
+# their answers are memoized by a small cache key. Detectors that look
+# at path segments or root placement (`/grails-app/`, vercel.json at
+# base root, …) are classified as path-sensitive and always evaluated
+# against the real path.
+def detector_build_applicable_lookup(detectors : Array(Detector)) : Proc(String, Array(Int32))
+  path_sensitive = [] of Int32
+  sample_suffixes = [
+    ".java", ".js", ".ts", ".tsx", ".rb", ".py", ".go", ".json", ".yml",
+    ".yaml", ".xml", ".cs", ".kt", ".php", ".cr", ".rs", ".ex", ".swift",
+    ".scala", ".dart", ".groovy", ".pl", ".clj", ".hs", ".lua", ".sql",
+    ".toml", ".bru", ".http", ".sbt", ".gradle", ".aspx", ".fs",
+  ]
+  # Bare names used to detect "parent must be project root" style checks
+  # (Vercel, Netlify, …) that return true for `name` but false for
+  # `a/b/c/name`.
+  path_probe_basenames = DETECTOR_SPECIAL_BASENAMES.to_a + sample_suffixes.map { |ext| "file#{ext}" }
+
+  detectors.each_with_index do |detector, idx|
+    sensitive = path_probe_basenames.any? do |name|
+      detector.applicable?("a/b/c/#{name}") != detector.applicable?(name)
+    end
+    path_sensitive << idx if sensitive
+  end
+
+  path_sensitive_set = Set(Int32).new(path_sensitive)
+  cache = {} of String => Array(Int32)
+
+  ->(path : String) do
+    base = File.basename(path)
+    key = if DETECTOR_SPECIAL_BASENAMES.includes?(base) || base.count('.') != 1
+            "b:#{base}"
+          else
+            "e:#{File.extname(base)}"
+          end
+
+    cached = cache[key]?
+    unless cached
+      probe = key.starts_with?("b:") ? base : "file#{File.extname(base)}"
+      idxs = [] of Int32
+      detectors.each_with_index do |detector, idx|
+        next if path_sensitive_set.includes?(idx)
+        idxs << idx if detector.applicable?(probe)
+      end
+      cache[key] = idxs
+      cached = idxs
+    end
+
+    # Always dup: callers `reject!` android-scope / JSON-spec candidates
+    # in place and must not corrupt the memoized array.
+    result = cached.dup
+    path_sensitive.each do |idx|
+      result << idx if detectors[idx].applicable?(path)
+    end
+    result
+  end
+end
+
 def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
   techs = [] of String
   passive_result = [] of PassiveScanResult
@@ -461,6 +537,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
   android_source_scope_active = detector_list.any? { |detector| detector_mobile_detector?(detector.name) }
   android_source_prefixes = [] of String
+  # Built once before the reader starts. Replaces the per-file
+  # O(detectors) `applicable?` walk with an extension/basename memo
+  # plus a short path-sensitive tail (see detector_build_applicable_lookup).
+  applicable_lookup = detector_build_applicable_lookup(detector_list)
 
   # Thread for reading files and sending their contents to the channel
   wg.add(1)
@@ -578,10 +658,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 next
               end
 
-              candidate_detector_indices = [] of Int32
-              detector_list.each_with_index do |detector, idx|
-                candidate_detector_indices << idx if detector.applicable?(full_path)
-              end
+              candidate_detector_indices = applicable_lookup.call(full_path)
 
               # An Android source-set file is normally narrowed to the
               # mobile detectors only (see ANDROID_EMBEDDED_SERVER_MARKER /
