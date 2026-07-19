@@ -245,6 +245,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :cfml_wheels => {
+      :framework => "Wheels",
+      :language  => "CFML",
+      :similar   => ["wheels", "cfwheels", "cfml-wheels", "cfml_wheels"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :cfml_pure => {
       :framework => "ColdFusion (CFML)",
       :language  => "CFML",

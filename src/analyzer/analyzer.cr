@@ -24,6 +24,7 @@ def initialize_analyzers(logger : NoirLogger)
     {"cfml_pure", Cfml::Pure},
     {"cfml_taffy", Cfml::Taffy},
     {"cfml_coldbox", Cfml::Coldbox},
+    {"cfml_wheels", Cfml::Wheels},
     {"asp_classic", Asp::Classic},
     {"aspnet_webforms", Aspnet::WebForms},
     {"clojure_cli", Clojure::Cli},
@@ -295,6 +296,7 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   cfml_frameworks = Set{
     "cfml_taffy",
     "cfml_coldbox",
+    "cfml_wheels",
   }
 
   if filtered.includes?("cfml_pure") && filtered.any? { |tech| cfml_frameworks.includes?(tech) }
