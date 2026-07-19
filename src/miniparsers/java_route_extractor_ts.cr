@@ -108,11 +108,29 @@ module Noir
     @@constants_memo = Hash(UInt64, Hash(String, String)).new
     @@constants_order = [] of UInt64
     @@memo_mutex = Mutex.new
+    @@clearer_registered = false
+
+    private def ensure_clearer_registered : Nil
+      return if @@clearer_registered
+      @@memo_mutex.synchronize do
+        return if @@clearer_registered
+        ExtractionResultCache.register_clearer do
+          @@memo_mutex.synchronize do
+            @@routes_memo.clear
+            @@routes_order.clear
+            @@constants_memo.clear
+            @@constants_order.clear
+          end
+        end
+        @@clearer_registered = true
+      end
+    end
 
     # Parses `source` and returns every Spring-style route it can
     # resolve. Top-level classes are scanned in order; nested classes
     # inherit their parent class's mapping prefix.
     def extract_routes(source : String) : Array(Route)
+      ensure_clearer_registered
       key = ExtractionResultCache.key(source, "java_routes")
       ExtractionResultCache.fetch(@@routes_memo, @@routes_order, key, mutex: @@memo_mutex) do
         routes = [] of Route
@@ -124,6 +142,7 @@ module Noir
     end
 
     def extract_string_constants(source : String) : Hash(String, String)
+      ensure_clearer_registered
       key = ExtractionResultCache.key(source, "java_constants")
       ExtractionResultCache.fetch(@@constants_memo, @@constants_order, key, mutex: @@memo_mutex) do
         constants = Hash(String, String).new

@@ -1,5 +1,6 @@
 require "./analyzers/**"
 require "./analyzers/file_analyzers/*"
+require "../miniparsers/extraction_result_cache"
 
 macro define_analyzers(analyzers)
   {% for analyzer in analyzers %}
@@ -388,6 +389,10 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
   logger.info "Initializing analyzers"
+
+  # Drop process-wide extraction memos from any previous scan (diff mode
+  # / repeated library use) so fingerprints cannot serve stale tables.
+  Noir::ExtractionResultCache.clear_all
 
   analyzer = initialize_analyzers logger
 
