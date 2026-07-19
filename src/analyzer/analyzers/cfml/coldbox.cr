@@ -88,7 +88,7 @@ module Analyzer::Cfml
     end
 
     private def analyze_router(path : String)
-      content = strip_cfml_comments(read_file_content(path))
+      content = strip_all_comments(read_file_content(path))
       prefix = module_prefix(path)
       locals = local_strings(content)
 
@@ -172,30 +172,6 @@ module Analyzer::Cfml
       end
     end
 
-    # Positional arguments are keyed "0", "1", ...; named arguments by
-    # their (downcased) name. Only string literals are resolved — a value
-    # built at runtime is not a route we can report.
-    private def call_arguments(raw : String) : Hash(String, String)
-      arguments = {} of String => String
-
-      split_arguments(raw).each_with_index do |chunk, index|
-        if match = chunk.match(/\A([A-Za-z_]\w*)\s*[:=]\s*(.+)\z/m)
-          if value = string_literal(match[2])
-            arguments[match[1].downcase] = value
-          end
-        elsif value = string_literal(chunk)
-          arguments[index.to_s] = value
-        end
-      end
-
-      arguments
-    end
-
-    private def string_literal(raw : String) : String?
-      match = raw.strip.match(/\A["']([^"']*)["']\z/)
-      match ? match[1] : nil
-    end
-
     # `route( "/x" ).to( "handler.action" )` and friends. Every `to*`
     # builder terminates a real route, so the specific one only matters
     # for resolving the handler's allowed methods.
@@ -251,7 +227,7 @@ module Analyzer::Cfml
           key = handler_key(path)
           next unless key
 
-          content = strip_cfml_comments(read_file_content(path))
+          content = strip_all_comments(read_file_content(path))
           actions = {} of String => Array(String)
 
           if match = content.match(ALLOWED_METHODS_BLOCK_RE)

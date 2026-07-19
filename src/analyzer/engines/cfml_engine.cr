@@ -37,6 +37,8 @@ module Analyzer::Cfml
     # text, so a value outside this set is not turned into a method.
     HTTP_VERBS = Set{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
+    NAMED_ARGUMENT_RE = /\A([A-Za-z_]\w*)\s*[:=]\s*(.+)\z/m
+
     # TestBox names suites `<Something>Test.cfc` / `<Something>Spec.cfc`.
     # The leading `.+` is load-bearing: a component named exactly
     # `Test.cfc` is a demo, not a suite (fw1 ships one that declares a
@@ -186,6 +188,41 @@ module Analyzer::Cfml
       chunks.map(&.strip).reject(&.empty?)
     end
 
+    # Arguments of a CFML function call: positional ones keyed "0", "1",
+    # ..., named ones by their downcased name. Only literals resolve — a
+    # value built at runtime is not something to report as a route.
+    # `##` is CFML's escape for a literal `#`.
+    protected def call_arguments(raw : String) : Hash(String, String)
+      arguments = {} of String => String
+
+      split_arguments(raw).each_with_index do |chunk, index|
+        if match = chunk.match(NAMED_ARGUMENT_RE)
+          if value = argument_literal(match[2])
+            arguments[match[1].downcase] = value
+          end
+        elsif value = argument_literal(chunk)
+          arguments[index.to_s] = value
+        end
+      end
+
+      arguments
+    end
+
+    protected def argument_literal(raw : String) : String?
+      stripped = raw.strip
+
+      if match = stripped.match(/\A"([^"]*)"\z/)
+        return match[1].gsub("##", "#")
+      end
+
+      if match = stripped.match(/\A'([^']*)'\z/)
+        return match[1].gsub("##", "#")
+      end
+
+      # Bare booleans reach flags such as `nested=true`.
+      stripped.matches?(/\A(?:true|false)\z/i) ? stripped : nil
+    end
+
     protected def paren_content(content : String, open_paren : Int32) : String?
       close = matching_paren(content, open_paren)
       close ? content[(open_paren + 1)...close] : nil
@@ -255,6 +292,72 @@ module Analyzer::Cfml
       end
 
       io.to_s
+    end
+
+    # Blank cfscript `//` and `/* */` comments, keeping newlines so line
+    # numbers hold.
+    #
+    # This matters more than it looks. Route files are heavily commented,
+    # and the generated comments quote the DSL they describe — Wheels
+    # ships `// The "wildcard" call below ...` and a commented-out
+    # `// .wildcard()`. Scanning raw content let a comment that merely
+    # mentions `mapper()` move the start of the chain, so unrelated calls
+    # before the real chain were read as routes.
+    #
+    # The scan is string-aware: CFML escapes a quote by doubling it, and
+    # `//` occurs inside ordinary string values (URLs).
+    protected def strip_script_comments(content : String) : String
+      return content unless content.includes?("//") || content.includes?("/*")
+
+      chars = content.chars
+      size = chars.size
+      io = String::Builder.new(content.bytesize)
+      index = 0
+      quote = nil.as(Char?)
+
+      while index < size
+        char = chars[index]
+
+        if quote
+          quote = nil if char == quote
+          io << char
+          index += 1
+          next
+        end
+
+        case
+        when char == '"' || char == '\''
+          quote = char
+          io << char
+          index += 1
+        when char == '/' && chars[index + 1]? == '/'
+          while index < size && chars[index] != '\n'
+            io << ' '
+            index += 1
+          end
+        when char == '/' && chars[index + 1]? == '*'
+          io << "  "
+          index += 2
+          while index < size && !(chars[index] == '*' && chars[index + 1]? == '/')
+            io << (chars[index] == '\n' ? '\n' : ' ')
+            index += 1
+          end
+          if index < size
+            io << "  "
+            index += 2
+          end
+        else
+          io << char
+          index += 1
+        end
+      end
+
+      io.to_s
+    end
+
+    # Both comment syntaxes, for analyzers that scan cfscript.
+    protected def strip_all_comments(content : String) : String
+      strip_script_comments(strip_cfml_comments(content))
     end
 
     # Attributes on the `<cfcomponent>` tag or the script `component`
