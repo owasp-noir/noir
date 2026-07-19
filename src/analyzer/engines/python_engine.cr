@@ -53,6 +53,57 @@ module Analyzer::Python
       Noir::PathScope.relative_under(path, base_path)
     end
 
+    # Production `.py` sources from the extension index: drops
+    # site-packages and standard test paths once so adapters don't
+    # re-walk monorepo noise. Prefer this (or the helpers below) over
+    # `get_files_by_extension(".py")` + nested `base_paths.each`.
+    protected def python_source_files : Array(String)
+      get_files_by_extension(".py").reject do |path|
+        path.includes?("/site-packages/") || python_test_path?(path)
+      end
+    end
+
+    # Yield each production `.py` path with its owning configured base.
+    # Single-base scans skip multi-base resolution; multi-base uses the
+    # longest-match cache in `configured_base_for` instead of O(bases)
+    # `path_under_root?` checks per file.
+    protected def each_python_source(&block : String, String -> Nil) : Nil
+      files = python_source_files
+      if base_paths.size <= 1
+        base = base_paths.first? || ""
+        files.each { |path| block.call(path, base) }
+      else
+        files.each { |path| block.call(path, python_base_path_for(path)) }
+      end
+    end
+
+    # Parallel walk of production Python sources. Same fiber model as
+    # the other engines' `parallel_file_scan`. Use only when per-file
+    # work is independent (no shared cross-file maps mutated without
+    # synchronization). Analyzers that accumulate blueprint/app state
+    # across files should use `each_python_source` instead.
+    protected def parallel_python_sources(&block : String, String -> Nil) : Nil
+      files = python_source_files
+      if base_paths.size <= 1
+        base = base_paths.first? || ""
+        parallel_analyze(files) do |path|
+          begin
+            block.call(path, base)
+          rescue e
+            logger.debug "Error analyzing #{path}: #{e}"
+          end
+        end
+      else
+        parallel_analyze(files) do |path|
+          begin
+            block.call(path, python_base_path_for(path))
+          rescue e
+            logger.debug "Error analyzing #{path}: #{e}"
+          end
+        end
+      end
+    end
+
     # Parses the definition of a function from the source lines starting at a given index
     def parse_function_def(source_lines : Array(::String), start_index : Int32) : FunctionDefinition?
       parameters = [] of FunctionParameter

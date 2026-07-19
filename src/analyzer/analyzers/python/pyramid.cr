@@ -58,12 +58,10 @@ module Analyzer::Python
     def analyze
       route_map = RouteMap.new # {base_path, name} => {path, decl_file}
 
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
 
           content = read_file_content(path)
           next unless content.includes?("pyramid") || content.includes?(".add_route") || content.includes?(".add_static_view")

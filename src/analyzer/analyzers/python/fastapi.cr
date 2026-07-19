@@ -57,12 +57,10 @@ module Analyzer::Python
         # Iterate through all Python files in all base paths. Pulls from
         # the detector-built file_map so subtree pruning and
         # --exclude-path apply to this pass too.
-        python_files = get_files_by_extension(".py")
+        python_files = python_source_files
         base_paths.each do |current_base_path|
           python_files.each do |path|
             next unless path_under_root?(path, current_base_path)
-            next if path.includes?("/site-packages/")
-            next if python_test_path?(path)
             source = read_file_content(path)
 
             import_modules = find_fastapi_imported_modules(current_base_path, path, source)

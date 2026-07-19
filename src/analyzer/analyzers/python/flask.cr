@@ -137,17 +137,14 @@ module Analyzer::Python
       # (namespace var name -> fully-resolved prefix) bridges the two files.
       namespace_prefixes = Hash(ScopedNameKey, ::String).new
 
-      # Iterate through all Python files in all base paths. Pulls from
-      # the detector-built file_map so subtree pruning and --exclude-path
-      # apply; current_base_path is still needed further down for import
-      # resolution, so keep the outer loop and filter by prefix.
-      python_files = get_files_by_extension(".py")
+      # Sequential: blueprint/namespace maps accumulate across files.
+      # Pre-filter .py sources once (no site-packages/tests) instead of
+      # O(bases × files) path_under_root checks.
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         flask_instances[{current_base_path, "app"}] ||= "" # Common flask instance name
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)

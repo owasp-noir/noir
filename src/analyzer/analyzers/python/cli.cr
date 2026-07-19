@@ -75,14 +75,12 @@ module Analyzer::Python
     CLEO_OPTION_CALL_RE            = /\bself\.option\s*\(\s*[rf]?["']([^"']+)["']/
 
     def analyze
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       endpoints = {} of String => Endpoint
 
       base_paths.each do |current_base_path|
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
 
           begin
             content = read_file_content(path)

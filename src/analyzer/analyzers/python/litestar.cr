@@ -54,40 +54,30 @@ module Analyzer::Python
     end
 
     def analyze
-      python_files = get_files_by_extension(".py")
       external_handler_prefixes = Hash(::String, Hash(::String, ::String)).new do |hash, key|
         hash[key] = Hash(::String, ::String).new
       end
 
-      base_paths.each do |current_base_path|
-        python_files.each do |path|
-          next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
+      # Pass 1 (sequential): build cross-file handler prefix map.
+      each_python_source do |path, current_base_path|
+        source = read_file_content(path)
+        next unless source.includes?("litestar")
 
-          source = read_file_content(path)
-          next unless source.includes?("litestar")
-
-          import_modules = find_imported_modules(current_base_path, path, source)
-          collect_external_handler_prefixes(source, collect_router_prefixes(source), import_modules).each do |handler_path, handler_map|
-            handler_map.each do |handler_name, prefix|
-              external_handler_prefixes[handler_path][handler_name] = prefix
-            end
+        import_modules = find_imported_modules(current_base_path, path, source)
+        collect_external_handler_prefixes(source, collect_router_prefixes(source), import_modules).each do |handler_path, handler_map|
+          handler_map.each do |handler_name, prefix|
+            external_handler_prefixes[handler_path][handler_name] = prefix
           end
         end
       end
 
-      base_paths.each do |current_base_path|
-        python_files.each do |path|
-          next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
+      # Pass 2 (parallel): per-file route extraction is independent once
+      # the prefix map is frozen.
+      parallel_python_sources do |path, current_base_path|
+        source = read_file_content(path)
+        next unless source.includes?("litestar")
 
-          source = read_file_content(path)
-          next unless source.includes?("litestar")
-
-          analyze_file(path, source, current_base_path, external_handler_prefixes[path]? || Hash(::String, ::String).new)
-        end
+        analyze_file(path, source, current_base_path, external_handler_prefixes[path]? || Hash(::String, ::String).new)
       end
 
       Fiber.yield

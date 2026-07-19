@@ -34,7 +34,7 @@ module Analyzer::Python
     @json_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     def analyze
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         router_prefixes = Hash(::String, ::String).new
         # `app` is the canonical Robyn instance name — accept it implicitly
@@ -43,8 +43,6 @@ module Analyzer::Python
         router_prefixes["app"] = ""
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
 
           # Prefer the detector-cached content over a fresh disk read;
           # falls back to File.read (same encoding: utf-8, invalid: :skip)

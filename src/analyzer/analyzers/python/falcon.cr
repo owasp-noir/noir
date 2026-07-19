@@ -31,16 +31,9 @@ module Analyzer::Python
     @media_var_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
     def analyze
-      python_files = get_files_by_extension(".py")
-      base_paths.each do |current_base_path|
-        python_files.each do |path|
-          next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
-          @logger.debug "Analyzing #{path}"
-
-          analyze_file(path, current_base_path)
-        end
+      parallel_python_sources do |path, current_base_path|
+        @logger.debug "Analyzing #{path}"
+        analyze_file(path, current_base_path)
       end
 
       result
