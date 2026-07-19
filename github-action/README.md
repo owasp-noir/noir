@@ -34,7 +34,7 @@ jobs:
 
       - name: Run OWASP Noir
         id: noir
-        uses: owasp-noir/noir@v1.1.0
+        uses: owasp-noir/noir@v1.2.0
         with:
           base_path: '.'
 
@@ -62,7 +62,7 @@ jobs:
 
       - name: Run OWASP Noir with Passive Scanning
         id: noir
-        uses: owasp-noir/noir@v1.1.0
+        uses: owasp-noir/noir@v1.2.0
         with:
           base_path: 'src'
           format: 'json'
@@ -139,7 +139,7 @@ For a complete list, run: `noir list techs`
 ### Ruby on Rails
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.2.0
   with:
     base_path: '.'
     techs: 'rails'
@@ -149,7 +149,7 @@ For a complete list, run: `noir list techs`
 ### Node.js/Express
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.2.0
   with:
     base_path: 'src'
     techs: 'express'
@@ -159,7 +159,7 @@ For a complete list, run: `noir list techs`
 ### Python/Django
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.2.0
   with:
     base_path: '.'
     techs: 'django'
@@ -188,7 +188,7 @@ For a complete list, run: `noir list techs`
 Enable debug output for troubleshooting:
 
 ```yaml
-- uses: owasp-noir/noir@v1.1.0
+- uses: owasp-noir/noir@v1.2.0
   with:
     base_path: '.'
     debug: 'true'

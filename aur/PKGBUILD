@@ -1,7 +1,7 @@
 # Maintainer: HAHWUL <hahwul@gmail.com>
 pkgname=noir
-pkgver=1.1.0
-pkgrel=2
+pkgver=1.2.0
+pkgrel=1
 pkgdesc="Attack surface detector that identifies endpoints by static analysis."
 arch=('x86_64')
 url="https://github.com/owasp-noir/noir"

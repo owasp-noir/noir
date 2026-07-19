@@ -1,6 +1,6 @@
 name: noir
 base: core24
-version: 1.1.0
+version: 1.2.0
 summary: OWASP Noir
 description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface.
 

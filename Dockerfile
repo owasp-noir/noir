@@ -20,7 +20,7 @@ FROM debian:13-slim
 
 # Standard OCI labels
 LABEL org.opencontainers.image.title="OWASP Noir"
-LABEL org.opencontainers.image.version="1.1.0"
+LABEL org.opencontainers.image.version="1.2.0"
 LABEL org.opencontainers.image.description="Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface."
 LABEL org.opencontainers.image.authors="Noir Team (@hahwul, @ksg97031)"
 LABEL org.opencontainers.image.source=https://github.com/owasp-noir/noir
