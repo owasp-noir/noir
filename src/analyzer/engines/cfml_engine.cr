@@ -45,19 +45,23 @@ module Analyzer::Cfml
     # real `remote` method), and an anchored `ends_with?` swallowed it.
     TEST_COMPONENT_RE = /.+(?:Test|Spec)\.cfc\z/i
 
-    private BYTE_LT          = '<'.ord.to_u8
-    private BYTE_BANG        = '!'.ord.to_u8
-    private BYTE_DASH        = '-'.ord.to_u8
-    private BYTE_GT          = '>'.ord.to_u8
-    private BYTE_NEWLINE     = '\n'.ord.to_u8
-    private BYTE_SEMICOLON   = ';'.ord.to_u8
-    private BYTE_OPEN_BRACE  = '{'.ord.to_u8
-    private BYTE_CLOSE_BRACE = '}'.ord.to_u8
-    private BYTE_SPACE       = ' '.ord.to_u8
-    private BYTE_TAB         = '\t'.ord.to_u8
-    private BYTE_RETURN      = '\r'.ord.to_u8
-    private BYTE_OPEN_PAREN  = '('.ord.to_u8
-    private BYTE_CLOSE_PAREN = ')'.ord.to_u8
+    private BYTE_LT            = '<'.ord.to_u8
+    private BYTE_BANG          = '!'.ord.to_u8
+    private BYTE_DASH          = '-'.ord.to_u8
+    private BYTE_GT            = '>'.ord.to_u8
+    private BYTE_NEWLINE       = '\n'.ord.to_u8
+    private BYTE_SEMICOLON     = ';'.ord.to_u8
+    private BYTE_OPEN_BRACE    = '{'.ord.to_u8
+    private BYTE_CLOSE_BRACE   = '}'.ord.to_u8
+    private BYTE_SPACE         = ' '.ord.to_u8
+    private BYTE_TAB           = '\t'.ord.to_u8
+    private BYTE_RETURN        = '\r'.ord.to_u8
+    private BYTE_OPEN_PAREN    = '('.ord.to_u8
+    private BYTE_CLOSE_PAREN   = ')'.ord.to_u8
+    private BYTE_OPEN_BRACKET  = '['.ord.to_u8
+    private BYTE_CLOSE_BRACKET = ']'.ord.to_u8
+    private BYTE_DQUOTE        = '"'.ord.to_u8
+    private BYTE_SQUOTE        = '\''.ord.to_u8
 
     # Route registrations are statements. An identifier as generic as
     # `get` or `delete` also appears inside expressions
@@ -228,26 +232,46 @@ module Analyzer::Cfml
       close ? content[(open_paren + 1)...close] : nil
     end
 
+    protected def matching_paren(content : String, open_paren : Int32) : Int32?
+      matching_delimiter(content, open_paren, BYTE_OPEN_PAREN, BYTE_CLOSE_PAREN)
+    end
+
+    protected def matching_bracket(content : String, open_bracket : Int32) : Int32?
+      matching_delimiter(content, open_bracket, BYTE_OPEN_BRACKET, BYTE_CLOSE_BRACKET)
+    end
+
+    # Index of the delimiter closing the one at `open_index`.
+    #
     # Byte scan rather than `String#[](Int)`, which is O(n) per access on
     # strings holding multi-byte characters and would make this O(n^2) —
     # the same trap `PhpEngine#find_matching_php_close_brace` documents
-    # after CJK-commented sources hung the PHP analyzer.
-    protected def matching_paren(content : String, open_paren : Int32) : Int32?
+    # after CJK-commented sources hung the PHP analyzer. Every delimiter
+    # is ASCII, so it can never collide with a UTF-8 continuation byte.
+    protected def matching_delimiter(content : String, open_index : Int32,
+                                     open_byte : UInt8, close_byte : UInt8) : Int32?
       bytes = content.to_slice
-      start = content.char_index_to_byte_index(open_paren)
-      return unless start && start < bytes.size && bytes[start] == BYTE_OPEN_PAREN
+      start = content.char_index_to_byte_index(open_index)
+      return unless start && start < bytes.size && bytes[start] == open_byte
 
       depth = 0
       position = start
       size = bytes.size
+      quote = 0_u8
 
       while position < size
-        case bytes[position]
-        when BYTE_OPEN_PAREN then depth += 1
-        when BYTE_CLOSE_PAREN
+        byte = bytes[position]
+
+        if quote != 0_u8
+          quote = 0_u8 if byte == quote
+        elsif byte == BYTE_DQUOTE || byte == BYTE_SQUOTE
+          quote = byte
+        elsif byte == open_byte
+          depth += 1
+        elsif byte == close_byte
           depth -= 1
           return content.byte_index_to_char_index(position) if depth == 0
         end
+
         position += 1
       end
 
