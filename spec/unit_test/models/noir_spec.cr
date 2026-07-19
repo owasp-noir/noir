@@ -73,8 +73,10 @@ describe "HTTP method validation" do
     runner.endpoints << Endpoint.new("/also-valid", "POST")
     runner.optimize_endpoints
 
-    runner.endpoints[0].method.should eq("GET")
-    runner.endpoints[1].method.should eq("POST")
+    # Order follows the source-location sort in `optimize_endpoints`;
+    # these fixtures carry no code path, so match by URL.
+    runner.endpoints.find! { |endpoint| endpoint.url == "/valid" }.method.should eq("GET")
+    runner.endpoints.find! { |endpoint| endpoint.url == "/also-valid" }.method.should eq("POST")
   end
 
   it "converts invalid HTTP methods to GET" do

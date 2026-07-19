@@ -203,6 +203,19 @@ class EndpointOptimizer
     result.to_s
   end
 
+  # Stable ordering key: source location first, then the endpoint itself
+  # as a tiebreak for endpoints that carry no code path (spec-derived
+  # ones, for example).
+  private def endpoint_order_key(endpoint : Endpoint) : Tuple(String, Int32, String, String)
+    code_path = endpoint.details.code_paths.first?
+    {
+      code_path.try(&.path) || "",
+      code_path.try(&.line) || -1,
+      endpoint.url,
+      endpoint.method,
+    }
+  end
+
   # Remove duplicated endpoints and parameters, validate HTTP methods, clean URLs
   def optimize_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
     @logger.info "Optimizing endpoints."
@@ -212,7 +225,20 @@ class EndpointOptimizer
     allowed_methods = get_allowed_methods
     cross_tech_keys = cross_technology_duplicate_keys(endpoints, allowed_methods)
 
-    endpoints.each do |endpoint|
+    # `parallel_analyze` does not preserve input order: files go to N
+    # workers through a bounded channel, so collection order depends on
+    # the worker count, which is derived from `System.cpu_count`. The
+    # dedup below is first-wins — the first endpoint seen for a key keeps
+    # its `details` and later duplicates only merge params/tags into it —
+    # so without a stable order the reported file:line for a duplicated
+    # route changes with the machine's core count, and JSON/YAML output
+    # diffs between machines for no real reason.
+    #
+    # Sorting on the source location makes "first" mean "earliest in the
+    # codebase, by path then line" instead of "whichever fiber won".
+    ordered_endpoints = endpoints.sort_by { |endpoint| endpoint_order_key(endpoint) }
+
+    ordered_endpoints.each do |endpoint|
       tiny_tmp = endpoint
 
       # Normalize the HTTP method to upper case. This makes the dedup
