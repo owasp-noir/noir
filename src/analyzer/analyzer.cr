@@ -346,42 +346,16 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
     filtered.reject!("php_symfony")
   end
 
-  # `js_http` matches generic Node `http`/`https` createServer usage.
-  # When a real framework is present it owns the route table; running
-  # the stdlib analyzer too rescans every JS/TS file for low-signal
-  # patterns and doubles endpoint noise.
-  js_frameworks = Set{
-    "js_express", "js_fastify", "js_hono", "js_koa", "js_nestjs",
-    "js_restify", "js_adonisjs", "js_elysia", "js_hapi", "js_nextjs",
-    "js_nuxtjs", "js_nitro", "js_remix", "js_sveltekit", "js_astro",
-    "js_fresh", "js_apollo", "js_graphql_yoga", "js_socketio",
-    "ts_nestjs", "ts_trpc", "ts_tanstack_router",
-  }
-  if filtered.includes?("js_http") && filtered.any? { |tech| js_frameworks.includes?(tech) }
-    filtered.reject!("js_http")
-  end
-
-  # FastAPI is built on Starlette and reuses its routing primitives.
-  # Both detectors fire on FastAPI apps; the FastAPI analyzer already
-  # covers APIRouter / app.include_router / decorators, so the Starlette
-  # pass is pure duplicate work on the same .py set.
-  if filtered.includes?("python_fastapi") && filtered.includes?("python_starlette")
-    filtered.reject!("python_starlette")
-  end
-
-  # Same shape as js_http: bare `net/http` when a router framework is
-  # present is almost always the framework's own listener, not a second
-  # surface to analyze.
-  go_frameworks = Set{
-    "go_gin", "go_echo", "go_fiber", "go_chi", "go_mux", "go_beego",
-    "go_iris", "go_fasthttp", "go_hertz", "go_gozero", "go_goyave",
-    "go_gf", "go_restful", "go_httprouter", "go_huma", "go_pocketbase",
-    "go_connect_rpc",
-  }
-  if filtered.includes?("go_http") && filtered.any? { |tech| go_frameworks.includes?(tech) }
-    filtered.reject!("go_http")
-  end
-
+  # NOTE: do not add "generic stdlib analyzer is redundant when framework
+  # X is present" rules here. `techs` is a flat, repo-wide list with no
+  # path granularity, so a framework detected anywhere suppresses the
+  # generic analyzer *everywhere*. In a monorepo that silently drops real
+  # attack surface: a standalone `net/http` admin listener exposing
+  # /debug/pprof next to a Gin API, or a standalone Starlette service next
+  # to a FastAPI one. Framework-vs-framework rules above are safe because
+  # both analyzers target the same routing DSL; framework-vs-stdlib rules
+  # are not. Scoping this correctly needs a per-tech path map from the
+  # detector (the detect loop does know the file), not a global list.
   filtered
 end
 

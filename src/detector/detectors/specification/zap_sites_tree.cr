@@ -27,12 +27,14 @@ module Detector::Specification
     end
 
     def applicable?(filename : String) : Bool
-      return false unless filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-
-      # ZAP exports are named *sites* (sites.yml, sites_tree.yaml). The
-      # previous "any YAML" gate made every non-idempotent pass pay a
-      # content probe + occasional YAML parse on unrelated manifests.
-      File.basename(filename).downcase.includes?("sites")
+      # Extension only. A `*sites*` basename gate looks tempting, but ZAP
+      # export filenames are chosen by the user at export time — an export
+      # saved as `zap_export.yaml` or `target.yaml` would be dropped with
+      # no diagnostic. The expensive work (`yaml_any?`) is already gated
+      # in `detect` by the `includes?("Sites")` content guard, so the name
+      # gate only saved a substring scan and bought that at the price of a
+      # silent false negative.
+      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
     end
 
     def set_name
