@@ -33,8 +33,16 @@ class Analyzer
   @configured_base_cache = {} of String => String
   @configured_base_cache_mutex = Mutex.new
   # Guards `@result` mutations from `parallel_analyze` workers.
-  # Fibers can interleave on yield during Array reallocation; concurrent
-  # `result <<` / `result.concat` without a mutex is racy.
+  #
+  # NOTE: this is forward-looking, not a fix for a live race. noir builds
+  # without `-Dpreview_mt`, so `parallel_analyze` runs cooperative fibers
+  # on one thread and `Array#<<` / `#concat` have no yield point — they
+  # cannot interleave today. It only becomes load-bearing under MT.
+  # See `docs/content/development/analyzer_architecture`, which documents
+  # the opposite convention (no mutex in per-file analyzers, synchronize
+  # at the `parallel_analyze` layer if MT lands); the helpers below are
+  # currently applied to only some engines, so that doc and this code
+  # disagree. Worth settling in one direction rather than half-applying.
   @result_mutex = Mutex.new
 
   def initialize(options : Hash(String, YAML::Any))

@@ -18,15 +18,15 @@ module Noir::ExtractionResultCache
   # relative to source text; the cap mainly bounds pathological cases.
   DEFAULT_MAX_ENTRIES = 4096
 
-  # Stable-ish fingerprint for a source buffer. Prefer this over bare
-  # `object_id` — the CodeLocator content cache reuses String instances
-  # across analyzers (good hit rate), but object_id alone is unsafe if
-  # a short-lived string is freed and the id is recycled.
+  # Content fingerprint for a source buffer. Deliberately *not* keyed on
+  # `object_id`: a short-lived string can be freed and its id recycled by
+  # a later buffer, which would serve another file's extraction table.
+  # Content-only means two distinct String instances holding identical
+  # source correctly share one entry, which is also the common case (the
+  # CodeLocator content cache hands the same text to sibling analyzers).
   def source_fingerprint(source : String) : UInt64
-    # Crystal's String#hash is content-based; mix in object_id so two
-    # identical buffers that are distinct instances still share a key
-    # when content matches (hash) while remaining O(1) to compute for
-    # the already-interned CodeLocator path (same instance → same id).
+    # Crystal's String#hash is content-based; bytesize is mixed in so
+    # collisions need matching length as well as matching hash.
     h = source.hash.to_u64!
     h &+= source.bytesize.to_u64! &* 0x9e3779b97f4a7c15_u64
     h
@@ -58,24 +58,34 @@ module Noir::ExtractionResultCache
     value = yield
 
     mutex.synchronize do
-      unless store.has_key?(key)
-        if store.size >= max_entries
-          # Drop oldest half.
-          drop = store.size // 2
-          drop = 1 if drop < 1
-          drop.times do
-            old = order.shift?
-            break unless old
-            store.delete(old)
-          end
-        end
-        store[key] = value
-        order << key
-      end
-      # Another fiber may have filled the same key first; prefer the
-      # stored entry so all callers share one array.
-      store[key]
+      store_capped(store, order, key, value, max_entries)
     end
+  end
+
+  # Capped insert-or-keep. The caller must already hold the store's
+  # mutex. Extractors that fill two stores from a single parse cannot go
+  # through `fetch` (that would parse twice), so they call this directly
+  # instead of writing to the Hash — writing raw skips eviction and lets
+  # the store grow one entry per file for the whole scan.
+  def store_capped(store : Hash(UInt64, T), order : Array(UInt64), key : UInt64, value : T,
+                   max_entries : Int32 = DEFAULT_MAX_ENTRIES) : T forall T
+    unless store.has_key?(key)
+      if store.size >= max_entries
+        # Drop oldest half.
+        drop = store.size // 2
+        drop = 1 if drop < 1
+        drop.times do
+          old = order.shift?
+          break unless old
+          store.delete(old)
+        end
+      end
+      store[key] = value
+      order << key
+    end
+    # Another fiber may have filled the same key first; prefer the
+    # stored entry so all callers share one array.
+    store[key]
   end
 
   def clear(store : Hash(UInt64, T), order : Array(UInt64), mutex : Mutex) : Nil forall T

@@ -192,16 +192,8 @@ module Noir
       end
 
       @@memo_mutex.synchronize do
-        unless @@decoration_memo.has_key?(deco_key)
-          @@decoration_memo[deco_key] = decorations
-          @@decoration_order << deco_key
-        end
-        unless @@blueprint_memo.has_key?(bp_key)
-          @@blueprint_memo[bp_key] = blueprints
-          @@blueprint_order << bp_key
-        end
-        decorations = @@decoration_memo[deco_key]
-        blueprints = @@blueprint_memo[bp_key]
+        decorations = ExtractionResultCache.store_capped(@@decoration_memo, @@decoration_order, deco_key, decorations)
+        blueprints = ExtractionResultCache.store_capped(@@blueprint_memo, @@blueprint_order, bp_key, blueprints)
       end
 
       {decorations, blueprints}
