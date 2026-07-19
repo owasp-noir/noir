@@ -5,7 +5,7 @@ module Analyzer::Rust
   abstract class RustEngine < Analyzer
     def analyze
       parallel_file_scan do |path|
-        append_endpoints(analyze_file(path))
+        result.concat(analyze_file(path))
       end
       result
     end

@@ -32,18 +32,6 @@ class Analyzer
   # `configured_base_for`; only used on multi-base (monorepo) scans.
   @configured_base_cache = {} of String => String
   @configured_base_cache_mutex = Mutex.new
-  # Guards `@result` mutations from `parallel_analyze` workers.
-  #
-  # NOTE: this is forward-looking, not a fix for a live race. noir builds
-  # without `-Dpreview_mt`, so `parallel_analyze` runs cooperative fibers
-  # on one thread and `Array#<<` / `#concat` have no yield point — they
-  # cannot interleave today. It only becomes load-bearing under MT.
-  # See `docs/content/development/analyzer_architecture`, which documents
-  # the opposite convention (no mutex in per-file analyzers, synchronize
-  # at the `parallel_analyze` layer if MT lands); the helpers below are
-  # currently applied to only some engines, so that doc and this code
-  # disagree. Worth settling in one direction rather than half-applying.
-  @result_mutex = Mutex.new
 
   def initialize(options : Hash(String, YAML::Any))
     @base_paths = options["base"].as_a.map(&.to_s)
@@ -63,17 +51,6 @@ class Analyzer
 
   def analyze
     # After inheriting the class, write an action code here.
-  end
-
-  # Thread/fiber-safe append into `@result`. Prefer these helpers from
-  # code paths that run under `parallel_analyze` / `parallel_file_scan`.
-  protected def append_endpoint(endpoint : Endpoint) : Nil
-    @result_mutex.synchronize { @result << endpoint }
-  end
-
-  protected def append_endpoints(endpoints : Array(Endpoint)) : Nil
-    return if endpoints.empty?
-    @result_mutex.synchronize { @result.concat(endpoints) }
   end
 
   # Prefer the detector-populated cache over a fresh disk read. On
