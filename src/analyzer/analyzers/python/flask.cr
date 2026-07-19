@@ -174,20 +174,20 @@ module Analyzer::Python
               registrar_substrings = (["add_resource"] + registrar_aliases).map { |r| ".#{r}(" }
             end
 
-            # Tree-sitter pre-pass: parse the file once and pull out every
+            # Tree-sitter pre-pass: one parse yields every
             # `@<router>.route(...)`/`@<router>.<method>(...)` decorator and
             # every `<name> = (flask.)?Blueprint(url_prefix=...)` declaration.
-            # Both pieces used to be rediscovered with a fresh regex on every
-            # single line; the parse is linear in file size instead of
-            # (lines × patterns) and also handles multi-line decorators that
-            # the regex can't see.
-            ts_decorations = Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content)
+            # Previously each table re-parsed the file; multi-line decorators
+            # still need the AST (regex can't see them).
+            ts_decorations, ts_blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(
+              file_content, ["flask"]
+            )
             decorations_by_line = Hash(Int32, Array(Noir::TreeSitterPythonRouteExtractor::Decoration)).new
             ts_decorations.each do |d|
               decorations_by_line[d.decorator_line] ||= [] of Noir::TreeSitterPythonRouteExtractor::Decoration
               decorations_by_line[d.decorator_line] << d
             end
-            Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["flask"]).each do |bp|
+            ts_blueprints.each do |bp|
               blueprint_prefixes[{current_base_path, bp.name}] ||= bp.prefix
               api_instances[bp.name] ||= bp.prefix
             end
