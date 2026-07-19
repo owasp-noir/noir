@@ -179,6 +179,13 @@ DETECTOR_PATH_SEGMENT_PROBES = [
 # placement, directory segments, multi-hop path layout). Those
 # detectors must always see the real path in the hot loop.
 def detector_path_sensitive?(detector : Detector) : Bool
+  # Explicit declaration wins. The probe sweep below is a safety net,
+  # not the contract: it is fail-open by construction, so a detector
+  # whose directory gate happens to agree with its basename gate on
+  # every probe would otherwise be memoized as basename-only and lose
+  # the path check entirely.
+  return true if detector.path_sensitive?
+
   sample_suffixes = [
     ".java", ".js", ".ts", ".tsx", ".rb", ".py", ".go", ".json", ".yml",
     ".yaml", ".xml", ".cs", ".kt", ".php", ".cr", ".rs", ".ex", ".swift",

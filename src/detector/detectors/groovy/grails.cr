@@ -44,6 +44,12 @@ module Detector::Groovy
       false
     end
 
+    # Memo safety: `applicable?` consults the path
+    # (/grails-app/ gate), not just the basename.
+    def path_sensitive? : Bool
+      true
+    end
+
     def applicable?(filename : String) : Bool
       filename.ends_with?(".groovy") || filename.ends_with?(".gsp") || filename.ends_with?(".gradle") || filename.ends_with?(".gradle.kts") || filename.ends_with?(".java") || filename.ends_with?(".yml") || filename.ends_with?(".yaml") || filename.ends_with?(".xml") || filename.includes?("/grails-app/")
     end

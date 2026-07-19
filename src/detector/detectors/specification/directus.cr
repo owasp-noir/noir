@@ -38,6 +38,12 @@ module Detector::Specification
 
     # libyaml parses JSON as a YAML subset, so one code path covers the
     # `--format json` snapshot too.
+    # Memo safety: `applicable?` consults the path
+    # (/directus/ and /snapshots/ gates), not just the basename.
+    def path_sensitive? : Bool
+      true
+    end
+
     def applicable?(filename : String) : Bool
       return false unless SNAPSHOT_EXTENSIONS.includes?(File.extname(filename).downcase)
 

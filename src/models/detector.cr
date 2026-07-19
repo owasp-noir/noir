@@ -45,6 +45,23 @@ class Detector
     true
   end
 
+  # Whether `applicable?` inspects more than the basename — directory
+  # segments (`/metadata/`, `/.kamal/`) or root placement.
+  #
+  # The detect loop memoizes `applicable?` by basename, so a detector
+  # that consults the path but does not declare it here has its path
+  # gate silently deleted: `applicable?` is only ever asked about the
+  # bare filename. That is a false-negative, not a crash, so nothing
+  # fails loudly. `detector_path_sensitive?` also probes for this, but
+  # the probe is fail-open — a probe whose basename independently
+  # matches masks the directory gate behind it (this is exactly how the
+  # Hasura `metadata/**` gate was lost). Declare it explicitly.
+  #
+  # Guarded by `spec/unit_test/detector/applicable_lookup_fidelity_spec.cr`.
+  def path_sensitive? : Bool
+    false
+  end
+
   # Whether the detector can be skipped on subsequent files once it
   # has matched. Defaults to `true` (idempotent — the detector only
   # signals tech presence). Detectors that perform side effects in

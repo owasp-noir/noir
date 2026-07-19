@@ -12,6 +12,12 @@ module Detector::Specification
       true
     end
 
+    # Memo safety: `applicable?` consults the path
+    # (/.kamal/ and /config/deploy gates), not just the basename.
+    def path_sensitive? : Bool
+      true
+    end
+
     def applicable?(filename : String) : Bool
       return false unless filename.ends_with?(".yaml") || filename.ends_with?(".yml")
 
