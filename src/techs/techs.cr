@@ -263,6 +263,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :cfml_fw1 => {
+      :framework => "FW/1",
+      :language  => "CFML",
+      :similar   => ["fw1", "fw/1", "framework-one", "framework.one", "cfml-fw1", "cfml_fw1"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :cfml_pure => {
       :framework => "ColdFusion (CFML)",
       :language  => "CFML",
