@@ -466,6 +466,11 @@ module Analyzer::Aspnet
       while index < characters.size
         character = characters[index]
 
+        if in_string && character == '\\' && !vb && index + 1 < characters.size
+          index += 2
+          next
+        end
+
         if character == '"'
           in_string = !in_string
         elsif !in_string && comment_start?(character, characters[index + 1]?, vb)

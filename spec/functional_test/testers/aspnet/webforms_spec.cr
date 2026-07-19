@@ -48,6 +48,10 @@ expected_endpoints = [
     Param.new("count", "", "form"),
   ]),
   Endpoint.new("/QuoteService.asmx/Ping", "POST"),
+  Endpoint.new("/BugTest.aspx", "GET", [
+    Param.new("RealParam", "", "query"),
+  ]),
+  Endpoint.new("/BugTest.aspx", "POST"),
 ]
 
 FunctionalTester.new("fixtures/aspnet/webforms/", {
