@@ -16,24 +16,20 @@ describe "filter_redundant_generic_techs" do
     filter_redundant_generic_techs(techs).should eq(techs)
   end
 
-  it "drops js_http when a JS framework analyzer is present" do
-    filter_redundant_generic_techs(["js_http", "js_express"]).should eq(["js_express"])
-    filter_redundant_generic_techs(["js_hono", "js_http", "js_fastify"]).should eq(["js_hono", "js_fastify"])
+  # Regression guard: a repo-wide framework hit must never suppress a
+  # generic stdlib analyzer. In a monorepo the two can belong to different
+  # applications (a standalone net/http admin listener beside a Gin API,
+  # a standalone Starlette service beside a FastAPI one), so dropping the
+  # generic analyzer silently loses real endpoints.
+  it "keeps go_http when a Go framework analyzer is also present" do
+    filter_redundant_generic_techs(["go_http", "go_gin"]).should eq(["go_http", "go_gin"])
   end
 
-  it "keeps js_http when no JS framework analyzer is present" do
-    filter_redundant_generic_techs(["js_http"]).should eq(["js_http"])
+  it "keeps js_http when a JS framework analyzer is also present" do
+    filter_redundant_generic_techs(["js_http", "js_express"]).should eq(["js_http", "js_express"])
   end
 
-  it "drops python_starlette when python_fastapi is present" do
-    filter_redundant_generic_techs(["python_fastapi", "python_starlette"]).should eq(["python_fastapi"])
-  end
-
-  it "keeps python_starlette alone" do
-    filter_redundant_generic_techs(["python_starlette"]).should eq(["python_starlette"])
-  end
-
-  it "drops go_http when a Go framework analyzer is present" do
-    filter_redundant_generic_techs(["go_http", "go_gin"]).should eq(["go_gin"])
+  it "keeps python_starlette when python_fastapi is also present" do
+    filter_redundant_generic_techs(["python_fastapi", "python_starlette"]).should eq(["python_fastapi", "python_starlette"])
   end
 end

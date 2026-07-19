@@ -845,6 +845,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             end
           rescue File::NotFoundError
             logger.debug "File not found: #{file}"
+          rescue e : Exception
+            # Mirror `parallel_analyze`'s worker rescue. Without this a
+            # single detector/passive-rule exception unwinds the whole
+            # worker loop; once every worker has died the reader fiber
+            # blocks forever on `channel.send` and the scan hangs with
+            # no output instead of skipping one bad file.
+            logger.debug "Error detecting #{file}: #{e.message}"
           end
         end
       ensure
