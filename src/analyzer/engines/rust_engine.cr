@@ -30,15 +30,14 @@ module Analyzer::Rust
       end
     end
 
-    # `.rs` extension filter baked in. Subclasses that want a different scan
-    # shape (e.g. a post-pass after the file walk) can override `analyze`
-    # and call this helper directly; the default `analyze` above is the
-    # simpler path.
+    # `.rs` sources from the extension index. Subclasses that want a
+    # different scan shape (e.g. a post-pass after the file walk) can
+    # override `analyze` and call this helper directly; the default
+    # `analyze` above is the simpler path. Paths are detector-registered
+    # regular files — no per-path `File.exists?` / `File.directory?`.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path) && File.extname(path) == ".rs"
+        parallel_analyze(get_files_by_extension(".rs")) do |path|
           next if RustEngine.test_path?(path)
 
           begin

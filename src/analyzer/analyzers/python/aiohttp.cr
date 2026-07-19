@@ -123,12 +123,10 @@ module Analyzer::Python
       class_view_routes = Hash(::String, Array(Tuple(::String, Int32, ::String))).new
       # path => [{route_path, line_index, class_name}]
 
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           # Prefer the detector-cached content over a fresh disk read;

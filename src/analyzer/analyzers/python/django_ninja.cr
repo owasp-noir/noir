@@ -59,7 +59,7 @@ module Analyzer::Python
     def analyze
       instances = Hash(::String, NinjaInstance).new
 
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
 
       # Phase 1 — collect NinjaAPI/Router instances, their operations and
       # `add_router(...)` edges.

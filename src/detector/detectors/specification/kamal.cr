@@ -13,7 +13,16 @@ module Detector::Specification
     end
 
     def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+      return false unless filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+
+      # Kamal deploy files are almost always named *deploy*.yml (or live
+      # under `.kamal/`). Matching every YAML in a monorepo made this
+      # non-idempotent detector re-parse CI/K8s/Compose files on every
+      # path for zero signal.
+      base = File.basename(filename).downcase
+      return true if base.includes?("deploy") || base.includes?("kamal")
+      path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
+      path.includes?("/.kamal/") || path.includes?("/config/deploy")
     end
 
     def set_name

@@ -47,20 +47,14 @@ module Analyzer::Python
     end
 
     def analyze
-      python_files = get_files_by_extension(".py")
-      base_paths.each do |current_base_path|
-        python_files.each do |path|
-          next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
-          @logger.debug "Analyzing #{path}"
+      parallel_python_sources do |path, current_base_path|
+        @logger.debug "Analyzing #{path}"
 
-          source = read_file_content(path)
-          lines = source.lines
-          next unless lines.any? { |l| l.includes?("http.server") || l.includes?("HTTPServer") || l.includes?("BaseHTTPRequestHandler") || l.includes?("SimpleHTTPRequestHandler") || l.includes?("wsgiref.simple_server") }
+        source = read_file_content(path)
+        lines = source.lines
+        next unless lines.any? { |l| l.includes?("http.server") || l.includes?("HTTPServer") || l.includes?("BaseHTTPRequestHandler") || l.includes?("SimpleHTTPRequestHandler") || l.includes?("wsgiref.simple_server") }
 
-          analyze_file(path, lines, source, current_base_path)
-        end
+        analyze_file(path, lines, source, current_base_path)
       end
 
       result

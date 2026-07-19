@@ -148,17 +148,20 @@ module Analyzer::Ruby
       roots
     end
 
-    # Walk the project file tree in parallel, invoking the block for each
-    # readable non-directory file. Used by analyzers that scan the whole
-    # tree (Sinatra); Rails/Hanami target specific config files directly.
+    # Walk Ruby sources (`.rb` / `.ru`) in parallel. Used by analyzers
+    # that scan the whole tree (Sinatra, Grape, Roda, WEBrick);
+    # Rails/Hanami target specific config files directly. Candidates
+    # come from the extension index so monorepo `file_map` entries in
+    # other languages never enter the channel. Paths are detector-
+    # registered regular files — no per-path `File.exists?` /
+    # `File.directory?`.
     #
     # Name-consistent with the other engines' `parallel_file_scan` helpers.
+    RUBY_SOURCE_EXTENSIONS = [".rb", ".ru"]
+
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path)
-
+        parallel_analyze(get_files_by_extensions(RUBY_SOURCE_EXTENSIONS)) do |path|
           begin
             block.call(path)
           rescue e

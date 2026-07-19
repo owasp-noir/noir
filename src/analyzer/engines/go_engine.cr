@@ -53,7 +53,6 @@ module Analyzer::Go
       file_contents = Hash(String, String).new
 
       get_files_by_extension(".go").each do |path|
-        next if File.directory?(path)
         next if GoEngine.go_test_file?(path)
         dir = File.dirname(path)
         files_by_dir[dir] ||= [] of String
@@ -335,7 +334,6 @@ module Analyzer::Go
     def read_package_file_contents : Hash(String, String)
       file_contents = Hash(String, String).new
       get_files_by_extension(".go").each do |path|
-        next if File.directory?(path)
         next if GoEngine.go_test_file?(path)
         begin
           file_contents[path] = read_file_content(path)

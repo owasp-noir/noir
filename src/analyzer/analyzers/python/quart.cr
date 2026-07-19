@@ -100,12 +100,10 @@ module Analyzer::Python
       register_blueprint = Hash(::String, Hash(::String, ::String)).new
       blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String))).new
 
-      python_files = get_files_by_extension(".py")
+      python_files = python_source_files
       base_paths.each do |current_base_path|
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
-          next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)

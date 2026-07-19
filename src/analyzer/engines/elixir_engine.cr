@@ -140,7 +140,6 @@ module Analyzer::Elixir
         # skip the per-file `File.exists?` syscall. Missing files surface
         # as read errors inside the analyzer and are logged there.
         parallel_analyze(elixir_source_files) do |path|
-          next if File.directory?(path)
           next if elixir_test_path?(path)
 
           begin

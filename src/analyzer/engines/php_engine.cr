@@ -27,12 +27,11 @@ module Analyzer::Php
 
     # Walk PHP sources concurrently. Extension + test-path filtering
     # lives here so adapters don't re-check every monorepo path.
-    # Paths come from CodeLocator; skip the redundant `File.exists?`
-    # syscall (missing files error on read and are logged).
+    # Paths come from CodeLocator (regular files only); missing files
+    # error on read and are logged.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
         parallel_analyze(php_source_files) do |path|
-          next if File.directory?(path)
           next if PhpEngine.test_path?(path)
 
           begin

@@ -11,14 +11,16 @@ module Analyzer::Perl
 
     abstract def analyze_file(path : String) : Array(Endpoint)
 
-    # No extension filter at the engine layer: Perl ships in `.pl`, `.pm`,
-    # `.psgi`, and `.t` files, so each analyzer filters inside `analyze_file`.
+    # Perl ships in `.pl`, `.pm`, `.psgi`, and `.t`. Pull those from the
+    # extension index instead of walking the whole monorepo `file_map`.
+    # Adapters still re-filter inside `analyze_file` for framework-specific
+    # rules (e.g. skipping `.t` tests). Paths are detector-registered
+    # regular files — no per-path `File.exists?` / `File.directory?`.
+    PERL_SOURCE_EXTENSIONS = [".pl", ".pm", ".psgi", ".t"]
+
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path)
-
+        parallel_analyze(get_files_by_extensions(PERL_SOURCE_EXTENSIONS)) do |path|
           begin
             block.call(path)
           rescue e

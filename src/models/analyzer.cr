@@ -9,9 +9,12 @@ require "../utils/utils"
 class Analyzer
   include FileHelper
 
-  DEFAULT_CHANNEL_CAPACITY         = 128
-  DEFAULT_CONTENT_CHANNEL_CAPACITY =  16
-  MAX_ANALYZER_WORKERS             =  64
+  DEFAULT_CHANNEL_CAPACITY = 128
+  # Detector reader → worker content channel. 16 was too small under
+  # heavy passive-scan / multi-detector load: the single reader fiber
+  # blocked on send while workers drained slowly, stalling disk I/O.
+  DEFAULT_CONTENT_CHANNEL_CAPACITY = 64
+  MAX_ANALYZER_WORKERS             = 64
 
   @result : Array(Endpoint)
   @endpoint_references : Array(EndpointReference)
