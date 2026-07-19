@@ -227,6 +227,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :cfml_coldbox => {
+      :framework => "ColdBox",
+      :language  => "CFML",
+      :similar   => ["coldbox", "cfml-coldbox", "cfml_coldbox", "contentbox"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => false,
+          :path   => true,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :cfml_pure => {
       :framework => "ColdFusion (CFML)",
       :language  => "CFML",

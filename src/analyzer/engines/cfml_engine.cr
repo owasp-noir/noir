@@ -33,6 +33,10 @@ module Analyzer::Cfml
     # file with no opening brace cannot walk the whole content.
     SCRIPT_COMPONENT_HEADER_LIMIT = 2000
 
+    # Verbs a CFML framework can register. Route DSLs take verbs as free
+    # text, so a value outside this set is not turned into a method.
+    HTTP_VERBS = Set{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
     # TestBox names suites `<Something>Test.cfc` / `<Something>Spec.cfc`.
     # The leading `.+` is load-bearing: a component named exactly
     # `Test.cfc` is a demo, not a suite (fw1 ships one that declares a
@@ -44,8 +48,41 @@ module Analyzer::Cfml
     private BYTE_DASH        = '-'.ord.to_u8
     private BYTE_GT          = '>'.ord.to_u8
     private BYTE_NEWLINE     = '\n'.ord.to_u8
+    private BYTE_SEMICOLON   = ';'.ord.to_u8
+    private BYTE_OPEN_BRACE  = '{'.ord.to_u8
+    private BYTE_CLOSE_BRACE = '}'.ord.to_u8
+    private BYTE_SPACE       = ' '.ord.to_u8
+    private BYTE_TAB         = '\t'.ord.to_u8
+    private BYTE_RETURN      = '\r'.ord.to_u8
     private BYTE_OPEN_PAREN  = '('.ord.to_u8
     private BYTE_CLOSE_PAREN = ')'.ord.to_u8
+
+    # Route registrations are statements. An identifier as generic as
+    # `get` or `delete` also appears inside expressions
+    # (`if ( get( "featureFlag" ) )`), so a call only counts when nothing
+    # but horizontal whitespace separates it from a statement boundary.
+    #
+    # A newline counts as a boundary in its own right. `//` line comments
+    # are not stripped (only `<!--- --->` is), so requiring `;`/`{`/`}`
+    # would reject every call preceded by a comment line — which is most
+    # of a real router.
+    protected def statement_start?(content : String, index : Int32) : Bool
+      bytes = content.to_slice
+      position = content.char_index_to_byte_index(index)
+      return true if position.nil? || position == 0
+
+      position -= 1
+      while position >= 0
+        byte = bytes[position]
+        return true if byte == BYTE_NEWLINE || byte == BYTE_RETURN
+        return true if byte == BYTE_SEMICOLON || byte == BYTE_OPEN_BRACE || byte == BYTE_CLOSE_BRACE
+        return false unless byte == BYTE_SPACE || byte == BYTE_TAB
+
+        position -= 1
+      end
+
+      true
+    end
 
     protected def cfml_components : Array(String)
       get_files_by_extension(".cfc").reject { |path| File.directory?(path) || cfml_test_path?(path) }

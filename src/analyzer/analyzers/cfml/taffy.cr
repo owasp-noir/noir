@@ -37,10 +37,6 @@ module Analyzer::Cfml
     SCRIPT_FUNCTION_TAIL_RE    = /\A[^{;]*/
     SCRIPT_FUNCTION_TAIL_LIMIT = 200
 
-    # Verbs Taffy will dispatch. `taffy_verb` is free text in the source,
-    # so an unrecognised value is not turned into an HTTP method.
-    HTTP_VERBS = Set{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
-
     def analyze
       parallel_analyze(cfml_components) do |path|
         analyze_resource(path)
