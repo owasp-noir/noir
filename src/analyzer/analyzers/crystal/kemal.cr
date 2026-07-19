@@ -26,7 +26,7 @@ module Analyzer::Crystal
       # with the handler defined in a separate controller file. Build the
       # cross-file action index up front so those routes can carry callees.
       if any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-        @action_index = build_crystal_action_index(all_files)
+        @action_index = build_crystal_action_index(get_files_by_extension(".cr"))
       end
       super
       collect_public_dir_endpoints

@@ -43,6 +43,24 @@ module FileHelper
     CodeLocator.instance.files_by_extension(extension)
   end
 
+  # Union of files matching any of `extensions`. Prefer this over
+  # `parallel_analyze(all_files)` + per-file extension filter: the
+  # monorepo `file_map` can be 10–100× larger than the language's
+  # source set, and walking it only to `next` on every non-matching
+  # path is pure overhead.
+  def get_files_by_extensions(extensions : Array(String)) : Array(String)
+    case extensions.size
+    when 0
+      [] of String
+    when 1
+      get_files_by_extension(extensions[0])
+    else
+      result = [] of String
+      extensions.each { |ext| result.concat(get_files_by_extension(ext)) }
+      result
+    end
+  end
+
   # Get files filtered by both prefix and extension
   def get_files_by_prefix_and_extension(prefix : String, extension : String) : Array(String)
     return all_files.select { |file| !File.directory?(file) && File.extname(file) == extension } if prefix.empty?

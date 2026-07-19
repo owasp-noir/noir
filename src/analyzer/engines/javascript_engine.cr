@@ -13,19 +13,16 @@ module Analyzer::Javascript
       "svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs",
     ]
 
-    # Walk the project tree concurrently, invoking the block for each
-    # readable source file whose extension matches. JS/TS analyzers vary
-    # in the exact filter (plain JS vs TS vs .mjs vs .tsx), so the filter
-    # is an argument with a sensible default.
+    # Walk matching source files concurrently. Candidates come from the
+    # CodeLocator extension index so monorepo `file_map` entries in other
+    # languages never enter the channel. Paths are detector-registered
+    # regular files — skip the redundant `File.exists?` / `File.directory?`
+    # syscalls (missing files surface as read errors and are logged).
     #
     # Name-consistent with the other engines' `parallel_file_scan` helpers.
     protected def parallel_file_scan(extensions : Array(String) = DEFAULT_EXTENSIONS, &block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path)
-          next unless extensions.any? { |ext| path.ends_with?(ext) }
-
+        parallel_analyze(get_files_by_extensions(extensions)) do |path|
           begin
             block.call(path)
           rescue e

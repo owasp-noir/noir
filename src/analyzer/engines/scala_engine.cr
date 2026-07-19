@@ -13,14 +13,13 @@ module Analyzer::Scala
 
     abstract def analyze_file(path : String) : Array(Endpoint)
 
-    # `.scala` extension filter baked in. Subclasses that need a custom
-    # scan shape can override `analyze` and call this helper directly.
+    # `.scala` sources from the extension index. Subclasses that need a
+    # custom scan shape can override `analyze` and call this helper
+    # directly. Paths are detector-registered regular files — no per-path
+    # `File.exists?` / `File.directory?`.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path) && File.extname(path) == ".scala"
-
+        parallel_analyze(get_files_by_extension(".scala")) do |path|
           begin
             block.call(path)
           rescue e

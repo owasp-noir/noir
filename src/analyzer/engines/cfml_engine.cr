@@ -92,13 +92,13 @@ module Analyzer::Cfml
     end
 
     protected def cfml_components : Array(String)
-      get_files_by_extension(".cfc").reject { |path| File.directory?(path) || cfml_test_path?(path) }
+      get_files_by_extension(".cfc").reject { |path| cfml_test_path?(path) }
     end
 
     protected def cfml_pages : Array(String)
       (get_files_by_extension(".cfm") + get_files_by_extension(".cfml"))
         .uniq!
-        .reject { |path| File.directory?(path) || cfml_test_path?(path) }
+        .reject { |path| cfml_test_path?(path) }
     end
 
     protected def cfml_test_path?(path : String) : Bool

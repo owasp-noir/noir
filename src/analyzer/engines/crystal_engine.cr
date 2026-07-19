@@ -12,15 +12,15 @@ module Analyzer::Crystal
 
     abstract def analyze_file(path : String) : Array(Endpoint)
 
-    # `.cr` extension filter plus `lib/` exclusion baked in (shards puts
-    # dependencies under `lib/` and we don't want to analyze them).
-    # Subclasses that need a custom scan shape can override `analyze`
-    # (e.g. Amber/Kemal run a public-dir post-pass after the file walk).
+    # `.cr` sources from the extension index, plus `lib/` exclusion
+    # (shards puts dependencies under `lib/` and we don't want to
+    # analyze them). Subclasses that need a custom scan shape can
+    # override `analyze` (e.g. Amber/Kemal run a public-dir post-pass
+    # after the file walk). Paths are detector-registered regular
+    # files — no per-path `File.exists?` / `File.directory?`.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
-        parallel_analyze(all_files) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path) && File.extname(path) == ".cr"
+        parallel_analyze(get_files_by_extension(".cr")) do |path|
           next if crystal_dependency_path?(path)
           # Crystal's standard test directory is `spec/`, and test
           # files always end in `_spec.cr`. Crystal framework repos
@@ -195,8 +195,10 @@ module Analyzer::Crystal
     protected def build_crystal_action_index(paths : Array(String)) : ActionIndex
       index = ActionIndex.new
       paths.each do |path|
-        next if File.directory?(path)
-        next unless File.exists?(path) && File.extname(path) == ".cr"
+        # Callers may pass a broader list (historically `all_files`); keep
+        # the cheap extension gate so non-Crystal paths never hit the
+        # lexer. Prefer `get_files_by_extension(".cr")` at the call site.
+        next unless path.ends_with?(".cr")
         next if crystal_dependency_path?(path)
         begin
           # Cache-first: detector already warmed CodeLocator for most
