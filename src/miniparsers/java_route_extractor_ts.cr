@@ -1,4 +1,5 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./extraction_result_cache"
 require "../models/endpoint"
 
 module Noir
@@ -99,23 +100,38 @@ module Noir
       end
     end
 
+    # Memo for the source-level entry points. Spring's analyzer already
+    # amortises within a file via `_from(root)`, but other callers
+    # (and any future multi-tech overlap) still re-parse whole buffers.
+    @@routes_memo = Hash(UInt64, Array(Route)).new
+    @@routes_order = [] of UInt64
+    @@constants_memo = Hash(UInt64, Hash(String, String)).new
+    @@constants_order = [] of UInt64
+    @@memo_mutex = Mutex.new
+
     # Parses `source` and returns every Spring-style route it can
     # resolve. Top-level classes are scanned in order; nested classes
     # inherit their parent class's mapping prefix.
     def extract_routes(source : String) : Array(Route)
-      routes = [] of Route
-      Noir::TreeSitter.parse_java(source) do |root|
-        routes = extract_routes_from(root, source)
+      key = ExtractionResultCache.key(source, "java_routes")
+      ExtractionResultCache.fetch(@@routes_memo, @@routes_order, key, mutex: @@memo_mutex) do
+        routes = [] of Route
+        Noir::TreeSitter.parse_java(source) do |root|
+          routes = extract_routes_from(root, source)
+        end
+        routes
       end
-      routes
     end
 
     def extract_string_constants(source : String) : Hash(String, String)
-      constants = Hash(String, String).new
-      Noir::TreeSitter.parse_java(source) do |root|
-        constants = extract_string_constants_from(root, source)
+      key = ExtractionResultCache.key(source, "java_constants")
+      ExtractionResultCache.fetch(@@constants_memo, @@constants_order, key, mutex: @@memo_mutex) do
+        constants = Hash(String, String).new
+        Noir::TreeSitter.parse_java(source) do |root|
+          constants = extract_string_constants_from(root, source)
+        end
+        constants
       end
-      constants
     end
 
     # `_from` variant — accept a pre-parsed `root` so the Spring

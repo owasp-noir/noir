@@ -115,12 +115,11 @@ module Analyzer::Python
           import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
           view_assignments = Hash(::String, ::String).new
 
-          # Tree-sitter pre-pass: harvest every `@<router>.route(...)`,
-          # `@<router>.<method>(...)`, and `@<router>.websocket(...)`
-          # decorator, plus every `<name> = (quart.)?Blueprint(...)`
-          # declaration. One parse per file vs. (lines × patterns) regex
-          # work; multi-line decorators come along for free.
-          ts_decorations = Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, nil, WEBSOCKET_ATTRIBUTES)
+          # Tree-sitter pre-pass: one parse yields decorations + blueprints
+          # (previously two full parses of the same buffer).
+          ts_decorations, ts_blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(
+            file_content, ["quart"], nil, WEBSOCKET_ATTRIBUTES
+          )
           ts_decorations.each do |decoration|
             is_ws = decoration.attribute_name == "websocket"
             methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
@@ -132,7 +131,7 @@ module Analyzer::Python
             @routes[decoration.router_name] << router_info
           end
 
-          Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["quart"]).each do |bp|
+          ts_blueprints.each do |bp|
             blueprint_prefixes[bp.name] ||= bp.prefix
             api_instances[bp.name] ||= bp.prefix
           end

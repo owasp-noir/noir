@@ -91,18 +91,18 @@ module Analyzer::Python
           api_instances = Hash(::String, ::String).new
           path_api_instances[path] = api_instances
 
-          # Tree-sitter pre-pass: parse once and harvest every
-          # `@<router>.route(...)` / `@<router>.<method>(...)` decorator
-          # plus every `<name> = (sanic.)?Blueprint(url_prefix=...)`
-          # declaration. Replaces the per-line regex sweep in the loop
-          # below and handles multi-line decorators for free.
-          Noir::TreeSitterPythonRouteExtractor.extract_blueprints(file_content, ["sanic"]).each do |bp|
+          # Tree-sitter pre-pass: one parse for decorations + blueprints
+          # (was two full parses of the same buffer).
+          ts_decorations, ts_blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(
+            file_content, ["sanic"], extra_attributes: {"websocket" => "GET"}
+          )
+          ts_blueprints.each do |bp|
             blueprint_prefixes[bp.name] ||= bp.prefix
             api_instances[bp.name] ||= bp.prefix
           end
           collect_blueprint_registrations(file_content, blueprint_registration_prefixes, current_base_path)
           collect_blueprint_groups_and_versions(file_content, blueprint_group_prefixes, blueprint_versions)
-          Noir::TreeSitterPythonRouteExtractor.extract_decorations(file_content, extra_attributes: {"websocket" => "GET"}).each do |decoration|
+          ts_decorations.each do |decoration|
             methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
             extra_params = "methods=[#{methods_literal}]"
             router_info = Tuple(Int32, ::String, ::String, ::String, ::String).new(decoration.decorator_line, path, decoration.path, extra_params, decoration.attribute_name)

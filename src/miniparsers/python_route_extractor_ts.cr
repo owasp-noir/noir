@@ -1,4 +1,5 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./extraction_result_cache"
 
 module Noir
   # Tree-sitter-backed port of `PythonRouteExtractor`.
@@ -44,6 +45,14 @@ module Noir
       end
     end
 
+    # Process-wide memo: same CodeLocator source buffer is often fed to
+    # decorations + blueprints (and to multiple framework analyzers).
+    @@decoration_memo = Hash(UInt64, Array(Decoration)).new
+    @@decoration_order = [] of UInt64
+    @@blueprint_memo = Hash(UInt64, Array(BlueprintDecl)).new
+    @@blueprint_order = [] of UInt64
+    @@memo_mutex = Mutex.new
+
     # Parses `source` and returns every route decoration found.
     #
     # `router_names` optionally restricts which variable names count as
@@ -59,12 +68,28 @@ module Noir
     def extract_decorations(source : String,
                             router_names : Array(String)? = nil,
                             extra_attributes : Hash(String, String)? = nil) : Array(Decoration)
-      results = [] of Decoration
-      Noir::TreeSitter.parse_python(source) do |root|
-        walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
-          collect_decorations(node, source, router_names, extra_attributes, results)
+      tag = decoration_options_tag(router_names, extra_attributes)
+      key = ExtractionResultCache.key(source, "decorations", tag)
+      ExtractionResultCache.fetch(@@decoration_memo, @@decoration_order, key, mutex: @@memo_mutex) do
+        results = [] of Decoration
+        Noir::TreeSitter.parse_python(source) do |root|
+          extract_decorations_from(root, source, router_names, extra_attributes, results)
         end
+        results
+      end
+    end
+
+    # Same as `extract_decorations` but reuses a pre-parsed root so a
+    # caller that also needs blueprints (Flask/Quart/Sanic) pays for one
+    # tree-sitter parse instead of two.
+    def extract_decorations_from(root : LibTreeSitter::TSNode,
+                                 source : String,
+                                 router_names : Array(String)? = nil,
+                                 extra_attributes : Hash(String, String)? = nil,
+                                 results : Array(Decoration) = [] of Decoration) : Array(Decoration)
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "decorated_definition"
+        collect_decorations(node, source, router_names, extra_attributes, results)
       end
       results
     end
@@ -82,29 +107,95 @@ module Noir
     # without one and the query language can't express "this keyword,
     # if present" cleanly.
     def extract_blueprints(source : String, module_names : Array(String)) : Array(BlueprintDecl)
-      results = [] of BlueprintDecl
+      tag = module_names.join(",")
+      key = ExtractionResultCache.key(source, "blueprints", tag)
+      ExtractionResultCache.fetch(@@blueprint_memo, @@blueprint_order, key, mutex: @@memo_mutex) do
+        results = [] of BlueprintDecl
+        Noir::TreeSitter.parse_python(source) do |root|
+          extract_blueprints_from(root, source, module_names, results)
+        end
+        results
+      end
+    end
+
+    def extract_blueprints_from(root : LibTreeSitter::TSNode,
+                                source : String,
+                                module_names : Array(String),
+                                results : Array(BlueprintDecl) = [] of BlueprintDecl) : Array(BlueprintDecl)
       allowed = module_names.to_set
       query = blueprint_query
-      Noir::TreeSitter.parse_python(source) do |root|
-        query.each_match_raw(root, source) do |pattern_index, caps|
-          captures = caps.to_h
-          name_node = captures["name"]?
-          call_node = captures["call"]?
-          next unless name_node && call_node
+      query.each_match_raw(root, source) do |pattern_index, caps|
+        captures = caps.to_h
+        name_node = captures["name"]?
+        call_node = captures["call"]?
+        next unless name_node && call_node
 
-          # Pattern 1 is the qualified form; enforce the module allowlist.
-          if pattern_index == 1
-            module_node = captures["module"]?
-            next unless module_node
-            next unless allowed.includes?(Noir::TreeSitter.node_text(module_node, source))
-          end
-
-          name = Noir::TreeSitter.node_text(name_node, source)
-          prefix = extract_url_prefix(call_node, source)
-          results << BlueprintDecl.new(name, prefix, Noir::TreeSitter.node_start_row(name_node))
+        # Pattern 1 is the qualified form; enforce the module allowlist.
+        if pattern_index == 1
+          module_node = captures["module"]?
+          next unless module_node
+          next unless allowed.includes?(Noir::TreeSitter.node_text(module_node, source))
         end
+
+        name = Noir::TreeSitter.node_text(name_node, source)
+        prefix = extract_url_prefix(call_node, source)
+        results << BlueprintDecl.new(name, prefix, Noir::TreeSitter.node_start_row(name_node))
       end
       results
+    end
+
+    # One parse → decorations + blueprints. Preferred entry for adapters
+    # that need both (Flask, Quart, Sanic); result arrays are also
+    # published into the individual memos so a later solo call hits.
+    def extract_decorations_and_blueprints(source : String,
+                                           module_names : Array(String),
+                                           router_names : Array(String)? = nil,
+                                           extra_attributes : Hash(String, String)? = nil) : Tuple(Array(Decoration), Array(BlueprintDecl))
+      deco_tag = decoration_options_tag(router_names, extra_attributes)
+      bp_tag = module_names.join(",")
+      deco_key = ExtractionResultCache.key(source, "decorations", deco_tag)
+      bp_key = ExtractionResultCache.key(source, "blueprints", bp_tag)
+
+      cached_deco = nil.as(Array(Decoration)?)
+      cached_bp = nil.as(Array(BlueprintDecl)?)
+      @@memo_mutex.synchronize do
+        cached_deco = @@decoration_memo[deco_key]?
+        cached_bp = @@blueprint_memo[bp_key]?
+      end
+      return {cached_deco, cached_bp} if cached_deco && cached_bp
+
+      decorations = cached_deco || [] of Decoration
+      blueprints = cached_bp || [] of BlueprintDecl
+      Noir::TreeSitter.parse_python(source) do |root|
+        extract_decorations_from(root, source, router_names, extra_attributes, decorations) unless cached_deco
+        extract_blueprints_from(root, source, module_names, blueprints) unless cached_bp
+      end
+
+      @@memo_mutex.synchronize do
+        unless @@decoration_memo.has_key?(deco_key)
+          @@decoration_memo[deco_key] = decorations
+          @@decoration_order << deco_key
+        end
+        unless @@blueprint_memo.has_key?(bp_key)
+          @@blueprint_memo[bp_key] = blueprints
+          @@blueprint_order << bp_key
+        end
+        decorations = @@decoration_memo[deco_key]
+        blueprints = @@blueprint_memo[bp_key]
+      end
+
+      {decorations, blueprints}
+    end
+
+    private def decoration_options_tag(router_names : Array(String)?,
+                                       extra_attributes : Hash(String, String)?) : String
+      routers = router_names ? router_names.join(",") : "*"
+      extras = if extra_attributes && !extra_attributes.empty?
+                 extra_attributes.to_a.sort_by!(&.first).map { |k, v| "#{k}=#{v}" }.join("&")
+               else
+                 ""
+               end
+      "#{routers}|#{extras}"
     end
 
     # Lazily compiled, cached across all calls. Two patterns keep bare
