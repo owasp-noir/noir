@@ -52,6 +52,23 @@ module Noir
     @@blueprint_memo = Hash(UInt64, Array(BlueprintDecl)).new
     @@blueprint_order = [] of UInt64
     @@memo_mutex = Mutex.new
+    @@clearer_registered = false
+
+    private def ensure_clearer_registered : Nil
+      return if @@clearer_registered
+      @@memo_mutex.synchronize do
+        return if @@clearer_registered
+        ExtractionResultCache.register_clearer do
+          @@memo_mutex.synchronize do
+            @@decoration_memo.clear
+            @@decoration_order.clear
+            @@blueprint_memo.clear
+            @@blueprint_order.clear
+          end
+        end
+        @@clearer_registered = true
+      end
+    end
 
     # Parses `source` and returns every route decoration found.
     #
@@ -68,6 +85,7 @@ module Noir
     def extract_decorations(source : String,
                             router_names : Array(String)? = nil,
                             extra_attributes : Hash(String, String)? = nil) : Array(Decoration)
+      ensure_clearer_registered
       tag = decoration_options_tag(router_names, extra_attributes)
       key = ExtractionResultCache.key(source, "decorations", tag)
       ExtractionResultCache.fetch(@@decoration_memo, @@decoration_order, key, mutex: @@memo_mutex) do
@@ -107,6 +125,7 @@ module Noir
     # without one and the query language can't express "this keyword,
     # if present" cleanly.
     def extract_blueprints(source : String, module_names : Array(String)) : Array(BlueprintDecl)
+      ensure_clearer_registered
       tag = module_names.join(",")
       key = ExtractionResultCache.key(source, "blueprints", tag)
       ExtractionResultCache.fetch(@@blueprint_memo, @@blueprint_order, key, mutex: @@memo_mutex) do
@@ -151,6 +170,7 @@ module Noir
                                            module_names : Array(String),
                                            router_names : Array(String)? = nil,
                                            extra_attributes : Hash(String, String)? = nil) : Tuple(Array(Decoration), Array(BlueprintDecl))
+      ensure_clearer_registered
       deco_tag = decoration_options_tag(router_names, extra_attributes)
       bp_tag = module_names.join(",")
       deco_key = ExtractionResultCache.key(source, "decorations", deco_tag)

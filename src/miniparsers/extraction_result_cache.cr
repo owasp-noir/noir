@@ -84,4 +84,19 @@ module Noir::ExtractionResultCache
       order.clear
     end
   end
+
+  # Registered clear callbacks for typed extractor stores. Invoked at
+  # the start of each scan so a long-lived process (diff mode, repeated
+  # library use) cannot serve memo entries from a previous codebase.
+  @@clearers = [] of -> Nil
+  @@clearers_mutex = Mutex.new
+
+  def register_clearer(&block : -> Nil) : Nil
+    @@clearers_mutex.synchronize { @@clearers << block }
+  end
+
+  def clear_all : Nil
+    clearers = @@clearers_mutex.synchronize { @@clearers.dup }
+    clearers.each(&.call)
+  end
 end

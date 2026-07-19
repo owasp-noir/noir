@@ -153,31 +153,60 @@ DETECTOR_SPECIAL_BASENAMES = Set{
   "swagger.json", "swagger.yaml",
 }
 
-# Build a lookup that turns a path into the list of detector indices
-# whose `applicable?` returns true — without re-walking every detector
-# on every file. Most detectors only inspect extension / basename, so
-# their answers are memoized by a small cache key. Detectors that look
-# at path segments or root placement (`/grails-app/`, vercel.json at
-# base root, …) are classified as path-sensitive and always evaluated
-# against the real path.
-def detector_build_applicable_lookup(detectors : Array(Detector)) : Proc(String, Array(Int32))
-  path_sensitive = [] of Int32
+# Paths that embed directory segments real detectors gate on
+# (`/grails-app/`, `/migrations/`, `/server/api/`, …). Used only to
+# classify path-sensitive detectors — not as production file samples.
+DETECTOR_PATH_SEGMENT_PROBES = [
+  # Extension-free path under grails-app: only matches via the directory
+  # gate (a bare `Foo.groovy` basename is true for other reasons).
+  "proj/grails-app/conf/application",
+  "proj/supabase/migrations/001.sql",
+  "proj/migrations/001.sql",
+  "proj/supabase/config.toml",
+  "proj/server/api/hello.js",
+  "proj/server/routes/hello.js",
+  "proj/pages/api/hello.js",
+  "proj/app/api/hello/route.ts",
+  "proj/routes/+server.ts",
+  "proj/routes/index.dart",
+  "proj/directus/snapshots/snap.json",
+  "proj/wp-content/plugins/x.php",
+  "proj/metadata/databases/tables.yaml",
+  "proj/Magento/module.xml",
+]
+
+# Whether `applicable?` depends on more than the basename (root
+# placement, directory segments, multi-hop path layout). Those
+# detectors must always see the real path in the hot loop.
+def detector_path_sensitive?(detector : Detector) : Bool
   sample_suffixes = [
     ".java", ".js", ".ts", ".tsx", ".rb", ".py", ".go", ".json", ".yml",
     ".yaml", ".xml", ".cs", ".kt", ".php", ".cr", ".rs", ".ex", ".swift",
     ".scala", ".dart", ".groovy", ".pl", ".clj", ".hs", ".lua", ".sql",
     ".toml", ".bru", ".http", ".sbt", ".gradle", ".aspx", ".fs",
   ]
-  # Bare names used to detect "parent must be project root" style checks
-  # (Vercel, Netlify, …) that return true for `name` but false for
-  # `a/b/c/name`.
-  path_probe_basenames = DETECTOR_SPECIAL_BASENAMES.to_a + sample_suffixes.map { |ext| "file#{ext}" }
+  # Bare names: catch "must sit at project root" checks (Vercel,
+  # Package.swift, …) where `name` is true but `a/b/c/name` is false.
+  basenames = DETECTOR_SPECIAL_BASENAMES.to_a + sample_suffixes.map { |ext| "file#{ext}" }
+  basenames.any? do |name|
+    detector.applicable?("a/b/c/#{name}") != detector.applicable?(name)
+  end || DETECTOR_PATH_SEGMENT_PROBES.any? do |probe|
+    # Directory-segment gates: same basename, different path → different
+    # answer (Supabase `/migrations/`, Grails `/grails-app/`, …).
+    detector.applicable?(probe) != detector.applicable?(File.basename(probe))
+  end
+end
 
+# Build a lookup that turns a path into the list of detector indices
+# whose `applicable?` returns true — without re-walking every detector
+# on every file. Most detectors only inspect extension / basename, so
+# their answers are memoized by basename. Detectors that look at path
+# segments or root placement are classified as path-sensitive and
+# always evaluated against the real path.
+def detector_build_applicable_lookup(detectors : Array(Detector)) : Proc(String, Array(Int32))
+  path_sensitive = [] of Int32
   detectors.each_with_index do |detector, idx|
-    sensitive = path_probe_basenames.any? do |name|
-      detector.applicable?("a/b/c/#{name}") != detector.applicable?(name)
-    end
-    path_sensitive << idx if sensitive
+    path_sensitive << idx if detector_path_sensitive?(detector)
   end
 
   path_sensitive_set = Set(Int32).new(path_sensitive)

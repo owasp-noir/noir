@@ -32,6 +32,10 @@ class Analyzer
   # `configured_base_for`; only used on multi-base (monorepo) scans.
   @configured_base_cache = {} of String => String
   @configured_base_cache_mutex = Mutex.new
+  # Guards `@result` mutations from `parallel_analyze` workers.
+  # Fibers can interleave on yield during Array reallocation; concurrent
+  # `result <<` / `result.concat` without a mutex is racy.
+  @result_mutex = Mutex.new
 
   def initialize(options : Hash(String, YAML::Any))
     @base_paths = options["base"].as_a.map(&.to_s)
@@ -51,6 +55,17 @@ class Analyzer
 
   def analyze
     # After inheriting the class, write an action code here.
+  end
+
+  # Thread/fiber-safe append into `@result`. Prefer these helpers from
+  # code paths that run under `parallel_analyze` / `parallel_file_scan`.
+  protected def append_endpoint(endpoint : Endpoint) : Nil
+    @result_mutex.synchronize { @result << endpoint }
+  end
+
+  protected def append_endpoints(endpoints : Array(Endpoint)) : Nil
+    return if endpoints.empty?
+    @result_mutex.synchronize { @result.concat(endpoints) }
   end
 
   # Prefer the detector-populated cache over a fresh disk read. On
