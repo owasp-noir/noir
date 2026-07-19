@@ -67,17 +67,15 @@ module Analyzer::Javascript
     end
 
     protected def process_js_static_dirs(static_dirs : Array(Hash(String, String)), result : Array(Endpoint)) : Nil
-      expanded_files = nil.as(Array(Tuple(String, String))?)
+      # Reuse CodeLocator's once-built expanded file map instead of
+      # re-running File.expand_path + File.directory? across every
+      # static dir (and across every concurrent JS analyzer).
+      files = all_files_expanded
 
       static_dirs.each do |dir|
         root = Noir::PathScope.normalize_root(dir["file_path"])
         static_path = dir["static_path"]
         static_path = static_path[0..-2] if static_path.ends_with?("/") && static_path != "/"
-
-        files = expanded_files ||= all_files.compact_map do |file_path|
-          next if File.directory?(file_path)
-          {file_path, File.expand_path(file_path)}
-        end
 
         files.each do |file_path, expanded_file_path|
           next unless Noir::PathScope.under_normalized_root?(expanded_file_path, root)
