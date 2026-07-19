@@ -315,6 +315,8 @@ end
 
 Noir 는 **single-threaded** 로 빌드됩니다 (`preview_mt` 미사용). `parallel_analyze` 는 OS 스레드가 아니라 cooperative Crystal fiber 를 spawn 합니다. 따라서 여러 fiber 에서 `result << endpoint`, `result.concat(...)` 는 안전한데, `Array#<<` 와 `#concat` 에 yield 지점이 없기 때문입니다. 모든 per-file 분석기가 result 배열에 Mutex 를 쓰지 않는 이유가 여기에 있고, 코드베이스 전반이 그렇게 일관되게 작성되어 있습니다. 나중에 MT 모드를 켜게 되면 동기화는 `parallel_analyze` 레이어에 한 번 추가하면 되는 일이지, 분석기마다 흩어 둘 일이 아닙니다.
 
+#2353 에서 엔진들에 `@result_mutex` 와 `append_endpoint` 헬퍼가 추가되었다가 #2357 에서 다시 제거되었습니다. single-threaded 빌드에서는 발생할 수 없는 race 를 막고 있었고, 일부 엔진에만 적용되어 있었으며, 이 문서와 정면으로 어긋났기 때문입니다. Mutex 를 다시 넣으려 한다면 그 반복을 여는 셈입니다. MT 를 먼저 켜고, 동기화는 `parallel_analyze` 레이어에 한 번만 추가하세요.
+
 ## 다음에 볼 것
 
 - Reference analyzer: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)

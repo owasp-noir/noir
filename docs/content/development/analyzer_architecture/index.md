@@ -314,6 +314,8 @@ See [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split)
 
 Noir is built **single-threaded** (no `preview_mt`). `parallel_analyze` spawns cooperative Crystal fibers, not OS threads, so `result << endpoint` and `result.concat(...)` from multiple fibers are safe because `Array#<<` and `#concat` have no yield points. You'll notice that no per-file analyzer uses a `Mutex` around the result array; that's by design and matches the whole codebase. If noir ever enables MT mode, synchronization belongs at the `parallel_analyze` layer, not scattered across analyzers.
 
+A `@result_mutex` plus `append_endpoint` helpers were added to the engines in #2353 and removed again in #2357: they guarded a race that cannot occur in a single-threaded build, landed in only some engines, and contradicted this note. If you are about to add one, you are re-opening that loop — enable MT first, then synchronize once at the `parallel_analyze` layer.
+
 ## Where to look next
 
 - Reference analyzer: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)
