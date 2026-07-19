@@ -181,25 +181,23 @@ def detector_build_applicable_lookup(detectors : Array(Detector)) : Proc(String,
   end
 
   path_sensitive_set = Set(Int32).new(path_sensitive)
+  # Key by basename, not bare extension: many detectors gate on
+  # basename substrings (`*deploy*.yml`, `*sites*.yaml`) or exact
+  # names (`package.json`). An extension-only key would probe
+  # `file.yml` and drop every basename-qualified match.
   cache = {} of String => Array(Int32)
 
   ->(path : String) do
     base = File.basename(path)
-    key = if DETECTOR_SPECIAL_BASENAMES.includes?(base) || base.count('.') != 1
-            "b:#{base}"
-          else
-            "e:#{File.extname(base)}"
-          end
 
-    cached = cache[key]?
+    cached = cache[base]?
     unless cached
-      probe = key.starts_with?("b:") ? base : "file#{File.extname(base)}"
       idxs = [] of Int32
       detectors.each_with_index do |detector, idx|
         next if path_sensitive_set.includes?(idx)
-        idxs << idx if detector.applicable?(probe)
+        idxs << idx if detector.applicable?(base)
       end
-      cache[key] = idxs
+      cache[base] = idxs
       cached = idxs
     end
 

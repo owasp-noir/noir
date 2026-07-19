@@ -27,7 +27,12 @@ module Detector::Specification
     end
 
     def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+      return false unless filename.ends_with?(".yaml") || filename.ends_with?(".yml")
+
+      # ZAP exports are named *sites* (sites.yml, sites_tree.yaml). The
+      # previous "any YAML" gate made every non-idempotent pass pay a
+      # content probe + occasional YAML parse on unrelated manifests.
+      File.basename(filename).downcase.includes?("sites")
     end
 
     def set_name
