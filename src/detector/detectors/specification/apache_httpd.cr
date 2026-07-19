@@ -30,6 +30,12 @@ module Detector::Specification
       true
     end
 
+    # Memo safety: `applicable?` consults the path
+    # (/nginx/ path exclusion), not just the basename.
+    def path_sensitive? : Bool
+      true
+    end
+
     def applicable?(filename : String) : Bool
       base = File.basename(filename)
       return true if base == HTACCESS

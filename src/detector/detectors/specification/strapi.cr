@@ -35,6 +35,12 @@ module Detector::Specification
       detect_routes(filename, file_contents)
     end
 
+    # Memo safety: `applicable?` consults the path
+    # (/content-types/ gate), not just the basename.
+    def path_sensitive? : Bool
+      true
+    end
+
     def applicable?(filename : String) : Bool
       path = normalize(filename)
       return true if schema_file?(filename)

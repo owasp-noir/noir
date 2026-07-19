@@ -39,6 +39,12 @@ module Detector::Specification
       detect_tables(filename, file_contents)
     end
 
+    # Memo safety: `applicable?` consults the path
+    # (metadata/** directory gate), not just the basename.
+    def path_sensitive? : Bool
+      true
+    end
+
     def applicable?(filename : String) : Bool
       return false unless filename.ends_with?(".yaml") || filename.ends_with?(".yml")
 
