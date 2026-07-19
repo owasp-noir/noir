@@ -10,11 +10,117 @@ module Analyzer::Php
     # file in the project, so the union regex is a straight win.
     ALLOW_PATTERNS_RE = Regex.union(["$_GET", "$_POST", "$_REQUEST", "$_SERVER", "$_COOKIE", "$_FILES", "filter_input"])
 
+    # Directory names that conventionally hold the document root. A
+    # directory only counts as one when it *also* contains an
+    # `index.php` front controller — that requirement is what keeps this
+    # safe: a static-site build output like `docs/public/` ships
+    # `index.html`, never `index.php`, so it is not mistaken for a web
+    # root. (See the warning in `Analyzer#web_root_path` about bare
+    # `public/` / `www/` markers.)
+    WEBROOT_DIR_NAMES = ["public", "webroot", "public_html", "htdocs", "www", "web"]
+
+    # Per document root: {expanded web root, normalized web root}.
+    # Lazily built; fibers are cooperative and nothing here yields, so a
+    # plain memo is safe under `parallel_file_scan`.
+    @php_web_roots : Array(Tuple(String, String))? = nil
+    # Normalized roots of composer-managed projects.
+    @php_managed_roots : Array(String)? = nil
+
+    # Document roots discovered in this scan.
+    #
+    # Framework layouts (Laravel, Slim → `public/`; CakePHP → `webroot/`)
+    # serve exactly one directory; everything else — controllers, config,
+    # `bootstrap/`, `bin/` — is on disk but not addressable over HTTP.
+    # Emitting those as endpoints invents attack surface that does not
+    # exist, which is why they used to be suppressed wholesale by dropping
+    # this analyzer whenever a framework was present.
+    #
+    # Returning an empty list means "no dedicated document root", which is
+    # the correct reading for WordPress and for plain-PHP trees: there the
+    # repository root *is* the web root, so every `.php` really is
+    # reachable and the caller keeps the base-relative behaviour.
+    private def php_web_roots : Array(Tuple(String, String))
+      cached = @php_web_roots
+      return cached if cached
+
+      roots = [] of Tuple(String, String)
+      get_files_by_extension(".php").each do |file|
+        next unless File.basename(file) == "index.php"
+
+        dir = File.dirname(file)
+        next unless WEBROOT_DIR_NAMES.includes?(File.basename(dir).downcase)
+
+        expanded = File.expand_path(dir)
+        next if roots.any? { |existing, _| existing == expanded }
+        roots << {expanded, Noir::PathScope.normalize_root(expanded)}
+      end
+
+      @php_web_roots = roots
+      roots
+    end
+
+    # Roots of composer-managed projects. A `composer.json` means the tree
+    # is an application or library with a defined entry point, not a
+    # directory of directly-served scripts.
+    private def php_managed_roots : Array(String)
+      cached = @php_managed_roots
+      return cached if cached
+
+      roots = [] of String
+      all_files.each do |file|
+        next unless File.basename(file) == "composer.json"
+        normalized = Noir::PathScope.normalize_root(File.dirname(file))
+        roots << normalized unless roots.includes?(normalized)
+      end
+
+      @php_managed_roots = roots
+      roots
+    end
+
+    # URL base for `path`, or nil when the file is not web-servable.
+    #
+    # Three layouts, decided per file so a monorepo can hold all of them:
+    #
+    #   1. Under a document root (`public/`, `webroot/`, …) — servable;
+    #      the URL is relative to that root. This is what keeps a legacy
+    #      `public/upload.php` visible next to a Laravel app.
+    #   2. Inside a composer-managed project but outside its document
+    #      root — not servable. Controllers, `config/`, `bootstrap/` and
+    #      `vendor/` live on disk but are never addressable, and emitting
+    #      them invents attack surface. This is the noise that used to be
+    #      suppressed by dropping the whole analyzer.
+    #   3. Neither — the directory *is* the document root. WordPress and
+    #      plain-PHP trees serve every `.php` where it sits, so the
+    #      original base-relative behaviour is correct and preserved.
+    # Returns {base, path} to hand to `get_relative_path`, or nil.
+    #
+    # Both elements must be in the same shape. Document roots are stored
+    # expanded (they are discovered via `File.expand_path`), while `path`
+    # arrives however the scan base was given — relative for `-b spec/...`.
+    # Mixing the two silently fails to strip the prefix and emits the whole
+    # path as the URL, so the doc-root branch pairs the expanded root with
+    # the expanded path, and the fallback keeps both as-given.
+    private def php_url_base_for(path : String) : Tuple(String, String)?
+      expanded = File.expand_path(path)
+
+      if inside = php_web_roots.find { |_, web_root| Noir::PathScope.under_normalized_root?(expanded, web_root) }
+        return {inside[0], expanded}
+      end
+
+      return if php_managed_roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
+
+      {php_base_path_for(path), path}
+    end
+
     def analyze_file(path : String) : Array(Endpoint)
       return [] of Endpoint unless File.extname(path) == ".php"
 
+      resolved = php_url_base_for(path)
+      return [] of Endpoint unless resolved
+      url_base, url_path = resolved
+
       endpoints = [] of Endpoint
-      relative_path = get_relative_path(php_base_path_for(path), path)
+      relative_path = get_relative_path(url_base, url_path)
       include_callee = callees_needed?
 
       content = read_file_content(path)

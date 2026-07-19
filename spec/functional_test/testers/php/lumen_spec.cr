@@ -27,6 +27,10 @@ FunctionalTester.new("fixtures/php/lumen/", {
 describe "Lumen analyzer filter" do
   it "drops php_laravel when php_lumen is detected so the redundant pass is skipped" do
     techs = ["php_lumen", "php_laravel", "php_pure"]
-    filter_redundant_generic_techs(techs).should eq ["php_lumen"]
+    # php_pure is deliberately kept: it resolves URLs against the document
+    # root now, so it no longer floods framework scans and can still find a
+    # legacy script sitting inside `public/` (#2358). Only the redundant
+    # framework-vs-framework pass is dropped.
+    filter_redundant_generic_techs(techs).should eq ["php_lumen", "php_pure"]
   end
 end

@@ -271,26 +271,15 @@ end
 def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   filtered = techs.dup
 
-  php_frameworks = Set{
-    "php_laravel",
-    "php_lumen",
-    "php_symfony",
-    "php_cakephp",
-    "php_codeigniter",
-    "php_hyperf",
-    "php_laminas",
-    "php_mautic",
-    "php_slim",
-    "php_thinkphp",
-    "php_wordpress",
-    "php_drupal",
-    "php_magento",
-    "php_yii",
-  }
-
-  if filtered.includes?("php_pure") && filtered.any? { |tech| php_frameworks.includes?(tech) }
-    filtered.reject!("php_pure")
-  end
+  # NOTE: `php_pure` is deliberately NOT dropped when a framework is
+  # present. It used to be, because it emitted every `.php` file in the
+  # tree as an endpoint and drowned framework scans in paths that are not
+  # web-reachable (`/config/app.php`, `/app/Models/User.php`). That was a
+  # workaround for a defect in the analyzer, and it cost real findings: a
+  # legacy script inside the document root — `public/upload.php` beside a
+  # Laravel app — vanished with it. `Analyzer::Php::Php` now resolves URLs
+  # against the document root, so the noise is gone at the source and the
+  # generic analyzer can run alongside the framework one. See #2358.
 
   # Same shape as php_pure: a CFML framework owns its route table, so the
   # generic `.cfm`/`remote`-method analyzer is redundant noise once one is

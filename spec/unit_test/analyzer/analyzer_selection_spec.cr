@@ -2,9 +2,14 @@ require "../../spec_helper"
 require "../../../src/analyzer/analyzer.cr"
 
 describe "filter_redundant_generic_techs" do
-  it "drops php_pure when a framework-specific php analyzer is present" do
-    filter_redundant_generic_techs(["php_pure", "php_laravel"]).should eq(["php_laravel"])
-    filter_redundant_generic_techs(["php_symfony", "php_pure"]).should eq(["php_symfony"])
+  # php_pure used to be dropped here whenever a PHP framework was detected,
+  # because it emitted every `.php` file as an endpoint. It now resolves URLs
+  # against the document root, so the noise is gone at the source and the rule
+  # was removed — keeping it would still lose a legacy script living inside
+  # `public/` next to a framework app (#2358).
+  it "keeps php_pure when a framework-specific php analyzer is present" do
+    filter_redundant_generic_techs(["php_pure", "php_laravel"]).should eq(["php_pure", "php_laravel"])
+    filter_redundant_generic_techs(["php_symfony", "php_pure"]).should eq(["php_symfony", "php_pure"])
   end
 
   it "keeps php_pure when no framework-specific php analyzer is present" do
