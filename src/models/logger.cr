@@ -5,7 +5,10 @@ lib LibC
 end
 
 class NoirLogger
-  SPINNER_FRAMES      = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+  # Frame delay. `sleep` (fiber-aware) rather than `LibC.usleep`, which
+  # would block the whole scheduler now that the spinner is a fiber.
+  SPINNER_INTERVAL    = 60.milliseconds
   SHIMMER_COLORS      = [159, 255, 250, 247, 245]
   SHIMMER_BAND_RADIUS = SHIMMER_COLORS.size - 1
 
@@ -79,7 +82,16 @@ class NoirLogger
     @spinner_active = true
     @stdout_busy.set(0_i8)
 
-    thread = Thread.new do
+    # Must be a fiber, not a `Thread`. Crystal 1.21 requires every thread
+    # that touches the scheduler to belong to an execution context, and a
+    # bare `Thread.new` has none — the `STDERR.print`/`flush` inside
+    # `render_spinner` then aborts the process with
+    # "Thread#execution_context cannot be nil (NilAssertionError)".
+    # Only reproducible on a TTY, because that is the sole condition under
+    # which `spinner_enabled?` is true.
+    finished = Channel(Nil).new
+
+    spawn do
       index = 0
       while stop.get == 0_i8
         # Non-blocking lock try
@@ -89,23 +101,26 @@ class NoirLogger
           index += 1
           @stdout_busy.set(0_i8)
         end
-        LibC.usleep(60000_u32)
+        sleep SPINNER_INTERVAL
       end
 
       # Spin-acquire for final cleanup
       while @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)[1] == false
-        LibC.usleep(100_u32)
+        Fiber.yield
       end
       clear_spinner_line
       @spinner_active = false
       @stdout_busy.set(0_i8)
+      finished.send(nil)
     end
 
     begin
       yield
     ensure
       stop.set(1_i8)
-      thread.join
+      # Wait for the frame loop to clear its line before returning, so the
+      # next writer doesn't land on top of a half-drawn spinner.
+      finished.receive
     end
   end
 
