@@ -62,6 +62,7 @@ module Analyzer::Cfml
     private BYTE_CLOSE_BRACKET = ']'.ord.to_u8
     private BYTE_DQUOTE        = '"'.ord.to_u8
     private BYTE_SQUOTE        = '\''.ord.to_u8
+    private BYTE_BACKSLASH     = '\\'.ord.to_u8
 
     # Route registrations are statements. An identifier as generic as
     # `get` or `delete` also appears inside expressions
@@ -158,10 +159,17 @@ module Analyzer::Cfml
       current = String::Builder.new
       depth = 0
       quote = nil.as(Char?)
+      escape = false
 
       raw.each_char do |char|
         if quote
-          quote = nil if char == quote
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            quote = nil
+          end
           current << char
           next
         end
@@ -257,12 +265,24 @@ module Analyzer::Cfml
       position = start
       size = bytes.size
       quote = 0_u8
+      escape = false
 
       while position < size
         byte = bytes[position]
 
         if quote != 0_u8
-          quote = 0_u8 if byte == quote
+          if escape
+            escape = false
+          elsif byte == BYTE_BACKSLASH
+            escape = true
+          elsif byte == quote
+            if position + 1 < size && bytes[position + 1] == quote
+              position += 2
+              next
+            else
+              quote = 0_u8
+            end
+          end
         elsif byte == BYTE_DQUOTE || byte == BYTE_SQUOTE
           quote = byte
         elsif byte == open_byte
@@ -338,12 +358,26 @@ module Analyzer::Cfml
       io = String::Builder.new(content.bytesize)
       index = 0
       quote = nil.as(Char?)
+      escape = false
 
       while index < size
         char = chars[index]
 
         if quote
-          quote = nil if char == quote
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            if index + 1 < size && chars[index + 1] == quote
+              io << char
+              io << chars[index + 1]
+              index += 2
+              next
+            else
+              quote = nil
+            end
+          end
           io << char
           index += 1
           next
@@ -407,10 +441,28 @@ module Analyzer::Cfml
     # the header mid-value and silently dropped every tokenised route.
     private def attributes_before_body(window : String) : String
       quote = nil.as(Char?)
+      escape = false
+      chars = window.chars
+      size = chars.size
+      index = 0
 
-      window.each_char_with_index do |char, index|
+      while index < size
+        char = chars[index]
+
         if quote
-          quote = nil if char == quote
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            if index + 1 < size && chars[index + 1] == quote
+              index += 2
+              next
+            else
+              quote = nil
+            end
+          end
+          index += 1
           next
         end
 
@@ -418,6 +470,7 @@ module Analyzer::Cfml
         when '"', '\'' then quote = char
         when '{'       then return window[0...index]
         end
+        index += 1
       end
 
       window

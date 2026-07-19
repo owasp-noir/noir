@@ -15,6 +15,7 @@ component extends="framework.one" {
 
 			// `hint` labels the entry; only the second key is a route.
 			{ 'hint' = 'Standard Route', '$GET/old/path' = '/new/path' },
+			{ 'hint' = "Standard \" Route, with comma", '$GET/escaped/comma' = '/new/path' },
 
 			// Expands per the framework's resourceRouteTemplates.
 			{ 'hint' = 'Resource Routes', '$RESOURCES' = 'dogs' }

@@ -20,6 +20,7 @@ expected_endpoints = [
   # `hint` labels the entry rather than declaring a route, but the
   # route beside it still counts.
   Endpoint.new("/old/path", "GET"),
+  Endpoint.new("/escaped/comma", "GET"),
 
   # `$RESOURCES` expands per framework/one.cfc's resourceRouteTemplates.
   # There is no `edit` route — FW/1 differs from Rails here.
