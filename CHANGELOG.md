@@ -2,26 +2,41 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
-## Unreleased
+## v1.2.0
+
+Noir v1.2.0 broadens attack-surface coverage beyond web frameworks — CLI applications, built-in HTTP servers, schema-generated platforms, and enterprise legacy stacks — and lands a codebase-wide performance sweep across every supported language.
 
 ### Added
-- **Schema-generated API analyzers**: headless CMS and BaaS platforms derive their HTTP surface from a schema file rather than from route declarations in source, so no source-level analyzer could see them. Attribute definitions become params, not just endpoints.
-  - **Strapi**: content-type schemas (`src/api/*/content-types/*/schema.json`) expand into the generated `/api/<pluralName>` CRUD routes (single types into `/api/<singularName>`), with attributes as `data.<name>` body params and `filters[<attr>][$eq]` query params. Custom routes in `src/api/*/routes/*.{ts,js}` are mounted under the same prefix. Strapi v4+.
-  - **Directus**: `snapshot.yaml` / `.json` schema snapshots expand into `/items/<collection>` CRUD, singletons into `/items/<collection>/singleton`, skipping `directus_*` system collections and UI-only folder collections.
-  - **Payload CMS**: `CollectionConfig` / `GlobalConfig` declarations expand into `/api/<slug>` CRUD, `/api/globals/<slug>`, plus the auth and versions route families when those flags are set, and any custom `endpoints`. Layout wrappers (`row`, `collapsible`, `tabs`) are hoisted so body params match the stored document.
-  - **Supabase / PostgREST**: `supabase/migrations/*.sql` are applied in order (including `ALTER TABLE` add/drop/rename) to derive `/rest/v1/<table>` with columns as both query filters and body params, `POST /rest/v1/rpc/<function>`, and read-only views. Only exposed schemas are emitted.
-  - **Hasura**: tracked tables in `metadata/` become GraphQL root fields on `POST /v1/graphql` using the existing SDL analyzer's fragment-URL convention (`/v1/graphql#Query.movies`); `metadata/rest_endpoints.yaml` becomes `/api/rest/<url>`. Both the flat `tables.yaml` and the CLI v3 per-table layout are supported.
-  - **Appwrite**: `appwrite.json` / `appwrite.config.json` expand into collection document, function execution and storage bucket endpoints, covering both the legacy `collections`/`documents` and the 1.6+ `tables`/`rows` vocabularies.
-- New specification analyzer: `.http` / `.rest` request files (VS Code REST Client and JetBrains HTTP Client), extracting endpoints, methods, and query/path/body/header parameters. `{{var}}` placeholders resolve from in-file `@name = value` definitions and are otherwise surfaced as path parameters; JetBrains `> {% ... %}` response-handler blocks are skipped.
-- Python: Django Ninja analyzer. Resolves the URLconf mount prefix (`path("api/", api.urls)` / `re_path(...)`), `@api.<verb>` / `@api.api_operation([...])` operations, `add_router(...)` (router objects, module-attribute references, and dotted-string module paths), path-param converters (`{int:item_id}`), `ninja.Schema` request bodies, and `Query`/`Path`/`Body`/`Form`/`File`/`Header`/`Cookie` parameters, with callee extraction.
-- **Terraform analyzer**: extracts HTTP endpoints from Terraform / OpenTofu configurations (`.tf` HCL and `.tf.json`) that declare AWS API Gateway routes — API Gateway v2 (`aws_apigatewayv2_route` route keys) and API Gateway v1 REST resource/method graphs, resolved module-wide across files.
-- New PHP CMS/platform analyzers:
-  - **WordPress**: REST API routes (`register_rest_route` → `/wp-json/...`, including `WP_REST_Server` method constants and `(?P<id>...)` path params), plus admin-ajax (`wp_ajax_`/`wp_ajax_nopriv_`) and admin-post (`admin_post_`/`admin_post_nopriv_`) action endpoints.
-  - **Drupal**: `*.routing.yml` route declarations (path, methods, path parameters) for Drupal 8+.
-  - **Magento**: Web API REST routes (`etc/webapi.xml` → `/rest/...`) and MVC controller routes (`etc/{area}/routes.xml` frontName + `Controller/.../Action.php`, with `Http{Verb}ActionInterface` method detection).
+- **CLI application endpoints**: detect command-line attack surface (argv, flags, environment variables) as endpoints across 17 languages and 40+ CLI libraries (Cobra, Click, clap, Commander, Thor, picocli, Spectre.Console, and more).
+- **Built-in web server analyzers**: stdlib HTTP servers for Go (`net/http`), Python (`http.server`), Node (`node:http`), Java (`com.sun.net.httpserver`), C# (`HttpListener`), Ruby (WEBrick), Crystal (`HTTP::Server`), Dart (`dart:io`), and Zig (`std.http.Server`).
+- **Schema-generated API analyzers**: Strapi, Directus, Payload CMS, Supabase/PostgREST, Hasura, and Appwrite — platforms that derive their HTTP surface from schema files rather than source-level routes, with attribute definitions expanded into params.
+- **Enterprise legacy stacks**: CFML/ColdFusion, Classic ASP, and ASP.NET WebForms, plus the CFML frameworks Taffy, ColdBox, Wheels, and FW/1.
+- **BEAM languages**: Erlang (Cowboy, Elli) and Gleam (Wisp).
+- New PHP CMS/platform analyzers: WordPress (REST API, admin-ajax, admin-post), Drupal (`*.routing.yml`), and Magento (Web API + MVC controller routes).
+- New framework analyzers: Django Ninja (Python) and Plumber (R).
+- **Terraform / OpenTofu analyzer**: AWS API Gateway v1/v2 routes from `.tf` HCL and `.tf.json`, resolved module-wide.
+- Realtime/event endpoint detection for SignalR, Socket.IO, Phoenix Channels, and Action Cable.
+- New specification analyzers: OpenRPC service descriptions, and `.http` / `.rest` request files (VS Code REST Client, JetBrains HTTP Client).
+- Machine-readable output for `noir list` and documented `noir cache purge`.
+- Added Claude Sonnet 5, Grok 4.5, and GPT-5.6 to the AI provider token map.
+
+### Changed
+- Redesigned the HTML report (`-f html`) as a dark-tech theme with semantic method/severity colors, path grouping, table view, and copy URL/curl actions.
+- Rebuilt the documentation site around the project's own film-noir artwork.
+
+### Performance
+- Codebase-wide analyzer and detector sweep across all 24 language groups: eliminated O(n²) non-ASCII character scans, collapsed chained `includes?` gates into precompiled `Regex.union`, memoized interpolated regexes, and routed file reads through the content cache. Large wins on real projects (e.g. F#/Giraffe 31.7s → 1.1s, Servant 101s → 4ms).
+- Guarded specification detectors before YAML/JSON parsing and memoized `applicable?` by extension/basename.
+- Memoized tree-sitter extraction results and consolidated multi-pass pre-scans into single-parse surfaces.
 
 ### Fixed
-- macOS release binaries are now shipped as portable `.tar.gz` archives with bundled OpenSSL libraries, instead of a bare executable linked against Homebrew `openssl@1.1` that failed to launch on clean machines (`dyld: libssl.1.1.dylib not found`).
+- Fixed a wide class of byte-vs-char offset bugs on non-ASCII sources, plus allocation-free line counting.
+- Robustness and correctness fixes across the `noir config`, `rules`, `cache`, `list`, and completion subcommands.
+- Fidelity and render fixes for the Mermaid mindmap output format.
+- Made endpoint ordering deterministic across machines and ran the log spinner as a fiber instead of a bare thread.
+- macOS release binaries now ship as portable `.tar.gz` archives with bundled OpenSSL, instead of a bare executable linked against Homebrew `openssl@1.1` that failed to launch on clean machines.
+- GitHub Action entrypoint CI coverage, robust image-tag resolution, and injection-safe examples.
+- Improved Java, Go, Python, Ruby, Kotlin, Rust (Axum), and tRPC v9 route accuracy.
 
 ## v1.1.0
 
