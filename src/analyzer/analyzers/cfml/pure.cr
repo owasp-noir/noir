@@ -1,5 +1,4 @@
-require "../../../models/analyzer"
-require "../../../utils/utils.cr"
+require "../../engines/cfml_engine"
 
 module Analyzer::Cfml
   # Plain CFML (ColdFusion / Lucee / BoxLang) attack surface.
@@ -17,7 +16,7 @@ module Analyzer::Cfml
   # Wheels `config/routes.cfm`, FW/1 `variables.framework.routes`) are
   # deliberately out of scope here — they warrant their own techs so the
   # generic analyzer isn't the thing that decides framework semantics.
-  class Pure < Analyzer
+  class Pure < CfmlEngine
     # Only unambiguous web-root directory names. Bare `public/` and
     # `www/` were tried and dropped: they collide with build output such
     # as `docs/public/`, the same false positive `FileHelper` documents.
@@ -33,13 +32,6 @@ module Analyzer::Cfml
     # Auto-run lifecycle includes, not requestable pages — the CFML
     # analogue of `global.asa`.
     LIFECYCLE_PAGES = Set{"application.cfm", "onrequestend.cfm"}
-
-    # `<cffunction ...>` / `<cfargument ...>` may span lines and align
-    # their `=` with padding, so attributes are matched with `\s*=\s*`
-    # and the tag body is scanned with `[\s\S]*?`.
-    CFFUNCTION_TAG_RE = /<cffunction\b([\s\S]*?)>/i
-    CFARGUMENT_TAG_RE = /<cfargument\b([\s\S]*?)>/i
-    TAG_ATTR_RE       = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/
 
     # Script syntax has two spellings of the same thing. The prefix form
     # is matched loosely and its argument list is delimited by real paren
@@ -82,32 +74,18 @@ module Analyzer::Cfml
     # and flipping the page to POST. Script bodies are blanked, except
     # `#...#` spans, because CFML genuinely interpolates server values
     # into JS (`var id = #url.id#;`).
-    SCRIPT_BLOCK_RE   = /(<script\b[^>]*>)([\s\S]*?)(<\/script>)/i
-    INTERPOLATION_RE  = /#[^#\n]+#/
-    TEST_COMPONENT_RE = /.+(?:Test|Spec)\.cfc\z/i
-
-    # Byte constants for the comment stripper and paren matcher. All are
-    # ASCII, so they can never collide with a UTF-8 continuation byte.
-    private BYTE_LT          = '<'.ord.to_u8
-    private BYTE_BANG        = '!'.ord.to_u8
-    private BYTE_DASH        = '-'.ord.to_u8
-    private BYTE_GT          = '>'.ord.to_u8
-    private BYTE_NEWLINE     = '\n'.ord.to_u8
-    private BYTE_OPEN_PAREN  = '('.ord.to_u8
-    private BYTE_CLOSE_PAREN = ')'.ord.to_u8
+    SCRIPT_BLOCK_RE  = /(<script\b[^>]*>)([\s\S]*?)(<\/script>)/i
+    INTERPOLATION_RE = /#[^#\n]+#/
 
     def analyze
-      components = get_files_by_extension(".cfc").reject { |path| test_path?(path) }
-      pages = (get_files_by_extension(".cfm") + get_files_by_extension(".cfml"))
-        .uniq
-        .reject { |path| test_path?(path) || LIFECYCLE_PAGES.includes?(File.basename(path).downcase) }
+      pages = cfml_pages.reject { |path| LIFECYCLE_PAGES.includes?(File.basename(path).downcase) }
 
-      parallel_analyze(components) do |path|
-        analyze_component(path) unless File.directory?(path)
+      parallel_analyze(cfml_components) do |path|
+        analyze_component(path)
       end
 
       parallel_analyze(pages) do |path|
-        analyze_page(path) unless File.directory?(path)
+        analyze_page(path)
       end
 
       @result
@@ -144,22 +122,6 @@ module Analyzer::Cfml
         params = tag_arguments(content, tag_end)
         emit_remote(path, base_url, name, params, line_number_for_index(content, match.begin(0) || 0), seen)
       end
-    end
-
-    # `<cfargument>` tags belong to the function they follow, so scan
-    # only up to the matching `</cffunction>` (or the next `<cffunction`
-    # when the closing tag is missing).
-    private def tag_arguments(content : String, from : Int32) : Array(String)
-      close = content.index(/<\/cffunction>/i, from)
-      next_fn = content.index(/<cffunction\b/i, from)
-      stop = [close, next_fn].compact.min? || content.size
-
-      names = [] of String
-      content[from...stop].scan(CFARGUMENT_TAG_RE) do |arg|
-        arg_name = tag_attributes(arg[1])["name"]?
-        names << arg_name if arg_name && !arg_name.empty?
-      end
-      names
     end
 
     private def extract_script_remote_methods(content : String, path : String, base_url : String, seen : Set(String))
@@ -271,141 +233,6 @@ module Analyzer::Cfml
       return true if path.includes?("/tests/") || path.includes?("/test/")
 
       File.basename(path).matches?(TEST_COMPONENT_RE)
-    end
-
-    private def tag_attributes(raw : String) : Hash(String, String)
-      attrs = {} of String => String
-      raw.scan(TAG_ATTR_RE) do |match|
-        attrs[match[1].downcase] = match[2]? || match[3]? || ""
-      end
-      attrs
-    end
-
-    # Split a script-syntax signature into argument names. Handles
-    # `name`, `type name`, `required type name`, and `type name="default"`;
-    # commas inside a default value are skipped by tracking nesting.
-    private def script_arguments(raw : String) : Array(String)
-      names = [] of String
-      split_arguments(raw).each do |chunk|
-        declaration = chunk.split('=').first.strip
-        next if declaration.empty?
-
-        name = declaration.split(/\s+/).last?
-        next if name.nil? || !name.matches?(/\A[A-Za-z_]\w*\z/)
-
-        names << name
-      end
-      names
-    end
-
-    private def split_arguments(raw : String) : Array(String)
-      chunks = [] of String
-      current = String::Builder.new
-      depth = 0
-      quote = nil.as(Char?)
-
-      raw.each_char do |char|
-        if quote
-          quote = nil if char == quote
-          current << char
-          next
-        end
-
-        case char
-        when '"', '\''
-          quote = char
-          current << char
-        when '(', '[', '{'
-          depth += 1
-          current << char
-        when ')', ']', '}'
-          depth -= 1
-          current << char
-        when ','
-          if depth == 0
-            chunks << current.to_s
-            current = String::Builder.new
-          else
-            current << char
-          end
-        else
-          current << char
-        end
-      end
-
-      chunks << current.to_s
-      chunks.map(&.strip).reject(&.empty?)
-    end
-
-    private def paren_content(content : String, open_paren : Int32) : String?
-      close = matching_paren(content, open_paren)
-      close ? content[(open_paren + 1)...close] : nil
-    end
-
-    # Byte scan rather than `String#[](Int)`, which is O(n) per access on
-    # strings holding multi-byte characters and would make this O(n^2) —
-    # the same trap `PhpEngine#find_matching_php_close_brace` documents
-    # after CJK-commented sources hung the PHP analyzer.
-    private def matching_paren(content : String, open_paren : Int32) : Int32?
-      bytes = content.to_slice
-      start = content.char_index_to_byte_index(open_paren)
-      return unless start && start < bytes.size && bytes[start] == BYTE_OPEN_PAREN
-
-      depth = 0
-      position = start
-      size = bytes.size
-
-      while position < size
-        case bytes[position]
-        when BYTE_OPEN_PAREN then depth += 1
-        when BYTE_CLOSE_PAREN
-          depth -= 1
-          return content.byte_index_to_char_index(position) if depth == 0
-        end
-        position += 1
-      end
-
-      nil
-    end
-
-    # Strip `<!--- ... --->` blocks. CFML comments nest, and a file may
-    # be almost entirely comment (MasaCMS opens every file with a ~70
-    # line licence header, sometimes closing on the same line as real
-    # code), so this cannot be line-oriented. Newlines inside comments
-    # are preserved so reported line numbers stay accurate.
-    private def strip_cfml_comments(content : String) : String
-      return content unless content.includes?("<!---")
-
-      bytes = content.to_slice
-      size = bytes.size
-      io = IO::Memory.new(size)
-      index = 0
-      depth = 0
-
-      while index < size
-        if index + 4 < size && bytes[index] == BYTE_LT && bytes[index + 1] == BYTE_BANG &&
-           bytes[index + 2] == BYTE_DASH && bytes[index + 3] == BYTE_DASH && bytes[index + 4] == BYTE_DASH
-          depth += 1
-          # Advance to the final dash of the opener, not past it: engines
-          # accept `<!----->`, where the closer overlaps the opener on
-          # that shared dash. Consuming all five stranded the `-->` tail
-          # and silently discarded the rest of the file.
-          index += 4
-        elsif depth > 0 && index + 3 < size && bytes[index] == BYTE_DASH && bytes[index + 1] == BYTE_DASH &&
-              bytes[index + 2] == BYTE_DASH && bytes[index + 3] == BYTE_GT
-          depth -= 1
-          index += 4
-        else
-          if depth == 0
-            io.write_byte(bytes[index])
-          elsif bytes[index] == BYTE_NEWLINE
-            io.write_byte(BYTE_NEWLINE)
-          end
-          index += 1
-        end
-      end
-
-      io.to_s
     end
   end
 end
