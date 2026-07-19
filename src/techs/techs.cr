@@ -209,6 +209,24 @@ module NoirTechs
         :websocket   => false,
       },
     },
+    :cfml_taffy => {
+      :framework => "Taffy",
+      :language  => "CFML",
+      :similar   => ["taffy", "cfml-taffy", "cfml_taffy", "coldfusion-taffy"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
     :cfml_pure => {
       :framework => "ColdFusion (CFML)",
       :language  => "CFML",
