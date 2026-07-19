@@ -51,7 +51,9 @@ describe "EndpointOptimizer" do
       ]
 
       result = optimizer.optimize_endpoints(endpoints)
-      result.map(&.method).should eq(["GET", "POST"])
+      # Assert the set, not the sequence: `optimize_endpoints` orders by
+      # source location, which these path-less fixtures don't have.
+      result.map(&.method).sort!.should eq(["GET", "POST"])
     end
 
     it "deduplicates endpoints whose methods differ only in case" do
@@ -180,7 +182,9 @@ describe "EndpointOptimizer" do
         result = optimizer.optimize_endpoints([endpoint_a, endpoint_b])
 
         result.size.should eq(1)
-        result[0].details.code_paths.map(&.path).should eq([static_a, static_b])
+        # Both module paths must survive the merge; their order follows
+        # the source-location sort, so compare as a set.
+        result[0].details.code_paths.map(&.path).sort!.should eq([static_a, static_b].sort)
       ensure
         FileUtils.rm_rf(temp_dir) if Dir.exists?(temp_dir)
       end
@@ -586,8 +590,7 @@ describe "EndpointOptimizer" do
       ]
 
       result = optimizer.optimize_endpoints(endpoints)
-      result[0].url.should eq("/api/users")
-      result[1].url.should eq("/api/data")
+      result.map(&.url).sort!.should eq(["/api/data", "/api/users"])
     end
 
     it "does not corrupt absolute URLs while normalizing slashes" do
@@ -913,17 +916,20 @@ describe "EndpointOptimizer" do
       result.size.should eq(2)
 
       # URLs should be combined with target URL
-      result[0].url.should contain("https://api.example.com")
-      result[1].url.should contain("https://api.example.com")
+      result.all?(&.url.includes?("https://api.example.com")).should be_true
 
-      # Parameters should be extracted
-      result[0].params.size.should eq(1)
-      result[0].params[0].name.should eq("id")
-      result[0].params[0].param_type.should eq("path")
+      # Parameters should be extracted. Look endpoints up by URL rather
+      # than by index — ordering follows the source-location sort.
+      users = result.find!(&.url.includes?("/users/"))
+      posts = result.find!(&.url.includes?("/posts/"))
 
-      result[1].params.size.should eq(1)
-      result[1].params[0].name.should eq("post_id")
-      result[1].params[0].param_type.should eq("path")
+      users.params.size.should eq(1)
+      users.params[0].name.should eq("id")
+      users.params[0].param_type.should eq("path")
+
+      posts.params.size.should eq(1)
+      posts.params[0].name.should eq("post_id")
+      posts.params[0].param_type.should eq("path")
     end
   end
 end
