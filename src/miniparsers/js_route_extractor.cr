@@ -692,6 +692,107 @@ module Noir
       HTTP_SERVER_LIBRARY_MARKERS.none? { |m| content.includes?(m) }
     end
 
+    # Import markers for the five frameworks whose analyzers call
+    # `extract_routes` directly and therefore share its framework-agnostic
+    # verb-chaining shape (`.get(`/`.post(`/...). Keyed by the same Symbol
+    # each analyzer passes to `other_shared_extractor_framework?` below.
+    SHARED_EXTRACTOR_FRAMEWORK_MARKERS = {
+      :express => [
+        "from \"express\"", "from 'express'",
+        "require(\"express\")", "require('express')",
+      ],
+      :fastify => [
+        "from \"fastify\"", "from 'fastify'",
+        "require(\"fastify\")", "require('fastify')",
+        "from \"fastify-plugin\"", "from 'fastify-plugin'",
+        "require(\"fastify-plugin\")", "require('fastify-plugin')",
+        "from \"@fastify/", "from '@fastify/",
+        "require(\"@fastify/", "require('@fastify/",
+      ],
+      :koa => [
+        "from \"koa\"", "from 'koa'",
+        "require(\"koa\")", "require('koa')",
+        "from \"koa-router\"", "from 'koa-router'",
+        "require(\"koa-router\")", "require('koa-router')",
+        "from \"@koa/router\"", "from '@koa/router'",
+        "require(\"@koa/router\")", "require('@koa/router')",
+      ],
+      :hono => [
+        "from \"hono\"", "from 'hono'",
+        "require(\"hono\")", "require('hono')",
+        "from \"hono/", "from 'hono/",
+      ],
+      :restify => [
+        "from \"restify\"", "from 'restify'",
+        "require(\"restify\")", "require('restify')",
+        "from \"restify-router\"", "from 'restify-router'",
+        "require(\"restify-router\")", "require('restify-router')",
+      ],
+    }
+
+    # Sibling JS/TS server frameworks that DON'T call `extract_routes`
+    # (NestJS uses decorators, Hapi/Elysia/AdonisJS have their own
+    # tree-sitter extractors) but whose files are still walked by every
+    # JS/TS analyzer's `parallel_file_scan`. These markers are exclusion-
+    # only: recognizing "this file belongs to NestJS" keeps Express/
+    # Fastify/Koa/Hono/Restify from re-extracting a route-shaped call
+    # (an inline example, a raw `app.use()` bridge, ...) out of it.
+    OTHER_FRAMEWORK_MARKERS = {
+      :nestjs => [
+        "from \"@nestjs/", "from '@nestjs/",
+        "require(\"@nestjs/", "require('@nestjs/",
+      ],
+      :hapi => [
+        "from \"@hapi/hapi\"", "from '@hapi/hapi'",
+        "require(\"@hapi/hapi\")", "require('@hapi/hapi')",
+        "from \"hapi\"", "from 'hapi'",
+        "require(\"hapi\")", "require('hapi')",
+      ],
+      :elysia => [
+        "from \"elysia\"", "from 'elysia'",
+        "require(\"elysia\")", "require('elysia')",
+      ],
+      :adonisjs => [
+        "from \"@adonisjs/", "from '@adonisjs/",
+        "require(\"@adonisjs/", "require('@adonisjs/",
+        "from \"@ioc:Adonis/", "from '@ioc:Adonis/",
+      ],
+    }
+
+    # True when `content` carries definitive import evidence of a
+    # *different* shared-extractor (or sibling) framework than
+    # `framework`, with no evidence of `framework` itself. Guards the main
+    # `extract_routes` call in Express/Fastify/Koa/Hono/Restify's
+    # analyzers: a file that only imports 'hono' should never be
+    # re-attributed to js_express just because its `.get()/.post()`
+    # chaining looks the same as Express's (issue #2368) — whichever
+    # analyzer runs over it first no longer matters once #2367 made the
+    # dedup tiebreak deterministic, because the over-matching analyzer
+    # never produces a competing endpoint in the first place.
+    #
+    # Files with no shared-extractor/sibling import at all (a router
+    # module that only receives `app`/`router` as a bare parameter, with
+    # no import in that file) return false here and fall through to the
+    # existing, permissive whole-tree scan — there's no import to
+    # disambiguate on, so narrowing further is left as follow-up scope
+    # (a confirmed package.json dependency or cross-file mount signal
+    # would be needed to resolve those).
+    def self.other_shared_extractor_framework?(content : String, framework : Symbol) : Bool
+      own_markers = SHARED_EXTRACTOR_FRAMEWORK_MARKERS[framework]
+      return false if own_markers.any? { |m| content.includes?(m) }
+
+      SHARED_EXTRACTOR_FRAMEWORK_MARKERS.each do |other, markers|
+        next if other == framework
+        return true if markers.any? { |m| content.includes?(m) }
+      end
+
+      OTHER_FRAMEWORK_MARKERS.each do |_, markers|
+        return true if markers.any? { |m| content.includes?(m) }
+      end
+
+      false
+    end
+
     def self.attach_callees(endpoint : Endpoint,
                             callees_by_route : Hash(String, Array(JSCalleeExtractor::Entry)),
                             method : String,

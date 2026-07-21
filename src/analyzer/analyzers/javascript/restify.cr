@@ -12,6 +12,7 @@ module Analyzer::Javascript
         begin
           content = read_file_content(path)
           next if client_library_file?(content)
+          next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :restify)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
