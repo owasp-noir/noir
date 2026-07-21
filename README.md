@@ -32,7 +32,7 @@ The inventory feeds three audiences:
 
 - **Human reviewers.** Security engineers and code auditors get a focused list of attacker-reachable entrypoints — paths, parameters, source files, tags — instead of skimming the whole repo.
 - **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include callee` for 1-hop callees, `--ai-context` for guards, sinks, validators, and signals).
-- **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
+- **DAST tools.** ZAP, Burp Suite, Caido and Gori get a real route list to scan, including paths they would never have reached by crawling.
 
 ## What Noir does
 
