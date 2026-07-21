@@ -203,16 +203,26 @@ class EndpointOptimizer
     result.to_s
   end
 
-  # Stable ordering key: source location first, then the endpoint itself
-  # as a tiebreak for endpoints that carry no code path (spec-derived
-  # ones, for example).
-  private def endpoint_order_key(endpoint : Endpoint) : Tuple(String, Int32, String, String)
+  # Stable ordering key: source location first, then technology as a
+  # tiebreak for endpoints that carry no code path (static/public-dir
+  # serving endpoints, spec-derived ones, etc). `url`/`method` alone
+  # cannot break such ties — every endpoint sharing a dedup key already
+  # has the same url and method, by definition — so without `technology`
+  # here, endpoints with an empty code path (a common shape: multiple
+  # frameworks each serving an identically-named asset from their own
+  # public/ dir) all collapse to the same `("", -1, url, method)` key.
+  # `Array#sort_by` is not a stable sort in Crystal, so those ties would
+  # still resolve to "whichever fiber won" — the exact non-determinism
+  # this sort exists to remove — making the winning `technology` flip
+  # between runs on a single machine, not just across machines.
+  private def endpoint_order_key(endpoint : Endpoint) : Tuple(String, Int32, String, String, String)
     code_path = endpoint.details.code_paths.first?
     {
       code_path.try(&.path) || "",
       code_path.try(&.line) || -1,
       endpoint.url,
       endpoint.method,
+      endpoint.details.technology || "",
     }
   end
 
