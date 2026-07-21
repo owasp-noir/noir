@@ -2,6 +2,16 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v1.2.1
+
+Noir v1.2.1 is a bug-fix release addressing determinism and cross-framework accuracy regressions introduced in v1.2.0's performance sweep.
+
+### Fixed
+- Fixed the shared JS route extractor (Express, Fastify, Koa, Hono, Restify) cross-tagging routes from sibling frameworks in multi-framework projects.
+- Fixed non-deterministic technology attribution for deduped endpoints with no code path (e.g. static/public-dir serving) by adding technology as a final sort tiebreaker.
+- Resolved Spring `application.properties` placeholders (`${...}`) in `@RequestMapping` paths.
+- Reverted the detector content-channel buffer capacity from 64 back to 16 — re-measurement showed no throughput gain, only a doubled worst-case memory ceiling.
+
 ## v1.2.0
 
 Noir v1.2.0 broadens attack-surface coverage beyond web frameworks — CLI applications, built-in HTTP servers, schema-generated platforms, and enterprise legacy stacks — and lands a codebase-wide performance sweep across every supported language.
