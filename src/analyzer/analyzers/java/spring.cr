@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_callee_extractor"
+require "../../../utils/spring_property_path"
 require "../../engines/java_engine"
 require "yaml"
 
@@ -90,12 +91,13 @@ module Analyzer::Java
       # servlet context paths come from `path_config_for` (application.yml
       # / .properties under each project root).
       java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(path) }
-      path_configs, stomp_prefixes, meta_annotation_index, interface_route_index =
+      path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index =
         build_spring_indexes(java_files)
 
       java_files.each do |path|
         project_root = project_root_for(path)
         path_config = path_configs[project_root]? || SpringPathConfig.new
+        spring_properties = spring_property_maps[project_root]? || {} of String => String
         stomp_application_prefixes = stomp_prefixes[project_root]? || [""]
         configured_base_path = path_config.web_base_path
         content = read_file_content(path)
@@ -183,7 +185,8 @@ module Analyzer::Java
               details = Details.new(PathInfo.new(path, line))
 
               endpoint = Endpoint.new(
-                join_paths(base_path, route.path), route.verb, parameters, details, is_internal_client
+                resolve_endpoint_path(join_paths(base_path, route.path), spring_properties),
+                route.verb, parameters, details, is_internal_client
               )
 
               # 1-hop callees out of the handler method body. Cross-file
@@ -233,7 +236,8 @@ module Analyzer::Java
 
                     details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
                     endpoint = Endpoint.new(
-                      join_paths(configured_base_path, inherited_path), entry_route.verb, parameters, details
+                      resolve_endpoint_path(join_paths(configured_base_path, inherited_path), spring_properties),
+                      entry_route.verb, parameters, details
                     )
 
                     # The route is declared on the interface (springdoc /
@@ -262,7 +266,10 @@ module Analyzer::Java
               constants = file_constants
               collect_stomp_endpoints(content, constants).each do |entry|
                 endpoint_path, line = entry
-                endpoint = Endpoint.new(join_paths(configured_base_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
+                endpoint = Endpoint.new(
+                  resolve_endpoint_path(join_paths(configured_base_path, endpoint_path), spring_properties),
+                  "GET", Details.new(PathInfo.new(path, line))
+                )
                 endpoint.protocol = "ws"
                 @result << endpoint
               end
@@ -272,7 +279,10 @@ module Analyzer::Java
               constants = file_constants
               collect_message_mapping_endpoints(root, content, constants, stomp_application_prefixes).each do |entry|
                 verb, destination, line = entry
-                endpoint = Endpoint.new(destination, verb, Details.new(PathInfo.new(path, line)))
+                endpoint = Endpoint.new(
+                  resolve_endpoint_path(destination, spring_properties),
+                  verb, Details.new(PathInfo.new(path, line))
+                )
                 endpoint.protocol = "ws"
                 @result << endpoint
               end
@@ -282,7 +292,10 @@ module Analyzer::Java
               constants = file_constants
               collect_resource_handler_endpoints(content, constants).each do |entry|
                 endpoint_path, line = entry
-                @result << Endpoint.new(join_paths(configured_base_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
+                @result << Endpoint.new(
+                  resolve_endpoint_path(join_paths(configured_base_path, endpoint_path), spring_properties),
+                  "GET", Details.new(PathInfo.new(path, line))
+                )
               end
             end
           end
@@ -333,7 +346,10 @@ module Analyzer::Java
               end
               composed = nest_prefix.empty? ? endpoint : join_paths(nest_prefix, endpoint)
               details = Details.new(PathInfo.new(path))
-              reactive_endpoint = Endpoint.new(join_paths(configured_base_path, composed), method, details)
+              reactive_endpoint = Endpoint.new(
+                resolve_endpoint_path(join_paths(configured_base_path, composed), spring_properties),
+                method, details
+              )
 
               if include_callee && !handler_ref.empty?
                 if handler_callees = reactive_callees[handler_ref]?
@@ -360,11 +376,13 @@ module Analyzer::Java
     # a second pass over the same cached content.
     private def build_spring_indexes(java_files : Array(String)) : Tuple(
       Hash(String, SpringPathConfig),
+      Hash(String, Hash(String, String)),
       Hash(String, Array(String)),
       SpringMetaAnnotationIndex,
       SpringInterfaceRouteIndex,
     )
       path_configs = Hash(String, SpringPathConfig).new
+      spring_property_maps = Hash(String, Hash(String, String)).new
       stomp_prefixes = Hash(String, Array(String)).new
       meta_index = SpringMetaAnnotationIndex.new
       project_roots = Set(String).new
@@ -401,11 +419,16 @@ module Analyzer::Java
       end
 
       project_roots.each do |root|
-        path_configs[root] = path_config_for(root)
+        values = spring_config_values_for(root)
+        spring_property_maps[root] = values
+        path_configs[root] = SpringPathConfig.new(
+          normalize_optional_path(values["server.servlet.context-path"]?),
+          normalize_optional_path(values["spring.webflux.base-path"]?)
+        )
       end
 
       interface_index = collect_interface_route_index(java_files, meta_index)
-      {path_configs, stomp_prefixes, meta_index, interface_index}
+      {path_configs, spring_property_maps, stomp_prefixes, meta_index, interface_index}
     end
 
     private def collect_interface_route_index(java_files : Array(String),
@@ -1169,6 +1192,14 @@ module Analyzer::Java
     end
 
     private def path_config_for(project_root : String) : SpringPathConfig
+      values = spring_config_values_for(project_root)
+      SpringPathConfig.new(
+        normalize_optional_path(values["server.servlet.context-path"]?),
+        normalize_optional_path(values["spring.webflux.base-path"]?)
+      )
+    end
+
+    private def spring_config_values_for(project_root : String) : Hash(String, String)
       values = Hash(String, String).new
 
       resource_dirs_for(project_root).each do |dir|
@@ -1177,14 +1208,15 @@ module Analyzer::Java
 
         yml_path = File.join(dir, "application.yml")
         yaml_path = File.join(dir, "application.yaml")
-        merge_yaml_path_config(values, yml_path) if File.exists?(yml_path)
-        merge_yaml_path_config(values, yaml_path) if File.exists?(yaml_path)
+        merge_yaml_properties(values, yml_path) if File.exists?(yml_path)
+        merge_yaml_properties(values, yaml_path) if File.exists?(yaml_path)
       end
 
-      SpringPathConfig.new(
-        normalize_optional_path(values["server.servlet.context-path"]?),
-        normalize_optional_path(values["spring.webflux.base-path"]?)
-      )
+      values
+    end
+
+    private def resolve_endpoint_path(path : String, properties : Hash(String, String)) : String
+      SpringPropertyPath.resolve(path, properties)
     end
 
     private def resource_dirs_for(project_root : String) : Array(String)
@@ -1210,23 +1242,37 @@ module Analyzer::Java
       values
     end
 
-    private def merge_yaml_path_config(values : Hash(String, String), path : String)
-      if value = yaml_string_value(path, "server", "servlet", "context-path")
-        values["server.servlet.context-path"] = value
-      end
-      if value = yaml_string_value(path, "spring", "webflux", "base-path")
-        values["spring.webflux.base-path"] = value
+    private def merge_yaml_properties(values : Hash(String, String), path : String)
+      document = YAML.parse(read_file_content(path))
+      flatten_yaml_properties("", document, values)
+    rescue
+      # Ignore unreadable or malformed YAML.
+    end
+
+    private def flatten_yaml_properties(prefix : String, node : YAML::Any, target : Hash(String, String))
+      if hash = yaml_hash(node)
+        hash.each do |key, value|
+          key_string = key.to_s
+          child_prefix = prefix.empty? ? key_string : "#{prefix}.#{key_string}"
+          flatten_yaml_properties(child_prefix, value, target)
+        end
+      elsif scalar = yaml_scalar(node)
+        target[prefix] = scalar unless prefix.empty?
       end
     end
 
-    private def yaml_string_value(path : String, *keys : String) : String?
-      value = YAML.parse(read_file_content(path))
-      keys.each do |key|
-        value = value[key]
-      end
-      value.as_s?
+    private def yaml_hash(node : YAML::Any) : Hash(YAML::Any, YAML::Any)?
+      node.as_h
     rescue
       nil
+    end
+
+    private def yaml_scalar(node : YAML::Any) : String?
+      node.as_s
+    rescue
+      if int = node.as_i64?
+        int.to_s
+      end
     end
 
     private def project_root_for(path : String) : String

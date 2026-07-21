@@ -136,6 +136,10 @@ expected_endpoints = [
   # declarations in sibling package directories still share the same base.
   Endpoint.new("/plain/items", "GET"),
   Endpoint.new("/plain/plain-audit", "GET"),
+  # PlaceholderPathController.java — Spring property placeholders (generic + error path).
+  Endpoint.new("/error", "ANY"),
+  Endpoint.new("/configured-api/items", "GET"),
+  Endpoint.new("/configured-api/docs/guide", "GET"),
 ]
 
 FunctionalTester.new("fixtures/java/spring/", {
