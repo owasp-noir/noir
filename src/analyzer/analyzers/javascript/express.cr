@@ -24,6 +24,7 @@ module Analyzer::Javascript
       parallel_file_scan do |path|
         begin
           content = read_file_content(path)
+          next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
