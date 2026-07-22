@@ -370,7 +370,7 @@ module Analyzer::Mobile
         basename.ends_with?(".generated.swift")
     end
 
-    MAX_HOST_ENUMS     = 20
+    MAX_HOST_ENUMS     =  20
     MAX_CASES_PER_ENUM = 200
 
     # `.host`/`.scheme` connected to `EnumName.case.rawValue` via a
@@ -462,7 +462,7 @@ module Analyzer::Mobile
         # unrelated SDK/extension target re-listing the main app's scheme
         # for its own purposes) — score against whichever declaration is
         # nearest to `reference_path`, not an arbitrary one.
-        score = dirs.map { |dir| shared_path_prefix_length(reference_segments, dir.split('/')) }.max
+        score = dirs.max_of { |dir| shared_path_prefix_length(reference_segments, dir.split('/')) }
         if score > best_score
           best_score = score
           best = [scheme]
@@ -620,7 +620,7 @@ module Analyzer::Mobile
       # instead of ~15.
       schemes = @result.compact_map do |ep|
         ep.protocol == "mobile-scheme" && ep.url.ends_with?("://") ? ep.url.rchop("://") : nil
-      end.uniq
+      end.uniq!
       return if schemes.empty?
 
       escaped = schemes.map { |s| Regex.escape(s) }.join("|")
