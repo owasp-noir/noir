@@ -25,13 +25,23 @@ module Noir::CLI::ScanCommand
   # rather than a bare magic number.
   WARNING_COLOR = Colorize::Color256.new(208)
 
-  # Output formats whose downstream consumers (jq, SARIF parsers,
-  # CI report uploaders) treat empty stdout as a hard error. When a
-  # scan finds no endpoints, we still emit a valid empty document
-  # for these formats — `{"endpoints":[],"passive_results":[]}` for
-  # json, the matching shape for the others. Plain / human-oriented
-  # formats stay silent because there's nothing meaningful to render.
-  STRUCTURED_OUTPUT_FORMATS = Set{"json", "yaml", "jsonl", "toml", "sarif"}
+  # Output formats whose downstream consumers (jq, SARIF parsers, Swagger/
+  # Postman importers, CI report uploaders/archivers) treat empty or missing
+  # output as a hard error. When a scan finds no endpoints, we still emit a
+  # valid empty document for these formats — `{"endpoints":[],"passive_
+  # results":[]}` for json, a `"paths": {}` OAS document, a header-only
+  # Markdown table, an empty-mindmap Mermaid diagram, a full HTML shell,
+  # etc. Every format below already produces a well-formed document for
+  # zero endpoints (verified), so this is purely about not skipping the
+  # builder call entirely.
+  #
+  # Command-list / line-list formats (curl, httpie, powershell, adb, simctl,
+  # only-*) and `plain` are deliberately excluded: they have no envelope, so
+  # "nothing to render" is the correct empty output for them.
+  STRUCTURED_OUTPUT_FORMATS = Set{
+    "json", "yaml", "jsonl", "toml", "sarif",
+    "oas2", "oas3", "postman", "html", "mermaid", "markdown-table",
+  }
 
   def self.run(argv : Array(String))
     # Stage ARGV through OptionParser (positional path discovery happens
@@ -289,11 +299,8 @@ module Noir::CLI::ScanCommand
         app.report
         exit(0)
       else
-        # Structured output formats need a valid empty document on
-        # stdout even when no endpoints were discovered — downstream
-        # `jq` / SARIF parsers / CI report uploaders treat zero bytes
-        # as a hard error. Plain text formats stay silent because
-        # there's nothing meaningful to render.
+        # See STRUCTURED_OUTPUT_FORMATS above for which formats still get
+        # a report call (and why) when no endpoints were discovered.
         if STRUCTURED_OUTPUT_FORMATS.includes?(app.options["format"].to_s)
           app.report
         end
