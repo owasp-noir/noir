@@ -31,16 +31,16 @@ describe Noir::GoRequestParamExtractor do
   describe "#params_for_routes" do
     it "extracts query and header parameters from go handler" do
       source = <<-GO
-      package main
-      import "net/http"
+        package main
+        import "net/http"
 
-      func main() {
-          http.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
-              q := r.URL.Query().Get("search")
-              h := r.Header.Get("X-API-Key")
-          })
-      }
-      GO
+        func main() {
+            http.HandleFunc("/api", func(w http.ResponseWriter, r *http.Request) {
+                q := r.URL.Query().Get("search")
+                h := r.Header.Get("X-API-Key")
+            })
+        }
+        GO
 
       # Row index for http.HandleFunc
       rows = Set{4}
