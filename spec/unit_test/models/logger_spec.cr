@@ -139,6 +139,31 @@ describe "NoirLogger" do
     end
   end
 
+  describe ".broken_pipe?" do
+    it "recognizes a POSIX EPIPE" do
+      ex = IO::Error.from_os_error("broken", Errno::EPIPE)
+      NoirLogger.broken_pipe?(ex).should be_true
+    end
+
+    it "rejects an unrelated POSIX errno" do
+      ex = IO::Error.from_os_error("no space", Errno::ENOSPC)
+      NoirLogger.broken_pipe?(ex).should be_false
+    end
+
+    it "recognizes Windows' broken-pipe error codes via WinError#to_errno" do
+      ex = IO::Error.from_os_error("broken", WinError::ERROR_BROKEN_PIPE)
+      NoirLogger.broken_pipe?(ex).should be_true
+
+      ex = IO::Error.from_os_error("no data", WinError::ERROR_NO_DATA)
+      NoirLogger.broken_pipe?(ex).should be_true
+    end
+
+    it "rejects an unrelated WinError" do
+      ex = IO::Error.from_os_error("denied", WinError::ERROR_ACCESS_DENIED)
+      NoirLogger.broken_pipe?(ex).should be_false
+    end
+  end
+
   describe "LogLevel enum" do
     it "has all expected levels" do
       NoirLogger::LogLevel::DEBUG.should_not be_nil

@@ -159,9 +159,17 @@ end
 #   --ai-context guards,sinks    → --ai-context=guards,sinks (heuristic)
 #   --ai-context ./app           → --ai-context=         (next token is a path)
 #
-# The heuristic for "is the next token a feature list?" is intentionally
-# tight: lowercase comma-separated words drawn from a fixed vocabulary.
-# This keeps `noir scan --ai-context ./app` working as a positional path.
+# The heuristic for "is the next token a feature list?": lowercase words
+# joined by commas, where either (a) there's more than one comma-separated
+# word, or (b) the single word matches the fixed vocabulary below exactly.
+# A real filesystem path essentially never contains a literal comma, so
+# any multi-word comma list — typo'd feature names included — is routed
+# to `--ai-context=...` and left for the vocabulary check in
+# `apply_ai_context` to reject with a precise "unknown feature" error,
+# rather than silently falling through to "Base path does not exist:
+# <the typo>". A single bare word still has to match a known feature
+# exactly, since that shape is genuinely ambiguous with a real one-word
+# directory name (`noir scan --ai-context myapp` must keep scanning `myapp`).
 AI_CONTEXT_FEATURES = ["guards", "sinks", "validators", "signals", "callee", "all"]
 
 def normalize_ai_context_flag(args : Array(String)) : Array(String)
@@ -200,7 +208,8 @@ private def ai_context_feature_list?(token : String) : Bool
   return false unless token.matches?(/\A[a-z,]+\z/)
   tokens = token.split(',').reject(&.empty?)
   return false if tokens.empty?
-  tokens.all? { |t| AI_CONTEXT_FEATURES.includes?(t) }
+  return true if tokens.size > 1
+  AI_CONTEXT_FEATURES.includes?(tokens.first)
 end
 
 private def base_help : String

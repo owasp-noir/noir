@@ -13,6 +13,7 @@ class OutputBuilder
   @is_color : Bool
   @is_log : Bool
   @output_file : String
+  @stdout_broken : Bool
 
   property io : IO
 
@@ -34,12 +35,25 @@ class OutputBuilder
     @is_log = any_to_bool(options["nolog"])
     @output_file = options["output"].to_s
     @io = STDOUT
+    @stdout_broken = false
 
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
   end
 
   def ob_puts(message)
-    @io.puts message
+    unless @stdout_broken
+      begin
+        @io.puts message
+      rescue ex : IO::Error
+        raise ex unless NoirLogger.broken_pipe?(ex)
+        # Downstream reader closed its end (`noir ... | head`, `| jq -e`,
+        # ...). Stop writing to it, but keep going below so a run that's
+        # both piped and saved via `-o` still ends up with a complete file
+        # instead of a truncated one — killing the whole process here
+        # would cut the `-o` write off mid-report.
+        @stdout_broken = true
+      end
+    end
     unless @output_file.empty?
       begin
         File.open(@output_file, output_file_mode) do |file|

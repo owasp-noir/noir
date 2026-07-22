@@ -310,6 +310,24 @@ describe "run_options_parser" do
     end
   end
 
+  it "normalize_ai_context_flag routes a multi-token typo to --ai-context=... instead of a stray path" do
+    # A comma-joined multi-word token essentially never collides with a real
+    # directory name, so any multi-token comma list -- typo'd feature names
+    # included -- is folded into `--ai-context=...` and left for
+    # apply_ai_context's own vocabulary check to reject with a precise
+    # "unknown feature" error, instead of silently being scanned as a bogus
+    # base path ("Base path does not exist: bogus,guards").
+    normalize_ai_context_flag(["--ai-context", "bogus,guards"]).should eq(["--ai-context=bogus,guards"])
+    normalize_ai_context_flag(["--ai-context", "guards,sink"]).should eq(["--ai-context=guards,sink"])
+  end
+
+  it "normalize_ai_context_flag still treats a single unrecognized word as a positional path" do
+    # A bare single word is genuinely ambiguous with a real one-word
+    # directory name (`noir scan --ai-context myapp`), so it's left alone
+    # rather than folded in as a feature-list value.
+    normalize_ai_context_flag(["--ai-context", "myapp"]).should eq(["--ai-context=", "myapp"])
+  end
+
   it "legacy --set-pvalue-query alias still appends to set_pvalue_query" do
     original_argv = ARGV.dup
     ARGV.clear
