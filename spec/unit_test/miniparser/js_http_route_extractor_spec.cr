@@ -13,15 +13,15 @@ describe Noir::JSHttpRouteExtractor do
   describe ".extract" do
     it "extracts endpoints from node:http createServer" do
       code = <<-JS
-      const http = require('http');
-      const server = http.createServer((req, res) => {
-        if (req.url === '/api/users' && req.method === 'GET') {
-          res.end('users');
-        } else if (req.url === '/api/posts' && req.method === 'POST') {
-          res.end('posts');
-        }
-      });
-      JS
+        const http = require('http');
+        const server = http.createServer((req, res) => {
+          if (req.url === '/api/users' && req.method === 'GET') {
+            res.end('users');
+          } else if (req.url === '/api/posts' && req.method === 'POST') {
+            res.end('posts');
+          }
+        });
+        JS
 
       endpoints = Noir::JSHttpRouteExtractor.extract("app.js", code)
       endpoints.size.should eq(2)
