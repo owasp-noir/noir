@@ -68,7 +68,7 @@ private SCAN_FLAGS = %w[
   --cache-clear
   -d --debug
   --verbose
-  -v --version
+  -v -V --version
   -h --help
 ]
 
@@ -199,7 +199,7 @@ def generate_zsh_completion_script
             '--cache-clear[Clear LLM cache before scan]' \\
             '(-d --debug)'{-d,--debug}'[Enable debug messages]' \\
             '--verbose[Verbose mode]' \\
-            '(-v --version)'{-v,--version}'[Show version]' \\
+            '(-v -V --version)'{-v,-V,--version}'[Show version]' \\
             '(-h --help)'{-h,--help}'[Show help]' \\
             '*:path:_files'
           return
@@ -462,7 +462,7 @@ def generate_fish_completion_script
     complete -c noir #{g}      -l cache-clear           -d 'Clear LLM cache before scan'
     complete -c noir #{g} -s d -l debug                 -d 'Enable debug messages'
     complete -c noir #{g}      -l verbose               -d 'Verbose mode'
-    complete -c noir #{g} -s v -l version               -d 'Show version'
+    complete -c noir #{g} -s v -s V -l version           -d 'Show version'
     complete -c noir #{g} -s h -l help                  -d 'Show help'
     SCRIPT
 end
@@ -511,7 +511,7 @@ def generate_elvish_completion_script
       --config-file --concurrency
       --cache-disable --cache-clear
       -d --debug --verbose
-      -v --version -h --help
+      -v -V --version -h --help
     ]
 
     set edit:completion:arg-completer[noir] = {|@cmd|

@@ -19,7 +19,7 @@ module Noir::CLI::VersionCommand
       case a
       when "-h", "--help"
         help = true
-      when "-V", "--verbose"
+      when "--verbose"
         verbose = true
       else
         unknown ||= a
@@ -63,11 +63,12 @@ module Noir::CLI::VersionCommand
         noir version [--verbose]
 
       #{green.call("OPTIONS:")}
-        #{cyan.call("--verbose, -V")}          Also show Crystal/LLVM/target build details
-                               (replaces v0 `--build-info`).
+        #{cyan.call("--verbose")}              Also show Crystal/LLVM/target build details
+                                (replaces v0 `--build-info`).
 
       #{green.call("LEGACY ALIASES:")}
         noir -v
+        noir -V
         noir --version
         noir --build-info      → noir version --verbose
       HELP
