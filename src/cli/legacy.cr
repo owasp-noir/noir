@@ -25,6 +25,7 @@ module Noir::CLI::Legacy
     "--build-info"   => ["version", "--verbose"],
     "--help-all"     => ["help"],
     "-v"             => ["version"],
+    "-V"             => ["version"],
     "--version"      => ["version"],
   }
 

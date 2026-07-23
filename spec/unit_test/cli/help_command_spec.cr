@@ -64,7 +64,7 @@ describe Noir::CLI::HelpCommand do
       end
       out.should contain("--no-color")
       out.should contain("--no-spinner")
-      out.should contain("-v, --version")
+      out.should contain("-v, -V, --version")
       out.should contain("-h, --help")
     end
 

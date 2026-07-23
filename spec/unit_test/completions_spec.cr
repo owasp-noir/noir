@@ -58,7 +58,7 @@ describe "Completion Script Generation" do
       script.should contain("(-T --use-all-taggers)")
       script.should contain("(-t --techs)")
       script.should contain("(-d --debug)")
-      script.should contain("(-v --version)")
+      script.should contain("(-v -V --version)")
       script.should contain("(-h --help)")
     end
 

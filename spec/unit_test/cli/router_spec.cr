@@ -35,10 +35,12 @@ describe "Noir::CLI::Legacy.rewrite" do
     Noir::CLI::Legacy.rewrite(["--generate-completion", "bash", "./extra"]).should eq(["completion", "bash"])
   end
 
-  it "rewrites -v to the version subcommand (global anywhere in ARGV)" do
+  it "rewrites -v and -V to the version subcommand (global anywhere in ARGV)" do
     Noir::CLI::Legacy.rewrite(["-v"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["-V"]).should eq(["version"])
     Noir::CLI::Legacy.rewrite(["scan", "-v"]).should eq(["version"])
     Noir::CLI::Legacy.rewrite(["scan", "./app", "-v"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["scan", "./app", "-V"]).should eq(["version"])
   end
 
   it "rewrites --version the same way as -v" do
