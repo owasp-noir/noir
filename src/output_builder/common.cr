@@ -79,7 +79,7 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       header_params = endpoint.params.select { |p| p.param_type == "header" }
-      if header_params.size > 0
+      if !header_params.empty?
         r_buffer << "\n  ○ headers: "
         header_params.each_with_index do |param, index|
           prefix = index == header_params.size - 1 ? "└── " : "├── "
@@ -91,7 +91,7 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       cookie_params = endpoint.params.select { |p| p.param_type == "cookie" }
-      if cookie_params.size > 0
+      if !cookie_params.empty?
         r_buffer << "\n  ○ cookies: "
         cookie_params.each_with_index do |param, index|
           prefix = index == cookie_params.size - 1 ? "└── " : "├── "
@@ -102,7 +102,7 @@ class OutputBuilderCommon < OutputBuilder
         end
       end
 
-      if baked[:path_param].size > 0
+      if !baked[:path_param].empty?
         r_path_param = baked[:path_param].join(", ").colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ path: #{r_path_param}"
       end
@@ -119,7 +119,7 @@ class OutputBuilderCommon < OutputBuilder
       # Intent extras (Bundle inputs, not part of the URI) read by a mobile
       # handler. Query params bake into the URL, so only "extra" is listed.
       extra_params = endpoint.params.select { |p| p.param_type == "extra" }
-      if extra_params.size > 0
+      if !extra_params.empty?
         r_extras = extra_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ extras: #{r_extras}"
       end
@@ -129,19 +129,19 @@ class OutputBuilderCommon < OutputBuilder
       # no params of these types, so these sections only render for CLI
       # endpoints.
       flag_params = endpoint.params.select { |p| p.param_type == "flag" }
-      if flag_params.size > 0
+      if !flag_params.empty?
         r_flags = flag_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ flags: #{r_flags}"
       end
 
       argument_params = endpoint.params.select { |p| p.param_type == "argument" }
-      if argument_params.size > 0
+      if !argument_params.empty?
         r_arguments = argument_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ arguments: #{r_arguments}"
       end
 
       env_params = endpoint.params.select { |p| p.param_type == "env" }
-      if env_params.size > 0
+      if !env_params.empty?
         r_env = env_params.map(&.name).join(", ").colorize(:cyan).toggle(@is_color)
         r_buffer << "\n  ○ env: #{r_env}"
       end
@@ -166,7 +166,7 @@ class OutputBuilderCommon < OutputBuilder
         tags << tag.name.to_s
       end
 
-      if tags.size > 0
+      if !tags.empty?
         r_tags = tags.join(" ").colorize(:light_magenta).toggle(@is_color)
         r_buffer << "\n  ○ tags: #{r_tags}"
       end

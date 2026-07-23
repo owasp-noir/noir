@@ -126,5 +126,36 @@ describe "OutputBuilderDiff" do
       result[:removed].size.should eq(0)
       result[:changed].size.should eq(0)
     end
+
+    # Regression for the idiomatic .empty? conversion (issue #1121).
+    # ``diff`` used to gate each section with ``result[X].size > 0``
+    # in the calling ``print`` / ``generate_toml_from_diff`` paths;
+    # the conversion to ``!result[X].empty?`` must still produce the
+    # same buckets when the input arrays are identical (every bucket
+    # ends up empty, and the caller must not render a section header).
+    it "produces three empty buckets for identical input" do
+      options = {
+        "debug"   => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
+      }
+      builder = OutputBuilderDiff.new(options)
+
+      endpoints = [
+        Endpoint.new("/test", "GET"),
+        Endpoint.new("/api/users", "POST"),
+      ]
+
+      result = builder.diff(endpoints, endpoints)
+
+      # Every diff bucket must be empty. ``print`` / ``generate_toml_from_diff``
+      # now gate on ``!result[X].empty?``; an empty bucket must NOT render a
+      # section header, which is the regression we're locking in.
+      result[:added].empty?.should be_true
+      result[:removed].empty?.should be_true
+      result[:changed].empty?.should be_true
+    end
   end
 end
