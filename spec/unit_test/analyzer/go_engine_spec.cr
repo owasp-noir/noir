@@ -78,4 +78,71 @@ describe Analyzer::Go::GoEngine do
       public_dirs.size.should eq(0)
     end
   end
+
+  describe ".strip_comments" do
+    it "blanks line comments while keeping the line count stable" do
+      source = <<-GO
+        a := 1
+        // rootCmd.Flags().StringVar(&dead, "ghost", "", "")
+        b := 2
+        GO
+
+      stripped = Analyzer::Go::GoEngine.strip_comments(source)
+
+      stripped.lines.size.should eq(source.lines.size)
+      stripped.should_not contain("ghost")
+      stripped.lines[0].should eq("a := 1")
+      stripped.lines[2].should eq("b := 2")
+    end
+
+    it "blanks block comments while keeping the line count stable" do
+      source = <<-GO
+        a := 1
+        /*
+        StringVar(&dead, "ghost", "", "")
+        */
+        b := 2
+        GO
+
+      stripped = Analyzer::Go::GoEngine.strip_comments(source)
+
+      stripped.lines.size.should eq(source.lines.size)
+      stripped.should_not contain("ghost")
+      stripped.lines[4].should eq("b := 2")
+    end
+
+    it "keeps a trailing comment's code but drops the comment" do
+      stripped = Analyzer::Go::GoEngine.strip_comments(%(x := "keep" // "ghost"))
+
+      stripped.should contain("keep")
+      stripped.should_not contain("ghost")
+    end
+
+    # Go raw strings take no escapes and may span newlines, so a `//` or
+    # `/*` inside one is ordinary text — a C-family stripper that only
+    # knows `"` and `'` would truncate the literal here.
+    it "leaves // and /* inside a raw string literal alone" do
+      stripped = Analyzer::Go::GoEngine.strip_comments("x := `keep // this /* and this */`")
+
+      stripped.should eq("x := `keep // this /* and this */`")
+    end
+
+    it "leaves // inside an interpreted string alone" do
+      stripped = Analyzer::Go::GoEngine.strip_comments(%(url := "https://x.example/a//b"))
+
+      stripped.should eq(%(url := "https://x.example/a//b"))
+    end
+
+    it "does not end a string literal on an escaped quote" do
+      stripped = Analyzer::Go::GoEngine.strip_comments(%(x := "a \\" b // still string"))
+
+      stripped.should eq(%(x := "a \\" b // still string"))
+    end
+
+    it "returns the source untouched when it holds no comment markers" do
+      source = %(x := "plain")
+
+      Analyzer::Go::GoEngine.strip_comments(source).should eq(source)
+    end
+  end
 end
