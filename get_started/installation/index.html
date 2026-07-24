@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source.">
+  <title>Install Noir - OWASP Noir</title>
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  <meta property="og:title" content="Install Noir">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/get_started/installation/">
+  <meta property="og:description" content="Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/get_started-installation.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Install Noir">
+  <meta name="twitter:description" content="Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/get_started-installation.png">
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/get_started/installation/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Install Noir","url":"https://owasp-noir.github.io/noir/get_started/installation/","description":"Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source.","image":"https://owasp-noir.github.io/noir/og-images/get_started-installation.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/"},{"@type":"ListItem","position":2,"name":"Getting Started","item":"https://owasp-noir.github.io/noir/get_started/"},{"@type":"ListItem","position":3,"name":"Install Noir"}]}</script>
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/get_started/installation/">
+<link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/get_started/installation/">
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/" class="header-logo" aria-label="OWASP Noir, home">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.2.1</a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+      <a href="https://owasp-noir.github.io/noir/usage/">Usage</a>
+      <a href="https://owasp-noir.github.io/noir/development/">Development</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://owasp-noir.github.io/noir/resources/">Resources</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="Search documentation">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>Search</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="Language">
+        
+        <a href="https://owasp-noir.github.io/noir/get_started/installation/" hreflang="en" aria-current="true">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/get_started/installation/" hreflang="ko">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="OWASP Noir on GitHub">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="Theme">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="Search documentation" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="Search documentation" placeholder="Search the docs" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="Search"></div>
+  </div>
+</div>
+<div class="docs-container">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="Documentation">
+
+    <details class="sidebar-group" data-group="get_started" open>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>Get Started</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/overview/">What is Noir?</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/installation/" aria-current="page">Install Noir</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/running/">Your First Scan</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/ai_power/">AI-Powered Analysis</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/migrate_v0_to_v1/">Migrating from v0 to v1</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>Usage</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/cli_commands/">CLI Commands</a></li>
+
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported">
+          <summary class="sidebar-subheading">
+            <span>Supported</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Languages & Frameworks</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/specification/">Specifications</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/callee_coverage/">Callee Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">AI Context Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/mobile/">Mobile Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/cli/">CLI Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/">Technology Scopes</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats">
+          <summary class="sidebar-subheading">
+            <span>Output Formats</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/json/">JSON and JSONL</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/">YAML</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">HTTP Client Commands</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/">OpenAPI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/">SARIF</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/html/">HTML Report</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/">Mermaid Chart</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/more/">Additional Formats</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive">
+          <summary class="sidebar-subheading">
+            <span>Passive Scan</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/">Writing a Rule</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/">Default Rules</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/">Community Rules</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features">
+          <summary class="sidebar-subheading">
+            <span>More Features</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/tagger/">Tagger</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/deliver/">Deliver</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/diff/">Diff Mode</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/">Pipeline for DAST</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers">
+          <summary class="sidebar-subheading">
+            <span>AI Providers</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/">OpenAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/">xAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/">Azure AI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/">GitHub Marketplace</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/">OpenRouter</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/">Ollama</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/">vLLM</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/">LM Studio</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/">ACP Agents</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations">
+          <summary class="sidebar-subheading">
+            <span>Configuration</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/">Configuration File</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/">Shell Completions</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/github_action/">GitHub Action</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>Development</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_build/">How to Build</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/analyzer_architecture/">Analyzer Architecture</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/nix_environment/">Nix Environment</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/debug_flags/">Debug Flags</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_release/">How to Release</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>Resources</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/faq/">FAQ</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/troubleshooting/">Troubleshooting</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/artwork/">Artwork</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/">Community</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/media/">Articles & Talks</a></li>
+
+      </ul>
+    </details>
+
+  </nav>
+</aside>
+  <main id="main" class="docs-main">
+    <article>
+      <h1 class="docs-title">Install Noir</h1>
+      <p class="docs-lede">Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source.</p>
+      <div class="prose">
+        
+<figure class="mascot-note">
+  <img src="https://owasp-noir.github.io/noir/images/mascot/hak-think.webp"
+       alt="Hak, the OWASP Noir mascot" width="512" height="512" loading="lazy" decoding="async">
+  <figcaption><p>Noir is a single binary with no runtime dependencies. Homebrew is the quickest way for most users, but pick whatever fits your system.</p>
+</figcaption>
+</figure>
+<p>Every method below installs the same <code>noir</code> binary, so you only need one. They're ordered roughly easiest-first. Find the section that matches your platform and package manager, and skip the rest.</p>
+<h2 id="homebrew-macos-and-linux">Homebrew (macOS and Linux)</h2>
+<p>The easiest option. Noir has an official <a href="https://formulae.brew.sh/formula/noir">Homebrew formula</a>.</p>
+<p>To install:</p>
+<pre><code class="language-bash hljs">brew install noir
+</code></pre>
+<p>To update:</p>
+<pre><code class="language-bash hljs">brew upgrade noir
+</code></pre>
+
+<aside class="callout callout--info">
+  <span class="callout-label">Note</span>
+  <p>Shell completions for Zsh, Bash, and Fish are automatically installed.</p>
+
+</aside>
+<h2 id="snapcraft-linux">Snapcraft (Linux)</h2>
+<p><a href="https://snapcraft.io">Snap</a> packages work across most Linux distros and auto-update in the background.</p>
+<p>To install:</p>
+<pre><code class="language-bash hljs">sudo snap install noir
+</code></pre>
+<p>To update manually:</p>
+<pre><code class="language-bash hljs">sudo snap refresh noir
+</code></pre>
+<h2 id="docker">Docker</h2>
+<p>Handy when you don't want to install anything on the host, or need Noir inside a CI/CD pipeline.</p>
+<p>To pull/update the latest image:</p>
+<pre><code class="language-bash hljs">docker pull ghcr.io/owasp-noir/noir:latest
+</code></pre>
+<p>Scan the current directory:</p>
+<pre><code class="language-bash hljs">docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
+</code></pre>
+<p>Image tags follow the OCI/Docker convention without the <code>v</code> prefix, e.g. <code>:0.30.0</code>, <code>:0.30</code>, and <code>:latest</code>. (Versions up to v0.29.1 used the <code>:vX.Y.Z</code> form; update any pinned references.) All available tags are on the <a href="https://github.com/owasp-noir/noir/pkgs/container/noir">GitHub Packages page</a>.</p>
+<h2 id="nix">Nix</h2>
+<p>If you use <a href="https://nixos.org">Nix</a>, install via Flakes.</p>
+<p>To install:</p>
+<pre><code class="language-bash hljs">nix profile add github:owasp-noir/noir
+</code></pre>
+<p>To update:</p>
+<pre><code class="language-bash hljs">nix profile upgrade github:owasp-noir/noir
+</code></pre>
+
+<aside class="callout callout--info">
+  <span class="callout-label">Note</span>
+  <p><strong>Tip:</strong> In Docker or restricted environments, you may need to enable experimental features. Use the command below.</p>
+
+</aside>
+<pre><code class="language-bash hljs">nix --extra-experimental-features &quot;nix-command flakes&quot; profile add github:owasp-noir/noir
+</code></pre>
+<p>Or run once without installing:</p>
+<pre><code class="language-bash hljs">nix run github:owasp-noir/noir -- -h
+</code></pre>
+<h2 id="direct-binary-download">Direct Binary Download</h2>
+<p>No package manager? Grab a prebuilt binary from <a href="https://github.com/owasp-noir/noir/releases/latest">GitHub Releases</a>. Linux and macOS builds are provided.</p>
+<p>To install or update:</p>
+<ol>
+<li>
+<p>Download the binary for your platform (e.g., <code>noir-v1.1.0-linux-x86_64</code> on Linux, or <code>noir-v1.1.0-osx-arm64.tar.gz</code> on macOS).</p>
+</li>
+<li>
+<p><strong>Linux</strong>: make it executable and move it into your <code>PATH</code>:</p>
+<pre><code class="language-bash hljs">chmod +x noir-v*-linux-*
+sudo mv noir-v*-linux-* /usr/local/bin/noir
+</code></pre>
+</li>
+<li>
+<p><strong>macOS</strong>: extract the tarball and keep the bundled <code>lib/</code> directory next to the binary:</p>
+<pre><code class="language-bash hljs"># system-wide install
+sudo mkdir -p /opt/noir
+sudo tar xzf noir-v*-osx-*.tar.gz -C /opt/noir
+sudo ln -sf /opt/noir/noir /usr/local/bin/noir
+</code></pre>
+<p>For a user-local install without <code>sudo</code>, extract under <code>~/.local/noir</code> instead and add <code>~/.local/noir</code> to your <code>PATH</code>.</p>
+<p>The macOS archive ships OpenSSL libraries in <code>lib/</code>; do not move only the <code>noir</code> binary without them.</p>
+</li>
+<li>
+<p>Verify:</p>
+<pre><code class="language-bash hljs">noir --version
+</code></pre>
+</li>
+</ol>
+<h2 id="debian-package-deb">Debian Package (.deb)</h2>
+<p>Debian/Ubuntu users can use the <code>.deb</code> package from <a href="https://github.com/owasp-noir/noir/releases/latest">GitHub Releases</a>. It integrates with <code>dpkg</code>/<code>apt</code> like any other system package. Both <code>amd64</code> and <code>arm64</code> are provided.</p>
+<p>To install or update:</p>
+<ol>
+<li>
+<p>Resolve the latest version and download:</p>
+<pre><code class="language-bash hljs">VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '&quot;tag_name&quot;:' | sed -E 's/.*&quot;v([^&quot;]+)&quot;.*/\1/')
+wget &quot;https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir_${VERSION}_amd64.deb&quot;
+</code></pre>
+</li>
+<li>
+<p>Install or upgrade:</p>
+<pre><code class="language-bash hljs">sudo dpkg -i &quot;noir_${VERSION}_amd64.deb&quot;
+</code></pre>
+</li>
+<li>
+<p>Fix missing dependencies if needed:</p>
+<pre><code class="language-bash hljs">sudo apt-get -f install
+</code></pre>
+</li>
+<li>
+<p>Verify:</p>
+<pre><code class="language-bash hljs">noir --version
+</code></pre>
+</li>
+</ol>
+<h2 id="arch-linux-aur">Arch Linux (AUR)</h2>
+<p>Noir is officially published on the <a href="https://aur.archlinux.org/packages/noir">AUR</a>.</p>
+<p>To install or update:</p>
+<pre><code class="language-bash hljs">yay -S noir
+</code></pre>
+<h2 id="rpm-package-rpm">RPM Package (.rpm)</h2>
+<p>Fedora, RHEL, CentOS, openSUSE, and other RPM-based distros can use the <code>.rpm</code> package from <a href="https://github.com/owasp-noir/noir/releases/latest">GitHub Releases</a>. Both <code>x86_64</code> and <code>aarch64</code> are provided.</p>
+<p>To install:</p>
+<ol>
+<li>
+<p>Resolve the latest version and download:</p>
+<pre><code class="language-bash hljs">VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '&quot;tag_name&quot;:' | sed -E 's/.*&quot;v([^&quot;]+)&quot;.*/\1/')
+wget &quot;https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}.x86_64.rpm&quot;
+</code></pre>
+</li>
+<li>
+<p>Install:</p>
+<pre><code class="language-bash hljs">sudo rpm -i &quot;noir-${VERSION}.x86_64.rpm&quot;
+</code></pre>
+<p>Or with <code>dnf</code>:</p>
+<pre><code class="language-bash hljs">sudo dnf install &quot;./noir-${VERSION}.x86_64.rpm&quot;
+</code></pre>
+</li>
+</ol>
+<p>To update:</p>
+<ol>
+<li>
+<p>Download the latest version as shown in the install step.</p>
+</li>
+<li>
+<p>Upgrade:</p>
+<pre><code class="language-bash hljs">sudo rpm -U &quot;noir-${VERSION}.x86_64.rpm&quot;
+</code></pre>
+<p>Or with <code>dnf</code>:</p>
+<pre><code class="language-bash hljs">sudo dnf upgrade &quot;./noir-${VERSION}.x86_64.rpm&quot;
+</code></pre>
+</li>
+<li>
+<p>Verify:</p>
+<pre><code class="language-bash hljs">noir --version
+</code></pre>
+</li>
+</ol>
+<h2 id="alpine-package-apk">Alpine Package (.apk)</h2>
+<p>Alpine Linux users can use the <code>.apk</code> package from <a href="https://github.com/owasp-noir/noir/releases/latest">GitHub Releases</a>. Both <code>x86_64</code> and <code>aarch64</code> are provided.</p>
+<p>To install or update:</p>
+<ol>
+<li>
+<p>Resolve the latest version and download:</p>
+<pre><code class="language-bash hljs">VERSION=$(curl -s https://api.github.com/repos/owasp-noir/noir/releases/latest | grep '&quot;tag_name&quot;:' | sed -E 's/.*&quot;v([^&quot;]+)&quot;.*/\1/')
+wget &quot;https://github.com/owasp-noir/noir/releases/download/v${VERSION}/noir-${VERSION}-x86_64.apk&quot;
+</code></pre>
+</li>
+<li>
+<p>Install or upgrade:</p>
+<pre><code class="language-bash hljs">sudo apk add --upgrade --allow-untrusted &quot;noir-${VERSION}-x86_64.apk&quot;
+</code></pre>
+</li>
+<li>
+<p>Verify:</p>
+<pre><code class="language-bash hljs">noir --version
+</code></pre>
+</li>
+</ol>
+<h2 id="build-from-source">Build from Source</h2>
+<p>For custom builds or contributing back to the project.</p>
+<aside class="callout callout--warning">
+  <span class="callout-label">Warning</span>
+  <p>Requires the <a href="https://crystal-lang.org/install/">Crystal</a> programming language.</p>
+
+</aside>
+<p>To install:</p>
+<ol>
+<li>
+<p><strong>Clone the repository:</strong></p>
+<pre><code class="language-bash hljs">git clone https://github.com/owasp-noir/noir
+cd noir
+</code></pre>
+</li>
+<li>
+<p><strong>Install dependencies:</strong></p>
+<pre><code class="language-bash hljs">shards install
+</code></pre>
+</li>
+<li>
+<p><strong>Build:</strong></p>
+<pre><code class="language-bash hljs">shards build --release
+</code></pre>
+<p>The compiled binary is at <code>./bin/noir</code>.</p>
+</li>
+</ol>
+<p>To update:</p>
+<ol>
+<li>
+<p><strong>Pull latest changes:</strong></p>
+<pre><code class="language-bash hljs">git pull
+</code></pre>
+</li>
+<li>
+<p><strong>Install dependencies and rebuild:</strong></p>
+<pre><code class="language-bash hljs">shards install
+shards build --release
+</code></pre>
+</li>
+</ol>
+<h2 id="verify-your-installation">Verify Your Installation</h2>
+<p>Whichever method you chose, confirm Noir is installed:</p>
+<pre><code class="language-bash hljs">noir --version
+</code></pre>
+<p>If you see a version number, you're ready.</p>
+<hr />
+<p><strong>Next</strong>: <a href="/noir/get_started/running/">Your First Scan</a></p>
+
+      </div>
+      
+      
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content/get_started/installation/index.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          Edit this page on GitHub
+        </a>
+        
+
+
+<nav class="prev-next" aria-label="Page navigation">
+  
+  <a class="prevnext-prev" href="https://owasp-noir.github.io/noir/get_started/overview/">
+    <span class="prevnext-dir">Previous</span>
+    What is Noir?
+  </a>
+  
+  
+  <a class="prevnext-next" href="https://owasp-noir.github.io/noir/get_started/running/">
+    <span class="prevnext-dir">Next</span>
+    Your First Scan
+  </a>
+  
+</nav>
+
+
+      </footer>
+    </article>
+  </main>
+  
+<nav class="docs-toc" aria-label="On this page">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    On this page
+  </p>
+  <ul><li><a href="#homebrew-macos-and-linux">Homebrew (macOS and Linux)</a></li><li><a href="#snapcraft-linux">Snapcraft (Linux)</a></li><li><a href="#docker">Docker</a></li><li><a href="#nix">Nix</a></li><li><a href="#direct-binary-download">Direct Binary Download</a></li><li><a href="#debian-package-deb">Debian Package (.deb)</a></li><li><a href="#arch-linux-aur">Arch Linux (AUR)</a></li><li><a href="#rpm-package-rpm">RPM Package (.rpm)</a></li><li><a href="#alpine-package-apk">Alpine Package (.apk)</a></li><li><a href="#build-from-source">Build from Source</a></li><li><a href="#verify-your-installation">Verify Your Installation</a></li></ul>
+</nav>
+
+    </main>
+  </div>
+
+  <footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir is free and open source under the MIT license.</span>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/www-project-noir/" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">Contributing</a>
+    </nav>
+  </div>
+</footer>
+  
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "Copy",
+    copied: "Copied",
+    copyManual: "Press Ctrl C",
+    noResults: "No results for",
+    theme: "Theme",
+    themeAuto: "auto",
+    themeLight: "light",
+    themeDark: "dark"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>

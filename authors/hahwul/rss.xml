@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir - Authors: hahwul</title>
+    <link>https://owasp-noir.github.io/noir/authors/hahwul/</link>
+    <description>Hunt every endpoint in your code. Noir statically analyses source across 23 languages and 144 frameworks, exposing shadow APIs and mapping the attack surface.</description>
+    <atom:link href="https://owasp-noir.github.io/noir/authors/hahwul/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>--ai-context and --include-callee: hint and sink for AI code review</title>
+      <link>https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/</guid>
+      <description>Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.</description>
+      <content:encoded><![CDATA[<p>Around November 2025, AI changed how software gets built, and source-code vulnerability analysis has been moving in the same direction ever since.</p>
+<p>A lot of AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To actually work well, the LLM needs to know <em>what to look at</em>. Drop the whole codebase on it and you burn tokens while still missing the spots that need attention.</p>
+<p>Noir v1 ships two flags that extract that &quot;what to look at&quot; upfront and pack it into the output.</p>
+<ul>
+<li><code>--include-callee</code>: adds a 1-hop callee graph to each endpoint as a <code>callees</code> array</li>
+<li><code>--ai-context</code>: includes the same callee data and sorts it into five security categories under <code>ai_context</code></li>
+</ul>
+<h2 id="include-callee-who-calls-whom">--include-callee: who calls whom</h2>
+<p>The simpler of the two. Parses each endpoint handler body with tree-sitter and pulls out 1-hop callees as <code>{name, path, line}</code>.</p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --include callee -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;callees&quot;: [
+    { &quot;name&quot;: &quot;get_hash&quot;,          &quot;path&quot;: &quot;app/utils.py&quot;, &quot;line&quot;: 3 },
+    { &quot;name&quot;: &quot;User.query.filter&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 21 },
+    { &quot;name&quot;: &quot;User&quot;,              &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 24 },
+    { &quot;name&quot;: &quot;db_session.add&quot;,    &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 25 },
+    { &quot;name&quot;: &quot;db_session.commit&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 26 }
+  ]
+}
+</code></pre>
+<p>To an LLM this reads as &quot;to review this endpoint, also look at <code>utils.py:3</code> and <code>app.py:21,24,25,26</code>&quot;. Token-efficient too: instead of shipping the entire codebase, you only need the handler plus those few referenced lines.</p>
+<h2 id="ai-context-same-data-sorted-into-security-categories">--ai-context: same data, sorted into security categories</h2>
+<p><code>--ai-context</code> takes the same callee information and runs further analysis to bucket it into five categories.</p>
+<ul>
+<li><strong>guards</strong>: auth middleware / decorators / access-control checks</li>
+<li><strong>callees</strong>: same as above but enriched with a code snippet and a confidence score</li>
+<li><strong>sinks</strong>: potential SQL / command-exec / file-I/O / redirect / template-render endpoints</li>
+<li><strong>validators</strong>: input-validation calls</li>
+<li><strong>signals</strong>: heuristic flags like <code>state_change</code>, <code>credential_input</code>, <code>guard_absence</code></li>
+</ul>
+<p>Running the same Flask <code>/sign</code> POST endpoint with <code>--ai-context</code></p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --ai-context -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;ai_context&quot;: {
+    &quot;sinks&quot;: [
+      {
+        &quot;kind&quot;: &quot;sql&quot;,
+        &quot;name&quot;: &quot;query&quot;,
+        &quot;description&quot;: &quot;Potential SQL/data-store sink inferred from code or callee name&quot;,
+        &quot;path&quot;: &quot;app/app.py&quot;, &quot;line&quot;: 21, &quot;confidence&quot;: 78,
+        &quot;snippet&quot;: &quot;20: password = get_hash(request.form['password'], ...) | 21: if User.query.filter(...).first(): | 22: return render_template('error.html')&quot;
+      }
+    ],
+    &quot;signals&quot;: [
+      { &quot;kind&quot;: &quot;state_change&quot;,     &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 88 },
+      { &quot;kind&quot;: &quot;credential_input&quot;, &quot;name&quot;: &quot;form.password&quot;, &quot;confidence&quot;: 86 },
+      { &quot;kind&quot;: &quot;guard_absence&quot;,    &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 28,
+        &quot;description&quot;: &quot;No auth guard was detected for this state-changing endpoint.&quot; }
+    ]
+  }
+}
+</code></pre>
+<p>What the LLM gets from this single endpoint</p>
+<ol>
+<li>There's a <code>credential_input</code>: a password arrives via form</li>
+<li>It's a <code>state_change</code>: POST</li>
+<li>There's a <code>guard_absence</code>: no auth decorator detected</li>
+<li>There's a <code>sql</code> sink: <code>User.query.filter</code></li>
+</ol>
+<p>For a human reviewer and an LLM alike, four signals stacked on one handler send a clear message: review this first. A credential-handling endpoint with no auth on top is priority 1, no further reasoning needed.</p>
+<p>For contrast, here's a case where <code>--ai-context</code> did pick up auth (flask_auth fixture)</p>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/profile&quot;,
+  &quot;method&quot;: &quot;GET&quot;,
+  &quot;ai_context&quot;: {
+    &quot;guards&quot;: [{
+      &quot;kind&quot;: &quot;auth_guard&quot;,
+      &quot;name&quot;: &quot;flask-login login_required&quot;,
+      &quot;description&quot;: &quot;Protected by flask-login login_required&quot;,
+      &quot;confidence&quot;: 86,
+      &quot;snippet&quot;: &quot;12: | 13: @login_required | 14: @app.route('/profile') | 15: def profile():&quot;
+    }]
+  }
+}
+</code></pre>
+<p>The <code>@login_required</code> decorator landed in <code>guards</code>. To an LLM that's a negative signal: &quot;this endpoint already has an auth check, focus on other vuln classes instead&quot;.</p>
+<h2 id="hint-and-sink-at-the-same-time">Hint and sink at the same time</h2>
+<p>The interesting bit is that these flags work as both hint and sink at once.</p>
+<ul>
+<li>As a <strong>hint</strong>: pre-curated per-endpoint context narrows the LLM's attention. Instead of &quot;review the entire codebase&quot;, it's &quot;this handler plus these files&quot;.</li>
+<li>As a <strong>sink</strong> (the source-to-sink kind): the <code>sinks</code> bucket lists framework-aware candidates for where data might land. A generic LLM <em>can</em> reason that <code>User.query.filter</code> is SQL, but it burns tokens doing so every time. Noir pre-labels them so the LLM can skip that reasoning step.</li>
+</ul>
+<p>The framework-aware part is the big one. The same callee name <code>query</code> means different things in different contexts.</p>
+<ul>
+<li>Flask + SQLAlchemy: <code>User.query.filter</code> → SQL sink</li>
+<li>Express + MongoDB: <code>User.find</code> → NoSQL sink</li>
+<li>A plain LLM either misses the distinction or re-derives it on every pass</li>
+</ul>
+<p>Noir identifies the framework in the detector phase, and the augmentor applies that framework's idioms when matching sink / guard patterns. The LLM consumes pre-labeled, framework-aware context instead of raw code.</p>
+<h2 id="recommended-use">Recommended use</h2>
+<p>For an AI-driven code review pipeline</p>
+<pre><code class="language-bash hljs"># Every category
+noir -b ./app --ai-context -f json
+
+# Narrow to the categories you actually want (saves tokens)
+noir -b ./app --ai-context=guards,sinks,signals -f json
+
+# Just callees (lightweight hint)
+noir -b ./app --include callee -f json
+</code></pre>
+<p>The full category set is best for the first audit pass. For incremental review or PR-level checks, <code>guards,sinks,signals</code> is usually enough.</p>
+<h2 id="whats-next">What's next</h2>
+<p><code>--ai-context</code>'s sink and guard patterns are currently regex-based heuristics. We don't do real data-flow tracing; we mark &quot;this looks like a sink&quot; based on callee names and code patterns, and stop there. That's a deliberate trade-off. Precise taint analysis has dedicated tooling, and Noir aims to be the layer that gives that tool (or an LLM) a fast focus point to start from.</p>
+<p>From here, the plan is to make the pattern catalogue more framework-aware and add new signal kinds. Feedback and new pattern proposals are always welcome.</p>
+]]></content:encoded>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <category>v1</category>
+      <category>ai-context</category>
+      <category>callee</category>
+      <category>design</category>
+    </item>
+    <item>
+      <title>Noir v1.0: Major bump, compat-first</title>
+      <link>https://owasp-noir.github.io/noir/blog/noir-v1-release/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/noir-v1-release/</guid>
+      <description>Why 1.x now, and how the v0 surface stayed intact.</description>
+      <content:encoded><![CDATA[<p>Noir v1.0 is out.</p>
+<p>It's been roughly four years since the first commit landed in my personal repo, and now we're cutting it as an official release.</p>
+<p>I could have kept extending the 0.x line, but there were two reasons to bump the major.</p>
+<ol>
+<li>Stability: around v0.30 it reached the point where adding a new framework no longer breaks existing analysis results. Analyzer contracts, output schema, on-disk paths: the core interfaces have settled, and it felt like the right time to call it 1.x.</li>
+<li>Sub-commands: v0's CLI was flag-only. With more ancillary features coming (cache, rules, config), flags alone were hitting their limits. v1 introduces a verb-based structure: <code>noir scan / list / cache / config / rules / completion / version / help</code>.</li>
+</ol>
+<p>Outside those two decisions, almost every change was designed around <strong>v0 compatibility</strong>. v0 call shapes like <code>noir -b ./app -P -f json</code> route automatically into the <code>scan</code> subcommand, and renamed flags keep their old names as silent aliases. The only thing that breaks explicitly is <code>--ollama</code> / <code>--ollama-model</code>, both deprecated since 2024.</p>
+<p>Most v0 scripts run on v1 without modification. That's the whole point of this release.</p>
+<p>The full change list and the few items that need migration are collected in the <a href="https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100">CHANGELOG v1.0.0</a>.</p>
+<p>Upgrades use the same paths as always:</p>
+<pre><code class="language-bash hljs">brew upgrade noir
+# or
+docker pull ghcr.io/owasp-noir/noir:1.0.0
+# or
+gh release download v1.0.0 -R owasp-noir/noir
+</code></pre>
+<p>Spot a bug or have feedback? File it on <a href="https://github.com/owasp-noir/noir/issues">GitHub Issues</a>. Happy hunting :D</p>
+]]></content:encoded>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <category>release</category>
+      <category>v1</category>
+    </item>
+    <item>
+      <title>Welcome to the Noir blog</title>
+      <link>https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/</guid>
+      <description>A new space for release deep dives, performance notes, design rationale, and the writing that doesn&apos;t fit in a changelog.</description>
+      <content:encoded><![CDATA[<p>Hi, this is hahwul. I've been writing Noir tips and notes on my personal blog for a while, but it felt better to have an official channel for it, so we're opening a blog space inside the project docs.</p>
+<p>It's a small experimental section sitting alongside the documentation, meant to collect the kinds of writing that don't quite fit into release notes or reference pages. Better here than scattered across PR descriptions.</p>
+<h2 id="what-youll-find-here">What you'll find here</h2>
+<ul>
+<li><strong>Release deep dives</strong>: what landed in recent versions, the background, and the trade-offs we picked.</li>
+<li><strong>Performance and accuracy investigations</strong>: when a benchmark or a false-positive sweep turns up something worth writing about, we'll post it.</li>
+<li><strong>Framework coverage notes</strong>: the parsing edge cases we run into while adding support for a new Rust/Python/JVM framework.</li>
+<li><strong>Design rationale</strong>: why the analyzer pipeline, optimizer passes, and AI context ended up shaped the way they are.</li>
+<li><strong>Tips</strong>: practical know-how for getting more out of Noir in everyday use.</li>
+</ul>
+<h2 id="how-it-fits-the-rest-of-the-docs">How it fits the rest of the docs</h2>
+<ul>
+<li>The <a href="https://owasp-noir.github.io/noir/get_started/">Get Started</a> guide stays the canonical place to learn the tool.</li>
+<li>The <a href="https://owasp-noir.github.io/noir/usage/">Usage</a> section keeps reference material: flags, supported frameworks, output formats.</li>
+<li>The blog supplements both with narrative content. If a topic graduates into something every user should know, it migrates into the docs.</li>
+</ul>
+<h2 id="cadence">Cadence</h2>
+<p>There's no schedule. Posts go up when there's something to write about. For regular updates, follow the GitHub <a href="https://github.com/owasp-noir/noir/releases">releases</a>; check back here once in a while for the longer reads.</p>
+<p>If you'd like to contribute a post (write about how you use Noir, share a CI integration, or unpack a framework's routing model), open a PR with a draft. Authors get a card next to the post.</p>
+]]></content:encoded>
+      <pubDate>Sun, 17 May 2026 00:00:00 +0000</pubDate>
+      <category>meta</category>
+      <category>announcements</category>
+    </item>
+  </channel>
+</rss>

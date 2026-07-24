@@ -1,0 +1,1 @@
+{"name":"OWASP Noir","short_name":"Noir","description":"Hunt every endpoint in your code. Noir statically analyses source across 23 languages and 144 frameworks, exposing shadow APIs and mapping the attack surface.","start_url":"/noir/","display":"standalone","theme_color":"#0b0b0c","background_color":"#0b0b0c"}

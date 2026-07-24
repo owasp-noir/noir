@@ -1,0 +1,146 @@
+# OWASP Noir
+
+> Hunt every endpoint in your code. Noir statically analyses source across 23 languages and 144 frameworks, exposing shadow APIs and mapping the attack surface.
+
+OWASP Noir documentation.
+
+## Pages
+
+- [OWASP Noir](https://owasp-noir.github.io/noir/): Hunt every endpoint in your code. Noir statically analyses source across 23 languages and 144 frameworks, exposing shadow APIs and mapping the attack surface.
+- [OWASP Noir](https://owasp-noir.github.io/noir/ko/): 코드 속 모든 엔드포인트를 찾아냅니다. Noir는 23개 언어와 144개 프레임워크의 소스를 정적 분석하여 섀도우 API를 드러내고 공격 표면을 그립니다.
+
+## Blog
+
+- [--ai-context and --include-callee: hint and sink for AI code review](https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/): Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.
+- [Noir v1.0: Major bump, compat-first](https://owasp-noir.github.io/noir/blog/noir-v1-release/): Why 1.x now, and how the v0 surface stayed intact.
+- [Welcome to the Noir blog](https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/): A new space for release deep dives, performance notes, design rationale, and the writing that doesn't fit in a changelog.
+- [--ai-context와 --include-callee: AI 코드 리뷰의 hint이자 sink](https://owasp-noir.github.io/noir/ko/blog/ai-context-and-callee-hints/): AI 기반 소스 코드 분석에서 구조화된 보안 context를 흘려보내는 Noir의 두 플래그 이야기.
+- [Noir v1.0: 메이저 버전, v0은 그대로](https://owasp-noir.github.io/noir/ko/blog/noir-v1-release/): 왜 1.x로 갔는지, 그리고 호환을 어떻게 지켰는지.
+- [Noir 블로그를 시작합니다](https://owasp-noir.github.io/noir/ko/blog/welcome-to-the-noir-blog/): 릴리스 딥다이브, 성능 개선기, 설계 결정의 배경 그리고 릴리스 노트에 담기 어려운 이야기들을 위한 공간.
+
+## Community
+
+- [Community Articles & Talks](https://owasp-noir.github.io/noir/community/media/): Articles, blog posts, and talks about OWASP Noir from the community.
+- [커뮤니티 기사 및 발표](https://owasp-noir.github.io/noir/ko/community/media/): 커뮤니티의 OWASP Noir 관련 기사, 블로그 및 발표 모음.
+
+## Development
+
+- [Analyzer Architecture](https://owasp-noir.github.io/noir/development/analyzer_architecture/): How Noir's detectors, language engines, route extractors, and framework adapters fit together, and how to add a new analyzer.
+- [Debug with hidden flags](https://owasp-noir.github.io/noir/development/debug_flags/): Developer-only flags not shown in --help for debugging and experimentation
+- [How to Build](https://owasp-noir.github.io/noir/development/how_to_build/): Set up a development environment, build from source, run tests, and contribute to OWASP Noir.
+- [How to Release](https://owasp-noir.github.io/noir/development/how_to_release/): Maintainer guide for creating and publishing new Noir releases.
+- [Build with Nix Env](https://owasp-noir.github.io/noir/development/nix_environment/): Set up a reproducible development environment for OWASP Noir using Nix and Docker.
+- [분석기 아키텍처](https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/): Noir의 detector, language engine, route extractor, framework adapter 가 어떻게 맞물리는지, 그리고 새 분석기를 어떻게 추가하는지.
+- [숨겨진 플래그로 디버그](https://owasp-noir.github.io/noir/ko/development/debug_flags/): 디버깅과 실험을 위한 개발자 전용 숨겨진 플래그
+- [빌드 방법](https://owasp-noir.github.io/noir/ko/development/how_to_build/): 개발 환경 설정, 소스 빌드, 테스트 실행 및 OWASP Noir 기여 방법.
+- [릴리스 방법](https://owasp-noir.github.io/noir/ko/development/how_to_release/): Noir 릴리스 생성 및 게시를 위한 관리자 가이드.
+- [Nix 환경으로 빌드](https://owasp-noir.github.io/noir/ko/development/nix_environment/): Nix와 Docker를 사용한 OWASP Noir 재현 가능 개발 환경 설정.
+
+## Getting Started
+
+- [AI-Powered Analysis](https://owasp-noir.github.io/noir/get_started/ai_power/): Connect Noir to LLM providers for deeper code analysis and endpoint discovery.
+- [Install Noir](https://owasp-noir.github.io/noir/get_started/installation/): Install OWASP Noir via Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, binary download, or from source.
+- [Migrating from v0 to v1](https://owasp-noir.github.io/noir/get_started/migrate_v0_to_v1/): What changed between Noir 0.x and 1.0: flags, config keys, behavior, and the compatibility shims that keep v0 scripts running.
+- [What is Noir?](https://owasp-noir.github.io/noir/get_started/overview/): OWASP Noir is a SAST tool that extracts endpoints from source code to feed human reviewers, AI auditors, and DAST scanners.
+- [Your First Scan](https://owasp-noir.github.io/noir/get_started/running/): Run your first scan with Noir and explore the results.
+- [AI 기반 분석](https://owasp-noir.github.io/noir/ko/get_started/ai_power/): Noir를 LLM 제공업체에 연결하여 심층 코드 분석과 엔드포인트 탐지를 수행합니다.
+- [Noir 설치](https://owasp-noir.github.io/noir/ko/get_started/installation/): Homebrew, Snapcraft, Docker, Nix, AUR, .deb, .rpm, .apk, 바이너리 다운로드 또는 소스 빌드를 통해 OWASP Noir를 설치합니다.
+- [v0 에서 v1 로 마이그레이션](https://owasp-noir.github.io/noir/ko/get_started/migrate_v0_to_v1/): Noir 0.x 와 1.0 사이의 변경점: flag, config key, 동작 변화, 그리고 v0 스크립트를 그대로 굴리게 해주는 호환 shim 모음.
+- [Noir란?](https://owasp-noir.github.io/noir/ko/get_started/overview/): OWASP Noir는 소스 코드에서 엔드포인트를 추출해, 사람 리뷰어, AI 감사자, DAST 스캐너에 공급하는 SAST 도구입니다.
+- [첫 번째 스캔](https://owasp-noir.github.io/noir/ko/get_started/running/): Noir로 첫 번째 스캔을 실행하고 결과를 살펴봅니다.
+
+## Resources
+
+- [아트워크](https://owasp-noir.github.io/noir/ko/resources/artwork/): OWASP Noir 공식 로고, 마스코트 및 시각적 리소스.
+- [연락처](https://owasp-noir.github.io/noir/ko/resources/contact/): OWASP Noir 팀에 연락하는 방법.
+- [FAQ](https://owasp-noir.github.io/noir/ko/resources/faq/): OWASP Noir에 대한 자주 묻는 질문.
+- [문제 해결](https://owasp-noir.github.io/noir/ko/resources/troubleshooting/): OWASP Noir 사용 시 자주 발생하는 문제의 해결 방법입니다.
+- [Artwork](https://owasp-noir.github.io/noir/resources/artwork/): Official OWASP Noir logos, mascots, and visual resources.
+- [Contact Us](https://owasp-noir.github.io/noir/resources/contact/): Get in touch with the OWASP Noir team.
+- [FAQ](https://owasp-noir.github.io/noir/resources/faq/): Common questions about OWASP Noir.
+- [Troubleshooting](https://owasp-noir.github.io/noir/resources/troubleshooting/): Solutions for common issues when using OWASP Noir.
+
+## AI Providers
+
+- [ACP 에이전트와 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/): Codex, Gemini, Claude 같은 ACP 기반 에이전트를 Noir와 연결해 AI 기반 엔드포인트 분석을 수행하는 방법입니다.
+- [Azure AI와 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/): Azure AI 언어 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다.
+- [GitHub Marketplace 모델과 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/): GitHub Marketplace의 AI 모델을 Noir와 함께 사용하는 방법입니다.
+- [LM Studio와 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/): Noir를 LM Studio와 통합하여 로컬 언어 모델로 코드 분석을 수행하는 방법입니다.
+- [Ollama와 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/): Noir를 Ollama와 통합하여 로컬 LLM으로 코드 분석을 수행하는 방법입니다.
+- [OpenAI와 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/): GPT-5.5 같은 OpenAI 모델을 Noir와 연결하여 AI 기반 코드 분석을 수행하는 방법입니다.
+- [OpenRouter와 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/): OpenRouter를 통해 여러 AI 모델에 접근하여 Noir와 함께 사용하는 방법입니다.
+- [vLLM과 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/): Noir를 vLLM과 통합하여 고성능 로컬 LLM 추론을 수행하는 방법입니다.
+- [xAI와 함께 Noir 사용하기](https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/): xAI Grok 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다.
+- [Using Noir with ACP Agents](https://owasp-noir.github.io/noir/usage/ai_providers/acp/): Use ACP-based agents such as Codex, Gemini, and Claude with Noir for AI-powered endpoint analysis.
+- [Using Noir with Azure AI](https://owasp-noir.github.io/noir/usage/ai_providers/azure/): Connect Noir with Azure AI language models for code analysis.
+- [Using Noir with GitHub Marketplace Models](https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/): Use AI models from GitHub Marketplace with Noir for code analysis.
+- [Using Noir with LM Studio](https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/): Integrate Noir with LM Studio for local, private code analysis.
+- [Using Noir with Ollama](https://owasp-noir.github.io/noir/usage/ai_providers/ollama/): Integrate Noir with Ollama for local LLM-powered code analysis.
+- [Using Noir with OpenAI](https://owasp-noir.github.io/noir/usage/ai_providers/openai/): Connect Noir with OpenAI models like GPT-5.5 for AI-powered code analysis.
+- [Using Noir with OpenRouter](https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/): Use OpenRouter with Noir to access multiple AI models through a unified API.
+- [Using Noir with vLLM](https://owasp-noir.github.io/noir/usage/ai_providers/vllm/): Integrate Noir with vLLM for high-performance local LLM inference.
+- [Using Noir with xAI](https://owasp-noir.github.io/noir/usage/ai_providers/xai/): Integrate Noir with xAI Grok models for code analysis.
+
+## Configuration
+
+- [구성 파일 사용하기](https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/): config.yaml 파일로 Noir 기본 옵션을 설정합니다.
+- [셸 자동완성](https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/): Zsh, Bash, Fish, Elvish에서 Noir 셸 자동완성을 설정합니다.
+- [Using a Configuration File](https://owasp-noir.github.io/noir/usage/configurations/configuration_file/): Set default options for Noir using a config.yaml file.
+- [Shell Completions](https://owasp-noir.github.io/noir/usage/configurations/shell-completion/): Set up shell auto-completion for Noir in Zsh, Bash, Fish, and Elvish.
+
+## Additional Features
+
+- [다른 도구로 결과 전송하기](https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/): Burp/ZAP을 통해 endpoint를 probe하거나 Elasticsearch로 export 합니다.
+- [Diff 모드로 코드 비교하기](https://owasp-noir.github.io/noir/ko/usage/more_features/diff/): 코드베이스의 두 버전을 비교하여 엔드포인트 변경사항을 식별합니다.
+- [DAST 파이프라인에 Noir 통합하기](https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/): ZAP, Burp Suite, Caido와 함께 Noir를 DAST 파이프라인에 통합합니다.
+- [상황별 분석을 위한 Tagger 사용하기](https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/): 엔드포인트와 매개변수에 자동으로 태그를 추가하여 잠재적 보안 위험을 식별합니다.
+- [Delivering Results to Other Tools](https://owasp-noir.github.io/noir/usage/more_features/deliver/): Probe endpoints through Burp/ZAP or export them to Elasticsearch.
+- [Comparing Code with Diff Mode](https://owasp-noir.github.io/noir/usage/more_features/diff/): Compare two codebase versions to identify endpoint changes.
+- [Integrating Noir into Your DAST Pipeline](https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/): Integrate Noir into your DAST pipeline with ZAP, Burp Suite, or Caido.
+- [Using the Tagger for Contextual Analysis](https://owasp-noir.github.io/noir/usage/more_features/tagger/): Automatically tag endpoints and parameters to identify potential security risks.
+
+## Output Formats
+
+- [HTTP 클라이언트 명령어](https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/): Noir 스캔 결과에서 cURL, HTTPie, PowerShell 명령어를 생성합니다.
+- [HTML 리포트](https://owasp-noir.github.io/noir/ko/usage/output_formats/html/): 공격 표면 스캔 결과에 대한 시각적인 HTML 보고서를 생성합니다.
+- [JSON 및 JSONL](https://owasp-noir.github.io/noir/ko/usage/output_formats/json/): JSON 또는 JSONL 형식으로 Noir 스캔 결과를 생성합니다.
+- [Mermaid 차트](https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/): Noir 스캔 결과에서 API 구조를 시각화하는 Mermaid 마인드맵을 생성합니다.
+- [추가 출력 형식](https://owasp-noir.github.io/noir/ko/usage/output_formats/more/): only-url, only-param, markdown-table, Postman 컬렉션 등 특수 출력 형식입니다.
+- [OpenAPI 명세](https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/): Noir 스캔 결과에서 OpenAPI 명세(OAS) 2.0 및 3.0 문서를 생성합니다.
+- [SARIF](https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/): GitHub, GitLab, Azure DevOps와 CI/CD 통합을 위한 SARIF v2.1.0 출력을 생성합니다.
+- [YAML](https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/): 사람이 읽기 쉬운 YAML 형식으로 스캔 결과를 생성합니다.
+- [HTTP Client Commands](https://owasp-noir.github.io/noir/usage/output_formats/curl/): Generate executable cURL, HTTPie, and PowerShell commands from Noir scan results.
+- [HTML Report](https://owasp-noir.github.io/noir/usage/output_formats/html/): Generate a self-contained, interactive HTML report of your attack surface scan results.
+- [JSON and JSONL](https://owasp-noir.github.io/noir/usage/output_formats/json/): Generate Noir scan results in JSON or JSONL format.
+- [Mermaid Chart](https://owasp-noir.github.io/noir/usage/output_formats/mermaid/): Generate Mermaid mindmaps to visualize API structure from Noir scan results.
+- [Additional Output Formats](https://owasp-noir.github.io/noir/usage/output_formats/more/): Specialized output formats like only-url, only-param, markdown-table, and Postman collections.
+- [OpenAPI Specification](https://owasp-noir.github.io/noir/usage/output_formats/openapi/): Generate OpenAPI Specification (OAS) 2.0 and 3.0 documents from Noir scan results.
+- [SARIF](https://owasp-noir.github.io/noir/usage/output_formats/sarif/): Generate SARIF v2.1.0 output for CI/CD integration with GitHub, GitLab, and Azure DevOps.
+- [YAML](https://owasp-noir.github.io/noir/usage/output_formats/yaml/): Generate scan results in human-readable YAML format.
+
+## Passive Security Scanning
+
+- [커뮤니티 기여 패시브 스캔 규칙](https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/): 커뮤니티 기여 패시브 스캔 규칙 사용 방법.
+- [기본 패시브 스캔 규칙](https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/): 기본 패시브 스캔 규칙 위치, 자동 업데이트 동작, 사용자 정의 방법.
+- [패시브 스캔 규칙](https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/): YAML을 사용하여 코드베이스의 보안 문제를 탐지하는 커스텀 패시브 스캔 규칙을 만듭니다.
+- [Community-Contributed Passive Scan Rules](https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/): Use community-contributed passive scan rules with Noir.
+- [Default Passive Scan Rules](https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/): Default passive scan rules location, auto-update behavior, and customization.
+- [Passive Scan Rule](https://owasp-noir.github.io/noir/usage/passive_scan/rule/): Create custom passive scan rules using YAML to detect security issues in your codebase.
+
+## Supported Technologies
+
+- [AI 컨텍스트](https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/): guards, callees, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다.
+- [Callee 커버리지](https://owasp-noir.github.io/noir/ko/usage/supported/callee_coverage/): Noir의 엔드포인트별 1-hop callee 추출을 지원하는 프레임워크 범위입니다.
+- [CLI 앱](https://owasp-noir.github.io/noir/ko/usage/supported/cli/): Noir가 CLI 애플리케이션의 커맨드라인 공격 표면(서브커맨드, 플래그, 위치 인자, 사용되는 환경 변수)을 21개 언어에 걸쳐 어떻게 매핑하는지 설명합니다.
+- [지원되는 언어 및 프레임워크](https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/): Noir가 지원하는 프로그래밍 언어 및 프레임워크와 기능 호환성 정보입니다.
+- [모바일 앱](https://owasp-noir.github.io/noir/ko/usage/supported/mobile/): Noir가 Android·iOS 딥링크 진입점을 추출하고 이를 처리하는 코드와 연결하는 방식입니다.
+- [지원되는 명세](https://owasp-noir.github.io/noir/ko/usage/supported/specification/): OpenAPI, RAML, HAR, GraphQL 등 Noir가 지원하는 API 및 데이터 명세입니다.
+- [기술 범위 관리](https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/): techs 및 exclude-techs 플래그로 Noir 스캔 대상 기술을 제어합니다.
+- [AI Context](https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/): Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals.
+- [Callee Coverage](https://owasp-noir.github.io/noir/usage/supported/callee_coverage/): Framework coverage for Noir's best-effort per-endpoint 1-hop callee extraction.
+- [CLI Apps](https://owasp-noir.github.io/noir/usage/supported/cli/): How Noir maps the command-line attack surface of CLI applications (subcommands, flags, positional arguments, and consumed environment variables) across 21 languages.
+- [Supported Languages and Frameworks](https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/): Programming languages and frameworks supported by Noir with feature compatibility details.
+- [Mobile Apps](https://owasp-noir.github.io/noir/usage/supported/mobile/): How Noir extracts Android and iOS deep-link entry points and links them to the code that handles them.
+- [Supported Specifications](https://owasp-noir.github.io/noir/usage/supported/specification/): API and data specifications supported by Noir, including OpenAPI, RAML, HAR, and GraphQL.
+- [Managing Technology Scopes](https://owasp-noir.github.io/noir/usage/supported/tech-commands/): Control which technologies Noir scans using the techs and exclude-techs flags.
+

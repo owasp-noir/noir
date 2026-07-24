@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals.">
+  <title>AI Context - OWASP Noir</title>
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  <meta property="og:title" content="AI Context">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+  <meta property="og:description" content="Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/usage-supported-ai_context_coverage.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AI Context">
+  <meta name="twitter:description" content="Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/usage-supported-ai_context_coverage.png">
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"AI Context","url":"https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/","description":"Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals.","image":"https://owasp-noir.github.io/noir/og-images/usage-supported-ai_context_coverage.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/"},{"@type":"ListItem","position":2,"name":"Usage Guide","item":"https://owasp-noir.github.io/noir/usage/"},{"@type":"ListItem","position":3,"name":"Supported Technologies","item":"https://owasp-noir.github.io/noir/usage/supported/"},{"@type":"ListItem","position":4,"name":"AI Context"}]}</script>
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/">
+<link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/">
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/" class="header-logo" aria-label="OWASP Noir, home">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.2.1</a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+      <a href="https://owasp-noir.github.io/noir/usage/">Usage</a>
+      <a href="https://owasp-noir.github.io/noir/development/">Development</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://owasp-noir.github.io/noir/resources/">Resources</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="Search documentation">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>Search</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="Language">
+        
+        <a href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/" hreflang="en" aria-current="true">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/" hreflang="ko">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="OWASP Noir on GitHub">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="Theme">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="Search documentation" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="Search documentation" placeholder="Search the docs" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="Search"></div>
+  </div>
+</div>
+<div class="docs-container">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="Documentation">
+
+    <details class="sidebar-group" data-group="get_started">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>Get Started</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/overview/">What is Noir?</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/installation/">Install Noir</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/running/">Your First Scan</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/ai_power/">AI-Powered Analysis</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/get_started/migrate_v0_to_v1/">Migrating from v0 to v1</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage" open>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>Usage</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/cli_commands/">CLI Commands</a></li>
+
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported" open>
+          <summary class="sidebar-subheading">
+            <span>Supported</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/language_and_frameworks/">Languages & Frameworks</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/specification/">Specifications</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/callee_coverage/">Callee Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/ai_context_coverage/" aria-current="page">AI Context Coverage</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/mobile/">Mobile Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/cli/">CLI Apps</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/supported/tech-commands/">Technology Scopes</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats">
+          <summary class="sidebar-subheading">
+            <span>Output Formats</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/json/">JSON and JSONL</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/yaml/">YAML</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/curl/">HTTP Client Commands</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/openapi/">OpenAPI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/sarif/">SARIF</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/html/">HTML Report</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/mermaid/">Mermaid Chart</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/output_formats/more/">Additional Formats</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive">
+          <summary class="sidebar-subheading">
+            <span>Passive Scan</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/rule/">Writing a Rule</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/default_rules/">Default Rules</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/passive_scan/community_rules/">Community Rules</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features">
+          <summary class="sidebar-subheading">
+            <span>More Features</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/tagger/">Tagger</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/deliver/">Deliver</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/diff/">Diff Mode</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/more_features/pipeline-for-dast/">Pipeline for DAST</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers">
+          <summary class="sidebar-subheading">
+            <span>AI Providers</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openai/">OpenAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/xai/">xAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/">Azure AI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/github_marketplace/">GitHub Marketplace</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/openrouter/">OpenRouter</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/ollama/">Ollama</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/vllm/">vLLM</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/lmstudio/">LM Studio</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/ai_providers/acp/">ACP Agents</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations">
+          <summary class="sidebar-subheading">
+            <span>Configuration</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/">Overview</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/configuration_file/">Configuration File</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/usage/configurations/shell-completion/">Shell Completions</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/usage/github_action/">GitHub Action</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>Development</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_build/">How to Build</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/analyzer_architecture/">Analyzer Architecture</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/nix_environment/">Nix Environment</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/debug_flags/">Debug Flags</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/development/how_to_release/">How to Release</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>Resources</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/">Overview</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/faq/">FAQ</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/troubleshooting/">Troubleshooting</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/artwork/">Artwork</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/resources/contact/">Contact</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/">Community</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/community/media/">Articles & Talks</a></li>
+
+      </ul>
+    </details>
+
+  </nav>
+</aside>
+  <main id="main" class="docs-main">
+    <article>
+      <h1 class="docs-title">AI Context</h1>
+      <p class="docs-lede">Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals.</p>
+      <div class="prose">
+        <p>Noir can attach a structured <strong>AI review context</strong> to each endpoint. It groups static signals that LLM-based SAST tools, code reviewers, and security agents commonly need to triage a route, without forcing them to walk the repository themselves.</p>
+<p>Use <code>--ai-context</code> to enable it:</p>
+<pre><code class="language-bash hljs">noir scan . --ai-context
+</code></pre>
+<p>Pass a comma-separated bucket list to narrow the output to just the categories you care about. The filter applies at the data layer, so JSON / SARIF / YAML / Postman / OAS all see the same selection, not just the plain-text renderer.</p>
+<pre><code class="language-bash hljs">noir scan . --ai-context=guards,sinks       # only auth + likely-dangerous sinks
+noir scan . --ai-context=callee             # only the 1-hop handler callees
+noir scan . --ai-context=all                # explicit form of &quot;everything&quot;
+noir scan . --ai-context                    # bare form: also &quot;everything&quot;
+</code></pre>
+<p>Valid feature names: <code>guards</code>, <code>callee</code>, <code>sinks</code>, <code>validators</code>, <code>signals</code> (plus <code>all</code>). Names are case-insensitive.</p>
+<p>In plain output, every endpoint with non-empty context grows an <code>ai_context:</code> block. Model-based formats expose the same structure under standard locations:</p>
+<table>
+<thead>
+<tr>
+<th>Format</th>
+<th>Where AI context appears</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>JSON / JSONL / YAML / TOML</td>
+<td><code>endpoints[].ai_context</code></td>
+</tr>
+<tr>
+<td>OpenAPI 2.0 / 3.0</td>
+<td>Operation-level <code>x-noir-ai-context</code> extension</td>
+</tr>
+<tr>
+<td>SARIF</td>
+<td><code>result.properties.noir.ai_context</code></td>
+</tr>
+<tr>
+<td>Postman</td>
+<td>Appended to the item description</td>
+</tr>
+<tr>
+<td>cURL / HTTPie / only-url / only-param</td>
+<td>Omitted on purpose (primary output stays stable)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="what-goes-inside">What goes inside</h2>
+<p>Every context bucket is a list of entries with <code>kind</code>, <code>name</code>, optional <code>source</code>, <code>description</code>, <code>path</code>, <code>line</code>, <code>confidence</code>, and <code>snippet</code>. The buckets are:</p>
+<table>
+<thead>
+<tr>
+<th>Bucket</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>guards</code></td>
+<td>Authentication / authorization gates detected on the route (middleware, decorators, <code>requires_auth</code>, role checks, etc.)</td>
+</tr>
+<tr>
+<td><code>callees</code></td>
+<td>The 1-hop handler callees Noir already collects with <code>--include callee</code>, re-emitted under the AI context structure for one-stop consumption</td>
+</tr>
+<tr>
+<td><code>sinks</code></td>
+<td>Likely dangerous operations inferred from the handler body or callee names (SQL, command execution, deserialization, template rendering, file I/O, redirects, etc.)</td>
+</tr>
+<tr>
+<td><code>validators</code></td>
+<td>Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk</td>
+</tr>
+<tr>
+<td><code>signals</code></td>
+<td>Other route-shape hints worth surfacing (state-changing methods without a detected guard, path-id usage suggesting object-level authorization concerns, file-upload behavior, etc.)</td>
+</tr>
+</tbody>
+</table>
+<p>The list is best-effort. Heuristic confidence is exposed on each entry so consumers can filter by threshold. Up to 16 entries per bucket are kept to keep output compact.</p>
+<h2 id="typical-use-cases">Typical use cases</h2>
+<ul>
+<li><strong>AI SAST</strong>: hand the endpoint inventory plus its AI context to an LLM so it can decide where vulnerabilities are reachable from the attack surface without re-discovering the route structure.</li>
+<li><strong>Manual triage</strong>: a reviewer skimming a large JSON or SARIF report can sort or filter by sink kind or by <code>signals</code> like <code>state_changing_without_guard</code>.</li>
+<li><strong>CI gating</strong>: surface <code>sinks</code> minus <code>validators</code> to flag risky endpoints in pull requests.</li>
+</ul>
+<h2 id="combine-with-other-flags">Combine with other flags</h2>
+<pre><code class="language-bash hljs"># Plain output with both 1-hop callees and the full AI context block
+noir scan . --include callee --ai-context
+
+# JSON output suitable for LLM-driven SAST pipelines
+noir scan . --ai-context -f json -o noir-context.json
+
+# OpenAPI export with `x-noir-ai-context` on every operation
+noir scan . --ai-context -f oas3 -o spec.json
+</code></pre>
+<h2 id="completeness-notes">Completeness notes</h2>
+<ul>
+<li>AI context is <strong>additive</strong>: endpoints unaffected by any heuristic come out exactly as they would without the flag (no <code>ai_context</code> key in serialized models).</li>
+<li>Heuristics are tuned conservatively. Both false positives and false negatives exist; treat entries as priors, not findings.</li>
+<li>Guard / sink / validator patterns improve over time. The set is intentionally cross-language so a single context schema works across the framework matrix Noir already covers.</li>
+<li>Callee coverage drives much of the AI context. See <a href="/noir/usage/supported/callee_coverage/">Callee Coverage</a> for which frameworks expose handler callees today.</li>
+</ul>
+
+      </div>
+      
+      
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content/usage/supported/ai_context_coverage/index.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          Edit this page on GitHub
+        </a>
+        
+
+
+
+      </footer>
+    </article>
+  </main>
+  
+<nav class="docs-toc" aria-label="On this page">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    On this page
+  </p>
+  <ul><li><a href="#what-goes-inside">What goes inside</a></li><li><a href="#typical-use-cases">Typical use cases</a></li><li><a href="#combine-with-other-flags">Combine with other flags</a></li><li><a href="#completeness-notes">Completeness notes</a></li></ul>
+</nav>
+
+    </main>
+  </div>
+
+  <footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir is free and open source under the MIT license.</span>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/www-project-noir/" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">Contributing</a>
+    </nav>
+  </div>
+</footer>
+  
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "Copy",
+    copied: "Copied",
+    copyManual: "Press Ctrl C",
+    noResults: "No results for",
+    theme: "Theme",
+    themeAuto: "auto",
+    themeLight: "light",
+    themeDark: "dark"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>

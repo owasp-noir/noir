@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.">
+  <title>--ai-context and --include-callee: hint and sink for AI code review - OWASP Noir</title>
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  <meta property="og:title" content="--ai-context and --include-callee: hint and sink for AI code review">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/">
+  <meta property="og:description" content="Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/blog-ai-context-and-callee-hints.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="--ai-context and --include-callee: hint and sink for AI code review">
+  <meta name="twitter:description" content="Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/blog-ai-context-and-callee-hints.png">
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"--ai-context and --include-callee: hint and sink for AI code review","url":"https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/","datePublished":"2026-05-24T00:00:00+00:00","description":"Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.","image":"https://owasp-noir.github.io/noir/og-images/blog-ai-context-and-callee-hints.png","author":{"@type":"Person","name":"HAHWUL"}}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/"},{"@type":"ListItem","position":2,"name":"Blog","item":"https://owasp-noir.github.io/noir/blog/"},{"@type":"ListItem","position":3,"name":"--ai-context and --include-callee: hint and sink for AI code review"}]}</script>
+  <link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/">
+<link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/blog/ai-context-and-callee-hints/">
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/" class="header-logo" aria-label="OWASP Noir, home">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.2.1</a>
+
+    <nav class="header-nav" aria-label="Primary">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Get Started</a>
+      <a href="https://owasp-noir.github.io/noir/usage/">Usage</a>
+      <a href="https://owasp-noir.github.io/noir/development/">Development</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://owasp-noir.github.io/noir/resources/">Resources</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="Search documentation">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>Search</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="Language">
+        
+        <a href="https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/" hreflang="en" aria-current="true">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/blog/ai-context-and-callee-hints/" hreflang="ko">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="OWASP Noir on GitHub">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="Theme">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="Search documentation" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="Search documentation" placeholder="Search the docs" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="Search"></div>
+  </div>
+</div>
+<main id="main" class="blog">
+  <div class="wrap blog-inner">
+    <a class="blog-back" href="https://owasp-noir.github.io/noir/blog/">
+      <svg class="ic" aria-hidden="true"><use href="#i-arrow-left"/></svg>
+      Back to blog
+    </a>
+
+    <article class="blog-post">
+      <header class="blog-post-head">
+        <time class="post-date" datetime="2026-05-24">2026-05-24</time>
+        <h1 class="blog-post-title">--ai-context and --include-callee: hint and sink for AI code review</h1>
+        <p class="blog-post-lede">Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.</p>
+        
+        <div class="post-tags">
+          <code>v1</code><code>ai-context</code><code>callee</code><code>design</code>
+        </div>
+        
+
+        
+        <ul class="author-row">
+          
+          
+          <li class="author-chip">
+            
+            <img class="author-avatar" src="https://github.com/hahwul.png" alt="HAHWUL" width="40" height="40" loading="lazy" decoding="async">
+            
+            <span class="author-chip-info">
+              
+              <a class="author-name" href="https://owasp-noir.github.io/noir/authors/hahwul/">HAHWUL</a>
+              <span class="author-role">Noir Co-Lead, Creator</span>
+            </span>
+            
+            
+            <a class="author-link" href="https://github.com/hahwul" target="_blank" rel="noopener noreferrer">
+              
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+
+              <span>@hahwul</span>
+            </a>
+            
+          </li>
+          
+        </ul>
+        
+      </header>
+
+      <div class="prose blog-post-body">
+        <p>Around November 2025, AI changed how software gets built, and source-code vulnerability analysis has been moving in the same direction ever since.</p>
+<p>A lot of AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To actually work well, the LLM needs to know <em>what to look at</em>. Drop the whole codebase on it and you burn tokens while still missing the spots that need attention.</p>
+<p>Noir v1 ships two flags that extract that &quot;what to look at&quot; upfront and pack it into the output.</p>
+<ul>
+<li><code>--include-callee</code>: adds a 1-hop callee graph to each endpoint as a <code>callees</code> array</li>
+<li><code>--ai-context</code>: includes the same callee data and sorts it into five security categories under <code>ai_context</code></li>
+</ul>
+<h2 id="include-callee-who-calls-whom">--include-callee: who calls whom</h2>
+<p>The simpler of the two. Parses each endpoint handler body with tree-sitter and pulls out 1-hop callees as <code>{name, path, line}</code>.</p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --include callee -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;callees&quot;: [
+    { &quot;name&quot;: &quot;get_hash&quot;,          &quot;path&quot;: &quot;app/utils.py&quot;, &quot;line&quot;: 3 },
+    { &quot;name&quot;: &quot;User.query.filter&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 21 },
+    { &quot;name&quot;: &quot;User&quot;,              &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 24 },
+    { &quot;name&quot;: &quot;db_session.add&quot;,    &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 25 },
+    { &quot;name&quot;: &quot;db_session.commit&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 26 }
+  ]
+}
+</code></pre>
+<p>To an LLM this reads as &quot;to review this endpoint, also look at <code>utils.py:3</code> and <code>app.py:21,24,25,26</code>&quot;. Token-efficient too: instead of shipping the entire codebase, you only need the handler plus those few referenced lines.</p>
+<h2 id="ai-context-same-data-sorted-into-security-categories">--ai-context: same data, sorted into security categories</h2>
+<p><code>--ai-context</code> takes the same callee information and runs further analysis to bucket it into five categories.</p>
+<ul>
+<li><strong>guards</strong>: auth middleware / decorators / access-control checks</li>
+<li><strong>callees</strong>: same as above but enriched with a code snippet and a confidence score</li>
+<li><strong>sinks</strong>: potential SQL / command-exec / file-I/O / redirect / template-render endpoints</li>
+<li><strong>validators</strong>: input-validation calls</li>
+<li><strong>signals</strong>: heuristic flags like <code>state_change</code>, <code>credential_input</code>, <code>guard_absence</code></li>
+</ul>
+<p>Running the same Flask <code>/sign</code> POST endpoint with <code>--ai-context</code></p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --ai-context -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;ai_context&quot;: {
+    &quot;sinks&quot;: [
+      {
+        &quot;kind&quot;: &quot;sql&quot;,
+        &quot;name&quot;: &quot;query&quot;,
+        &quot;description&quot;: &quot;Potential SQL/data-store sink inferred from code or callee name&quot;,
+        &quot;path&quot;: &quot;app/app.py&quot;, &quot;line&quot;: 21, &quot;confidence&quot;: 78,
+        &quot;snippet&quot;: &quot;20: password = get_hash(request.form['password'], ...) | 21: if User.query.filter(...).first(): | 22: return render_template('error.html')&quot;
+      }
+    ],
+    &quot;signals&quot;: [
+      { &quot;kind&quot;: &quot;state_change&quot;,     &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 88 },
+      { &quot;kind&quot;: &quot;credential_input&quot;, &quot;name&quot;: &quot;form.password&quot;, &quot;confidence&quot;: 86 },
+      { &quot;kind&quot;: &quot;guard_absence&quot;,    &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 28,
+        &quot;description&quot;: &quot;No auth guard was detected for this state-changing endpoint.&quot; }
+    ]
+  }
+}
+</code></pre>
+<p>What the LLM gets from this single endpoint</p>
+<ol>
+<li>There's a <code>credential_input</code>: a password arrives via form</li>
+<li>It's a <code>state_change</code>: POST</li>
+<li>There's a <code>guard_absence</code>: no auth decorator detected</li>
+<li>There's a <code>sql</code> sink: <code>User.query.filter</code></li>
+</ol>
+<p>For a human reviewer and an LLM alike, four signals stacked on one handler send a clear message: review this first. A credential-handling endpoint with no auth on top is priority 1, no further reasoning needed.</p>
+<p>For contrast, here's a case where <code>--ai-context</code> did pick up auth (flask_auth fixture)</p>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/profile&quot;,
+  &quot;method&quot;: &quot;GET&quot;,
+  &quot;ai_context&quot;: {
+    &quot;guards&quot;: [{
+      &quot;kind&quot;: &quot;auth_guard&quot;,
+      &quot;name&quot;: &quot;flask-login login_required&quot;,
+      &quot;description&quot;: &quot;Protected by flask-login login_required&quot;,
+      &quot;confidence&quot;: 86,
+      &quot;snippet&quot;: &quot;12: | 13: @login_required | 14: @app.route('/profile') | 15: def profile():&quot;
+    }]
+  }
+}
+</code></pre>
+<p>The <code>@login_required</code> decorator landed in <code>guards</code>. To an LLM that's a negative signal: &quot;this endpoint already has an auth check, focus on other vuln classes instead&quot;.</p>
+<h2 id="hint-and-sink-at-the-same-time">Hint and sink at the same time</h2>
+<p>The interesting bit is that these flags work as both hint and sink at once.</p>
+<ul>
+<li>As a <strong>hint</strong>: pre-curated per-endpoint context narrows the LLM's attention. Instead of &quot;review the entire codebase&quot;, it's &quot;this handler plus these files&quot;.</li>
+<li>As a <strong>sink</strong> (the source-to-sink kind): the <code>sinks</code> bucket lists framework-aware candidates for where data might land. A generic LLM <em>can</em> reason that <code>User.query.filter</code> is SQL, but it burns tokens doing so every time. Noir pre-labels them so the LLM can skip that reasoning step.</li>
+</ul>
+<p>The framework-aware part is the big one. The same callee name <code>query</code> means different things in different contexts.</p>
+<ul>
+<li>Flask + SQLAlchemy: <code>User.query.filter</code> → SQL sink</li>
+<li>Express + MongoDB: <code>User.find</code> → NoSQL sink</li>
+<li>A plain LLM either misses the distinction or re-derives it on every pass</li>
+</ul>
+<p>Noir identifies the framework in the detector phase, and the augmentor applies that framework's idioms when matching sink / guard patterns. The LLM consumes pre-labeled, framework-aware context instead of raw code.</p>
+<h2 id="recommended-use">Recommended use</h2>
+<p>For an AI-driven code review pipeline</p>
+<pre><code class="language-bash hljs"># Every category
+noir -b ./app --ai-context -f json
+
+# Narrow to the categories you actually want (saves tokens)
+noir -b ./app --ai-context=guards,sinks,signals -f json
+
+# Just callees (lightweight hint)
+noir -b ./app --include callee -f json
+</code></pre>
+<p>The full category set is best for the first audit pass. For incremental review or PR-level checks, <code>guards,sinks,signals</code> is usually enough.</p>
+<h2 id="whats-next">What's next</h2>
+<p><code>--ai-context</code>'s sink and guard patterns are currently regex-based heuristics. We don't do real data-flow tracing; we mark &quot;this looks like a sink&quot; based on callee names and code patterns, and stop there. That's a deliberate trade-off. Precise taint analysis has dedicated tooling, and Noir aims to be the layer that gives that tool (or an LLM) a fast focus point to start from.</p>
+<p>From here, the plan is to make the pattern catalogue more framework-aware and add new signal kinds. Feedback and new pattern proposals are always welcome.</p>
+
+      </div>
+    </article>
+  </div>
+</main>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir is free and open source under the MIT license.</span>
+    <nav class="footer-links" aria-label="Footer">
+      <a href="https://owasp-noir.github.io/noir/get_started/overview/">Docs</a>
+      <a href="https://owasp-noir.github.io/noir/blog/">Blog</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/www-project-noir/" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">Contributing</a>
+    </nav>
+  </div>
+</footer>
+
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "Copy",
+    copied: "Copied",
+    copyManual: "Press Ctrl C",
+    noResults: "No results for",
+    theme: "Theme",
+    themeAuto: "auto",
+    themeLight: "light",
+    themeDark: "dark"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>

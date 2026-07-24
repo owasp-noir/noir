@@ -1,0 +1,1397 @@
+/* ===========================================================================
+   OWASP Noir - documentation theme
+   ---------------------------------------------------------------------------
+   Language: cinematic monochrome. One accent, signal red, sampled from the
+   red crest of Hak (the mascot) at #EA1623 and opened up to #EE2A22 so that
+   both "red text on near-black" and "near-black label on a red fill" clear
+   WCAG AA at 4.67:1. The raw crest red only reaches 4.35:1 and would fail.
+
+   Rules this sheet holds itself to:
+     - ONE accent. No second hue anywhere except the amber reserved for
+       warning callouts. Third-party logos are grayscaled so the Hwaro brick
+       red cannot leak in.
+     - ONE radius scale: --r everywhere, --r-lg on large panels, 0 on
+       full-bleed media. Nothing is a pill.
+     - No pure #000 and no pure #fff.
+     - Every z-index comes from the scale below. No bare integers.
+   =========================================================================== */
+
+/* ---------------------------------------------------------------- 1. Fonts */
+
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../fonts/geist-variable-latin.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../fonts/geist-mono-variable-latin.woff2") format("woff2");
+}
+
+/* --------------------------------------------------------------- 2. Tokens */
+
+:root {
+  /* Dark is listed first, so a visitor with no OS preference gets the brand
+     default. A visitor with a preference still wins. The toggle pins a side
+     by setting [data-theme], which narrows color-scheme to a single value. */
+  color-scheme: dark light;
+
+  /* Accent. The single red. */
+  --accent:      light-dark(#c21f16, #ee2a22);
+  --accent-text: light-dark(#b01c13, #ff6a5e); /* link text; clears AA on every surface */
+  --accent-ink:  light-dark(#fcfcfb, #0b0b0c); /* label sitting on an accent fill */
+  --accent-tint: color-mix(in srgb, var(--accent) 8%, transparent);
+  --accent-edge: color-mix(in srgb, var(--accent) 42%, transparent);
+
+  /* Surfaces. */
+  --bg:            light-dark(#fbfbfa, #0b0b0c);
+  --bg-subtle:     light-dark(#f3f3f1, #121213);
+  --surface:       light-dark(#fefefd, #17171a);
+  --surface-2:     light-dark(#eeeeeb, #1d1d21);
+  --border:        light-dark(#e2e2de, #232326);
+  --border-subtle: light-dark(#ededea, #1a1a1d);
+
+  /* Ink. Four steps, and --text-muted is the floor: it still clears WCAG AA
+     (4.5:1) against --surface, the lightest thing it ever sits on. Against a
+     near-black page that forces it fairly bright, so the gap to
+     --text-secondary is small. That is the honest ceiling on a dark ramp;
+     dimming it further would fail the small labels that use it (stat keys,
+     code language tags, footer text, tech-card labels). */
+  --heading:        light-dark(#131314, #f2f1ef);
+  --text:           light-dark(#3a3a3c, #c9c7c3);
+  --text-secondary: light-dark(#5e5e60, #8e8c88);
+  --text-muted:     light-dark(#6e6e71, #85837e);
+
+  /* The one support hue, warning callouts only. */
+  --warn:      light-dark(#8a5a00, #d8a130);
+  --warn-tint: color-mix(in srgb, var(--warn) 9%, transparent);
+
+  /* The hero is a photograph, and there are two plates of it: the night street
+     and the same street in fog. The theme picks the plate, so the ink over it
+     has to turn with the theme too. --film is the colour the scrim fades the
+     plate out to; it tracks --bg so the poster dissolves into the page. */
+  --film:     light-dark(#fbfbfa, #0b0b0c);
+  --film-ink: light-dark(#131314, #f2f1ef);
+  --film-dim: light-dark(rgba(19, 19, 20, 0.72), rgba(242, 241, 239, 0.66));
+
+  /* The product screenshots are dark terminals in both themes. Anything that
+     blends with them has to use their own background, not the card's. Sampled
+     from the crops: they came from two different terminal captures. */
+  --shot-bg: #171b22;
+
+  /* Filters cannot live in light-dark(), so they are plain custom props
+     overridden in the light blocks below. */
+  --logo-filter: grayscale(1) brightness(1.75) opacity(0.7);
+  --logo-filter-hover: grayscale(1) brightness(2) opacity(0.95);
+
+  /* Radius. One scale. */
+  --r: 3px;
+  --r-lg: 6px;
+
+  /* Z-index scale. Nothing outside this list gets a z-index. */
+  --z-header: 40;
+  --z-drawer: 45;
+  --z-modal: 50;
+  --z-grain: 60;
+
+  /* Layout. */
+  --header-h: 64px;
+  --sidebar-w: 268px;
+  --toc-w: 212px;
+  --page-max: 1440px;
+  --gutter: clamp(1.25rem, 4vw, 2.5rem);
+
+  /* Type. */
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --fs-xs:   0.75rem;
+  --fs-sm:   0.8125rem;
+  --fs-base: 1rem;
+  --fs-md:   clamp(1.0625rem, 1.02rem + 0.18vw, 1.125rem);
+  --fs-lg:   clamp(1.2rem, 1.13rem + 0.32vw, 1.4rem);
+  --fs-xl:   clamp(1.45rem, 1.31rem + 0.62vw, 1.85rem);
+  --fs-2xl:  clamp(1.8rem, 1.55rem + 1.1vw, 2.5rem);
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
+
+/* Light-side overrides for the values light-dark() cannot express. */
+:root[data-theme="light"] {
+  --logo-filter: grayscale(1) brightness(0.45) opacity(0.72);
+  --logo-filter-hover: grayscale(1) brightness(0.3) opacity(0.98);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --logo-filter: grayscale(1) brightness(0.45) opacity(0.72);
+    --logo-filter-hover: grayscale(1) brightness(0.3) opacity(0.98);
+  }
+}
+
+/* Browsers without light-dark() (pre-2024) get the dark palette flat. */
+@supports not (color: light-dark(#000, #fff)) {
+  :root {
+    --accent: #ee2a22; --accent-text: #ff6a5e; --accent-ink: #0b0b0c;
+    --bg: #0b0b0c; --bg-subtle: #121213; --surface: #17171a; --surface-2: #1d1d21;
+    --border: #232326; --border-subtle: #1a1a1d;
+    --heading: #f2f1ef; --text: #c9c7c3; --text-secondary: #8e8c88; --text-muted: #85837e;
+    --warn: #d8a130;
+    --film: #0b0b0c; --film-ink: #f2f1ef; --film-dim: rgba(242, 241, 239, 0.66);
+  }
+}
+
+/* ----------------------------------------------------------- 3. Reset, base */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-synthesis-weight: none;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--heading);
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  line-height: 1.2;
+  margin: 0;
+  text-wrap: balance;
+}
+
+p { margin: 0; text-wrap: pretty; }
+
+a { color: var(--accent-text); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
+
+/* height: auto is required when HTML width/height attributes are present.
+   Without it, max-width shrinks the width while the height attribute stays
+   fixed, so content images (e.g. running.png) render stretched. */
+img, svg, picture, video { display: block; max-width: 100%; height: auto; }
+
+code, kbd, pre, samp { font-family: var(--font-mono); }
+
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+
+hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--heading); }
+
+:where(a, button, input, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r);
+}
+
+.skip-link {
+  position: absolute; left: 0.5rem; top: -100%;
+  z-index: var(--z-modal);
+  background: var(--accent); color: var(--accent-ink);
+  padding: 0.6rem 1rem; border-radius: var(--r); font-weight: 500;
+}
+.skip-link:focus { top: 0.5rem; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+.icon-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.ic { width: 1em; height: 1em; flex: none; stroke: currentColor; fill: none; }
+
+/* ------------------------------------------------------------- 4. Site header */
+
+.site-header {
+  --hdr-fg: var(--heading);
+  --hdr-dim: var(--text-secondary);
+  --hdr-bg: color-mix(in srgb, var(--bg) 84%, transparent);
+  --hdr-border: var(--border-subtle);
+
+  position: sticky; top: 0;
+  z-index: var(--z-header);
+  height: var(--header-h);
+  background: var(--hdr-bg);
+  border-bottom: 1px solid var(--hdr-border);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  transition: background 0.35s var(--ease), border-color 0.35s var(--ease);
+}
+
+/* Over the hero photograph the bar is invisible and its ink is the poster's,
+   which the theme has already resolved for the plate on show.
+
+   Only colors change here. The bar stays sticky and stays in flow: swapping
+   to position:fixed on scroll would hand its 64px back to the layout and
+   shove the whole page down by exactly that much. The hero is pulled up
+   under it instead (see .landing .hero). */
+.site-header[data-over-hero] {
+  --hdr-fg: var(--film-ink);
+  --hdr-dim: var(--film-dim);
+  --hdr-bg: transparent;
+  --hdr-border: transparent;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .site-header { background: var(--bg); backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .site-header[data-over-hero] { background: color-mix(in srgb, var(--film) 55%, transparent); }
+}
+
+.header-inner {
+  height: 100%;
+  max-width: var(--page-max); margin-inline: auto;
+  padding-inline: var(--gutter);
+  display: flex; align-items: center; gap: 1.25rem;
+}
+
+.header-logo { display: flex; align-items: center; gap: 0.6rem; flex: none; }
+.header-logo img { height: 23px; width: auto; }
+.header-logo .logo-light { display: none; }
+:root[data-theme="light"] .header-logo .logo-dark { display: none; }
+:root[data-theme="light"] .header-logo .logo-light { display: block; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .header-logo .logo-dark { display: none; }
+  :root:not([data-theme="dark"]) .header-logo .logo-light { display: block; }
+}
+/* No override over the hero: the poster now turns with the theme, so the
+   wordmark the theme already picked is the one that reads on it. */
+
+.header-version {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  color: var(--hdr-dim);
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: var(--r);
+  padding: 0.1rem 0.35rem;
+}
+.header-version:hover { color: var(--hdr-fg); text-decoration: none; }
+
+.header-nav { display: flex; align-items: center; gap: 1.5rem; margin-left: 0.75rem; }
+.header-nav a {
+  color: var(--hdr-dim);
+  font-size: 0.875rem; font-weight: 450;
+  white-space: nowrap;
+  transition: color 0.18s var(--ease);
+}
+.header-nav a:hover, .header-nav a[aria-current] { color: var(--hdr-fg); text-decoration: none; }
+
+.header-right { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
+
+.header-btn {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  height: 32px; padding-inline: 0.6rem;
+  color: var(--hdr-dim);
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: var(--r);
+  font-size: var(--fs-sm);
+  transition: color 0.18s var(--ease), border-color 0.18s var(--ease);
+}
+.header-btn:hover { color: var(--hdr-fg); border-color: color-mix(in srgb, currentColor 34%, transparent); text-decoration: none; }
+.header-btn .ic { font-size: 1rem; }
+.header-btn kbd {
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  opacity: 0.75;
+  padding-left: 0.3rem; border-left: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+}
+.search-trigger { min-width: 152px; justify-content: flex-start; }
+.search-trigger > span { margin-right: auto; }
+
+.lang-switcher {
+  display: flex; align-items: center;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: var(--r);
+  color: var(--hdr-dim);
+  overflow: hidden;
+}
+.lang-switcher a {
+  padding: 0.25rem 0.45rem;
+  font-family: var(--font-mono); font-size: 0.6875rem; letter-spacing: 0.04em;
+  color: var(--hdr-dim);
+  transition: color 0.18s var(--ease), background 0.18s var(--ease);
+}
+.lang-switcher a + a { border-left: 1px solid color-mix(in srgb, currentColor 18%, transparent); }
+.lang-switcher a:hover { color: var(--hdr-fg); text-decoration: none; }
+.lang-switcher a[aria-current="true"] {
+  color: var(--hdr-fg);
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.icon-btn {
+  display: inline-grid; place-items: center;
+  flex: none;                 /* otherwise the hamburger collapses to 14px */
+  width: 32px; height: 32px;
+  color: var(--hdr-dim);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  transition: color 0.18s var(--ease), background 0.18s var(--ease);
+}
+.icon-btn:hover { color: var(--hdr-fg); background: color-mix(in srgb, currentColor 8%, transparent); }
+.icon-btn .ic { font-size: 1.125rem; }
+
+/* Theme toggle shows exactly one glyph for the active mode. */
+.theme-toggle .ic { display: none; }
+.theme-toggle[data-mode="auto"]  .ic-auto,
+.theme-toggle[data-mode="light"] .ic-light,
+.theme-toggle[data-mode="dark"]  .ic-dark { display: block; }
+
+.hamburger { display: none; }
+
+/* -------------------------------------------------------- 5. Search modal */
+
+.search-overlay {
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  background: color-mix(in srgb, #000 62%, transparent);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  display: none; padding-top: 12vh;
+}
+.search-overlay.is-open { display: block; }
+
+.search-modal {
+  width: min(640px, calc(100vw - 2rem));
+  margin-inline: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: 0 24px 70px color-mix(in srgb, #000 45%, transparent);
+  overflow: hidden;
+}
+
+.search-input-wrap {
+  display: flex; align-items: center; gap: 0.65rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+.search-input-wrap .ic { font-size: 1.125rem; }
+#searchInput {
+  flex: 1; min-width: 0;
+  background: none; border: 0; outline: none;
+  color: var(--heading); font: inherit;
+}
+/* Placeholder clears AA against --surface. --text-muted would not. */
+#searchInput::placeholder { color: var(--text-secondary); opacity: 1; }
+.search-input-wrap kbd {
+  font-family: var(--font-mono); font-size: 0.6875rem;
+  color: var(--text-secondary);
+  border: 1px solid var(--border); border-radius: var(--r);
+  padding: 0.15rem 0.35rem; cursor: pointer;
+}
+
+.search-results { max-height: min(52vh, 460px); overflow-y: auto; padding: 0.4rem; }
+.search-results:empty { display: none; }
+.search-result { display: block; padding: 0.6rem 0.75rem; border-radius: var(--r); color: var(--text); }
+.search-result:hover, .search-result.is-active { background: var(--surface-2); text-decoration: none; }
+.search-result strong { display: block; color: var(--heading); font-weight: 550; font-size: 0.9375rem; }
+.search-result span {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  color: var(--text-secondary); font-size: var(--fs-sm); margin-top: 0.15rem;
+}
+.search-result mark { background: var(--accent-tint); color: var(--accent-text); border-radius: 2px; }
+
+.search-empty { padding: 1.5rem 1rem; text-align: center; color: var(--text-secondary); font-size: var(--fs-sm); }
+
+/* Drawer scrim only exists below 900px; above it, it is an inert empty div. */
+.drawer-scrim { display: none; }
+
+/* --------------------------------------------------------- 6. Docs layout */
+
+.docs-container {
+  max-width: var(--page-max); margin-inline: auto;
+  padding-inline: var(--gutter);
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr) var(--toc-w);
+  gap: 3rem;
+  align-items: start;
+}
+
+/* Sidebar */
+.docs-sidebar {
+  position: sticky; top: var(--header-h);
+  max-height: calc(100dvh - var(--header-h));
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 2rem 0.5rem 4rem 0;
+  scrollbar-width: thin;
+}
+
+/* The groups are <details>, the headings <summary>. Disclosure works without
+   JavaScript, and the browser owns the expanded state. Hide the native marker;
+   the chevron is ours. */
+.sidebar-group + .sidebar-group { margin-top: 1.6rem; }
+.sidebar-heading {
+  display: flex; align-items: center; gap: 0.55rem;
+  width: 100%; padding: 0.3rem 0;
+  color: var(--heading);
+  font-size: var(--fs-sm); font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  list-style: none;
+}
+.sidebar-heading::-webkit-details-marker { display: none; }
+.sidebar-heading .ic { font-size: 1rem; color: var(--text-muted); }
+.sidebar-chevron { margin-left: auto; font-size: 0.9rem; transition: transform 0.22s var(--ease); }
+.sidebar-group:not([open]) > .sidebar-heading .sidebar-chevron { transform: rotate(-90deg); }
+
+.sidebar-links { list-style: none; margin: 0.35rem 0 0; padding: 0; }
+.sidebar-links li { margin: 0; }
+.sidebar-links a {
+  display: block;
+  padding: 0.32rem 0.75rem;
+  margin-left: 0.5rem;
+  border-left: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  transition: color 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+.sidebar-links a:hover { color: var(--heading); border-left-color: var(--text-muted); text-decoration: none; }
+.sidebar-links a[aria-current="page"] {
+  color: var(--heading); font-weight: 500;
+  border-left-color: var(--accent);
+  box-shadow: -1px 0 0 var(--accent);
+}
+
+.sidebar-sub { list-style: none; margin: 0; padding: 0; }
+.sidebar-subheading {
+  display: flex; align-items: center; gap: 0.4rem;
+  width: calc(100% - 0.5rem); margin-left: 0.5rem; padding: 0.32rem 0.75rem;
+  border-left: 1px solid var(--border);
+  color: var(--text-secondary); font-size: 0.875rem; text-align: left;
+  cursor: pointer;
+  list-style: none;
+}
+.sidebar-subheading::-webkit-details-marker { display: none; }
+.sidebar-subheading:hover { color: var(--heading); }
+.sidebar-subgroup:not([open]) > .sidebar-subheading .sidebar-chevron { transform: rotate(-90deg); }
+.sidebar-sub a { margin-left: 1.25rem; }
+
+/* Main column */
+.docs-main { min-width: 0; padding: 2.5rem 0 5rem; }
+
+.docs-breadcrumb {
+  display: flex; gap: 0.4rem; align-items: center;
+  font-size: var(--fs-sm); color: var(--text-muted);
+  margin-bottom: 0.9rem;
+}
+.docs-breadcrumb a { color: var(--text-secondary); }
+.docs-breadcrumb a:hover { color: var(--heading); text-decoration: none; }
+
+.docs-title { font-size: var(--fs-2xl); letter-spacing: -0.028em; }
+.docs-lede { margin-top: 0.75rem; color: var(--text-secondary); font-size: var(--fs-md); max-width: 68ch; }
+.docs-title + .prose, .docs-lede + .prose { margin-top: 2.25rem; }
+
+/* TOC */
+.docs-toc {
+  position: sticky; top: var(--header-h);
+  max-height: calc(100dvh - var(--header-h));
+  overflow-y: auto;
+  padding: 2.75rem 0 4rem;
+  font-size: var(--fs-sm);
+  scrollbar-width: thin;
+}
+.docs-toc-title {
+  display: flex; align-items: center; gap: 0.45rem;
+  color: var(--heading); font-weight: 600; font-size: var(--fs-xs);
+  text-transform: uppercase; letter-spacing: 0.08em;
+  margin: 0 0 0.75rem;
+}
+.docs-toc-title .ic { font-size: 0.95rem; color: var(--text-muted); }
+.docs-toc ul { list-style: none; margin: 0; padding: 0; border-left: 1px solid var(--border); }
+.docs-toc li ul { border-left: 0; }
+.docs-toc a {
+  display: block; padding: 0.28rem 0 0.28rem 0.85rem;
+  margin-left: -1px;
+  border-left: 1px solid transparent;
+  color: var(--text-secondary); line-height: 1.45;
+}
+.docs-toc li li a { padding-left: 1.7rem; font-size: 0.78rem; }
+.docs-toc a:hover { color: var(--heading); text-decoration: none; }
+.docs-toc a.is-active { color: var(--accent-text); border-left-color: var(--accent); }
+
+/* ------------------------------------------------------------- 7. Prose */
+
+/* Long slash-joined tokens like
+   "endpoint/method/query/path/body/header/cookie/static/websocket" do not break
+   on their own and push a 350px phone column out to 506px. */
+.prose { color: var(--text); font-size: var(--fs-md); line-height: 1.72; overflow-wrap: break-word; }
+/* min(..., 100%) matters: a bare `max-width: 72ch` beats `img { max-width: 100% }`
+   on specificity, so a direct-child <img> wider than the column would spill out
+   of the grid track and collide with the table of contents. */
+.prose > * { max-width: min(72ch, 100%); }
+.prose > .table-scroll,
+.prose > .code-block,
+.prose > .tech-grid,
+.prose > .tech-legend,
+.prose > figure,
+.prose > pre { max-width: none; }
+
+.prose > * + * { margin-top: 1.15rem; }
+.prose > * + :is(h2, h3, h4) { margin-top: 2.75rem; }
+.prose :is(h2, h3, h4) + * { margin-top: 0.85rem; }
+
+.prose h2 {
+  font-size: var(--fs-xl); letter-spacing: -0.024em;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.prose h3 { font-size: var(--fs-lg); letter-spacing: -0.02em; }
+.prose h4 { font-size: var(--fs-md); font-weight: 600; }
+
+.prose :is(h2, h3, h4) { scroll-margin-top: calc(var(--header-h) + 1.5rem); }
+
+.heading-anchor {
+  margin-left: 0.4rem; opacity: 0;
+  color: var(--text-muted); font-weight: 400;
+  transition: opacity 0.15s var(--ease);
+}
+:is(h2, h3, h4):hover .heading-anchor, .heading-anchor:focus-visible { opacity: 1; }
+
+.prose a { text-decoration: underline; text-decoration-color: var(--accent-edge); text-underline-offset: 0.18em; }
+.prose a:hover { text-decoration-color: currentColor; }
+
+.prose strong { color: var(--heading); font-weight: 600; }
+
+.prose ul, .prose ol { padding-left: 1.35rem; }
+.prose li + li { margin-top: 0.35rem; }
+.prose li::marker { color: var(--text-muted); }
+
+.prose blockquote {
+  margin-inline: 0; padding: 0.25rem 0 0.25rem 1.15rem;
+  border-left: 2px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.prose img { border-radius: var(--r); border: 1px solid var(--border); }
+
+.prose kbd {
+  font-size: 0.82em; padding: 0.12em 0.4em;
+  border: 1px solid var(--border); border-bottom-width: 2px;
+  border-radius: var(--r); background: var(--surface); color: var(--heading);
+}
+
+/* Inline code. Not a chip, just a tint plus a hairline. */
+.prose :not(pre) > code {
+  font-size: 0.875em;
+  padding: 0.12em 0.36em;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r);
+  color: var(--heading);
+  word-break: break-word;
+}
+
+/* ------------------------------------------------- 8. Code blocks, syntax */
+
+.code-block {
+  position: relative;
+  margin-block: 1.6rem;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.code-block-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 0.6rem 0.4rem 0.9rem;
+  border-bottom: 1px solid var(--border-subtle);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+.code-lang {
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.code-copy {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.22rem 0.5rem; border-radius: var(--r);
+  color: var(--text-secondary); font-size: var(--fs-xs);
+  transition: color 0.16s var(--ease), background 0.16s var(--ease);
+}
+.code-copy:hover { color: var(--heading); background: var(--surface-2); }
+.code-copy:active { transform: translateY(1px); }
+.code-copy .ic { font-size: 0.9rem; }
+.code-copy .ic-check { display: none; color: var(--accent-text); }
+.code-copy[data-copied] .ic-check { display: block; }
+.code-copy[data-copied] .ic-copy { display: none; }
+
+.prose pre {
+  margin: 0; padding: 1rem 1.1rem;
+  overflow-x: auto;
+  font-size: 0.8125rem; line-height: 1.65;
+  background: none;
+  scrollbar-width: thin;
+}
+.prose pre code { background: none; border: 0; padding: 0; font-size: inherit; color: var(--text); }
+
+/* Monochrome syntax. Red is reserved for keywords, the one thing worth
+   spotting when you skim a snippet. Everything else is greyscale.
+   These override whatever theme highlight.js ships. */
+.hljs { background: none; color: var(--text); }
+.hljs-comment, .hljs-quote { color: var(--text-muted); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag,
+.hljs-name, .hljs-section, .hljs-meta .hljs-keyword { color: var(--accent-text); font-weight: 500; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: var(--heading); }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-link, .hljs-variable, .hljs-template-variable {
+  color: light-dark(#4b4b4d, #a9a7a3);
+}
+.hljs-title, .hljs-title.function_, .hljs-built_in, .hljs-class .hljs-title {
+  color: var(--heading); font-weight: 550;
+}
+.hljs-type, .hljs-attr, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id {
+  color: light-dark(#5e5e60, #b6b4b0);
+}
+.hljs-meta, .hljs-params { color: var(--text-secondary); }
+.hljs-deletion { color: var(--accent-text); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
+/* ------------------------------------------- 9. Callouts, tables, tech cards */
+
+.callout {
+  margin-block: 1.6rem;
+  padding: 0.9rem 1.1rem;
+  border-left: 2px solid var(--border);
+  background: var(--bg-subtle);
+  border-radius: 0 var(--r) var(--r) 0;
+  color: var(--text);
+  font-size: 0.9375rem;
+}
+.callout > :first-child { margin-top: 0; }
+.callout > :last-child { margin-bottom: 0; }
+.callout p + p { margin-top: 0.6rem; }
+
+/* Info stays hueless. The accent is not spent on a neutral aside. */
+.callout--info { border-left-color: var(--text-muted); }
+.callout--warning { border-left-color: var(--warn); background: var(--warn-tint); }
+
+.callout-label {
+  display: block;
+  font-size: var(--fs-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-secondary);
+  margin-bottom: 0.35rem;
+}
+.callout--warning .callout-label { color: var(--warn); }
+
+.table-scroll {
+  margin-block: 1.6rem; overflow-x: auto; scrollbar-width: thin;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+}
+.prose table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.prose thead th {
+  text-align: left; font-weight: 600; color: var(--heading);
+  background: var(--bg-subtle);
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.prose tbody td { padding: 0.6rem 0.9rem; border-top: 1px solid var(--border-subtle); vertical-align: top; }
+.prose tbody tr:first-child td { border-top: 0; }
+
+/* The auto-generated frameworks page ships these classes as raw HTML. */
+.tech-legend {
+  display: flex; flex-wrap: wrap; gap: 1.25rem;
+  margin-block: 1.5rem; padding: 0.85rem 1rem;
+  border: 1px solid var(--border-subtle); border-radius: var(--r-lg);
+  background: var(--bg-subtle);
+  font-size: var(--fs-sm); color: var(--text-secondary);
+}
+.tech-legend-item { display: inline-flex; align-items: center; gap: 0.5rem; }
+
+.tech-grid {
+  display: grid; gap: 0.9rem;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  margin-block: 1.5rem;
+}
+.tech-card {
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.tech-card-title { font-size: var(--fs-base); font-weight: 600; margin: 0 0 0.75rem; }
+.tech-card-row + .tech-card-row { margin-top: 0.7rem; }
+.tech-card-label {
+  display: block; font-size: var(--fs-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--text-muted); margin-bottom: 0.4rem;
+}
+.tech-card-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+/* This page renders 144 framework cards, each with ~14 chips. Painting every
+   supported chip with the accent puts roughly a thousand red marks on one
+   page, which spends the accent entirely and says nothing. Supported reads as
+   solid ink; unsupported recedes and is struck through. The accent stays for
+   links, the active nav item, and the primary CTA. */
+.tech-chip {
+  font-family: var(--font-mono); font-size: 0.6875rem; line-height: 1.6;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border); border-radius: var(--r);
+  color: var(--text-muted);
+}
+.tech-chip.on { color: var(--heading); border-color: var(--text-muted); background: var(--surface-2); }
+/* The strike-through already says "not implemented". Dimming it on top of that
+   pushed it under AA, so the state is carried by the line, not by opacity. */
+.tech-chip.off { text-decoration: line-through; }
+
+.members-grid {
+  display: grid; gap: 1rem; margin-block: 1.5rem;
+  grid-template-columns: repeat(var(--member-cols, 2), minmax(0, 1fr));
+}
+.member-card {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 1rem 1.15rem; margin-block: 0.75rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.member-avatar {
+  width: 56px; height: 56px; flex: none;
+  border-radius: 50%; object-fit: cover;
+  border: 1px solid var(--border);
+}
+.member-name { font-size: var(--fs-base); font-weight: 600; margin: 0; }
+.member-role { color: var(--text-secondary); font-size: var(--fs-sm); margin: 0.1rem 0 0; }
+.member-links { display: flex; gap: 0.85rem; margin-top: 0.45rem; }
+.member-links a { font-size: var(--fs-sm); }
+
+.mermaid-figure {
+  margin-block: 1.75rem; padding: 1.25rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--bg-subtle);
+  overflow-x: auto; scrollbar-width: thin;
+}
+.mermaid-figure pre.mermaid { margin: 0; padding: 0; background: none; text-align: center; }
+/* Until the renderer lands (or if it never does) the source stays legible. */
+pre.mermaid:not([data-processed]) { font-size: 0.75rem; color: var(--text-muted); text-align: left; }
+pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
+
+/* Hak, delivering an aside. */
+.mascot-note {
+  display: flex; align-items: center; gap: 1.1rem;
+  margin: 1.75rem 0; padding: 0.9rem 1.2rem 0.9rem 0.6rem;
+  border-left: 2px solid var(--border);
+  background: var(--bg-subtle);
+  border-radius: 0 var(--r) var(--r) 0;
+}
+.mascot-note img { width: 72px; height: 72px; flex: none; border: 0; border-radius: 0; }
+.mascot-note figcaption { color: var(--text); font-size: 0.9375rem; }
+.mascot-note figcaption > :first-child { margin-top: 0; }
+.mascot-note figcaption > :last-child { margin-bottom: 0; }
+.mascot-note p { margin: 0; }
+/* The mascot is decorative next to its own caption; give it a light touch in
+   dark mode so the white trench coat does not glare. */
+.mascot-note img { opacity: 0.92; }
+
+/* ------------------------------------------- 10. Article footer, prev/next */
+
+.docs-article-footer {
+  margin-top: 4rem; padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+.edit-link {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  color: var(--text-secondary); font-size: var(--fs-sm);
+}
+.edit-link:hover { color: var(--heading); text-decoration: none; }
+.edit-link .ic { font-size: 0.95rem; }
+
+.prev-next { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1.5rem; }
+.prev-next a {
+  display: block; padding: 0.9rem 1.1rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  color: var(--heading);
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
+}
+.prev-next a:hover { border-color: var(--accent-edge); background: var(--bg-subtle); text-decoration: none; }
+.prevnext-dir { display: block; font-size: var(--fs-xs); color: var(--text-muted); margin-bottom: 0.2rem; }
+.prevnext-next { text-align: right; grid-column: 2; }
+
+.section-list { list-style: none; padding: 0; display: grid; gap: 0.75rem; margin-top: 1.75rem; }
+.section-list li { margin: 0; }
+.section-list a {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.95rem 1.15rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  color: var(--heading); font-weight: 500;
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
+}
+.section-list a:hover { border-color: var(--accent-edge); background: var(--bg-subtle); text-decoration: none; }
+
+/* ------------------------------------------------------------ 11. Landing */
+
+.grain {
+  position: fixed; inset: 0;
+  z-index: var(--z-grain);
+  pointer-events: none;
+  opacity: 0.03;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+@media (prefers-reduced-transparency: reduce) { .grain { display: none; } }
+
+.wrap { max-width: var(--page-max); margin-inline: auto; padding-inline: var(--gutter); }
+
+.section { padding-block: clamp(4.5rem, 10vw, 8rem); }
+.section-head { max-width: 60ch; margin-bottom: clamp(2.5rem, 5vw, 3.75rem); }
+.section-title { font-size: var(--fs-2xl); letter-spacing: -0.03em; }
+.section-lede { margin-top: 0.9rem; color: var(--text-secondary); font-size: var(--fs-md); }
+
+/* 11.1 Hero. A poster: a dark island in both themes, closed by a hairline.
+   Pulled up under the sticky header so the bar can float over the photograph
+   without the page reserving space for it twice. */
+.landing .hero { margin-top: calc(var(--header-h) * -1); }
+
+.hero {
+  position: relative;
+  min-height: 100dvh;
+  display: flex; align-items: flex-end;
+  background: var(--film);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+/* A 1px marker sitting exactly at the bottom edge of the header. nav.js watches
+   it: the moment it scrolls out from under the bar, the bar takes its
+   background. Without that, hero copy slides under a transparent header and
+   collides with the nav links. */
+.hero-sentinel {
+  position: absolute; top: var(--header-h); left: 0;
+  width: 1px; height: 1px; pointer-events: none;
+}
+
+.hero-media { position: absolute; inset: 0; }
+.hero-plate { display: block; width: 100%; height: 100%; }
+.hero-art { width: 100%; height: 100%; object-fit: cover; object-position: 50% 40%; }
+
+/* Both plates ship in the markup and one is display:none, so the theme swap
+   costs no script and cannot flash on a pinned theme. */
+.hero-plate-light { display: none; }
+:root[data-theme="light"] .hero-plate-dark { display: none; }
+:root[data-theme="light"] .hero-plate-light { display: block; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .hero-plate-dark { display: none; }
+  :root:not([data-theme="dark"]) .hero-plate-light { display: block; }
+}
+
+/* One alpha ramp, mixed into whichever --film is current: it sinks the night
+   plate into black and lifts the fog plate into bone, and either way the copy
+   ends up on near-solid --film and the top edge keeps its vignette. */
+.hero-scrim {
+  position: absolute; inset: 0;
+  background:
+    linear-gradient(to top,
+      var(--film) 0%,
+      color-mix(in srgb, var(--film) 95%, transparent) 20%,
+      color-mix(in srgb, var(--film) 62%, transparent) 42%,
+      color-mix(in srgb, var(--film) 12%, transparent) 66%,
+      color-mix(in srgb, var(--film) 45%, transparent) 100%),
+    linear-gradient(to right,
+      color-mix(in srgb, var(--film) 72%, transparent),
+      color-mix(in srgb, var(--film) 10%, transparent) 58%);
+}
+.hero-inner {
+  position: relative;
+  width: 100%; max-width: var(--page-max); margin-inline: auto;
+  padding: 0 var(--gutter) clamp(3.5rem, 8vh, 6rem);
+}
+.hero-copy { max-width: 46rem; }
+/* Deliberately restrained. The photograph carries the title; this is the
+   tagline under it, the way a poster works. */
+.hero h1 {
+  color: var(--film-ink);
+  font-size: clamp(1.9rem, 3.4vw, 2.9rem);
+  font-weight: 600; letter-spacing: -0.032em; line-height: 1.12;
+  max-width: 22ch;
+}
+.hero-sub {
+  margin-top: 1.1rem; max-width: 54ch;
+  color: var(--film-dim); font-size: var(--fs-md); line-height: 1.6;
+}
+.hero-actions { margin-top: 2rem; display: flex; flex-wrap: wrap; gap: 0.75rem; }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  height: 44px; padding-inline: 1.15rem;
+  border-radius: var(--r);
+  font-size: 0.9375rem; font-weight: 500;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease), color 0.18s var(--ease);
+}
+.btn:hover { text-decoration: none; }
+.btn:active { transform: translateY(1px); }
+.btn .ic { font-size: 1.05rem; }
+
+/* Red fill, near-black label: 4.67:1. White on red is 3.58:1 and fails. */
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 86%, #fff); }
+
+/* Hero only, so it strokes itself in the poster's ink, not the theme's. */
+.btn-ghost { color: var(--film-ink); border-color: color-mix(in srgb, var(--film-ink) 30%, transparent); }
+.btn-ghost:hover {
+  border-color: color-mix(in srgb, var(--film-ink) 62%, transparent);
+  background: color-mix(in srgb, var(--film-ink) 7%, transparent);
+}
+
+.btn-outline { color: var(--heading); border-color: var(--border); }
+.btn-outline:hover { border-color: var(--text-muted); background: var(--bg-subtle); }
+
+/* 11.2 Logo wall. Logos only, no captions. Grayscaled so no foreign brand
+   hue (Hwaro ships a brick red) can break the single-accent lock. */
+.logowall { border-bottom: 1px solid var(--border-subtle); }
+.logowall-inner {
+  display: flex; align-items: center; justify-content: center;
+  flex-wrap: wrap; gap: clamp(2.5rem, 8vw, 7rem);
+  padding-block: 3.5rem;
+}
+/* All three lockups sit near a 2.8:1 aspect, so a shared height reads as
+   optically balanced without per-logo tuning. */
+.logowall img {
+  height: 48px; width: auto;
+  filter: var(--logo-filter);
+  transition: filter 0.25s var(--ease);
+}
+/* At 390px the three lockups plus the desktop gap total 369px against 350px of
+   usable width, which wraps them onto two rows. Tighten the gap instead. */
+@media (max-width: 767px) {
+  .logowall img { height: 34px; }
+  .logowall-inner { gap: 1.25rem; padding-block: 2.5rem; }
+}
+.logowall a:hover img { filter: var(--logo-filter-hover); }
+
+/* 11.3 Bento. Five items, five cells, no empty tiles. */
+.bento { display: grid; gap: 1rem; grid-template-columns: repeat(12, 1fr); }
+.cell {
+  position: relative; overflow: hidden;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.cell-body { padding: clamp(1.35rem, 2.4vw, 1.9rem); }
+.cell h3 { font-size: var(--fs-lg); letter-spacing: -0.02em; }
+.cell p { margin-top: 0.65rem; color: var(--text-secondary); font-size: 0.9375rem; line-height: 1.62; }
+
+.cell-a { grid-column: span 7; }
+.cell-b { grid-column: span 5; }
+.cell-c { grid-column: span 4; }
+.cell-d { grid-column: span 4; }
+.cell-e { grid-column: span 4; }
+
+/* Detail crops, not thumbnails. The full screenshots are 1904px of dense
+   terminal text; fitting one into a tile turns the type into grey mush. These
+   sources are pre-cropped to a readable region, so the words stay words. */
+.cell-shot { position: relative; margin-top: auto; overflow: hidden; height: 300px; }
+.cell-shot img {
+  width: 100%; height: 100%; display: block;
+  object-fit: cover; object-position: left top;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--shot-bg);
+}
+
+/* The crop has to end somewhere, and the last line of type would otherwise be
+   sliced mid-glyph. Fade it into the terminal's OWN background, not into the
+   card: masking to transparent let a white card show through a dark screenshot,
+   which read as a haze over the bottom of the image in light mode. */
+.cell-shot::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    linear-gradient(to bottom, transparent 58%, var(--shot-bg) 97%),
+    linear-gradient(to right, transparent 80%, var(--shot-bg) 99%);
+}
+/* The AI-context capture has its own slightly different backdrop, and its lines
+   run much further off the right edge, so that side fades earlier. */
+.cell-b .cell-shot { --shot-bg: #171820; }
+.cell-b .cell-shot::after {
+  background:
+    linear-gradient(to bottom, transparent 58%, var(--shot-bg) 97%),
+    linear-gradient(to right, transparent 60%, var(--shot-bg) 96%);
+}
+
+/* The texture tile: real photography, not a CSS gradient. Cropped into the
+   venetian-blind slats and away from the foil logo, because the wordmark is
+   already on this page twice (the hero photograph and the poster) and a third
+   one sitting under live body copy would be both loud and unreadable.
+
+   Image and scrim share one pseudo-element on purpose. A separate ::after
+   would be the element's last child and would paint OVER .cell-body, greying
+   out the heading and hiding the paragraph entirely. */
+.cell-plate { min-height: 270px; justify-content: flex-end; }
+.cell-plate::before {
+  content: ""; position: absolute; inset: 0;
+  background:
+    linear-gradient(to top,
+      var(--surface) 36%,
+      color-mix(in srgb, var(--surface) 80%, transparent) 64%,
+      color-mix(in srgb, var(--surface) 42%, transparent) 100%),
+    url("../images/slat-plate.webp") 82% 6% / 190% no-repeat;
+}
+.cell-plate .cell-body { position: relative; }
+
+.stat-row { display: flex; gap: 2rem; margin-top: 1.5rem; }
+.stat-val {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: clamp(1.6rem, 3vw, 2.1rem); font-weight: 500;
+  color: var(--heading); letter-spacing: -0.03em;
+}
+.stat-key { display: block; margin-top: 0.15rem; font-size: var(--fs-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+
+.tag-cloud { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 1.35rem; }
+.tag-cloud code {
+  font-size: 0.75rem; padding: 0.14rem 0.45rem;
+  border: 1px solid var(--border); border-radius: var(--r);
+  color: var(--text-secondary);
+}
+
+/* 11.4 Workflow. A vertical rule, three verbs. Not "Step 1 / Step 2". */
+.flow { border-left: 1px solid var(--border); margin-left: 0.5rem; }
+.flow-step { position: relative; padding: 0 0 2.75rem 2rem; }
+.flow-step:last-child { padding-bottom: 0; }
+.flow-step::before {
+  content: ""; position: absolute; left: -4px; top: 0.55rem;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+}
+.flow-step h3 { font-size: var(--fs-lg); letter-spacing: -0.02em; }
+.flow-step p { margin-top: 0.55rem; color: var(--text-secondary); max-width: 60ch; }
+.flow-cmd {
+  display: block; margin-top: 1rem; padding: 0.7rem 0.95rem;
+  background: var(--bg-subtle); border: 1px solid var(--border); border-radius: var(--r);
+  font-family: var(--font-mono); font-size: 0.8125rem;
+  color: var(--heading);
+  overflow-x: auto; white-space: nowrap; scrollbar-width: thin;
+}
+.flow-cmd::before { content: "$ "; color: var(--accent-text); }
+
+/* 11.5 Format marquee. The page's only marquee. */
+.marquee { position: relative; overflow: hidden; }
+.marquee + .marquee { margin-top: 0.6rem; }
+.marquee::before, .marquee::after {
+  content: ""; position: absolute; top: 0; bottom: 0; width: clamp(3rem, 8vw, 8rem);
+  pointer-events: none; z-index: 1;
+}
+.marquee::before { left: 0; background: linear-gradient(to right, var(--bg), transparent); }
+.marquee::after { right: 0; background: linear-gradient(to left, var(--bg), transparent); }
+.marquee-track {
+  display: flex; gap: 0.6rem; width: max-content;
+  animation: marquee 54s linear infinite;
+}
+.marquee--reverse .marquee-track { animation-direction: reverse; }
+.marquee:hover .marquee-track, .marquee:focus-within .marquee-track { animation-play-state: paused; }
+@keyframes marquee { to { transform: translateX(-50%); } }
+
+.fmt {
+  font-family: var(--font-mono); font-size: 0.875rem;
+  padding: 0.55rem 1rem;
+  border: 1px solid var(--border); border-radius: var(--r);
+  color: var(--text-secondary); white-space: nowrap;
+  background: var(--surface);
+}
+
+/* 11.6 Split. The page's only image-plus-text split. */
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: clamp(2rem, 5vw, 4.5rem); align-items: center; }
+.split-list { margin-top: 2rem; border-top: 1px solid var(--border); }
+.split-item { padding: 1.25rem 0; border-bottom: 1px solid var(--border); }
+.split-item h3 { font-size: var(--fs-base); font-weight: 600; }
+.split-item p { margin-top: 0.35rem; color: var(--text-secondary); font-size: 0.9375rem; }
+.split-shot {
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  overflow: hidden; background: #0b0b0c;
+  box-shadow: 0 30px 70px -30px color-mix(in srgb, #000 55%, transparent);
+}
+.split-shot img { width: 100%; height: auto; }
+
+/* 11.7 Community. The poster gets a frame, like a poster. */
+.community-inner {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(2rem, 5vw, 4rem); align-items: center;
+}
+.poster-frame {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 0.6rem;
+  background: var(--surface);
+}
+.poster-frame img { width: 100%; height: auto; border-radius: 2px; }
+.community-copy p { margin-top: 1rem; color: var(--text-secondary); font-size: var(--fs-md); max-width: 46ch; }
+.community-copy .btn { margin-top: 1.75rem; }
+
+.contributors { margin-top: clamp(3rem, 6vw, 4.5rem); padding-top: 2.25rem; border-top: 1px solid var(--border); text-align: center; }
+.contributors p { color: var(--text-muted); font-size: var(--fs-sm); margin-bottom: 1.25rem; }
+.contributors img { width: 100%; max-width: 780px; margin-inline: auto; height: auto; }
+
+/* ------------------------------------------------ 11.8 Blog and authors */
+
+.blog { padding-block: clamp(2.5rem, 6vw, 4.5rem) clamp(4rem, 9vw, 7rem); }
+.blog-inner { max-width: 820px; }
+
+.blog-back {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  color: var(--text-secondary); font-size: var(--fs-sm);
+  margin-bottom: 2rem;
+}
+.blog-back:hover { color: var(--heading); text-decoration: none; }
+
+.blog-head { padding-bottom: 2.25rem; border-bottom: 1px solid var(--border); margin-bottom: 0.5rem; }
+.blog-title { font-size: var(--fs-2xl); letter-spacing: -0.03em; }
+.blog-lede { margin-top: 0.9rem; color: var(--text-secondary); font-size: var(--fs-md); max-width: 60ch; }
+.blog-intro { margin-top: 1.25rem; }
+.blog-intro > * { max-width: 62ch; }
+
+.blog-rss {
+  display: inline-flex; align-items: center; gap: 0.45rem;
+  margin-top: 1.5rem; padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border); border-radius: var(--r);
+  color: var(--text-secondary); font-size: var(--fs-sm);
+}
+.blog-rss:hover { color: var(--heading); border-color: var(--text-muted); text-decoration: none; }
+
+.blog-empty { margin-top: 2.5rem; color: var(--text-secondary); }
+
+/* Post list: hairline rows, not cards. Elevation would say nothing here. */
+.post-list { list-style: none; margin: 0; padding: 0; }
+.post-row { border-bottom: 1px solid var(--border); }
+.post-row-link { display: block; padding: 1.75rem 0; color: inherit; }
+.post-row-link:hover { text-decoration: none; }
+.post-row-link:hover .post-row-title { color: var(--accent-text); }
+
+.post-date {
+  display: block;
+  font-family: var(--font-mono); font-size: var(--fs-xs);
+  color: var(--text-muted); letter-spacing: 0.04em;
+}
+.post-row-title {
+  margin-top: 0.5rem;
+  font-size: var(--fs-lg); letter-spacing: -0.02em;
+  transition: color 0.18s var(--ease);
+}
+.post-row-desc { margin-top: 0.5rem; color: var(--text-secondary); max-width: 62ch; }
+.post-row-foot { margin-top: 0.9rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.25rem; }
+.post-authors { color: var(--text-muted); font-size: var(--fs-sm); }
+
+.post-tags { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.post-tags code {
+  font-size: 0.7rem; padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border); border-radius: var(--r);
+  color: var(--text-muted);
+}
+
+/* Post article */
+.blog-post-head { padding-bottom: 2rem; border-bottom: 1px solid var(--border); }
+.blog-post-title { margin-top: 0.6rem; font-size: var(--fs-2xl); letter-spacing: -0.03em; }
+.blog-post-lede { margin-top: 0.9rem; color: var(--text-secondary); font-size: var(--fs-md); max-width: 62ch; }
+.blog-post-head .post-tags { margin-top: 1.1rem; }
+.blog-post-body { margin-top: 2.5rem; }
+
+.author-row { list-style: none; margin: 1.75rem 0 0; padding: 0; display: grid; gap: 0.75rem; }
+.author-chip {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.author-avatar { border-radius: 50%; border: 1px solid var(--border); flex: none; width: 40px; height: 40px; object-fit: cover; }
+.author-avatar-lg { width: 56px; height: 56px; }
+.author-avatar-xl { width: 88px; height: 88px; }
+.author-chip-info { display: flex; flex-direction: column; min-width: 0; }
+.author-name { color: var(--heading); font-weight: 600; font-size: 0.9375rem; }
+.author-name:hover { color: var(--accent-text); text-decoration: none; }
+.author-role { color: var(--text-muted); font-size: var(--fs-sm); }
+.author-bio { color: var(--text-secondary); font-size: var(--fs-sm); margin-top: 0.4rem; line-height: 1.55; }
+
+.author-link {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  color: var(--text-secondary); font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.author-link:hover { color: var(--heading); text-decoration: none; }
+.author-link svg { flex: none; }
+
+/* Authors index */
+.author-grid { list-style: none; margin: 2rem 0 0; padding: 0; display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); }
+.author-card-inner {
+  display: flex; gap: 1rem; height: 100%;
+  padding: 1.15rem 1.25rem;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface);
+  color: inherit;
+  transition: border-color 0.18s var(--ease);
+}
+a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: none; }
+.author-card-info { display: flex; flex-direction: column; min-width: 0; }
+.author-card-name { display: flex; align-items: center; gap: 0.5rem; color: var(--heading); font-weight: 600; }
+.author-badge {
+  font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--accent-edge); border-radius: var(--r);
+  color: var(--accent-text);
+}
+
+/* Author profile */
+.author-profile { display: flex; gap: 1.5rem; align-items: flex-start; padding-bottom: 2.25rem; border-bottom: 1px solid var(--border); }
+.author-profile-name { display: flex; align-items: center; gap: 0.65rem; font-size: var(--fs-xl); letter-spacing: -0.025em; }
+.author-profile-info .author-role { margin-top: 0.25rem; }
+.author-profile-info .author-bio { max-width: 58ch; }
+.author-links { display: flex; flex-wrap: wrap; gap: 1rem; margin-top: 1rem; }
+.author-links .author-link { margin-left: 0; }
+.author-posts-title {
+  margin: 2.5rem 0 0.5rem;
+  font-size: var(--fs-xs); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .author-profile { flex-direction: column; gap: 1rem; }
+  .author-chip { flex-wrap: wrap; }
+  .author-link { margin-left: 0; width: 100%; }
+}
+
+/* --------------------------------------------------------- 12. Site footer */
+
+.site-footer { border-top: 1px solid var(--border); background: var(--bg-subtle); }
+.footer-inner {
+  max-width: var(--page-max); margin-inline: auto;
+  padding: 2.25rem var(--gutter);
+  display: flex; flex-wrap: wrap; gap: 1rem 2rem; align-items: center;
+  font-size: var(--fs-sm); color: var(--text-muted);
+}
+.footer-links { margin-left: auto; display: flex; flex-wrap: wrap; gap: 1.5rem; }
+.footer-links a { color: var(--text-secondary); }
+.footer-links a:hover { color: var(--heading); text-decoration: none; }
+
+/* -------------------------------------------------------------- 13. Motion */
+
+/* Nothing is hidden unless JS is present to reveal it. If the script never
+   runs, the page is simply static and fully readable. */
+@media (prefers-reduced-motion: no-preference) {
+  :root.js [data-reveal] { opacity: 0; transform: translateY(22px); }
+  :root.js [data-reveal].is-in {
+    opacity: 1; transform: none;
+    transition: opacity 0.7s var(--ease), transform 0.7s var(--ease);
+    transition-delay: var(--reveal-delay, 0ms);
+  }
+
+  /* Hero entrance. Communicates arrival; runs once, no scroll coupling. */
+  .hero-art { animation: hero-push 1.4s var(--ease) both; }
+  .hero-copy > * { animation: rise 0.85s var(--ease) both; }
+  .hero h1 { animation-delay: 0.15s; }
+  .hero-sub { animation-delay: 0.28s; }
+  .hero-actions { animation-delay: 0.4s; }
+}
+
+@keyframes hero-push { from { transform: scale(1.06); } to { transform: scale(1); } }
+@keyframes rise { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee { overflow-x: auto; scrollbar-width: thin; }
+  .marquee-track { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---------------------------------------------------------- 14. Responsive */
+
+@media (max-width: 1199px) {
+  .docs-container { grid-template-columns: var(--sidebar-w) minmax(0, 1fr); gap: 2.5rem; }
+  .docs-toc { display: none; }
+}
+
+@media (max-width: 1023px) {
+  .split { grid-template-columns: 1fr; }
+  .community-inner { grid-template-columns: 1fr; }
+  .cell-a, .cell-b { grid-column: span 12; }
+  .cell-c, .cell-d, .cell-e { grid-column: span 4; }
+}
+
+/* Below 900px the nav collapses and the sidebar becomes a drawer. Everything
+   in this block MUST stay inside it: a stray `}` here parks the drawer rules
+   at top level and the sidebar disappears off-screen at every width. */
+@media (max-width: 900px) {
+  .header-nav { display: none; }
+  .search-trigger { min-width: 0; }
+  .search-trigger > span, .search-trigger kbd { display: none; }
+  .hamburger { display: inline-grid; order: -1; margin-left: -0.35rem; }
+  .header-inner { gap: 0.75rem; }
+
+  .docs-container { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .docs-sidebar {
+    position: fixed; inset: var(--header-h) auto 0 0;
+    z-index: var(--z-drawer);
+    width: min(320px, 84vw);
+    padding: 1.5rem 1.25rem 4rem;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+    transform: translateX(-102%);
+    transition: transform 0.28s var(--ease);
+    max-height: none;
+  }
+  :root[data-drawer="open"] .docs-sidebar { transform: none; }
+  .drawer-scrim {
+    display: block;
+    position: fixed; inset: var(--header-h) 0 0; z-index: calc(var(--z-drawer) - 1);
+    background: color-mix(in srgb, #000 55%, transparent);
+    opacity: 0; visibility: hidden; transition: opacity 0.25s var(--ease), visibility 0.25s;
+  }
+  :root[data-drawer="open"] .drawer-scrim { opacity: 1; visibility: visible; }
+  :root[data-drawer="open"] body { overflow: hidden; }
+}
+
+/* The header has to fit a hamburger, a wordmark, a version chip, search, the
+   language switcher, GitHub and the theme toggle. At 390px that needs 415px,
+   so the decorative pieces stand down before the functional ones. */
+@media (max-width: 640px) {
+  .header-version { display: none; }
+}
+@media (max-width: 400px) {
+  .header-inner { gap: 0.6rem; padding-inline: 1rem; }
+  .header-logo img { height: 20px; }
+  .header-right { gap: 0.35rem; }
+}
+
+@media (max-width: 767px) {
+  /* The wordmark is baked across the full width of the photograph. Cropping
+     it into a 390px viewport would slice it to "WASP NOI". So on narrow
+     screens the poster becomes a band at its native aspect ratio and the
+     copy sits underneath it. */
+  .hero { display: block; min-height: 0; }
+  .hero-media { position: relative; aspect-ratio: 1168 / 784; }
+  .hero-art { object-position: 50% 50%; }
+  .hero-scrim {
+    background: linear-gradient(to top,
+      var(--film) 2%,
+      color-mix(in srgb, var(--film) 8%, transparent) 46%,
+      color-mix(in srgb, var(--film) 50%, transparent) 100%);
+  }
+  .hero-inner { padding-top: 0; padding-bottom: 3.5rem; margin-top: -2.5rem; }
+  .hero h1 { font-size: 1.75rem; }
+  .hero-actions .btn { flex: 1 1 auto; justify-content: center; }
+
+  .cell-a, .cell-b, .cell-c, .cell-d, .cell-e { grid-column: span 12; }
+  .stat-row { gap: 1.5rem; }
+  .prev-next { grid-template-columns: 1fr; }
+  .prevnext-next { grid-column: 1; text-align: left; }
+  .footer-links { margin-left: 0; }
+  .prose { font-size: 1rem; }
+  .flow-cmd { font-size: 0.75rem; }
+  .code-copy-label { display: none; }
+  .mascot-note { flex-direction: column; align-items: flex-start; }
+}

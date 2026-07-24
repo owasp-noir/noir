@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Azure AI 언어 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다.">
+  <title>Azure AI와 함께 Noir 사용하기 - OWASP Noir</title>
+
+  
+  <meta name="theme-color" content="#0b0b0c" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#fbfbfa" media="(prefers-color-scheme: light)">
+
+  
+  <script>
+    (function () {
+      var r = document.documentElement;
+      r.classList.add("js");
+      try {
+        var t = localStorage.getItem("noir-theme");
+        if (t === "light" || t === "dark") r.setAttribute("data-theme", t);
+      } catch (e) {}
+    })();
+  </script>
+
+  <meta property="og:title" content="Azure AI와 함께 Noir 사용하기">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/">
+  <meta property="og:description" content="Azure AI 언어 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다.">
+  <meta property="og:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-ai_providers-azure.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Azure AI와 함께 Noir 사용하기">
+  <meta name="twitter:description" content="Azure AI 언어 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다.">
+  <meta name="twitter:image" content="https://owasp-noir.github.io/noir/og-images/ko-usage-ai_providers-azure.png">
+  <link rel="canonical" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Azure AI와 함께 Noir 사용하기","url":"https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/","description":"Azure AI 언어 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다.","image":"https://owasp-noir.github.io/noir/og-images/ko-usage-ai_providers-azure.png"}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"OWASP Noir","item":"https://owasp-noir.github.io/noir/ko/"},{"@type":"ListItem","position":2,"name":"사용 가이드","item":"https://owasp-noir.github.io/noir/ko/usage/"},{"@type":"ListItem","position":3,"name":"AI 제공업체","item":"https://owasp-noir.github.io/noir/ko/usage/ai_providers/"},{"@type":"ListItem","position":4,"name":"Azure AI와 함께 Noir 사용하기"}]}</script>
+  <link rel="alternate" hreflang="ko" href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/">
+<link rel="alternate" hreflang="en" href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/">
+
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.ico" sizes="any">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="https://owasp-noir.github.io/noir/logos/favicon-96x96.png" type="image/png" sizes="96x96">
+  <link rel="apple-touch-icon" href="https://owasp-noir.github.io/noir/logos/apple-touch-icon.png">
+  
+  <link rel="manifest" href="https://owasp-noir.github.io/noir/logos/site.webmanifest">
+
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog" href="https://owasp-noir.github.io/noir/rss.xml">
+  <link rel="alternate" type="application/rss+xml" title="OWASP Noir Blog (한국어)" href="https://owasp-noir.github.io/noir/ko/rss.xml">
+
+  <link rel="preload" href="https://owasp-noir.github.io/noir/fonts/geist-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+
+  
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/assets/css/highlight/atom-one-dark.min.css">
+  <link rel="stylesheet" href="https://owasp-noir.github.io/noir/css/style.css">
+  
+</head>
+<body>
+  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  
+<svg xmlns="http://www.w3.org/2000/svg" class="icon-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" />
+    <path d="M21 21l-6 -6" />
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7" />
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454l0 .008" />
+  </symbol>
+  <symbol id="i-contrast" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M12 17a5 5 0 0 0 0 -10v10" />
+  </symbol>
+  <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9l6 6l6 -6" />
+  </symbol>
+  <symbol id="i-menu-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 6l16 0" />
+    <path d="M4 12l16 0" />
+    <path d="M4 18l16 0" />
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 9.667a2.667 2.667 0 0 1 2.667 -2.667h8.666a2.667 2.667 0 0 1 2.667 2.667v8.666a2.667 2.667 0 0 1 -2.667 2.667h-8.666a2.667 2.667 0 0 1 -2.667 -2.667l0 -8.666" />
+    <path d="M4.012 16.737a2.005 2.005 0 0 1 -1.012 -1.737v-10c0 -1.1 .9 -2 2 -2h10c.75 0 1.158 .385 1.5 1" />
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l5 5l10 -10" />
+  </symbol>
+  <symbol id="i-arrow-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M13 18l6 -6" />
+    <path d="M13 6l6 6" />
+  </symbol>
+  <symbol id="i-arrow-up-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 7l-10 10" />
+    <path d="M8 7l9 0l0 9" />
+  </symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 12l14 0" />
+    <path d="M5 12l6 6" />
+    <path d="M5 12l6 -6" />
+  </symbol>
+  <symbol id="i-brand-github" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 19c-4.3 1.4 -4.3 -2.5 -6 -3m12 5v-3.5c0 -1 .1 -1.4 -.5 -2c2.8 -.3 5.5 -1.4 5.5 -6a4.6 4.6 0 0 0 -1.3 -3.2a4.2 4.2 0 0 0 -.1 -3.2s-1.1 -.3 -3.5 1.3a12.3 12.3 0 0 0 -6.2 0c-2.4 -1.6 -3.5 -1.3 -3.5 -1.3a4.2 4.2 0 0 0 -.1 3.2a4.6 4.6 0 0 0 -1.3 3.2c0 4.6 2.7 5.7 5.5 6c-.6 .6 -.6 1.2 -.5 2v3.5" />
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+    <path d="M13.5 6.5l4 4" />
+  </symbol>
+  <symbol id="i-rocket" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 13a8 8 0 0 1 7 7a6 6 0 0 0 3 -5a9 9 0 0 0 6 -8a3 3 0 0 0 -3 -3a9 9 0 0 0 -8 6a6 6 0 0 0 -5 3" />
+    <path d="M7 14a6 6 0 0 0 -3 6a6 6 0 0 0 6 -3" />
+    <path d="M14 9a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+  </symbol>
+  <symbol id="i-terminal-2" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 9l3 3l-3 3" />
+    <path d="M13 15l3 0" />
+    <path d="M3 6a2 2 0 0 1 2 -2h14a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-14a2 2 0 0 1 -2 -2l0 -12" />
+  </symbol>
+  <symbol id="i-lifebuoy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 12a4 4 0 1 0 8 0a4 4 0 1 0 -8 0" />
+    <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0" />
+    <path d="M15 15l3.35 3.35" />
+    <path d="M9 15l-3.35 3.35" />
+    <path d="M5.65 5.65l3.35 3.35" />
+    <path d="M18.35 5.65l-3.35 3.35" />
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 6l11 0" />
+    <path d="M9 12l11 0" />
+    <path d="M9 18l11 0" />
+    <path d="M5 6l0 .01" />
+    <path d="M5 12l0 .01" />
+    <path d="M5 18l0 .01" />
+  </symbol>
+  <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 8l-4 4l4 4" />
+    <path d="M17 8l4 4l-4 4" />
+    <path d="M14 4l-4 16" />
+  </symbol>
+  <symbol id="i-rss" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 19a1 1 0 1 0 2 0a1 1 0 1 0 -2 0" />
+    <path d="M4 4a16 16 0 0 1 16 16" />
+    <path d="M4 11a9 9 0 0 1 9 9" />
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 7a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2v-12" />
+    <path d="M16 3v4" />
+    <path d="M8 3v4" />
+    <path d="M4 11h16" />
+    <path d="M11 15h1" />
+    <path d="M12 15v3" />
+  </symbol>
+</svg>
+
+<header class="site-header">
+  <div class="header-inner">
+    <button class="icon-btn hamburger" id="drawerToggle" aria-label="메뉴 열기" aria-expanded="false" aria-controls="sidebar">
+      <svg class="ic" aria-hidden="true"><use href="#i-menu-2"/></svg>
+    </button>
+
+    <a href="https://owasp-noir.github.io/noir/ko/" class="header-logo" aria-label="OWASP Noir 홈">
+      <img class="logo-dark" src="https://owasp-noir.github.io/noir/images/noir-dark.png" alt="OWASP Noir" width="1280" height="337">
+      <img class="logo-light" src="https://owasp-noir.github.io/noir/images/noir-light.png" alt="OWASP Noir" width="1280" height="337">
+    </a>
+    <a class="header-version" href="https://github.com/owasp-noir/noir/releases" target="_blank" rel="noopener noreferrer">v1.2.1</a>
+
+    <nav class="header-nav" aria-label="주요 메뉴">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">시작하기</a>
+      <a href="https://owasp-noir.github.io/noir/ko/usage/">사용 가이드</a>
+      <a href="https://owasp-noir.github.io/noir/ko/development/">개발</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://owasp-noir.github.io/noir/ko/resources/">리소스</a>
+    </nav>
+
+    <div class="header-right">
+      <button class="header-btn search-trigger" id="searchTrigger" aria-label="문서 검색">
+        <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+        <span>검색</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+
+      
+      
+      <nav class="lang-switcher" aria-label="언어">
+        
+        <a href="https://owasp-noir.github.io/noir/usage/ai_providers/azure/" hreflang="en">EN</a>
+        
+        <a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/" hreflang="ko" aria-current="true">KO</a>
+        
+      </nav>
+      
+
+      <a class="icon-btn" href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer" aria-label="GitHub의 OWASP Noir">
+        <svg class="ic" aria-hidden="true"><use href="#i-brand-github"/></svg>
+      </a>
+
+      
+      <button class="icon-btn theme-toggle" id="themeToggle" data-mode="auto" type="button" aria-label="테마">
+        <svg class="ic ic-auto" aria-hidden="true"><use href="#i-contrast"/></svg>
+        <svg class="ic ic-light" aria-hidden="true"><use href="#i-sun"/></svg>
+        <svg class="ic ic-dark" aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+<div class="search-overlay" id="searchOverlay" role="dialog" aria-modal="true" aria-label="문서 검색" hidden>
+  <div class="search-modal">
+    <div class="search-input-wrap">
+      <svg class="ic" aria-hidden="true"><use href="#i-search"/></svg>
+      <input type="search" id="searchInput" aria-label="문서 검색" placeholder="문서 검색" autocomplete="off" spellcheck="false">
+      <kbd id="searchClose" role="button" tabindex="0">Esc</kbd>
+    </div>
+    <div class="search-results" id="searchResults" role="listbox" aria-label="검색"></div>
+  </div>
+</div>
+<div class="docs-container">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div class="drawer-scrim" id="drawerScrim"></div>
+<aside class="docs-sidebar" id="sidebar">
+  <nav class="sidebar-nav" aria-label="문서">
+
+    <details class="sidebar-group" data-group="get_started">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-rocket"/></svg>
+        <span>시작하기</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">Noir란?</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/installation/">Noir 설치</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/running/">첫 번째 스캔</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/ai_power/">AI 기반 분석</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/get_started/migrate_v0_to_v1/">v0에서 v1으로 마이그레이션</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="usage" open>
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-terminal-2"/></svg>
+        <span>사용 가이드</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/cli_commands/">CLI 명령어</a></li>
+
+
+        <li>
+        <details class="sidebar-subgroup" data-group="supported">
+          <summary class="sidebar-subheading">
+            <span>지원되는 기술</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/language_and_frameworks/">언어 및 프레임워크</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/specification/">명세</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/callee_coverage/">Callee 커버리지</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/ai_context_coverage/">AI 컨텍스트 커버리지</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/mobile/">모바일 앱</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/cli/">CLI 앱</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/supported/tech-commands/">기술 범위</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="formats">
+          <summary class="sidebar-subheading">
+            <span>출력 형식</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/json/">JSON 및 JSONL</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/yaml/">YAML</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/curl/">HTTP 클라이언트 명령어</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/openapi/">OpenAPI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/sarif/">SARIF</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/html/">HTML 리포트</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/mermaid/">Mermaid 차트</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/output_formats/more/">추가 출력 형식</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="passive">
+          <summary class="sidebar-subheading">
+            <span>패시브 스캔</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/rule/">규칙 작성</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/default_rules/">기본 규칙</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/passive_scan/community_rules/">커뮤니티 규칙</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="more_features">
+          <summary class="sidebar-subheading">
+            <span>추가 기능</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/tagger/">태거</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/deliver/">Deliver</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/diff/">Diff 모드</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/more_features/pipeline-for-dast/">DAST 파이프라인</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="ai_providers" open>
+          <summary class="sidebar-subheading">
+            <span>AI 제공업체</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openai/">OpenAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/xai/">xAI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/azure/" aria-current="page">Azure AI</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/github_marketplace/">GitHub Marketplace</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/openrouter/">OpenRouter</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/ollama/">Ollama</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/vllm/">vLLM</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/lmstudio/">LM Studio</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/ai_providers/acp/">ACP 에이전트</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        <li>
+        <details class="sidebar-subgroup" data-group="configurations">
+          <summary class="sidebar-subheading">
+            <span>구성</span>
+            <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </summary>
+          <ul class="sidebar-sub">
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/">개요</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/configuration_file/">구성 파일</a></li>
+
+            
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/configurations/shell-completion/">셸 자동완성</a></li>
+
+          </ul>
+          </details>
+        </li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/usage/github_action/">GitHub Action</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="development">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-code"/></svg>
+        <span>개발</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/how_to_build/">빌드 방법</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/analyzer_architecture/">분석기 아키텍처</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/nix_environment/">Nix 환경</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/debug_flags/">디버그 플래그</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/development/how_to_release/">릴리스 방법</a></li>
+
+      </ul>
+    </details>
+
+    <details class="sidebar-group" data-group="resources">
+      <summary class="sidebar-heading">
+        <svg class="ic" aria-hidden="true"><use href="#i-lifebuoy"/></svg>
+        <span>리소스</span>
+        <svg class="ic sidebar-chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </summary>
+      <ul class="sidebar-links">
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/">개요</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/faq/">FAQ</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/troubleshooting/">문제 해결</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/artwork/">아트워크</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/resources/contact/">연락처</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/community/">커뮤니티</a></li>
+
+        
+        <li><a href="https://owasp-noir.github.io/noir/ko/community/media/">아티클 및 발표</a></li>
+
+      </ul>
+    </details>
+
+  </nav>
+</aside>
+  <main id="main" class="docs-main">
+    <article>
+      <h1 class="docs-title">Azure AI와 함께 Noir 사용하기</h1>
+      <p class="docs-lede">Azure AI 언어 모델을 Noir와 연결하여 코드 분석을 수행하는 방법입니다.</p>
+      <div class="prose">
+        <p><a href="https://azure.microsoft.com/ko-kr/products/ai-services">Azure AI</a> 언어 모델을 GitHub Models 추론 엔드포인트를 통해 사용할 수 있습니다.</p>
+<h2 id="설정">설정</h2>
+<ol>
+<li><strong>API 키 획득</strong>: <a href="https://models.inference.ai.azure.com">Azure AI Inference 포털</a>에서 API 키를 받으세요.</li>
+<li><strong>모델 선택</strong>: Azure AI에서 사용 가능한 모델을 선택하세요.</li>
+</ol>
+<h2 id="사용-방법">사용 방법</h2>
+<pre><code class="language-bash hljs">noir scan ./myapp \
+     --ai-provider=azure \
+     --ai-model=YOUR_MODEL_NAME \
+     --ai-key=YOUR_API_KEY
+</code></pre>
+<p><code>azure</code> 제공자는 <code>https://models.inference.ai.azure.com</code> 엔드포인트를 사용합니다.</p>
+<p>환경 변수 사용:</p>
+<pre><code class="language-bash hljs">export NOIR_AI_KEY=YOUR_API_KEY
+noir scan ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
+</code></pre>
+
+      </div>
+      
+      
+      <footer class="docs-article-footer">
+        <a class="edit-link"
+           href="https://github.com/owasp-noir/noir/edit/main/docs/content/usage/ai_providers/azure/index.ko.md"
+           target="_blank" rel="noopener noreferrer">
+          <svg class="ic" aria-hidden="true"><use href="#i-pencil"/></svg>
+          GitHub에서 이 페이지 수정
+        </a>
+        
+
+
+
+      </footer>
+    </article>
+  </main>
+  
+<nav class="docs-toc" aria-label="목차">
+  <p class="docs-toc-title">
+    <svg class="ic" aria-hidden="true"><use href="#i-list"/></svg>
+    목차
+  </p>
+  <ul><li><a href="#설정">설정</a></li><li><a href="#사용-방법">사용 방법</a></li></ul>
+</nav>
+
+    </main>
+  </div>
+
+  <footer class="site-footer">
+  <div class="footer-inner">
+    <span>OWASP Noir는 MIT 라이선스로 배포되는 오픈소스입니다.</span>
+    <nav class="footer-links" aria-label="푸터">
+      <a href="https://owasp-noir.github.io/noir/ko/get_started/overview/">문서</a>
+      <a href="https://owasp-noir.github.io/noir/ko/blog/">블로그</a>
+      <a href="https://github.com/owasp-noir/noir" target="_blank" rel="noopener noreferrer">GitHub</a>
+      <a href="https://owasp.org/www-project-noir/" target="_blank" rel="noopener noreferrer">OWASP</a>
+      <a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">기여하기</a>
+    </nav>
+  </div>
+</footer>
+  
+<script src="https://owasp-noir.github.io/noir/assets/js/highlight.min.js" defer></script>
+<script>
+  window.NOIR_BASE = "https://owasp-noir.github.io/noir";
+  
+  window.NOIR_I18N = {
+    copy: "복사",
+    copied: "복사됨",
+    copyManual: "Ctrl C 를 누르세요",
+    noResults: "검색 결과가 없습니다:",
+    theme: "테마",
+    themeAuto: "자동",
+    themeLight: "라이트",
+    themeDark: "다크"
+  };
+</script>
+<script src="https://owasp-noir.github.io/noir/js/theme.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/nav.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/code.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/toc.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/reveal.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/mermaid.js" defer></script>
+<script src="https://owasp-noir.github.io/noir/js/search.js" defer></script>
+
+</body>
+</html>
