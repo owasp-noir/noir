@@ -73,7 +73,14 @@ class Application
       end
     end
 
-    get "/health", IndexController
+    # Comments are not routes. Pre-fix the analyzer matched raw source
+    # lines, so each of these became a live endpoint and the
+    # fetch_query_params below became a param on /health.
+    # delete "/purge", IndexController
+    # post "/legacy/import", IndexController, as: :create
+    # ws "/notifications", ChatController
+    get "/health", IndexController # a trailing comment must not break a real route
+    # legacy: context.fetch_query_params["debug"] used to be read here
     ws "/chat", ChatController
   end
 end

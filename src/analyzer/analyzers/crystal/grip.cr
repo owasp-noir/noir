@@ -22,7 +22,15 @@ module Analyzer::Crystal
       last_endpoint = Endpoint.new("", "")
       scope_stack = [] of NamedTuple(prefix: String, indent: Int32)
 
-      lines.each_with_index do |line, index|
+      lines.each_with_index do |raw_line, index|
+        # Grip was the one Crystal analyzer matching routes on raw source:
+        # a comment like `# TODO: add a delete "/users/:id" route` parsed as
+        # a live route, and `context.fetch_query_params["x"]` written in a
+        # comment became a real param. Every sibling analyzer (kemal, amber,
+        # lucky, marten, http) strips first — and this file already did so
+        # for callee collection below, just not here. `strip_comment` keeps
+        # leading whitespace, so the scope-indentation match still lines up.
+        line = Noir::CrystalCalleeExtractor.strip_comment(raw_line)
         details = Details.new(PathInfo.new(path, index + 1))
 
         # Open a scope block, recording its indentation.
