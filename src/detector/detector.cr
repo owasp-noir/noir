@@ -576,6 +576,22 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # plus a short path-sensitive tail (see detector_build_applicable_lookup).
   applicable_lookup = detector_build_applicable_lookup(detector_list)
 
+  # A malformed `--exclude-path` glob makes `File.match?` raise
+  # `File::BadPatternError`. In practice that means an unterminated `[`
+  # character class: the pattern list is comma-separated (so a `{a,b}`
+  # brace group can never arrive intact) and backslashes are folded to
+  # `/` above, which rules out the escape-related raises.
+  #
+  # The raise fires inside the reader fiber below, mid-walk, and only
+  # once traversal actually reaches the malformed part — so `[bad`
+  # raises on the first file while `src/[bad` survives until the walk
+  # descends into `src/`. Left unhandled the fiber died silently: the
+  # walk stopped wherever it was, every remaining file went unscanned,
+  # and noir reported "No technologies detected" with exit 0 — an empty
+  # or partial scan indistinguishable from a genuinely empty codebase.
+  # Capture it here and fail loudly after the WaitGroup instead.
+  exclude_pattern_error : String? = nil
+
   # Thread for reading files and sending their contents to the channel
   wg.add(1)
   spawn do
@@ -779,6 +795,8 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         budget_mb = (stats[:budget] / (1024.0 * 1024.0)).round(1)
         logger.debug "Content cache: #{stats[:files]} files / #{cached_mb} MB (budget #{budget_mb} MB, #{stats[:skipped]} skipped)"
       end
+    rescue e : File::BadPatternError
+      exclude_pattern_error = e.message || "invalid pattern"
     ensure
       channel.close
       wg.done
@@ -861,6 +879,17 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   end
 
   wg.wait
+
+  # The file walk aborted on a bad glob, so `techs` reflects only the
+  # files read before the raise. Reporting that as a result would be a
+  # silent lie; surface the pattern error and stop.
+  if pattern_error = exclude_pattern_error
+    raise Noir::InvalidExcludePathError.new(
+      "--exclude-path contains an invalid glob pattern (#{pattern_error}): #{options["exclude_path"]?.to_s.inspect}. " \
+      "Check the `[` character classes — each one must be closed with a `]`."
+    )
+  end
+
   logger.debug "Added #{locator.all("file_map").size} files to file_map"
   {techs.uniq, passive_result}
 end
