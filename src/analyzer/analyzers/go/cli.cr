@@ -125,7 +125,11 @@ module Analyzer::Go
         next unless File.exists?(path)
 
         begin
-          content = read_file_content(path)
+          # Blank out comments before any matching: the flag/command
+          # patterns below are shape-based, so a commented-out or merely
+          # documented registration read as a live one. Line numbers are
+          # preserved, so PathInfo stays accurate.
+          content = GoEngine.strip_comments(read_file_content(path))
           next unless cli_evidence?(content)
 
           binary = go_binary_name(modules, path)
