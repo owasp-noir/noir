@@ -11,9 +11,9 @@ class OutputBuilderOnlyTag < OutputBuilder
         end
       end
 
-      if endpoint.params.size > 0
+      if !endpoint.params.empty?
         endpoint.params.each do |param|
-          if param.tags.size > 0
+          if !param.tags.empty?
             param.tags.each do |tag|
               tags << tag
             end

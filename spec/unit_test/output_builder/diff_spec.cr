@@ -1,6 +1,7 @@
 require "../../spec_helper"
 require "../../../src/output_builder/diff"
 require "../../../src/models/endpoint"
+require "../../../src/models/noir"
 require "../../../src/utils/utils"
 
 describe "OutputBuilderDiff" do
@@ -125,6 +126,44 @@ describe "OutputBuilderDiff" do
       result[:added][0].method.should eq("POST")
       result[:removed].size.should eq(0)
       result[:changed].size.should eq(0)
+    end
+  end
+
+  # `diff` itself has no emptiness gate — the `.size > 0` -> `!.empty?`
+  # conversion (#1121) lives in `print` and `generate_toml_from_diff`,
+  # which skip a section entirely when its bucket is empty. Assert on the
+  # rendered output so the gate is what's actually covered.
+  describe "section gating" do
+    it "renders nothing when every bucket is empty" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      endpoints = [
+        Endpoint.new("/test", "GET"),
+        Endpoint.new("/api/users", "POST"),
+      ]
+      diff_app = NoirRunner.new(create_test_options)
+      diff_app.endpoints.concat(endpoints)
+
+      builder.print(endpoints, diff_app)
+
+      builder.io.to_s.should eq("")
+    end
+
+    it "renders only the sections whose bucket is populated" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      diff_app = NoirRunner.new(create_test_options)
+      diff_app.endpoints << Endpoint.new("/test", "GET")
+
+      # POST /api/users is new, GET /test is gone, nothing changed in place.
+      builder.print_toml([Endpoint.new("/api/users", "POST")], diff_app)
+
+      output = builder.io.to_s
+      output.should contain("[added]")
+      output.should contain("[removed]")
+      output.should_not contain("[changed]")
     end
   end
 end

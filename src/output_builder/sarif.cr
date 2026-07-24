@@ -19,7 +19,7 @@ class OutputBuilderSarif < OutputBuilder
         r.information_uri("https://github.com/owasp-noir/noir")
 
         # Add endpoint discovery rule
-        if endpoints.size > 0
+        if !endpoints.empty?
           r.rule("endpoint-discovery",
             name: "Endpoint Discovery",
             short_description: "Discovered API endpoints through static analysis",
@@ -49,11 +49,13 @@ class OutputBuilderSarif < OutputBuilder
           end
 
           message_text = "#{endpoint.method} #{endpoint.url}"
-          if params_info.size > 0
+          if !params_info.empty?
             message_text += " (Parameters: #{params_info.join(", ")})"
           end
 
-          if endpoint.details.code_paths && endpoint.details.code_paths.size > 0
+          # `code_paths` is a non-nilable `Array(PathInfo)`, so the old
+          # `code_paths && ...` truthiness half was always true.
+          if !endpoint.details.code_paths.empty?
             r.result do |rb|
               rb.message(message_text)
               rb.rule_id("endpoint-discovery")
