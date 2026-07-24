@@ -66,4 +66,23 @@ describe "Initialize FileAnalyzer" do
   it "getter - hooks_count" do
     object.hooks_count.should_not eq(0)
   end
+
+  # Hooks that recognise an endpoint by matching against `-u/--url` cannot
+  # do anything without one, but the url-independent hooks (graphql
+  # operation documents) still have to run — a plain `noir scan ./app`
+  # used to skip the file analyzer wholesale and lose them.
+  it "keeps url-independent hooks active when no url is set" do
+    object.url.should eq("")
+    object.active_hooks.should_not be_empty
+    object.active_hooks.all?(&.requires_url.!).should be_true
+  end
+
+  it "activates every hook once a url is set" do
+    with_url = create_test_options
+    with_url["base"] = YAML::Any.new([YAML::Any.new("noir")])
+    with_url["url"] = YAML::Any.new("https://ex.com")
+
+    analyzer = FileAnalyzer.new(with_url)
+    analyzer.active_hooks.size.should be > object.active_hooks.size
+  end
 end

@@ -238,17 +238,39 @@ class Analyzer
 end
 
 class FileAnalyzer < Analyzer
-  @@hooks = [] of Proc(String, String, Array(Endpoint))
+  # Most hooks (http, base64, string) recognise an endpoint by matching a
+  # URL they found in the file against the user-supplied `-u/--url`. With
+  # no url their `includes?(url)` test degenerates to "matches
+  # everything", so they must not run at all — that is what `requires_url`
+  # marks.
+  #
+  # A hook that identifies endpoints from file syntax instead (graphql
+  # operation documents) is url-independent and has to run either way.
+  # Gating the whole FileAnalyzer on `-u` used to drop those from every
+  # default scan, so the requirement is now declared per hook rather than
+  # assumed for all of them.
+  record Hook, func : Proc(String, String, Array(Endpoint)), requires_url : Bool
 
-  def hooks_count
-    @@hooks.size
+  @@hooks = [] of Hook
+
+  def self.add_hook(func : Proc(String, String, Array(Endpoint)), requires_url : Bool = true)
+    @@hooks << Hook.new(func, requires_url)
   end
 
-  def self.add_hook(func : Proc(String, String, Array(Endpoint)))
-    @@hooks << func
+  # Hooks that can actually produce something for this scan.
+  def active_hooks : Array(Hook)
+    url_present = !@url.empty?
+    @@hooks.select { |hook| url_present || !hook.requires_url }
+  end
+
+  def hooks_count
+    active_hooks.size
   end
 
   def analyze
+    hooks = active_hooks
+    return @result if hooks.empty?
+
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
     WaitGroup.wait do |wg|
@@ -269,8 +291,8 @@ class FileAnalyzer < Analyzer
 
               logger.debug "Analyzing: #{path}"
 
-              @@hooks.each do |hook|
-                file_results = hook.call(path, @url)
+              hooks.each do |hook|
+                file_results = hook.func.call(path, @url)
                 unless file_results.nil?
                   file_results.each do |file_result|
                     @result << file_result

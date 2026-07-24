@@ -405,8 +405,14 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
     end
   end
 
-  unless options["url"].to_s.empty?
-    logger.sub "➔ File-based Analyzer: #{file_analyzer.hooks_count} hook#{'s' unless file_analyzer.hooks_count == 1} in use"
+  # `hooks_count` reports only the hooks that can produce something for
+  # this scan: without `-u/--url` the url-matching hooks sit out and the
+  # url-independent ones (graphql operation documents) still run. This used
+  # to be `unless options["url"].empty?`, which skipped the whole
+  # FileAnalyzer — and with it GraphQL operations — on every default scan.
+  file_analyzer_hooks = file_analyzer.hooks_count
+  if file_analyzer_hooks > 0
+    logger.sub "➔ File-based Analyzer: #{file_analyzer_hooks} hook#{'s' unless file_analyzer_hooks == 1} in use"
     result = result + file_analyzer.analyze
   end
 
