@@ -344,5 +344,10 @@ module Noir::CLI::ScanCommand
       app.logger.info "Generating Diff Report."
       app.diff_report(app_diff)
     end
+  rescue e : Noir::InvalidExcludePathError
+    # Raised from the detector's file walk once a malformed --exclude-path
+    # glob is actually reached. Without this the process printed a raw
+    # Crystal backtrace from a dead fiber and still exited 0.
+    Noir::CLI.die(e.message || "--exclude-path contains an invalid glob pattern.")
   end
 end

@@ -112,4 +112,106 @@ describe "detect_techs file walker" do
       CodeLocator.instance.clear_all
     end
   end
+
+  # A malformed glob makes `File.match?` raise inside the reader fiber.
+  # Pre-fix the fiber died silently: the walk stopped where it was, the
+  # remaining files were never read, and the caller saw an empty tech
+  # list — a scan that looks "clean" but covered nothing, with exit 0.
+  describe "malformed --exclude-path globs" do
+    it "raises instead of silently abandoning the walk" do
+      temp_dir = File.tempname("noir_detector_bad_glob")
+      Dir.mkdir_p(temp_dir)
+
+      begin
+        File.write(File.join(temp_dir, "collection.json"), <<-JSON)
+          {
+            "info": {
+              "name": "Example",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": []
+          }
+          JSON
+
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+        options["exclude_path"] = YAML::Any.new("[unterminated")
+        logger = NoirLogger.new(false, false, false, true)
+        CodeLocator.instance.clear_all
+
+        expect_raises(Noir::InvalidExcludePathError, /invalid glob pattern/) do
+          detect_techs([temp_dir], options, [] of PassiveScan, logger)
+        end
+      ensure
+        FileUtils.rm_rf(temp_dir) if temp_dir
+        CodeLocator.instance.clear_all
+      end
+    end
+
+    # `File.match?` only raises once traversal reaches the malformed
+    # part, so a pattern with a literal prefix stays dormant until the
+    # walk descends into it — the partial-scan case.
+    it "raises for a path-prefixed pattern that only fails deeper in the walk" do
+      temp_dir = File.tempname("noir_detector_bad_glob_prefixed")
+      Dir.mkdir_p(File.join(temp_dir, "src"))
+
+      begin
+        File.write(File.join(temp_dir, "src", "collection.json"), <<-JSON)
+          {
+            "info": {
+              "name": "Example",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": []
+          }
+          JSON
+
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+        options["exclude_path"] = YAML::Any.new("src/[unterminated")
+        logger = NoirLogger.new(false, false, false, true)
+        CodeLocator.instance.clear_all
+
+        expect_raises(Noir::InvalidExcludePathError, /invalid glob pattern/) do
+          detect_techs([temp_dir], options, [] of PassiveScan, logger)
+        end
+      ensure
+        FileUtils.rm_rf(temp_dir) if temp_dir
+        CodeLocator.instance.clear_all
+      end
+    end
+
+    it "still walks normally for a valid glob" do
+      temp_dir = File.tempname("noir_detector_good_glob")
+      Dir.mkdir_p(temp_dir)
+
+      begin
+        postman_json = File.join(temp_dir, "collection.json")
+        File.write(postman_json, <<-JSON)
+          {
+            "info": {
+              "name": "Example",
+              "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+            },
+            "item": []
+          }
+          JSON
+
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+        options["exclude_path"] = YAML::Any.new("*.md,src/[a-z]*.go")
+        logger = NoirLogger.new(false, false, false, true)
+        locator = CodeLocator.instance
+        locator.clear_all
+
+        detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
+
+        detected[0].should contain("postman")
+        locator.all("file_map").should contain(postman_json)
+      ensure
+        FileUtils.rm_rf(temp_dir) if temp_dir
+        CodeLocator.instance.clear_all
+      end
+    end
+  end
 end

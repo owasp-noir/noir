@@ -2,6 +2,15 @@ require "./logger"
 require "../utils/utils"
 require "yaml"
 
+module Noir
+  # Raised when a user-supplied `--exclude-path` glob is malformed.
+  # `File.match?` only raises once the walk reaches the bad construct, so
+  # this surfaces from inside the detector's file walk rather than at CLI
+  # parse time; `noir scan` catches it and exits with a clean error.
+  class InvalidExcludePathError < Exception
+  end
+end
+
 class Detector
   @logger : NoirLogger
   @is_debug : Bool
