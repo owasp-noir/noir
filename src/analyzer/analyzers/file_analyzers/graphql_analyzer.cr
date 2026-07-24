@@ -173,6 +173,11 @@ module InternalGraphqlParser
   end
 end
 
+# Operations are recognised by GraphQL syntax, not by matching a discovered
+# URL against `-u/--url`, so this hook runs whether or not one was given
+# (`requires_url: false`). It used to be skipped along with the url-matching
+# hooks, which meant `noir scan ./app` found no GraphQL operations at all
+# unless an unrelated `-u` was also passed.
 FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   # Operation documents ship with either extension; `.graphqls` is
   # SDL-only by convention and is left to the graphql_sdl analyzer.
@@ -186,4 +191,4 @@ FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   end
 
   InternalGraphqlParser.parse_content(path, file_content)
-})
+}, requires_url: false)
