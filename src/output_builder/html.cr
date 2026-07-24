@@ -229,7 +229,7 @@ class OutputBuilderHtml < OutputBuilder
   private def build_endpoint_card(endpoint : Endpoint, index : Int32) : String
     baked = bake_endpoint(endpoint.url, endpoint.params)
     method_class = get_method_class(endpoint.method)
-    has_body = endpoint.params.size > 0 || !endpoint.details.code_paths.empty?
+    has_body = !endpoint.params.empty? || !endpoint.details.code_paths.empty?
     search_text = endpoint_search_text(endpoint, baked[:url])
     body_id = "ep-body-#{index}"
     curl = curl_attribute_for(endpoint, baked)
@@ -251,7 +251,7 @@ class OutputBuilderHtml < OutputBuilder
       html << "<span class=\"method-badge #{method_class}\">#{HTML.escape(endpoint.method)}</span>\n"
       html << "<span class=\"url\">#{HTML.escape(baked[:url])}</span>\n"
 
-      if endpoint.protocol != "http" || !endpoint.tags.empty? || endpoint.params.size > 0
+      if endpoint.protocol != "http" || !endpoint.tags.empty? || !endpoint.params.empty?
         html << "<span class=\"card-details\">\n"
         if endpoint.protocol != "http"
           html << "<span class=\"protocol-badge\">#{HTML.escape(endpoint.protocol)}</span>\n"
@@ -259,7 +259,7 @@ class OutputBuilderHtml < OutputBuilder
         endpoint.tags.each do |tag|
           html << "<span class=\"tag-badge\">#{HTML.escape(tag.name)}</span>\n"
         end
-        if endpoint.params.size > 0
+        if !endpoint.params.empty?
           html << "<span class=\"card-meta\">#{endpoint.params.size} #{endpoint.params.size == 1 ? "param" : "params"}</span>\n"
         end
         html << "</span>\n"
@@ -284,7 +284,7 @@ class OutputBuilderHtml < OutputBuilder
       if has_body
         html << "<div class=\"card-collapse\" id=\"#{body_id}\"><div class=\"card-pane\"><div class=\"card-body\">\n"
 
-        if endpoint.params.size > 0
+        if !endpoint.params.empty?
           html << "<table class=\"params-table\">\n"
           html << "<thead><tr><th>Parameter</th><th>Type</th><th>Value</th></tr></thead>\n"
           html << "<tbody>\n"
