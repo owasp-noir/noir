@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./js_callee_extractor"
@@ -166,7 +167,7 @@ module Noir
       end
       return unless group_path && group_body
 
-      new_prefix = join_paths(prefix, group_path)
+      new_prefix = Noir::URLPath.join_trimmed(prefix, group_path)
       walk(group_body, source, new_prefix, routes, depth + 1, include_callees)
     end
 
@@ -197,7 +198,7 @@ module Noir
       end
       return unless path
 
-      full_path = join_paths(prefix, path)
+      full_path = Noir::URLPath.join_trimmed(prefix, path)
       line = Noir::TreeSitter.node_start_row(call)
 
       query_params = [] of String
@@ -408,12 +409,6 @@ module Noir
       else
         raw
       end
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

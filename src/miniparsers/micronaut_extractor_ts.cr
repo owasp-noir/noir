@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./java_callee_extractor"
@@ -287,7 +288,7 @@ module Noir
 
         controller_paths.each do |class_path|
           method_paths.each do |method_path|
-            full_path = join_paths(class_path, method_path)
+            full_path = Noir::URLPath.join_trimmed(class_path, method_path)
             normalized_path = strip_uri_template_query(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
@@ -343,7 +344,7 @@ module Noir
 
         interface_paths.each do |interface_path|
           method_paths.each do |method_path|
-            full_path = join_paths(interface_path, method_path)
+            full_path = Noir::URLPath.join_trimmed(interface_path, method_path)
             normalized_path = strip_uri_template_query(full_path)
             query_vars = uri_template_query_vars(full_path)
             path_vars = uri_template_path_vars(normalized_path)
@@ -645,12 +646,6 @@ module Noir
 
     # Micronaut joins class + method paths with a single `/`. Empty
     # method path → just the class prefix (no trailing slash).
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     private def strip_uri_template_query(path : String) : String
       normalized = path.gsub(/\{\?[^}]*\}/, "")
       normalized.empty? ? "/" : normalized

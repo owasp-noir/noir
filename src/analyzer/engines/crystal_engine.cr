@@ -169,14 +169,6 @@ module Analyzer::Crystal
       end
     end
 
-    protected def each_public_dir_file(folder : String, &block : String -> Nil) : Nil
-      base_paths.each do |base|
-        get_public_dir_files(base, folder).each do |file|
-          block.call(file)
-        end
-      end
-    end
-
     protected def attach_crystal_callees(endpoint : Endpoint, callees : Array(Noir::CrystalCalleeExtractor::Entry))
       Noir::CrystalCalleeExtractor.attach_to(endpoint, callees)
     end
@@ -397,14 +389,6 @@ module Analyzer::Crystal
     private def crystal_closes_block?(line : String) : Bool
       line.starts_with?("end") && line.matches?(CLOSES_BLOCK_RE)
     end
-
-    # Shared `verb "/path"` matchers for Kemal/Lucky/Grip-style DSLs.
-    # One combined PCRE2 scan replaces the previous 7–8 sequential
-    # per-verb `.scan` calls that ran on every source line. Leftmost
-    # match wins, which matches real one-verb-per-line route DSLs and
-    # the prior first-matching-verb behaviour for those lines. Optional
-    # `extra` covers framework-only verbs (Lucky's `trace`).
-    HTTP_ROUTE_VERBS = %w[get post put delete patch head options]
 
     # Group 1 = verb (or `ws`), group 2 = path. `ws` is folded in so a
     # single scan covers WebSocket routes too; the caller maps `ws` →

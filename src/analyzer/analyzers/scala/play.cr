@@ -1,3 +1,4 @@
+require "../../../utils/url_path"
 require "../../../models/analyzer"
 require "../../../miniparsers/scala_callee_extractor"
 
@@ -439,11 +440,11 @@ module Analyzer::Scala
           include_prefix = include_match[1]
           include_target = include_match[2]
           if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
-            process_routes_file(included_path, controller_methods, routes_by_key, join_paths(prefix, include_prefix), seen)
+            process_routes_file(included_path, controller_methods, routes_by_key, Noir::URLPath.join_trimmed(prefix, include_prefix), seen)
           elsif router = resolve_sird_router(include_target, path)
             # The include target is a programmatic SIRD router class
             # (`-> /v1/posts v1.post.PostRouter`), not a routes file.
-            process_sird_router(router, join_paths(prefix, include_prefix))
+            process_sird_router(router, Noir::URLPath.join_trimmed(prefix, include_prefix))
           end
           next
         end
@@ -544,12 +545,6 @@ module Analyzer::Scala
       nil
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     # Join a mount prefix onto a route defined in an included routes file, but
     # don't double the prefix when the included file already carries it.
     # Standard Play sub-routes are relative (`-> /appeal appeal.Routes` over
@@ -558,7 +553,7 @@ module Analyzer::Scala
     # would yield `/appeal/appeal/landing`. The boundary check (exact match or
     # `prefix/…`) keeps a coincidental relative path like `/appeals` prefixed.
     private def join_included_route(prefix : String, suffix : String) : String
-      return join_paths(prefix, suffix) if prefix.empty?
+      return Noir::URLPath.join_trimmed(prefix, suffix) if prefix.empty?
 
       normalized_prefix = prefix.rstrip('/')
       normalized_suffix = suffix.starts_with?('/') ? suffix : "/#{suffix}"
@@ -566,7 +561,7 @@ module Analyzer::Scala
         return normalized_suffix
       end
 
-      join_paths(prefix, suffix)
+      Noir::URLPath.join_trimmed(prefix, suffix)
     end
 
     # Extract path parameters from route pattern
@@ -847,7 +842,7 @@ module Analyzer::Scala
       body.scan(/case\s+(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*p"([^"]*)"/) do |match|
         method = match[1]
         url_path, params = normalize_sird_path(match[2])
-        full_path = join_paths(prefix, url_path)
+        full_path = Noir::URLPath.join_trimmed(prefix, url_path)
         full_path = "/" if full_path.empty?
 
         line = line_at(source, body_start + (match.begin(0) || 0))

@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "./java_callee_extractor"
 require "./java_route_extractor_ts"
@@ -152,7 +153,7 @@ module Noir
           return
         when config.nest_methods.includes?(name)
           path_arg = first_string_argument(node, source, constants)
-          new_prefix = path_arg ? join_paths(prefix, path_arg) : prefix
+          new_prefix = path_arg ? Noir::URLPath.join_trimmed(prefix, path_arg) : prefix
           if body = lambda_body_in_args(node)
             walk(body, source, new_prefix, config, routes, constants, method_bodies, handler_vars, depth + 1, include_callees)
           end
@@ -189,7 +190,7 @@ module Noir
         path_arg = ""
       end
 
-      full_path = join_paths(prefix, path_arg)
+      full_path = Noir::URLPath.join_trimmed(prefix, path_arg)
       line = Noir::TreeSitter.node_start_row(call)
 
       query_params = [] of String
@@ -256,7 +257,7 @@ module Noir
       item_path_arg = first_string_argument(call, source, constants)
       return if item_path_arg.nil? && prefix.empty?
 
-      item_path = item_path_arg ? join_paths(prefix, item_path_arg) : prefix
+      item_path = item_path_arg ? Noir::URLPath.join_trimmed(prefix, item_path_arg) : prefix
       collection_path = crud_collection_path(item_path)
       line = Noir::TreeSitter.node_start_row(call)
 
@@ -775,12 +776,6 @@ module Noir
     # Single-`/` join: `prefix + suffix` with one separator,
     # collapsing trailing/leading slashes. Empty prefix or suffix is
     # passed through unchanged.
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     private def crud_collection_path(item_path : String) : String
       trimmed = item_path.rstrip('/')
       return trimmed if trimmed.empty?

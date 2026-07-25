@@ -51,15 +51,6 @@ module Analyzer::Scala
       extract_scala_brace_block_with_end_at(lines, start_index, opening_brace)
     end
 
-    protected def extract_scala_brace_block_at(lines : Array(String),
-                                               start_index : Int32,
-                                               opening_brace : Int32) : Tuple(String, Int32)?
-      block = extract_scala_brace_block_with_end_at(lines, start_index, opening_brace)
-      return unless block
-
-      {block[0], block[1]}
-    end
-
     protected def extract_scala_brace_block_with_end_at(lines : Array(String),
                                                         start_index : Int32,
                                                         opening_brace : Int32) : Tuple(String, Int32, Int32)?
@@ -90,10 +81,6 @@ module Analyzer::Scala
     #   * structural view: all strings/comments blanked, for brace matching.
     protected def scala_code_lines(content : String) : Array(String)
       Noir::ScalaLexer.new(content).code_lines
-    end
-
-    protected def scala_structural_lines(content : String) : Array(String)
-      Noir::ScalaLexer.new(content).masked_lines
     end
 
     # One lexer per file when an analyzer needs BOTH the code and structural

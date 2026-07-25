@@ -848,18 +848,6 @@ module Analyzer::Elixir
       {base, "#{endpoint.method}::#{endpoint.url}"}
     end
 
-    def should_extract_params_for_endpoint?(endpoint : Endpoint, controller_name : String, action_name : String) : Bool
-      # Check if the endpoint's route_map entry matches this controller/action
-      route_key = endpoint_route_map_key(endpoint)
-      if mapping = @route_map[route_key]?
-        return controller_refs_match?(controller_name, mapping.controller) && mapping.action == action_name
-      end
-
-      # Fallback: try to match by conventional naming
-      # For example, resources routes: GET /posts -> PostController.index
-      false
-    end
-
     private def controller_refs_match?(controller_name : String, mapped_controller : String) : Bool
       normalized_controller = normalize_controller_ref(controller_name)
       normalized_mapping = normalize_controller_ref(mapped_controller)
