@@ -241,8 +241,12 @@ module Analyzer::Go
     # the file that calls `router.GET(...)` may not import Gin/Echo itself.
     def framework_package_dirs(file_contents : Hash(String, String), import_marker : String) : Set(String)
       dirs = Set(String).new
+      # Compiled once for the whole sweep — this walks every cached `.go`
+      # source, and one JIT-compiled scan beats `includes?`'s Rabin-Karp
+      # walk per file.
+      marker = Regex.union(import_marker)
       file_contents.each do |path, content|
-        dirs << File.dirname(path) if content.includes?(import_marker)
+        dirs << File.dirname(path) if content.matches?(marker, options: Noir::TextFile::MATCH_OPTIONS)
       end
       dirs
     end
@@ -251,10 +255,10 @@ module Analyzer::Go
     # import Gin/Echo for `*gin.Context` / `echo.Context`, but they cannot emit
     # endpoints unless they contain a route/static registration call.
     def go_route_source_candidate?(content : String, extra_methods : Array(String)) : Bool
-      return true if content.matches?(GO_HTTP_ROUTE_CALL_RE)
+      return true if content.matches?(GO_HTTP_ROUTE_CALL_RE, options: Noir::TextFile::MATCH_OPTIONS)
       extra_methods.any? do |method|
         method_regex = @extra_method_regexes[method] ||= /\.#{Regex.escape(method)}\s*\(/
-        content.matches?(method_regex)
+        content.matches?(method_regex, options: Noir::TextFile::MATCH_OPTIONS)
       end
     end
 
