@@ -51,10 +51,8 @@ class HonoAuthTagger < FrameworkTagger
     extensions.each do |ext|
       files = collect_files_by_extension(ext)
       files.each do |file|
-        content = read_file(file)
-        next if content.nil?
-
-        lines = content.split("\n")
+        lines = read_file_lines(file)
+        next if lines.nil?
         lines.each do |line|
           stripped = line.strip
 
@@ -97,10 +95,8 @@ class HonoAuthTagger < FrameworkTagger
 
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we

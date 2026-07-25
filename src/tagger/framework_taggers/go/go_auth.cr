@@ -123,10 +123,8 @@ class GoAuthTagger < FrameworkTagger
   private def check_endpoint(endpoint : Endpoint)
     # Check route definition for inline middleware
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
 
