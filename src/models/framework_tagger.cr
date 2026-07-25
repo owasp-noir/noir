@@ -18,12 +18,14 @@ class FrameworkTagger < Tagger
   @base_path : String
   @base_paths : Array(String)
   @file_cache : Hash(String, String)
+  @lines_cache : Hash(String, Array(String))
 
   def initialize(options : Hash(String, YAML::Any))
     super
     @base_paths = resolve_base_paths(options)
     @base_path = @base_paths.first
     @file_cache = Hash(String, String).new
+    @lines_cache = Hash(String, Array(String)).new
   end
 
   # `base` is built as a flat Array(YAML::Any) and `-b PATH` / positional
@@ -91,6 +93,28 @@ class FrameworkTagger < Tagger
   rescue ex
     @logger.debug "FrameworkTagger: Failed to read file #{path}: #{ex.message}"
     nil
+  end
+
+  # `read_file` split on newlines, cached alongside it.
+  #
+  # Taggers walk backwards from an endpoint's line looking for decorators,
+  # middleware and guard blocks, so they need the file as lines. They ask
+  # once per endpoint (really once per code path per endpoint), which meant
+  # re-splitting the same controller for every action it defines: on a
+  # Rails app that was the single most expensive thing the `-T` pass did.
+  #
+  # The returned array is shared, so treat it as read-only.
+  def read_file_lines(path : String) : Array(String)?
+    if cached = @lines_cache[path]?
+      return cached
+    end
+
+    content = read_file(path)
+    return if content.nil?
+
+    lines = content.split("\n")
+    @lines_cache[path] = lines
+    lines
   end
 
   # Static-asset file extensions. A route ending in one of these serves a

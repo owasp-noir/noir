@@ -40,10 +40,8 @@ class PythonMiscAuthTagger < FrameworkTagger
 
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
-      content = read_file(path_info.path)
-      next if content.nil?
-
-      lines = content.split("\n")
+      lines = read_file_lines(path_info.path)
+      next if lines.nil?
       line_num = path_info.line
       next if line_num.nil?
       # Skip stale/out-of-range line refs: a line beyond the content we
