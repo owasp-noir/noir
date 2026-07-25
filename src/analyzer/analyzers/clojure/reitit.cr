@@ -9,6 +9,8 @@ module Analyzer::Clojure
   # vectors, accumulating the prefix, and pulls method handlers
   # out of the route-data map keyed by `:get`/`:post`/etc.
   class Reitit < Analyzer
+    analyzer_for "clojure_reitit"
+
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
 
     HTTP_METHODS = {

@@ -10,6 +10,8 @@ module Analyzer::Go
   end
 
   class Chi < Analyzer
+    analyzer_for "go_chi"
+
     # Go enforces per-file imports, so any file using chi's router
     # types must mention the package path. Filter on this marker
     # to avoid touching the bulk of files in projects whose

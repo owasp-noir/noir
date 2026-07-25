@@ -2,6 +2,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Starlette < PythonEngine
+    analyzer_for "python_starlette"
+
     # Route('/path', handler, methods=[...]) — captures path, and the tail
     # after the path literal so we can inspect methods= and the handler
     # reference. The tail stops at the closing paren on the same line to

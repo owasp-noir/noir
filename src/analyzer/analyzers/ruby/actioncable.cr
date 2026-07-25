@@ -15,6 +15,8 @@ module Analyzer::Ruby
   # `routes.rb` while channels live under `app/channels/`, so the mount is
   # collected across every `.rb` file first, then joined onto the channels.
   class ActionCable < RubyEngine
+    analyzer_for "ruby_actioncable"
+
     # `class ChatChannel < ApplicationCable::Channel` (or the framework base
     # `ActionCable::Channel::Base`). The base module `class
     # ApplicationCable::Channel < ...` carries a `::` in the subclass name,

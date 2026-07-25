@@ -2,6 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Mux < GoEngine
+    analyzer_for "go_mux"
+
     IMPORT_MARKER = "github.com/gorilla/mux"
 
     def analyze

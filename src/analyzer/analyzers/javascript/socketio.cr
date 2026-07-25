@@ -14,6 +14,8 @@ module Analyzer::Javascript
   # co-located). A namespace cursor tracks which `.of("/ns")` connection
   # block the current `socket.on` handlers belong to.
   class SocketIO < JavascriptEngine
+    analyzer_for "js_socketio"
+
     # `const admin = io.of("/admin")` — binds a variable to a namespace.
     NS_ASSIGN = /\b(\w+)\s*=\s*\w+\.of\(\s*["']([^"']+)["']/
 

@@ -3,6 +3,8 @@ require "../../../utils/yaml"
 
 module Analyzer::Specification
   class Oas2 < SpecificationEngine
+    analyzer_for "oas2"
+
     HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
 
     # Resolves a `#/definitions/Name` pointer against the spec root.

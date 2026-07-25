@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class ThinkPHP < PhpEngine
+    analyzer_for "php_thinkphp"
+
     ALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
     @method_def_regexes = Hash(String, Regex).new

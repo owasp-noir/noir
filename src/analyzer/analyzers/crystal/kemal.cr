@@ -3,6 +3,8 @@ require "../../../utils/url_path"
 
 module Analyzer::Crystal
   class Kemal < CrystalEngine
+    analyzer_for "crystal_kemal"
+
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
     MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(\w+)/
     ROUTER_PATTERN    = /^\s*(\w+)\s*=\s*Kemal::Router\.new/

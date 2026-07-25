@@ -6,6 +6,8 @@ module Analyzer::Zig
   # fields, yazap App/Arg builder calls, plus std.process argv / env reads.
   # Line-scan, merged by URL.
   class Cli < Analyzer
+    analyzer_for "zig_cli"
+
     # zig-clap multiline param string lines (each begins with `\\`).
     CLAP_FLAG = /\\\\\s*(?:-[A-Za-z0-9]\s*,\s*)?--([A-Za-z0-9][\w-]*)/
     CLAP_ARG  = /\\\\\s*<([A-Za-z_]\w*)>/

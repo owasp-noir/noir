@@ -13,6 +13,8 @@ module Analyzer::Mobile
   # (deep links are dispatched by the App/SceneDelegate `onOpenURL` /
   # `application(_:open:)`), so `via` is filled later by the code layer.
   class Ios < Analyzer
+    analyzer_for "ios"
+
     # Generic web/file schemes an app may register without them being a
     # real deep-link surface (a bare `http://` / `https://` has no host to
     # address). Compared case-insensitively.

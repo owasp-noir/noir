@@ -7,6 +7,8 @@ module Analyzer::Lua
   # (add_argument/add_option/add_flag, attributed by receiver variable), plus
   # `arg` indexing and os.getenv. Line-scan, merged by URL.
   class Cli < Analyzer
+    analyzer_for "lua_cli"
+
     ARGPARSE_CTOR = /(?:local\s+)?([A-Za-z_]\w*)\s*=\s*argparse\s*\(\s*(?:['"]([^'"]*)['"])?/
     SUBCOMMAND    = /(?:local\s+)?(?:([A-Za-z_]\w*)\s*=\s*)?([A-Za-z_]\w*)\s*:\s*command\s*\(\s*['"]([^'"]+)['"]/
     OPTION        = /([A-Za-z_]\w*)\s*:\s*(?:option|flag)\s*\(\s*['"]([^'"]+)['"]/

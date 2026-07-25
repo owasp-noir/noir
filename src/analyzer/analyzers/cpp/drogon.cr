@@ -4,6 +4,8 @@ require "wait_group"
 
 module Analyzer::Cpp
   class Drogon < Analyzer
+    analyzer_for "cpp_drogon"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp"]
     alias HandlerTarget = Tuple(String?, String)
     alias SourceRange = Tuple(Int32, Int32)

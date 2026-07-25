@@ -3,6 +3,8 @@ require "../../../miniparsers/cpp_callee_extractor"
 
 module Analyzer::Cpp
   class Crow < Analyzer
+    analyzer_for "cpp_crow"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
     # CROW_ROUTE(app, "/path") — the app identifier and route literal.
     ROUTE_REGEX = /CROW_ROUTE\s*\(\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*"([^"]*)"\s*\)/

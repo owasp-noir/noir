@@ -4,6 +4,8 @@ require "../../engines/kotlin_engine"
 
 module Analyzer::Kotlin
   class Http4k < Analyzer
+    analyzer_for "kotlin_http4k"
+
     KOTLIN_EXTENSION = "kt"
     HTTP4K_MARKER    = "org.http4k"
 

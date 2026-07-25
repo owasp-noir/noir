@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Grpc < SpecificationEngine
+    analyzer_for "grpc"
+
     # Represents a parsed protobuf message with its fields
     alias MessageFields = Array(Param)
 

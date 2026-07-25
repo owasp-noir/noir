@@ -4,6 +4,8 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Typescript
   class TRPC < Analyzer::Javascript::JavascriptEngine
+    analyzer_for "ts_trpc"
+
     DEFAULT_PREFIX = "/api/trpc"
     alias RouterKey = Tuple(String, String)
 

@@ -28,6 +28,8 @@ module Analyzer::Javascript
   #     reads accurately needs cross-call value tracking. Path
   #     placeholders still surface via the optimizer.
   class Astro < JavascriptEngine
+    analyzer_for "js_astro"
+
     HTTP_METHODS    = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     PAGE_EXTENSIONS = [".astro", ".md", ".mdx", ".html"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs", ".tsx", ".jsx"]

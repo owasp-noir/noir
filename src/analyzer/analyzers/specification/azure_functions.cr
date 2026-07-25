@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class AzureFunctions < SpecificationEngine
+    analyzer_for "azure_functions"
+
     METHOD_ANY = "ANY"
 
     def analyze

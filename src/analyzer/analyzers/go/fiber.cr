@@ -2,6 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Fiber < GoEngine
+    analyzer_for "go_fiber"
+
     IMPORT_MARKER = "github.com/gofiber/fiber"
 
     def analyze

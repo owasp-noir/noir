@@ -3,6 +3,8 @@ require "../../../miniparsers/js_http_route_extractor"
 
 module Analyzer::Javascript
   class Http < JavascriptEngine
+    analyzer_for "js_http"
+
     HTTP_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".tsx"]
 
     def analyze

@@ -13,6 +13,8 @@ module Analyzer::Rust
   #   2. poem-openapi macros: `#[oai(path = "/p", method = "get")]`
   #      attached to functions inside an `impl Api { ... }` block.
   class Poem < RustEngine
+    analyzer_for "rust_poem"
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
     def analyze_file(path : String) : Array(Endpoint)

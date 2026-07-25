@@ -5,6 +5,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Flask < PythonEngine
+    analyzer_for "python_flask"
+
     alias ScopedNameKey = Tuple(::String, ::String)
 
     # Reference: https://stackoverflow.com/a/16664376

@@ -5,6 +5,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Fasthttp < Analyzer
+    analyzer_for "go_fasthttp"
+
     IMPORT_MARKER = "github.com/valyala/fasthttp"
 
     def analyze

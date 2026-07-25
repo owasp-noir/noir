@@ -14,6 +14,8 @@ module Analyzer::Scala
   # endpoint even though Scallop's own subcommand scoping correctly bound
   # them to the subcommand.
   class Cli < Analyzer
+    analyzer_for "scala_cli"
+
     # --- scopt / decline -----------------------------------------------
     SCOPT_OPT = /\bopt\[[^\]]*\]\s*\(\s*(?:'[A-Za-z0-9]'\s*,\s*)?"([^"]+)"/
     SCOPT_ARG = /\barg\[[^\]]*\]\s*\(\s*"<?([A-Za-z0-9][\w-]*)>?"/

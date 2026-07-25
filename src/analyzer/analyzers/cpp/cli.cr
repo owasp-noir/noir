@@ -11,6 +11,8 @@ module Analyzer::Cpp
   # Line-scan analyzer (Go/Ruby/Rust CLI house style) merging endpoints by
   # URL. There is no C++ engine, so it subclasses Analyzer directly.
   class Cli < Analyzer
+    analyzer_for "cpp_cli"
+
     EXTS = [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx"]
 
     # CLI11. Variable-mapped: an option/flag binds to its receiver variable

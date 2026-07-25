@@ -8,6 +8,8 @@ module Analyzer::Php
   # Laravel's facade-style routing that it gets its own analyzer rather than
   # extending `Laravel`.
   class Lumen < PhpEngine
+    analyzer_for "php_lumen"
+
     private struct RouteGroup
       getter prefix, body, body_start, body_end
 

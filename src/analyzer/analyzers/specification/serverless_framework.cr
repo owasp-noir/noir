@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class ServerlessFramework < SpecificationEngine
+    analyzer_for "serverless_framework"
+
     METHOD_ANY = "ANY"
 
     def analyze

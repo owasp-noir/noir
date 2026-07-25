@@ -5,21 +5,21 @@ require "../../../src/detector/detector"
 require "../../../src/analyzer/analyzer"
 require "../../../src/models/logger"
 
-# Tech identity lives in four hand-maintained lists with no compile-time
+# Tech identity lives in three hand-maintained lists with no compile-time
 # linkage between them:
 #
 #   * `NoirTechs::TECHS`                 — the user-facing catalog behind
 #                                          `noir list techs`, `-t`,
 #                                          `--only-techs`, `--exclude-techs`
-#   * `define_analyzers` (analyzer.cr)   — tech -> analyzer
 #   * `CALLEE_SUPPORTED_TECHS`           — `--include-callee` capability
 #   * `AI_CONTEXT_GUARD_SUPPORTED_TECHS` — `--ai-context guards` capability
 #
-# It was five. `build_detector_list` is now derived from the `Detector::`
-# subclasses themselves, so a detector cannot be missing from it — which is
-# the shape the remaining four should end up in. Until then these specs stay
-# the linkage, and the detector checks below are what proves the derivation
-# still lines up with the catalog.
+# It was five. The analyzer and detector registries are now derived from the
+# classes themselves (`analyzer_for` / `detector_for`), so neither can be
+# missing an entry — that is the shape the remaining three should end up in.
+# Until then these specs are the linkage, and the analyzer/detector checks
+# below prove the derivations still line up with the catalog rather than that
+# two hand-written lists agree with each other.
 #
 # Nothing forced them to agree, and they drifted in both directions:
 # `zap_sites_tree` shipped a working analyzer *and* detector but no catalog

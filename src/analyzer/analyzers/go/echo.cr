@@ -2,6 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Echo < GoEngine
+    analyzer_for "go_echo"
+
     IMPORT_MARKER = "github.com/labstack/echo"
 
     def analyze

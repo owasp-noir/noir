@@ -2,6 +2,8 @@ require "../../engines/elixir_engine"
 
 module Analyzer::Elixir
   class Plug < ElixirEngine
+    analyzer_for "elixir_plug"
+
     def analyze_file(path : String) : Array(Endpoint)
       # Extension and `*_test.exs` filtering live in ElixirEngine's
       # `parallel_file_scan`; Plug only needs the remaining .ex/.exs

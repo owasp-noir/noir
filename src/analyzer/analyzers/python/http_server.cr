@@ -2,6 +2,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class HttpServer < PythonEngine
+    analyzer_for "python_http_server"
+
     # Reference: https://docs.python.org/3/library/http.server.html
     # Reference: https://docs.python.org/3/library/http.server.html#http.server.BaseHTTPRequestHandler
     #

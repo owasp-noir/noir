@@ -4,6 +4,8 @@ require "../../../utils/tnetstring"
 
 module Analyzer::Specification
   class Mitmproxy < SpecificationEngine
+    analyzer_for "mitmproxy"
+
     # mitmproxy's `version` field has changed shape across releases:
     # pre-3.x stored a `[major, minor, patch]` list, while modern
     # versions (3.x through current ≥20) store a single integer. A

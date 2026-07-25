@@ -6,6 +6,8 @@ module Analyzer::Clojure
   # dispatches directly on `(:uri request)` / `(:request-method request)` via
   # `case`, `condp`, or `cond`, without going through Compojure's routing macros.
   class Ring < Analyzer
+    analyzer_for "clojure_ring"
+
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
     METHOD_KEYWORDS    = {
       "get"     => "GET",

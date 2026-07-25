@@ -17,6 +17,8 @@ module Analyzer::Javascript
   # servers carry typeDefs as a backtick template literal — so the only
   # Yoga-specific work here is reading `graphqlEndpoint` for the mount.
   class GraphqlYoga < JavascriptEngine
+    analyzer_for "js_graphql_yoga"
+
     DEFAULT_GRAPHQL_PATH = "/graphql"
 
     # Cheap content hints used to gate the heavier SDL extraction.

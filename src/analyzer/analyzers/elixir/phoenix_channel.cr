@@ -15,6 +15,8 @@ module Analyzer::Elixir
   # declarations are collected across every `.ex` file first, then joined
   # onto each channel module.
   class PhoenixChannel < Analyzer
+    analyzer_for "elixir_phoenix_channel"
+
     # `channel "room:*", RoomChannel` / `channel "room:" <> _, MyApp.RoomChannel`.
     CHANNEL_DECL = /^\s*channel\s+["']([^"']+)["']\s*,\s*([\w.]+)/
 

@@ -7,6 +7,8 @@ module Analyzer::Specification
   # at `/api/globals/<slug>`, generating the CRUD verbs plus auth and
   # version route families from flags on the config.
   class PayloadCms < SpecificationEngine
+    analyzer_for "payload_cms"
+
     include SchemaApiCommon
 
     FIELD_TYPE_HINTS = {

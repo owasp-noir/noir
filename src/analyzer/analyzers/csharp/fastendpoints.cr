@@ -3,6 +3,8 @@ require "./common"
 
 module Analyzer::CSharp
   class FastEndpoints < Analyzer
+    analyzer_for "cs_fastendpoints"
+
     include Common
 
     alias RequestTypeKey = Tuple(String, String)

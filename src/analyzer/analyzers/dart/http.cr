@@ -8,6 +8,8 @@ module Analyzer::Dart
   # `HttpRequest.method` and `HttpRequest.uri.path` inside an `await for`
   # or `listen` handler.
   class Http < Analyzer
+    analyzer_for "dart_http"
+
     DART_IO_IMPORT_RE = /^\s*import\s+['"]dart:io['"]/m
     HTTP_METHODS      = "GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE"
 

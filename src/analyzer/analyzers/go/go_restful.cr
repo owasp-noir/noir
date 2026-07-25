@@ -16,6 +16,8 @@ module Analyzer::Go
   # The extractor resolves the full mounted path and the self-declared
   # params; this analyzer wires endpoints, params, and 1-hop callees.
   class GoRestful < GoEngine
+    analyzer_for "go_restful"
+
     IMPORT_MARKER = "github.com/emicklei/go-restful"
 
     def analyze

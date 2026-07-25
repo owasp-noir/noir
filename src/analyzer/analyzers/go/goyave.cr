@@ -3,6 +3,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Goyave < GoEngine
+    analyzer_for "go_goyave"
+
     IMPORT_MARKER = "goyave.dev/goyave"
 
     def analyze

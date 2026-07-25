@@ -6,6 +6,8 @@ module Analyzer::Clojure
   # babashka.cli spec/dispatch tables, environ.core env lookups, and
   # *command-line-args* / (System/getenv). Line-scan, merged by URL.
   class Cli < Analyzer
+    analyzer_for "clojure_cli"
+
     TOOLS_CLI_LONG = /"--([A-Za-z0-9][\w-]*)/
     TOOLS_CLI_SPEC = /\[\s*(?:(?:"-[A-Za-z0-9]"|nil)\s+)?"--/
     MATIC_COMMAND  = /:command\s+"([^"]+)"/

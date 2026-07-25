@@ -19,6 +19,8 @@ module Analyzer::Groovy
   # subcommand's URL. A cross-file pre-pass would be needed to close that
   # gap; not attempted here.
   class Cli < Analyzer
+    analyzer_for "groovy_cli"
+
     CLI_OPT     = /\bcli\.([A-Za-z_]\w*)\s*\(([^)]*)/
     LONGOPT     = /longOpt:\s*['"]([^'"]+)['"]/
     OPTION_ATTR = /@Option\s*\(([^)]*)\)/

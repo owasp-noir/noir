@@ -2,6 +2,8 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Grip < CrystalEngine
+    analyzer_for "crystal_grip"
+
     # One combined PCRE2 scan replaces the previous 7 sequential per-verb
     # matchers. Grip requires whitespace after the verb (`get "/x"`, not
     # `get("/x")`) — the `\s+` keeps that shape, so `input "/x"` still

@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Slim < PhpEngine
+    analyzer_for "php_slim"
+
     # ASCII byte values scanned by `find_matching_close_brace` below. Both
     # are < 0x80, so they can never collide with a UTF-8 multi-byte
     # continuation/lead byte (>= 0x80) — same invariant

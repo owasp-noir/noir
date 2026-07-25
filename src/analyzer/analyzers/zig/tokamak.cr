@@ -39,6 +39,8 @@ module Analyzer::Zig
   # to a `tk.Route` const (rather than an inline `&.{ … }` array) — those
   # controllers' routes are emitted without the referenced-group prefix.
   class Tokamak < Analyzer
+    analyzer_for "zig_tokamak"
+
     VERB_METHOD = {
       "get" => "GET", "post" => "POST", "post0" => "POST", "put" => "PUT",
       "put0" => "PUT", "patch" => "PATCH", "patch0" => "PATCH",

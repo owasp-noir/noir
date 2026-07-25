@@ -29,6 +29,8 @@ module Analyzer::Dart
   # method. `Method.ws` is a WebSocket upgrade (surfaced as `GET`). Path
   # captures use the Express-style `:id` syntax → `{id}`.
   class GetServer < Analyzer
+    analyzer_for "dart_get_server"
+
     METHOD_MAP = {
       "get"     => "GET",
       "post"    => "POST",

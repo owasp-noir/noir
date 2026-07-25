@@ -4,6 +4,8 @@ require "set"
 
 module Analyzer::Haskell
   class Scotty < Analyzer
+    analyzer_for "haskell_scotty"
+
     HTTP_VERBS = {
       "get"     => "GET",
       "post"    => "POST",

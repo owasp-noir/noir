@@ -25,6 +25,8 @@ module Analyzer::Lua
   # convention. Verbs come from lor's supported set (get/post/put/delete/patch/
   # head/options/trace and the catch-all `all`).
   class Lor < Analyzer
+    analyzer_for "lua_lor"
+
     # Crystal recompiles an interpolated regex literal on every evaluation, so
     # memoize the route matcher per app/router-variable alternation.
     @route_regexes = Hash(String, Regex).new

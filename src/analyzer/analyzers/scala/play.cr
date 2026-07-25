@@ -3,6 +3,8 @@ require "../../../miniparsers/scala_callee_extractor"
 
 module Analyzer::Scala
   class Play < Analyzer
+    analyzer_for "scala_play"
+
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Noir::ScalaCalleeExtractor::Entry))
     alias ScopedKey = Tuple(String, String)

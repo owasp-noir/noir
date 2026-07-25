@@ -14,6 +14,8 @@ module Analyzer::Cpp
   # inside the generated coroutine class, so only the path placeholders are
   # mined from those.
   class Oatpp < Analyzer
+    analyzer_for "cpp_oatpp"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
     HTTP_VERBS = Set{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}

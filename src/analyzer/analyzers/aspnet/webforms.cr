@@ -13,6 +13,8 @@ module Analyzer::Aspnet
   # Control reads are therefore attributed to the pages that register
   # them.
   class WebForms < Analyzer
+    analyzer_for "aspnet_webforms"
+
     # Requestable handlers. `.ascx` (user control) and `.master` (master
     # page) are composed into pages and are blocked by the default IIS
     # handler mapping, so they are sources of params but never routes.

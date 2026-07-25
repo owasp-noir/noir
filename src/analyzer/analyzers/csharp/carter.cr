@@ -12,6 +12,8 @@ module Analyzer::CSharp
   # `ICarterModule` files) are not double-counted with a stale tech
   # tag.
   class Carter < Analyzer
+    analyzer_for "cs_carter"
+
     include Common
 
     MAP_METHODS = %w[Get Post Put Delete Patch Head Options]

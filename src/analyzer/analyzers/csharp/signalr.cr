@@ -17,6 +17,8 @@ module Analyzer::CSharp
   # (`ChatHub.cs` vs `Program.cs`), so routes and hubs are collected across
   # every `.cs` file first, then joined.
   class SignalR < Analyzer
+    analyzer_for "cs_signalr"
+
     include Common
 
     # `app.MapHub<ChatHub>("/chatHub")` / `endpoints.MapHub<ChatHub>("/hub")`.

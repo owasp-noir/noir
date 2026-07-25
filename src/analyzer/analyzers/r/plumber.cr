@@ -3,6 +3,8 @@ require "set"
 
 module Analyzer::R
   class Plumber < Analyzer
+    analyzer_for "r_plumber"
+
     HTTP_METHODS = Set{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 
     # Matches lines like: #* @get /path or #* @post /path

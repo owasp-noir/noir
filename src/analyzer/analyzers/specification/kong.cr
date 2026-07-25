@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Kong < SpecificationEngine
+    analyzer_for "kong"
+
     def analyze
       each_spec_file_with_details("kong-spec") do |path, details|
         content = read_file_content(path)

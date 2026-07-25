@@ -2,6 +2,8 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class Http4s < ScalaEngine
+    analyzer_for "scala_http4s"
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 
     # Crystal recompiles an interpolated regex literal on every evaluation

@@ -17,6 +17,8 @@ module Analyzer::Javascript
   # (`import typeDefs from './schema.graphql'`) are handled by the
   # `graphql_sdl` analyzer, so no work is duplicated here.
   class Apollo < JavascriptEngine
+    analyzer_for "js_apollo"
+
     DEFAULT_GRAPHQL_PATH = "/graphql"
 
     # File-level signals that mark a JS/TS file as Apollo-relevant. The

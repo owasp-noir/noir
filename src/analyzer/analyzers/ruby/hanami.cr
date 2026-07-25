@@ -2,6 +2,8 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Hanami < RubyEngine
+    analyzer_for "ruby_hanami"
+
     HANAMI_HTTP_VERBS = HTTP_VERBS + ["trace"]
 
     # Crystal recompiles an interpolated regex literal on every evaluation

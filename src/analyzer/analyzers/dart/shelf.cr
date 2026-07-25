@@ -25,6 +25,8 @@ module Analyzer::Dart
   # the parent router. Each top-level router (not mounted anywhere) is
   # emitted as a separate set of endpoints.
   class Shelf < Analyzer
+    analyzer_for "dart_shelf"
+
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile); the router-variable matcher interpolates
     # a discovered name (`router`, `app`, ...) that repeats across files,

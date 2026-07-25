@@ -22,6 +22,8 @@ module Analyzer::Rust
   # nodes, so we re-parse each route-bearing macro body as an expression
   # fragment and scan it too, mapping line numbers back onto the file.
   class Rwf < RustEngine
+    analyzer_for "rust_rwf"
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 
     # Precompiled union for collect_route_macro_fragments' per-macro

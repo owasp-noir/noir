@@ -19,6 +19,8 @@ module Analyzer::Php
   # other XML — `module.xml`, `di.xml`, `config.xml`, `acl.xml` …) and
   # controller classes under `/Controller/`.
   class Magento < PhpEngine
+    analyzer_for "php_magento"
+
     # `Http{Verb}ActionInterface` markers a controller can implement to
     # declare the HTTP methods it accepts.
     HTTP_ACTION_INTERFACES = {

@@ -14,6 +14,8 @@ module Analyzer::Zig
   # followed by `admin.get("/users", …)` yields `/admin/users`. The handler
   # is the second argument; its function body supplies the callees.
   class Httpz < Analyzer
+    analyzer_for "zig_httpz"
+
     VERBS       = %w[get post put delete head patch trace options connect all]
     VERB_METHOD = {
       "get" => "GET", "post" => "POST", "put" => "PUT", "delete" => "DELETE",

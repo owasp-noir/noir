@@ -2,6 +2,8 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Amber < CrystalEngine
+    analyzer_for "crystal_amber"
+
     # `routes :web, "/admin" do … end` — the optional second argument is a
     # path scope that prefixes every route declared inside the block.
     ROUTES_SCOPE_PATTERN = /^(\s*)routes\s+:\w+(?:\s*,\s*["']([^"']*)["'])?\s+do\b/

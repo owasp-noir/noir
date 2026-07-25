@@ -3,6 +3,8 @@ require "../../../miniparsers/go_request_param_extractor"
 
 module Analyzer::Go
   class Http < GoEngine
+    analyzer_for "go_http"
+
     IMPORT_MARKER = "net/http"
 
     def analyze

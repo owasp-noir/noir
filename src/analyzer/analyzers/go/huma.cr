@@ -10,6 +10,8 @@ module Analyzer::Go
   # a `Body` field for request bodies). That makes extraction
   # unusually precise compared to other Go routers.
   class Huma < GoEngine
+    analyzer_for "go_huma"
+
     IMPORT_MARKER = "github.com/danielgtaylor/huma"
 
     # Tags we lift from Input struct fields onto endpoint params.

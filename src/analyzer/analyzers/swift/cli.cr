@@ -12,6 +12,8 @@ module Analyzer::Swift
   # URL. Subclasses Analyzer directly (SwiftEngine#analyze_file is abstract)
   # and reuses SwiftEngine.swift_test_path? to skip tests.
   class Cli < Analyzer
+    analyzer_for "swift_cli"
+
     PARSABLE_STRUCT = /\b(?:struct|enum|class)\s+(\w+)\s*:\s*[^\{]*\b(?:Async)?ParsableCommand\b/
     COMMAND_NAME    = /\bcommandName:\s*"([^"]+)"/
     SUBCOMMANDS_KEY = /\bsubcommands:/

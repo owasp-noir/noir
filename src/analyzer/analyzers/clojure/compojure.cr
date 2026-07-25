@@ -4,6 +4,8 @@ require "../../../utils/utils"
 
 module Analyzer::Clojure
   class Compojure < Analyzer
+    analyzer_for "clojure_compojure"
+
     ROUTE_METHODS = {
       "GET"     => "GET",
       "POST"    => "POST",

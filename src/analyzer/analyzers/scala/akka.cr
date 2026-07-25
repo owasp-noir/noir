@@ -2,6 +2,8 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class Akka < ScalaEngine
+    analyzer_for "scala_akka"
+
     HTTP_METHODS = %w[get post put delete patch head options]
 
     # Crystal recompiles an interpolated regex literal on every evaluation

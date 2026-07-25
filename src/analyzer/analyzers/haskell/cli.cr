@@ -6,6 +6,8 @@ module Analyzer::Haskell
   # (Turtle.Options: optText/optInt/optPath/switch/arg/argText) plus getEnv
   # reads. Line-scan, merged by URL.
   class Cli < Analyzer
+    analyzer_for "haskell_cli"
+
     LONG     = /(?<![A-Za-z0-9_'])long\s+"([A-Za-z0-9][\w-]*)"/
     ARGUMENT = /(?<![A-Za-z0-9_'])argument\b.*?\bmetavar\s+"([A-Za-z0-9][\w-]*)"/
     COMMAND  = /(?<![A-Za-z0-9_'])command\s+"([A-Za-z0-9][\w-]*)"/

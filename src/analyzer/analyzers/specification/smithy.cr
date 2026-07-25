@@ -7,6 +7,8 @@ module Analyzer::Specification
   # directly to Noir endpoints, so we parse them shape-by-shape rather
   # than building a full AST.
   class Smithy < SpecificationEngine
+    analyzer_for "smithy"
+
     # Parsed representation of one operation's HTTP binding.
     record HttpBinding, method : String, uri : String, code : Int32?
 

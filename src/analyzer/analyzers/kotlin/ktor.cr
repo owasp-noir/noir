@@ -4,6 +4,8 @@ require "../../engines/kotlin_engine"
 
 module Analyzer::Kotlin
   class Ktor < Analyzer
+    analyzer_for "kotlin_ktor"
+
     KOTLIN_EXTENSION = "kt"
 
     def analyze

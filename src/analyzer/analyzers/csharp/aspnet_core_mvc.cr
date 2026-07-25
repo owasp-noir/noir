@@ -3,6 +3,8 @@ require "./common"
 
 module Analyzer::CSharp
   class AspNetCoreMvc < Analyzer
+    analyzer_for "cs_aspnet_core_mvc"
+
     include Common
 
     DEFAULT_ROUTE = "{controller=Home}/{action=Index}/{id?}"

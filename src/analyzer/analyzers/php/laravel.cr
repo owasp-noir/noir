@@ -3,6 +3,8 @@ require "../../../minilexers/php_lexer"
 
 module Analyzer::Php
   class Laravel < PhpEngine
+    analyzer_for "php_laravel"
+
     @method_def_regexes = Hash(String, Regex).new
 
     private struct RouteGroup

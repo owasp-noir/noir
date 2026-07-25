@@ -7,6 +7,8 @@ module Analyzer::CSharp
   # Url/RawUrl at runtime. This analyzer therefore extracts endpoints from
   # conservative request method + path guards in HttpListener handler code.
   class HttpListener < Analyzer
+    analyzer_for "cs_httplistener"
+
     include Common
 
     HTTP_METHODS = Set{

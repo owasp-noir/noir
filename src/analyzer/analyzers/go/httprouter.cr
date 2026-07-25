@@ -4,6 +4,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Httprouter < Analyzer
+    analyzer_for "go_httprouter"
+
     IMPORT_MARKER = "github.com/julienschmidt/httprouter"
 
     PARAM_PATTERNS = [

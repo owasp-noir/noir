@@ -16,6 +16,8 @@ module Analyzer::Php
   # Verbs come from the optional `'method'` key (`'GET|POST'`, pipe-separated),
   # defaulting to GET. Path params are already `{brace}`-style.
   class Mautic < PhpEngine
+    analyzer_for "php_mautic"
+
     GROUP_PREFIXES = {"main" => "", "public" => "", "api" => "/api"}
 
     def analyze_file(path : String) : Array(Endpoint)

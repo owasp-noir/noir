@@ -16,6 +16,8 @@ module Analyzer::Specification
   # The first server's `protocol` (kafka, mqtt, ws, amqp, nats, http, …)
   # is surfaced on the endpoint so DAST consumers can route accordingly.
   class AsyncApi < SpecificationEngine
+    analyzer_for "asyncapi"
+
     # Operation keys on `channels` entries (2.x).
     OPERATIONS_2X = {"publish", "subscribe"}
 
