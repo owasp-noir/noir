@@ -1,9 +1,9 @@
 require "uri"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/tnetstring"
 
 module Analyzer::Specification
-  class Mitmproxy < Analyzer
+  class Mitmproxy < SpecificationEngine
     # mitmproxy's `version` field has changed shape across releases:
     # pre-3.x stored a `[major, minor, patch]` list, while modern
     # versions (3.x through current ≥20) store a single integer. A
@@ -12,18 +12,9 @@ module Analyzer::Specification
     LEGACY_LIST_MIN_MAJOR = 3_i64
 
     def analyze
-      locator = CodeLocator.instance
-      paths = locator.all("mitmproxy-path")
-      return @result unless paths.is_a?(Array(String))
-
-      paths.each do |path|
-        next unless File.exists?(path)
-        begin
-          bytes = read_binary(path)
-          process_file(path, bytes)
-        rescue ex
-          logger.debug "Failed to read mitmproxy flow #{path}: #{ex.message}"
-        end
+      each_spec_file("mitmproxy-path") do |path|
+        bytes = read_binary(path)
+        process_file(path, bytes)
       end
 
       @result

@@ -1,29 +1,19 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "set"
 
 module Analyzer::Specification
-  class Traefik < Analyzer
+  class Traefik < SpecificationEngine
     def analyze
-      locator = CodeLocator.instance
-      files = locator.all("traefik-spec")
+      # Shared across every file so one route defined in two providers
+      # (a TOML and a YAML dynamic-config pair) is emitted once.
       seen = Set(String).new
 
-      if files.is_a?(Array(String))
-        files.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = read_file_content(path)
-
-          begin
-            if path.ends_with?(".toml")
-              process_toml(content, details, seen)
-            else
-              process_yaml(content, details, seen)
-            end
-          rescue e
-            @logger.debug "Exception processing #{path}"
-            @logger.debug_sub e
-          end
+      each_spec_file_with_details("traefik-spec") do |path, details|
+        content = read_file_content(path)
+        if path.ends_with?(".toml")
+          process_toml(content, details, seen)
+        else
+          process_yaml(content, details, seen)
         end
       end
 

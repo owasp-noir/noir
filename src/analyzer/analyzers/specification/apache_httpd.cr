@@ -1,26 +1,16 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class ApacheHttpd < Analyzer
+  class ApacheHttpd < SpecificationEngine
     METHOD_ANY = "ANY"
 
     REDIRECT_STATUSES = Set{"permanent", "temp", "temporary", "seeother", "gone"}
     STATIC_EXTENSIONS = Set{".css", ".js", ".gz", ".br", ".ico", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".woff", ".woff2", ".ttf", ".eot", ".map"}
 
     def analyze
-      spec_files = CodeLocator.instance.all("apache-httpd-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
+      each_spec_file("apache-httpd-spec") do |path|
         content = read_file_content(path)
-        begin
-          process_content(content, path)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_content(content, path)
       end
 
       @result

@@ -1,40 +1,20 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/http_symbols"
 require "uri"
 
 module Analyzer::Specification
-  class Insomnia < Analyzer
+  class Insomnia < SpecificationEngine
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     def analyze
-      locator = CodeLocator.instance
-
-      json_files = locator.all("insomnia-json")
-      if json_files.is_a?(Array(String))
-        json_files.each do |path|
-          next unless File.exists?(path)
-          content = read_file_content(path)
-          begin
-            process_v4(JSON.parse(content), path)
-          rescue e
-            @logger.debug "Exception processing #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("insomnia-json") do |path|
+        content = read_file_content(path)
+        process_v4(JSON.parse(content), path)
       end
 
-      yaml_files = locator.all("insomnia-yaml")
-      if yaml_files.is_a?(Array(String))
-        yaml_files.each do |path|
-          next unless File.exists?(path)
-          content = read_file_content(path)
-          begin
-            process_v5(YAML.parse(content), path)
-          rescue e
-            @logger.debug "Exception processing #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("insomnia-yaml") do |path|
+        content = read_file_content(path)
+        process_v5(YAML.parse(content), path)
       end
 
       @result

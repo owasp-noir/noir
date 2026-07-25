@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # Extracts the externally reachable surface described by a Kamal
@@ -6,26 +6,15 @@ module Analyzer::Specification
   # declares the hosts kamal-proxy serves, the path prefixes it forwards,
   # and the health endpoint it probes on every deploy — all of which are
   # live HTTP routes worth inventorying.
-  class Kamal < Analyzer
+  class Kamal < SpecificationEngine
     DEFAULT_HEALTHCHECK_PATH = "/up"
     APP_METHOD               = "ANY"
     HEALTHCHECK_METHOD       = "GET"
 
     def analyze
-      spec_files = CodeLocator.instance.all("kamal-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("kamal-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          process_config(YAML.parse(content), details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_config(YAML.parse(content), details)
       end
 
       @result

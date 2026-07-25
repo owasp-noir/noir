@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/yaml"
 require "./schema_api_common"
 
@@ -7,7 +7,7 @@ module Analyzer::Specification
   # `/items/<collection>`, with the item-level verbs on
   # `/items/<collection>/<id>` and singletons on
   # `/items/<collection>/singleton`.
-  class Directus < Analyzer
+  class Directus < SpecificationEngine
     include SchemaApiCommon
 
     FIELD_TYPE_HINTS = {
@@ -43,19 +43,9 @@ module Analyzer::Specification
     TAG_SOURCE = "directus_analyzer"
 
     def analyze
-      locator = CodeLocator.instance
-      snapshots = locator.all("directus-snapshot")
-      return @result unless snapshots.is_a?(Array(String))
-
-      snapshots.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = read_file_content(path)
-          parse_snapshot(content, path)
-        rescue e
-          @logger.debug "Failed to parse Directus snapshot #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file("directus-snapshot") do |path|
+        content = read_file_content(path)
+        parse_snapshot(content, path)
       end
 
       @result

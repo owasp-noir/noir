@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Nginx < Analyzer
+  class Nginx < SpecificationEngine
     METHOD_ANY = "ANY"
 
     LOCATION_RE     = /^location\s+(?:(=|~\*|~|\^~)\s+)?(\S+)/
@@ -11,20 +11,9 @@ module Analyzer::Specification
     METHOD_BLOCK_RE = /^if\s*\(\s*\$request_method\s*=\s*([A-Z]+)\s*\)/
 
     def analyze
-      spec_files = CodeLocator.instance.all("nginx-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("nginx-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          process_content(content, details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_content(content, details)
       end
 
       @result

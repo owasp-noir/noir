@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # Extracts HTTP endpoints from Terraform / OpenTofu configurations that
@@ -13,7 +13,7 @@ module Analyzer::Specification
   #     per file.
   #
   # Both HCL (`.tf`) and Terraform JSON (`.tf.json`) inputs are supported.
-  class Terraform < Analyzer
+  class Terraform < SpecificationEngine
     METHOD_ANY   = "ANY"
     HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ANY"}
 
@@ -39,14 +39,10 @@ module Analyzer::Specification
     record RestNode, name : String, path_part : String, parent : String?
 
     def analyze
-      spec_files = CodeLocator.instance.all("terraform-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
       # Group files by module directory. A REST resource and the method that
       # references it routinely live in different files of the same module.
       by_dir = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-      spec_files.each do |path|
-        next unless File.exists?(path)
+      each_spec_file("terraform-spec") do |path|
         by_dir[File.dirname(path)] << path
       end
 

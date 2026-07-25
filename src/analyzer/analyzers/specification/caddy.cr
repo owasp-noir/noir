@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Caddy < Analyzer
+  class Caddy < SpecificationEngine
     METHOD_ANY = "ANY"
 
     HANDLE_OPEN_RE   = /^handle(_path)?\s+(\S+)\s*\{?/
@@ -15,23 +15,12 @@ module Analyzer::Specification
     SITE_BLOCK_RE    = /^([A-Za-z0-9_.:\/@*?-]+(?:\s*,\s*[A-Za-z0-9_.:\/@*?-]+)*)\s*\{$/
 
     def analyze
-      spec_files = CodeLocator.instance.all("caddy-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("caddy-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          if path.ends_with?(".json")
-            process_json(content, details)
-          else
-            process_caddyfile(content, path, details)
-          end
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
+        if path.ends_with?(".json")
+          process_json(content, details)
+        else
+          process_caddyfile(content, path, details)
         end
       end
 

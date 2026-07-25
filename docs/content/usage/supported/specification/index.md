@@ -37,7 +37,6 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Directus (schema snapshot) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | Envoy | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Envoy | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| GraphQL | GRAPHQL | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | GraphQL SDL | GRAPHQL_SDL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Grpc | PROTOBUF | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
@@ -78,5 +77,6 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | TypeSpec | TYPESPEC | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
 | Vercel | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Wsdl | XML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ☑️ | ✗ |
+| Zap Sites Tree | YAML | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | iOS (Info.plist) | PLIST | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | mitmproxy Flow | TNETSTRING | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |

@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class RAML < Analyzer
+  class RAML < SpecificationEngine
     HTTP_METHODS       = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
     INCLUDE_EXTENSIONS = {".raml", ".yaml", ".yml", ".json"}
     alias ResolvedNode = NamedTuple(node: YAML::Any, source_dir: String)
@@ -12,58 +12,54 @@ module Analyzer::Specification
     @libraries = {} of String => ResolvedNode
 
     def analyze
-      locator = CodeLocator.instance
-      raml_specs = locator.all("raml-spec")
+      each_spec_file("raml-spec") do |raml_spec|
+        content = read_file_content(raml_spec)
 
-      if raml_specs.is_a?(Array(String))
-        raml_specs.each do |raml_spec|
-          next unless File.exists?(raml_spec)
-          content = read_file_content(raml_spec)
+        # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe
+        # endpoints. Fragments — Library, Trait, ResourceType, DataType,
+        # and especially Overlay / Extension — are applied onto a master
+        # API, not served on their own. Analyzing an Extension standalone
+        # emits phantom endpoints (its resources without the master's
+        # baseUri or context), so skip every non-root fragment.
+        next unless raml_root_api?(content)
 
-          # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe
-          # endpoints. Fragments — Library, Trait, ResourceType, DataType,
-          # and especially Overlay / Extension — are applied onto a master
-          # API, not served on their own. Analyzing an Extension standalone
-          # emits phantom endpoints (its resources without the master's
-          # baseUri or context), so skip every non-root fragment.
-          next unless raml_root_api?(content)
+        details = Details.new(PathInfo.new(raml_spec))
+        yaml_obj = YAML.parse(content)
+        source_dir = File.dirname(raml_spec)
 
-          details = Details.new(PathInfo.new(raml_spec))
-          yaml_obj = YAML.parse(content)
-          source_dir = File.dirname(raml_spec)
+        # A non-mapping root (scalar/array/empty) makes the YAML `[...]?`
+        # lookups below raise "Expected Array or Hash". `each_spec_file`
+        # would catch that and move on, but only after logging it as a
+        # failure — a non-mapping root is an ordinary non-API document, not
+        # an error. Skip it cleanly instead.
+        next unless yaml_obj.as_h?
 
-          # A non-mapping root (scalar/array/empty) makes the YAML `[...]?`
-          # lookups below raise "Expected Array or Hash" and, with no per-spec
-          # rescue, aborts every other RAML spec. Skip it cleanly instead.
-          next unless yaml_obj.as_h?
+        @libraries = collect_libraries(yaml_obj, source_dir)
+        base_path = base_path_from(yaml_obj)
+        default_media = media_types_from(yaml_obj[YAML::Any.new("mediaType")]?)
+        types = yaml_obj[YAML::Any.new("types")]? || YAML::Any.new(nil)
+        schemas = yaml_obj[YAML::Any.new("schemas")]? || YAML::Any.new(nil)
+        resource_types = yaml_obj[YAML::Any.new("resourceTypes")]? || YAML::Any.new(nil)
+        traits = yaml_obj[YAML::Any.new("traits")]? || YAML::Any.new(nil)
 
-          @libraries = collect_libraries(yaml_obj, source_dir)
-          base_path = base_path_from(yaml_obj)
-          default_media = media_types_from(yaml_obj[YAML::Any.new("mediaType")]?)
-          types = yaml_obj[YAML::Any.new("types")]? || YAML::Any.new(nil)
-          schemas = yaml_obj[YAML::Any.new("schemas")]? || YAML::Any.new(nil)
-          resource_types = yaml_obj[YAML::Any.new("resourceTypes")]? || YAML::Any.new(nil)
-          traits = yaml_obj[YAML::Any.new("traits")]? || YAML::Any.new(nil)
-
-          if root = yaml_obj.as_h?
-            root.each do |key, value|
-              key_s = key.to_s
-              next unless key_s.starts_with?("/")
-              walk_resource(
-                value,
-                base_path + key_s,
-                default_media,
-                types,
-                schemas,
-                resource_types,
-                traits,
-                details,
-                raml_spec,
-                source_dir,
-                source_dir,
-                [] of Param
-              )
-            end
+        if root = yaml_obj.as_h?
+          root.each do |key, value|
+            key_s = key.to_s
+            next unless key_s.starts_with?("/")
+            walk_resource(
+              value,
+              base_path + key_s,
+              default_media,
+              types,
+              schemas,
+              resource_types,
+              traits,
+              details,
+              raml_spec,
+              source_dir,
+              source_dir,
+              [] of Param
+            )
           end
         end
       end

@@ -1,28 +1,17 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "toml"
 
 module Analyzer::Specification
-  class CloudflareWrangler < Analyzer
+  class CloudflareWrangler < SpecificationEngine
     METHOD_ANY = "ANY"
 
     def analyze
-      spec_files = CodeLocator.instance.all("cloudflare-wrangler-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("cloudflare-wrangler-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          if path.ends_with?(".toml")
-            process_toml(content, details)
-          else
-            process_json(content, details)
-          end
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
+        if path.ends_with?(".toml")
+          process_toml(content, details)
+        else
+          process_json(content, details)
         end
       end
 

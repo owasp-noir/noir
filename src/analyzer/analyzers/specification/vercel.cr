@@ -1,26 +1,15 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Vercel < Analyzer
+  class Vercel < SpecificationEngine
     ROUTING_GROUP_KEYS = {"beforeFiles", "afterFiles", "fallback"}
     PATTERN_CHARS      = {'*', '^', '$', '(', ')', '[', ']', '{', '}', '|', '+', '?', '\\'}
     METHOD_ANY         = "ANY"
 
     def analyze
-      locator = CodeLocator.instance
-      config_files = locator.all("vercel-spec")
-      return @result unless config_files.is_a?(Array(String))
-
-      config_files.each do |path|
-        next unless File.exists?(path)
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("vercel-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          process_config(JSON.parse(content), details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_config(JSON.parse(content), details)
       end
 
       @result

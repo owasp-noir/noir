@@ -1,28 +1,16 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "uri"
 
 module Analyzer::Specification
-  class Postman < Analyzer
+  class Postman < SpecificationEngine
     def analyze
-      locator = CodeLocator.instance
-      postman_files = locator.all("postman-json")
+      each_spec_file("postman-json") do |postman_file|
+        content = read_file_content(postman_file)
+        json_obj = JSON.parse(content)
 
-      if postman_files.is_a?(Array(String))
-        postman_files.each do |postman_file|
-          if File.exists?(postman_file)
-            content = read_file_content(postman_file)
-            json_obj = JSON.parse(content)
-
-            begin
-              # Process items (requests) in the collection
-              if json_obj["item"]?
-                process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?), "", json_obj["auth"]?)
-              end
-            rescue e
-              @logger.debug "Exception processing #{postman_file}"
-              @logger.debug_sub e
-            end
-          end
+        # Process items (requests) in the collection
+        if json_obj["item"]?
+          process_items(json_obj["item"], postman_file, collect_variables(json_obj["variable"]?), "", json_obj["auth"]?)
         end
       end
 

@@ -1,8 +1,8 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/yaml"
 
 module Analyzer::Specification
-  class Oas2 < Analyzer
+  class Oas2 < SpecificationEngine
     HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
 
     # Resolves a `#/definitions/Name` pointer against the spec root.
@@ -312,16 +312,12 @@ module Analyzer::Specification
     end
 
     def analyze
-      locator = CodeLocator.instance
-      swagger_jsons = locator.all("swagger-json")
-      swagger_yamls = locator.all("swagger-yaml")
-
-      if swagger_jsons.is_a?(Array(String))
-        swagger_jsons.each { |path| process_json(path) }
+      each_spec_file("swagger-json") do |path|
+        process_json(path)
       end
 
-      if swagger_yamls.is_a?(Array(String))
-        swagger_yamls.each { |path| process_yaml(path) }
+      each_spec_file("swagger-yaml") do |path|
+        process_yaml(path)
       end
 
       @result

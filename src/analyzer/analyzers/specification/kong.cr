@@ -1,22 +1,11 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Kong < Analyzer
+  class Kong < SpecificationEngine
     def analyze
-      spec_files = CodeLocator.instance.all("kong-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("kong-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          process_doc(YAML.parse(content), details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_doc(YAML.parse(content), details)
       end
 
       @result
