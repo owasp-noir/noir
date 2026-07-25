@@ -4,6 +4,15 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Caido < Detector
+    # Every `.json` in the tree reaches these guards. The first four must
+    # all match, so they stay separate probes; only the last pair is an
+    # alternation.
+    HOST_MARKER        = /"host"/
+    METHOD_MARKER      = /"method"/
+    PATH_MARKER        = /"path"/
+    RAW_MARKER         = /"raw"/
+    TLS_OR_PORT_MARKER = Regex.union("\"is_tls\"", "\"port\"")
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".json")
       return false unless caido_json_candidate?(file_contents)
@@ -51,11 +60,11 @@ module Detector::Specification
     end
 
     private def caido_json_candidate?(content : String) : Bool
-      content.includes?("\"host\"") &&
-        content.includes?("\"method\"") &&
-        content.includes?("\"path\"") &&
-        content.includes?("\"raw\"") &&
-        (content.includes?("\"is_tls\"") || content.includes?("\"port\""))
+      content_matches?(content, HOST_MARKER) &&
+        content_matches?(content, METHOD_MARKER) &&
+        content_matches?(content, PATH_MARKER) &&
+        content_matches?(content, RAW_MARKER) &&
+        content_matches?(content, TLS_OR_PORT_MARKER)
     end
   end
 end

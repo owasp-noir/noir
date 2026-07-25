@@ -6,6 +6,11 @@ module Detector::Specification
   class Caddy < Detector
     CADDYFILE_NAMES = {"Caddyfile", "caddyfile"}
 
+    # Every `.json` in the tree reaches these guards. Both must match, so
+    # they stay separate probes rather than a union.
+    APPS_MARKER     = /"apps"/
+    HTTP_APP_MARKER = /"http"/
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
@@ -43,7 +48,7 @@ module Detector::Specification
       # JSON-format Caddy configs always nest the HTTP app under
       # `apps.http`. Use that shape as the discriminator so we don't
       # claim every JSON file that happens to be in the tree.
-      content.includes?("\"apps\"") && content.includes?("\"http\"")
+      content_matches?(content, APPS_MARKER) && content_matches?(content, HTTP_APP_MARKER)
     end
   end
 end

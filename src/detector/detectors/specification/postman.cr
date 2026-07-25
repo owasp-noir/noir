@@ -4,6 +4,11 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Postman < Detector
+    # Every `.json` in the tree reaches this guard.
+    CANDIDATE_MARKER = Regex.union(
+      "schema.getpostman.com", "schema.postman.com", "\"_postman_id\"",
+    )
+
     def detect(filename : String, file_contents : String) : Bool
       check = false
       if filename.ends_with?(".json") && postman_json_candidate?(file_contents)
@@ -45,9 +50,7 @@ module Detector::Specification
     end
 
     private def postman_json_candidate?(content : String) : Bool
-      content.includes?("schema.getpostman.com") ||
-        content.includes?("schema.postman.com") ||
-        content.includes?("\"_postman_id\"")
+      content_matches?(content, CANDIDATE_MARKER)
     end
   end
 end

@@ -6,6 +6,11 @@ require "har"
 
 module Detector::Specification
   class Har < Detector
+    # Every `.json` in the tree reaches these guards. Both must match, so
+    # they stay separate probes rather than a union.
+    LOG_MARKER     = /"log"/
+    ENTRIES_MARKER = /"entries"/
+
     def detect(filename : String, file_contents : String) : Bool
       if (filename.ends_with? ".har") || (filename.ends_with? ".json")
         if filename.ends_with?(".har") || har_json_candidate?(file_contents)
@@ -39,7 +44,7 @@ module Detector::Specification
     end
 
     private def har_json_candidate?(content : String) : Bool
-      content.includes?("\"log\"") && content.includes?("\"entries\"")
+      content_matches?(content, LOG_MARKER) && content_matches?(content, ENTRIES_MARKER)
     end
   end
 end
