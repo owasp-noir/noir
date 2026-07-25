@@ -109,6 +109,12 @@ module Analyzer::Javascript
     # OR-of-includes? it replaces.
     CLI_MARKERS_RE = Regex.union("commander", "yargs", "cac", "meow", "minimist", "clipanion", "@oclif", "sade", "parseArgs", "Deno.args", "Bun.argv")
 
+    # Two more OR-ed pairs of whole-file scans, collapsed the same way:
+    # the evidence gate every JS/TS file passes through, and the
+    # web-framework veto that decides whether env reads are emitted.
+    CLI_EVIDENCE_RE = Regex.union(CLI_MARKERS_RE, ARGV_SLICE, LIB_IMPORT_ONLY_RE)
+    WEB_EVIDENCE_RE = Regex.union(WEB_FRAMEWORK_RE, WEB_LISTEN_RE)
+
     def analyze
       package_names = collect_package_names
       endpoints = {} of String => Endpoint
@@ -126,7 +132,7 @@ module Analyzer::Javascript
               binary = js_binary_name(package_names, path)
               root_url = "cli://#{binary}"
               lines = content.lines
-              emit_env = !(content.matches?(WEB_FRAMEWORK_RE) || content.matches?(WEB_LISTEN_RE))
+              emit_env = !content_matches?(content, WEB_EVIDENCE_RE)
 
               scan(lines, path, root_url, endpoints, emit_env)
             rescue e
@@ -143,8 +149,7 @@ module Analyzer::Javascript
     end
 
     private def cli_evidence?(content : String) : Bool
-      content.matches?(CLI_MARKERS_RE) || content.matches?(ARGV_SLICE) ||
-        content.matches?(LIB_IMPORT_ONLY_RE)
+      content_matches?(content, CLI_EVIDENCE_RE)
     end
 
     private def js_test_or_vendor?(path : String) : Bool

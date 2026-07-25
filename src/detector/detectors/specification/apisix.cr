@@ -101,9 +101,9 @@ module Detector::Specification
     PAYLOAD_MARKER = /\bupstream_id\b|\bplugins\b/
 
     private def apisix_candidate?(content : String) : Bool
-      content.matches?(ROUTES_MARKER) &&
-        content.matches?(URI_MARKER) &&
-        content.matches?(PAYLOAD_MARKER)
+      content_matches?(content, ROUTES_MARKER) &&
+        content_matches?(content, URI_MARKER) &&
+        content_matches?(content, PAYLOAD_MARKER)
     end
   end
 end

@@ -40,7 +40,7 @@ module Detector::Specification
     end
 
     private def nginx_shape?(content : String) : Bool
-      return false unless content.matches?(SHAPE_GUARD)
+      return false unless content_matches?(content, SHAPE_GUARD)
 
       # Include fragments often contain only `location` blocks, so scan
       # executable directives instead of requiring a top-level server/http block.
