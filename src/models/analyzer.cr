@@ -76,6 +76,21 @@ class Analyzer
     Noir::TextFile.read(path)
   end
 
+  # Whether `content` matches `markers`, skipping PCRE2's per-call UTF-8
+  # revalidation. Analyzer content always comes from `read_file_content`
+  # (or the detector cache it reads through), so the subject is
+  # known-valid UTF-8 — see `Noir::TextFile::MATCH_OPTIONS`.
+  #
+  # Use this in place of a chain of `String#includes?` over whole file
+  # content: `String#includes?` runs Rabin-Karp per marker, while one
+  # precompiled `Regex.union` of the same literals is the same predicate
+  # in a single JIT-compiled pass. A single `includes?` on a short string
+  # (one source line, a path segment) is not worth converting — the win
+  # scales with the size of the subject.
+  def content_matches?(content : String, markers : Regex) : Bool
+    markers.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
+  end
+
   # Callees feed `--include-callee` (direct output) and `--ai-context`
   # (aggregated review context). Analyzers should consult this before
   # running their callee extractor so the work is skipped on default
