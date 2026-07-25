@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/yaml"
 require "./graphql_sdl_parser"
 require "./schema_api_common"
@@ -14,7 +14,7 @@ module Analyzer::Specification
   # That yields the fragment URL convention (`/v1/graphql#Query.movies`),
   # a runnable operation document per field, and input-object expansion
   # into dotted params — all of which the SDL analyzer already does.
-  class Hasura < Analyzer
+  class Hasura < SpecificationEngine
     include SchemaApiCommon
 
     GRAPHQL_PATH = "/v1/graphql"
@@ -33,32 +33,12 @@ module Analyzer::Specification
     GRAPHQL_IDENTIFIER = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
     def analyze
-      locator = CodeLocator.instance
-
-      tables = locator.all("hasura-tables")
-      if tables.is_a?(Array(String))
-        tables.each do |path|
-          next unless File.exists?(path)
-          begin
-            parse_tables(read_file_content(path), path)
-          rescue e
-            @logger.debug "Failed to parse Hasura table metadata #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("hasura-tables") do |path|
+        parse_tables(read_file_content(path), path)
       end
 
-      rest = locator.all("hasura-rest-endpoints")
-      if rest.is_a?(Array(String))
-        rest.each do |path|
-          next unless File.exists?(path)
-          begin
-            parse_rest_endpoints(read_file_content(path), path)
-          rescue e
-            @logger.debug "Failed to parse Hasura REST endpoints #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("hasura-rest-endpoints") do |path|
+        parse_rest_endpoints(read_file_content(path), path)
       end
 
       @result

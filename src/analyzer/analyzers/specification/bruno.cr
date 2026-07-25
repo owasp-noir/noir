@@ -1,23 +1,14 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Bruno < Analyzer
+  class Bruno < SpecificationEngine
     HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
     def analyze
-      locator = CodeLocator.instance
-      bruno_files = locator.all("bruno-bru")
-
-      bruno_files.each do |bruno_file|
-        next unless File.exists?(bruno_file)
-        begin
-          content = read_file_content(bruno_file)
-          details = Details.new(PathInfo.new(bruno_file))
-          process_bru(content, details)
-        rescue e
-          @logger.debug "Exception processing #{bruno_file}"
-          @logger.debug_sub e
-        end
+      each_spec_file("bruno-bru") do |bruno_file|
+        content = read_file_content(bruno_file)
+        details = Details.new(PathInfo.new(bruno_file))
+        process_bru(content, details)
       end
 
       @result

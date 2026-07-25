@@ -1,9 +1,9 @@
 require "xml"
 require "uri"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class WSDL < Analyzer
+  class WSDL < SpecificationEngine
     SOAP12_NS        = "http://schemas.xmlsoap.org/wsdl/soap12/"
     MAX_IMPORT_DEPTH = 8
 
@@ -15,19 +15,9 @@ module Analyzer::Specification
     alias PartRef = NamedTuple(name: String, ref: String, is_element: Bool)
 
     def analyze
-      locator = CodeLocator.instance
-      wsdl_specs = locator.all("wsdl-spec")
-      return @result unless wsdl_specs.is_a?(Array(String))
-
-      wsdl_specs.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = read_file_content(path)
-          parse_wsdl(content, path)
-        rescue e
-          @logger.debug "Failed to parse WSDL #{path}: #{e.message}"
-          @logger.debug_sub e
-        end
+      each_spec_file("wsdl-spec") do |path|
+        content = read_file_content(path)
+        parse_wsdl(content, path)
       end
 
       @result

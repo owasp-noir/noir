@@ -1,29 +1,16 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "uri"
 
 module Analyzer::Specification
-  class ZapSitesTree < Analyzer
+  class ZapSitesTree < SpecificationEngine
     def analyze
-      locator = CodeLocator.instance
-      sites_trees = locator.all("zap-sites-tree")
+      each_spec_file_with_details("zap-sites-tree") do |sites_tree, details|
+        content = read_file_content(sites_tree)
+        yaml_obj = YAML.parse(content)
 
-      if sites_trees.is_a?(Array(String))
-        sites_trees.each do |sites_tree|
-          if File.exists?(sites_tree)
-            details = Details.new(PathInfo.new(sites_tree))
-            content = read_file_content(sites_tree)
-            yaml_obj = YAML.parse(content)
-
-            begin
-              children = yaml_obj.as_a
-              children.each do |child|
-                process_node(child, details)
-              end
-            rescue e
-              @logger.debug "Exception of #{sites_tree}/paths"
-              @logger.debug_sub e
-            end
-          end
+        children = yaml_obj.as_a
+        children.each do |child|
+          process_node(child, details)
         end
       end
 

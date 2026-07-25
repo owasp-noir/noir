@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class AwsCloudformation < Analyzer
+  class AwsCloudformation < SpecificationEngine
     METHOD_ANY            = "ANY"
     SAM_FUNCTION_TYPE     = "AWS::Serverless::Function"
     APIGW_RESOURCE_TYPE   = "AWS::ApiGateway::Resource"
@@ -11,24 +11,13 @@ module Analyzer::Specification
     record ApigwResource, name : String, path_part : String, parent : String?
 
     def analyze
-      spec_files = CodeLocator.instance.all("aws-cloudformation-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("aws-cloudformation-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          resources = parse_resources(path, content)
-          next if resources.empty?
+        resources = parse_resources(path, content)
+        next if resources.empty?
 
-          process_sam(resources, details)
-          process_cloudformation(resources, details)
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        process_sam(resources, details)
+        process_cloudformation(resources, details)
       end
 
       @result

@@ -1,9 +1,9 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/yaml"
 require "uri"
 
 module Analyzer::Specification
-  class Oas3 < Analyzer
+  class Oas3 < SpecificationEngine
     HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
 
     def get_base_path(servers : JSON::Any)
@@ -416,48 +416,34 @@ module Analyzer::Specification
     end
 
     def analyze
-      locator = CodeLocator.instance
-      oas3_jsons = locator.all("oas3-json")
-      oas3_yamls = locator.all("oas3-yaml")
+      each_spec_file_with_details("oas3-json") do |oas3_json, details|
+        content = read_file_content(oas3_json)
+        json_obj = JSON.parse(content)
 
-      if oas3_jsons.is_a?(Array(String))
-        oas3_jsons.each do |oas3_json|
-          if File.exists?(oas3_json)
-            details = Details.new(PathInfo.new(oas3_json))
-            content = read_file_content(oas3_json)
-            json_obj = JSON.parse(content)
-
-            base_path = @url
-            begin
-              base_path = get_base_path json_obj["servers"]
-            rescue e
-              @logger.debug "Exception of #{oas3_json}/servers"
-              @logger.debug_sub e
-            end
-
-            process_paths_json(json_obj, base_path, details, oas3_json)
-          end
+        base_path = @url
+        begin
+          base_path = get_base_path json_obj["servers"]
+        rescue e
+          @logger.debug "Exception of #{oas3_json}/servers"
+          @logger.debug_sub e
         end
+
+        process_paths_json(json_obj, base_path, details, oas3_json)
       end
 
-      if oas3_yamls.is_a?(Array(String))
-        oas3_yamls.each do |oas3_yaml|
-          if File.exists?(oas3_yaml)
-            details = Details.new(PathInfo.new(oas3_yaml))
-            content = read_file_content(oas3_yaml)
-            yaml_obj = parse_yaml(content)
+      each_spec_file_with_details("oas3-yaml") do |oas3_yaml, details|
+        content = read_file_content(oas3_yaml)
+        yaml_obj = parse_yaml(content)
 
-            base_path = @url
-            begin
-              base_path = get_base_path yaml_obj["servers"]
-            rescue e
-              @logger.debug "Exception of #{oas3_yaml}/servers"
-              @logger.debug_sub e
-            end
-
-            process_paths_yaml(yaml_obj, base_path, details, oas3_yaml)
-          end
+        base_path = @url
+        begin
+          base_path = get_base_path yaml_obj["servers"]
+        rescue e
+          @logger.debug "Exception of #{oas3_yaml}/servers"
+          @logger.debug_sub e
         end
+
+        process_paths_yaml(yaml_obj, base_path, details, oas3_yaml)
       end
 
       @result

@@ -1,22 +1,16 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "toml"
 
 module Analyzer::Specification
-  class Netlify < Analyzer
+  class Netlify < SpecificationEngine
     DEFAULT_METHOD = "ANY"
 
     def analyze
-      locator = CodeLocator.instance
-      redirects_files = locator.all("netlify-redirects")
-      toml_files = locator.all("netlify-toml")
-
-      redirects_files.each do |path|
-        next unless File.exists?(path)
+      each_spec_file("netlify-redirects") do |path|
         parse_redirects_file(path)
       end
 
-      toml_files.each do |path|
-        next unless File.exists?(path)
+      each_spec_file("netlify-toml") do |path|
         parse_toml_file(path)
       end
 

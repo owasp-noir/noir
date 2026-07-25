@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../miniparsers/js_object_config_extractor"
 require "./schema_api_common"
 
@@ -6,7 +6,7 @@ module Analyzer::Specification
   # Payload CMS mounts every collection at `/api/<slug>` and every global
   # at `/api/globals/<slug>`, generating the CRUD verbs plus auth and
   # version route families from flags on the config.
-  class PayloadCms < Analyzer
+  class PayloadCms < SpecificationEngine
     include SchemaApiCommon
 
     FIELD_TYPE_HINTS = {
@@ -45,34 +45,14 @@ module Analyzer::Specification
     TAG_SOURCE         = "payload_cms_analyzer"
 
     def analyze
-      locator = CodeLocator.instance
+      api_prefix = resolve_api_prefix(CodeLocator.instance.all("payload-config"))
 
-      api_prefix = resolve_api_prefix(locator.all("payload-config"))
-
-      collections = locator.all("payload-collection")
-      if collections.is_a?(Array(String))
-        collections.each do |path|
-          next unless File.exists?(path)
-          begin
-            parse_collections(read_file_content(path), path, api_prefix)
-          rescue e
-            @logger.debug "Failed to parse Payload collection #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("payload-collection") do |path|
+        parse_collections(read_file_content(path), path, api_prefix)
       end
 
-      globals = locator.all("payload-global")
-      if globals.is_a?(Array(String))
-        globals.each do |path|
-          next unless File.exists?(path)
-          begin
-            parse_globals(read_file_content(path), path, api_prefix)
-          rescue e
-            @logger.debug "Failed to parse Payload global #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("payload-global") do |path|
+        parse_globals(read_file_content(path), path, api_prefix)
       end
 
       @result

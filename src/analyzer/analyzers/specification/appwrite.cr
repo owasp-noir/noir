@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "./schema_api_common"
 
 module Analyzer::Specification
@@ -10,7 +10,7 @@ module Analyzer::Specification
   # them from `/v1/databases/...` to `/v1/tablesdb/...`. A project uses
   # one naming or the other, so we emit the family matching the keys
   # actually present — emitting both would mean half the output 404s.
-  class Appwrite < Analyzer
+  class Appwrite < SpecificationEngine
     include SchemaApiCommon
 
     ATTRIBUTE_TYPE_HINTS = {
@@ -29,19 +29,9 @@ module Analyzer::Specification
     TAG_SOURCE = "appwrite_analyzer"
 
     def analyze
-      locator = CodeLocator.instance
-      configs = locator.all("appwrite-config")
-      return @result unless configs.is_a?(Array(String))
-
-      configs.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = read_file_content(path)
-          parse_config(content, path)
-        rescue e
-          @logger.debug "Failed to parse Appwrite config #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file("appwrite-config") do |path|
+        content = read_file_content(path)
+        parse_config(content, path)
       end
 
       @result

@@ -1,24 +1,13 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class K8sGatewayApi < Analyzer
+  class K8sGatewayApi < SpecificationEngine
     METHOD_ANY = "ANY"
 
     def analyze
-      spec_files = CodeLocator.instance.all("k8s-gateway-api-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("k8s-gateway-api-spec") do |path, details|
         content = read_file_content(path)
-        begin
-          YAML.parse_all(content).each { |doc| process_doc(doc, details) }
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
-        end
+        YAML.parse_all(content).each { |doc| process_doc(doc, details) }
       end
 
       @result

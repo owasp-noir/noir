@@ -1,7 +1,7 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class K8sIngress < Analyzer
+  class K8sIngress < SpecificationEngine
     DEFAULT_METHOD     = "GET"
     REWRITE_ANNOTATION = "nginx.ingress.kubernetes.io/rewrite-target"
     DEFAULT_PATH_TYPE  = "ImplementationSpecific"
@@ -12,17 +12,17 @@ module Analyzer::Specification
     HOST_LINE          = /^[ \t-]*host:\s*(.*)$/
 
     def analyze
-      spec_files = CodeLocator.instance.all("k8s-ingress-spec")
-      return @result unless spec_files.is_a?(Array(String))
-
-      spec_files.each do |path|
-        next unless File.exists?(path)
-
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("k8s-ingress-spec") do |path, details|
         content = read_file_content(path)
         begin
           YAML.parse_all(content).each { |doc| process_doc(doc, details) }
         rescue e
+          # Kept as an explicit rescue rather than delegating to the engine:
+          # a Helm chart's `templates/ingress.yaml` is a Go template, so
+          # `path: {{ .Values.server.ingress.path }}` is not valid YAML and
+          # the parse legitimately fails. That is the common case, not an
+          # error — fall back to the tolerant line scanner instead of
+          # letting the file be logged and skipped.
           @logger.debug "Exception processing #{path}, falling back to tolerant Ingress template extraction"
           @logger.debug_sub e
           process_template(content, details)

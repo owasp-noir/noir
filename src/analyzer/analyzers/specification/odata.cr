@@ -1,5 +1,5 @@
 require "xml"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # OData CSDL (`$metadata`) describes a service's entity sets,
@@ -8,7 +8,7 @@ module Analyzer::Specification
   # base path is left implicit (`/`) because CSDL doesn't carry the
   # service root — downstream consumers prefix it from their own
   # context.
-  class OData < Analyzer
+  class OData < SpecificationEngine
     EDM_PRIMITIVE_BODY_TYPES = {
       "Edm.String"         => "string",
       "Edm.Boolean"        => "boolean",
@@ -33,19 +33,9 @@ module Analyzer::Specification
     alias Operation = NamedTuple(parameters: Array(NamedTuple(name: String, type: String)), kind: String)
 
     def analyze
-      locator = CodeLocator.instance
-      odata_specs = locator.all("odata-spec")
-      return @result unless odata_specs.is_a?(Array(String))
-
-      odata_specs.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = read_file_content(path)
-          parse_metadata(content, path)
-        rescue e
-          @logger.debug "Failed to parse OData metadata #{path}: #{e.message}"
-          @logger.debug_sub e
-        end
+      each_spec_file("odata-spec") do |path|
+        content = read_file_content(path)
+        parse_metadata(content, path)
       end
 
       @result

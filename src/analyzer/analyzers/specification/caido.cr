@@ -1,37 +1,26 @@
 require "base64"
 require "uri"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Caido < Analyzer
+  class Caido < SpecificationEngine
     def analyze
-      locator = CodeLocator.instance
-      caido_files = locator.all("caido-json")
-      return @result unless caido_files.is_a?(Array(String))
-
-      caido_files.each do |path|
-        next unless File.exists?(path)
-        details = Details.new(PathInfo.new(path))
+      each_spec_file_with_details("caido-json") do |path, details|
         content = read_file_content(path)
 
-        begin
-          data = JSON.parse(content)
-          entries = data.as_a?
-          next unless entries
+        data = JSON.parse(content)
+        entries = data.as_a?
+        next unless entries
 
-          seen = Set(String).new
+        seen = Set(String).new
 
-          entries.each do |entry|
-            begin
-              process_entry(entry, details, seen)
-            rescue e
-              @logger.debug "Exception processing caido entry in #{path}"
-              @logger.debug_sub e
-            end
+        entries.each do |entry|
+          begin
+            process_entry(entry, details, seen)
+          rescue e
+            @logger.debug "Exception processing caido entry in #{path}"
+            @logger.debug_sub e
           end
-        rescue e
-          @logger.debug "Exception processing #{path}"
-          @logger.debug_sub e
         end
       end
 

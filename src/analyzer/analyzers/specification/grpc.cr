@@ -1,14 +1,15 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Grpc < Analyzer
+  class Grpc < SpecificationEngine
     # Represents a parsed protobuf message with its fields
     alias MessageFields = Array(Param)
 
     def analyze
-      locator = CodeLocator.instance
-      proto_files = locator.all("grpc-proto")
-      return @result if proto_files.empty?
+      # `build_message_registry` reads and parses every `.proto` in the
+      # codebase, so bail out before it when the detector registered no
+      # service definitions to resolve against.
+      return @result if CodeLocator.instance.all("grpc-proto").empty?
 
       # Request/response messages are frequently defined in a separate
       # (imported) `.proto`, so resolving params from the service file alone
@@ -16,13 +17,9 @@ module Analyzer::Specification
       # both simple and package-qualified name, and resolve against it.
       registry = build_message_registry
 
-      proto_files.each do |proto_file|
-        begin
-          content = read_file_content(proto_file)
-          parse_proto(content, proto_file, registry)
-        rescue File::NotFoundError
-          @logger.debug "Proto file not found during analysis, skipping: #{proto_file}"
-        end
+      each_spec_file("grpc-proto") do |proto_file|
+        content = read_file_content(proto_file)
+        parse_proto(content, proto_file, registry)
       end
 
       @result

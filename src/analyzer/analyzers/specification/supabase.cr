@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../miniparsers/postgres_ddl_parser"
 require "./schema_api_common"
 
@@ -14,7 +14,7 @@ module Analyzer::Specification
   #   * Only exposed schemas are reachable. Supabase migrations routinely
   #     create tables in `auth`, `storage` and `extensions`, none of
   #     which PostgREST serves.
-  class Supabase < Analyzer
+  class Supabase < SpecificationEngine
     include SchemaApiCommon
 
     REST_PREFIX = "/rest/v1"
@@ -35,24 +35,17 @@ module Analyzer::Specification
     MAX_FILTER_PARAMS = 25
 
     def analyze
-      locator = CodeLocator.instance
-      migrations = locator.all("supabase-migration")
-      return @result unless migrations.is_a?(Array(String))
+      # Nothing to apply the DDL to, so skip reading `config.toml` as well.
+      return @result if CodeLocator.instance.all("supabase-migration").empty?
 
-      exposed = exposed_schemas(locator.all("supabase-config"))
+      exposed = exposed_schemas(CodeLocator.instance.all("supabase-config"))
 
       # Migration filenames are `<timestamp>_<name>.sql`, so lexical order
       # is chronological. Applying them in order is what makes a column
       # added in one file and dropped in another come out right.
       state = Noir::PostgresDdlParser::State.new
-      migrations.sort.each do |path|
-        next unless File.exists?(path)
-        begin
-          Noir::PostgresDdlParser.apply(read_file_content(path), path, state)
-        rescue e
-          @logger.debug "Failed to parse Supabase migration #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file("supabase-migration", sorted: true) do |path|
+        Noir::PostgresDdlParser.apply(read_file_content(path), path, state)
       end
 
       state.tables.each_value do |table|

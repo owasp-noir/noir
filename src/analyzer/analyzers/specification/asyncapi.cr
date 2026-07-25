@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # AsyncAPI 2.x / 3.x analyzer.
@@ -15,37 +15,19 @@ module Analyzer::Specification
   #
   # The first server's `protocol` (kafka, mqtt, ws, amqp, nats, http, …)
   # is surfaced on the endpoint so DAST consumers can route accordingly.
-  class AsyncApi < Analyzer
+  class AsyncApi < SpecificationEngine
     # Operation keys on `channels` entries (2.x).
     OPERATIONS_2X = {"publish", "subscribe"}
 
     def analyze
-      locator = CodeLocator.instance
-      jsons = locator.all("asyncapi-json")
-      yamls = locator.all("asyncapi-yaml")
-
-      if jsons.is_a?(Array(String))
-        jsons.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = read_file_content(path)
-          process_json(JSON.parse(content), details, path)
-        rescue e
-          @logger.debug "Exception parsing AsyncAPI #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file_with_details("asyncapi-json") do |path, details|
+        content = read_file_content(path)
+        process_json(JSON.parse(content), details, path)
       end
 
-      if yamls.is_a?(Array(String))
-        yamls.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = read_file_content(path)
-          process_yaml(YAML.parse(content), details, path)
-        rescue e
-          @logger.debug "Exception parsing AsyncAPI #{path}"
-          @logger.debug_sub e
-        end
+      each_spec_file_with_details("asyncapi-yaml") do |path, details|
+        content = read_file_content(path)
+        process_yaml(YAML.parse(content), details, path)
       end
 
       @result
