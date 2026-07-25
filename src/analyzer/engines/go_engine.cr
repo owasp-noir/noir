@@ -236,17 +236,23 @@ module Analyzer::Go
     # instead of rebuilding them for every candidate file.
     @extra_method_regexes = Hash(String, Regex).new
 
+    # One compiled matcher per framework import marker. Each analyzer
+    # passes a single `IMPORT_MARKER` constant, so the cardinality here is
+    # one entry; the Hash just keeps the memo honest if that changes.
+    @import_marker_regexes = Hash(String, Regex).new
+
+    private def import_marker_regex(import_marker : String) : Regex
+      @import_marker_regexes[import_marker] ||= Regex.union(import_marker)
+    end
+
     # Per-package directories that import a target framework. Some real
     # projects hide the concrete framework type behind a local interface, so
     # the file that calls `router.GET(...)` may not import Gin/Echo itself.
     def framework_package_dirs(file_contents : Hash(String, String), import_marker : String) : Set(String)
       dirs = Set(String).new
-      # Compiled once for the whole sweep — this walks every cached `.go`
-      # source, and one JIT-compiled scan beats `includes?`'s Rabin-Karp
-      # walk per file.
-      marker = Regex.union(import_marker)
+      marker = import_marker_regex(import_marker)
       file_contents.each do |path, content|
-        dirs << File.dirname(path) if content.matches?(marker, options: Noir::TextFile::MATCH_OPTIONS)
+        dirs << File.dirname(path) if content_matches?(content, marker)
       end
       dirs
     end
@@ -255,10 +261,10 @@ module Analyzer::Go
     # import Gin/Echo for `*gin.Context` / `echo.Context`, but they cannot emit
     # endpoints unless they contain a route/static registration call.
     def go_route_source_candidate?(content : String, extra_methods : Array(String)) : Bool
-      return true if content.matches?(GO_HTTP_ROUTE_CALL_RE, options: Noir::TextFile::MATCH_OPTIONS)
+      return true if content_matches?(content, GO_HTTP_ROUTE_CALL_RE)
       extra_methods.any? do |method|
         method_regex = @extra_method_regexes[method] ||= /\.#{Regex.escape(method)}\s*\(/
-        content.matches?(method_regex, options: Noir::TextFile::MATCH_OPTIONS)
+        content_matches?(content, method_regex)
       end
     end
 
@@ -267,7 +273,7 @@ module Analyzer::Go
                                           framework_dirs : Set(String),
                                           import_marker : String,
                                           extra_methods : Array(String)) : Bool
-      return false unless content.includes?(import_marker) || framework_dirs.includes?(dir)
+      return false unless content_matches?(content, import_marker_regex(import_marker)) || framework_dirs.includes?(dir)
       go_route_source_candidate?(content, extra_methods)
     end
 

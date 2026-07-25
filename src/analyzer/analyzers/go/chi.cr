@@ -18,6 +18,10 @@ module Analyzer::Go
     # calls would otherwise surface as chi routes).
     IMPORT_MARKER = "github.com/go-chi/chi"
 
+    # Whole-file gates, run on every `.go` in the tree.
+    IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
+    MOUNT_CALL_RE    = /\.Mount\(/
+
     def analyze
       result = [] of Endpoint
 
@@ -40,7 +44,7 @@ module Analyzer::Go
           package_files[dir] << scan_path
 
           content = read_file_content(scan_path)
-          chi_dirs << dir if content.includes?(IMPORT_MARKER)
+          chi_dirs << dir if content_matches?(content, IMPORT_MARKER_RE)
           # Cache contents for every Go file in the package — the
           # cross-file callee map and Mount-expansion walker both
           # need handler/helper functions that live in non-chi
@@ -59,7 +63,7 @@ module Analyzer::Go
           # (qualified by receiver type for methods, so a same-named
           # `Routes()` on another type — or a top-level router builder
           # also named `Routes()` — is not skipped by accident).
-          next unless content.includes?(".Mount(")
+          next unless content_matches?(content, MOUNT_CALL_RE)
           content.each_line do |scan_line|
             next unless scan_line.includes?(".Mount(")
             if target = parse_mount_target(scan_line)
@@ -131,7 +135,7 @@ module Analyzer::Go
                 next if GoEngine.go_test_file?(path)
                 if File.exists?(path)
                   content = file_contents_cache[path]? || read_file_content(path)
-                  next unless content.includes?(IMPORT_MARKER)
+                  next unless content_matches?(content, IMPORT_MARKER_RE)
                   lines = file_lines_cache[path]? || content.lines
 
                   dir = File.dirname(path)
