@@ -248,11 +248,15 @@ def detector_build_applicable_lookup(detectors : Array(Detector)) : Proc(String,
   end
 end
 
-def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
-  techs = [] of String
-  passive_result = [] of PassiveScanResult
+# The complete detector registry, constructed fresh per scan.
+#
+# Extracted from `detect_techs` so the registry is enumerable outside the
+# scan path. `spec/unit_test/techs/registry_integrity_spec.cr` walks it to
+# prove every detector name has a matching `NoirTechs::TECHS` entry — the
+# linkage that `zap_sites_tree` (detector + analyzer, no TECHS entry) had
+# silently lost.
+def build_detector_list(options : Hash(String, YAML::Any)) : Array(Detector)
   detector_list = [] of Detector
-  mutex = Mutex.new
 
   # Define detectors
   define_detectors([
@@ -498,6 +502,15 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     Zig::Httpz,
     Zig::Tokamak,
   ])
+
+  detector_list
+end
+
+def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), passive_scans : Array(PassiveScan), logger : NoirLogger)
+  techs = [] of String
+  passive_result = [] of PassiveScanResult
+  detector_list = build_detector_list(options)
+  mutex = Mutex.new
 
   # Handle --only-techs: filter detector_list to only specified techs
   only_techs_value = options["only_techs"]?.to_s
