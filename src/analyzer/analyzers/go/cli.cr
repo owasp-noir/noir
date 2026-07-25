@@ -31,6 +31,16 @@ module Analyzer::Go
     # precompiled `Regex.union` (PCRE2 JIT) checks all nine in a single pass.
     FRAMEWORK_IMPORTS_RE = Regex.union(FRAMEWORK_IMPORTS)
 
+    # Per-framework matchers for the scan dispatch below, which asks the
+    # same questions again once `cli_evidence?` has let a file through.
+    KONG_IMPORT_RE       = Regex.union("github.com/alecthomas/kong")
+    KINGPIN_IMPORT_RE    = Regex.union("github.com/alecthomas/kingpin", "gopkg.in/alecthomas/kingpin.v2")
+    MITCHELLH_IMPORT_RE  = Regex.union("github.com/mitchellh/cli")
+    STRUCT_TAG_IMPORT_RE = Regex.union("alexflint/go-arg", "jessevdk/go-flags")
+    FLAG_IMPORT_RE       = /"flag"/
+    FLAG_PARSE_RE        = /flag\.Parse\(/
+    OS_ARGS_RE           = /os\.Args/
+
     # --- builtin flag / argv -------------------------------------------------
     # The flag name is always the FIRST quoted string in the call: the `*Var`
     # forms put the destination pointer (unquoted) first, then the name.
@@ -150,15 +160,15 @@ module Analyzer::Go
             emit_stdlib, has_cli_parse)
           scan_struct_tags(content, path, root_url, endpoints)
 
-          if content.includes?("github.com/alecthomas/kong")
+          if content_matches?(content, KONG_IMPORT_RE)
             scan_kong(lines, path, root_url, endpoints, kong_cmd_type_urls(lines, root_url))
           end
 
-          if content.includes?("github.com/alecthomas/kingpin") || content.includes?("gopkg.in/alecthomas/kingpin.v2")
+          if content_matches?(content, KINGPIN_IMPORT_RE)
             scan_kingpin(lines, path, endpoints, kingpin_cmd_urls(lines, root_url))
           end
 
-          if content.includes?("github.com/mitchellh/cli")
+          if content_matches?(content, MITCHELLH_IMPORT_RE)
             scan_mitchellh(lines, path, root_url, endpoints)
           end
         rescue e
@@ -174,11 +184,11 @@ module Analyzer::Go
     # A file is part of the CLI surface when it imports a CLI framework or
     # uses the stdlib flag package / os.Args directly.
     private def cli_evidence?(content : String) : Bool
-      return true if content.matches?(FRAMEWORK_IMPORTS_RE)
-      return true if content.includes?("\"flag\"") &&
-                     (content.matches?(BUILTIN_FLAG_RE) || content.includes?("flag.Parse(") ||
-                     content.matches?(BUILTIN_ARG_RE) || content.matches?(BUILTIN_ARGS_RE))
-      content.matches?(OS_ARG_INDEX_RE)
+      return true if content_matches?(content, FRAMEWORK_IMPORTS_RE)
+      return true if content_matches?(content, FLAG_IMPORT_RE) &&
+                     (content_matches?(content, BUILTIN_FLAG_RE) || content_matches?(content, FLAG_PARSE_RE) ||
+                     content_matches?(content, BUILTIN_ARG_RE) || content_matches?(content, BUILTIN_ARGS_RE))
+      content_matches?(content, OS_ARG_INDEX_RE)
     end
 
     # Five markers OR-ed as a standalone boolean gate for `cli_parse_point?`
@@ -201,9 +211,9 @@ module Analyzer::Go
       # precisely (struct tag / .Envar() / scoped Run() body) — they
       # deliberately don't opt into the raw root-level os.Getenv fallback
       # below, which would double-attribute (or mis-scope) those reads.
-      return true if content.matches?(CLI_PARSE_POINT_RE)
-      return true if content.matches?(OS_ARG_INDEX_RE)
-      content.includes?("os.Args")
+      return true if content_matches?(content, CLI_PARSE_POINT_RE)
+      return true if content_matches?(content, OS_ARG_INDEX_RE)
+      content_matches?(content, OS_ARGS_RE)
     end
 
     private def go_binary_name(modules : Array(Tuple(String, String)), path : String) : String
@@ -384,7 +394,7 @@ module Analyzer::Go
     # follow-up).
     private def scan_struct_tags(content : String, path : String, root_url : String,
                                  endpoints : Hash(String, Endpoint))
-      return unless content.includes?("alexflint/go-arg") || content.includes?("jessevdk/go-flags")
+      return unless content_matches?(content, STRUCT_TAG_IMPORT_RE)
 
       content.each_line.with_index do |line, index|
         line_no = index + 1

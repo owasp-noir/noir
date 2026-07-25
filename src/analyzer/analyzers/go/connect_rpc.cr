@@ -17,7 +17,12 @@ module Analyzer::Go
   # file that registers the handler instead of (or in addition to)
   # the proto file.
   class ConnectRpc < GoEngine
-    IMPORT_MARKER         = "connectrpc.com/connect"
+    IMPORT_MARKER = "connectrpc.com/connect"
+
+    # Whole-file gates, run on every `.go` in the tree.
+    IMPORT_MARKER_RE      = Regex.union(IMPORT_MARKER)
+    PROCEDURE_MARKER_RE   = /Procedure/
+    IMPORT_OR_HANDLER_RE  = Regex.union(IMPORT_MARKER, "ServiceHandler(")
     HANDLER_NAME_REGEX    = /New(\w+ServiceHandler)\s*\(/
     CONNECT_CONTENT_TYPES = "application/proto, application/json, application/connect+proto, application/connect+json"
 
@@ -71,8 +76,8 @@ module Analyzer::Go
         next if GoEngine.go_test_file?(path)
         begin
           content = read_file_content(path)
-          next unless content.includes?(IMPORT_MARKER)
-          next unless content.includes?("Procedure")
+          next unless content_matches?(content, IMPORT_MARKER_RE)
+          next unless content_matches?(content, PROCEDURE_MARKER_RE)
 
           kinds = {} of String => String
           content.scan(HANDLER_KIND_REGEX) do |m|
@@ -124,7 +129,7 @@ module Analyzer::Go
           next if GoEngine.go_test_file?(path)
           base_path = configured_base_for(path)
           content = read_file_content(path)
-          next unless content.includes?(IMPORT_MARKER) || content.includes?("ServiceHandler(")
+          next unless content_matches?(content, IMPORT_OR_HANDLER_RE)
           content.each_line.with_index do |line, index|
             if match = line.match(HANDLER_NAME_REGEX)
               handler_name = match[1]
