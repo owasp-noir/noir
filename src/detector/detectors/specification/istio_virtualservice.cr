@@ -6,6 +6,11 @@ module Detector::Specification
   class IstioVirtualservice < Detector
     ISTIO_API_PREFIX = "networking.istio.io/"
 
+    # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
+    # match, so they stay separate probes rather than a union.
+    ISTIO_API_PREFIX_MARKER     = /networking\.istio\.io\//
+    VIRTUAL_SERVICE_KIND_MARKER = /kind: VirtualService/
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       # Substring guard first: the full `YAML.parse_all` below only runs on
@@ -40,7 +45,7 @@ module Detector::Specification
     end
 
     private def virtual_service_present?(content : String) : Bool
-      content.includes?(ISTIO_API_PREFIX) && content.includes?("kind: VirtualService")
+      content_matches?(content, ISTIO_API_PREFIX_MARKER) && content_matches?(content, VIRTUAL_SERVICE_KIND_MARKER)
     end
   end
 end

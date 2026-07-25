@@ -6,6 +6,11 @@ module Detector::Specification
   class K8sGatewayApi < Detector
     GATEWAY_API_PREFIX = "gateway.networking.k8s.io/"
 
+    # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
+    # match, so they stay separate probes rather than a union.
+    GATEWAY_API_PREFIX_MARKER = /gateway\.networking\.k8s\.io\//
+    HTTP_ROUTE_KIND_MARKER    = /kind: HTTPRoute/
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       # Substring guard first: the full `YAML.parse_all` below only runs on
@@ -40,7 +45,7 @@ module Detector::Specification
     end
 
     private def route_present?(content : String) : Bool
-      content.includes?(GATEWAY_API_PREFIX) && content.includes?("kind: HTTPRoute")
+      content_matches?(content, GATEWAY_API_PREFIX_MARKER) && content_matches?(content, HTTP_ROUTE_KIND_MARKER)
     end
   end
 end
