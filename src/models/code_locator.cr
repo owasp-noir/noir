@@ -15,7 +15,6 @@ class CodeLocator
   @is_log : Bool
   @s_map : Hash(String, String)
   @a_map : Hash(String, Array(String))
-  @file_usage_stats : Hash(String, Int32) # Track number of file reads
   @extension_index : Hash(String, Array(String))
   @extension_index_built : Bool
   @file_contents : Hash(String, String)
@@ -37,7 +36,6 @@ class CodeLocator
 
     @s_map = Hash(String, String).new
     @a_map = Hash(String, Array(String)).new
-    @file_usage_stats = Hash(String, Int32).new
     @extension_index = Hash(String, Array(String)).new
     @extension_index_built = false
 
@@ -77,9 +75,8 @@ class CodeLocator
     @a_map[key] ||= Array(String).new
     @a_map[key] << value
 
-    # Track file usage if this is the file_map
+    # Pushing into file_map invalidates the derived path caches.
     if key == "file_map"
-      increment_file_usage(value)
       @expanded_file_map = nil
       @expanded_path_index = nil
     end
@@ -210,7 +207,6 @@ class CodeLocator
   def clear_all
     @s_map.clear
     @a_map.clear
-    @file_usage_stats.clear
     @extension_index.clear
     @extension_index_built = false
     @file_contents.clear
@@ -228,32 +224,6 @@ class CodeLocator
     @logger.sub("Array Map:")
     @a_map.each do |key, value|
       @logger.sub("  #{key} => #{value.size} items")
-    end
-  end
-
-  # Get file usage statistics
-  def file_usage_stats : Hash(String, Int32)
-    @file_usage_stats
-  end
-
-  # Increment file usage count
-  private def increment_file_usage(file_path : String)
-    @file_usage_stats[file_path] ||= 0
-    @file_usage_stats[file_path] += 1
-  end
-
-  # Show file usage statistics
-  def show_file_stats
-    @logger.sub("File Usage Statistics:")
-    @logger.sub("  Total unique files: #{@file_usage_stats.size}")
-    total_usages = @file_usage_stats.values.sum
-    @logger.sub("  Total file reads: #{total_usages}")
-
-    if @is_verbose && !@file_usage_stats.empty?
-      @logger.sub("  Top 10 most accessed files:")
-      @file_usage_stats.to_a.sort_by { |_, count| -count }[0..9].each do |file, count|
-        @logger.sub("    #{count} times: #{file}")
-      end
     end
   end
 end

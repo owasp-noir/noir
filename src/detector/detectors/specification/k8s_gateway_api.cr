@@ -7,8 +7,6 @@ module Detector::Specification
     # Registers each Gateway API manifest path in `CodeLocator`.
     detector_for "k8s_gateway_api", extensions: %w[.yaml .yml], idempotent: false
 
-    GATEWAY_API_PREFIX = "gateway.networking.k8s.io/"
-
     # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
     # match, so they stay separate probes rather than a union.
     GATEWAY_API_PREFIX_MARKER = /gateway\.networking\.k8s\.io\//

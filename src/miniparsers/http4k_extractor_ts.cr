@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./kotlin_callee_extractor"
@@ -225,7 +226,7 @@ module Noir
 
           path_text = route_path_from(inner_lhs, source, string_constants, local_string_constants)
           return false unless path_text
-          emit_route(verb, join_paths(prefix, path_text), node, rhs, source, routes, include_callees)
+          emit_route(verb, Noir::URLPath.join_trimmed(prefix, path_text), node, rhs, source, routes, include_callees)
           true
         else
           # Bare `VERB to handler` directly inside a `routes(...)` call
@@ -246,7 +247,7 @@ module Noir
 
         path_text = resolve_string_value(lhs, source, string_constants, local_string_constants)
         return false unless path_text
-        new_prefix = join_paths(prefix, path_text)
+        new_prefix = Noir::URLPath.join_trimmed(prefix, path_text)
         walk_routes_args(rhs, source, new_prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, true, contract_routes)
         true
       else
@@ -261,14 +262,14 @@ module Noir
                                      contract_routes : Hash(String, Array(Route)))
       line = Noir::TreeSitter.node_start_row(node)
       contract_description_paths(node, source).each do |path|
-        routes << Route.new("GET", join_paths(prefix, path), line, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
+        routes << Route.new("GET", Noir::URLPath.join_trimmed(prefix, path), line, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
       end
 
       contract_route_references(node, source).each do |name|
         next unless helper_routes = contract_routes[name]?
 
         helper_routes.each do |route|
-          routes << route.with_path(join_paths(prefix, route.path))
+          routes << route.with_path(Noir::URLPath.join_trimmed(prefix, route.path))
         end
       end
     end
@@ -590,12 +591,6 @@ module Noir
         end
         parts.join
       end
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

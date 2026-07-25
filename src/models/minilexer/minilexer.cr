@@ -81,16 +81,4 @@ class MiniLexer
       puts token.to_s
     end
   end
-
-  def start_repl
-    loop do
-      print ">> "
-      input = gets
-      break if input.nil?
-      input = input.chomp
-      break if input == "exit"
-      tokenize(input)
-      trace
-    end
-  end
 end

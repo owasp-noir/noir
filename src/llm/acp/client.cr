@@ -40,12 +40,6 @@ module LLM
       ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
     end
 
-    # True when the provider resolves to a built-in target, or the operator
-    # opted into custom commands. Used for a friendly CLI-time pre-flight.
-    def self.allowed_target?(provider : String) : Bool
-      KNOWN_TARGETS.includes?(extract_target(provider).downcase) || custom_command_allowed?
-    end
-
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
       @command, @args = self.class.resolve_command(provider)
       @session_lock = Mutex.new

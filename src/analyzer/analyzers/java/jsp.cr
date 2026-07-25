@@ -462,12 +462,6 @@ module Analyzer::Java
         (content.includes?("HttpServlet") && !!content.match(/\bextends\s+HttpServlet\b/))
     end
 
-    private def java_class_name(content : String) : String?
-      if match = content.match(/\bclass\s+([A-Za-z_][A-Za-z0-9_]*)/)
-        match[1]
-      end
-    end
-
     private def java_package_name(content : String) : String?
       if match = content.match(/\bpackage\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;/)
         match[1]

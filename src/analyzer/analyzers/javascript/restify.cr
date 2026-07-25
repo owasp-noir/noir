@@ -477,12 +477,6 @@ module Analyzer::Javascript
       match ? match[1] : ""
     end
 
-    def extract_path(line : String) : String
-      # Extract path from route definition, handling different quote styles
-      match = line.match(/\(\s*['"]([^'"]+)['"]/)
-      match ? match[1] : ""
-    end
-
     def line_to_param(line : String) : Param
       # Extract request body parameters
       if line.includes?("req.body.")

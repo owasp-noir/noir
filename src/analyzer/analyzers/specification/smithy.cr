@@ -37,10 +37,6 @@ module Analyzer::Specification
         @http_query = nil
         @http_header = nil
       end
-
-      def any_member_binding? : Bool
-        http_label? || http_payload? || !@http_query.nil? || !@http_header.nil?
-      end
     end
 
     # A field on an `@input` structure with its derived param type.

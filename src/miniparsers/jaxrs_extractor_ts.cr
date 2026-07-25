@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./java_callee_extractor"
@@ -294,7 +295,7 @@ module Noir
         method_name = method_name_of(member, source) || ""
         method_path = annotation_string_value(member, "Path", source, local_constants, class_name) || ""
 
-        full_path = join_paths(class_path, method_path)
+        full_path = Noir::URLPath.join_trimmed(class_path, method_path)
         method_consumes = consumes_format(member, source) || class_consumes
 
         unless verb && verb_node
@@ -357,7 +358,7 @@ module Noir
         if interface_decl = class_index[interface_name]?
           interface_path = annotation_string_value(interface_decl, "Path", source, constants, interface_name) || ""
           collect_class_routes(interface_decl, source, dto_index, bean_index, routes, include_callees,
-            base_path: join_paths(class_path, interface_path), inherited_consumes: class_consumes,
+            base_path: Noir::URLPath.join_trimmed(class_path, interface_path), inherited_consumes: class_consumes,
             class_index: class_index, constants: constants, subresource_sources: subresource_sources,
             current_file: current_file, visited: visited, method_excludes: method_excludes)
         elsif source_entry = subresource_sources[interface_name]?
@@ -450,7 +451,7 @@ module Noir
         constants = TreeSitterJavaRouteExtractor.extract_string_constants_from(root, interface_source)
         own_path = annotation_string_value(interface_decl, "Path", interface_source, constants, interface_name) || ""
         collect_class_routes(interface_decl, interface_source, dto_index, bean_index, routes, include_callees,
-          base_path: join_paths(class_path, own_path), inherited_consumes: class_consumes,
+          base_path: Noir::URLPath.join_trimmed(class_path, own_path), inherited_consumes: class_consumes,
           class_index: classes, constants: constants, subresource_sources: subresource_sources,
           current_file: interface_path, visited: visited, method_excludes: method_excludes)
       end
@@ -779,12 +780,6 @@ module Noir
     # cosmetic — Jakarta REST normalises it. We emit `/users` rather
     # than `/users/` for the index handler, matching how callers
     # actually request the route.
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
-    end
-
     # ---- formal-parameter walk --------------------------------------
 
     private def collect_method_params(method : LibTreeSitter::TSNode,

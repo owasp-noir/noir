@@ -141,15 +141,6 @@ module Analyzer::Go
       result
     end
 
-    def get_method_from_line(line : String) : String
-      # Extract method from .Methods("GET", "POST") or default to GET
-      if match = line.match(/\.Methods\(\s*[\"']([^\"']+)[\"']/)
-        match[1].upcase
-      else
-        "GET"
-      end
-    end
-
     def get_param(line : String, pattern : String, endpoint : Endpoint? = nil) : Param
       param_name = ""
       param_type = ""

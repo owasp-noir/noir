@@ -136,13 +136,6 @@ module Analyzer::Ruby
       Endpoint.new(join_paths(current_path_prefix(stack), m[1]), "GET", details)
     end
 
-    def extract_action_path(content : String, framework_root : String = @base_path) : String
-      target = extract_action_target(content)
-      return "" unless target
-
-      find_action_path(target, framework_root, nil)
-    end
-
     def scan_action_file(endpoint : Endpoint, action_path : String, include_callee : Bool = false)
       return unless File.exists?(action_path)
 
