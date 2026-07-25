@@ -36,23 +36,23 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless file_contents.matches?(PAYLOAD_MARKER)
+      return false unless content_matches?(file_contents, PAYLOAD_MARKER)
 
       detected = false
 
-      if file_contents.matches?(COLLECTION_MARKER) &&
-         file_contents.matches?(SLUG_MARKER) && file_contents.matches?(FIELDS_MARKER)
+      if content_matches?(file_contents, COLLECTION_MARKER) &&
+         content_matches?(file_contents, SLUG_MARKER) && content_matches?(file_contents, FIELDS_MARKER)
         CodeLocator.instance.push("payload-collection", filename)
         detected = true
       end
 
-      if file_contents.matches?(GLOBAL_MARKER) &&
-         file_contents.matches?(SLUG_MARKER) && file_contents.matches?(FIELDS_MARKER)
+      if content_matches?(file_contents, GLOBAL_MARKER) &&
+         content_matches?(file_contents, SLUG_MARKER) && content_matches?(file_contents, FIELDS_MARKER)
         CodeLocator.instance.push("payload-global", filename)
         detected = true
       end
 
-      if file_contents.matches?(BUILD_CONFIG)
+      if content_matches?(file_contents, BUILD_CONFIG)
         CodeLocator.instance.push("payload-config", filename)
         detected = true
       end

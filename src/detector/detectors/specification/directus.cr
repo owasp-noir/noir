@@ -21,7 +21,7 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless file_contents.matches?(SNAPSHOT_MARKER)
+      return false unless content_matches?(file_contents, SNAPSHOT_MARKER)
 
       data = yaml_any?(file_contents)
       return false unless data

@@ -14,7 +14,7 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") || filename.ends_with?(".cjs")
-      file_contents.matches?(SIGNAL)
+      content_matches?(file_contents, SIGNAL)
     end
 
     def applicable?(filename : String) : Bool

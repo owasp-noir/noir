@@ -6,7 +6,7 @@ module Detector::Zig
       return true if filename.ends_with?(".zig") && file_contents.includes?("@import(\"httpz\")")
 
       if File.basename(filename) == "build.zig.zon"
-        return true if file_contents.matches?(/\.httpz\s*=\s*\.\{/)
+        return true if content_matches?(file_contents, /\.httpz\s*=\s*\.\{/)
         return true if file_contents.includes?("karlseguin/http.zig")
       end
 

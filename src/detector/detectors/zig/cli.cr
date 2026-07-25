@@ -9,7 +9,7 @@ module Detector::Zig
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".zig")
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

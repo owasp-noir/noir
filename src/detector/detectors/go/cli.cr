@@ -21,6 +21,13 @@ module Detector::Go
       "gopkg.in/alecthomas/kingpin.v2",
     ]
 
+    # Single-pass union of the library markers above. The `any? includes?`
+    # chain walked every non-CLI `.go` file nine times over.
+    CLI_LIBRARY_MARKER = Regex.union(CLI_LIBRARY_MARKERS)
+
+    # The stdlib `flag` import line.
+    FLAG_IMPORT = /"flag"/
+
     # A real call into the stdlib `flag` package (not just the bare token
     # "flag", which appears in unrelated identifiers/comments).
     BUILTIN_FLAG_USE = /\bflag\.(?:Parse|Args?|NArg|String(?:Var)?|Int(?:64)?(?:Var)?|Uint(?:64)?(?:Var)?|Bool(?:Var)?|Float64(?:Var)?|Duration(?:Var)?|Var)\s*\(/
@@ -35,14 +42,14 @@ module Detector::Go
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".go") || File.basename(filename) == "go.mod"
-      return true if CLI_LIBRARY_MARKERS.any? { |marker| file_contents.includes?(marker) }
+      return true if content_matches?(file_contents, CLI_LIBRARY_MARKER)
 
       # go.mod has no flag/argv usage of its own; only the library markers
       # above qualify it.
       return false unless filename.ends_with?(".go")
-      return false if file_contents.matches?(HTTP_LISTEN)
-      return true if file_contents.includes?("\"flag\"") && file_contents.matches?(BUILTIN_FLAG_USE)
-      return true if file_contents.matches?(ARGV_INDEX)
+      return false if content_matches?(file_contents, HTTP_LISTEN)
+      return true if content_matches?(file_contents, FLAG_IMPORT) && content_matches?(file_contents, BUILTIN_FLAG_USE)
+      return true if content_matches?(file_contents, ARGV_INDEX)
 
       false
     end

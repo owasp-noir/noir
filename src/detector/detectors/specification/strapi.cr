@@ -59,7 +59,7 @@ module Detector::Specification
     end
 
     private def detect_schema(filename : String, file_contents : String) : Bool
-      return false unless file_contents.matches?(SCHEMA_MARKER)
+      return false unless content_matches?(file_contents, SCHEMA_MARKER)
 
       data = json_any?(file_contents)
       return false unless data
@@ -79,8 +79,8 @@ module Detector::Specification
     end
 
     private def detect_routes(filename : String, file_contents : String) : Bool
-      core_router = file_contents.matches?(CORE_ROUTER_MARKER)
-      custom = file_contents.matches?(ROUTE_MARKER) && file_contents.matches?(ROUTE_HANDLER)
+      core_router = content_matches?(file_contents, CORE_ROUTER_MARKER)
+      custom = content_matches?(file_contents, ROUTE_MARKER) && content_matches?(file_contents, ROUTE_HANDLER)
       return false unless core_router || custom
 
       CodeLocator.instance.push("strapi-routes", filename)

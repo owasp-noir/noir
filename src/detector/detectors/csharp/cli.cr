@@ -16,9 +16,9 @@ module Detector::CSharp
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".cs")
-      return true if file_contents.matches?(CLI_LIB) || file_contents.matches?(LIB_USAGE)
-      return false if file_contents.matches?(WEB_HOST)
-      file_contents.matches?(MAIN_ARGS) || file_contents.matches?(GET_ARGS)
+      return true if content_matches?(file_contents, CLI_LIB) || content_matches?(file_contents, LIB_USAGE)
+      return false if content_matches?(file_contents, WEB_HOST)
+      content_matches?(file_contents, MAIN_ARGS) || content_matches?(file_contents, GET_ARGS)
     end
 
     def applicable?(filename : String) : Bool

@@ -14,7 +14,7 @@ module Detector::Python
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
-      file_contents.matches?(CLI_IMPORT_RE)
+      content_matches?(file_contents, CLI_IMPORT_RE)
     end
 
     def applicable?(filename : String) : Bool

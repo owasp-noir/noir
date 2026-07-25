@@ -21,7 +21,7 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless file_contents.matches?(PROJECT_ID_MARKER)
+      return false unless content_matches?(file_contents, PROJECT_ID_MARKER)
 
       data = json_any?(file_contents)
       return false unless data

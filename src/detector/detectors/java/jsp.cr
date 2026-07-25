@@ -23,7 +23,7 @@ module Detector::Java
       end
 
       if filename.ends_with?(".xml")
-        return false unless file_contents.matches?(XML_MARKER)
+        return false unless content_matches?(file_contents, XML_MARKER)
         xml_without_comments = file_contents.gsub(/<!--.*?-->/m, "")
         return xml_without_comments.includes?("<jsp-file>") ||
           !!xml_without_comments.match(/<servlet-class>\s*[^<]*\bJspServlet\b[^<]*<\/servlet-class>/)

@@ -5,9 +5,12 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class AsyncApi < Detector
+    # Every `.json`/`.yaml`/`.yml` in the tree reaches this gate.
+    ASYNCAPI_MARKER = /asyncapi/
+
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      return false unless file_contents.includes?("asyncapi")
+      return false unless content_matches?(file_contents, ASYNCAPI_MARKER)
 
       if filename.ends_with?(".json")
         begin

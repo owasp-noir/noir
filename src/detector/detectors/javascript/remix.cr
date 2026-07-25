@@ -2,6 +2,9 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Remix < Detector
+    PACKAGE_MARKER = /@remix-run\//
+    VITE_MARKER    = /@remix-run\/dev/
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -14,14 +17,14 @@ module Detector::Javascript
         return true
       end
 
-      if base == "package.json" && file_contents.includes?("@remix-run/")
+      if base == "package.json" && content_matches?(file_contents, PACKAGE_MARKER)
         return true
       end
 
       # `vite.config.*` carrying `@remix-run/dev` confirms a
       # Remix 2 / Vite project even when package.json is far away.
       if (base.starts_with?("vite.config.") || base.starts_with?("remix.")) &&
-         file_contents.includes?("@remix-run/dev")
+         content_matches?(file_contents, VITE_MARKER)
         return true
       end
 
@@ -30,7 +33,7 @@ module Detector::Javascript
       if (filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
          filename.ends_with?(".js") || filename.ends_with?(".jsx") ||
          filename.ends_with?(".mjs")) &&
-         file_contents.includes?("@remix-run/")
+         content_matches?(file_contents, PACKAGE_MARKER)
         return true
       end
 

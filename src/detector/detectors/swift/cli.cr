@@ -14,9 +14,9 @@ module Detector::Swift
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".swift")
-      file_contents.includes?("import ArgumentParser") || file_contents.matches?(PARSABLE) ||
-        file_contents.matches?(WRAPPERS) || file_contents.matches?(SWIFTCLI) ||
-        file_contents.matches?(COMMANDER) || file_contents.matches?(CMDLINE)
+      file_contents.includes?("import ArgumentParser") || content_matches?(file_contents, PARSABLE) ||
+        content_matches?(file_contents, WRAPPERS) || content_matches?(file_contents, SWIFTCLI) ||
+        content_matches?(file_contents, COMMANDER) || content_matches?(file_contents, CMDLINE)
     end
 
     def applicable?(filename : String) : Bool

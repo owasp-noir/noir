@@ -12,7 +12,7 @@ module Detector::Clojure
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

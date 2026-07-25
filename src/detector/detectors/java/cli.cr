@@ -27,7 +27,7 @@ module Detector::Java
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".java")
       return true if LIB_IMPORTS.any? { |marker| file_contents.includes?(marker) }
-      file_contents.matches?(USAGE)
+      content_matches?(file_contents, USAGE)
     end
 
     def applicable?(filename : String) : Bool

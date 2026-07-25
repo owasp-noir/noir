@@ -27,12 +27,12 @@ module Detector::Php
     # PCRE2's fast scan, which the wide alternation defeats.
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".php")
-      file_contents.matches?(USE_SF_CONSOLE) || file_contents.matches?(SF_COMMAND) ||
-        file_contents.matches?(AS_COMMAND) || file_contents.matches?(LARAVEL_ZERO) ||
-        file_contents.matches?(CLIMATE) || file_contents.matches?(MINICLI) ||
-        file_contents.matches?(GETOPT) || file_contents.matches?(ARGV_INDEX) ||
-        file_contents.matches?(ARTISAN_SIGNATURE) || file_contents.matches?(ROBO_MARKER) ||
-        file_contents.matches?(WP_ADD_COMMAND) || file_contents.matches?(WP_COMMAND_CLASS)
+      content_matches?(file_contents, USE_SF_CONSOLE) || content_matches?(file_contents, SF_COMMAND) ||
+        content_matches?(file_contents, AS_COMMAND) || content_matches?(file_contents, LARAVEL_ZERO) ||
+        content_matches?(file_contents, CLIMATE) || content_matches?(file_contents, MINICLI) ||
+        content_matches?(file_contents, GETOPT) || content_matches?(file_contents, ARGV_INDEX) ||
+        content_matches?(file_contents, ARTISAN_SIGNATURE) || content_matches?(file_contents, ROBO_MARKER) ||
+        content_matches?(file_contents, WP_ADD_COMMAND) || content_matches?(file_contents, WP_COMMAND_CLASS)
     end
 
     def applicable?(filename : String) : Bool

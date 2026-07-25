@@ -15,15 +15,15 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless source_file?(filename)
-      return false unless file_contents.matches?(CORE_HTTP_IMPORT)
-      return false unless file_contents.matches?(CREATE_SERVER_SIGNAL)
+      return false unless content_matches?(file_contents, CORE_HTTP_IMPORT)
+      return false unless content_matches?(file_contents, CREATE_SERVER_SIGNAL)
 
       # Adapter use such as `createServer(yoga)` imports node:http but has no
       # direct request branching. Keep js_http scoped to the bare stdlib router
       # shape requested in #2144.
-      file_contents.matches?(METHOD_REF) &&
-        file_contents.matches?(URL_REF) &&
-        file_contents.matches?(PATH_LITERAL)
+      content_matches?(file_contents, METHOD_REF) &&
+        content_matches?(file_contents, URL_REF) &&
+        content_matches?(file_contents, PATH_LITERAL)
     end
 
     def applicable?(filename : String) : Bool

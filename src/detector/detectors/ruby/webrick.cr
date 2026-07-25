@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Ruby
   class Webrick < Detector
+    MARKERS = Regex.union("WEBrick", "webrick", "mount_proc", "AbstractServlet")
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".rb") || filename.ends_with?(".ru")
 
@@ -10,12 +12,7 @@ module Detector::Ruby
       # tech counts from incidental "webrick" mentions in Gemfiles of other
       # Ruby frameworks (e.g. rackup using webrick in a sinatra/rails Gemfile).
       # Mirrors python_http_server and crystal_http design.
-      return true if file_contents.includes?("WEBrick")
-      return true if file_contents.includes?("webrick")
-      return true if file_contents.includes?("mount_proc")
-      return true if file_contents.includes?("AbstractServlet")
-
-      false
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

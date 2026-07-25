@@ -19,14 +19,14 @@ module Detector::Aspnet
       return false unless applicable?(filename)
 
       if MARKUP_EXTENSIONS.includes?(File.extname(filename).downcase)
-        return true if file_contents.matches?(DIRECTIVE_RE)
-        return true if file_contents.matches?(RUNAT_RE)
+        return true if content_matches?(file_contents, DIRECTIVE_RE)
+        return true if content_matches?(file_contents, RUNAT_RE)
         return false
       end
 
       # `.cs` / `.vb` only count as WebForms when they are page code-behind;
       # otherwise every ASP.NET Core project would match.
-      file_contents.matches?(CODEBEHIND_RE)
+      content_matches?(file_contents, CODEBEHIND_RE)
     end
 
     def applicable?(filename : String) : Bool

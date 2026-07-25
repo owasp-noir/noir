@@ -10,7 +10,7 @@ module Detector::Ruby
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".rb") || filename.ends_with?(".ru")
-      file_contents.matches?(ACTIONCABLE_MARKER)
+      content_matches?(file_contents, ACTIONCABLE_MARKER)
     end
 
     def applicable?(filename : String) : Bool

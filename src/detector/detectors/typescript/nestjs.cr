@@ -15,7 +15,7 @@ module Detector::Typescript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".ts") || filename.ends_with?(".tsx")
-      file_contents.matches?(SIGNAL)
+      content_matches?(file_contents, SIGNAL)
     end
 
     def applicable?(filename : String) : Bool

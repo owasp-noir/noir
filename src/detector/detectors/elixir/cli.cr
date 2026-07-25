@@ -8,7 +8,7 @@ module Detector::Elixir
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".ex") || filename.ends_with?(".exs")
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

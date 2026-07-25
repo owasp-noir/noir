@@ -6,6 +6,9 @@ module Detector::Specification
   class K8sIngress < Detector
     INGRESS_API_VERSION_PREFIXES = ["networking.k8s.io/", "extensions/v1beta1"]
 
+    # Every `.yml`/`.yaml` in the tree reaches this gate.
+    INGRESS_API_VERSION_MARKER = Regex.union(INGRESS_API_VERSION_PREFIXES)
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless ingress_markers_present?(file_contents)
@@ -43,7 +46,7 @@ module Detector::Specification
     end
 
     private def ingress_markers_present?(content : String) : Bool
-      return false unless INGRESS_API_VERSION_PREFIXES.any? { |prefix| content.includes?(prefix) }
+      return false unless content_matches?(content, INGRESS_API_VERSION_MARKER)
 
       has_api_version = false
       has_kind = false

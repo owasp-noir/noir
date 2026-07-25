@@ -9,7 +9,7 @@ module Detector::Dart
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".dart")
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

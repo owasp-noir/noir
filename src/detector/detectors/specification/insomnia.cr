@@ -5,10 +5,16 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Insomnia < Detector
+    # Every `.json`/`.yaml`/`.yml` in the tree reaches these gates.
+    EXPORT_FORMAT_MARKER = /"__export_format"/
+    TYPE_FIELD_MARKER    = /"_type"/
+    INSOMNIA_HOST_MARKER = /\.insomnia\.rest\//
+
     def detect(filename : String, file_contents : String) : Bool
       check = false
       if filename.ends_with?(".json")
-        return false unless file_contents.includes?("\"__export_format\"") && file_contents.includes?("\"_type\"")
+        return false unless content_matches?(file_contents, EXPORT_FORMAT_MARKER) &&
+                            content_matches?(file_contents, TYPE_FIELD_MARKER)
 
         begin
           data = JSON.parse(file_contents)
@@ -23,7 +29,7 @@ module Detector::Specification
           logger.debug "Insomnia JSON detection failed for #{filename}: #{e}"
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-        return false unless file_contents.includes?(".insomnia.rest/")
+        return false unless content_matches?(file_contents, INSOMNIA_HOST_MARKER)
 
         begin
           data = YAML.parse(file_contents)

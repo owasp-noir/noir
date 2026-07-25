@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Fresh < Detector
+    FRESH_MARKER = /\$fresh\//
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -9,19 +11,19 @@ module Detector::Javascript
       # canonical signals are `deno.json` / `deno.jsonc` referencing
       # `$fresh/` and `fresh.config.{ts,js}` files.
       if base == "fresh.config.ts" || base == "fresh.config.js" ||
-         base == "main.ts" && file_contents.includes?("$fresh/")
+         base == "main.ts" && content_matches?(file_contents, FRESH_MARKER)
         return true
       end
 
       if (base == "deno.json" || base == "deno.jsonc") &&
-         file_contents.includes?("$fresh/")
+         content_matches?(file_contents, FRESH_MARKER)
         return true
       end
 
       # Source-side: Fresh handlers / pages import from `$fresh/`.
       if (filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
          filename.ends_with?(".js") || filename.ends_with?(".jsx")) &&
-         file_contents.includes?("$fresh/")
+         content_matches?(file_contents, FRESH_MARKER)
         return true
       end
 

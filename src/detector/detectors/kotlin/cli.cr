@@ -10,7 +10,7 @@ module Detector::Kotlin
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".kt")
-      LIB_IMPORTS.any? { |marker| file_contents.includes?(marker) } || file_contents.matches?(USAGE)
+      LIB_IMPORTS.any? { |marker| file_contents.includes?(marker) } || content_matches?(file_contents, USAGE)
     end
 
     def applicable?(filename : String) : Bool

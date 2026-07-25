@@ -65,7 +65,7 @@ module Detector::Specification
     end
 
     private def detect_rest_endpoints(filename : String, file_contents : String) : Bool
-      return false unless file_contents.matches?(REST_MARKER)
+      return false unless content_matches?(file_contents, REST_MARKER)
 
       data = yaml_any?(file_contents)
       return false unless data
@@ -84,8 +84,8 @@ module Detector::Specification
     end
 
     private def detect_tables(filename : String, file_contents : String) : Bool
-      return false unless file_contents.matches?(TABLE_MARKER)
-      return false unless file_contents.matches?(HASURA_VOCABULARY)
+      return false unless content_matches?(file_contents, TABLE_MARKER)
+      return false unless content_matches?(file_contents, HASURA_VOCABULARY)
 
       data = yaml_any?(file_contents)
       return false unless data

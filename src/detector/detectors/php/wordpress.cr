@@ -74,7 +74,7 @@ module Detector::Php
         # `admin_post_` substring also occurs in Symfony/Laravel route
         # names like `admin_post_edit`, so anchor to the call syntax
         # rather than matching the prefix anywhere in the file.
-        return true if file_contents.matches?(/add_action\s*\(\s*['"](?:wp_ajax_|admin_post_)/)
+        return true if content_matches?(file_contents, /add_action\s*\(\s*['"](?:wp_ajax_|admin_post_)/)
       end
 
       false

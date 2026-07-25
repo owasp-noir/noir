@@ -40,7 +40,7 @@ module Detector::Ruby
       end
 
       return false unless filename.ends_with?(".rb")
-      file_contents.matches?(CLI_MARKER)
+      content_matches?(file_contents, CLI_MARKER)
     end
 
     def applicable?(filename : String) : Bool

@@ -9,7 +9,7 @@ module Detector::Crystal
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".cr")
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

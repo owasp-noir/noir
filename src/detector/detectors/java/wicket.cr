@@ -2,19 +2,15 @@ require "../../../models/detector"
 
 module Detector::Java
   class Wicket < Detector
-    def detect(filename : String, file_contents : String) : Bool
-      if filename.ends_with?(".java")
-        return true if file_contents.includes?("org.apache.wicket")
-        return true if file_contents.includes?("extends WebApplication")
-        return true if file_contents.includes?("@MountPath")
-      end
+    SOURCE_MARKERS = Regex.union("org.apache.wicket", "extends WebApplication", "@MountPath")
+    BUILD_MARKERS  = Regex.union("org.apache.wicket", "wicket-core", "wicket-auth-roles", "wicketstuff")
 
-      build_file?(filename) && (
-        file_contents.includes?("org.apache.wicket") ||
-          file_contents.includes?("wicket-core") ||
-          file_contents.includes?("wicket-auth-roles") ||
-          file_contents.includes?("wicketstuff")
-      )
+    def detect(filename : String, file_contents : String) : Bool
+      # `build_file?` never matches `.java`, so the source markers decide
+      # the answer outright for those.
+      return content_matches?(file_contents, SOURCE_MARKERS) if filename.ends_with?(".java")
+
+      build_file?(filename) && content_matches?(file_contents, BUILD_MARKERS)
     end
 
     def applicable?(filename : String) : Bool

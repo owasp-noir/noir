@@ -10,7 +10,7 @@ module Detector::Specification
     SERVICE_BLOCK = /\bservice\s+\w+\s*\{/
 
     def detect(filename : String, file_contents : String) : Bool
-      if filename.ends_with?(".proto") && file_contents.matches?(SERVICE_BLOCK)
+      if filename.ends_with?(".proto") && content_matches?(file_contents, SERVICE_BLOCK)
         CodeLocator.instance.push("grpc-proto", filename)
         return true
       end

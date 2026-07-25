@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Nuxtjs < Detector
+    EVENT_HANDLER = /defineEventHandler/
+
     # Single precompiled alternation — one PCRE2 scan instead of six.
     SIGNAL = Regex.union(
       /require\(['"]nuxt['"]\)/,
@@ -20,7 +22,7 @@ module Detector::Javascript
 
       # Check for Nuxt imports and patterns in JS/TS files
       if (filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")) &&
-         file_contents.matches?(SIGNAL)
+         content_matches?(file_contents, SIGNAL)
         return true
       end
 
@@ -34,7 +36,7 @@ module Detector::Javascript
       if (filename.includes?("/server/api/") || filename.includes?("/server/routes/")) &&
          (filename.ends_with?(".js") || filename.ends_with?(".ts") ||
          filename.ends_with?(".mjs") || filename.ends_with?(".mts")) &&
-         file_contents.includes?("defineEventHandler")
+         content_matches?(file_contents, EVENT_HANDLER)
         return true
       end
 

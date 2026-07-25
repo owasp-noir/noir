@@ -5,9 +5,12 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Oas2 < Detector
+    # Every `.json`/`.yaml`/`.yml` in the tree reaches this gate.
+    SWAGGER_MARKER = /swagger/
+
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      return false unless file_contents.includes?("swagger")
+      return false unless content_matches?(file_contents, SWAGGER_MARKER)
 
       if filename.ends_with?(".json")
         begin

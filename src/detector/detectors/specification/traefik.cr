@@ -18,7 +18,7 @@ module Detector::Specification
 
       if filename.ends_with?(".toml")
         check = file_contents.includes?("[http.routers.") && file_contents.includes?("rule")
-      elsif (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && file_contents.matches?(YAML_MARKER)
+      elsif (filename.ends_with?(".yaml") || filename.ends_with?(".yml")) && content_matches?(file_contents, YAML_MARKER)
         if data = yaml_any?(file_contents)
           begin
             check = traefik_dynamic_config?(data) ||

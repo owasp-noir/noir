@@ -7,7 +7,7 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".bru")
-      return false unless file_contents.matches?(BLOCK_HEADER)
+      return false unless content_matches?(file_contents, BLOCK_HEADER)
 
       locator = CodeLocator.instance
       locator.push("bruno-bru", filename)
