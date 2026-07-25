@@ -1,3 +1,4 @@
+require "./ai_context/features.cr"
 require "./completions.cr"
 require "./config_initializer.cr"
 require "./banner.cr"
@@ -170,7 +171,9 @@ end
 # <the typo>". A single bare word still has to match a known feature
 # exactly, since that shape is genuinely ambiguous with a real one-word
 # directory name (`noir scan --ai-context myapp` must keep scanning `myapp`).
-AI_CONTEXT_FEATURES = ["guards", "sinks", "validators", "signals", "callee", "all"]
+# Both this and `AI_CONTEXT_VALID_FEATURES` below used to spell the
+# vocabulary out by hand, and both omitted `sources`.
+AI_CONTEXT_FEATURES = NoirAIContext::ACCEPTED_FEATURES
 
 def normalize_ai_context_flag(args : Array(String)) : Array(String)
   result = [] of String
@@ -324,9 +327,13 @@ def run_options_parser
     parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
       apply_include_list(noir_options, v)
     end
+    # Category names come from the one vocabulary so the help can no longer
+    # drift from what the validator accepts. It had: it omitted `sources`
+    # and spelled `callee` as "callees", neither of which is a name you can
+    # actually pass.
     parser.on "--ai-context [LIST]", <<-DESC do |v|
       Include aggregated AI review context. With no argument, emits every
-      category (guards, callees, sinks, validators, signals). Pass a
+      category (#{NoirAIContext::FEATURES.join(", ")}). Pass a
       comma-separated subset to narrow the output:
         --ai-context guards,sinks
         --ai-context=callee
@@ -638,7 +645,7 @@ end
 # `--ai-context[=LIST]` always enables AI context output. An empty LIST
 # means "every category"; a non-empty LIST narrows the output to the
 # named categories.
-AI_CONTEXT_VALID_FEATURES = {"guards", "sinks", "validators", "signals", "callee", "all"}
+AI_CONTEXT_VALID_FEATURES = NoirAIContext::ACCEPTED_FEATURES.to_set
 
 def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
   noir_options["ai_context"] = YAML::Any.new(true)
