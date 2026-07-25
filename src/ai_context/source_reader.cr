@@ -1,3 +1,4 @@
+require "../models/code_locator"
 require "../utils/text_file"
 
 module NoirAIContext
@@ -187,7 +188,11 @@ module NoirAIContext
         return cached
       end
 
-      lines = Noir::TextFile.read(path).split("\n")
+      # The detector already read and cached almost every file of the
+      # scan; going back to disk here paid a second open per file the
+      # augmentor touches.
+      content = CodeLocator.instance.content_for(path) || Noir::TextFile.read(path)
+      lines = content.split("\n")
       @file_cache[path] = lines
       lines
     rescue
