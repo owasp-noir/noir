@@ -1,3 +1,4 @@
+require "./features.cr"
 require "../models/endpoint"
 require "./pattern_definition"
 require "./patterns"
@@ -29,16 +30,10 @@ module NoirAIContext
   # plain-text builder's feature filter so JSON/YAML/SARIF/Postman/
   # OAS — which serialize the struct directly — show the same
   # subset the user asked for via `--ai-context=guards,sinks`.
-  # `features` follows the canonical bucket names: "guards",
-  # "callee", "sources", "sinks", "validators", "signals". An empty set or
-  # one containing every name is a no-op.
+  # `features` holds bucket names from `NoirAIContext::FEATURES`. An empty
+  # set, or one naming every bucket, is a no-op.
   def apply_feature_filter(endpoints : Array(Endpoint), features : Set(String))
-    return endpoints if features.includes?("guards") &&
-                        features.includes?("callee") &&
-                        features.includes?("sources") &&
-                        features.includes?("sinks") &&
-                        features.includes?("validators") &&
-                        features.includes?("signals")
+    return endpoints if FEATURES.all? { |feature| features.includes?(feature) }
 
     # Endpoint is a struct (value type). `endpoints.each` iterates
     # copies, so `endpoint.ai_context = …` would only mutate the
@@ -58,22 +53,5 @@ module NoirAIContext
       endpoints[idx] = endpoint
     end
     endpoints
-  end
-
-  # Parses the comma-separated `--ai-context=…` value into the set
-  # of bucket names that should survive the filter. Empty value or
-  # `"all"` means every bucket (the no-op set).
-  def parse_feature_set(raw : String) : Set(String)
-    all = Set{"guards", "callee", "sources", "sinks", "validators", "signals"}
-    return all if raw.empty?
-
-    filtered = Set(String).new
-    raw.split(',').each do |feature|
-      f = feature.strip
-      next if f.empty?
-      return all if f == "all"
-      filtered << f
-    end
-    filtered
   end
 end

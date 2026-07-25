@@ -1,3 +1,4 @@
+require "../ai_context/features"
 require "../models/output_builder"
 require "../models/endpoint"
 
@@ -228,18 +229,7 @@ class OutputBuilderCommon < OutputBuilder
   # Returns the set of AI-context category names that should be emitted.
   # An empty/unset `ai_context_features` option means "all categories".
   private def ai_context_feature_filter : Set(String)
-    all = Set{"guards", "callee", "sources", "sinks", "validators", "signals"}
-    raw = @options["ai_context_features"]?.try(&.to_s) || ""
-    return all if raw.empty?
-
-    filtered = Set(String).new
-    raw.split(',').each do |feature|
-      f = feature.strip
-      next if f.empty?
-      return all if f == "all"
-      filtered << f
-    end
-    filtered
+    NoirAIContext.parse_feature_set(@options["ai_context_features"]?.try(&.to_s) || "")
   end
 
   private def append_ai_context_block(r_buffer : String::Builder, label : String, entries : Array(AIContextEntry))
