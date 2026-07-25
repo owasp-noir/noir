@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../utils/http_symbols"
 require "uri"
 
@@ -13,22 +13,13 @@ module Analyzer::Specification
   # definitions; anything left unresolved in the path is treated as a path
   # parameter (`:var`) rather than literal text. JetBrains response-handler
   # blocks (`> {% ... %}` / `> script.js`) are skipped.
-  class HttpFile < Analyzer
+  class HttpFile < SpecificationEngine
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     def analyze
-      locator = CodeLocator.instance
-      http_files = locator.all("http-file")
-
-      http_files.each do |http_file|
-        next unless File.exists?(http_file)
-        begin
-          content = read_file_content(http_file)
-          process_file(content, http_file)
-        rescue e
-          @logger.debug "Exception processing #{http_file}"
-          @logger.debug_sub e
-        end
+      each_spec_file("http-file") do |http_file|
+        content = read_file_content(http_file)
+        process_file(content, http_file)
       end
 
       @result

@@ -1,9 +1,9 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "json"
 require "uri"
 
 module Analyzer::Specification
-  class Har < Analyzer
+  class Har < SpecificationEngine
     STATIC_EXTENSIONS = {
       ".avif", ".bmp", ".css", ".cur", ".eot", ".gif", ".ico", ".jpeg", ".jpg",
       ".js", ".map", ".mjs", ".otf", ".png", ".svg", ".ttf", ".webmanifest",
@@ -34,43 +34,36 @@ module Analyzer::Specification
     }
 
     def analyze
-      locator = CodeLocator.instance
-      har_files = locator.all("har-path")
+      each_spec_file("har-path") do |har_file|
+        data = HAR.from_file(har_file)
+        logger.debug "Open #{har_file} file"
+        data.entries.each do |entry|
+          request_uri = parse_uri(entry.request.url)
+          next unless request_uri
 
-      if har_files.is_a?(Array(String))
-        har_files.each do |har_file|
-          if File.exists?(har_file)
-            data = HAR.from_file(har_file)
-            logger.debug "Open #{har_file} file"
-            data.entries.each do |entry|
-              request_uri = parse_uri(entry.request.url)
-              next unless request_uri
+          path = endpoint_path(request_uri)
+          next unless path
+          next if static_asset_request?(entry, request_uri)
 
-              path = endpoint_path(request_uri)
-              next unless path
-              next if static_asset_request?(entry, request_uri)
+          endpoint = Endpoint.new(path, entry.request.method)
+          add_query_params(endpoint, entry.request, request_uri)
 
-              endpoint = Endpoint.new(path, entry.request.method)
-              add_query_params(endpoint, entry.request, request_uri)
-
-              is_websocket = websocket_request?(entry.request, request_uri)
-              entry.request.headers.each do |header|
-                endpoint.params << Param.new(header.name, header.value, "header")
-              end
-
-              entry.request.cookies.each do |cookie|
-                endpoint.params << Param.new(cookie.name, cookie.value, "cookie")
-              end
-
-              add_post_data_params(endpoint, entry.request)
-
-              details = Details.new(PathInfo.new(har_file, 0))
-              details.status_code = entry.response.status
-              endpoint.details = details
-              endpoint.protocol = "ws" if is_websocket
-              @result << endpoint
-            end
+          is_websocket = websocket_request?(entry.request, request_uri)
+          entry.request.headers.each do |header|
+            endpoint.params << Param.new(header.name, header.value, "header")
           end
+
+          entry.request.cookies.each do |cookie|
+            endpoint.params << Param.new(cookie.name, cookie.value, "cookie")
+          end
+
+          add_post_data_params(endpoint, entry.request)
+
+          details = Details.new(PathInfo.new(har_file, 0))
+          details.status_code = entry.response.status
+          endpoint.details = details
+          endpoint.protocol = "ws" if is_websocket
+          @result << endpoint
         end
       end
 

@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "../../../miniparsers/js_object_config_extractor"
 require "./schema_api_common"
 
@@ -9,7 +9,7 @@ module Analyzer::Specification
   #
   # Custom routes declared in `src/api/<name>/routes/*.{ts,js}` are read
   # separately and mounted under the same `/api` prefix.
-  class Strapi < Analyzer
+  class Strapi < SpecificationEngine
     include SchemaApiCommon
 
     ATTRIBUTE_TYPE_HINTS = {
@@ -42,32 +42,12 @@ module Analyzer::Specification
     TAG_SOURCE = "strapi_analyzer"
 
     def analyze
-      locator = CodeLocator.instance
-
-      schemas = locator.all("strapi-schema")
-      if schemas.is_a?(Array(String))
-        schemas.each do |path|
-          next unless File.exists?(path)
-          begin
-            parse_schema(read_file_content(path), path)
-          rescue e
-            @logger.debug "Failed to parse Strapi schema #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("strapi-schema") do |path|
+        parse_schema(read_file_content(path), path)
       end
 
-      routes = locator.all("strapi-routes")
-      if routes.is_a?(Array(String))
-        routes.each do |path|
-          next unless File.exists?(path)
-          begin
-            parse_routes(read_file_content(path), path)
-          rescue e
-            @logger.debug "Failed to parse Strapi routes #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file("strapi-routes") do |path|
+        parse_routes(read_file_content(path), path)
       end
 
       @result

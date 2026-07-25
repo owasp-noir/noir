@@ -1,18 +1,14 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
-  class Apisix < Analyzer
+  class Apisix < SpecificationEngine
     def analyze
-      locator = CodeLocator.instance
-
-      json_files = locator.all("apisix-json")
-      if json_files.is_a?(Array(String))
-        json_files.each { |path| process_json(path) }
+      each_spec_file("apisix-json") do |path|
+        process_json(path)
       end
 
-      yaml_files = locator.all("apisix-yaml")
-      if yaml_files.is_a?(Array(String))
-        yaml_files.each { |path| process_yaml(path) }
+      each_spec_file("apisix-yaml") do |path|
+        process_yaml(path)
       end
 
       @result

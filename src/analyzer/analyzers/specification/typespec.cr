@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 require "uri"
 
 module Analyzer::Specification
@@ -7,20 +7,13 @@ module Analyzer::Specification
   # that compose along namespace + interface scopes. This analyzer is a
   # line/block parser (not a full TypeSpec compiler): it walks balanced braces,
   # buffers decorators across newlines, and emits one endpoint per operation.
-  class TypeSpec < Analyzer
+  class TypeSpec < SpecificationEngine
     HTTP_VERB_DECORATORS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
     def analyze
-      locator = CodeLocator.instance
-      typespec_files = locator.all("typespec-spec")
-
-      if typespec_files.is_a?(Array(String))
-        typespec_files.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = read_file_content(path)
-          process_file(content, details, path)
-        end
+      each_spec_file_with_details("typespec-spec") do |path, details|
+        content = read_file_content(path)
+        process_file(content, details, path)
       end
 
       @result

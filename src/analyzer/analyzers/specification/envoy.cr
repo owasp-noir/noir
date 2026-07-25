@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # Extracts HTTP endpoints from Envoy proxy route configuration files
@@ -12,38 +12,16 @@ module Analyzer::Specification
   #   - HTTP method from `match.headers[]` where `name: ":method"`
   #   - An additional endpoint for `route.prefix_rewrite` when it differs
   #     from the matched path
-  class Envoy < Analyzer
+  class Envoy < SpecificationEngine
     def analyze
-      locator = CodeLocator.instance
-
-      yaml_files = locator.all("envoy-yaml")
-      if yaml_files.is_a?(Array(String))
-        yaml_files.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = read_file_content(path)
-          begin
-            process_yaml(YAML.parse(content), details)
-          rescue e
-            @logger.debug "Exception processing #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file_with_details("envoy-yaml") do |path, details|
+        content = read_file_content(path)
+        process_yaml(YAML.parse(content), details)
       end
 
-      json_files = locator.all("envoy-json")
-      if json_files.is_a?(Array(String))
-        json_files.each do |path|
-          next unless File.exists?(path)
-          details = Details.new(PathInfo.new(path))
-          content = read_file_content(path)
-          begin
-            process_json(JSON.parse(content), details)
-          rescue e
-            @logger.debug "Exception processing #{path}"
-            @logger.debug_sub e
-          end
-        end
+      each_spec_file_with_details("envoy-json") do |path, details|
+        content = read_file_content(path)
+        process_json(JSON.parse(content), details)
       end
 
       @result

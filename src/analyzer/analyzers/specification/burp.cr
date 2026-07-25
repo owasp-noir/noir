@@ -1,28 +1,18 @@
 require "base64"
 require "uri"
 require "xml"
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # Parses Burp Suite sitemap XML exports (`Target → Site map → right-click →
   # Save items`). Each `<item>` holds an absolute URL, a base64-encoded raw
   # HTTP request, and the response — the request blob is the source of truth
   # for method, path, headers, and body.
-  class Burp < Analyzer
+  class Burp < SpecificationEngine
     def analyze
-      locator = CodeLocator.instance
-      burp_files = locator.all("burp-sitemap")
-      return @result unless burp_files.is_a?(Array(String))
-
-      burp_files.each do |path|
-        next unless File.exists?(path)
-        begin
-          content = read_file_content(path)
-          process_file(content, path)
-        rescue e
-          @logger.debug "Failed to parse Burp sitemap #{path}: #{e.message}"
-          @logger.debug_sub e
-        end
+      each_spec_file("burp-sitemap") do |path|
+        content = read_file_content(path)
+        process_file(content, path)
       end
 
       @result

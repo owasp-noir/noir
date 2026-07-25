@@ -1,4 +1,4 @@
-require "../../../models/analyzer"
+require "../../engines/specification_engine"
 
 module Analyzer::Specification
   # Smithy IDL (https://smithy.io) is AWS's interface definition language.
@@ -6,7 +6,7 @@ module Analyzer::Specification
   # (`@httpLabel`, `@httpHeader`, `@httpQuery`, `@httpPayload`) map
   # directly to Noir endpoints, so we parse them shape-by-shape rather
   # than building a full AST.
-  class Smithy < Analyzer
+  class Smithy < SpecificationEngine
     # Parsed representation of one operation's HTTP binding.
     record HttpBinding, method : String, uri : String, code : Int32?
 
@@ -45,23 +45,13 @@ module Analyzer::Specification
     record InputMember, name : String, param_type : String
 
     def analyze
-      locator = CodeLocator.instance
-      spec_files = locator.all("smithy-spec")
-
       # Two-pass: first collect every structure's member bindings so an
       # `operation` declared above its input structure still resolves.
       structures = {} of String => Array(InputMember)
       operations = [] of NamedTuple(name: String, file: String, line: Int32, binding: HttpBinding, input: String?)
 
-      spec_files.each do |file|
-        begin
-          content = read_file_content(file)
-        rescue File::NotFoundError
-          @logger.debug "Smithy spec not found during analysis, skipping: #{file}"
-          next
-        end
-
-        parse_file(content, file, structures, operations)
+      each_spec_file("smithy-spec") do |file|
+        parse_file(read_file_content(file), file, structures, operations)
       end
 
       operations.each do |op|
