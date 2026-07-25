@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Ruby
   class Rails < Detector
+    detector_for "ruby_rails", extensions: %w[.rb .ru .gemspec], basenames: %w[Gemfile Gemfile.lock]
+
     # Modern Rails apps frequently skip the umbrella `rails` dependency and
     # pull the individual frameworks they actually use (railties +
     # actionpack + activerecord + ...). Treat `railties` as a unique marker
@@ -22,18 +24,6 @@ module Detector::Ruby
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".rb") ||
-        filename.ends_with?(".ru") ||
-        filename.ends_with?(".gemspec") ||
-        File.basename(filename) == "Gemfile" ||
-        File.basename(filename) == "Gemfile.lock"
-    end
-
-    def set_name
-      @name = "ruby_rails"
     end
   end
 end

@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Php
   class Wordpress < Detector
+    detector_for "php_wordpress", extensions: %w[.php .phtml], basenames: %w[composer.json]
+
     # Strong, WordPress-specific source markers. A generic PHP file that
     # merely calls `add_action` is not enough — we require a marker that
     # is effectively unique to WordPress core/plugin/theme code so we do
@@ -78,14 +80,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json"
-    end
-
-    def set_name
-      @name = "php_wordpress"
     end
   end
 end

@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Cfml
   class Pure < Detector
+    detector_for "cfml_pure", extensions: %w[.cfm .cfc .cfml]
+
     # CFML tag markers. Tags are case-insensitive and may be written with
     # or without a closing slash, so match the opening `<cfxxx` prefix only.
     TAG_MARKERS_RE = /<cf(?:component|function|argument|script|set|output|query|param|return|invoke|http|location|include)\b/i
@@ -18,14 +20,6 @@ module Detector::Cfml
       return true if content_matches?(file_contents, SCRIPT_COMPONENT_RE)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cfm") || filename.ends_with?(".cfc") || filename.ends_with?(".cfml")
-    end
-
-    def set_name
-      @name = "cfml_pure"
     end
   end
 end

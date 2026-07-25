@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Zig
   class Httpz < Detector
+    detector_for "zig_httpz", extensions: %w[.zig], basenames: %w[build.zig.zon]
+
     def detect(filename : String, file_contents : String) : Bool
       return true if filename.ends_with?(".zig") && file_contents.includes?("@import(\"httpz\")")
 
@@ -11,14 +13,6 @@ module Detector::Zig
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".zig") || File.basename(filename) == "build.zig.zon"
-    end
-
-    def set_name
-      @name = "zig_httpz"
     end
   end
 end

@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class Laminas < Detector
+    detector_for "php_laminas",
+      extensions: %w[.php .phtml],
+      basenames: %w[composer.json composer.lock]
+
     LAMINAS_PACKAGES = [
       "laminas/laminas-mvc",
       "laminas/laminas-router",
@@ -33,14 +37,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_laminas"
     end
   end
 end

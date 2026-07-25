@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Elixir
   class Bandit < Detector
+    detector_for "elixir_bandit", extensions: %w[.ex .exs], basenames: %w[mix.exs]
+
     def detect(filename : String, file_contents : String) : Bool
       basename = File.basename(filename)
 
@@ -25,14 +27,6 @@ module Detector::Elixir
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".ex") || filename.ends_with?(".exs") || File.basename(filename) == "mix.exs"
-    end
-
-    def set_name
-      @name = "elixir_bandit"
     end
   end
 end

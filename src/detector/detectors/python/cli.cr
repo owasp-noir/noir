@@ -10,19 +10,13 @@ module Detector::Python
   # (sys.argv) is far too common to treat as CLI evidence on its own, so it
   # is only honored inside the analyzer when paired with a `__main__` guard.
   class Cli < Detector
+    detector_for "python_cli", extensions: %w[.py]
+
     CLI_IMPORT_RE = /(?:^|\n)\s*(?:import|from)\s+(?:argparse|click|typer|fire|docopt|getopt|absl|cleo)\b/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
       content_matches?(file_contents, CLI_IMPORT_RE)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_cli"
     end
   end
 end

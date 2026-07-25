@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class CloudflareWrangler < Detector
+    # Registers each wrangler config path in `CodeLocator`.
+    detector_for "cloudflare_wrangler", idempotent: false
+
     WRANGLER_FILES = {"wrangler.toml", "wrangler.jsonc", "wrangler.json"}
 
     def detect(filename : String, file_contents : String) : Bool
@@ -27,15 +30,6 @@ module Detector::Specification
 
     def applicable?(filename : String) : Bool
       WRANGLER_FILES.includes?(File.basename(filename))
-    end
-
-    def set_name
-      @name = "cloudflare_wrangler"
-    end
-
-    # Registers each wrangler config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

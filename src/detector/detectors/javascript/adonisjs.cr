@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Adonisjs < Detector
+    detector_for "js_adonisjs",
+      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      basenames: %w[package.json]
+
     PACKAGE_MARKERS = Regex.union("@adonisjs/core", "\"adonis-") # legacy adonis-* packages
     SOURCE_MARKERS  = Regex.union("@adonisjs/core", "@ioc:Adonis")
 
@@ -26,14 +30,6 @@ module Detector::Javascript
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_adonisjs"
     end
   end
 end

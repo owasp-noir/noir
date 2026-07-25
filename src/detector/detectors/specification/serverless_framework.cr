@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class ServerlessFramework < Detector
+    # Registers each Serverless Framework config path in `CodeLocator`.
+    detector_for "serverless_framework", idempotent: false
+
     CONFIG_FILES = {"serverless.yml", "serverless.yaml", "serverless.json"}
 
     def detect(filename : String, file_contents : String) : Bool
@@ -24,15 +27,6 @@ module Detector::Specification
 
     def applicable?(filename : String) : Bool
       CONFIG_FILES.includes?(File.basename(filename))
-    end
-
-    def set_name
-      @name = "serverless_framework"
-    end
-
-    # Registers each Serverless Framework config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def serverless_doc?(data : JSON::Any) : Bool

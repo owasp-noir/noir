@@ -4,6 +4,8 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Kong < Detector
+    detector_for "kong", extensions: %w[.yaml .yml], idempotent: false
+
     # Necessary-condition guard: both accepted shapes require one of these
     # literals somewhere in the document (`deck_shape?` needs a
     # `_format_version` key, `kic_shape?` an apiVersion containing
@@ -26,18 +28,6 @@ module Detector::Specification
         logger.debug "Kong detection failed for #{filename}: #{e}"
       end
 
-      false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "kong"
-    end
-
-    def idempotent? : Bool
       false
     end
 

@@ -14,6 +14,10 @@ module Detector::Mobile
   # JSON blob doesn't register. Both file types feed the single
   # `well_known_applinks` analyzer via the CodeLocator.
   class WellKnown < Detector
+    # Registers assetlinks.json / apple-app-site-association paths in
+    # `CodeLocator`, so it must run on every candidate file.
+    detector_for "well_known_applinks", idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       basename = File.basename(filename)
       locator = CodeLocator.instance
@@ -34,16 +38,6 @@ module Detector::Mobile
     def applicable?(filename : String) : Bool
       basename = File.basename(filename)
       basename == "assetlinks.json" || aasa_basename?(basename)
-    end
-
-    def set_name
-      @name = "well_known_applinks"
-    end
-
-    # Registers assetlinks.json / apple-app-site-association paths in
-    # `CodeLocator`, so it must run on every candidate file.
-    def idempotent? : Bool
-      false
     end
 
     private def aasa_basename?(basename : String) : Bool

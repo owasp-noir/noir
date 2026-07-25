@@ -5,19 +5,13 @@ module Detector::Perl
   # MooseX::Getopt, Getopt::Long::Descriptive, MooX::Options, or explicit
   # @ARGV indexing. Never gates on bare %ENV (Mojolicious/Dancer2 config).
   class Cli < Detector
+    detector_for "perl_cli", extensions: %w[.pl .pm .t]
+
     MARKERS = /\buse\s+Getopt::(?:Long|Std)\b|\bGetOptions\s*\(|\bgetopts?\s*\(|\buse\s+App::Cmd\b|\bMooseX::Getopt\b|\$ARGV\s*\[\s*\d+\s*\]|\buse\s+Getopt::Long::Descriptive\b|\bdescribe_options\s*\(|\buse\s+MooX::Options\b/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       content_matches?(file_contents, MARKERS)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".pl") || filename.ends_with?(".pm") || filename.ends_with?(".t")
-    end
-
-    def set_name
-      @name = "perl_cli"
     end
   end
 end

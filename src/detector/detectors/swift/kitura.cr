@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Swift
   class Kitura < Detector
+    detector_for "swift_kitura", basenames: %w[Package.swift]
+
     def detect(filename : String, file_contents : String) : Bool
       # Check if this is a Package.swift file
       return false unless filename.includes?("Package.swift")
@@ -14,14 +16,6 @@ module Detector::Swift
                          file_contents.includes?(".package(")))
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      File.basename(filename) == "Package.swift"
-    end
-
-    def set_name
-      @name = "swift_kitura"
     end
   end
 end

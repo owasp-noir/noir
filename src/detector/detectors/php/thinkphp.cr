@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class ThinkPHP < Detector
+    detector_for "php_thinkphp",
+      extensions: %w[.php .phtml],
+      basenames: %w[composer.json composer.lock think]
+
     def detect(filename : String, file_contents : String) : Bool
       # Check for composer.json with ThinkPHP dependency
       if filename.ends_with?("composer.json") && file_contents.includes?("topthink/framework")
@@ -31,14 +35,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock" || File.basename(filename) == "think"
-    end
-
-    def set_name
-      @name = "php_thinkphp"
     end
   end
 end

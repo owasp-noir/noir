@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::CSharp
   class Carter < Detector
+    detector_for "cs_carter", extensions: %w[.cs .csproj .props .targets]
+
     # Detects Carter (https://github.com/CarterCommunity/Carter), a
     # module library for ASP.NET Core minimal APIs. Carter projects
     # are also ASP.NET Core projects, so the surrounding
@@ -18,15 +20,6 @@ module Detector::CSharp
 
       return false unless filename.ends_with?(".cs")
       file_contents.includes?("using Carter") || file_contents.includes?("ICarterModule")
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cs") || filename.ends_with?(".csproj") ||
-        filename.ends_with?(".props") || filename.ends_with?(".targets")
-    end
-
-    def set_name
-      @name = "cs_carter"
     end
   end
 end

@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class K8sIngress < Detector
+    # Registers each ingress manifest path in `CodeLocator`.
+    detector_for "k8s_ingress", extensions: %w[.yaml .yml], idempotent: false
+
     INGRESS_API_VERSION_PREFIXES = ["networking.k8s.io/", "extensions/v1beta1"]
 
     # Every `.yml`/`.yaml` in the tree reaches this gate.
@@ -16,19 +19,6 @@ module Detector::Specification
 
       CodeLocator.instance.push("k8s-ingress-spec", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "k8s_ingress"
-    end
-
-    # Registers each ingress manifest path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def ingress_document_present?(content : String) : Bool

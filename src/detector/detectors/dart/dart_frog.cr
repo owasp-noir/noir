@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Dart
   class DartFrog < Detector
+    detector_for "dart_frog", extensions: %w[.dart], basenames: %w[pubspec.yaml pubspec.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -26,14 +28,6 @@ module Detector::Dart
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".dart") || File.basename(filename) == "pubspec.yaml" || File.basename(filename) == "pubspec.lock"
-    end
-
-    def set_name
-      @name = "dart_frog"
     end
   end
 end

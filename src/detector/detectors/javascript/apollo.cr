@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Apollo < Detector
+    detector_for "js_apollo", extensions: %w[.js .mjs .cjs .jsx .ts .tsx]
+
     # Apollo Server v4 ships as `@apollo/server`; legacy v2/v3 use the
     # `apollo-server` / `apollo-server-*` family. `ApolloServer` shows up
     # in both, so a literal-name match catches plain `import { ApolloServer }`
@@ -21,16 +23,6 @@ module Detector::Javascript
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       content_matches?(file_contents, SIGNAL)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") ||
-        filename.ends_with?(".cjs") || filename.ends_with?(".jsx") ||
-        filename.ends_with?(".ts") || filename.ends_with?(".tsx")
-    end
-
-    def set_name
-      @name = "js_apollo"
     end
   end
 end

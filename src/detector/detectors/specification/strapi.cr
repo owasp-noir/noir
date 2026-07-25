@@ -11,6 +11,9 @@ module Detector::Specification
   # Scoped to v4+. Strapi v3's `config/routes.json` is EOL since 2023 and
   # its shape is indistinguishable from an APISIX route export.
   class Strapi < Detector
+    # Registers every schema and route path in `CodeLocator`.
+    detector_for "strapi", idempotent: false
+
     SCHEMA_FILENAME  = "schema.json"
     ROUTE_EXTENSIONS = {".ts", ".js", ".mts", ".cts", ".mjs", ".cjs"}
 
@@ -47,15 +50,6 @@ module Detector::Specification
       return false unless ROUTE_EXTENSIONS.includes?(File.extname(path).downcase)
 
       routes_module?(path)
-    end
-
-    def set_name
-      @name = "strapi"
-    end
-
-    # Registers every schema and route path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def detect_schema(filename : String, file_contents : String) : Bool

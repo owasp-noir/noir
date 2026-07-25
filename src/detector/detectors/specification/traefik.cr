@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Traefik < Detector
+    # Registers every Traefik config path in `CodeLocator`.
+    detector_for "traefik", extensions: %w[.yaml .yml .toml], idempotent: false
+
     # Necessary-condition guard for the YAML branch: every accepted shape
     # requires one of these literals in the raw document — a `routers` key
     # (`traefik_dynamic_config?`, and the `traefik.http.routers.` label
@@ -36,19 +39,6 @@ module Detector::Specification
       end
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml") || filename.ends_with?(".toml")
-    end
-
-    def set_name
-      @name = "traefik"
-    end
-
-    # Registers every Traefik config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def traefik_dynamic_config?(data : YAML::Any) : Bool

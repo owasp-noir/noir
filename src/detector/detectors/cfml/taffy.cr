@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Cfml
   class Taffy < Detector
+    detector_for "cfml_taffy", extensions: %w[.cfc .cfm]
+
     # The `taffy:uri` / `taffy_uri` resource attribute, or a component
     # extending Taffy's resource base. `taffy.core.api` appears in the
     # application's index.cfm.
@@ -17,14 +19,6 @@ module Detector::Cfml
       return true if content_matches?(file_contents, API_BASE_RE)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cfc") || filename.ends_with?(".cfm")
-    end
-
-    def set_name
-      @name = "cfml_taffy"
     end
   end
 end

@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class AzureFunctions < Detector
+    # Registers each function.json path in `CodeLocator`.
+    detector_for "azure_functions", idempotent: false
+
     FUNCTION_JSON = "function.json"
 
     def detect(filename : String, file_contents : String) : Bool
@@ -19,15 +22,6 @@ module Detector::Specification
 
     def applicable?(filename : String) : Bool
       File.basename(filename) == FUNCTION_JSON
-    end
-
-    def set_name
-      @name = "azure_functions"
-    end
-
-    # Registers each function.json path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

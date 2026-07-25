@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Clojure
   class Ring < Detector
+    detector_for "clojure_ring",
+      extensions: %w[.clj .cljs .cljc .edn],
+      basenames: %w[project.clj deps.edn]
+
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
     PROJECT_FILES      = {"project.clj", "deps.edn"}
 
@@ -34,14 +38,6 @@ module Detector::Clojure
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".clj") || filename.ends_with?(".cljs") || filename.ends_with?(".cljc") || filename.ends_with?(".edn") || File.basename(filename) == "project.clj" || File.basename(filename) == "deps.edn"
-    end
-
-    def set_name
-      @name = "clojure_ring"
     end
   end
 end

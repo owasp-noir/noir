@@ -5,6 +5,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Apisix < Detector
+    # Registers every APISIX route config path in `CodeLocator`.
+    detector_for "apisix", extensions: %w[.json .yaml .yml], idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       if filename.ends_with?(".json")
         return false unless apisix_candidate?(file_contents)
@@ -26,19 +29,6 @@ module Detector::Specification
 
       false
     rescue
-      false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "apisix"
-    end
-
-    # Registers every APISIX route config path in `CodeLocator`.
-    def idempotent? : Bool
       false
     end
 

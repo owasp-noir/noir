@@ -6,6 +6,9 @@ require "har"
 
 module Detector::Specification
   class Har < Detector
+    # Registers HAR file paths in `CodeLocator`.
+    detector_for "har", extensions: %w[.har .json], idempotent: false
+
     # Every `.json` in the tree reaches these guards. Both must match, so
     # they stay separate probes rather than a union.
     LOG_MARKER     = /"log"/
@@ -27,19 +30,6 @@ module Detector::Specification
         end
       end
 
-      false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".har") || filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "har"
-    end
-
-    # Registers HAR file paths in `CodeLocator`.
-    def idempotent? : Bool
       false
     end
 

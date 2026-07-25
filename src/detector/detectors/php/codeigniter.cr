@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class CodeIgniter < Detector
+    detector_for "php_codeigniter",
+      extensions: %w[.php .phtml],
+      basenames: %w[composer.json composer.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       # composer.json with CodeIgniter dependency
       if filename.ends_with?("composer.json") &&
@@ -46,14 +50,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_codeigniter"
     end
   end
 end

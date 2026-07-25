@@ -5,6 +5,10 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Oas3 < Detector
+    # Registers every OAS3 spec path in `CodeLocator` for the
+    # analyzer pass. Must keep running after first match.
+    detector_for "oas3", extensions: %w[.json .yaml .yml], idempotent: false
+
     # Every `.json`/`.yaml`/`.yml` in the tree reaches this gate.
     OPENAPI_MARKER = /openapi/
 
@@ -37,20 +41,6 @@ module Detector::Specification
       end
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "oas3"
-    end
-
-    # Registers every OAS3 spec path in `CodeLocator` for the
-    # analyzer pass. Must keep running after first match.
-    def idempotent? : Bool
-      false
     end
   end
 end

@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Caido < Detector
+    # Registers Caido export paths in `CodeLocator`.
+    detector_for "caido", extensions: %w[.json], idempotent: false
+
     # Every `.json` in the tree reaches these guards. The first four must
     # all match, so they stay separate probes; only the last pair is an
     # alternation.
@@ -44,19 +47,6 @@ module Detector::Specification
       rescue
         false
       end
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "caido"
-    end
-
-    # Registers Caido export paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def caido_json_candidate?(content : String) : Bool

@@ -6,19 +6,13 @@ module Detector::CSharp
   # mount. Gates the SignalR analyzer, which emits hub methods as `ws://`
   # realtime endpoints.
   class SignalR < Detector
+    detector_for "cs_signalr", extensions: %w[.cs]
+
     SIGNALR_MARKER = /Microsoft\.AspNetCore\.SignalR\b|\bMapHub\s*</
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".cs")
       content_matches?(file_contents, SIGNALR_MARKER)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cs")
-    end
-
-    def set_name
-      @name = "cs_signalr"
     end
   end
 end

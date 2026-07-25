@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Gleam
   class Wisp < Detector
+    detector_for "gleam_wisp", extensions: %w[.gleam], basenames: %w[gleam.toml manifest.toml]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -16,16 +18,6 @@ module Detector::Gleam
       return true if file_contents.includes?("wisp.path_segments")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".gleam") ||
-        File.basename(filename) == "gleam.toml" ||
-        File.basename(filename) == "manifest.toml"
-    end
-
-    def set_name
-      @name = "gleam_wisp"
     end
   end
 end

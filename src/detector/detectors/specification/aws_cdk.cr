@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class AwsCdk < Detector
+    # Registers each CDK source path in `CodeLocator`.
+    detector_for "aws_cdk", extensions: %w[.ts .tsx .js .mjs .py], idempotent: false
+
     # Every `.ts`/`.js`/`.py` in the tree reaches these gates, so each was
     # walking the whole corpus three (hints) plus six (constructs) times.
     TS_JS_HINT_MARKER  = Regex.union("aws-cdk-lib", "@aws-cdk/aws-apigateway", "@aws-cdk/aws-apigatewayv2")
@@ -21,21 +24,6 @@ module Detector::Specification
 
       CodeLocator.instance.push("aws-cdk-spec", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
-        filename.ends_with?(".js") || filename.ends_with?(".mjs") ||
-        filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "aws_cdk"
-    end
-
-    # Registers each CDK source path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def cdk_api_construct?(content : String) : Bool

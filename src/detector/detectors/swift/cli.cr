@@ -6,6 +6,8 @@ module Detector::Swift
   # ParsableCommand conformance, ArgumentParser property wrappers, SwiftCLI /
   # Commander, or builtin CommandLine.arguments.
   class Cli < Detector
+    detector_for "swift_cli", extensions: %w[.swift]
+
     PARSABLE  = /\b(?:struct|enum|class)\s+\w+\s*:\s*[^\{]*\b(?:Async)?ParsableCommand\b/
     WRAPPERS  = /@(?:Option|Argument|Flag|OptionGroup)\b/
     SWIFTCLI  = /\bimport\s+SwiftCLI\b/
@@ -17,14 +19,6 @@ module Detector::Swift
       file_contents.includes?("import ArgumentParser") || content_matches?(file_contents, PARSABLE) ||
         content_matches?(file_contents, WRAPPERS) || content_matches?(file_contents, SWIFTCLI) ||
         content_matches?(file_contents, COMMANDER) || content_matches?(file_contents, CMDLINE)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".swift")
-    end
-
-    def set_name
-      @name = "swift_cli"
     end
   end
 end

@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Elixir
   class Plug < Detector
+    detector_for "elixir_plug", extensions: %w[.ex .exs], basenames: %w[mix.exs]
+
     def detect(filename : String, file_contents : String) : Bool
       # Check if this is a mix.exs file with Plug dependency
       if filename.includes?("mix.exs")
@@ -20,14 +22,6 @@ module Detector::Elixir
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".ex") || filename.ends_with?(".exs") || File.basename(filename) == "mix.exs"
-    end
-
-    def set_name
-      @name = "elixir_plug"
     end
   end
 end

@@ -7,19 +7,13 @@ module Detector::Elixir
   # `handle_in` events as `ws://` realtime endpoints. Runs alongside the
   # Phoenix (HTTP router) detector — the two cover different surfaces.
   class PhoenixChannel < Detector
+    detector_for "elixir_phoenix_channel", extensions: %w[.ex .exs]
+
     CHANNEL_MARKER = /\buse\s+Phoenix\.Channel\b|\buse\s+[A-Z][\w.]*\s*,\s*:channel\b|\bchannel\s+["'][^"']+["']\s*,\s*[A-Z]/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".ex") || filename.ends_with?(".exs")
       content_matches?(file_contents, CHANNEL_MARKER)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".ex") || filename.ends_with?(".exs")
-    end
-
-    def set_name
-      @name = "elixir_phoenix_channel"
     end
   end
 end

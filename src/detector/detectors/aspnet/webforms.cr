@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Aspnet
   class WebForms < Detector
+    detector_for "aspnet_webforms"
+
     # `<%@ Page %>` / `<%@ Control %>` / `<%@ WebHandler %>` /
     # `<%@ WebService %>` directives, and the `runat="server"` marker that
     # every WebForms control carries. Directives routinely span several
@@ -35,10 +37,6 @@ module Detector::Aspnet
 
       # Only code-behind siblings, never arbitrary sources.
       filename.downcase.matches?(/\.(?:aspx|ascx|ashx|asmx|master)\.(?:cs|vb)\z/)
-    end
-
-    def set_name
-      @name = "aspnet_webforms"
     end
   end
 end

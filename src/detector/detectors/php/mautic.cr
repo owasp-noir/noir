@@ -6,6 +6,8 @@ module Detector::Php
   # => ['name' => ['path' => '/x', 'controller' => '...']]]`) rather than
   # Symfony attributes/annotations — so the Symfony analyzer finds nothing.
   class Mautic < Detector
+    detector_for "php_mautic", extensions: %w[.php], basenames: %w[composer.json composer.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
         return true if file_contents.includes?(%("mautic/core-lib"))
@@ -18,14 +20,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_mautic"
     end
   end
 end

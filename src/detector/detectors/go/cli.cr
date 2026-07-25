@@ -7,6 +7,8 @@ module Detector::Go
   # `os.Args` directly. Gates the Go CLI analyzer, which surfaces the argv /
   # flag / env attack surface as `cli://` endpoints.
   class Cli < Detector
+    detector_for "go_cli", extensions: %w[.go], basenames: %w[go.mod]
+
     # CLI framework import paths. Presence of any of these — in go.mod or a
     # source import block — is a strong, unambiguous CLI signal.
     CLI_LIBRARY_MARKERS = [
@@ -52,14 +54,6 @@ module Detector::Go
       return true if content_matches?(file_contents, ARGV_INDEX)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".go") || File.basename(filename) == "go.mod"
-    end
-
-    def set_name
-      @name = "go_cli"
     end
   end
 end

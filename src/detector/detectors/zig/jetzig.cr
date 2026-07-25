@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Zig
   class Jetzig < Detector
+    detector_for "zig_jetzig", extensions: %w[.zig], basenames: %w[build.zig.zon]
+
     def detect(filename : String, file_contents : String) : Bool
       # Source files import the framework directly.
       return true if filename.ends_with?(".zig") && file_contents.includes?("@import(\"jetzig\")")
@@ -14,14 +16,6 @@ module Detector::Zig
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".zig") || File.basename(filename) == "build.zig.zon"
-    end
-
-    def set_name
-      @name = "zig_jetzig"
     end
   end
 end

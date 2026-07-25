@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Ruby
   class Roda < Detector
+    detector_for "ruby_roda", extensions: %w[.rb .ru .gemspec], basenames: %w[Gemfile Gemfile.lock]
+
     SOURCE_MARKERS = Regex.union(/<\s*Roda\b/, "Roda.route", /require\s+['"]roda['"]/)
 
     def detect(filename : String, file_contents : String) : Bool
@@ -18,14 +20,6 @@ module Detector::Ruby
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".rb") || filename.ends_with?(".ru") || filename.ends_with?(".gemspec") || File.basename(filename) == "Gemfile" || File.basename(filename) == "Gemfile.lock"
-    end
-
-    def set_name
-      @name = "ruby_roda"
     end
   end
 end

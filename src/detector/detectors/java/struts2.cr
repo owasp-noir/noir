@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Java
   class Struts2 < Detector
+    detector_for "java_struts2", extensions: %w[.java .xml .gradle .gradle.kts .properties]
+
     def detect(filename : String, file_contents : String) : Bool
       if filename.ends_with?(".java")
         return true if file_contents.includes?("org.apache.struts2")
@@ -28,18 +30,6 @@ module Detector::Java
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".java") ||
-        filename.ends_with?(".xml") ||
-        filename.ends_with?(".gradle") ||
-        filename.ends_with?(".gradle.kts") ||
-        filename.ends_with?(".properties")
-    end
-
-    def set_name
-      @name = "java_struts2"
     end
   end
 end

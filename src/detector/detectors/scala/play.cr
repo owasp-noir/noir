@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Scala
   class Play < Detector
+    detector_for "scala_play", extensions: %w[.scala .sbt], basenames: %w[build.sbt]
+
     def detect(filename : String, file_contents : String) : Bool
       # Detect Play Framework by Scala-specific indicators
       if filename.ends_with?(".scala")
@@ -23,14 +25,6 @@ module Detector::Scala
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".scala") || filename.ends_with?(".sbt") || File.basename(filename) == "build.sbt"
-    end
-
-    def set_name
-      @name = "scala_play"
     end
   end
 end

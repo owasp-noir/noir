@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Asp
   class Classic < Detector
+    detector_for "asp_classic", extensions: %w[.asp .asa .inc]
+
     # `<%@ LANGUAGE="VBSCRIPT" %>` page directive, the ASP intrinsic
     # objects, and server-side <script> blocks. `.aspx` is a different
     # extension entirely, so there is no overlap with WebForms.
@@ -18,14 +20,6 @@ module Detector::Asp
       return true if content_matches?(file_contents, SCRIPT_DELIMITER_RE) && content_matches?(file_contents, INTRINSIC_RE)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".asp") || filename.ends_with?(".asa") || filename.ends_with?(".inc")
-    end
-
-    def set_name
-      @name = "asp_classic"
     end
   end
 end

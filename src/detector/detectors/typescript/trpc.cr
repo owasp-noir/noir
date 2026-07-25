@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Typescript
   class TRPC < Detector
+    detector_for "ts_trpc",
+      extensions: %w[.ts .tsx .cts .mts .js .jsx .cjs .mjs],
+      basenames: %w[package.json]
+
     # Single precompiled alternation — one PCRE2 scan instead of eight.
     SIGNAL = Regex.union(
       /import[^'"`]+from\s+['"`]@trpc\/server(?:\/[^'"`]*)?['"`]/,
@@ -30,18 +34,6 @@ module Detector::Typescript
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
-        filename.ends_with?(".cts") || filename.ends_with?(".mts") ||
-        filename.ends_with?(".js") || filename.ends_with?(".jsx") ||
-        filename.ends_with?(".cjs") || filename.ends_with?(".mjs") ||
-        File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "ts_trpc"
     end
   end
 end

@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Python
   class Quart < Detector
+    detector_for "python_quart", extensions: %w[.py]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
 
@@ -14,14 +16,6 @@ module Detector::Python
       has_import = file_contents.match(/(^|\n)\s*import\s+quart(\s|,|$)/)
 
       !!(has_from_import || has_import)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_quart"
     end
   end
 end

@@ -5,19 +5,13 @@ module Detector::Lua
   # (lua_cliargs) library, or explicit `arg` indexing. Never gates on bare
   # os.getenv (lapis/lor config).
   class Cli < Detector
+    detector_for "lua_cli", extensions: %w[.lua]
+
     MARKERS = /\brequire\s*\(?\s*['"]argparse['"]|\bargparse\s*\(|\barg\s*\[\s*\d+\s*\]|\brequire\s*\(?\s*['"]cliargs['"]/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".lua")
       content_matches?(file_contents, MARKERS)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".lua")
-    end
-
-    def set_name
-      @name = "lua_cli"
     end
   end
 end

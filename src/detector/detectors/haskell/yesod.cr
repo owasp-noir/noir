@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Haskell
   class Yesod < Detector
+    detector_for "haskell_yesod",
+      extensions: %w[.hs .cabal .dhall],
+      basenames: %w[stack.yaml package.yaml]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -20,14 +24,6 @@ module Detector::Haskell
       return true if file_contents.includes?("parseRoutesFile")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".hs") || filename.ends_with?(".cabal") || filename.ends_with?(".dhall") || File.basename(filename) == "stack.yaml" || File.basename(filename) == "package.yaml"
-    end
-
-    def set_name
-      @name = "haskell_yesod"
     end
   end
 end
