@@ -87,6 +87,17 @@ module Analyzer::Ruby
     # instead of up to four naive substring scans.
     CLI_EVIDENCE_MARKERS_RE = Regex.union("OptionParser.new", "GLI::App", "TTY::Option", "Commander::Methods")
 
+    SLOP_CALL = /\bSlop\.(?:parse|new)\b/
+
+    # `cli_evidence?` is the gate every `.rb` in the tree passes through,
+    # and it OR-ed seven separate whole-file scans. One union is the same
+    # predicate in a single pass; the individual patterns are still needed
+    # below, where each one sets its own flag.
+    CLI_EVIDENCE_RE = Regex.union(
+      THOR_SUBCLASS, CLI_EVIDENCE_MARKERS_RE, SLOP_CALL,
+      ARGV_INDEX, OPTIMIST_CALL, CLAMP_SUBCLASS, DRY_CLI_MARKER,
+    )
+
     def analyze
       endpoints = {} of String => Endpoint
 
@@ -102,11 +113,11 @@ module Analyzer::Ruby
             binary = ruby_binary_name(content, path)
             root_url = "cli://#{binary}"
             lines = content.lines
-            thor = content.matches?(THOR_SUBCLASS)
-            clamp = content.matches?(CLAMP_SUBCLASS)
-            dry_cli = content.matches?(DRY_CLI_MARKER)
-            optimist = content.matches?(OPTIMIST_CALL)
-            emit_env = !content.matches?(WEB_FRAMEWORK_RE)
+            thor = content_matches?(content, THOR_SUBCLASS)
+            clamp = content_matches?(content, CLAMP_SUBCLASS)
+            dry_cli = content_matches?(content, DRY_CLI_MARKER)
+            optimist = content_matches?(content, OPTIMIST_CALL)
+            emit_env = !content_matches?(content, WEB_FRAMEWORK_RE)
 
             scan(lines, path, root_url, endpoints, thor, emit_env, clamp, dry_cli, optimist)
           rescue e
@@ -122,13 +133,7 @@ module Analyzer::Ruby
     end
 
     private def cli_evidence?(content : String) : Bool
-      content.matches?(THOR_SUBCLASS) ||
-        content.matches?(CLI_EVIDENCE_MARKERS_RE) ||
-        content.matches?(/\bSlop\.(?:parse|new)\b/) ||
-        content.matches?(ARGV_INDEX) ||
-        content.matches?(OPTIMIST_CALL) ||
-        content.matches?(CLAMP_SUBCLASS) ||
-        content.matches?(DRY_CLI_MARKER)
+      content_matches?(content, CLI_EVIDENCE_RE)
     end
 
     private def ruby_binary_name(content : String, path : String) : String
