@@ -6,6 +6,7 @@ require "../models/code_locator"
 require "../utils/url_path"
 require "../utils/js_literal_scanner"
 require "../analyzer/analyzers/javascript/express_constants"
+require "../utils/text_file"
 
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
@@ -22,7 +23,7 @@ module Noir
       return [] of Endpoint unless File.exists?(file_path)
 
       begin
-        content = content || File.read(file_path, encoding: "utf-8", invalid: :skip)
+        content = content || Noir::TextFile.read(file_path)
 
         # Cheap pre-filter: every shape the JSParser knows about ends
         # in a verb call (`x.get(`, `.post(`, ...), a Fastify/Restify
@@ -336,24 +337,20 @@ module Noir
     # contains no shape the JS parser knows how to emit (any verb
     # invocation pattern like `.get(`/`.post(`/... or Fastify/Restify
     # `.route(`, plus Express-style mounts `.use(` which feed into the
-    # cross-file router prefix table). Substring-checking is millions
-    # of times cheaper than tokenizing the file.
-    PARSER_ROUTE_CALL_HINTS = [
-      ".get(", ".post(", ".put(", ".delete(", ".patch(",
-      ".options(", ".head(", ".all(",
-      ".route(", ".register(", ".use(",
-      ".get (", ".post (", ".put (", ".delete (", ".patch (",
-      ".options (", ".head (", ".all (",
-      ".route (", ".register (", ".use (",
-    ]
-
+    # cross-file router prefix table). Matching is millions of times
+    # cheaper than tokenizing the file.
     BRACKET_ROUTE_CALL_PATTERN  = /\[\s*['"](?:get|post|put|delete|del|patch|options|head|all)['"]\s*\]\s*\(/i
     FLEXIBLE_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*(?:get|post|put|delete|del|patch|options|head|all|route|register|use)(?:\s|\n|\r)*\(/i
 
+    # A 22-literal `includes?` pre-pass used to run ahead of these two
+    # patterns (`".get("`, `".get ("`, ... for each verb). Every one of
+    # those literals is `.` + verb + optional space + `(`, which
+    # `FLEXIBLE_ROUTE_CALL_PATTERN` already matches with zero or one
+    # whitespace character — so the pre-pass could never change the
+    # result, and each miss cost 22 Rabin-Karp walks of the whole file.
     def self.route_call_candidate?(content : String) : Bool
-      PARSER_ROUTE_CALL_HINTS.any? { |hint| content.includes?(hint) } ||
-        content.matches?(BRACKET_ROUTE_CALL_PATTERN) ||
-        content.matches?(FLEXIBLE_ROUTE_CALL_PATTERN)
+      content.matches?(BRACKET_ROUTE_CALL_PATTERN, options: Noir::TextFile::MATCH_OPTIONS) ||
+        content.matches?(FLEXIBLE_ROUTE_CALL_PATTERN, options: Noir::TextFile::MATCH_OPTIONS)
     end
 
     # Byte length above which a single source line is considered "long".
@@ -681,15 +678,33 @@ module Noir
     # from 'react'`, and skipping them on that basis dropped every such
     # route. The test-stub *library* markers (msw/supertest/...) and path/
     # filename markers still apply in both modes.
+    # Precompiled unions of the marker lists above. `Regex.union` escapes
+    # every String argument, so each is exactly the `any? includes?` it
+    # replaces — but the content lists are long (72 test-stub libraries,
+    # 32 client frameworks, 26 server libraries), and every JS/TS file in
+    # the tree used to be walked once per literal.
+    TEST_STUB_FILENAME_MARKER    = Regex.union(TEST_STUB_FILENAME_MARKERS)
+    STRICT_TEST_PATH_MARKER      = Regex.union(STRICT_TEST_PATH_MARKERS)
+    TEST_STUB_PATH_MARKER        = Regex.union(TEST_STUB_PATH_MARKERS)
+    TEST_STUB_LIBRARY_MARKER     = Regex.union(TEST_STUB_LIBRARY_MARKERS)
+    CLIENT_SIDE_FRAMEWORK_MARKER = Regex.union(CLIENT_SIDE_FRAMEWORK_MARKERS)
+    HTTP_SERVER_LIBRARY_MARKER   = Regex.union(HTTP_SERVER_LIBRARY_MARKERS)
+
     def self.test_stub_only?(file_path : String, content : String,
                              include_client_frameworks : Bool = true) : Bool
-      return true if TEST_STUB_FILENAME_MARKERS.any? { |m| file_path.includes?(m) }
-      return true if STRICT_TEST_PATH_MARKERS.any? { |m| file_path.includes?(m) }
-      has_library = TEST_STUB_LIBRARY_MARKERS.any? { |m| content.includes?(m) } ||
-                    (include_client_frameworks && CLIENT_SIDE_FRAMEWORK_MARKERS.any? { |m| content.includes?(m) })
-      has_path_marker = TEST_STUB_PATH_MARKERS.any? { |m| file_path.includes?(m) }
+      return true if file_path.matches?(TEST_STUB_FILENAME_MARKER)
+      return true if file_path.matches?(STRICT_TEST_PATH_MARKER)
+      has_library = content_matches?(content, TEST_STUB_LIBRARY_MARKER) ||
+                    (include_client_frameworks && content_matches?(content, CLIENT_SIDE_FRAMEWORK_MARKER))
+      has_path_marker = file_path.matches?(TEST_STUB_PATH_MARKER)
       return false unless has_library || has_path_marker
-      HTTP_SERVER_LIBRARY_MARKERS.none? { |m| content.includes?(m) }
+      !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER)
+    end
+
+    # Match against file content, which always came from a
+    # `Noir::TextFile.read` (directly or via the detector's cache).
+    private def self.content_matches?(content : String, markers : Regex) : Bool
+      markers.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
     end
 
     # Import markers for the five frameworks whose analyzers call
@@ -777,20 +792,30 @@ module Noir
     # disambiguate on, so narrowing further is left as follow-up scope
     # (a confirmed package.json dependency or cross-file mount signal
     # would be needed to resolve those).
+    # Per-framework precompiled unions of the two tables above: the
+    # framework's own import markers, and the markers of every *other*
+    # shared-extractor framework. Together with the sibling union this
+    # turns the up-to-44-literal `includes?` walk below into three
+    # matches. Five analyzers call this on every JS/TS file, so the old
+    # shape scanned some trees over 200 times per file.
+    OWN_EXTRACTOR_MARKER = SHARED_EXTRACTOR_FRAMEWORK_MARKERS
+      .transform_values { |markers| Regex.union(markers) }
+
+    OTHER_EXTRACTOR_MARKER = SHARED_EXTRACTOR_FRAMEWORK_MARKERS.keys.to_h do |framework|
+      others = SHARED_EXTRACTOR_FRAMEWORK_MARKERS
+        .reject { |other, _| other == framework }
+        .values
+        .flatten
+      {framework, Regex.union(others)}
+    end
+
+    SIBLING_FRAMEWORK_MARKER = Regex.union(OTHER_FRAMEWORK_MARKERS.values.flatten)
+
     def self.other_shared_extractor_framework?(content : String, framework : Symbol) : Bool
-      own_markers = SHARED_EXTRACTOR_FRAMEWORK_MARKERS[framework]
-      return false if own_markers.any? { |m| content.includes?(m) }
+      return false if content_matches?(content, OWN_EXTRACTOR_MARKER[framework])
+      return true if content_matches?(content, OTHER_EXTRACTOR_MARKER[framework])
 
-      SHARED_EXTRACTOR_FRAMEWORK_MARKERS.each do |other, markers|
-        next if other == framework
-        return true if markers.any? { |m| content.includes?(m) }
-      end
-
-      OTHER_FRAMEWORK_MARKERS.each do |_, markers|
-        return true if markers.any? { |m| content.includes?(m) }
-      end
-
-      false
+      content_matches?(content, SIBLING_FRAMEWORK_MARKER)
     end
 
     def self.attach_callees(endpoint : Endpoint,
@@ -1350,6 +1375,11 @@ module Noir
     # analyzer walks all `.js`/`.ts` files) doesn't pick up another
     # framework's static declaration and re-emit it under the wrong tech.
     # `nil` runs every pattern (back-compat for un-scoped callers).
+    STATIC_MOUNT_MARKER = Regex.union(
+      ".use(", ".use (", ".register(", ".register (",
+      "ServeStaticModule.forRoot", "serveStatic",
+    )
+
     def self.extract_static_paths(content : String, framework : Symbol? = nil) : Array(Hash(String, String))
       static_paths = [] of Hash(String, String)
 
@@ -1358,10 +1388,7 @@ module Noir
       # `ServeStaticModule.forRoot(...)`, or Restify `serveStatic(...)`.
       # Files without any of those markers cannot host one — skip the
       # regex scans on the vast majority of JS/TS files.
-      return static_paths unless content.includes?(".use(") || content.includes?(".use (") ||
-                                 content.includes?(".register(") || content.includes?(".register (") ||
-                                 content.includes?("ServeStaticModule.forRoot") ||
-                                 content.includes?("serveStatic")
+      return static_paths unless content_matches?(content, STATIC_MOUNT_MARKER)
 
       # Bundled/minified assets occasionally carry a `.use(`/`.register(`
       # substring from packed library code; never run the static-mount
