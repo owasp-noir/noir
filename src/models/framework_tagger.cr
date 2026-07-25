@@ -2,6 +2,7 @@ require "./tagger"
 require "./endpoint"
 require "./code_locator"
 require "./file_helper"
+require "../utils/text_file"
 
 struct SourceContext
   property path : String
@@ -87,7 +88,14 @@ class FrameworkTagger < Tagger
       return cached
     end
 
-    content = File.read(path)
+    # Prefer the detector's content cache, which by this point holds
+    # almost every file of the scan — the bare `File.read` this replaces
+    # paid a second open for every file any tagger looked at. Analyzers
+    # already read through the same cache (`Analyzer#read_file_content`),
+    # so this also stops taggers being the one component that sees raw
+    # bytes: on a file with invalid UTF-8 they now get the same
+    # `invalid: :skip` text everything else works from.
+    content = CodeLocator.instance.content_for(path) || Noir::TextFile.read(path)
     @file_cache[path] = content
     content
   rescue ex
