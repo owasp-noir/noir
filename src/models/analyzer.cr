@@ -4,6 +4,7 @@ require "./file_helper"
 require "wait_group"
 require "../utils/media_filter"
 require "../utils/path_scope"
+require "../utils/text_file"
 require "../utils/utils"
 
 class Analyzer
@@ -64,7 +65,7 @@ class Analyzer
 
   # Prefer the detector-populated cache over a fresh disk read. On
   # cache miss (budget exhausted, cache cleared between runs, path
-  # not registered via register_file) falls back to `File.read`.
+  # not registered via register_file) falls back to a disk read.
   #
   # Analyzers migrating from direct `File.read(path, ...)` calls
   # should use this helper so the second read of files the detector
@@ -72,7 +73,7 @@ class Analyzer
   def read_file_content(path : String) : String
     cached = CodeLocator.instance.content_for(path)
     return cached if cached
-    File.read(path, encoding: "utf-8", invalid: :skip)
+    Noir::TextFile.read(path)
   end
 
   # Callees feed `--include-callee` (direct output) and `--ai-context`

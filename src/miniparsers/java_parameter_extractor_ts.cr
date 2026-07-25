@@ -3,6 +3,7 @@ require "../models/endpoint"
 require "../models/code_locator"
 require "./import_graph"
 require "./java_route_extractor_ts"
+require "../utils/text_file"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Java/Spring.
@@ -1294,10 +1295,10 @@ module Noir
     private def file_body(file : String) : String
       # Detector pre-warms a content cache for every scanned file
       # (size-bounded). Sibling/parent DTO files often live in that
-      # cache already — `nil` falls back to a fresh `File.read` for
+      # cache already — `nil` falls back to a fresh disk read for
       # files outside the budget.
       CodeLocator.instance.content_for(file) ||
-        File.read(file, encoding: "utf-8", invalid: :skip)
+        Noir::TextFile.read(file)
     end
 
     private def absorb!(result : Index,

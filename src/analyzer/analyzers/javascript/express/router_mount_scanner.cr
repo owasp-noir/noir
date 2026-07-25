@@ -3,6 +3,7 @@ require "../../../../utils/js_literal_scanner"
 require "../../../../utils/path_scope"
 require "../../../../utils/url_path"
 require "../express_constants"
+require "../../../../utils/text_file"
 
 module Analyzer::Javascript
   # RouterMountScanner handles the two-pass scanning process for Express router mounts.
@@ -69,7 +70,7 @@ module Analyzer::Javascript
       file_contexts : Hash(String, FileContext),
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
     )
-      content = CodeLocator.instance.content_for(main_file) || File.read(main_file, encoding: "utf-8", invalid: :skip)
+      content = CodeLocator.instance.content_for(main_file) || Noir::TextFile.read(main_file)
 
       # Cheap pre-filter: every code path in this scanner is downstream
       # of a `.use(...)` or `.route(...)` call (literal mount, no-prefix
@@ -652,7 +653,7 @@ module Analyzer::Javascript
       return false unless File.file?(file_path)
 
       begin
-        content = CodeLocator.instance.content_for(file_path) || File.read(file_path, encoding: "utf-8", invalid: :skip)
+        content = CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
         # Look for common route definition patterns
         # Matches: router.get(, router.post(, .get(, .post(, etc.
         content.matches?(/\.(get|post|put|delete|patch|all|head|options)\s*\(/)

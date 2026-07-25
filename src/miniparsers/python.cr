@@ -1,6 +1,7 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../utils/parser_limit"
 require "./import_graph"
+require "../utils/text_file"
 
 # Python source-file parser used by the Flask analyzer to resolve
 # routing-relevant globals (Blueprint / Namespace / Api instances)
@@ -401,7 +402,7 @@ class PythonParser
   private def get_or_create_parser(pyfile : String) : PythonParser?
     return @parsers[pyfile] if @parsers.has_key?(pyfile)
 
-    content = File.read(pyfile, encoding: "utf-8", invalid: :skip)
+    content = Noir::TextFile.read(pyfile)
     sub = PythonParser.new(pyfile, content, @parsers, @visited.dup, depth: @depth + 1)
     @parsers[pyfile] = sub
     sub

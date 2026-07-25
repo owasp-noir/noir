@@ -5,6 +5,7 @@ require "../miniparsers/kotlin_callee_extractor"
 require "../miniparsers/java_callee_extractor"
 require "../miniparsers/swift_callee_extractor"
 require "../miniparsers/objc_callee_extractor"
+require "../utils/text_file"
 
 # Post-analysis pass that links mobile deep-link endpoints (produced by the
 # config-file analyzers from AndroidManifest.xml) to the source code that
@@ -186,7 +187,7 @@ module NoirMobileLinker
     cached = CodeLocator.instance.content_for(path)
     return cached if cached
     return unless File.exists?(path)
-    File.read(path, encoding: "utf-8", invalid: :skip)
+    Noir::TextFile.read(path)
   end
 
   private def self.android_handler_info(simple : String, path : String, lang : Symbol,

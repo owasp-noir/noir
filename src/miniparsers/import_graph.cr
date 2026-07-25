@@ -1,3 +1,5 @@
+require "../utils/text_file"
+
 module Noir
   # Shared file-level import-graph traversal for cross-file route /
   # DTO resolution.
@@ -317,11 +319,11 @@ module Noir::ImportGraph::Python
   # `app_base_path` anchors the dotted path for absolute imports;
   # `file_path`'s directory anchors relative imports. Pass
   # `content` when the caller already has the file in hand to
-  # skip the second `File.read`.
+  # skip the second disk read.
   def self.find_imported_modules(app_base_path : String,
                                  file_path : String,
                                  content : String? = nil) : Hash(String, Tuple(String, Int32))
-    content = File.read(file_path, encoding: "utf-8", invalid: :skip) if content.nil?
+    content = Noir::TextFile.read(file_path) if content.nil?
 
     file_base_path = file_path
     file_base_path = File.dirname(file_path) if file_path.ends_with? ".py"
