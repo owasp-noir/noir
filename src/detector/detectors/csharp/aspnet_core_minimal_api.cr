@@ -6,8 +6,8 @@ module Detector::CSharp
       return false unless filename.ends_with?(".cs")
       return false if file_contents.includes?("ICarterModule")
 
-      has_http_map = file_contents.matches?(/\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*\(/)
-      has_generic_map = file_contents.matches?(/\.\s*Map\s*\(/) && minimal_api_context?(file_contents)
+      has_http_map = content_matches?(file_contents, /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*\(/)
+      has_generic_map = content_matches?(file_contents, /\.\s*Map\s*\(/) && minimal_api_context?(file_contents)
 
       has_http_map || has_generic_map
     end

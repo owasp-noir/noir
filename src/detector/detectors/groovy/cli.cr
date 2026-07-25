@@ -10,7 +10,7 @@ module Detector::Groovy
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".groovy")
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

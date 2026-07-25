@@ -49,7 +49,7 @@ module Detector::Javascript
       if (filename.ends_with?(".js") || filename.ends_with?(".jsx") ||
          filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
          filename.ends_with?(".mjs")) &&
-         file_contents.matches?(NEXT_IMPORT)
+         content_matches?(file_contents, NEXT_IMPORT)
         return true
       end
 

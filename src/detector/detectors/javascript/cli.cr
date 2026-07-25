@@ -19,11 +19,11 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      file_contents.matches?(CLI_LIB_IMPORT) ||
-        file_contents.matches?(PARSE_ARGS) ||
-        file_contents.matches?(DENO_ARGS) ||
-        file_contents.matches?(BUN_ARGV) ||
-        file_contents.matches?(ARGV_SLICE)
+      content_matches?(file_contents, CLI_LIB_IMPORT) ||
+        content_matches?(file_contents, PARSE_ARGS) ||
+        content_matches?(file_contents, DENO_ARGS) ||
+        content_matches?(file_contents, BUN_ARGV) ||
+        content_matches?(file_contents, ARGV_SLICE)
     end
 
     def applicable?(filename : String) : Bool

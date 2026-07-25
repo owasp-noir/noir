@@ -16,7 +16,7 @@ module Detector::Haskell
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".hs") || filename.ends_with?(".lhs")
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

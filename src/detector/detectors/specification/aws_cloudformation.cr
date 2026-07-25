@@ -7,6 +7,10 @@ module Detector::Specification
   class AwsCloudformation < Detector
     SAM_TRANSFORM = "AWS::Serverless-2016-10-31"
 
+    # Every `.yml`/`.yaml`/`.json` in the tree reaches this gate, so the
+    # two-`includes?` chain it replaces was walking the whole corpus twice.
+    CANDIDATE_MARKER = Regex.union("AWSTemplateFormatVersion", SAM_TRANSFORM)
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
@@ -84,7 +88,7 @@ module Detector::Specification
     end
 
     private def cloudformation_candidate?(content : String) : Bool
-      content.includes?("AWSTemplateFormatVersion") || content.includes?(SAM_TRANSFORM)
+      content_matches?(content, CANDIDATE_MARKER)
     end
   end
 end

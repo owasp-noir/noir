@@ -20,7 +20,7 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      file_contents.matches?(SIGNAL)
+      content_matches?(file_contents, SIGNAL)
     end
 
     def applicable?(filename : String) : Bool

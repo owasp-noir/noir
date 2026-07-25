@@ -12,7 +12,7 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
-      return false unless file_contents.matches?(REQUEST_LINE)
+      return false unless content_matches?(file_contents, REQUEST_LINE)
 
       locator = CodeLocator.instance
       locator.push("http-file", filename)

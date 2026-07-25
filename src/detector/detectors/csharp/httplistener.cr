@@ -6,8 +6,8 @@ module Detector::CSharp
       return false unless filename.ends_with?(".cs")
       return false unless file_contents.includes?("HttpListener")
 
-      file_contents.matches?(/\bnew\s+HttpListener\s*\(/) ||
-        file_contents.matches?(/\bnew\s+System\.Net\.HttpListener\s*\(/) ||
+      content_matches?(file_contents, /\bnew\s+HttpListener\s*\(/) ||
+        content_matches?(file_contents, /\bnew\s+System\.Net\.HttpListener\s*\(/) ||
         file_contents.includes?(".Prefixes.Add") ||
         file_contents.includes?(".GetContext") ||
         file_contents.includes?("GetContextAsync")

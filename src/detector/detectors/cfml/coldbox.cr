@@ -16,9 +16,9 @@ module Detector::Cfml
         return true
       end
 
-      return true if file_contents.matches?(NAMESPACE_RE)
-      return true if base == "moduleconfig.cfc" && file_contents.matches?(MODULE_RE)
-      return true if base == "routes.cfm" && file_contents.matches?(ROUTER_DSL_RE)
+      return true if content_matches?(file_contents, NAMESPACE_RE)
+      return true if base == "moduleconfig.cfc" && content_matches?(file_contents, MODULE_RE)
+      return true if base == "routes.cfm" && content_matches?(file_contents, ROUTER_DSL_RE)
 
       false
     end

@@ -39,10 +39,10 @@ module Detector::Specification
         return true
       end
 
-      return false unless file_contents.matches?(DDL_MARKER)
+      return false unless content_matches?(file_contents, DDL_MARKER)
 
       unless supabase_directory?(path)
-        return false unless file_contents.matches?(SUPABASE_FINGERPRINT)
+        return false unless content_matches?(file_contents, SUPABASE_FINGERPRINT)
       end
 
       CodeLocator.instance.push("supabase-migration", filename)

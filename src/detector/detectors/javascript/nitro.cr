@@ -17,7 +17,7 @@ module Detector::Javascript
 
       # Check for Nitro imports and patterns in JS/TS files
       if (filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") || filename.ends_with?(".cjs")) &&
-         file_contents.matches?(SIGNAL)
+         content_matches?(file_contents, SIGNAL)
         return true
       end
 

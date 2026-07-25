@@ -10,7 +10,7 @@ module Detector::CSharp
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".cs")
-      file_contents.matches?(SIGNALR_MARKER)
+      content_matches?(file_contents, SIGNALR_MARKER)
     end
 
     def applicable?(filename : String) : Bool

@@ -12,11 +12,11 @@ module Detector::Cfml
       return false unless applicable?(filename)
 
       if File.basename(filename).downcase == "routes.cfm"
-        return true if file_contents.matches?(MAPPER_RE)
-        return true if file_contents.matches?(DSL_RE)
+        return true if content_matches?(file_contents, MAPPER_RE)
+        return true if content_matches?(file_contents, DSL_RE)
       end
 
-      file_contents.matches?(NAMESPACE_RE)
+      content_matches?(file_contents, NAMESPACE_RE)
     end
 
     def applicable?(filename : String) : Bool

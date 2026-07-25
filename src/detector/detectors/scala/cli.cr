@@ -8,7 +8,7 @@ module Detector::Scala
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".scala") || filename.ends_with?(".sc")
-      file_contents.matches?(MARKERS)
+      content_matches?(file_contents, MARKERS)
     end
 
     def applicable?(filename : String) : Bool

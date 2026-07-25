@@ -12,9 +12,9 @@ module Detector::Cfml
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
-      return true if file_contents.matches?(URI_ATTRIBUTE_RE)
-      return true if file_contents.matches?(RESOURCE_BASE_RE)
-      return true if file_contents.matches?(API_BASE_RE)
+      return true if content_matches?(file_contents, URI_ATTRIBUTE_RE)
+      return true if content_matches?(file_contents, RESOURCE_BASE_RE)
+      return true if content_matches?(file_contents, API_BASE_RE)
 
       false
     end

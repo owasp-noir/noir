@@ -31,7 +31,7 @@ module Detector::Elixir
       # isn't in scope (e.g. `--include-path` runs over `lib/` only).
       if filename.ends_with?(".ex") || filename.ends_with?(".exs")
         return file_contents.includes?("Phoenix.Router") ||
-          file_contents.matches?(ROUTER_USE_REGEX)
+          content_matches?(file_contents, ROUTER_USE_REGEX)
       end
 
       false

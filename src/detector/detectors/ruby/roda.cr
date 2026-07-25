@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Ruby
   class Roda < Detector
+    SOURCE_MARKERS = Regex.union(/<\s*Roda\b/, "Roda.route", /require\s+['"]roda['"]/)
+
     def detect(filename : String, file_contents : String) : Bool
       if filename.includes?("Gemfile")
         return true if gemfile_dependency?(file_contents, "roda")
@@ -12,9 +14,7 @@ module Detector::Ruby
       end
 
       if filename.ends_with?(".rb")
-        return true if file_contents =~ /<\s*Roda\b/
-        return true if file_contents.includes?("Roda.route")
-        return true if file_contents =~ /require\s+['"]roda['"]/
+        return true if content_matches?(file_contents, SOURCE_MARKERS)
       end
 
       false

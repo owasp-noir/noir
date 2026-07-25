@@ -2,13 +2,14 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Adonisjs < Detector
+    PACKAGE_MARKERS = Regex.union("@adonisjs/core", "\"adonis-") # legacy adonis-* packages
+    SOURCE_MARKERS  = Regex.union("@adonisjs/core", "@ioc:Adonis")
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
       # `package.json` listing AdonisJS as a dependency.
-      if base == "package.json" &&
-         (file_contents.includes?("@adonisjs/core") ||
-         file_contents.includes?("\"adonis-")) # legacy adonis-* packages
+      if base == "package.json" && content_matches?(file_contents, PACKAGE_MARKERS)
         return true
       end
 
@@ -20,8 +21,7 @@ module Detector::Javascript
       # service-locator router or the v5 IoC alias.
       if (filename.ends_with?(".ts") || filename.ends_with?(".js") ||
          filename.ends_with?(".mjs")) &&
-         (file_contents.includes?("@adonisjs/core") ||
-         file_contents.includes?("@ioc:Adonis"))
+         content_matches?(file_contents, SOURCE_MARKERS)
         return true
       end
 

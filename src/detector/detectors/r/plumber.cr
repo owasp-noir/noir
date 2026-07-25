@@ -6,15 +6,15 @@ module Detector::R
       return false unless filename.ends_with?(".R") || filename.ends_with?(".r")
 
       # plumber library import
-      return true if file_contents.matches?(/library\s*\(\s*plumber\s*\)/)
-      return true if file_contents.matches?(/require\s*\(\s*plumber\s*\)/)
+      return true if content_matches?(file_contents, /library\s*\(\s*plumber\s*\)/)
+      return true if content_matches?(file_contents, /require\s*\(\s*plumber\s*\)/)
       return true if file_contents.includes?("plumber::")
 
       # Plumber annotations
-      return true if file_contents.matches?(/^\s*#\*\s*@(?:get|post|put|delete|patch|head|options|apiTitle|apiDescription|param|serializer)\b/mi)
+      return true if content_matches?(file_contents, /^\s*#\*\s*@(?:get|post|put|delete|patch|head|options|apiTitle|apiDescription|param|serializer)\b/mi)
 
       # Programmatic plumber routing functions
-      return true if file_contents.matches?(/\bpr_(?:get|post|put|delete|patch|head|options|handle|mount)\b/i)
+      return true if content_matches?(file_contents, /\bpr_(?:get|post|put|delete|patch|head|options|handle|mount)\b/i)
 
       false
     end

@@ -25,7 +25,7 @@ module Detector::Typescript
         return file_contents.includes?("\"@trpc/server\"") || file_contents.includes?("\"@trpc/next\"")
       end
 
-      if file_contents.matches?(SIGNAL)
+      if content_matches?(file_contents, SIGNAL)
         return true
       end
 

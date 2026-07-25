@@ -13,9 +13,9 @@ module Detector::Asp
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
-      return true if file_contents.matches?(DIRECTIVE_RE)
-      return true if file_contents.matches?(SERVER_SCRIPT_RE)
-      return true if file_contents.matches?(SCRIPT_DELIMITER_RE) && file_contents.matches?(INTRINSIC_RE)
+      return true if content_matches?(file_contents, DIRECTIVE_RE)
+      return true if content_matches?(file_contents, SERVER_SCRIPT_RE)
+      return true if content_matches?(file_contents, SCRIPT_DELIMITER_RE) && content_matches?(file_contents, INTRINSIC_RE)
 
       false
     end

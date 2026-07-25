@@ -30,13 +30,13 @@ module Detector::Rust
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "Cargo.toml"
         return file_contents.includes?("dependencies") &&
-          file_contents.matches?(CARGO_CLI_DEP)
+          content_matches?(file_contents, CARGO_CLI_DEP)
       end
 
       return false unless filename.ends_with?(".rs")
-      return true if file_contents.matches?(SOURCE_MARKER)
+      return true if content_matches?(file_contents, SOURCE_MARKER)
       # `Command::new(` alone is clap-builder only when clap is in use.
-      return true if file_contents.includes?("clap") && file_contents.matches?(BUILDER_CMD)
+      return true if file_contents.includes?("clap") && content_matches?(file_contents, BUILDER_CMD)
 
       false
     end

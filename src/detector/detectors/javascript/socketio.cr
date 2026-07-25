@@ -12,14 +12,18 @@ module Detector::Javascript
       /require\(\s*['"]socket\.io['"]\s*\)/,
     )
 
+    PACKAGE_MARKER = /"socket\.io"\s*:/
+    NEW_SERVER     = /new Server\(/
+    ON_CALL        = /\.on\(/
+
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "package.json"
-        return file_contents.matches?(/"socket\.io"\s*:/)
+        return content_matches?(file_contents, PACKAGE_MARKER)
       end
 
       return false unless source_file?(filename)
-      return true if file_contents.matches?(SIGNAL)
-      file_contents.includes?("new Server(") && file_contents.includes?(".on(")
+      return true if content_matches?(file_contents, SIGNAL)
+      content_matches?(file_contents, NEW_SERVER) && content_matches?(file_contents, ON_CALL)
     end
 
     def applicable?(filename : String) : Bool

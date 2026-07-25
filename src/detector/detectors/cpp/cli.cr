@@ -18,10 +18,10 @@ module Detector::Cpp
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless EXTS.any? { |ext| filename.ends_with?(ext) }
-      file_contents.matches?(CLI11) || file_contents.matches?(GETOPT) ||
-        file_contents.matches?(CXXOPTS) || file_contents.matches?(BOOST_PO) ||
-        file_contents.matches?(GFLAGS) || file_contents.matches?(ABSL_FLAG) ||
-        file_contents.matches?(ARGPARSE)
+      content_matches?(file_contents, CLI11) || content_matches?(file_contents, GETOPT) ||
+        content_matches?(file_contents, CXXOPTS) || content_matches?(file_contents, BOOST_PO) ||
+        content_matches?(file_contents, GFLAGS) || content_matches?(file_contents, ABSL_FLAG) ||
+        content_matches?(file_contents, ARGPARSE)
     end
 
     def applicable?(filename : String) : Bool

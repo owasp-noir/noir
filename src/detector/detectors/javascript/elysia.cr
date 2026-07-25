@@ -2,11 +2,17 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Elysia < Detector
+    PACKAGE_MARKER = /"elysia"/
+    SOURCE_MARKERS = Regex.union(
+      "from 'elysia'", "from \"elysia\"",
+      "require('elysia')", "require(\"elysia\")",
+    )
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
       # `package.json` listing elysia as a dependency.
-      if base == "package.json" && file_contents.includes?("\"elysia\"")
+      if base == "package.json" && content_matches?(file_contents, PACKAGE_MARKER)
         return true
       end
 
@@ -18,10 +24,7 @@ module Detector::Javascript
                           filename.ends_with?(".js") ||
                           filename.ends_with?(".mjs")
 
-      file_contents.includes?("from 'elysia'") ||
-        file_contents.includes?("from \"elysia\"") ||
-        file_contents.includes?("require('elysia')") ||
-        file_contents.includes?("require(\"elysia\")")
+      content_matches?(file_contents, SOURCE_MARKERS)
     end
 
     def applicable?(filename : String) : Bool

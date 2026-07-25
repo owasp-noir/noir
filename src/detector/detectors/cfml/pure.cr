@@ -13,9 +13,9 @@ module Detector::Cfml
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
-      return true if file_contents.matches?(TAG_MARKERS_RE)
-      return true if file_contents.matches?(SCRIPT_FUNCTION_RE)
-      return true if file_contents.matches?(SCRIPT_COMPONENT_RE)
+      return true if content_matches?(file_contents, TAG_MARKERS_RE)
+      return true if content_matches?(file_contents, SCRIPT_FUNCTION_RE)
+      return true if content_matches?(file_contents, SCRIPT_COMPONENT_RE)
 
       false
     end

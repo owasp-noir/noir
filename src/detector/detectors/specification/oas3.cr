@@ -5,9 +5,12 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Oas3 < Detector
+    # Every `.json`/`.yaml`/`.yml` in the tree reaches this gate.
+    OPENAPI_MARKER = /openapi/
+
     def detect(filename : String, file_contents : String) : Bool
       check = false
-      return false unless file_contents.includes?("openapi")
+      return false unless content_matches?(file_contents, OPENAPI_MARKER)
 
       if filename.ends_with?(".json")
         begin

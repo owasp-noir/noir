@@ -11,8 +11,8 @@ module Detector::Go
       # - Direct "http.HandleFunc(" / "http.Handle(" for the default serve mux case
       #   (the "http." qualifier prevents catching r.HandleFunc in chi/mux/etc).
       file_contents.includes?("NewServeMux") ||
-        file_contents.matches?(/http\.HandleFunc\s*\(/) ||
-        file_contents.matches?(/http\.Handle\s*\(\s*["`\/]/)
+        content_matches?(file_contents, /http\.HandleFunc\s*\(/) ||
+        content_matches?(file_contents, /http\.Handle\s*\(\s*["`\/]/)
     end
 
     def applicable?(filename : String) : Bool

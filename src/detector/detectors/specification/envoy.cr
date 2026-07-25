@@ -5,8 +5,13 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Envoy < Detector
+    # Every `.yaml`/`.yml`/`.json` in the tree reaches these gates.
+    VIRTUAL_HOSTS_MARKER = /virtual_hosts/
+    DOMAINS_MARKER       = /domains/
+
     def detect(filename : String, file_contents : String) : Bool
-      return false unless file_contents.includes?("virtual_hosts") && file_contents.includes?("domains")
+      return false unless content_matches?(file_contents, VIRTUAL_HOSTS_MARKER) &&
+                          content_matches?(file_contents, DOMAINS_MARKER)
 
       if filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         if (data = yaml_any?(file_contents)) && find_virtual_hosts_yaml(data)
