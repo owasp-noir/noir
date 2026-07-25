@@ -1,4 +1,5 @@
 require "../ext/tree_sitter/tree_sitter"
+require "./extraction_result_cache"
 
 # Tree-sitter-backed Go 1-hop callee extractor. Parallels
 # `Noir::PythonCalleeExtractor` but works at the AST level — Go can't
@@ -120,25 +121,106 @@ module Noir::GoCalleeExtractor
     package_method_bodies[dir]? || Hash(String, Array(FunctionBody)).new
   end
 
+  # Process-wide memo for the two top-level-declaration tables.
+  #
+  # A Go scan asks for these tables from several directions: the callee
+  # pass (`GoEngine#collect_package_*`), the request-param pass
+  # (`GoRequestParamExtractor#package_*_for_dirs`), and once per Go
+  # framework analyzer that survived detection — each over the same
+  # `CodeLocator` content. Measured on a gitea checkout: 1734 Go parses
+  # for 680 distinct sources, 2.55 parses per file, some files 8 times.
+  #
+  # Both tables come out of one `each_named_child` walk, so a miss on
+  # either fills both (via `store_capped`, which `fetch` cannot do
+  # without parsing twice). Keys include `file_path` because it is baked
+  # into every `FunctionBody`, so two identical files at different paths
+  # must not share an entry.
+  @@function_bodies_memo = Hash(UInt64, Hash(String, FunctionBody)).new
+  @@function_bodies_order = [] of UInt64
+  @@method_bodies_memo = Hash(UInt64, Hash(String, Array(FunctionBody))).new
+  @@method_bodies_order = [] of UInt64
+  @@bodies_memo_mutex = Mutex.new
+  @@bodies_clearer_registered = false
+
+  private def ensure_bodies_clearer_registered : Nil
+    return if @@bodies_clearer_registered
+    @@bodies_memo_mutex.synchronize do
+      return if @@bodies_clearer_registered
+      Noir::ExtractionResultCache.register_clearer do
+        @@bodies_memo_mutex.synchronize do
+          @@function_bodies_memo.clear
+          @@function_bodies_order.clear
+          @@method_bodies_memo.clear
+          @@method_bodies_order.clear
+        end
+      end
+      @@bodies_clearer_registered = true
+    end
+  end
+
   # Returns top-level function declarations in `source`, keyed by name.
   # `file_path` is recorded on each `FunctionBody` so callees emitted by
   # later re-parsing can report a useful path.
+  #
+  # Callers treat the result as read-only (they copy entries into their
+  # own per-directory maps), which is what lets it be shared.
   def collect_function_bodies(source : String, file_path : String) : Hash(String, FunctionBody)
-    bodies = Hash(String, FunctionBody).new
+    collect_top_level_bodies(source, file_path)[0]
+  end
+
+  # Collects top-level `method_declaration` bodies keyed by method name.
+  # The value is a list because a name can be defined on several receiver
+  # types in one package; callers that need an unambiguous resolution
+  # should require `size == 1`. Used to attach callees to controller-style
+  # routes whose handler is referenced by method name only.
+  def collect_method_bodies(source : String, file_path : String) : Hash(String, Array(FunctionBody))
+    collect_top_level_bodies(source, file_path)[1]
+  end
+
+  # One parse, both tables, memoized.
+  private def collect_top_level_bodies(source : String,
+                                       file_path : String) : Tuple(Hash(String, FunctionBody), Hash(String, Array(FunctionBody)))
+    ensure_bodies_clearer_registered
+    fn_key = Noir::ExtractionResultCache.key(source, "go_fn_bodies", file_path)
+    method_key = Noir::ExtractionResultCache.key(source, "go_method_bodies", file_path)
+
+    @@bodies_memo_mutex.synchronize do
+      cached_fns = @@function_bodies_memo[fn_key]?
+      cached_methods = @@method_bodies_memo[method_key]?
+      return {cached_fns, cached_methods} if cached_fns && cached_methods
+    end
+
+    functions = Hash(String, FunctionBody).new
+    methods = Hash(String, Array(FunctionBody)).new
+
     Noir::TreeSitter.parse_go(source) do |root|
       Noir::TreeSitter.each_named_child(root) do |child|
-        next unless Noir::TreeSitter.node_type(child) == "function_declaration"
+        node_type = Noir::TreeSitter.node_type(child)
+        next unless node_type == "function_declaration" || node_type == "method_declaration"
         name_node = Noir::TreeSitter.field(child, "name")
         next unless name_node
         name = Noir::TreeSitter.node_text(name_node, source)
-        bodies[name] ||= FunctionBody.new(
+        body = FunctionBody.new(
           Noir::TreeSitter.node_text(child, source),
           file_path,
           Noir::TreeSitter.node_start_row(child),
         )
+        if node_type == "function_declaration"
+          functions[name] ||= body
+        else
+          (methods[name] ||= [] of FunctionBody) << body
+        end
       end
     end
-    bodies
+
+    @@bodies_memo_mutex.synchronize do
+      functions = Noir::ExtractionResultCache.store_capped(
+        @@function_bodies_memo, @@function_bodies_order, fn_key, functions)
+      methods = Noir::ExtractionResultCache.store_capped(
+        @@method_bodies_memo, @@method_bodies_order, method_key, methods)
+    end
+
+    {functions, methods}
   end
 
   # Like `callees_for_routes`, but returns an empty map immediately when
@@ -774,29 +856,6 @@ module Noir::GoCalleeExtractor
   def callees_in_body(fn : FunctionBody,
                       external_functions : Hash(String, FunctionBody) = Hash(String, FunctionBody).new) : Array(Tuple(String, String, Int32))
     calls_in_external(fn, external_functions)
-  end
-
-  # Collects top-level `method_declaration` bodies keyed by method name.
-  # The value is a list because a name can be defined on several receiver
-  # types in one package; callers that need an unambiguous resolution
-  # should require `size == 1`. Used to attach callees to controller-style
-  # routes whose handler is referenced by method name only.
-  def collect_method_bodies(source : String, file_path : String) : Hash(String, Array(FunctionBody))
-    bodies = Hash(String, Array(FunctionBody)).new
-    Noir::TreeSitter.parse_go(source) do |root|
-      Noir::TreeSitter.each_named_child(root) do |child|
-        next unless Noir::TreeSitter.node_type(child) == "method_declaration"
-        name_node = Noir::TreeSitter.field(child, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        (bodies[name] ||= [] of FunctionBody) << FunctionBody.new(
-          Noir::TreeSitter.node_text(child, source),
-          file_path,
-          Noir::TreeSitter.node_start_row(child),
-        )
-      end
-    end
-    bodies
   end
 
   # Render a callee's textual name. Identifiers come back verbatim;
