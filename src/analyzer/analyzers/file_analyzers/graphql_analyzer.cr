@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../models/endpoint"
 require "json"
 require "log"
+require "../../../utils/text_file"
 
 # Parses GraphQL *operation documents* (`query Foo { ... }`,
 # `mutation Bar { ... }`, `subscription Baz { ... }`) carried in `.graphql`
@@ -184,7 +185,7 @@ FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   return [] of Endpoint unless path.ends_with?(".graphql") || path.ends_with?(".gql")
 
   begin
-    file_content = File.read(path, encoding: "utf-8", invalid: :skip)
+    file_content = Noir::TextFile.read(path)
   rescue ex
     Log.debug { "GraphQL Analyzer: Error reading file #{path}: #{ex.message} (#{ex.class})" }
     return [] of Endpoint # Return empty if read fails

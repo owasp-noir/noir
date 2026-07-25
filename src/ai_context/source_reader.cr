@@ -1,3 +1,5 @@
+require "../utils/text_file"
+
 module NoirAIContext
   # Reads source files once (cached per path) and extracts the
   # contextual snippets the augmentor attaches to AIContext entries:
@@ -185,7 +187,7 @@ module NoirAIContext
         return cached
       end
 
-      lines = File.read(path, encoding: "utf-8", invalid: :skip).split("\n")
+      lines = Noir::TextFile.read(path).split("\n")
       @file_cache[path] = lines
       lines
     rescue

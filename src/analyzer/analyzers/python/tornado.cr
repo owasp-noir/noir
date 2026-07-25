@@ -1,4 +1,5 @@
 require "../../engines/python_engine"
+require "../../../utils/text_file"
 
 module Analyzer::Python
   class Tornado < PythonEngine
@@ -658,7 +659,7 @@ module Analyzer::Python
     private def read_file_content(file_path : ::String) : ::String
       return @file_content_cache[file_path] if @file_content_cache.has_key?(file_path)
       content = begin
-        CodeLocator.instance.content_for(file_path) || File.read(file_path, encoding: "utf-8", invalid: :skip)
+        CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
       rescue e : IO::Error
         @logger.debug "Failed to read file: #{file_path} (#{e.message})"
         ""

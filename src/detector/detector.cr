@@ -5,6 +5,7 @@ require "../techs/techs.cr" # Added to define NoirTechs
 require "../passive_scan/detect.cr"
 require "wait_group"
 require "../utils/media_filter"
+require "../utils/text_file"
 require "yaml"
 
 macro define_detectors(detectors)
@@ -118,7 +119,7 @@ def detector_add_android_source_prefixes_from_dir(dir : String, prefixes : Array
   return unless File.exists?(manifest_path)
 
   begin
-    content = File.read(manifest_path, encoding: "utf-8", invalid: :skip)
+    content = Noir::TextFile.read(manifest_path)
     return unless content.includes?("<manifest")
   rescue File::NotFoundError | File::AccessDeniedError
     return
@@ -728,13 +729,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 # Keep the path visible to analyzers without paying to
                 # read/cache content that neither detection nor passive
                 # scan will inspect. Analyzer reads still fall back to
-                # File.read when a file was not cached here.
+                # a disk read when a file was not cached here.
                 locator.push("file_map", full_path)
                 skipped_content_reads += 1
                 next
               end
 
-              content = File.read(full_path, encoding: "utf-8", invalid: :skip)
+              content = Noir::TextFile.read(full_path)
               if content.to_slice.includes?(0_u8)
                 logger.debug "Skipping #{full_path}: binary content (file is text-extension but bytes look binary)"
                 skipped_files += 1

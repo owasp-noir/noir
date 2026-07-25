@@ -2,6 +2,7 @@ require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "../models/code_locator"
 require "./import_graph"
+require "../utils/text_file"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Kotlin Spring.
@@ -1388,7 +1389,7 @@ module Noir
 
     private def file_body(file : String) : String
       CodeLocator.instance.content_for(file) ||
-        File.read(file, encoding: "utf-8", invalid: :skip)
+        Noir::TextFile.read(file)
     end
 
     private def absorb!(result : Index,

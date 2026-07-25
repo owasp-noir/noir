@@ -4,6 +4,7 @@ require "../../../llm/adapter"
 require "../../../llm/prompt"
 require "../../../llm/prompt_overrides"
 require "../../../llm/cache"
+require "../../../utils/text_file"
 
 module Analyzer::AI
   # Unified AI analyzer that uses a provider-agnostic LLM adapter.
@@ -144,7 +145,7 @@ module Analyzer::AI
         next if File.directory?(path) || File.symlink?(path) || ignore_extensions.includes?(File.extname(path))
 
         relative_path = get_relative_path(base_path, path)
-        content = File.read(path, encoding: "utf-8", invalid: :skip)
+        content = Noir::TextFile.read(path)
         files << {relative_path, content}
       end
       files
@@ -595,7 +596,7 @@ module Analyzer::AI
       return "ERROR: file '#{path}' is outside base paths or does not exist." if resolved.nil?
       return "ERROR: '#{path}' is a directory. Use list_directory instead." if File.directory?(resolved)
 
-      content = File.read(resolved, encoding: "utf-8", invalid: :skip)
+      content = Noir::TextFile.read(resolved)
       return "FILE #{agent_relative_path(resolved)}\n#{content}" if content.bytesize <= AGENT_MAX_READ_BYTES
 
       half = AGENT_MAX_READ_BYTES // 2
