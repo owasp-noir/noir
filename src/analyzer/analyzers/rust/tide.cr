@@ -16,6 +16,8 @@ module Analyzer::Rust
   # We collect both `let <var> = <expr>.at("/path")` bindings and
   # direct `.at("/path").<verb>(handler)` chains in a single AST pass.
   class Tide < RustEngine
+    analyzer_for "rust_tide"
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
     def analyze_file(path : String) : Array(Endpoint)

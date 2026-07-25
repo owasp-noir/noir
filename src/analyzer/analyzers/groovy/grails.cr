@@ -29,6 +29,8 @@ module Analyzer::Groovy
   # ...]` dispatch maps and `${name}` GString path variables are recognized,
   # while bare-status-code (`"404"`, `"500"`) error mappings are excluded.
   class Grails < Analyzer
+    analyzer_for "groovy_grails"
+
     DEFAULT_METHODS = ["GET"]
     HTTP_METHODS    = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 

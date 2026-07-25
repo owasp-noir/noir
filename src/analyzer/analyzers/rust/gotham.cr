@@ -16,6 +16,8 @@ module Analyzer::Rust
   # pieces locally and we don't need to thread state through the
   # chain.
   class Gotham < RustEngine
+    analyzer_for "rust_gotham"
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
     def analyze_file(path : String) : Array(Endpoint)

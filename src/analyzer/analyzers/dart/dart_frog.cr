@@ -22,6 +22,8 @@ module Analyzer::Dart
   # `_middleware.dart` and other underscore-prefixed Dart files are
   # framework plumbing — not user-facing routes — and skipped.
   class DartFrog < Analyzer
+    analyzer_for "dart_frog"
+
     HTTP_METHOD_MAP = {
       "get"     => "GET",
       "post"    => "POST",

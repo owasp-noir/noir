@@ -4,6 +4,8 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Adonisjs < Analyzer
+    analyzer_for "js_adonisjs"
+
     JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
     # Precompiled once — a single PCRE2-JIT scan replaces two naive
     # String#includes? substring scans over the whole file content.

@@ -6,6 +6,8 @@ module Analyzer::Elixir
   # Line-scan; one root endpoint per binary (stdlib OptionParser has no
   # subcommands), params flag/argument/env, merged by URL.
   class Cli < Analyzer
+    analyzer_for "elixir_cli"
+
     SWITCHES   = /switches:\s*\[([^\]]*)\]/
     SWITCH_KEY = /([a-z_]\w*):/
     GET_ENV    = /\bSystem\.(?:get_env|fetch_env!?)\s*\(\s*"([^"]+)"/

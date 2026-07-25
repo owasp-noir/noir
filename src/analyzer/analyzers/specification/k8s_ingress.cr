@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class K8sIngress < SpecificationEngine
+    analyzer_for "k8s_ingress"
+
     DEFAULT_METHOD     = "GET"
     REWRITE_ANNOTATION = "nginx.ingress.kubernetes.io/rewrite-target"
     DEFAULT_PATH_TYPE  = "ImplementationSpecific"

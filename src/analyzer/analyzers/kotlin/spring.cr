@@ -7,6 +7,8 @@ require "../../../utils/utils.cr"
 
 module Analyzer::Kotlin
   class Spring < Analyzer
+    analyzer_for "kotlin_spring"
+
     KOTLIN_EXTENSION = "kt"
     alias SpringRoute = Noir::TreeSitterKotlinRouteExtractor::Route
 

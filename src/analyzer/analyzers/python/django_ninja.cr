@@ -27,6 +27,8 @@ module Analyzer::Python
   # URLconf, resolve router prefixes from `add_router(...)`, then emit
   # one endpoint per (instance, prefix) reachable from an API root.
   class DjangoNinja < PythonEngine
+    analyzer_for "python_django_ninja"
+
     # django-ninja path parameters use Django's converter syntax, where
     # the converter (when present) comes BEFORE the name: `{item_id}` or
     # `{int:item_id}`. This is the reverse of FastAPI's `{item_id:int}`,

@@ -6,6 +6,8 @@ module Analyzer::Crystal
   # commander shards. One endpoint per (sub)command, params flag/argument/env,
   # merged by URL. Line-scan; subclasses Analyzer directly.
   class Cli < Analyzer
+    analyzer_for "crystal_cli"
+
     OPTION_PARSER = /\bOptionParser\.(?:parse|new)\b/
     OPT_LONG      = /\.on\s*\(?[^)]*?["'](-{2}[A-Za-z0-9][\w-]*)/
     OPT_SHORT     = /\.on\s*\(\s*["'](-[A-Za-z0-9])(?:["' =]|\))/

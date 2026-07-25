@@ -15,6 +15,8 @@ module Analyzer::Cfml
   #     component extends="taffy.core.resource" taffy:uri="/echo" {
   #         function post(string name = "", string value = "") {}
   class Taffy < CfmlEngine
+    analyzer_for "cfml_taffy"
+
     # Both spellings are officially supported — `taffy/core/api.cfc`
     # reads `taffy_uri` and falls back to `taffy:uri`.
     URI_ATTRIBUTES  = ["taffy_uri", "taffy:uri"]

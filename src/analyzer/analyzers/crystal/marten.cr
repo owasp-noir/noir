@@ -3,6 +3,8 @@ require "../../../utils/url_path"
 
 module Analyzer::Crystal
   class Marten < CrystalEngine
+    analyzer_for "crystal_marten"
+
     alias HandlerActionKey = Tuple(String, String, String)
     @handler_callees = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 

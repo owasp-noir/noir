@@ -21,6 +21,8 @@ module Analyzer::Java
   #
   # Reference: https://docs.oracle.com/en/java/javase/21/docs/api/jdk.httpserver/com/sun/net/httpserver/HttpServer.html
   class HttpServer < Analyzer
+    analyzer_for "java_httpserver"
+
     JAVA_EXTENSION = "java"
     PACKAGE_MARKER = "com.sun.net.httpserver"
     CREATE_CONTEXT = "createContext"

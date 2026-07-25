@@ -11,6 +11,8 @@ module Analyzer::Rust
   # the `data = "<...>"` form, query / path angle-bracket params, and
   # `CookieJar` / `headers().get(...)` body uses.
   class Rocket < RustEngine
+    analyzer_for "rust_rocket"
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias ScopedRouteKey = Tuple(String, String, String)
     alias AliasKey = Tuple(String, String)

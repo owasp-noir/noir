@@ -2,6 +2,8 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Roda < RubyEngine
+    analyzer_for "ruby_roda"
+
     HTTP_METHOD_MATCHERS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
     # Precompile the per-verb routing-tree regexes once at load time.

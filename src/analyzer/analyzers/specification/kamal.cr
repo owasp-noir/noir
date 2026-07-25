@@ -7,6 +7,8 @@ module Analyzer::Specification
   # and the health endpoint it probes on every deploy — all of which are
   # live HTTP routes worth inventorying.
   class Kamal < SpecificationEngine
+    analyzer_for "kamal"
+
     DEFAULT_HEALTHCHECK_PATH = "/up"
     APP_METHOD               = "ANY"
     HEALTHCHECK_METHOD       = "GET"

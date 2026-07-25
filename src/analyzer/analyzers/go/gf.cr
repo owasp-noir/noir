@@ -3,6 +3,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Gf < GoEngine
+    analyzer_for "go_gf"
+
     IMPORT_MARKER = "github.com/gogf/gf"
 
     def analyze

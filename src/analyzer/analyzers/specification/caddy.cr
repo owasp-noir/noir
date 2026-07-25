@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Caddy < SpecificationEngine
+    analyzer_for "caddy"
+
     METHOD_ANY = "ANY"
 
     HANDLE_OPEN_RE   = /^handle(_path)?\s+(\S+)\s*\{?/

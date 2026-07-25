@@ -4,6 +4,8 @@ require "../../../miniparsers/perl_callee_extractor"
 
 module Analyzer::Perl
   class Mojolicious < PerlEngine
+    analyzer_for "perl_mojolicious"
+
     HTTP_VERBS   = %w[get post put delete patch options head]
     LITE_VERB_RE = /^\s*(get|post|put|patch|delete|del|options|head|websocket)\s+['"]([^'"]+)['"]/
     LITE_ANY_RE  = /^\s*any\s+(?:\[([^\]]+)\]\s*=>\s*)?['"]([^'"]+)['"]/

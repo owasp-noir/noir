@@ -23,6 +23,8 @@ module Analyzer::Cfml
   #     via `this.allowedMethods`, so that map decides the verbs instead
   #     of fanning out to all seven.
   class Coldbox < CfmlEngine
+    analyzer_for "cfml_coldbox"
+
     ROUTER_FILES = Set{"router.cfc", "routes.cfm"}
 
     # `route()` is verb-agnostic; the rest name their verb.

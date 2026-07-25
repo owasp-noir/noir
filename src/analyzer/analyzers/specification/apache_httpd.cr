@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class ApacheHttpd < SpecificationEngine
+    analyzer_for "apache_httpd"
+
     METHOD_ANY = "ANY"
 
     REDIRECT_STATUSES = Set{"permanent", "temp", "temporary", "seeother", "gone"}

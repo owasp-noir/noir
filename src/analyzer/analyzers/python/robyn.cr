@@ -4,6 +4,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Robyn < PythonEngine
+    analyzer_for "python_robyn"
+
     # Reference: https://robyn.tech/documentation
     #
     # Robyn is a Rust-backed Python web framework whose route registration

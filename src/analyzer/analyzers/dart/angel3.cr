@@ -31,6 +31,8 @@ module Analyzer::Dart
   # `chain([...]).<verb>(...)` form where the verb is called directly on a
   # `chain(...)` result rather than a bound router variable.
   class Angel3 < Analyzer
+    analyzer_for "dart_angel3"
+
     HTTP_METHOD_MAP = {
       "get"     => "GET",
       "post"    => "POST",

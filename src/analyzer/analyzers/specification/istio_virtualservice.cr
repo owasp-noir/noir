@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class IstioVirtualservice < SpecificationEngine
+    analyzer_for "istio_virtualservice"
+
     METHOD_ANY = "ANY"
 
     def analyze

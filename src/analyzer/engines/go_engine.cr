@@ -3,7 +3,7 @@ require "../../miniparsers/go_callee_extractor"
 require "../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
-  class GoEngine < Analyzer
+  abstract class GoEngine < Analyzer
     # `*_test.go` is Go's hard-wired build-tag for test-only source.
     # `go build` excludes these files entirely; only `go test` pulls
     # them in. Real route handlers never live there, but framework

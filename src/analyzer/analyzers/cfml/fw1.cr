@@ -18,6 +18,8 @@ module Analyzer::Cfml
   # A key with no `$` prefix answers every method. `hint` is a label the
   # framework skips, not a route.
   class Fw1 < CfmlEngine
+    analyzer_for "cfml_fw1"
+
     ROUTES_ARRAY_RE = /\broutes\s*[:=]\s*\[/i
 
     # `"$GET/todo/:id" = "/main/get/id/:id"` — the value is the internal

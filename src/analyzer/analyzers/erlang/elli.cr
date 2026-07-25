@@ -18,6 +18,8 @@ module Analyzer::Erlang
   # Unlike Cowboy the verb is right there in the clause head, so no
   # cross-module lookup is needed.
   class Elli < Analyzer
+    analyzer_for "erlang_elli"
+
     # The 2-arity `handle(Req, _Args)` dispatcher carries no path, so the
     # head must bind a list in slot 2 to count as a route.
     CLAUSE_REGEX = /^\s*handle\s*\(\s*(?:'([A-Za-z]+)'|<<\s*"([A-Za-z]+)"\s*>>|([A-Z_][A-Za-z0-9_]*))\s*,\s*\[([^\]]*)\]/

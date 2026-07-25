@@ -32,6 +32,8 @@ module Analyzer::Gleam
   # verb the handler it calls is followed (`resolve_handler`) to find a
   # `case req.method` or a `wisp.require_method`.
   class Wisp < Analyzer
+    analyzer_for "gleam_wisp"
+
     CASE_KEYWORD = /\bcase\b/
     PATH_SOURCE  = /\bpath_segments\s*\(/
     # `let path = wisp.path_segments(req)` / `let method = req.method`.

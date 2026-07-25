@@ -3,6 +3,8 @@ require "../../../miniparsers/swift_callee_extractor"
 
 module Analyzer::Swift
   class Hummingbird < SwiftEngine
+    analyzer_for "swift_hummingbird"
+
     # Maximum number of lines to look ahead for function parameters
     LOOKAHEAD_LIMIT = 20
 

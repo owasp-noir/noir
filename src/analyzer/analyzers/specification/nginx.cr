@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Nginx < SpecificationEngine
+    analyzer_for "nginx"
+
     METHOD_ANY = "ANY"
 
     LOCATION_RE     = /^location\s+(?:(=|~\*|~|\^~)\s+)?(\S+)/

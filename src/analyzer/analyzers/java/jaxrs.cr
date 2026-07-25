@@ -6,6 +6,8 @@ require "xml"
 
 module Analyzer::Java
   class JaxRs < Analyzer
+    analyzer_for "java_jaxrs"
+
     JAVA_EXTENSION = "java"
     alias ApplicationBaseKey = Tuple(String, String)
 

@@ -14,6 +14,8 @@ module Analyzer::Go
   # root command whose flags are registered in a separate `init()` block
   # collects them all under a single `cli://<binary>` entry.
   class Cli < GoEngine
+    analyzer_for "go_cli"
+
     # Any of these in a file means it participates in the CLI surface.
     FRAMEWORK_IMPORTS = [
       "github.com/spf13/cobra",

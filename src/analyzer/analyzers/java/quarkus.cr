@@ -15,6 +15,8 @@ module Analyzer::Java
   # `@RestCookie` shorthand annotations alongside the standard
   # JAX-RS names, so no Quarkus-specific tree walking is needed.
   class Quarkus < Analyzer
+    analyzer_for "java_quarkus"
+
     JAVA_EXTENSION  = "java"
     QUARKUS_MARKERS = ["io.quarkus", "quarkus.io"]
     alias ApplicationBaseKey = Tuple(String, String)

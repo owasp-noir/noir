@@ -4,6 +4,8 @@ require "./minimal_api_support"
 
 module Analyzer::CSharp
   class MinimalApis < Analyzer
+    analyzer_for "cs_aspnet_core_minimal_api"
+
     include Common
     include MinimalApiSupport
 

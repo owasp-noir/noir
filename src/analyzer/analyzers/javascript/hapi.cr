@@ -3,6 +3,8 @@ require "../../../miniparsers/hapi_extractor_ts"
 
 module Analyzer::Javascript
   class Hapi < Analyzer
+    analyzer_for "js_hapi"
+
     JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
     # Precompiled once — a single PCRE2-JIT scan replaces five naive
     # String#includes? substring scans over the whole file content.

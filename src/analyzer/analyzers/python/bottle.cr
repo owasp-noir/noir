@@ -5,6 +5,8 @@ require "./python_helper"
 
 module Analyzer::Python
   class Bottle < PythonEngine
+    analyzer_for "python_bottle"
+
     # Reference: https://bottlepy.org/docs/dev/tutorial.html#request-routing
     #
     # Bottle supports two decorator forms:

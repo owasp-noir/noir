@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class AwsCloudformation < SpecificationEngine
+    analyzer_for "aws_cloudformation"
+
     METHOD_ANY            = "ANY"
     SAM_FUNCTION_TYPE     = "AWS::Serverless::Function"
     APIGW_RESOURCE_TYPE   = "AWS::ApiGateway::Resource"

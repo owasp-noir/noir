@@ -24,6 +24,8 @@ module Analyzer::Mobile
   # gradle manifest placeholders (`${applicationId}`, custom
   # `manifestPlaceholders`) against the nearest build.gradle(.kts).
   class Android < Analyzer
+    analyzer_for "android"
+
     LAUNCHER_ACTION = "android.intent.action.MAIN"
 
     def analyze

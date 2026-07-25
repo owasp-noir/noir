@@ -7,6 +7,8 @@ require "../../../miniparsers/java_route_extractor_ts"
 
 module Analyzer::Java
   class Armeria < Analyzer
+    analyzer_for "java_armeria"
+
     # Anchor only — the chain body is bounded by a depth-aware scan so
     # semicolons inside lambda/anonymous-class bodies do not truncate
     # the match, and a trailing `.` after `build()` is not required

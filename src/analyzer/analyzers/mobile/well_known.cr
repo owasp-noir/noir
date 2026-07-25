@@ -18,6 +18,8 @@ module Analyzer::Mobile
   # / `exclude: true`) are still emitted, tagged `excluded`, since they are
   # part of the declared surface.
   class WellKnown < Analyzer
+    analyzer_for "well_known_applinks"
+
     # Digital Asset Links relation that delegates URL handling to the app —
     # the App Links grant. Other relations (e.g. get_login_creds) are not
     # deep-link surface and are ignored.

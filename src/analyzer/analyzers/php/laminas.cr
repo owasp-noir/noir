@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Laminas < PhpEngine
+    analyzer_for "php_laminas"
+
     HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
     # ASCII byte values for the structural characters the byte-level

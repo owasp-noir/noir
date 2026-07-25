@@ -11,6 +11,8 @@ module Analyzer::Rust
   # pairs each routing attribute with the function_item that follows
   # it, skipping intermediate attribute_items and doc comments.
   class ActixWeb < RustEngine
+    analyzer_for "rust_actix_web"
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias GlobalFunctionEntry = NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, callees: Array(Noir::RustCalleeExtractor::Entry))
 

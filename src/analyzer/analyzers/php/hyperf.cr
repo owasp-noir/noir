@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Hyperf < PhpEngine
+    analyzer_for "php_hyperf"
+
     private struct ClassRoutePrefix
       getter path, body_start, body_end
 

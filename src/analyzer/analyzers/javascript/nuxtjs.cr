@@ -3,6 +3,8 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nuxtjs < JavascriptEngine
+    analyzer_for "js_nuxtjs"
+
     EXTENSIONS = [".js", ".ts", ".mjs", ".mts"]
 
     def analyze

@@ -14,6 +14,8 @@ module Analyzer::CSharp
   # URL. Subclasses Analyzer directly (there is no C# engine) and reuses
   # Common.csharp_test_path? to skip test files.
   class Cli < Analyzer
+    analyzer_for "cs_cli"
+
     include Common
 
     # System.CommandLine (builder). Variable-mapped: a command/option binds to

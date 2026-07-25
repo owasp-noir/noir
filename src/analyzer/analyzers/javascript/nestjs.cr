@@ -4,6 +4,8 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Nestjs < JavascriptEngine
+    analyzer_for "js_nestjs"
+
     # Request-object fields read in handler bodies, paired with the param
     # type they map to. Iterated in this order when extracting params.
     REQUEST_OBJECT_FIELDS = { {"query", "query"}, {"body", "body"}, {"headers", "header"}, {"params", "path"} }

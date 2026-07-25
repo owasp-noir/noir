@@ -3,6 +3,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class Beego < GoEngine
+    analyzer_for "go_beego"
+
     IMPORT_MARKER = "github.com/beego/beego"
 
     # Crystal recompiles an interpolated regex literal on every evaluation

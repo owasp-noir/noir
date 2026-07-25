@@ -4,6 +4,8 @@ require "../../../miniparsers/java_route_extractor_ts"
 
 module Analyzer::Java
   class Play < Analyzer
+    analyzer_for "java_play"
+
     # Stores parsed controller methods with their parameters
     alias ControllerMethod = NamedTuple(headers: Array(String), cookies: Array(String), body_type: String?, callees: Array(Callee))
     alias ScopedKey = Tuple(String, String)

@@ -8,6 +8,8 @@ module Analyzer::Specification
   # line/block parser (not a full TypeSpec compiler): it walks balanced braces,
   # buffers decorators across newlines, and emits one endpoint per operation.
   class TypeSpec < SpecificationEngine
+    analyzer_for "typespec"
+
     HTTP_VERB_DECORATORS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
     def analyze

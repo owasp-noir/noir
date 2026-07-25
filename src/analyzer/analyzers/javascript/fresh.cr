@@ -45,6 +45,8 @@ module Analyzer::Javascript
   #   * Route groups (`(group)` directories — same convention as
   #     SvelteKit). Add when fixtures show real-world usage.
   class Fresh < JavascriptEngine
+    analyzer_for "js_fresh"
+
     HTTP_METHODS    = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     PAGE_EXTENSIONS = [".tsx", ".jsx"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs"]

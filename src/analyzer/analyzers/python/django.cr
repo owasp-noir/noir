@@ -3,6 +3,8 @@ require "json"
 
 module Analyzer::Python
   class Django < PythonEngine
+    analyzer_for "python_django"
+
     # Base path for the Django project
     @django_base_path : ::String = ""
     @visited_url_paths = Hash(String, Bool).new

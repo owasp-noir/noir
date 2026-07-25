@@ -8,6 +8,8 @@ require "yaml"
 
 module Analyzer::Java
   class Spring < Analyzer
+    analyzer_for "java_spring"
+
     REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
     REGEX_ROUTE_CALL        = /((?:andRoute|route)\s*\(|\.)\s*(?:RequestPredicates\.)?(GET|POST|DELETE|PUT|PATCH|HEAD|OPTIONS)\s*\(/
 

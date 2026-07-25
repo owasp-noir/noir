@@ -21,6 +21,8 @@ module Analyzer::Erlang
   # `handler_info` does; routes whose handler can't be resolved fall back
   # to "ANY".
   class Cowboy < Analyzer
+    analyzer_for "erlang_cowboy"
+
     # Cowboy dispatch entries are `{PathMatch, Handler, InitialState}` or
     # `{PathMatch, Constraints, Handler, InitialState}`, and PathMatch is
     # always an absolute path — as a string or as a binary. Requiring the

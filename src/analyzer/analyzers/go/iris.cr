@@ -2,6 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Iris < GoEngine
+    analyzer_for "go_iris"
+
     HTTP_METHODS  = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
     IMPORT_MARKER = "github.com/kataras/iris"
 

@@ -12,6 +12,8 @@ module Analyzer::Asp
   # `global.asa` and `.inc` are never served (IIS refuses the former and
   # does not map the latter to the ASP engine), so only `.asp` is walked.
   class Classic < Analyzer
+    analyzer_for "asp_classic"
+
     # IIS-specific roots only. Generic names like `public/` are
     # deliberately absent — they collide with build output, the false
     # positive `FileHelper` documents.

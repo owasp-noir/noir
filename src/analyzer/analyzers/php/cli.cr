@@ -13,6 +13,8 @@ module Analyzer::Php
   # URL. Subclasses Analyzer directly (PhpEngine is abstract) and reuses
   # PhpEngine.test_path? to skip tests.
   class Cli < Analyzer
+    analyzer_for "php_cli"
+
     SET_NAME     = /\$this->setName\s*\(\s*['"]([^'"]+)['"]/
     DEFAULT_NAME = /protected\s+(?:static\s+)?\$defaultName\s*=\s*['"]([^'"]+)['"]/
     AS_COMMAND   = /#\[\s*AsCommand\s*\(\s*name\s*:\s*['"]([^'"]+)['"]/

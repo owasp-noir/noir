@@ -4,6 +4,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class WSDL < SpecificationEngine
+    analyzer_for "wsdl"
+
     SOAP12_NS        = "http://schemas.xmlsoap.org/wsdl/soap12/"
     MAX_IMPORT_DEPTH = 8
 

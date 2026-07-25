@@ -23,6 +23,8 @@ module Analyzer::Dart
   # on unrelated receivers (e.g. `someMap.get('key')`) are never mistaken
   # for routes.
   class Alfred < Analyzer
+    analyzer_for "dart_alfred"
+
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile); the router-variable matcher interpolates
     # a discovered name that repeats across files, so memoize it per name.

@@ -9,6 +9,8 @@ module Analyzer::Cpp
   # function. The library's `Client` type shares the same verb method names, so
   # we only treat calls on a *server* variable as routes.
   class Httplib < Analyzer
+    analyzer_for "cpp_httplib"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
     VERBS = {

@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class RAML < SpecificationEngine
+    analyzer_for "raml"
+
     HTTP_METHODS       = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
     INCLUDE_EXTENSIONS = {".raml", ".yaml", ".yml", ".json"}
     alias ResolvedNode = NamedTuple(node: YAML::Any, source_dir: String)

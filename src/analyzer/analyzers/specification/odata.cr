@@ -9,6 +9,8 @@ module Analyzer::Specification
   # service root — downstream consumers prefix it from their own
   # context.
   class OData < SpecificationEngine
+    analyzer_for "odata"
+
     EDM_PRIMITIVE_BODY_TYPES = {
       "Edm.String"         => "string",
       "Edm.Boolean"        => "boolean",

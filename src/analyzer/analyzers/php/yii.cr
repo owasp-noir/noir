@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Yii < PhpEngine
+    analyzer_for "php_yii"
+
     # Standard REST verbs auto-exposed by yii\rest\ActiveController.
     REST_ACTIONS = {
       "index"   => ["GET"],

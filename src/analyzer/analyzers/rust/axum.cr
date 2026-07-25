@@ -11,6 +11,8 @@ module Analyzer::Rust
   # shares the parsed tree instead of re-scanning the file with
   # regexes and a body-text wrapper.
   class Axum < RustEngine
+    analyzer_for "rust_axum"
+
     alias UtoipaScopedKey = Tuple(String, String, String)
     alias UtoipaNestEdge = Tuple(UtoipaScopedKey, String)
     alias NestScopedKey = Tuple(String, String, String)

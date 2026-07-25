@@ -31,6 +31,8 @@ module Analyzer::Javascript
   # `(group)`-with-`+layout.server.ts` cookie-protected endpoints
   # (the route still fires; auth tagging is the tagger's job).
   class Sveltekit < JavascriptEngine
+    analyzer_for "js_sveltekit"
+
     HTTP_METHODS    = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     PAGE_EXTENSIONS = [".svelte", ".svx", ".md"]
     API_EXTENSIONS  = [".ts", ".js", ".mjs"]

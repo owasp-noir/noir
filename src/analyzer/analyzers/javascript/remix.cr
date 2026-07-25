@@ -38,6 +38,8 @@ module Analyzer::Javascript
   #   * The legacy v1 nested-folder convention — v2 flat is what
   #     the toolchain has been on since Remix 1.15 / Remix 2.
   class Remix < JavascriptEngine
+    analyzer_for "js_remix"
+
     HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]
 
     PAGE_EXTENSIONS     = [".tsx", ".jsx"]

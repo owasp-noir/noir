@@ -2,6 +2,8 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Lucky < CrystalEngine
+    analyzer_for "crystal_lucky"
+
     def analyze
       collect_public_dir_endpoints
       super

@@ -5,6 +5,8 @@ require "../../../miniparsers/import_graph"
 
 module Analyzer::Javascript
   class Nextjs < JavascriptEngine
+    analyzer_for "js_nextjs"
+
     HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
     EXTENSIONS   = [".js", ".jsx", ".ts", ".tsx", ".mjs"]
 

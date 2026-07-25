@@ -3,6 +3,8 @@ require "set"
 
 module Analyzer::Specification
   class Traefik < SpecificationEngine
+    analyzer_for "traefik"
+
     def analyze
       # Shared across every file so one route defined in two providers
       # (a TOML and a YAML dynamic-config pair) is emitted once.

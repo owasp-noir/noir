@@ -3,6 +3,8 @@ require "../../../utils/text_file"
 
 module Analyzer::Python
   class Tornado < PythonEngine
+    analyzer_for "python_tornado"
+
     # Reference: https://tornadoweb.org/en/stable/web.html
     # Reference: https://tornadoweb.org/en/stable/httputil.html#tornado.httputil.HTTPServerRequest
     REQUEST_PARAM_FIELDS = {

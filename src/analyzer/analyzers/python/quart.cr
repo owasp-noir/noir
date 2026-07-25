@@ -16,6 +16,8 @@ module Analyzer::Python
   #     parameter extraction reads the function body line-by-line and
   #     the `await` prefix doesn't change the access shape.
   class Quart < PythonEngine
+    analyzer_for "python_quart"
+
     # Reference: https://quart.palletsprojects.com/en/latest/reference/source/quart.wrappers.request.html
     REQUEST_PARAM_FIELDS = {
       "data"    => {["POST", "PUT", "PATCH", "DELETE"], "form"},

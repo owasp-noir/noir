@@ -14,6 +14,8 @@ module Analyzer::Zig
   #     `router.handle_func_unbound("/p", handler)` map a path to a handler
   #     for any method.
   class Zap < Analyzer
+    analyzer_for "zig_zap"
+
     VERBS       = %w[get post put delete patch options head]
     VERB_METHOD = {
       "get" => "GET", "post" => "POST", "put" => "PUT", "delete" => "DELETE",

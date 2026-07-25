@@ -3,6 +3,8 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   class Restify < JavascriptEngine
+    analyzer_for "js_restify"
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)

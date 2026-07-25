@@ -16,6 +16,8 @@ module Analyzer::Fsharp
   # textual line as a route are honored; lines without an explicit
   # method default to a fallback set.
   class Giraffe < Analyzer
+    analyzer_for "fs_giraffe"
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 
     FALLBACK_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"]

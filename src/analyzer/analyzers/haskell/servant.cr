@@ -4,6 +4,8 @@ require "set"
 
 module Analyzer::Haskell
   class Servant < Analyzer
+    analyzer_for "haskell_servant"
+
     HTTP_METHOD_VERBS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
 
     alias TypeAlias = NamedTuple(body: String, source: String, line: Int32)
