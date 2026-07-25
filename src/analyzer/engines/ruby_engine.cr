@@ -50,13 +50,26 @@ module Analyzer::Ruby
     # root so noir's own fixture tree under `spec/functional_test/fixtures`
     # is not accidentally skipped when the fixture directory itself is the
     # base path.
+    # Exact translation of the three-way check this replaces:
+    # `relative == dir` and `relative.starts_with?("#{dir}/")` collapse to
+    # the leading branch, `relative.includes?("/#{dir}/")` to the second.
+    # Deliberately NOT `(?:\A|\/)dir(?:\/|\z)`, which would also match a
+    # trailing segment (`app/spec`) the old chain rejected.
+    #
+    # The chain built two interpolated Strings per directory per call —
+    # 18 allocations on every Ruby file, for every whole-tree Ruby
+    # analyzer — before scanning for each of them separately.
+    RUBY_NON_PRODUCTION_PATH_RE = begin
+      alternation = RUBY_NON_PRODUCTION_DIRS.join("|") { |dir| Regex.escape(dir) }
+      Regex.new("\\A(?:#{alternation})(?:/|\\z)|/(?:#{alternation})/")
+    end
+
     protected def ruby_non_production_path?(path : String) : Bool
       return true if RubyEngine.ruby_test_path?(path)
 
-      relative = ruby_relative_path(path).gsub('\\', '/')
-      RUBY_NON_PRODUCTION_DIRS.any? do |dir|
-        relative == dir || relative.starts_with?("#{dir}/") || relative.includes?("/#{dir}/")
-      end
+      relative = ruby_relative_path(path)
+      relative = relative.gsub('\\', '/') if relative.includes?('\\')
+      relative.matches?(RUBY_NON_PRODUCTION_PATH_RE)
     end
 
     private def ruby_relative_path(path : String) : String
