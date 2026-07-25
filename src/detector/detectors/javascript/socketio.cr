@@ -7,6 +7,8 @@ module Detector::Javascript
   # with `.on(` usage. Gates the Socket.IO analyzer, which emits inbound
   # `socket.on` events as `ws://` realtime endpoints.
   class SocketIO < Detector
+    detector_for "js_socketio"
+
     SIGNAL = Regex.union(
       /from\s+['"]socket\.io['"]/,
       /require\(\s*['"]socket\.io['"]\s*\)/,
@@ -28,10 +30,6 @@ module Detector::Javascript
 
     def applicable?(filename : String) : Bool
       source_file?(filename) || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_socketio"
     end
 
     private def source_file?(filename : String) : Bool

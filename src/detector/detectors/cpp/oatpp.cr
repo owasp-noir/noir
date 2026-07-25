@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Cpp
   class Oatpp < Detector
+    detector_for "cpp_oatpp"
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
     def detect(filename : String, file_contents : String) : Bool
@@ -17,10 +19,6 @@ module Detector::Cpp
 
     def applicable?(filename : String) : Bool
       CPP_EXTENSIONS.any? { |ext| filename.ends_with?(ext) } || filename.ends_with?(".c")
-    end
-
-    def set_name
-      @name = "cpp_oatpp"
     end
   end
 end

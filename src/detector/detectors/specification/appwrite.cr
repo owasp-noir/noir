@@ -8,6 +8,9 @@ module Detector::Specification
   # `appwrite.config.json` from v6). The server generates the whole
   # REST surface from that file, so it is the only thing to read.
   class Appwrite < Detector
+    # Registers each config path in `CodeLocator`.
+    detector_for "appwrite", idempotent: false
+
     CONFIG_FILENAMES = {"appwrite.json", "appwrite.config.json"}
 
     # `projectId` is mandatory in every Appwrite config and is the
@@ -40,15 +43,6 @@ module Detector::Specification
     # unrelated `.json`.
     def applicable?(filename : String) : Bool
       CONFIG_FILENAMES.includes?(File.basename(filename))
-    end
-
-    def set_name
-      @name = "appwrite"
-    end
-
-    # Registers each config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

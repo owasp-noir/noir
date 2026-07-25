@@ -5,6 +5,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Envoy < Detector
+    # Registers every matching config path in CodeLocator.
+    detector_for "envoy", extensions: %w[.yaml .yml .json], idempotent: false
+
     # Every `.yaml`/`.yml`/`.json` in the tree reaches these gates.
     VIRTUAL_HOSTS_MARKER = /virtual_hosts/
     DOMAINS_MARKER       = /domains/
@@ -27,19 +30,6 @@ module Detector::Specification
         end
       end
 
-      false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml") || filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "envoy"
-    end
-
-    # Registers every matching config path in CodeLocator.
-    def idempotent? : Bool
       false
     end
 

@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Javascript
   class Nextjs < Detector
+    detector_for "js_nextjs",
+      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      basenames: %w[package.json]
+
     # Single-pass union of the four Next.js import forms (`require("next")`,
     # `require("next/...")`, `from "next"`, `from "next/..."`) — previously
     # four separate whole-file scans per JS/TS source.
@@ -54,14 +58,6 @@ module Detector::Javascript
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".cjs") || filename.ends_with?(".jsx") || filename.ends_with?(".ts") || filename.ends_with?(".tsx") || File.basename(filename) == "package.json"
-    end
-
-    def set_name
-      @name = "js_nextjs"
     end
 
     private def next_js_content_signal?(content : String) : Bool

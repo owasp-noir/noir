@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Dart
   class GetServer < Detector
+    detector_for "dart_get_server", extensions: %w[.dart], basenames: %w[pubspec.yaml pubspec.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -16,14 +18,6 @@ module Detector::Dart
       return true if file_contents.includes?("package:get_server/")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".dart") || File.basename(filename) == "pubspec.yaml" || File.basename(filename) == "pubspec.lock"
-    end
-
-    def set_name
-      @name = "dart_get_server"
     end
   end
 end

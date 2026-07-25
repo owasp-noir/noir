@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Postman < Detector
+    # Registers Postman collection paths in `CodeLocator`.
+    detector_for "postman", extensions: %w[.json], idempotent: false
+
     # Every `.json` in the tree reaches this guard.
     CANDIDATE_MARKER = Regex.union(
       "schema.getpostman.com", "schema.postman.com", "\"_postman_id\"",
@@ -34,19 +37,6 @@ module Detector::Specification
       end
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "postman"
-    end
-
-    # Registers Postman collection paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def postman_json_candidate?(content : String) : Bool

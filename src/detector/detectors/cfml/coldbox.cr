@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Cfml
   class Coldbox < Detector
+    detector_for "cfml_coldbox", extensions: %w[.cfc .cfm]
+
     # The router DSL and the ColdBox base classes. `coldbox.system` is the
     # framework namespace every ColdBox application references.
     ROUTER_DSL_RE = /(?<![\w.])(?:addRoute|resources)\s*\(|\.\s*to(?:Handler|View|Redirect|Response|ModuleRouting)\s*\(/i
@@ -21,14 +23,6 @@ module Detector::Cfml
       return true if base == "routes.cfm" && content_matches?(file_contents, ROUTER_DSL_RE)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cfc") || filename.ends_with?(".cfm")
-    end
-
-    def set_name
-      @name = "cfml_coldbox"
     end
   end
 end

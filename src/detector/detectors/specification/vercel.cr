@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Vercel < Detector
+    # Registers Vercel config paths in `CodeLocator`.
+    detector_for "vercel", idempotent: false
+
     CONFIG_FILES = {"vercel.json", "now.json"}
     @expanded_base_paths : Array(String)?
 
@@ -32,15 +35,6 @@ module Detector::Specification
       expanded_base_paths.any? do |base_path|
         File.join(base_path, base) == absolute
       end
-    end
-
-    def set_name
-      @name = "vercel"
-    end
-
-    # Registers Vercel config paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def expanded_base_paths : Array(String)

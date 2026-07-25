@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Go
   class Iris < Detector
+    detector_for "go_iris", extensions: %w[.go], path_segments: %w[go.mod]
+
     IMPORT_MARKER = "github.com/kataras/iris"
 
     # One JIT-compiled scan per file instead of a Rabin-Karp walk;
@@ -16,14 +18,6 @@ module Detector::Go
       return true if (filename.includes? "go.mod") && content_matches?(file_contents, IMPORT_PATTERN)
       return true if filename.ends_with?(".go") && content_matches?(file_contents, IMPORT_PATTERN)
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.includes?("go.mod") || filename.ends_with?(".go")
-    end
-
-    def set_name
-      @name = "go_iris"
     end
   end
 end

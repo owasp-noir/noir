@@ -16,6 +16,9 @@ module Detector::Specification
   # Matching bare `slug:` + `fields:` would trip on all three of the
   # above, so that gap is accepted.
   class PayloadCms < Detector
+    # Registers every collection, global and config path in `CodeLocator`.
+    detector_for "payload_cms", idempotent: false
+
     CONFIG_EXTENSIONS = {".ts", ".tsx", ".js", ".mjs", ".cjs", ".mts", ".cts"}
 
     # Single combined gate, checked before anything else. This detector is
@@ -68,15 +71,6 @@ module Detector::Specification
       return false if path.includes?(".test.") || path.includes?(".spec.")
 
       CONFIG_EXTENSIONS.includes?(File.extname(path).downcase)
-    end
-
-    def set_name
-      @name = "payload_cms"
-    end
-
-    # Registers every collection, global and config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

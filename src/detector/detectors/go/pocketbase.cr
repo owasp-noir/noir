@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Go
   class Pocketbase < Detector
+    detector_for "go_pocketbase", extensions: %w[.go], path_segments: %w[go.mod]
+
     # Pocketbase apps are full Go programs that import the
     # framework's own `tools/router` package. The framework repo
     # itself self-references via the same path so the marker
@@ -14,14 +16,6 @@ module Detector::Go
       else
         false
       end
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.includes?("go.mod") || filename.ends_with?(".go")
-    end
-
-    def set_name
-      @name = "go_pocketbase"
     end
   end
 end

@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Php
   class Slim < Detector
+    detector_for "php_slim", extensions: %w[.php .phtml], basenames: %w[composer.json composer.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       if filename.ends_with?("composer.json") && file_contents.includes?("slim/slim")
         return true
@@ -15,14 +17,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".phtml") || File.basename(filename) == "composer.json" || File.basename(filename) == "composer.lock"
-    end
-
-    def set_name
-      @name = "php_slim"
     end
   end
 end

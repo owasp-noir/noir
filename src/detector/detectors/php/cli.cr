@@ -8,6 +8,8 @@ module Detector::Php
   # (`WP_CLI::add_command` / `WP_CLI_Command`), or builtin getopt / $argv
   # indexing.
   class Cli < Detector
+    detector_for "php_cli", extensions: %w[.php]
+
     USE_SF_CONSOLE    = /\buse\s+Symfony\\Component\\Console\b/
     SF_COMMAND        = /\bclass\s+\w+\s+extends\s+(?:\\?Symfony\\Component\\Console\\Command\\)?Command\b/
     AS_COMMAND        = /#\[\s*AsCommand\b/
@@ -33,14 +35,6 @@ module Detector::Php
         content_matches?(file_contents, GETOPT) || content_matches?(file_contents, ARGV_INDEX) ||
         content_matches?(file_contents, ARTISAN_SIGNATURE) || content_matches?(file_contents, ROBO_MARKER) ||
         content_matches?(file_contents, WP_ADD_COMMAND) || content_matches?(file_contents, WP_COMMAND_CLASS)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php")
-    end
-
-    def set_name
-      @name = "php_cli"
     end
   end
 end

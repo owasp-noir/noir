@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Java
   class Jsp < Detector
+    detector_for "java_jsp", extensions: %w[.jsp .java .xml]
+
     # Necessary-condition guard for the `.xml` branch: comment stripping
     # only removes text, so a marker absent from the raw content is also
     # absent from the stripped copy — the whole-file `gsub` allocation can
@@ -30,14 +32,6 @@ module Detector::Java
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".jsp") || filename.ends_with?(".java") || filename.ends_with?(".xml")
-    end
-
-    def set_name
-      @name = "java_jsp"
     end
   end
 end

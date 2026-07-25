@@ -7,6 +7,8 @@ module Detector::Cpp
   # `main(int argc, char** argv)`, which every C++ program (servers
   # included) has.
   class Cli < Detector
+    detector_for "cpp_cli"
+
     EXTS      = [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx"]
     CLI11     = /\bCLI::App\b|include\s*[<"]CLI\/CLI\.hpp/
     GETOPT    = /\bgetopt(?:_long)?\s*\(|\bstruct\s+option\b/
@@ -26,10 +28,6 @@ module Detector::Cpp
 
     def applicable?(filename : String) : Bool
       EXTS.any? { |ext| filename.ends_with?(ext) }
-    end
-
-    def set_name
-      @name = "cpp_cli"
     end
   end
 end

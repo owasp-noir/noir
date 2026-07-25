@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Erlang
   class Elli < Detector
+    detector_for "erlang_elli",
+      extensions: %w[.erl .hrl .app.src],
+      basenames: %w[rebar.config erlang.mk]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -16,17 +20,6 @@ module Detector::Erlang
       return true if file_contents.includes?("elli:start_link")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".erl") || filename.ends_with?(".hrl") ||
-        filename.ends_with?(".app.src") ||
-        File.basename(filename) == "rebar.config" ||
-        File.basename(filename) == "erlang.mk"
-    end
-
-    def set_name
-      @name = "erlang_elli"
     end
   end
 end

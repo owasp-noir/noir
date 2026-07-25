@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class IstioVirtualservice < Detector
+    # Registers each VirtualService manifest path in `CodeLocator`.
+    detector_for "istio_virtualservice", extensions: %w[.yaml .yml], idempotent: false
+
     ISTIO_API_PREFIX = "networking.istio.io/"
 
     # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
@@ -22,19 +25,6 @@ module Detector::Specification
 
       CodeLocator.instance.push("istio-virtualservice-spec", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "istio_virtualservice"
-    end
-
-    # Registers each VirtualService manifest path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def valid_yaml_documents?(content : String) : Bool

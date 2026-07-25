@@ -6,6 +6,8 @@ module Detector::Java
   # `main(String[] args)` / `System.getenv`, which every Java app (web
   # servers included) has.
   class Cli < Detector
+    detector_for "java_cli", extensions: %w[.java]
+
     LIB_IMPORTS = [
       "picocli.",
       "org.kohsuke.args4j",
@@ -28,14 +30,6 @@ module Detector::Java
       return false unless filename.ends_with?(".java")
       return true if LIB_IMPORTS.any? { |marker| file_contents.includes?(marker) }
       content_matches?(file_contents, USAGE)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".java")
-    end
-
-    def set_name
-      @name = "java_cli"
     end
   end
 end

@@ -5,10 +5,16 @@ require "../../../src/models/detector"
 # Instantiate every concrete Detector subclass. Using `all_subclasses`
 # rather than a hand-written list is deliberate: a new detector joins
 # this sweep automatically, so it cannot silently regress the memo.
+#
+# Restricted to the `Detector::` namespace, which is where every production
+# detector lives. `crystal spec` compiles the whole suite into one binary, so
+# `all_subclasses` also sees the throwaway subclasses other spec files define
+# to exercise the base class (`detector_for_spec.cr`) — and because those are
+# file-private, naming them here does not even compile.
 private def every_detector(options) : Array(Detector)
   detectors = [] of Detector
   {% for sub in Detector.all_subclasses %}
-    {% unless sub.abstract? %}
+    {% if !sub.abstract? && sub.name.starts_with?("Detector::") %}
       detector = {{ sub }}.new(options)
       detector.set_name
       detectors << detector.as(Detector)

@@ -3,6 +3,11 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class WSDL < Detector
+    # Registers WSDL paths in `CodeLocator` for the analyzer pass to
+    # consume. Must keep running after the first match so every spec
+    # in a multi-WSDL repo is captured.
+    detector_for "wsdl", extensions: %w[.wsdl .xml], idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless file_contents.includes?("wsdl:definitions") ||
@@ -13,21 +18,6 @@ module Detector::Specification
       locator = CodeLocator.instance
       locator.push("wsdl-spec", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".wsdl") || filename.ends_with?(".xml")
-    end
-
-    def set_name
-      @name = "wsdl"
-    end
-
-    # Registers WSDL paths in `CodeLocator` for the analyzer pass to
-    # consume. Must keep running after the first match so every spec
-    # in a multi-WSDL repo is captured.
-    def idempotent? : Bool
-      false
     end
   end
 end

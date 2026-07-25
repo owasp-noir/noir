@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Go
   class Http < Detector
+    detector_for "go_http", extensions: %w[.go], path_segments: %w[go.mod]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".go")
       return false unless file_contents.includes?("net/http")
@@ -13,14 +15,6 @@ module Detector::Go
       file_contents.includes?("NewServeMux") ||
         content_matches?(file_contents, /http\.HandleFunc\s*\(/) ||
         content_matches?(file_contents, /http\.Handle\s*\(\s*["`\/]/)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".go") || filename.includes?("go.mod")
-    end
-
-    def set_name
-      @name = "go_http"
     end
   end
 end

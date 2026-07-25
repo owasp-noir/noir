@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Python
   class Aiohttp < Detector
+    detector_for "python_aiohttp", extensions: %w[.py]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
 
@@ -9,14 +11,6 @@ module Detector::Python
       has_import = file_contents.match(/(^|\n)\s*import\s+aiohttp(\s|,|$|\.)/)
 
       !!(has_from_import || has_import)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_aiohttp"
     end
   end
 end

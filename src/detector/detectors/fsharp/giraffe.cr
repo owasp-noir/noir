@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Fsharp
   class Giraffe < Detector
+    detector_for "fs_giraffe",
+      extensions: %w[.fs .fsx .fsproj .csproj],
+      basenames: %w[paket.dependencies]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -24,14 +28,6 @@ module Detector::Fsharp
                      file_contents.match(/\b(?:route|routef|routeCi|subRoute|subRouteCi|subRoutef|choose)\s+/)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".fs") || filename.ends_with?(".fsx") || filename.ends_with?(".fsproj") || filename.ends_with?(".csproj") || File.basename(filename) == "paket.dependencies"
-    end
-
-    def set_name
-      @name = "fs_giraffe"
     end
   end
 end

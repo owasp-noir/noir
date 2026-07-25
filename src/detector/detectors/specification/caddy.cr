@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Caddy < Detector
+    # Registers each Caddy config path in `CodeLocator`.
+    detector_for "caddy", idempotent: false
+
     CADDYFILE_NAMES = {"Caddyfile", "caddyfile"}
 
     # Every `.json` in the tree reaches these guards. Both must match, so
@@ -33,15 +36,6 @@ module Detector::Specification
     def applicable?(filename : String) : Bool
       base = File.basename(filename)
       CADDYFILE_NAMES.includes?(base) || filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "caddy"
-    end
-
-    # Registers each Caddy config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def caddy_json?(content : String) : Bool

@@ -7,6 +7,11 @@ module Detector::Specification
   # gate — root marker plus namespace — keeps generic WSDL/XML files
   # from being claimed by this detector.
   class OData < Detector
+    # Registers OData spec paths for the analyzer pass. Must keep
+    # firing past the first match so multi-service repos land every
+    # `$metadata` document in the locator.
+    detector_for "odata", idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless file_contents.includes?("edmx:Edmx") || file_contents.includes?("<Edmx")
@@ -22,17 +27,6 @@ module Detector::Specification
       base = File.basename(filename)
       return true if base == "$metadata" || base == "$metadata.xml" || base == "metadata.xml"
       filename.ends_with?(".xml") || filename.ends_with?(".edmx") || filename.ends_with?(".csdl")
-    end
-
-    def set_name
-      @name = "odata"
-    end
-
-    # Registers OData spec paths for the analyzer pass. Must keep
-    # firing past the first match so multi-service repos land every
-    # `$metadata` document in the locator.
-    def idempotent? : Bool
-      false
     end
   end
 end

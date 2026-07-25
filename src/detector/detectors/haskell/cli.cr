@@ -6,6 +6,8 @@ module Detector::Haskell
   # Turtle.Options. Never gates on bare getEnv/lookupEnv (Scotty/Servant
   # config).
   class Cli < Detector
+    detector_for "haskell_cli", extensions: %w[.hs .lhs]
+
     # Turtle re-exports Turtle.Options from the top-level Turtle module,
     # which is used pervasively for plain shell scripting too, so gate on
     # either the qualified submodule import or an explicit `options` name
@@ -17,14 +19,6 @@ module Detector::Haskell
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".hs") || filename.ends_with?(".lhs")
       content_matches?(file_contents, MARKERS)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".hs") || filename.ends_with?(".lhs")
-    end
-
-    def set_name
-      @name = "haskell_cli"
     end
   end
 end

@@ -6,6 +6,8 @@ module Detector::Rust
   # parser / uses `std::env::args()`. Gates the Rust CLI analyzer. Bare
   # `std::env::var(...)` (config reads, common in web crates) does not qualify.
   class Cli < Detector
+    detector_for "rust_cli", extensions: %w[.rs], basenames: %w[Cargo.toml]
+
     CLI_CRATES = ["clap", "structopt", "argh", "bpaf", "pico-args", "getopts"]
     # Single-pass alternation over CLI_CRATES — the previous per-crate
     # interpolated literal recompiled (and rescanned) once per crate for
@@ -39,14 +41,6 @@ module Detector::Rust
       return true if file_contents.includes?("clap") && content_matches?(file_contents, BUILDER_CMD)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".rs") || File.basename(filename) == "Cargo.toml"
-    end
-
-    def set_name
-      @name = "rust_cli"
     end
   end
 end

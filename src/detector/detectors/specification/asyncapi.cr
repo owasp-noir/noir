@@ -5,6 +5,10 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class AsyncApi < Detector
+    # Registers every AsyncAPI spec path in `CodeLocator` for the
+    # analyzer pass. Must keep running after first match.
+    detector_for "asyncapi", extensions: %w[.json .yaml .yml], idempotent: false
+
     # Every `.json`/`.yaml`/`.yml` in the tree reaches this gate.
     ASYNCAPI_MARKER = /asyncapi/
 
@@ -39,20 +43,6 @@ module Detector::Specification
       end
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "asyncapi"
-    end
-
-    # Registers every AsyncAPI spec path in `CodeLocator` for the
-    # analyzer pass. Must keep running after first match.
-    def idempotent? : Bool
-      false
     end
   end
 end

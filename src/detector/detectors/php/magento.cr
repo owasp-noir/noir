@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Php
   class Magento < Detector
+    detector_for "php_magento", extensions: %w[.php .xml], basenames: %w[composer.json]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -47,15 +49,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".xml") ||
-        File.basename(filename) == "composer.json"
-    end
-
-    def set_name
-      @name = "php_magento"
     end
   end
 end

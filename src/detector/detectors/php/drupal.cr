@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Php
   class Drupal < Detector
+    detector_for "php_drupal",
+      extensions: %w[.php .module .install .theme .profile .inc .yml .yaml],
+      basenames: %w[composer.json]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -48,18 +52,6 @@ module Detector::Php
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".php") || filename.ends_with?(".module") ||
-        filename.ends_with?(".install") || filename.ends_with?(".theme") ||
-        filename.ends_with?(".profile") || filename.ends_with?(".inc") ||
-        filename.ends_with?(".yml") || filename.ends_with?(".yaml") ||
-        File.basename(filename) == "composer.json"
-    end
-
-    def set_name
-      @name = "php_drupal"
     end
   end
 end

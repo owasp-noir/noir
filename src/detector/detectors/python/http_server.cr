@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Python
   class HttpServer < Detector
+    detector_for "python_http_server", extensions: %w[.py]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
 
@@ -15,14 +17,6 @@ module Detector::Python
       return true if file_contents.includes?("HTTPServer")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_http_server"
     end
   end
 end

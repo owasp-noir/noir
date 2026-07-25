@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Scala
   class ZioHttp < Detector
+    detector_for "scala_zio_http", extensions: %w[.scala .sbt], basenames: %w[build.sbt]
+
     def detect(filename : String, file_contents : String) : Bool
       if (filename.ends_with? ".scala") && (
            file_contents.includes?("zio.http") ||
@@ -11,14 +13,6 @@ module Detector::Scala
       end
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".scala") || filename.ends_with?(".sbt") || File.basename(filename) == "build.sbt"
-    end
-
-    def set_name
-      @name = "scala_zio_http"
     end
   end
 end

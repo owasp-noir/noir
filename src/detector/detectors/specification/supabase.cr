@@ -21,6 +21,9 @@ module Detector::Specification
   # adds no syntax of its own, so nothing in the file distinguishes a
   # schema served by PostgREST from any other schema.
   class Supabase < Detector
+    # Registers every migration path in `CodeLocator`.
+    detector_for "supabase", idempotent: false
+
     # `alter table` counts too: a migration that only adds a column is
     # still part of the schema, and dropping those would leave the
     # emitted params stuck at whatever the first migration declared.
@@ -62,15 +65,6 @@ module Detector::Specification
       return false unless path.ends_with?(".sql")
 
       supabase_directory?(path) || path.includes?("/migrations/") || path.starts_with?("migrations/")
-    end
-
-    def set_name
-      @name = "supabase"
-    end
-
-    # Registers every migration path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def supabase_directory?(path : String) : Bool

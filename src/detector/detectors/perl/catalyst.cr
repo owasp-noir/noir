@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Perl
   class Catalyst < Detector
+    detector_for "perl_catalyst"
+
     def detect(filename : String, file_contents : String) : Bool
       if dependency_manifest?(filename)
         return file_contents.includes?("Catalyst") ||
@@ -27,10 +29,6 @@ module Detector::Perl
 
     def applicable?(filename : String) : Bool
       perl_source?(filename) || dependency_manifest?(filename)
-    end
-
-    def set_name
-      @name = "perl_catalyst"
     end
 
     private def perl_source?(filename : String) : Bool

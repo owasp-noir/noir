@@ -19,6 +19,9 @@ module Detector::Specification
   # required and the document must also carry a key from Hasura's own
   # permission/relationship vocabulary.
   class Hasura < Detector
+    # Registers every metadata path in `CodeLocator`.
+    detector_for "hasura", idempotent: false
+
     METADATA_SEGMENT = "/metadata/"
 
     TABLE_MARKER = /^\s*(?:-\s+)?table\s*:/m
@@ -53,15 +56,6 @@ module Detector::Specification
 
       basename = File.basename(path)
       basename == "tables.yaml" || basename == "rest_endpoints.yaml"
-    end
-
-    def set_name
-      @name = "hasura"
-    end
-
-    # Registers every metadata path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def detect_rest_endpoints(filename : String, file_contents : String) : Bool

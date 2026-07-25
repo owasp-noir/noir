@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Rust
   class Salvo < Detector
+    detector_for "rust_salvo", extensions: %w[.rs], basenames: %w[Cargo.toml Cargo.lock]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.includes?("Cargo.toml")
 
@@ -9,14 +11,6 @@ module Detector::Rust
       check = check && file_contents.includes?("dependencies")
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".rs") || File.basename(filename) == "Cargo.toml" || File.basename(filename) == "Cargo.lock"
-    end
-
-    def set_name
-      @name = "rust_salvo"
     end
   end
 end

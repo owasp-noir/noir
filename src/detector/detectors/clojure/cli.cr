@@ -8,19 +8,13 @@ module Detector::Clojure
   # web apps and services, so it only annotates params on a `cli://`
   # endpoint one of the markers below already established.
   class Cli < Detector
+    detector_for "clojure_cli", extensions: %w[.clj .cljs .cljc]
+
     MARKERS = /clojure\.tools\.cli\b|\(\s*(?:[\w.-]+\/)?parse-opts\b|\bcli-matic\b|\*command-line-args\*|\bbabashka\.cli\b/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       content_matches?(file_contents, MARKERS)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".clj") || filename.ends_with?(".cljs") || filename.ends_with?(".cljc")
-    end
-
-    def set_name
-      @name = "clojure_cli"
     end
   end
 end

@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Python
   class Flask < Detector
+    detector_for "python_flask", extensions: %w[.py]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
 
@@ -13,14 +15,6 @@ module Detector::Python
       has_appbuilder_import = file_contents.match(/(^|\n)\s*(?:from|import)\s+flask_appbuilder\b/)
 
       !!(has_from_import || has_import || has_appbuilder_import)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_flask"
     end
   end
 end

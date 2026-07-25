@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class HttpFile < Detector
+    # Registers `.http` / `.rest` request-file paths in `CodeLocator`.
+    detector_for "http_file", extensions: %w[.http .rest], idempotent: false
+
     # A request line: an HTTP method followed by a target whose first token
     # carries a URL-ish char (`.` `/` `:` `{`). This is the unambiguous
     # signal shared by the VS Code REST Client and JetBrains HTTP Client
@@ -17,19 +20,6 @@ module Detector::Specification
       locator = CodeLocator.instance
       locator.push("http-file", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".http") || filename.ends_with?(".rest")
-    end
-
-    def set_name
-      @name = "http_file"
-    end
-
-    # Registers `.http` / `.rest` request-file paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

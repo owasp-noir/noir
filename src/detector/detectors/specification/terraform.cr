@@ -6,6 +6,9 @@ module Detector::Specification
   # declares AWS API Gateway routes, and registers the path so the analyzer can
   # reconstruct endpoints module-wide.
   class Terraform < Detector
+    # Registers each Terraform config path in `CodeLocator`.
+    detector_for "terraform", extensions: %w[.tf .tf.json], idempotent: false
+
     # Resource types that produce endpoints. Markers are quoted so they match a
     # `resource "aws_apigatewayv2_route"` block (HCL) or an `"aws_apigatewayv2_route"`
     # key (JSON) but NOT sibling types that merely share a prefix
@@ -22,19 +25,6 @@ module Detector::Specification
 
       CodeLocator.instance.push("terraform-spec", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".tf") || filename.ends_with?(".tf.json")
-    end
-
-    def set_name
-      @name = "terraform"
-    end
-
-    # Registers each Terraform config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

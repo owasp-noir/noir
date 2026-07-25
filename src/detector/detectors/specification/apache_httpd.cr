@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class ApacheHttpd < Detector
+    # Registers each Apache config path in `CodeLocator`.
+    detector_for "apache_httpd", idempotent: false
+
     HTACCESS          = ".htaccess"
     APACHE_DIRECTIVES = [
       "<VirtualHost",
@@ -40,15 +43,6 @@ module Detector::Specification
       base = File.basename(filename)
       return true if base == HTACCESS
       apache_conf?(filename) && !nginx_only?(filename)
-    end
-
-    def set_name
-      @name = "apache_httpd"
-    end
-
-    # Registers each Apache config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     # Avoid claiming nginx-only fragments by name to prevent the

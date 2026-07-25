@@ -39,6 +39,85 @@ class Detector
     false
   end
 
+  # Declares the detector's tech name and the cheap filename gate that lets
+  # the detect loop skip `detect` on files this detector cannot match.
+  #
+  #     class Gin < Detector
+  #       detector_for "go_gin", extensions: %w[.go], basenames: %w[go.mod]
+  #     end
+  #
+  # Expands to the same short-circuiting chain the detectors used to write by
+  # hand — one `ends_with?` / `==` per declared term, *not* a runtime loop
+  # over an array — so the hot path is unchanged. Terms are emitted
+  # extension, then path segment, then basename: extensions reject the most
+  # files for the least work, and only a surviving candidate pays for
+  # `File.basename`.
+  #
+  # A `path_segments` term that names a directory (`"/metadata/"`) implies
+  # `path_sensitive?`, and that link is the whole point. `applicable?` is
+  # memoized by basename, so a detector that consults directory segments
+  # without declaring itself path-sensitive has its gate silently deleted —
+  # that is how the Hasura `metadata/**` gate was lost. Declaring the
+  # segment *is* declaring the sensitivity, so the two can no longer drift
+  # apart.
+  #
+  # A separator-free term (`"go.mod"`) is a plain substring test on the whole
+  # path and deliberately does *not* imply sensitivity, because
+  # `detector_path_sensitive?` does not flag those today: the probe compares
+  # `applicable?("a/b/c/go.mod")` with `applicable?("go.mod")`, which agree.
+  # Declaring them sensitive would drop those detectors out of the basename
+  # memo and slow the hot loop for no correctness gain here.
+  #
+  # Pass `idempotent: false` for a detector whose `detect` has side effects
+  # (registering spec paths in `CodeLocator`), so the pass keeps calling it
+  # after its first match.
+  #
+  # A gate that is more than a term list — one that normalises separators,
+  # checks a parent directory, or excludes `.d.ts` — keeps its hand-written
+  # `applicable?`. Pass just the tech name and define the method below; with
+  # no terms the macro emits no gate to collide with.
+  macro detector_for(tech, extensions = nil, basenames = nil, path_segments = nil, idempotent = nil)
+    def set_name
+      @name = {{ tech }}
+    end
+
+    # The tech name without needing an instance, so the registry can be
+    # read off the classes themselves rather than from a parallel list.
+    def self.tech_name : String
+      {{ tech }}
+    end
+
+    {% if extensions || basenames || path_segments %}
+      def applicable?(filename : String) : Bool
+        {% for ext in (extensions || [] of String) %}
+          return true if filename.ends_with?({{ ext }})
+        {% end %}
+        {% for segment in (path_segments || [] of String) %}
+          return true if filename.includes?({{ segment }})
+        {% end %}
+        {% if basenames %}
+          base = File.basename(filename)
+          {% for name in basenames %}
+            return true if base == {{ name }}
+          {% end %}
+        {% end %}
+        false
+      end
+    {% end %}
+
+    {% if path_segments && path_segments.any?(&.includes?("/")) %}
+      def path_sensitive? : Bool
+        true
+      end
+    {% end %}
+
+    {% if idempotent == false %}
+      def idempotent? : Bool
+        false
+      end
+    {% end %}
+  end
+
   # Cheap filename-only filter the detector pass uses to skip
   # `detect` on files the detector cannot possibly match. The
   # default `true` preserves prior behavior (every detector runs on

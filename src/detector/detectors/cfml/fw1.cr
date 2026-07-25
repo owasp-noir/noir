@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Cfml
   class Fw1 < Detector
+    detector_for "cfml_fw1", extensions: %w[.cfc]
+
     # Applications extend `framework.one`; the routes array and the
     # framework settings struct are the other unambiguous markers.
     BASE_RE     = /extends\s*=\s*["']framework\.one["']/i
@@ -16,14 +18,6 @@ module Detector::Cfml
       return true if content_matches?(file_contents, SETTINGS_RE)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cfc")
-    end
-
-    def set_name
-      @name = "cfml_fw1"
     end
   end
 end

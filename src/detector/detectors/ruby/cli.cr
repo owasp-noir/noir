@@ -8,6 +8,8 @@ module Detector::Ruby
   # bare `ENV[...]` or a plain `ARGV` reference (without an index) is too
   # common in web apps to qualify.
   class Cli < Detector
+    detector_for "ruby_cli"
+
     CLI_GEMS = ["thor", "gli", "slop", "tty-option", "commander", "optimist", "clamp", "dry-cli"]
 
     REQUIRE_OPTPARSE = /\brequire\s+["']optparse["']/
@@ -46,10 +48,6 @@ module Detector::Ruby
     def applicable?(filename : String) : Bool
       base = File.basename(filename)
       filename.ends_with?(".rb") || filename.ends_with?(".gemspec") || base == "Gemfile"
-    end
-
-    def set_name
-      @name = "ruby_cli"
     end
   end
 end

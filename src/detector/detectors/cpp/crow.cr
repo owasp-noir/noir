@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Cpp
   class Crow < Detector
+    detector_for "cpp_crow", extensions: %w[.cpp .cc .cxx .c .h .hpp .hxx]
+
     CPP_EXTENSIONS = [".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"]
 
     def detect(filename : String, file_contents : String) : Bool
@@ -17,14 +19,6 @@ module Detector::Cpp
       return true if file_contents.includes?("CROW_ROUTE(")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cpp") || filename.ends_with?(".cc") || filename.ends_with?(".cxx") || filename.ends_with?(".c") || filename.ends_with?(".h") || filename.ends_with?(".hpp") || filename.ends_with?(".hxx")
-    end
-
-    def set_name
-      @name = "cpp_crow"
     end
   end
 end

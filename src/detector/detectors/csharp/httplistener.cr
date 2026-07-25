@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::CSharp
   class HttpListener < Detector
+    detector_for "cs_httplistener", extensions: %w[.cs]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".cs")
       return false unless file_contents.includes?("HttpListener")
@@ -11,14 +13,6 @@ module Detector::CSharp
         file_contents.includes?(".Prefixes.Add") ||
         file_contents.includes?(".GetContext") ||
         file_contents.includes?("GetContextAsync")
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cs")
-    end
-
-    def set_name
-      @name = "cs_httplistener"
     end
   end
 end

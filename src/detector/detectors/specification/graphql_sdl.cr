@@ -3,6 +3,10 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class GraphqlSdl < Detector
+    # Registers every SDL path in `CodeLocator` for the analyzer pass.
+    # Must keep running after the first match so all schema files get picked up.
+    detector_for "graphql_sdl", extensions: %w[.graphql .gql .graphqls], idempotent: false
+
     # SDL declaration signals — distinguished at top-level only by
     # `sdl_document?`. A broad keyword-only check is too loose: generated
     # operation documents often select fields named `type`, `schema`, or
@@ -123,22 +127,6 @@ module Detector::Specification
         end
       end
       depth
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".graphql") ||
-        filename.ends_with?(".gql") ||
-        filename.ends_with?(".graphqls")
-    end
-
-    def set_name
-      @name = "graphql_sdl"
-    end
-
-    # Registers every SDL path in `CodeLocator` for the analyzer pass.
-    # Must keep running after the first match so all schema files get picked up.
-    def idempotent? : Bool
-      false
     end
   end
 end

@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Mitmproxy < Detector
+    # Registers mitmproxy flow paths in `CodeLocator`.
+    detector_for "mitmproxy", extensions: %w[.mitm .flow .flows], idempotent: false
+
     # Tnetstring length prefix: one or more ASCII digits then a colon.
     LENGTH_PREFIX = /\A\d+:/
 
@@ -21,21 +24,6 @@ module Detector::Specification
       locator = CodeLocator.instance
       locator.push("mitmproxy-path", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".mitm") ||
-        filename.ends_with?(".flow") ||
-        filename.ends_with?(".flows")
-    end
-
-    def set_name
-      @name = "mitmproxy"
-    end
-
-    # Registers mitmproxy flow paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

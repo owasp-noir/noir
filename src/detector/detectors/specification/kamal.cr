@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Kamal < Detector
+    # Registers each Kamal config path in `CodeLocator`.
+    detector_for "kamal", idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
       return false unless kamal_markers?(file_contents)
@@ -29,15 +32,6 @@ module Detector::Specification
       return true if base.includes?("deploy") || base.includes?("kamal")
       path = filename.includes?('\\') ? filename.gsub('\\', '/') : filename
       path.includes?("/.kamal/") || path.includes?("/config/deploy")
-    end
-
-    def set_name
-      @name = "kamal"
-    end
-
-    # Registers each Kamal config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     # Cheap substring pre-check ahead of the (relatively costly) YAML

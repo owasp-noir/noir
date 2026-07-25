@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Go
   class ConnectRpc < Detector
+    detector_for "go_connect_rpc", extensions: %w[.go], path_segments: %w[go.mod]
+
     IMPORT_MARKER = "connectrpc.com/connect"
 
     # One JIT-compiled scan per file instead of a Rabin-Karp walk;
@@ -16,14 +18,6 @@ module Detector::Go
         return true
       end
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.includes?("go.mod") || filename.ends_with?(".go")
-    end
-
-    def set_name
-      @name = "go_connect_rpc"
     end
   end
 end

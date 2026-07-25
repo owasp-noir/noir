@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class RAML < Detector
+    # Registers RAML spec paths in `CodeLocator`.
+    detector_for "raml", extensions: %w[.raml .yaml .yml], idempotent: false
+
     # Every `.raml`/`.yaml`/`.yml` in the tree reaches this guard.
     RAML_MARKER = /\#%RAML/
 
@@ -23,19 +26,6 @@ module Detector::Specification
       end
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".raml") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "raml"
-    end
-
-    # Registers RAML spec paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

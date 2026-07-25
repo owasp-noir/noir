@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Java
   class JaxRs < Detector
+    detector_for "java_jaxrs", extensions: %w[.java]
+
     # Frameworks that ride on JAX-RS but ship their own detector.
     # Quarkus / Dropwizard projects should report as that specific
     # framework, not as plain JAX-RS.
@@ -25,14 +27,6 @@ module Detector::Java
       return false if DERIVATIVE_MARKERS.any? { |marker| file_contents.includes?(marker) }
       return false if derivative_project?(filename)
       file_contents.includes?("jakarta.ws.rs") || file_contents.includes?("javax.ws.rs")
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".java")
-    end
-
-    def set_name
-      @name = "java_jaxrs"
     end
 
     private def derivative_project?(filename : String) : Bool

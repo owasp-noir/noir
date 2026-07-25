@@ -2,6 +2,13 @@ require "../../../models/detector"
 
 module Detector::CSharp
   class AspNetCoreMvc < Detector
+    # Side effect: registers `Program.cs` / similar paths in
+    # `CodeLocator` for the analyzer. Must keep running after first
+    # match.
+    detector_for "cs_aspnet_core_mvc",
+      extensions: %w[.cs .csproj .vbproj .sln .config],
+      idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       is_csproj = filename.ends_with?(".csproj")
       is_program_file = filename.ends_with?("Program.cs") || filename.ends_with?("Startup.cs")
@@ -31,21 +38,6 @@ module Detector::CSharp
       end
 
       detected
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cs") || filename.ends_with?(".csproj") || filename.ends_with?(".vbproj") || filename.ends_with?(".sln") || filename.ends_with?(".config")
-    end
-
-    def set_name
-      @name = "cs_aspnet_core_mvc"
-    end
-
-    # Side effect: registers `Program.cs` / similar paths in
-    # `CodeLocator` for the analyzer. Must keep running after first
-    # match.
-    def idempotent? : Bool
-      false
     end
   end
 end

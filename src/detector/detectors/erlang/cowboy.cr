@@ -2,6 +2,10 @@ require "../../../models/detector"
 
 module Detector::Erlang
   class Cowboy < Detector
+    detector_for "erlang_cowboy",
+      extensions: %w[.erl .hrl .app.src],
+      basenames: %w[rebar.config erlang.mk]
+
     # Elixir projects pull Cowboy in through `plug_cowboy`, but their
     # routes live in Phoenix/Plug routers that the Elixir analyzers
     # already own. Restricting the manifest check to Erlang's own build
@@ -21,17 +25,6 @@ module Detector::Erlang
       return true if file_contents.includes?("cowboy_req:")
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".erl") || filename.ends_with?(".hrl") ||
-        filename.ends_with?(".app.src") ||
-        File.basename(filename) == "rebar.config" ||
-        File.basename(filename) == "erlang.mk"
-    end
-
-    def set_name
-      @name = "erlang_cowboy"
     end
   end
 end

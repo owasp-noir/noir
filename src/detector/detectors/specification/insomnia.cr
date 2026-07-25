@@ -5,6 +5,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Insomnia < Detector
+    # Registers Insomnia export paths in `CodeLocator`.
+    detector_for "insomnia", extensions: %w[.json .yaml .yml], idempotent: false
+
     # Every `.json`/`.yaml`/`.yml` in the tree reaches these gates.
     EXPORT_FORMAT_MARKER = /"__export_format"/
     TYPE_FIELD_MARKER    = /"_type"/
@@ -50,19 +53,6 @@ module Detector::Specification
       end
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json") || filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "insomnia"
-    end
-
-    # Registers Insomnia export paths in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
   end
 end

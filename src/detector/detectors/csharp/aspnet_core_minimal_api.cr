@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::CSharp
   class AspNetCoreMinimalApi < Detector
+    detector_for "cs_aspnet_core_minimal_api", extensions: %w[.cs]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".cs")
       return false if file_contents.includes?("ICarterModule")
@@ -10,14 +12,6 @@ module Detector::CSharp
       has_generic_map = content_matches?(file_contents, /\.\s*Map\s*\(/) && minimal_api_context?(file_contents)
 
       has_http_map || has_generic_map
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cs")
-    end
-
-    def set_name
-      @name = "cs_aspnet_core_minimal_api"
     end
 
     private def minimal_api_context?(file_contents : String) : Bool

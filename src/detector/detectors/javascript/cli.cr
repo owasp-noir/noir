@@ -8,6 +8,8 @@ module Detector::Javascript
   # `process.argv.slice(2)` parse. Gates the JS CLI analyzer. Bare
   # `process.argv` / `process.env` are too common to qualify.
   class Cli < Detector
+    detector_for "js_cli"
+
     CLI_LIB_IMPORT = /(?:require\s*\(\s*|from\s+)['"](?:commander|yargs(?:\/(?:yargs|helpers))?|cac|meow|minimist|mri|arg|clipanion|@oclif\/(?:core|command)|sade|gluegun|command-line-args|getopts|citty)['"]/
 
     PARSE_ARGS = /\bparseArgs\s*\(\s*\{/
@@ -28,10 +30,6 @@ module Detector::Javascript
 
     def applicable?(filename : String) : Bool
       SOURCE_EXTS.any? { |ext| filename.ends_with?(ext) }
-    end
-
-    def set_name
-      @name = "js_cli"
     end
   end
 end

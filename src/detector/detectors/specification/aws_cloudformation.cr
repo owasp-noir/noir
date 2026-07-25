@@ -5,6 +5,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class AwsCloudformation < Detector
+    # Registers each template path in `CodeLocator`.
+    detector_for "aws_cloudformation", extensions: %w[.yaml .yml .json], idempotent: false
+
     SAM_TRANSFORM = "AWS::Serverless-2016-10-31"
 
     # Every `.yml`/`.yaml`/`.json` in the tree reaches this gate, so the
@@ -22,19 +25,6 @@ module Detector::Specification
 
       CodeLocator.instance.push("aws-cloudformation-spec", filename) if detected
       detected
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml") || filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "aws_cloudformation"
-    end
-
-    # Registers each template path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def detect_yaml(content : String) : Bool

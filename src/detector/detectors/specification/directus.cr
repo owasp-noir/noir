@@ -13,6 +13,9 @@ module Detector::Specification
   # exports, MongoDB configs, CI matrices), so it is required rather than
   # merely preferred.
   class Directus < Detector
+    # Registers each snapshot path in `CodeLocator`.
+    detector_for "directus", idempotent: false
+
     SNAPSHOT_EXTENSIONS = {".yaml", ".yml", ".json"}
 
     # Cheap gate before libyaml: one precompiled alternation beats
@@ -51,15 +54,6 @@ module Detector::Specification
       File.basename(path).downcase.starts_with?("snapshot") ||
         path.includes?("/directus/") ||
         path.includes?("/snapshots/")
-    end
-
-    def set_name
-      @name = "directus"
-    end
-
-    # Registers each snapshot path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def collections_present?(root : Hash(YAML::Any, YAML::Any)) : Bool

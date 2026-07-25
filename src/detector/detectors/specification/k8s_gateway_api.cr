@@ -4,6 +4,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class K8sGatewayApi < Detector
+    # Registers each Gateway API manifest path in `CodeLocator`.
+    detector_for "k8s_gateway_api", extensions: %w[.yaml .yml], idempotent: false
+
     GATEWAY_API_PREFIX = "gateway.networking.k8s.io/"
 
     # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
@@ -22,19 +25,6 @@ module Detector::Specification
 
       CodeLocator.instance.push("k8s-gateway-api-spec", filename)
       true
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".yaml") || filename.ends_with?(".yml")
-    end
-
-    def set_name
-      @name = "k8s_gateway_api"
-    end
-
-    # Registers each Gateway API manifest path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def valid_yaml_documents?(content : String) : Bool

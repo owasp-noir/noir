@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::R
   class Plumber < Detector
+    detector_for "r_plumber", extensions: %w[.R .r]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".R") || filename.ends_with?(".r")
 
@@ -17,14 +19,6 @@ module Detector::R
       return true if content_matches?(file_contents, /\bpr_(?:get|post|put|delete|patch|head|options|handle|mount)\b/i)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".R") || filename.ends_with?(".r")
-    end
-
-    def set_name
-      @name = "r_plumber"
     end
   end
 end

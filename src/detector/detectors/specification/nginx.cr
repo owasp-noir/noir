@@ -3,6 +3,9 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class Nginx < Detector
+    # Registers each Nginx config path in `CodeLocator`.
+    detector_for "nginx", idempotent: false
+
     # `.conf` is by far the most common extension for Nginx fragments;
     # `.tmpl`/`.template` files are common in docker-gen and deployment
     # repositories that render Nginx configs from templates.
@@ -28,15 +31,6 @@ module Detector::Specification
     def applicable?(filename : String) : Bool
       return true if File.basename(filename) == "nginx.conf"
       EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
-    end
-
-    def set_name
-      @name = "nginx"
-    end
-
-    # Registers each Nginx config path in `CodeLocator`.
-    def idempotent? : Bool
-      false
     end
 
     private def nginx_shape?(content : String) : Bool

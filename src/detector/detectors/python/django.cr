@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Python
   class Django < Detector
+    detector_for "python_django", extensions: %w[.py]
+
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
 
@@ -10,14 +12,6 @@ module Detector::Python
       has_import = file_contents.match(/(^|\n)\s*import\s+django(\s|,|$)/)
 
       !!(has_from_import || has_import)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".py")
-    end
-
-    def set_name
-      @name = "python_django"
     end
   end
 end

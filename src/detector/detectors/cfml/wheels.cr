@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Cfml
   class Wheels < Detector
+    detector_for "cfml_wheels", extensions: %w[.cfm .cfc]
+
     # The `mapper()` chain in config/routes.cfm, and the framework's own
     # namespace used by application components.
     MAPPER_RE    = /(?<![\w.])mapper\s*\(\s*\)\s*(?:\/\/[^\n]*\n\s*)*\./i
@@ -17,14 +19,6 @@ module Detector::Cfml
       end
 
       content_matches?(file_contents, NAMESPACE_RE)
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".cfm") || filename.ends_with?(".cfc")
-    end
-
-    def set_name
-      @name = "cfml_wheels"
     end
   end
 end

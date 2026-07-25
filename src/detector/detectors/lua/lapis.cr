@@ -2,6 +2,8 @@ require "../../../models/detector"
 
 module Detector::Lua
   class Lapis < Detector
+    detector_for "lua_lapis", extensions: %w[.lua .moon .rockspec]
+
     def detect(filename : String, file_contents : String) : Bool
       base = File.basename(filename)
 
@@ -26,14 +28,6 @@ module Detector::Lua
       return true if file_contents.match(/extends\s+lapis\.Application/)
 
       false
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".lua") || filename.ends_with?(".moon") || filename.ends_with?(".rockspec")
-    end
-
-    def set_name
-      @name = "lua_lapis"
     end
   end
 end

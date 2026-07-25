@@ -4,6 +4,10 @@ require "../../../models/code_locator"
 
 module Detector::Specification
   class OpenRpc < Detector
+    # Registers every OpenRPC spec path in `CodeLocator` for the
+    # analyzer pass. Must keep running after first match.
+    detector_for "openrpc", extensions: %w[.json], idempotent: false
+
     def detect(filename : String, file_contents : String) : Bool
       check = false
       return false unless file_contents.includes?("openrpc")
@@ -22,20 +26,6 @@ module Detector::Specification
       end
 
       check
-    end
-
-    def applicable?(filename : String) : Bool
-      filename.ends_with?(".json")
-    end
-
-    def set_name
-      @name = "openrpc"
-    end
-
-    # Registers every OpenRPC spec path in `CodeLocator` for the
-    # analyzer pass. Must keep running after first match.
-    def idempotent? : Bool
-      false
     end
   end
 end
