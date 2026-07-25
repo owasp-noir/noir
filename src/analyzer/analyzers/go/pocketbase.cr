@@ -8,6 +8,8 @@ module Analyzer::Go
   # shapes — this analyzer just wires the import marker so noir
   # opts the framework's source files into the same pipeline.
   class Pocketbase < GoEngine
+    analyzer_for "go_pocketbase"
+
     IMPORT_MARKER = "pocketbase/tools/router"
 
     def analyze

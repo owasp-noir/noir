@@ -3,6 +3,8 @@ require "../../../utils/url_path"
 
 module Analyzer::Elixir
   class Phoenix < ElixirEngine
+    analyzer_for "elixir_phoenix"
+
     alias ScopeEntry = NamedTuple(prefix: String, module_prefix: String, indent: Int32)
     # Route-map keys carry the configured base so multi-base (monorepo)
     # scans keep each service's controller/action mapping isolated.

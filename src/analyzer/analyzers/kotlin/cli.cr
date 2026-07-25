@@ -12,6 +12,8 @@ module Analyzer::Kotlin
   # URL. Subclasses Analyzer directly (KotlinEngine is a module) and uses
   # KotlinEngine.test_path? to skip tests.
   class Cli < Analyzer
+    analyzer_for "kotlin_cli"
+
     # clikt: `class Serve : CliktCommand(name = "serve")` (name optional →
     # class name lower-cased).
     CLIKT_CLASS  = /\bclass\s+(\w+)\s*(?:\([^)]*\))?\s*:\s*[^{]*\bCliktCommand\b/

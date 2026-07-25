@@ -4,6 +4,8 @@ require "xml"
 
 module Analyzer::Java
   class Jsp < Analyzer
+    analyzer_for "java_jsp"
+
     alias ServletClassKey = Tuple(String, String)
 
     # Crystal recompiles an interpolated regex literal on every evaluation

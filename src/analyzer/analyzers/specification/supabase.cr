@@ -15,6 +15,8 @@ module Analyzer::Specification
   #     create tables in `auth`, `storage` and `extensions`, none of
   #     which PostgREST serves.
   class Supabase < SpecificationEngine
+    analyzer_for "supabase"
+
     include SchemaApiCommon
 
     REST_PREFIX = "/rest/v1"

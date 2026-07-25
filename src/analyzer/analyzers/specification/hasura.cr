@@ -15,6 +15,8 @@ module Analyzer::Specification
   # a runnable operation document per field, and input-object expansion
   # into dotted params — all of which the SDL analyzer already does.
   class Hasura < SpecificationEngine
+    analyzer_for "hasura"
+
     include SchemaApiCommon
 
     GRAPHQL_PATH = "/v1/graphql"

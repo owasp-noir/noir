@@ -25,6 +25,8 @@ module Analyzer::Lua
   # `app.path = "/prefix"` that every route inherits, so the prefix is
   # detected per file and prepended to the routes bound on that app.
   class Lapis < Analyzer
+    analyzer_for "lua_lapis"
+
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile); the route matchers interpolate the
     # discovered app-variable alternation, so memoize them per alternation.

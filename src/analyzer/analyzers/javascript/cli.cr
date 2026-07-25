@@ -10,6 +10,8 @@ module Analyzer::Javascript
   # command-line-args, getopts and citty. A single analyzer scans every JS/TS
   # extension so a `.ts` CLI isn't double-counted.
   class Cli < JavascriptEngine
+    analyzer_for "js_cli"
+
     SOURCE_EXTS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"]
 
     # commander / cac / sade / yargs subcommand. The command string may carry

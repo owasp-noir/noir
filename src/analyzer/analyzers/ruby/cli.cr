@@ -12,6 +12,8 @@ module Analyzer::Ruby
   # Line-scan analyzer (house style for non-tree-sitter Ruby adapters),
   # merging endpoints by URL across files.
   class Cli < RubyEngine
+    analyzer_for "ruby_cli"
+
     # OptionParser: `opts.on("-p", "--port PORT")` — prefer the long name.
     OPTPARSE_LONG  = /\.on\s*\(?[^)]*?["'](-{2}[A-Za-z0-9][\w-]*)/
     OPTPARSE_SHORT = /\.on\s*\(\s*["'](-[A-Za-z0-9])(["' ]|\))/

@@ -6,6 +6,8 @@ require "xml"
 
 module Analyzer::Java
   class Struts2 < Analyzer
+    analyzer_for "java_struts2"
+
     STRUTS_CONFIG_BASENAMES = Set{"struts.xml", "struts-plugin.xml", "struts-deferred.xml"}
     DEFAULT_LOCATORS        = ["action", "actions", "struts", "struts2"]
 

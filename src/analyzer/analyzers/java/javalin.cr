@@ -10,6 +10,8 @@ module Analyzer::Java
   # analyzer just supplies the Javalin method-name set and turns
   # the raw scan results into `Endpoint`s.
   class Javalin < Analyzer
+    analyzer_for "java_javalin"
+
     JAVA_EXTENSION  = "java"
     JAVALIN_MARKERS = ["io.javalin"]
 

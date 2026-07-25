@@ -5,6 +5,8 @@ require "./python_helper"
 
 module Analyzer::Python
   class Aiohttp < PythonEngine
+    analyzer_for "python_aiohttp"
+
     # Reference: https://docs.aiohttp.org/en/stable/web_quickstart.html
     #
     # aiohttp supports two route registration styles:

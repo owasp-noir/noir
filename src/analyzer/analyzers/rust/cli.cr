@@ -22,6 +22,8 @@ module Analyzer::Rust
   # analyzers use. Subclasses Analyzer directly (RustEngine#analyze_file is
   # abstract) and reuses RustEngine.test_path? as a class method.
   class Cli < Analyzer
+    analyzer_for "rust_cli"
+
     DERIVE_RE = /#\[\s*derive\s*\(([^)]*)\)/
     ITEM_RE   = /\b(?:struct|enum)\s+\w+/
     # clap/structopt field attribute, e.g. #[arg(short, long, env = "X")].

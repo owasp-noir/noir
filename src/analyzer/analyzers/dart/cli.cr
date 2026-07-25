@@ -5,6 +5,8 @@ module Analyzer::Dart
   # endpoints: the args package (ArgParser / CommandRunner) plus
   # main(List<String>) argv and Platform.environment. Line-scan, merged by URL.
   class Cli < Analyzer
+    analyzer_for "dart_cli"
+
     ARGPARSER_VAR  = /(\w+)\s*=\s*ArgParser\s*\(/
     SUBCOMMAND_VAR = /(\w+)\s*=\s*\w+\s*\.\s*addCommand\s*\(\s*['"]([^'"]+)['"]/
     ADD_COMMAND    = /\.addCommand\s*\(\s*['"]([^'"]+)['"]/

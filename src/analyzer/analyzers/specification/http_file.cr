@@ -14,6 +14,8 @@ module Analyzer::Specification
   # parameter (`:var`) rather than literal text. JetBrains response-handler
   # blocks (`> {% ... %}` / `> script.js`) are skipped.
   class HttpFile < SpecificationEngine
+    analyzer_for "http_file"
+
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     def analyze

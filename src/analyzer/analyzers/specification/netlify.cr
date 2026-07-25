@@ -3,6 +3,8 @@ require "toml"
 
 module Analyzer::Specification
   class Netlify < SpecificationEngine
+    analyzer_for "netlify"
+
     DEFAULT_METHOD = "ANY"
 
     def analyze

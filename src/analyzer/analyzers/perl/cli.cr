@@ -7,6 +7,8 @@ module Analyzer::Perl
   # plus @ARGV indexing and %ENV. Line-scan; root attribution (these libs
   # are flat), merged by URL.
   class Cli < Analyzer
+    analyzer_for "perl_cli"
+
     # GetOptions("port=i" => \$port) — the spec string bound to a reference.
     GETOPT_KEY = /["']([a-zA-Z][\w-]*)[^"']*["']\s*=>\s*\\/
     GETOPTS    = /\bgetopts?\s*\(\s*['"]([^'"]*)['"]/

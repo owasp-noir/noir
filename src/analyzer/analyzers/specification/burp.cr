@@ -9,6 +9,8 @@ module Analyzer::Specification
   # HTTP request, and the response — the request blob is the source of truth
   # for method, path, headers, and body.
   class Burp < SpecificationEngine
+    analyzer_for "burp"
+
     def analyze
       each_spec_file("burp-sitemap") do |path|
         content = read_file_content(path)

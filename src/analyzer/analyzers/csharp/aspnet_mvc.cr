@@ -3,6 +3,8 @@ require "./common"
 
 module Analyzer::CSharp
   class AspNetMvc < Analyzer
+    analyzer_for "cs_aspnet_mvc"
+
     include Common
 
     # Crystal recompiles an interpolated regex literal on every evaluation

@@ -13,6 +13,8 @@ module Analyzer::Specification
   #   - An additional endpoint for `route.prefix_rewrite` when it differs
   #     from the matched path
   class Envoy < SpecificationEngine
+    analyzer_for "envoy"
+
     def analyze
       each_spec_file_with_details("envoy-yaml") do |path, details|
         content = read_file_content(path)

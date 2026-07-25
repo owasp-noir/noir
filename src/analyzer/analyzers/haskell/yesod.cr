@@ -4,6 +4,8 @@ require "set"
 
 module Analyzer::Haskell
   class Yesod < Analyzer
+    analyzer_for "haskell_yesod"
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
     alias HandlerBody = Noir::HaskellCalleeExtractor::FunctionBody
     # A handler name can occur in more than one file; keep all bodies and only

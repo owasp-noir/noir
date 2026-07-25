@@ -10,6 +10,8 @@ module Analyzer::Rust
   # Axum extractor types (`Path<T>`, `Query<T>`, `Json<T>`, `Form<T>`,
   # `HeaderMap`).
   class Loco < RustEngine
+    analyzer_for "rust_loco"
+
     REST_ACTIONS = Set{"index", "show", "new", "create", "edit", "update", "destroy", "delete"}
     HTTP_VERBS   = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 

@@ -4,6 +4,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Caido < SpecificationEngine
+    analyzer_for "caido"
+
     def analyze
       each_spec_file_with_details("caido-json") do |path, details|
         content = read_file_content(path)

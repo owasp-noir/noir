@@ -10,6 +10,8 @@ module Analyzer::AI
   # Unified AI analyzer that uses a provider-agnostic LLM adapter.
   # Supports both OpenAI-compatible APIs and Ollama.
   class Unified < Analyzer
+    analyzer_for "ai"
+
     alias AgentAction = NamedTuple(action: String, args: JSON::Any)
 
     AGENT_TOOL_MAX_LINES               = 300

@@ -5,6 +5,8 @@ require "../../../utils/url_path"
 
 module Analyzer::Javascript
   class Fastify < JavascriptEngine
+    analyzer_for "js_fastify"
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)

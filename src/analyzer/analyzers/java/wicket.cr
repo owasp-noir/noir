@@ -5,6 +5,8 @@ require "../../../miniparsers/java_callee_extractor"
 
 module Analyzer::Java
   class Wicket < Analyzer
+    analyzer_for "java_wicket"
+
     JAVA_EXTENSION = "java"
     WICKET_MARKERS = [
       "org.apache.wicket",

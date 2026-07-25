@@ -5,6 +5,8 @@ require "./python_helper"
 
 module Analyzer::Python
   class Sanic < PythonEngine
+    analyzer_for "python_sanic"
+
     alias ScopedNameKey = Tuple(::String, ::String)
 
     # Reference: https://sanic.readthedocs.io/en/stable/sanic/request.html

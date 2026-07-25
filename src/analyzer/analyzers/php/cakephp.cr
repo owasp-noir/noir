@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class CakePHP < PhpEngine
+    analyzer_for "php_cakephp"
+
     @method_def_regexes = Hash(String, Regex).new
 
     def analyze_file(path : String) : Array(Endpoint)

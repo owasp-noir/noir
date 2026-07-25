@@ -2,6 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Hertz < GoEngine
+    analyzer_for "go_hertz"
+
     # Hertz (https://github.com/cloudwego/hertz) mirrors Gin's routing API:
     #   h := server.Default()
     #   h.GET("/ping", handler)

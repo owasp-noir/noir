@@ -3,6 +3,8 @@ require "../../../miniparsers/swift_callee_extractor"
 
 module Analyzer::Swift
   class Kitura < SwiftEngine
+    analyzer_for "swift_kitura"
+
     # Maximum number of lines to look ahead for function parameters
     LOOKAHEAD_LIMIT = 20
 

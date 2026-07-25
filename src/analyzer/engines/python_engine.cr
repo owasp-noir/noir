@@ -4,7 +4,7 @@ require "../../miniparsers/python_callee_extractor"
 require "json"
 
 module Analyzer::Python
-  class PythonEngine < Analyzer
+  abstract class PythonEngine < Analyzer
     # HTTP method names commonly used in REST APIs
     HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
     # Indentation size in spaces; different sizes can cause analysis issues

@@ -12,6 +12,8 @@ module Analyzer::Java
   # URL. Subclasses Analyzer directly (JavaEngine is a module) and uses
   # JavaEngine.test_path? to skip tests.
   class Cli < Analyzer
+    analyzer_for "java_cli"
+
     COMMAND_ATTR    = /@Command\s*\([^)]*\bname\s*=\s*"([^"]+)"/
     COMMAND_OPEN    = /@Command\b/
     COMMAND_NAME_KV = /\bname\s*=\s*"([^"]+)"/

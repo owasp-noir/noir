@@ -3,6 +3,8 @@ require "toml"
 
 module Analyzer::Specification
   class CloudflareWrangler < SpecificationEngine
+    analyzer_for "cloudflare_wrangler"
+
     METHOD_ANY = "ANY"
 
     def analyze

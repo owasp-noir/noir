@@ -20,6 +20,8 @@ module Analyzer::Php
   # other YAML files (`*.info.yml`, `*.services.yml`, `*.libraries.yml`,
   # `*.schema.yml`) that must never be treated as routes.
   class Drupal < PhpEngine
+    analyzer_for "php_drupal"
+
     # Drupal routing lives in YAML, not PHP; scan those files instead of
     # the engine's default `.php`-only set.
     protected def php_source_files : Array(String)

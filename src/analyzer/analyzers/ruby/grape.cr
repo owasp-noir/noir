@@ -2,6 +2,8 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Grape < RubyEngine
+    analyzer_for "ruby_grape"
+
     GRAPE_VERBS = ["get", "post", "put", "delete", "patch", "head", "options"]
 
     # `build_grape_index`'s whole-tree pre-pass gate OR-ed two

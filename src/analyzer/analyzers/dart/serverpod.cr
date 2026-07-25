@@ -16,6 +16,8 @@ module Analyzer::Dart
   # RPCs are visible in the output, with the non-`Session` arguments
   # reported as JSON body params.
   class Serverpod < Analyzer
+    analyzer_for "dart_serverpod"
+
     HTTP_METHOD         = "POST"
     RESERVED_DART_NAMES = %w[if else for while switch case return try catch finally throw new const final var late void await async assert]
     # `Method.<verb>` constants accepted by `Route`'s `methods:` set.

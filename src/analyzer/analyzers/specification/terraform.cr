@@ -14,6 +14,8 @@ module Analyzer::Specification
   #
   # Both HCL (`.tf`) and Terraform JSON (`.tf.json`) inputs are supported.
   class Terraform < SpecificationEngine
+    analyzer_for "terraform"
+
     METHOD_ANY   = "ANY"
     HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ANY"}
 

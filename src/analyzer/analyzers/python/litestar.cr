@@ -2,6 +2,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Litestar < PythonEngine
+    analyzer_for "python_litestar"
+
     # Decorator matching: @get("/path"), @post("/path"), etc. The tail
     # after the path literal is captured so extra kwargs (like methods=)
     # can be inspected for multi-method @route decorators.

@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Vercel < SpecificationEngine
+    analyzer_for "vercel"
+
     ROUTING_GROUP_KEYS = {"beforeFiles", "afterFiles", "fallback"}
     PATTERN_CHARS      = {'*', '^', '$', '(', ')', '[', ']', '{', '}', '|', '+', '?', '\\'}
     METHOD_ANY         = "ANY"

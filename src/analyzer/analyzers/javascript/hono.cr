@@ -5,6 +5,8 @@ require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Hono < JavascriptEngine
+    analyzer_for "js_hono"
+
     ON_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*on(?:\s|\n|\r)*\(/
 
     def analyze

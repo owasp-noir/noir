@@ -4,6 +4,8 @@ require "uri"
 
 module Analyzer::Specification
   class Insomnia < SpecificationEngine
+    analyzer_for "insomnia"
+
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     def analyze

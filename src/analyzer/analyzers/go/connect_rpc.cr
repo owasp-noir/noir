@@ -17,6 +17,8 @@ module Analyzer::Go
   # file that registers the handler instead of (or in addition to)
   # the proto file.
   class ConnectRpc < GoEngine
+    analyzer_for "go_connect_rpc"
+
     IMPORT_MARKER = "connectrpc.com/connect"
 
     # Whole-file gates, run on every `.go` in the tree.

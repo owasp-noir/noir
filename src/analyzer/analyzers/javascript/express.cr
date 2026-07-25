@@ -7,6 +7,8 @@ require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
   class Express < JavascriptEngine
+    analyzer_for "js_express"
+
     include ExpressConstants
 
     # Constants for method chaining detection

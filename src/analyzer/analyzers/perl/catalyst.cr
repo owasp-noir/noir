@@ -3,6 +3,8 @@ require "./perl_helper"
 
 module Analyzer::Perl
   class Catalyst < PerlEngine
+    analyzer_for "perl_catalyst"
+
     HTTP_VERBS        = %w[get post put delete patch options head]
     BARE_ATTR_VALUE   = "__NOIR_BARE_ATTR__"
     HTTP_METHOD_ATTRS = {

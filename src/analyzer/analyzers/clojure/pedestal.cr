@@ -4,6 +4,8 @@ require "../../../utils/utils"
 
 module Analyzer::Clojure
   class Pedestal < Analyzer
+    analyzer_for "clojure_pedestal"
+
     CLOJURE_EXTENSIONS = {".clj", ".cljc", ".cljs"}
 
     HTTP_METHODS = {

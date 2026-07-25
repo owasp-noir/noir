@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class CodeIgniter < PhpEngine
+    analyzer_for "php_codeigniter"
+
     @method_def_regexes = Hash(String, Regex).new
 
     # CI4 placeholders → param names. CI3 uses the same shapes.

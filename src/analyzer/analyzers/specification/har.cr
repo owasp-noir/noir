@@ -4,6 +4,8 @@ require "uri"
 
 module Analyzer::Specification
   class Har < SpecificationEngine
+    analyzer_for "har"
+
     STATIC_EXTENSIONS = {
       ".avif", ".bmp", ".css", ".cur", ".eot", ".gif", ".ico", ".jpeg", ".jpg",
       ".js", ".map", ".mjs", ".otf", ".png", ".svg", ".ttf", ".webmanifest",

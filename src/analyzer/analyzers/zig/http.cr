@@ -6,6 +6,8 @@ module Analyzer::Zig
   # branch on `request.head.target` and `request.head.method` after
   # `receiveHead()`, then call `request.respond(...)` or a handler function.
   class Http < Analyzer
+    analyzer_for "zig_http"
+
     TARGET_ASSIGN_RE = /(?:const|var)\s+([A-Za-z_]\w*)\s*(?::\s*[^=;]+)?=\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*;/
 
     TARGET_EQL_RE      = /std\s*\.\s*mem\s*\.\s*eql\s*\(\s*u8\s*,\s*([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)\s*,\s*"((?:[^"\\]|\\.)*)"\s*\)/

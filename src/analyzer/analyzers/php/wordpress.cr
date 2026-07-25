@@ -16,6 +16,8 @@ module Analyzer::Php
   #                  `admin_post_nopriv_{action}`, dispatched by
   #                  `/wp-admin/admin-post.php?action={action}`.
   class Wordpress < PhpEngine
+    analyzer_for "php_wordpress"
+
     ADMIN_AJAX_PATH = "/wp-admin/admin-ajax.php"
     ADMIN_POST_PATH = "/wp-admin/admin-post.php"
 

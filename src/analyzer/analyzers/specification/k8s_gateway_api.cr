@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class K8sGatewayApi < SpecificationEngine
+    analyzer_for "k8s_gateway_api"
+
     METHOD_ANY = "ANY"
 
     def analyze

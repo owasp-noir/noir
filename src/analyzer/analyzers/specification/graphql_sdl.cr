@@ -11,6 +11,8 @@ module Analyzer::Specification
   # The SDL grammar itself lives in `GraphqlSdlParser` so other analyzers
   # (Apollo Server inline typeDefs, GraphQL Yoga, etc.) can share it.
   class GraphqlSdl < SpecificationEngine
+    analyzer_for "graphql_sdl"
+
     def analyze
       each_spec_file("graphql-sdl") do |sdl_file|
         content = read_file_content(sdl_file)

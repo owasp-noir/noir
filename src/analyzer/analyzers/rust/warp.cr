@@ -17,6 +17,8 @@ module Analyzer::Rust
   # subtree for the warp::* call shapes, and assembles a single
   # `Endpoint` from them.
   class Warp < RustEngine
+    analyzer_for "rust_warp"
+
     @external_handler_callee_cache = {} of String => Array(Noir::RustCalleeExtractor::Entry)
     @external_handler_miss_cache = Set(String).new
     @external_handler_callee_cache_mutex = Mutex.new

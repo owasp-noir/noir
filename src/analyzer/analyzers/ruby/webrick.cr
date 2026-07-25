@@ -2,6 +2,8 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Webrick < RubyEngine
+    analyzer_for "ruby_webrick"
+
     # Reference: https://ruby-doc.org/stdlib/libdoc/webrick/rdoc/WEBrick.html
     # WEBrick::HTTPServer#mount_proc + #mount + HTTPServlet::AbstractServlet (do_GET etc.)
     #

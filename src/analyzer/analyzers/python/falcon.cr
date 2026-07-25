@@ -2,6 +2,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Falcon < PythonEngine
+    analyzer_for "python_falcon"
+
     # Reference: https://falcon.readthedocs.io/en/stable/user/tutorial.html
     #
     # Falcon is a class-based REST framework. Routes are registered with

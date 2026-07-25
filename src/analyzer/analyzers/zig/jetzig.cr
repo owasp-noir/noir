@@ -20,6 +20,8 @@ module Analyzer::Zig
   # handler, so its 1-hop calls are surfaced as callees and `params.get("…")`
   # reads become query parameters.
   class Jetzig < Analyzer
+    analyzer_for "zig_jetzig"
+
     VIEWS_MARKER = "app#{File::SEPARATOR}views#{File::SEPARATOR}"
 
     # action => {http method, url suffix, has resource id}

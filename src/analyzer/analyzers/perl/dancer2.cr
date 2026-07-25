@@ -26,6 +26,8 @@ module Analyzer::Perl
   # `cookies`, `request->header`, `upload`) as well as the legacy
   # `param`/`params` helpers.
   class Dancer2 < PerlEngine
+    analyzer_for "perl_dancer2"
+
     # Verb spellings accepted inside an `any [...]` method list. Dancer2
     # normalizes `del` to `delete` and registers HEAD alongside GET, so the
     # arrayref form takes both the route-keyword spelling (`del`) and the

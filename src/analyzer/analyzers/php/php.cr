@@ -2,6 +2,8 @@ require "../../engines/php_engine"
 
 module Analyzer::Php
   class Php < PhpEngine
+    analyzer_for "php_pure"
+
     # Precompiled once at load. The per-line gate below used to be
     # `allow_patterns.any? { |pattern| line.includes? pattern }` — 7
     # `String#includes?` scans of the line per pattern. Crystal's

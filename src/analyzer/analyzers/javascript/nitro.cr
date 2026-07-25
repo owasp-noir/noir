@@ -2,6 +2,8 @@ require "../../engines/javascript_engine"
 
 module Analyzer::Javascript
   class Nitro < JavascriptEngine
+    analyzer_for "js_nitro"
+
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new

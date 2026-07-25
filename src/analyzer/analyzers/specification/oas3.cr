@@ -4,6 +4,8 @@ require "uri"
 
 module Analyzer::Specification
   class Oas3 < SpecificationEngine
+    analyzer_for "oas3"
+
     HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
 
     def get_base_path(servers : JSON::Any)

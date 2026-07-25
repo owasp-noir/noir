@@ -63,6 +63,28 @@ class Analyzer
     # After inheriting the class, write an action code here.
   end
 
+  # Declares which tech this analyzer implements.
+  #
+  #     class Gin < GoEngine
+  #       analyzer_for "go_gin"
+  #     end
+  #
+  # `initialize_analyzers` reads the registry off the classes themselves, so
+  # this is the only place the name is written. Before it, the mapping lived
+  # in a hand-maintained `define_analyzers` list — a second place to
+  # remember, where forgetting produced no error and no failing spec, just an
+  # analyzer that never ran. Mirrors `Detector.detector_for`.
+  #
+  # Every concrete class under the `Analyzer::` namespace must declare one:
+  # the derivation calls `tech_name` on each, so omitting it is a compile
+  # error rather than a silent no-op. Shared base classes (`GoEngine`,
+  # `SpecificationEngine`, …) are `abstract` and sit outside that set.
+  macro analyzer_for(tech)
+    def self.tech_name : String
+      {{ tech }}
+    end
+  end
+
   # Prefer the detector-populated cache over a fresh disk read. On
   # cache miss (budget exhausted, cache cleared between runs, path
   # not registered via register_file) falls back to a disk read.

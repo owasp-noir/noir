@@ -3,6 +3,8 @@ require "../../../miniparsers/go_route_extractor_ts"
 
 module Analyzer::Go
   class GoZero < GoEngine
+    analyzer_for "go_gozero"
+
     IMPORT_MARKER = "github.com/zeromicro/go-zero"
 
     # Crystal recompiles an interpolated regex literal on every evaluation

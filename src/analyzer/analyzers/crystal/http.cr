@@ -2,6 +2,8 @@ require "../../engines/crystal_engine"
 
 module Analyzer::Crystal
   class Http < CrystalEngine
+    analyzer_for "crystal_http"
+
     # Precompiled regexes (avoid repeated compilation of interpolated literals inside
     # the per-line hot path; mirrors the VERB_ROUTE_PATTERNS approach in grip.cr).
     METHOD_THEN_PATH_RE = /context\.request\.method\s*(?:==|===)\s*["'](GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)["']\s*&&\s*.*context\.request\.path\s*(?:==|===)\s*["']([^"']+?)["']/

@@ -19,6 +19,8 @@ module Analyzer::Specification
   # ready-to-send JSON-RPC 2.0 request envelope, the same way the GraphQL
   # analyzers attach a `graphql_<operation>_<field>` document param.
   class OpenRpc < SpecificationEngine
+    analyzer_for "openrpc"
+
     # Fallback when the document declares no usable server URL. JSON-RPC has
     # no canonical path the way GraphQL has `/graphql`, so stay at the root
     # rather than inventing one.

@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Apisix < SpecificationEngine
+    analyzer_for "apisix"
+
     def analyze
       each_spec_file("apisix-json") do |path|
         process_json(path)

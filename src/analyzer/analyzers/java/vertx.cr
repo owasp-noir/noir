@@ -6,6 +6,8 @@ require "wait_group"
 
 module Analyzer::Java
   class Vertx < Analyzer
+    analyzer_for "java_vertx"
+
     # Regex patterns for Vert.x route detection
     REGEX_ROUTER_ROUTE         = /(\w+)\.(get|post|put|delete|patch|head|options|connect|trace)\s*\(([^)]*)\)/i
     REGEX_ROUTE_METHOD         = /(\w+)\.route\s*\(([^)]*)\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(/i

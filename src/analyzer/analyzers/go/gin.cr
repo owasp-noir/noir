@@ -2,6 +2,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Gin < GoEngine
+    analyzer_for "go_gin"
+
     IMPORT_MARKER = "github.com/gin-gonic/gin"
 
     # Shared read-only fallback for directories with no resolved

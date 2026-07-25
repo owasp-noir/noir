@@ -23,6 +23,8 @@ module Analyzer::Cfml
   # each push a path segment, and `end()` pops it. Without that, every
   # admin route would be emitted at the top level.
   class Wheels < CfmlEngine
+    analyzer_for "cfml_wheels"
+
     ROUTES_FILE = "routes.cfm"
 
     MAPPER_RE   = /(?<![\w.])mapper\s*\(/i

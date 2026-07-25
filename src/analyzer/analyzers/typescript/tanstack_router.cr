@@ -4,6 +4,8 @@ require "../../../miniparsers/js_route_extractor"
 
 module Analyzer::Typescript
   class TanstackRouter < Analyzer::Javascript::JavascriptEngine
+    analyzer_for "ts_tanstack_router"
+
     private struct CodeRoute
       getter name : String
       getter path : String

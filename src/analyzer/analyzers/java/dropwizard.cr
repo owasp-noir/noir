@@ -12,6 +12,8 @@ module Analyzer::Java
   # classes are often pure JAX-RS and do not import Dropwizard
   # directly.
   class Dropwizard < Analyzer
+    analyzer_for "java_dropwizard"
+
     JAVA_EXTENSION = "java"
 
     # A bare `io.dropwizard` substring also matches Dropwizard's

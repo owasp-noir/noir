@@ -13,6 +13,8 @@ module Analyzer::Python
   # e.g. bottle). Endpoints are merged by URL so options registered across
   # decorators/functions collect onto a single command.
   class Cli < PythonEngine
+    analyzer_for "python_cli"
+
     # Web frameworks: their os.environ/os.getenv reads are config, not a CLI
     # surface, so raw env is suppressed when one is present (framework-bound
     # env via click/typer is still emitted).

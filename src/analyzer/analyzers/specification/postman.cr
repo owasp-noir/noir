@@ -3,6 +3,8 @@ require "uri"
 
 module Analyzer::Specification
   class Postman < SpecificationEngine
+    analyzer_for "postman"
+
     def analyze
       each_spec_file("postman-json") do |postman_file|
         content = read_file_content(postman_file)

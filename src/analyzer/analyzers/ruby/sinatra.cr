@@ -2,6 +2,8 @@ require "../../engines/ruby_engine"
 
 module Analyzer::Ruby
   class Sinatra < RubyEngine
+    analyzer_for "ruby_sinatra"
+
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 

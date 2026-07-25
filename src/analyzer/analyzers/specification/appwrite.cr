@@ -11,6 +11,8 @@ module Analyzer::Specification
   # one naming or the other, so we emit the family matching the keys
   # actually present — emitting both would mean half the output 404s.
   class Appwrite < SpecificationEngine
+    analyzer_for "appwrite"
+
     include SchemaApiCommon
 
     ATTRIBUTE_TYPE_HINTS = {

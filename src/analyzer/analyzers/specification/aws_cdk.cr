@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class AwsCdk < SpecificationEngine
+    analyzer_for "aws_cdk"
+
     METHOD_ANY = "ANY"
 
     # Variable -> (parent variable | nil, literal path segment)

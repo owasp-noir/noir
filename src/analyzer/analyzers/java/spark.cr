@@ -9,6 +9,8 @@ module Analyzer::Java
   # The shared lambda-DSL extractor handles all of that; this
   # analyzer just supplies the Spark method-name set.
   class Spark < Analyzer
+    analyzer_for "java_spark"
+
     JAVA_EXTENSION = "java"
     SPARK_MARKERS  = ["spark.Spark", "import static spark.", "import spark."]
 

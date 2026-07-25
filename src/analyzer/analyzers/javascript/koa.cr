@@ -6,6 +6,8 @@ require "../../../utils/url_path"
 
 module Analyzer::Javascript
   class Koa < JavascriptEngine
+    analyzer_for "js_koa"
+
     def analyze
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)

@@ -3,6 +3,8 @@ require "../../../miniparsers/elysia_extractor_ts"
 
 module Analyzer::Javascript
   class Elysia < Analyzer
+    analyzer_for "js_elysia"
+
     JS_EXTENSIONS = [".js", ".mjs", ".cjs", ".ts"]
     # Precompiled once — a single PCRE2-JIT scan replaces four naive
     # String#includes? substring scans over the whole file content.

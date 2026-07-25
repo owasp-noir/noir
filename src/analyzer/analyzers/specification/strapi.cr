@@ -10,6 +10,8 @@ module Analyzer::Specification
   # Custom routes declared in `src/api/<name>/routes/*.{ts,js}` are read
   # separately and mounted under the same `/api` prefix.
   class Strapi < SpecificationEngine
+    analyzer_for "strapi"
+
     include SchemaApiCommon
 
     ATTRIBUTE_TYPE_HINTS = {

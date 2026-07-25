@@ -5,6 +5,8 @@ require "yaml"
 
 module Analyzer::Java
   class Micronaut < Analyzer
+    analyzer_for "java_micronaut"
+
     JAVA_EXTENSION    = "java"
     MICRONAUT_MARKERS = ["io.micronaut", "micronaut.io"]
     alias PackageScopeKey = Tuple(String, String)

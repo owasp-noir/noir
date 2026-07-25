@@ -8,6 +8,8 @@ module Analyzer::Specification
   # `/items/<collection>/<id>` and singletons on
   # `/items/<collection>/singleton`.
   class Directus < SpecificationEngine
+    analyzer_for "directus"
+
     include SchemaApiCommon
 
     FIELD_TYPE_HINTS = {

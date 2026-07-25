@@ -2,6 +2,8 @@ require "../../engines/scala_engine"
 
 module Analyzer::Scala
   class ZioHttp < ScalaEngine
+    analyzer_for "scala_zio_http"
+
     HTTP_METHODS   = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
     MATCHER_IDENTS = %w[int long string uuid boolean bool trailing]
 

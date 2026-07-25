@@ -17,6 +17,8 @@ module Analyzer::Cfml
   # deliberately out of scope here — they warrant their own techs so the
   # generic analyzer isn't the thing that decides framework semantics.
   class Pure < CfmlEngine
+    analyzer_for "cfml_pure"
+
     # Only unambiguous web-root directory names. Bare `public/` and
     # `www/` were tried and dropped: they collide with build output such
     # as `docs/public/`, the same false positive `FileHelper` documents.

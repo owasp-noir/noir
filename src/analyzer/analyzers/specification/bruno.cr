@@ -2,6 +2,8 @@ require "../../engines/specification_engine"
 
 module Analyzer::Specification
   class Bruno < SpecificationEngine
+    analyzer_for "bruno"
+
     HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
     def analyze

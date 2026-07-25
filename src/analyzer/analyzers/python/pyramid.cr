@@ -2,6 +2,8 @@ require "../../engines/python_engine"
 
 module Analyzer::Python
   class Pyramid < PythonEngine
+    analyzer_for "python_pyramid"
+
     # Reference: https://docs.pylonsproject.org/projects/pyramid/en/latest/narr/urldispatch.html
     #
     # Pyramid wires requests in two steps:

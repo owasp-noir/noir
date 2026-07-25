@@ -26,6 +26,8 @@ module Analyzer::Rust
   # AST walk. We recover them by re-parsing each router-bearing macro
   # body as an expression fragment and mapping line numbers back.
   class Salvo < RustEngine
+    analyzer_for "rust_salvo"
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias ScopedNameKey = Tuple(String, String)
     alias PrefixEdge = Tuple(ScopedNameKey, String)
