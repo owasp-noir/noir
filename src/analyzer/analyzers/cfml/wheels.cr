@@ -29,7 +29,6 @@ module Analyzer::Cfml
 
     MAPPER_RE   = /(?<![\w.])mapper\s*\(/i
     DSL_CALL_RE = /\.\s*([A-Za-z_]\w*)\s*\(/
-    UNESCAPE_RE = /##/
     # Wheels writes path variables in brackets, not colons.
     PLACEHOLDER_RE = /\[([A-Za-z_]\w*)\]/
 

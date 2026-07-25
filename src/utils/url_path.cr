@@ -33,5 +33,31 @@ module Noir
         "#{parent}#{child}"
       end
     end
+
+    # Join two URL path segments, collapsing *every* slash at the seam to
+    # exactly one.
+    #
+    # Seven route extractors had this open-coded, byte for byte: the JVM DSL
+    # ones (http4k, JAX-RS, Micronaut, the shared lambda-DSL extractor),
+    # AdonisJS, Elysia, and the Scala Play analyzer.
+    #
+    # It is deliberately NOT `join`, and the two are not interchangeable —
+    # `join` removes at most one slash and keeps a trailing one:
+    #
+    #   join("/api//", "/users")  # => "/api//users"
+    #   join_trimmed(...)         # => "/api/users"
+    #
+    #   join("/api/", "")         # => "/api/"
+    #   join_trimmed("/api/", "") # => "/api"
+    #
+    # Use this where a framework's prefix stack can contribute repeated or
+    # trailing slashes that must not survive into the emitted URL; use `join`
+    # where the segments are already normalised and a trailing slash is
+    # meaningful.
+    def self.join_trimmed(prefix : String, suffix : String) : String
+      return suffix if prefix.empty?
+      return prefix.rstrip('/') if suffix.empty?
+      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
+    end
   end
 end

@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./js_callee_extractor"
@@ -172,7 +173,7 @@ module Noir
       receiver = chain_receiver(call)
       return unless receiver
 
-      new_prefix = arg ? join_paths(prefix, arg) : prefix
+      new_prefix = arg ? Noir::URLPath.join_trimmed(prefix, arg) : prefix
       walk(receiver, source, new_prefix, routes, depth + 1, include_callees)
     end
 
@@ -219,7 +220,7 @@ module Noir
     private def emit_verb(call : LibTreeSitter::TSNode, source : String, verb : String, prefix : String, routes : Array(Route), include_callees : Bool)
       path = first_string_argument(call, source)
       return unless path
-      full = join_paths(prefix, path)
+      full = Noir::URLPath.join_trimmed(prefix, path)
       line = Noir::TreeSitter.node_start_row(call)
       callees = include_callees ? route_callees(call, source, line) : [] of JSCalleeExtractor::Entry
       routes << Route.new(verb, full, line, callees)
@@ -228,7 +229,7 @@ module Noir
     private def emit_resource(call : LibTreeSitter::TSNode, source : String, prefix : String, actions : Array(String), routes : Array(Route), include_callees : Bool)
       name = first_string_argument(call, source)
       return unless name
-      base = join_paths(prefix, name.starts_with?("/") ? name : "/#{name}")
+      base = Noir::URLPath.join_trimmed(prefix, name.starts_with?("/") ? name : "/#{name}")
       line = Noir::TreeSitter.node_start_row(call)
 
       actions.each do |action|
@@ -330,7 +331,7 @@ module Noir
     private def emit_on(call : LibTreeSitter::TSNode, source : String, prefix : String, routes : Array(Route))
       path = first_string_argument(call, source)
       return unless path
-      full = join_paths(prefix, path)
+      full = Noir::URLPath.join_trimmed(prefix, path)
       line = Noir::TreeSitter.node_start_row(call)
       routes << Route.new("GET", full, line)
     end
@@ -417,12 +418,6 @@ module Noir
       else
         raw
       end
-    end
-
-    private def join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
   end
 end

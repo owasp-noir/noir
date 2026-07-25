@@ -671,10 +671,6 @@ module Analyzer::Python
       def params : Array(FunctionParameter)
         @params
       end
-
-      def add_parameter(param : FunctionParameter)
-        @params << param
-      end
     end
 
     # Net `(` − `)` count on a single Python source line, ignoring

@@ -7,8 +7,6 @@ module Detector::Specification
     # Registers each VirtualService manifest path in `CodeLocator`.
     detector_for "istio_virtualservice", extensions: %w[.yaml .yml], idempotent: false
 
-    ISTIO_API_PREFIX = "networking.istio.io/"
-
     # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
     # match, so they stay separate probes rather than a union.
     ISTIO_API_PREFIX_MARKER     = /networking\.istio\.io\//

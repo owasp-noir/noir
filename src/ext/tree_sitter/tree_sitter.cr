@@ -131,6 +131,24 @@ end
 # Thin high-level facade. Keeps tree lifetime tied to an object so callers
 # don't have to think about `ts_tree_delete`.
 module Noir::TreeSitter
+  # Names the `error_type` that `ts_query_new` writes back on failure.
+  # `LibTreeSitter`'s `TS_QUERY_ERROR_*` constants existed for exactly this
+  # and were never used, so a broken query reported a bare `code=2` and the
+  # reader had to go find `TSQueryError` in tree-sitter's `api.h` to learn
+  # that meant an unknown node type.
+  def self.query_error_name(error_type : Int32) : String
+    case error_type
+    when LibTreeSitter::TS_QUERY_ERROR_NONE      then "no error"
+    when LibTreeSitter::TS_QUERY_ERROR_SYNTAX    then "syntax error"
+    when LibTreeSitter::TS_QUERY_ERROR_NODE_TYPE then "unknown node type"
+    when LibTreeSitter::TS_QUERY_ERROR_FIELD     then "unknown field name"
+    when LibTreeSitter::TS_QUERY_ERROR_CAPTURE   then "unknown capture name"
+    when LibTreeSitter::TS_QUERY_ERROR_STRUCTURE then "invalid pattern structure"
+    when LibTreeSitter::TS_QUERY_ERROR_LANGUAGE  then "language mismatch"
+    else                                              "unrecognised code=#{error_type}"
+    end
+  end
+
   # Recursion guard for AST walkers. Crystal's default fiber stack
   # is generous (~8 MB) but a malicious source file with deeply
   # nested syntax — `(((((((...)))))))` chains, deeply nested
@@ -243,19 +261,6 @@ module Noir::TreeSitter
   # (axum, actix-web, rocket, …) and the Rust callee extractor.
   def self.parse_rust(source : String, &)
     parse(source, LibTreeSitter.tree_sitter_rust) { |root| yield root }
-  end
-
-  # Convenience: returns the root-node s-expression for `source`.
-  def self.python_sexp(source : String) : String
-    parse_python(source) do |root|
-      ptr = LibTreeSitter.ts_node_string(root)
-      begin
-        String.new(ptr)
-      ensure
-        # ts_node_string allocates with malloc; free it.
-        LibC.free(ptr.as(Void*))
-      end
-    end
   end
 
   # --- Small helpers used by extractors. Kept here so callers don't
@@ -401,7 +406,8 @@ module Noir::TreeSitter
       )
       if handle.null?
         raise CompileError.new(
-          "tree-sitter query failed to compile (code=#{error_type}, byte_offset=#{error_offset})"
+          "tree-sitter query failed to compile " \
+          "(#{Noir::TreeSitter.query_error_name(error_type)}, byte_offset=#{error_offset})"
         )
       end
       @handle = handle
