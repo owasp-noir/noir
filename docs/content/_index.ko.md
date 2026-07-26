@@ -198,6 +198,6 @@ template = "landing"
   </div>
   <div class="contributors" data-reveal>
     <p>기여해 주신 모든 분께 감사드립니다.</p>
-    <img src="../CONTRIBUTORS.svg" alt="OWASP Noir에 기여한 사람들의 프로필 이미지." width="740" height="222" loading="lazy" decoding="async">
+    <img src="../CONTRIBUTORS.svg" alt="OWASP Noir에 기여한 사람들의 프로필 이미지." width="720" height="240" loading="lazy" decoding="async">
   </div>
 </section>

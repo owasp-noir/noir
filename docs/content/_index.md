@@ -196,6 +196,6 @@ template = "landing"
   </div>
   <div class="contributors" data-reveal>
     <p>Thanks to everyone who has contributed.</p>
-    <img src="./CONTRIBUTORS.svg" alt="Avatars of the people who have contributed to OWASP Noir." width="740" height="222" loading="lazy" decoding="async">
+    <img src="./CONTRIBUTORS.svg" alt="Avatars of the people who have contributed to OWASP Noir." width="720" height="240" loading="lazy" decoding="async">
   </div>
 </section>

@@ -1,0 +1,27 @@
+# https://github.com/crystal-actions/contributor-mural
+style: voronoi
+
+output: docs/static/CONTRIBUTORS.svg
+
+contributors:
+  include_bots: true
+
+users:
+  - login: hahwul
+    role: "Creator, Leader"
+  - login: ksg97031
+    role: "Leader"
+
+exclude:
+  - dependabot[bot]
+  - github-actions[bot]
+  - Copilot
+  - imgbot[bot]
+
+voronoi:
+  width: 720
+  cell_size: 96
+  gap: 4
+  jitter: 0.5
+  weight_influence: 0.6
+  outline: false
