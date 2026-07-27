@@ -23,6 +23,27 @@ describe "EndpointOptimizer" do
       result[1].method.should eq("POST")
     end
 
+    # An analyzer that can tell a param exists but not what it is called
+    # (`request.getCookies()` hands back the whole jar) used to stand that
+    # in with an empty name, and every builder rendered the hole:
+    # `curl --cookie '='`, an empty `└──` node in plain output, and a
+    # `{"name": "", "in": "cookie"}` entry that makes the OAS document
+    # invalid. Unsendable names are dropped here alongside spaced ones.
+    it "drops params whose name is blank or contains a space" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "GET", [
+          Param.new("", "", "cookie"),
+          Param.new("   ", "", "query"),
+          Param.new("two words", "", "query"),
+          Param.new("session_id", "", "cookie"),
+        ]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].params.map(&.name).should eq(["session_id"])
+    end
+
     it "normalizes HTTP methods" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

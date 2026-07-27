@@ -11,7 +11,11 @@ expected_endpoints = [
   Endpoint.new("/reports/summary.jsp", "GET", [Param.new("range", "", "query")]),
   Endpoint.new("/attribute.jsp", "GET", [Param.new("userId", "", "query")]),
   Endpoint.new("/header.jsp", "GET", [Param.new("X-API-Key", "", "header")]),
-  Endpoint.new("/cookie.jsp", "GET", [Param.new("", "", "cookie")]),
+  # `cookie.jsp` only calls `request.getCookies()`, which names no cookie.
+  # The endpoint is still real, it just carries no param — an empty-named
+  # one used to stand in for "reads cookies" and corrupted every builder
+  # downstream (`--cookie '='`, `{"name": "", "in": "cookie"}`).
+  Endpoint.new("/cookie.jsp", "GET"),
   Endpoint.new("/advanced.jsp", "GET", [
     Param.new("q", "", "query"),
     Param.new("tag", "", "query"),
@@ -53,7 +57,6 @@ expected_endpoints = [
   ]),
   Endpoint.new("/audit", "POST", [
     Param.new("note", "", "form"),
-    Param.new("", "", "cookie"),
   ]),
   Endpoint.new("/admin", "GET"),
 ]
