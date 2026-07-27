@@ -5,12 +5,20 @@ require "../../../src/models/logger"
 require "../../../src/utils/utils"
 require "yaml"
 
-# Mock logger to capture output
+# Mock logger to capture output.
+#
+# `io` stands in for stdout (the report stream) and `log_io` for stderr
+# (progress logging). Keeping them apart is the point: the previous mock
+# funnelled `puts` and `sub` into one buffer, so it could not see that the
+# builder was emitting half of every finding to stderr — where a redirect
+# drops it and `--no-log` suppresses it outright.
 class MockLogger < NoirLogger
   property io : IO::Memory
+  property log_io : IO::Memory
 
   def initialize
     @io = IO::Memory.new
+    @log_io = IO::Memory.new
     # Initialize NoirLogger with default values (false for debug, verbose, color, nolog)
     super(false, false, false, false)
   end
@@ -19,8 +27,12 @@ class MockLogger < NoirLogger
     @io.puts message
   end
 
-  def sub(message)
+  def puts_sub(message)
     @io.puts "  " + message
+  end
+
+  def sub(message)
+    @log_io.puts "  " + message
   end
 end
 
@@ -139,6 +151,11 @@ describe "OutputBuilderPassiveScan" do
       output.should contain("Test Rule Name")
       output.should contain("├── extract: found secret")
       output.should contain("└── file: src/test.cr:15")
+
+      # The whole finding belongs on the report stream. `noir scan . -P >
+      # findings.txt` used to keep the rule header and lose the extract and
+      # the file:line that say where the secret actually is.
+      logger.log_io.to_s.should be_empty
     end
 
     it "prints multiple passive scan results" do

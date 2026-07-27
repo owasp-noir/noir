@@ -8,8 +8,13 @@ class OutputBuilderPassiveScan < OutputBuilder
   def print(passive_results : Array(PassiveScanResult), logger : NoirLogger, is_color : Bool)
     passive_results.each do |result|
       logger.puts "[#{severity_color(result.info.severity, is_color)}][#{result.id.colorize(:light_blue).toggle(is_color)}][#{result.category.colorize(:light_yellow).toggle(is_color)}] #{result.info.name.colorize(:light_green).toggle(is_color)}"
-      logger.sub "├── extract: #{result.extract}"
-      logger.sub "└── file: #{result.file_path}:#{result.line_number}"
+      # `puts_sub`, not `sub`: these two lines are the finding, not progress
+      # logging. `sub` writes to stderr and returns early under `--no-log`,
+      # which split one finding across two streams — `noir scan . -P >
+      # findings.txt` kept the rule header and dropped the extract and the
+      # file:line that say where the secret is.
+      logger.puts_sub "├── extract: #{result.extract}"
+      logger.puts_sub "└── file: #{result.file_path}:#{result.line_number}"
       logger.puts ""
     end
   end
