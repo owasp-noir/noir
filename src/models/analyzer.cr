@@ -305,6 +305,15 @@ class FileAnalyzer < Analyzer
     active_hooks.size
   end
 
+  # True when at least one hook recognises endpoints from file syntax
+  # alone. `noir scan` consults this before giving up on a code base the
+  # detector found no technologies in: with no techs *and* no
+  # url-independent hook there is genuinely nothing left to analyze, but
+  # with one there still is.
+  def self.url_independent_hooks? : Bool
+    @@hooks.any? { |hook| !hook.requires_url }
+  end
+
   def analyze
     hooks = active_hooks
     return @result if hooks.empty?
