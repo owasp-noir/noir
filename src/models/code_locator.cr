@@ -17,6 +17,8 @@ class CodeLocator
   @a_map : Hash(String, Array(String))
   @extension_index : Hash(String, Array(String))
   @extension_index_built : Bool
+  @basename_index : Hash(String, Array(String))
+  @basename_index_built : Bool
   @file_contents : Hash(String, String)
   @content_cache_budget : Int64
   @content_cache_used : Int64
@@ -38,6 +40,8 @@ class CodeLocator
     @a_map = Hash(String, Array(String)).new
     @extension_index = Hash(String, Array(String)).new
     @extension_index_built = false
+    @basename_index = Hash(String, Array(String)).new
+    @basename_index_built = false
 
     @file_contents = Hash(String, String).new
     @content_cache_budget = resolve_content_cache_budget
@@ -75,10 +79,20 @@ class CodeLocator
     @a_map[key] ||= Array(String).new
     @a_map[key] << value
 
-    # Pushing into file_map invalidates the derived path caches.
+    # Pushing into file_map invalidates every derived view of it.
+    #
+    # The extension/basename indexes are memoised behind a `_built`
+    # flag, so without this a lookup taken before a later push would
+    # keep serving the older file list. Nothing pushes to `file_map`
+    # after the detector finishes today — the indexes are only read
+    # during analysis, by which point the map is complete — so this
+    # costs nothing in a normal scan and just stops the caches from
+    # being able to go stale.
     if key == "file_map"
       @expanded_file_map = nil
       @expanded_path_index = nil
+      @extension_index_built = false
+      @basename_index_built = false
     end
   end
 
@@ -167,20 +181,28 @@ class CodeLocator
     end
   end
 
+  # Group every file_map entry under the key `block` derives from it.
+  #
+  # Shared by the extension and basename indexes, which differ only in
+  # that key. Returns whether the index is now built: with no file_map
+  # yet there is nothing to index and the caller leaves its `_built`
+  # flag false so a later lookup retries. Callers must hold `@lock`.
+  private def rebuild_path_index(index : Hash(String, Array(String)), & : String -> String) : Bool
+    index.clear
+    files = @a_map["file_map"]?
+    return false unless files
+    files.each do |file|
+      (index[yield file] ||= Array(String).new) << file
+    end
+    true
+  end
+
   # Build extension index from file_map for fast lookups
   def build_extension_index
     return if @extension_index_built
     @lock.synchronize do
       return if @extension_index_built
-      @extension_index.clear
-      files = @a_map["file_map"]?
-      return unless files
-      files.each do |file|
-        ext = File.extname(file)
-        @extension_index[ext] ||= Array(String).new
-        @extension_index[ext] << file
-      end
-      @extension_index_built = true
+      @extension_index_built = rebuild_path_index(@extension_index) { |file| File.extname(file) }
     end
   end
 
@@ -190,12 +212,42 @@ class CodeLocator
     @extension_index[extension]? || Array(String).new
   end
 
+  # Build a `basename => paths` index from file_map.
+  #
+  # The companion to `build_extension_index`, for the "find the file(s)
+  # whose path ends with `a/b/c.py`" lookups that analyzers otherwise
+  # answer with `Dir.glob("root/**/a/b/c.py")`. That glob walks the whole
+  # tree from the scan root — descending into `node_modules`, `.git` and
+  # every other subtree the detector deliberately pruned — and costs one
+  # `opendir`/`getdirentries` pass per call. Django's ROOT_URLCONF
+  # resolution ran it once per `settings.py`, which on a 44k-file
+  # monorepo was ~73% of the entire analysis phase.
+  #
+  # Keyed on basename because that is the selective part of those
+  # patterns: `urls.py` narrows 44k files to a handful, and the caller
+  # confirms the rest of the path with a cheap `ends_with?`.
+  def build_basename_index
+    return if @basename_index_built
+    @lock.synchronize do
+      return if @basename_index_built
+      @basename_index_built = rebuild_path_index(@basename_index) { |file| File.basename(file) }
+    end
+  end
+
+  # Files whose basename is exactly `basename` (O(1) lookup).
+  def files_by_basename(basename : String) : Array(String)
+    build_basename_index
+    @basename_index[basename]? || Array(String).new
+  end
+
   def clear(key : String)
     @s_map.delete(key)
     @a_map.delete(key)
     if key == "file_map"
       @extension_index.clear
       @extension_index_built = false
+      @basename_index.clear
+      @basename_index_built = false
       @file_contents.clear
       @content_cache_used = 0_i64
       @content_cache_skipped = 0
@@ -209,6 +261,8 @@ class CodeLocator
     @a_map.clear
     @extension_index.clear
     @extension_index_built = false
+    @basename_index.clear
+    @basename_index_built = false
     @file_contents.clear
     @content_cache_used = 0_i64
     @content_cache_skipped = 0

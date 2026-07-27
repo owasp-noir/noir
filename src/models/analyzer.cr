@@ -309,6 +309,11 @@ class FileAnalyzer < Analyzer
     hooks = active_hooks
     return @result if hooks.empty?
 
+    # Hoisted out of the worker loop: this used to re-read the locator's
+    # `har-path` array and scan it linearly for every file, i.e.
+    # O(files × har_paths) with a fresh Array allocation per file.
+    har_paths = CodeLocator.instance.all("har-path").to_set
+
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
     WaitGroup.wait do |wg|
@@ -324,8 +329,10 @@ class FileAnalyzer < Analyzer
             begin
               path = channel.receive?
               break if path.nil?
-              next if File.directory?(path)
-              next if skip_file_analyzer?(path)
+              # No `File.directory?` guard — `all_files` comes from
+              # `file_map`, which the detector only fills with regular
+              # files.
+              next if har_paths.includes?(path)
 
               logger.debug "Analyzing: #{path}"
 
@@ -346,10 +353,5 @@ class FileAnalyzer < Analyzer
     end
 
     @result
-  end
-
-  private def skip_file_analyzer?(path : String) : Bool
-    har_files = CodeLocator.instance.all("har-path")
-    har_files.is_a?(Array(String)) && har_files.includes?(path)
   end
 end

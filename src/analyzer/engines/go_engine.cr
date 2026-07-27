@@ -538,9 +538,11 @@ module Analyzer::Go
 
     private def collect_go_modules : Array(Tuple(String, String))
       modules = [] of Tuple(String, String)
-      all_files.each do |path|
-        next unless File.basename(path) == "go.mod"
-        next if File.directory?(path)
+      # Basename index instead of a full `file_map` walk: this runs once
+      # per Go analyzer, and on a monorepo the `.go` module files are a
+      # handful of entries out of tens of thousands. No `File.directory?`
+      # either — the detector only registers regular files.
+      get_files_by_basename("go.mod").each do |path|
         next if path.split("/").includes?("vendor")
 
         begin

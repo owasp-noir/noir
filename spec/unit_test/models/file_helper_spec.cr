@@ -244,4 +244,68 @@ describe "FileHelper" do
       helper.get_public_dir_files("/app", "assets").should eq(["/app/assets/file1.css"])
     end
   end
+
+  describe "get_files_by_basename" do
+    it "returns only files whose basename matches exactly" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/a/go.mod")
+      locator.push("file_map", "/b/nested/go.mod")
+      locator.push("file_map", "/c/go.sum")
+      locator.push("file_map", "/d/mygo.mod")
+
+      helper.get_files_by_basename("go.mod").should eq(["/a/go.mod", "/b/nested/go.mod"])
+    end
+
+    it "returns an empty array when nothing matches" do
+      TestHelper.new.get_files_by_basename("go.mod").should be_empty
+    end
+  end
+
+  describe "get_files_by_relative_path" do
+    # Stands in for `Dir.glob("<root>/**/<relative_path>")`, so the
+    # multi-segment suffix has to match on a directory boundary and the
+    # result has to stay inside the requested root.
+    it "matches a multi-segment path suffix" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/repo/svc/myproj/urls.py")
+      locator.push("file_map", "/repo/other/urls.py")
+      locator.push("file_map", "/repo/svc/myproj/views.py")
+
+      helper.get_files_by_relative_path("myproj/urls.py").should eq(["/repo/svc/myproj/urls.py"])
+    end
+
+    it "matches when the suffix sits directly under the root" do
+      helper = TestHelper.new
+      CodeLocator.instance.push("file_map", "/repo/myproj/urls.py")
+
+      helper.get_files_by_relative_path("myproj/urls.py", "/repo").should eq(["/repo/myproj/urls.py"])
+    end
+
+    it "excludes matches outside the requested root" do
+      helper = TestHelper.new
+      locator = CodeLocator.instance
+
+      locator.push("file_map", "/repo/a/myproj/urls.py")
+      locator.push("file_map", "/repo/b/myproj/urls.py")
+
+      helper.get_files_by_relative_path("myproj/urls.py", "/repo/a").should eq(["/repo/a/myproj/urls.py"])
+    end
+
+    it "does not match a partial final segment" do
+      helper = TestHelper.new
+      # `Dir.glob` would not treat `notmyproj` as `myproj`; a bare
+      # `ends_with?` without the separator would.
+      CodeLocator.instance.push("file_map", "/repo/notmyproj/urls.py")
+
+      helper.get_files_by_relative_path("myproj/urls.py").should be_empty
+    end
+
+    it "returns an empty array for an empty relative path" do
+      TestHelper.new.get_files_by_relative_path("").should be_empty
+    end
+  end
 end

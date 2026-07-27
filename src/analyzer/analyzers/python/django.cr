@@ -196,8 +196,17 @@ module Analyzer::Python
               begin
                 file = channel.receive?
                 break if file.nil?
-                next if File.directory?(file)
+                # No `File.directory?` — `all_files` is `file_map`, which
+                # holds regular files only.
                 next if file.includes?("/site-packages/")
+                # `django_settings_path?` is pure string work and rejects
+                # all but a handful of files, so it runs before
+                # `base_path_for` / `python_test_path?`. Every gate here
+                # is a pure predicate and all of them must pass, so the
+                # order is free to favour the cheapest, most selective
+                # one — previously each of the tens of thousands of
+                # non-settings files paid the base-path resolution first.
+                next unless django_settings_path?(file)
                 # Skip Python test files: each Django test app under
                 # `tests/<feature>/` carries its own `ROOT_URLCONF`
                 # the analyzer would otherwise treat as a real Django
@@ -207,7 +216,6 @@ module Analyzer::Python
                 # are unambiguous in Python codebases.
                 current_base_path = base_path_for(file)
                 next if PythonEngine.python_test_path?(file, current_base_path)
-                next unless django_settings_path?(file)
                 if file.ends_with? ".py"
                   content = read_file_content(file)
                   content.each_line do |line|
@@ -258,11 +266,16 @@ module Analyzer::Python
         return candidates.select { |path| File.exists?(path) }.uniq!
       end
 
-      paths = [] of ::String
-      Dir.glob("#{escape_glob_path(search_dir)}/**/#{relative_path}") do |filepath|
-        paths << filepath
-      end
-      paths.uniq
+      # Resolve against the scanned file index rather than
+      # `Dir.glob("#{search_dir}/**/#{relative_path}")`. The glob walks
+      # every directory under the scan root on each call — and this runs
+      # once per ROOT_URLCONF line per `settings.py`, so a monorepo with
+      # many Django services paid a full filesystem traversal per
+      # service. On a 44k-file corpus that single glob was ~73% of the
+      # whole analysis phase; the index lookup is O(files named
+      # `urls.py`) with no syscalls. See `get_files_by_relative_path`
+      # for the (deliberate) scope difference on excluded subtrees.
+      get_files_by_relative_path(relative_path, search_dir)
     end
 
     # Extract endpoints from a Django URL configuration file

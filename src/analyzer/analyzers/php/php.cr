@@ -69,8 +69,10 @@ module Analyzer::Php
       return cached if cached
 
       roots = [] of String
-      all_files.each do |file|
-        next unless File.basename(file) == "composer.json"
+      # Basename index rather than a walk of the whole `file_map` — a
+      # monorepo holds a few `composer.json` files among tens of
+      # thousands of entries.
+      get_files_by_basename("composer.json").each do |file|
         normalized = Noir::PathScope.normalize_root(File.dirname(file))
         roots << normalized unless roots.includes?(normalized)
       end

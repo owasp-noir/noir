@@ -71,3 +71,59 @@ describe "content cache" do
     end
   end
 end
+
+describe "basename index" do
+  it "groups file_map entries by basename" do
+    locator = CodeLocator.new
+    locator.push("file_map", "/a/urls.py")
+    locator.push("file_map", "/b/urls.py")
+    locator.push("file_map", "/c/views.py")
+
+    locator.files_by_basename("urls.py").should eq(["/a/urls.py", "/b/urls.py"])
+    locator.files_by_basename("views.py").should eq(["/c/views.py"])
+    locator.files_by_basename("missing.py").should be_empty
+  end
+
+  # The index is built lazily and memoised, so a file_map that changes
+  # after the first lookup must not keep serving the stale build.
+  it "rebuilds after clear(\"file_map\")" do
+    locator = CodeLocator.new
+    locator.push("file_map", "/a/urls.py")
+    locator.files_by_basename("urls.py").should eq(["/a/urls.py"])
+
+    locator.clear("file_map")
+    locator.files_by_basename("urls.py").should be_empty
+
+    locator.push("file_map", "/b/urls.py")
+    locator.files_by_basename("urls.py").should eq(["/b/urls.py"])
+  end
+
+  it "rebuilds after clear_all" do
+    locator = CodeLocator.new
+    locator.push("file_map", "/a/urls.py")
+    locator.files_by_basename("urls.py").should eq(["/a/urls.py"])
+
+    locator.clear_all
+    locator.files_by_basename("urls.py").should be_empty
+  end
+end
+
+describe "derived index invalidation" do
+  it "does not serve a stale basename index after a later push" do
+    locator = CodeLocator.new
+    locator.push("file_map", "/a/urls.py")
+    locator.files_by_basename("urls.py").should eq(["/a/urls.py"])
+
+    locator.push("file_map", "/b/urls.py")
+    locator.files_by_basename("urls.py").should eq(["/a/urls.py", "/b/urls.py"])
+  end
+
+  it "does not serve a stale extension index after a later push" do
+    locator = CodeLocator.new
+    locator.push("file_map", "/a/one.py")
+    locator.files_by_extension(".py").should eq(["/a/one.py"])
+
+    locator.push("file_map", "/b/two.py")
+    locator.files_by_extension(".py").should eq(["/a/one.py", "/b/two.py"])
+  end
+end
