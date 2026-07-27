@@ -26,7 +26,7 @@ module Analyzer::Java
     # The request-access matchers interpolate a discovered receiver name, so
     # they can't be hoisted — memoize them per receiver instead of rebuilding
     # four regexes for every handler body.
-    @servlet_param_regexes = Hash(String, Tuple(Regex, Regex, Regex, Regex)).new
+    @servlet_param_regexes = Hash(String, Tuple(Regex, Regex, Regex)).new
 
     def analyze
       servlet_methods = collect_servlet_methods
@@ -164,7 +164,13 @@ module Analyzer::Java
         add_param(params, match[1], "header")
       end
 
-      add_param(params, "", "cookie") if content.match(/request\s*\.\s*getCookies\s*\(/)
+      # No `getCookies()` param: it hands back the whole cookie jar without
+      # naming anything, so there is no name to report. Emitting a param
+      # with an empty name pushed that hole straight into the output —
+      # `curl --cookie '='`, an empty `└──` node in plain, and a
+      # `{"name": "", "in": "cookie"}` entry that makes the OAS document
+      # invalid (`name` is required and must be non-empty). Named reads
+      # (`${cookie.x}`, `${cookie["x"]}`) are still collected below.
 
       content.scan(/\$\{\s*param(?:Values)?\.([A-Za-z_][A-Za-z0-9_-]*)/) do |match|
         add_param(params, match[1], "query")
@@ -370,12 +376,13 @@ module Analyzer::Java
       request_param_type = method == "GET" ? "query" : "form"
 
       request_receivers.each do |receiver|
-        parameter_re, attribute_re, header_re, cookie_re = @servlet_param_regexes[receiver] ||= begin
+        # No `getCookies()` regex here for the same reason as the JSP path
+        # above: the call names no cookie, so there is nothing to report.
+        parameter_re, attribute_re, header_re = @servlet_param_regexes[receiver] ||= begin
           receiver_pattern = Regex.escape(receiver)
           {/#{receiver_pattern}\s*\.\s*get(?:Parameter|ParameterValues)\s*\(\s*["']([^"']+)["']\s*\)/,
            /#{receiver_pattern}\s*\.\s*getAttribute\s*\(\s*["']([^"']+)["']\s*\)/,
-           /#{receiver_pattern}\s*\.\s*getHeaders?\s*\(\s*["']([^"']+)["']\s*\)/,
-           /#{receiver_pattern}\s*\.\s*getCookies\s*\(/}
+           /#{receiver_pattern}\s*\.\s*getHeaders?\s*\(\s*["']([^"']+)["']\s*\)/}
         end
 
         content.scan(parameter_re) do |match|
@@ -390,8 +397,6 @@ module Analyzer::Java
         content.scan(header_re) do |match|
           add_param(params, match[1], "header")
         end
-
-        add_param(params, "", "cookie") if content.match(cookie_re)
       end
 
       params

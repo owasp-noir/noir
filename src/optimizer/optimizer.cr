@@ -267,11 +267,16 @@ class EndpointOptimizer
         tiny_tmp.method = "GET"
       end
 
-      # Remove space in param name
+      # Drop param names that cannot be sent as-is: one containing a space,
+      # and one that is blank. A blank name renders as `--cookie '='` in the
+      # curl builder, an empty `└──` node in plain output and a
+      # `{"name": ""}` entry that makes the OAS document invalid, so an
+      # analyzer that knows a param exists but not what it is called must
+      # not leak that hole into the report.
       if endpoint.params.present?
         tiny_tmp.params = [] of Param
         endpoint.params.each do |param|
-          if !param.name.includes? " "
+          if !param.name.includes?(" ") && !param.name.blank?
             param.value = apply_pvalue(param.param_type, param.name, param.value).to_s
             tiny_tmp.params << param
           end
