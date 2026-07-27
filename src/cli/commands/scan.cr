@@ -294,6 +294,18 @@ module Noir::CLI::ScanCommand
         app.logger.info "Falling back to file-based analysis because -u was set."
       elsif ai_provider_active?(app.options)
         app.logger.info "Falling back to AI-based analysis because --ai-provider was set."
+      elsif FileAnalyzer.url_independent_hooks?
+        # No tech analyzer will run, but the url-independent file hooks
+        # (GraphQL operation documents) recognise endpoints from file
+        # syntax rather than by matching `-u`, so the analysis pass still
+        # has work to do. Bailing out here made a code base whose only
+        # surface is a `.graphql`/`.gql` operation document report zero
+        # endpoints on a plain `noir scan ./app`, even though the analyzer
+        # layer had already been fixed to run those hooks without `-u`.
+        # FunctionalTester drives `detect`/`analyze` directly, so this
+        # CLI-only gate slipped past the functional spec that asserts the
+        # endpoint is found on a default scan.
+        app.logger.info "Falling back to file-based analysis."
       elsif app.passive_results.size > 0
         app.logger.info "Noir found #{app.passive_results.size} passive results."
         app.report

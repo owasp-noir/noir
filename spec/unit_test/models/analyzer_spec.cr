@@ -85,4 +85,14 @@ describe "Initialize FileAnalyzer" do
     analyzer = FileAnalyzer.new(with_url)
     analyzer.active_hooks.size.should be > object.active_hooks.size
   end
+
+  # `noir scan` branches on this to decide whether a code base with zero
+  # detected technologies is still worth an analysis pass. If it ever goes
+  # false the CLI takes its "nothing left to do" exit and every
+  # url-independent hook silently stops contributing to a default scan —
+  # which is exactly the regression that made `.graphql`/`.gql` operation
+  # documents invisible to `noir scan ./app`.
+  it "reports that url-independent hooks exist" do
+    FileAnalyzer.url_independent_hooks?.should be_true
+  end
 end
