@@ -25,14 +25,21 @@ module FileHelper
   end
 
   # Get files filtered by path prefix
+  #
+  # No `File.directory?` guard: the detector's walk only registers a
+  # path in `file_map` after `next unless info.file?` (see
+  # `detect_techs`), so every entry is already a regular file. The guard
+  # was a guaranteed-false `stat(2)` paid once per file per analyzer.
   def get_files_by_prefix(prefix : String) : Array(String)
-    return all_files.select { |file| !File.directory?(file) } if prefix.empty?
+    # `.dup`: the previous `.select` handed back a fresh array, and
+    # `all_files` is CodeLocator's live `file_map`. Callers that
+    # `reject!`/`<<` the result must not reach through to it.
+    return all_files.dup if prefix.empty?
 
     root = expanded_root_for(prefix)
     result = [] of String
     all_files_expanded.each do |file, expanded|
       next unless Noir::PathScope.under_normalized_root?(expanded, root)
-      next if File.directory?(file)
       result << file
     end
     result
@@ -61,19 +68,61 @@ module FileHelper
     end
   end
 
-  # Get files filtered by both prefix and extension
+  # Files whose basename is exactly `basename` (uses cached index).
+  def get_files_by_basename(basename : String) : Array(String)
+    CodeLocator.instance.files_by_basename(basename)
+  end
+
+  # Scanned files whose path ends with `relative_path` (a `a/b/c.py`
+  # style module-ish suffix), optionally restricted to `root`.
+  #
+  # The in-memory answer to `Dir.glob("root/**/#{relative_path}")`. The
+  # glob form walks every directory under the scan root — including the
+  # subtrees the detector pruned — so it costs a full filesystem
+  # traversal per call; this narrows by basename first and confirms the
+  # remaining path with `ends_with?`.
+  #
+  # Scope note: this resolves against `file_map`, so it sees exactly the
+  # files noir actually scanned. A match the glob would have found under
+  # an ignored directory (`node_modules/**/urls.py`) or behind
+  # `--exclude-path` is deliberately not returned — resolving to a file
+  # the scan excluded would contradict every other analyzer lookup.
+  def get_files_by_relative_path(relative_path : String, root : String = "") : Array(String)
+    return [] of String if relative_path.empty?
+
+    suffix = relative_path.starts_with?("/") ? relative_path : "/#{relative_path}"
+    candidates = get_files_by_basename(File.basename(relative_path))
+    return [] of String if candidates.empty?
+
+    result = [] of String
+    candidates.each do |path|
+      next unless path.ends_with?(suffix) || path == relative_path
+      next unless root.empty? || path_under_root?(path, root)
+      result << path
+    end
+    result.uniq!
+    result
+  end
+
+  # Get files filtered by both prefix and extension.
+  #
+  # Narrows by extension first (O(1) index hit), then by root. The
+  # previous shape scanned the whole `file_map` and paid an
+  # `under_normalized_root?` test per file before looking at the
+  # extension at all — on a monorepo where the language's source set is
+  # a small slice of the tree that is mostly wasted work.
   def get_files_by_prefix_and_extension(prefix : String, extension : String) : Array(String)
-    return all_files.select { |file| !File.directory?(file) && File.extname(file) == extension } if prefix.empty?
+    candidates = get_files_by_extension(extension)
+    return [] of String if candidates.empty?
+    # See `get_files_by_prefix` — the index array is live, so hand back
+    # a copy rather than aliasing it.
+    return candidates.dup if prefix.empty?
 
     root = expanded_root_for(prefix)
-    result = [] of String
-    all_files_expanded.each do |file, expanded|
-      next unless Noir::PathScope.under_normalized_root?(expanded, root)
-      next if File.directory?(file)
-      next unless File.extname(file) == extension
-      result << file
+    locator = CodeLocator.instance
+    candidates.select do |file|
+      Noir::PathScope.under_normalized_root?(locator.expanded_path_for(file), root)
     end
-    result
   end
 
   # Get public files (files that should be served as static content)
@@ -107,7 +156,6 @@ module FileHelper
     result = [] of String
     pairs.each do |file, expanded|
       next unless base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)
-      next if File.directory?(file)
       next if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
       result << file if project_public_roots.any? { |root| expanded != root && Noir::PathScope.under_normalized_root?(expanded, root) }
     end
@@ -124,9 +172,8 @@ module FileHelper
     # Handle different folder specification formats
     public_dir_files = [] of String
     all_files_expanded.each do |file, expanded|
-      # Ignore directories
-      next if File.directory?(file)
-      # Ignore VC/OS placeholder files (never served).
+      # Ignore VC/OS placeholder files (never served). No directory
+      # guard needed — `file_map` holds regular files only.
       next if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
 
       # Case 1: Folder is a full path
@@ -156,8 +203,20 @@ module FileHelper
   end
 
   protected def path_under_root?(path : String, root : String) : Bool
+    expanded_under_root?(CodeLocator.instance.expanded_path_for(path), root)
+  end
+
+  # `path_under_root?` for a path whose expansion the caller already has.
+  #
+  # `expanded_path_for` is a Hash lookup keyed on the full path string,
+  # so it re-hashes the path on every call. Callers that test one file
+  # against several roots (`roots.any? { path_under_root?(file, it) }`)
+  # paid that per root; hoisting the expansion out of the inner loop
+  # makes it once per file. Semantics are identical — `path_under_root?`
+  # is now defined in terms of this.
+  protected def expanded_under_root?(expanded_path : String, root : String) : Bool
     return true if root.empty?
-    Noir::PathScope.under_normalized_root?(CodeLocator.instance.expanded_path_for(path), expanded_root_for(root))
+    Noir::PathScope.under_normalized_root?(expanded_path, expanded_root_for(root))
   end
 
   # `root` is almost always loop-invariant across a `select`/scan over

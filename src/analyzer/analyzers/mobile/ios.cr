@@ -175,11 +175,34 @@ module Analyzer::Mobile
         return cached
       end
 
+      # Prefer the scanned-file index over `Dir.glob(root/**/…)`. When no
+      # `.xcodeproj` is checked in, `root` falls back to the whole scan
+      # base, so each glob was a full recursive walk of the repo —
+      # including the subtrees the detector pruned.
+      #
+      # The glob stays as the fallback for when `file_map` is empty,
+      # which means the analyzer is running without a detector pass in
+      # front of it (specs drive it that way, and `clear("file_map")` is
+      # explicit about it). That is "no scan context", not "scanned and
+      # found nothing" — the latter must not re-walk the tree, or the
+      # expensive case would be exactly the one the index was added for.
+      #
+      # `.sort.first(MAX)` is kept either way: both caps really do
+      # truncate (a 20-service monorepo carries more than
+      # MAX_PBXPROJ_FILES), so the selection depends on order.
       vars = {} of String => Array(String)
-      Dir.glob(File.join(root, "**", "*.xcconfig")).sort.first(MAX_XCCONFIG_FILES).each do |xc|
+      if all_files.empty?
+        xcconfigs = Dir.glob(File.join(root, "**", "*.xcconfig"))
+        pbxprojs = Dir.glob(File.join(root, "**", "project.pbxproj"))
+      else
+        xcconfigs = get_files_by_prefix_and_extension(root, ".xcconfig")
+        pbxprojs = get_files_by_relative_path("project.pbxproj", root)
+      end
+
+      xcconfigs.sort.first(MAX_XCCONFIG_FILES).each do |xc|
         parse_xcconfig(xc, vars)
       end
-      Dir.glob(File.join(root, "**", "project.pbxproj")).sort.first(MAX_PBXPROJ_FILES).each do |pbx|
+      pbxprojs.sort.first(MAX_PBXPROJ_FILES).each do |pbx|
         parse_pbxproj(pbx, vars)
       end
       @build_vars_cache[root] = vars

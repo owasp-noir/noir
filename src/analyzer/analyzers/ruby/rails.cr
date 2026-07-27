@@ -109,10 +109,12 @@ module Analyzer::Ruby
     # resolve it cross-file once up front.
     @engine_mount_prefixes = Hash(EngineMountKey, String).new
     @known_files = Set(String).new
+    @gemfile_public_roots : Array(Tuple(String, String))? = nil
 
     def analyze
       files = all_files.reject { |file| ruby_non_production_path?(file) }
       @known_files = Set(String).new(files)
+      @gemfile_public_roots = nil
       @engine_mount_prefixes = build_engine_mount_map(files)
 
       framework_roots = discover_framework_roots(files, "config/routes.rb")
@@ -166,18 +168,55 @@ module Analyzer::Ruby
       roots
     end
 
-    private def get_public_files(files : Array(String), base_path : String) : Array(String)
-      project_public_roots = Set(String).new
+    # `{<gemfile_dir>/public, expanded gemfile path}` for every Gemfile in
+    # the scan. Built once and reused: `get_public_files` runs per
+    # framework root, and re-deriving this list each time meant one full
+    # pass over `files` per root (O(roots x files) on a monorepo with a
+    # Gemfile per service).
+    #
+    # The memo ignores `files` after the first call, which is only sound
+    # because `analyze` builds the list once and hands the same array to
+    # every `get_public_files` call. A second caller passing a different
+    # list would silently get the first one's roots — reset
+    # `@gemfile_public_roots` (as `analyze` does) if that ever changes.
+    private def gemfile_public_roots(files : Array(String)) : Array(Tuple(String, String))
+      cached = @gemfile_public_roots
+      return cached if cached
+
+      locator = CodeLocator.instance
+      built = [] of Tuple(String, String)
       files.each do |file|
         next unless File.basename(file) == "Gemfile"
-        next unless path_under_root?(file, base_path)
-        project_public_roots << File.join(File.dirname(file), "public")
+        built << {File.join(File.dirname(file), "public"), locator.expanded_path_for(file)}
+      end
+      @gemfile_public_roots = built
+      built
+    end
+
+    private def get_public_files(files : Array(String), base_path : String) : Array(String)
+      project_public_roots = Set(String).new
+      gemfile_public_roots(files).each do |public_root, gemfile_expanded|
+        next unless expanded_under_root?(gemfile_expanded, base_path)
+        project_public_roots << public_root
       end
 
+      # With no `public/` root under this framework root the filter below
+      # can only ever yield nothing (`Set#any?` on an empty set is
+      # false), so skip the full pass over `files` instead of walking it
+      # to produce an empty array.
+      return [] of String if project_public_roots.empty?
+
+      # Expand each path once and reuse it across the root tests below.
+      # `path_under_root?` re-hashes the full path string on every call,
+      # and this tests each file against every discovered `public/` root
+      # — on a monorepo with one Gemfile per service that was
+      # O(files x roots) hash lookups.
+      locator = CodeLocator.instance
       files.select do |file|
-        next false unless path_under_root?(file, base_path)
+        expanded = locator.expanded_path_for(file)
+        next false unless expanded_under_root?(expanded, base_path)
         next false if FileHelper::PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-        project_public_roots.any? { |root| file != root && path_under_root?(file, root) }
+        project_public_roots.any? { |root| file != root && expanded_under_root?(expanded, root) }
       end
     end
 
