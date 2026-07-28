@@ -45,16 +45,56 @@ describe Noir::CLI::CacheCommand do
       parsed.rest.should be_empty
     end
 
-    it "collects extra positionals into rest in order" do
-      parsed = Noir::CLI::CacheCommand.parse_argv(["purge", "7", "ignored"])
+    it "collects positionals into rest in order" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["purge", "7"])
       parsed.action.should eq("purge")
-      parsed.rest.should eq(["7", "ignored"])
+      parsed.rest.should eq(["7"])
+      parsed.error.should be_nil
     end
 
     it "sets help on -h / --help anywhere in argv" do
       Noir::CLI::CacheCommand.parse_argv(["-h"]).help.should be_true
       Noir::CLI::CacheCommand.parse_argv(["--help"]).help.should be_true
       Noir::CLI::CacheCommand.parse_argv(["purge", "--help"]).help.should be_true
+    end
+
+    # An unknown flag used to be filed as a positional and then dropped, so
+    # `noir cache clear --dry-run` performed a real, irreversible wipe while
+    # reading like a rehearsal.
+    it "rejects an unknown option instead of silently dropping it" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["clear", "--dry-run"])
+      parsed.error.should eq("Unknown option: --dry-run. Run `noir cache --help`.")
+    end
+
+    it "rejects surplus positionals past the action's arity" do
+      Noir::CLI::CacheCommand.parse_argv(["info", "clear"]).error
+        .should eq("Unexpected argument: clear. Usage: noir cache info")
+      Noir::CLI::CacheCommand.parse_argv(["purge", "7", "999"]).error
+        .should eq("Unexpected argument: 999. Usage: noir cache purge <days>")
+      Noir::CLI::CacheCommand.parse_argv(["purge", "7", "999", "junk"]).error
+        .should eq("Unexpected arguments: 999, junk. Usage: noir cache purge <days>")
+    end
+
+    # An unrecognized action must reach the "Unknown cache action" branch in
+    # `run` rather than being pre-empted by an arity complaint about its
+    # trailing arguments.
+    it "leaves an unknown action to the action check, not the arity check" do
+      Noir::CLI::CacheCommand.parse_argv(["bogus", "extra"]).error.should be_nil
+    end
+
+    # `-5` is a value the user meant for <days>, not a flag; it must reach
+    # `parse_days` so the error names the real problem.
+    it "treats a bare negative number as a positional, not an option" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["purge", "-5"])
+      parsed.rest.should eq(["-5"])
+      parsed.error.should be_nil
+      Noir::CLI::CacheCommand.parse_days("-5").should be_nil
+    end
+
+    it "accepts the router's global flags without treating them as the action" do
+      parsed = Noir::CLI::CacheCommand.parse_argv(["--no-color", "info", "--no-spinner"])
+      parsed.action.should eq("info")
+      parsed.error.should be_nil
     end
   end
 
