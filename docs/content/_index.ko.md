@@ -197,3 +197,19 @@ template = "landing"
     </div>
   </div>
 </section>
+
+<section class="section wrap">
+  <div class="cta" data-reveal>
+    <h2 class="section-title">지금 시작하세요.</h2>
+    <p class="section-lede">Noir를 설치하고 코드베이스를 가리키면 됩니다. 첫 목록은 몇 초면 나옵니다.</p>
+    <div class="cta-actions">
+      <a class="btn btn-primary" href="./get_started/overview/">
+        시작하기
+        <svg class="ic" aria-hidden="true"><use href="#i-arrow-right"/></svg>
+      </a>
+      <a class="btn btn-outline" href="./get_started/installation/">
+        설치하기
+      </a>
+    </div>
+  </div>
+</section>
