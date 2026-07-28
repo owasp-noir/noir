@@ -1134,7 +1134,30 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
 .contributors p { color: var(--text-muted); font-size: var(--fs-sm); margin-bottom: 1.25rem; }
 .contributors img { width: 100%; max-width: 780px; margin-inline: auto; height: auto; }
 
-/* ------------------------------------------------ 11.8 Blog and authors */
+/* 11.8 Closing CTA. One last invitation. The accent is spent only on the
+   primary button, never as a decorative stripe or glow. */
+.cta {
+  text-align: center;
+  padding: clamp(2.75rem, 6vw, 4.25rem) clamp(1.5rem, 4vw, 3rem);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+}
+.cta .section-title { max-width: 18ch; margin-inline: auto; }
+.cta .section-lede {
+  margin-top: 0.9rem;
+  margin-inline: auto;
+  max-width: 42ch;
+}
+.cta-actions {
+  margin-top: 2rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+/* ------------------------------------------------ 11.9 Blog and authors */
 
 .blog { padding-block: clamp(2.5rem, 6vw, 4.5rem) clamp(4rem, 9vw, 7rem); }
 .blog-inner { max-width: 820px; }
@@ -1384,6 +1407,7 @@ a.author-card-inner:hover { border-color: var(--accent-edge); text-decoration: n
   .hero-inner { padding-top: 0; padding-bottom: 3.5rem; margin-top: -2.5rem; }
   .hero h1 { font-size: 1.75rem; }
   .hero-actions .btn { flex: 1 1 auto; justify-content: center; }
+  .cta-actions .btn { flex: 1 1 auto; justify-content: center; }
 
   .cell-a, .cell-b, .cell-c, .cell-d, .cell-e { grid-column: span 12; }
   .stat-row { gap: 1.5rem; }

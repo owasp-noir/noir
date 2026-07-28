@@ -195,3 +195,19 @@ template = "landing"
     </div>
   </div>
 </section>
+
+<section class="section wrap">
+  <div class="cta" data-reveal>
+    <h2 class="section-title">Start hunting.</h2>
+    <p class="section-lede">Install Noir and point it at a codebase. The first inventory takes seconds.</p>
+    <div class="cta-actions">
+      <a class="btn btn-primary" href="./get_started/overview/">
+        Get Started
+        <svg class="ic" aria-hidden="true"><use href="#i-arrow-right"/></svg>
+      </a>
+      <a class="btn btn-outline" href="./get_started/installation/">
+        Install
+      </a>
+    </div>
+  </div>
+</section>
