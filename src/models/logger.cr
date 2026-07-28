@@ -215,6 +215,15 @@ class NoirLogger
     log(LogLevel::DEBUG, message.to_s)
   end
 
+  # Block form for messages that cost something to build. The `message`
+  # overload takes an already-built String, so `debug "...#{expensive}"`
+  # pays for the interpolation on every call and then throws it away with
+  # debug off; `debug { "...#{expensive}" }` doesn't build it at all.
+  def debug(&) : Nil
+    return if @no_log || !@debug
+    log(LogLevel::DEBUG, yield.to_s)
+  end
+
   def debug_sub(message)
     return if @no_log || !@debug
     write_stderr_line "  " + message.to_s

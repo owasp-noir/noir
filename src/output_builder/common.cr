@@ -241,15 +241,4 @@ class OutputBuilderCommon < OutputBuilder
       r_buffer << "\n      * #{r_entry}"
     end
   end
-
-  private def format_ai_context_entry(entry : AIContextEntry) : String
-    label = "#{entry.kind}: #{entry.name}"
-    label += " [#{entry.source}]" if entry.source
-    label += " (#{entry.path}:#{entry.line})" if entry.path && entry.line
-    label += " (#{entry.path})" if entry.path && entry.line.nil?
-    label += " (line #{entry.line})" if entry.path.nil? && entry.line
-    label += " - #{entry.description}" if entry.description
-    label += " :: #{entry.snippet}" if entry.snippet
-    label
-  end
 end

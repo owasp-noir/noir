@@ -428,10 +428,16 @@ class NoirRunner
 
   def print_passive_results
     unless @passive_results.empty?
-      @logger.puts ""
-      @logger.heading "Passive Results:"
       builder = OutputBuilderPassiveScan.new @options
-      builder.print @passive_results, @logger, @is_color
+      # Separator through the builder, not `@logger.puts`: the logger
+      # `exit(0)`s the process on a broken pipe, so `noir scan . -P -o
+      # report.txt | head` died on this one blank line and the `-o` file
+      # kept the endpoint list but lost every finding. `ob_puts` marks
+      # stdout broken and keeps filling the file. It also puts the blank
+      # line in `-o`, so the saved report matches what stdout showed.
+      builder.ob_puts ""
+      @logger.heading "Passive Results:"
+      builder.print @passive_results
     end
   end
 

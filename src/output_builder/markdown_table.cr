@@ -8,11 +8,11 @@ class OutputBuilderMarkdownTable < OutputBuilder
 
     endpoints.each do |endpoint|
       if !endpoint.params.nil?
-        params_text = ""
-        endpoint.params.each do |param|
-          name = sanitize_markdown_cell(param.name)
-          type = sanitize_markdown_cell(param.param_type)
-          params_text += "`#{name} (#{type})` "
+        params_text = String.build do |cell|
+          endpoint.params.each do |param|
+            cell << '`' << sanitize_markdown_cell(param.name)
+            cell << " (" << sanitize_markdown_cell(param.param_type) << ")` "
+          end
         end
         ob_puts "| #{sanitize_markdown_cell(endpoint.method)} #{sanitize_markdown_cell(endpoint.url)} | #{sanitize_markdown_cell(endpoint.protocol)} | #{params_text} |"
       else

@@ -25,6 +25,11 @@ describe "OutputBuilderPostman" do
     endpoint1.push_callee(Callee.new("AuditLog.record", line: 13))
     context = AIContext.new
     context.push_guard(AIContextEntry.new("auth", "auth", source: "express_auth", description: "Protected by auth middleware"))
+    # Carries a source *and* a location, so the description pins the field
+    # order the plain-text report and Postman now share. With only one of
+    # the two set (as the guard above has) any ordering looks the same.
+    context.push_sink(AIContextEntry.new("sql", "run_query", source: "callee",
+      path: "app/controllers/pets.cr", line: 12))
     endpoint1.ai_context = context
 
     endpoint2 = Endpoint.new("/pets", "POST")
@@ -68,6 +73,9 @@ describe "OutputBuilderPostman" do
     item1["description"].as_s.should contain("Noir AI context:")
     item1["description"].as_s.should contain("guards:")
     item1["description"].as_s.should contain("auth: auth [express_auth]")
+    # `[source]` before the location, matching OutputBuilderCommon's
+    # plain-text ai_context block — the two used to disagree.
+    item1["description"].as_s.should contain("sql: run_query [callee] (app/controllers/pets.cr:12)")
 
     # Check second item (POST with JSON body)
     item2 = items[1]
