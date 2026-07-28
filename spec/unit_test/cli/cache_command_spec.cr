@@ -76,7 +76,7 @@ describe Noir::CLI::CacheCommand do
     end
 
     # An unrecognized action must reach the "Unknown cache action" branch in
-    # `run` rather than being pre-empted by an arity complaint about its
+    # `run` rather than being masked by an arity complaint about its
     # trailing arguments.
     it "leaves an unknown action to the action check, not the arity check" do
       Noir::CLI::CacheCommand.parse_argv(["bogus", "extra"]).error.should be_nil
