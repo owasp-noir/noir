@@ -185,7 +185,7 @@ template = "landing"
 <section class="section wrap">
   <div class="community-inner">
     <div class="poster-frame" data-reveal>
-      <img src="../images/hak-poster.webp" alt="빗속에 트렌치코트와 고글 차림으로 서 있는 OWASP Noir 마스코트 학의 영화 포스터." width="2000" height="1116" loading="lazy" decoding="async">
+      <img src="https://owasp-noir.github.io/noir/CONTRIBUTORS.svg" alt="OWASP Noir에 기여한 사람들의 프로필 이미지." width="720" height="240" loading="lazy" decoding="async">
     </div>
     <div class="community-copy" data-reveal style="--reveal-delay: 90ms">
       <h2 class="section-title">공개적으로 만듭니다</h2>
@@ -195,9 +195,5 @@ template = "landing"
         <svg class="ic" aria-hidden="true"><use href="#i-arrow-up-right"/></svg>
       </a>
     </div>
-  </div>
-  <div class="contributors" data-reveal>
-    <p>기여해 주신 모든 분께 감사드립니다.</p>
-    <img src="../CONTRIBUTORS.svg" alt="OWASP Noir에 기여한 사람들의 프로필 이미지." width="720" height="240" loading="lazy" decoding="async">
   </div>
 </section>

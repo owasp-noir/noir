@@ -183,7 +183,7 @@ template = "landing"
 <section class="section wrap">
   <div class="community-inner">
     <div class="poster-frame" data-reveal>
-      <img src="./images/hak-poster.webp" alt="A film poster of Hak, the OWASP Noir mascot: a crane in a trench coat and goggles, standing in the rain." width="2000" height="1116" loading="lazy" decoding="async">
+      <img src="https://owasp-noir.github.io/noir/CONTRIBUTORS.svg" alt="Avatars of the people who have contributed to OWASP Noir." width="720" height="240" loading="lazy" decoding="async">
     </div>
     <div class="community-copy" data-reveal style="--reveal-delay: 90ms">
       <h2 class="section-title">Built in the open</h2>
@@ -193,9 +193,5 @@ template = "landing"
         <svg class="ic" aria-hidden="true"><use href="#i-arrow-up-right"/></svg>
       </a>
     </div>
-  </div>
-  <div class="contributors" data-reveal>
-    <p>Thanks to everyone who has contributed.</p>
-    <img src="./CONTRIBUTORS.svg" alt="Avatars of the people who have contributed to OWASP Noir." width="720" height="240" loading="lazy" decoding="async">
   </div>
 </section>
