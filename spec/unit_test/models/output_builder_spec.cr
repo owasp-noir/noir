@@ -83,6 +83,83 @@ describe "Initialize" do
 
       File.read(output_file).should eq("new\nnext\n")
     ensure
+      NoirOutputFiles.reset
+      File.delete(output_file) if File.exists?(output_file)
+    end
+  end
+
+  # One run writes a single `-o` file from *different* builder classes: the
+  # diff builder emits its section headers, then delegates the endpoint list
+  # to OutputBuilderCommon. Only the first writer may truncate. Crystal gives
+  # every subclass its own copy of an inherited class variable, so the
+  # per-class truncation bookkeeping this replaces let the second class wipe
+  # the first class's output — the "✚ Added" header never reached the file.
+  it "appends when a different builder class writes to the same output file" do
+    output_file = File.tempname("noir-output-builder-shared")
+
+    begin
+      options = create_test_options
+      options["output"] = YAML::Any.new(output_file)
+
+      header = OutputBuilderDiff.new options
+      header.io = IO::Memory.new
+      header.ob_puts "section-header"
+
+      body = OutputBuilderCommon.new options
+      body.io = IO::Memory.new
+      body.ob_puts "endpoint-line"
+
+      File.read(output_file).should eq("section-header\nendpoint-line\n")
+    ensure
+      NoirOutputFiles.reset
+      File.delete(output_file) if File.exists?(output_file)
+    end
+  end
+
+  # `@is_color` is on whenever stdout is a terminal, so a colorized report
+  # used to carry its ANSI codes straight into `-o`. STDOUT keeps the color;
+  # the file must not.
+  it "strips ANSI color codes from the output file but not from stdout" do
+    output_file = File.tempname("noir-output-builder-ansi")
+
+    begin
+      options = create_test_options
+      options["output"] = YAML::Any.new(output_file)
+
+      object = OutputBuilder.new options
+      io = IO::Memory.new
+      object.io = io
+      object.ob_puts "\e[93m/sign\e[39m"
+
+      File.read(output_file).should eq("/sign\n")
+      io.to_s.should eq("\e[93m/sign\e[39m\n")
+    ensure
+      NoirOutputFiles.reset
+      File.delete(output_file) if File.exists?(output_file)
+    end
+  end
+
+  # The text being colorized is endpoint data lifted out of the scanned
+  # repo, so the file copy has to survive escapes `Colorize` would never
+  # produce — otherwise a crafted route string is replayed by the terminal
+  # of whoever `cat`s the report.
+  it "strips non-SGR escape sequences from the output file" do
+    output_file = File.tempname("noir-output-builder-escapes")
+
+    begin
+      options = create_test_options
+      options["output"] = YAML::Any.new(output_file)
+
+      object = OutputBuilder.new options
+      object.io = IO::Memory.new
+      object.ob_puts "\e[2J/clear"             # CSI, non-SGR final byte
+      object.ob_puts "\e[?1049h/altscreen"     # CSI with a private parameter byte
+      object.ob_puts "\e]8;;http://evil\a/osc" # OSC 8 hyperlink, BEL-terminated
+      object.ob_puts "\ec/reset"               # two-character escape
+
+      File.read(output_file).should eq("/clear\n/altscreen\n/osc\n/reset\n")
+    ensure
+      NoirOutputFiles.reset
       File.delete(output_file) if File.exists?(output_file)
     end
   end

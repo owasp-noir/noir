@@ -3,8 +3,72 @@ require "./endpoint"
 require "../utils/*"
 require "colorize"
 
+# Process-wide registry of `-o` file handles, one per output path.
+#
+# A standalone type, deliberately, rather than a `@@` on OutputBuilder:
+# Crystal gives every *subclass* its own copy of an inherited class
+# variable. The `@@prepared_output_files` set this replaces therefore
+# tracked "already truncated?" separately per builder class, so the second
+# builder to write a given run's `-o` file re-opened it in "w" and erased
+# what the first had put there. In diff mode that silently ate the
+# `✚ Added (n)` section header: OutputBuilderDiff writes the header, then
+# the OutputBuilderCommon it delegates to truncates the file out from under
+# it. One registry, keyed by path only, gives every builder in the run the
+# same handle — truncate once on open, append from then on.
+module NoirOutputFiles
+  @@handles = {} of String => File
+  # Guards open/close only, not the per-line writes: report emission runs
+  # after analysis on a single fiber, so lines can't interleave, but an
+  # unguarded double-open would have two handles truncating one path — the
+  # failure this registry exists to prevent.
+  @@mutex = Mutex.new
+
+  # Every write is flushed as it happens, so the only thing left at exit is
+  # to release descriptors. One handler for the whole registry rather than
+  # one per opened file, so `reset` fully undoes what `handle` did instead
+  # of leaving a closure behind per call.
+  at_exit { reset }
+
+  # Opened lazily so a builder constructed with an `-o` path but never
+  # written to (the format never emits, or the run has no results) doesn't
+  # leave an empty file behind.
+  def self.handle(path : String) : File
+    @@mutex.synchronize do
+      @@handles[path] ||= File.open(path, "w")
+    end
+  end
+
+  # Specs write to a tempname, read it back, then delete it; without this
+  # a later example reusing a path would keep writing to the stale handle.
+  def self.reset : Nil
+    @@mutex.synchronize do
+      @@handles.each_value { |file| close(file) }
+      @@handles.clear
+    end
+  end
+
+  # Every line is flushed as it is written, so a failure here can only mean
+  # the descriptor is already gone (the `-o` target was unlinked mid-run, a
+  # write error took the file down). There is no report content left to
+  # lose and nowhere useful to report it from a shutdown hook.
+  private def self.close(file : File) : Nil
+    file.close unless file.closed?
+  rescue IO::Error
+  end
+end
+
 class OutputBuilder
-  @@prepared_output_files = Set(String).new
+  # Escape sequences removed on the way into the `-o` file. `Colorize` only
+  # ever emits the SGR form (`\e[…m`), but the text being colorized comes
+  # out of the scanned repo, so the pattern covers the rest of the escape
+  # space too — a route or param string carrying `\e[2J`, `\e[?1049h`, `\ec`
+  # or an OSC-8 hyperlink would otherwise be replayed by the terminal of
+  # whoever `cat`s the report. Three alternatives, matched in order: CSI
+  # (parameter bytes, intermediate bytes, then a final byte in `@`–`~`),
+  # OSC (terminated by BEL or ST), and every other escape — optional
+  # intermediates and one final byte. CSI and OSC come first so their
+  # introducers aren't consumed as a bare two-character escape.
+  ANSI_ESCAPE = /\e\[[0-?]*[ -\/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)|\e[ -\/]*[0-~]/
 
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
@@ -56,29 +120,54 @@ class OutputBuilder
     end
     unless @output_file.empty?
       begin
-        File.open(@output_file, output_file_mode) do |file|
-          file.puts message
-        end
-      rescue e : File::Error
+        file = output_handle
+        # The stdout copy above keeps its color; the file copy must not.
+        # `@is_color` is on whenever stdout is a terminal, so `noir -f
+        # only-url -o urls.txt` wrote `\e[93m/sign\e[39m` into urls.txt —
+        # the same ANSI-into-a-pipe problem the constructor already fixed
+        # for `| sort -u`, just via the other output path.
+        file.puts strip_ansi(message.to_s)
+        # Flush per line rather than relying on the buffer: a run can be
+        # cut short (upstream broken pipe, Ctrl-C) and the `-o` file is the
+        # artifact the user asked to keep. One `write` per line is still
+        # far cheaper than the open+write+close this replaced.
+        file.flush
+      rescue e : IO::Error
         STDERR.puts "ERROR: Could not write output file '#{@output_file}': #{e.message}".colorize(:yellow)
         exit(1)
       end
     end
   end
 
-  private def output_file_mode : String
-    return "a" if @@prepared_output_files.includes?(@output_file)
+  private def output_handle : File
+    NoirOutputFiles.handle(@output_file)
+  end
 
-    @@prepared_output_files << @output_file
-    "w"
+  # Drops escape sequences from report text on its way to a file, so the
+  # saved report is plain text whether the color came from `Colorize` or
+  # from the scanned repo.
+  #
+  # Scope note: this covers the file only. The stdout copy is written raw,
+  # because the color codes there are the point and stripping them would
+  # have to happen before each builder colorizes rather than after. Escapes
+  # that originate in scanned source therefore still reach a terminal —
+  # unchanged from before, and true of `NoirLogger`'s output as well.
+  private def strip_ansi(message : String) : String
+    return message unless message.includes?('\e')
+
+    message.gsub(ANSI_ESCAPE, "")
   end
 
   def print
     # After inheriting the class, write an action code here.
   end
 
+  # The block form of `NoirLogger#debug`, not the String one: `bake_endpoint`
+  # runs once per endpoint for most builders, and the String overload would
+  # build all seven of these messages on every call only for the logger to
+  # drop them with debug off.
   def bake_endpoint(url : String, params : Array(Param))
-    @logger.debug "Baking endpoint #{url} with #{params.size} params."
+    @logger.debug { "Baking endpoint #{url} with #{params.size} params." }
 
     final_url = url
     final_body = ""
@@ -152,13 +241,13 @@ class OutputBuilder
       end
     end
 
-    @logger.debug "Baked endpoints"
-    @logger.debug " + Final URL: #{final_url}"
-    @logger.debug " + Path Params: #{final_path_params}"
-    @logger.debug " + Body: #{final_body}"
-    @logger.debug " + Headers: #{final_headers}"
-    @logger.debug " + Cookies: #{final_cookies}"
-    @logger.debug " + Tags: #{final_tags}"
+    @logger.debug { "Baked endpoints" }
+    @logger.debug { " + Final URL: #{final_url}" }
+    @logger.debug { " + Path Params: #{final_path_params}" }
+    @logger.debug { " + Body: #{final_body}" }
+    @logger.debug { " + Headers: #{final_headers}" }
+    @logger.debug { " + Cookies: #{final_cookies}" }
+    @logger.debug { " + Tags: #{final_tags}" }
 
     {
       url:        final_url,
@@ -277,31 +366,38 @@ class OutputBuilder
     lines.join("\n")
   end
 
-  private def format_noir_callee(callee : Callee) : String
-    if path = callee.path
-      if line = callee.line
-        return "#{callee.name} (#{path}:#{line})"
-      end
+  # `(path:line)` / `(path)` / `(line N)`, or nil when neither is known.
+  # Callees and AI-context entries both render a source location and used
+  # to spell this out separately, so a change to one (making paths relative
+  # to the scan root, say) could silently leave the other behind.
+  private def format_location(path : String?, line : Int32?) : String?
+    return "(#{path}:#{line})" if path && line
+    return "(#{path})" if path
+    return "(line #{line})" if line
 
-      return "#{callee.name} (#{path})"
-    end
-
-    if line = callee.line
-      return "#{callee.name} (line #{line})"
-    end
-
-    callee.name
+    nil
   end
 
-  private def format_ai_context_entry(entry : AIContextEntry) : String
-    label = "#{entry.kind}: #{entry.name}"
-    label += " (#{entry.path}:#{entry.line})" if entry.path && entry.line
-    label += " (#{entry.path})" if entry.path && entry.line.nil?
-    label += " (line #{entry.line})" if entry.path.nil? && entry.line
-    label += " [#{entry.source}]" if entry.source
-    label += " - #{entry.description}" if entry.description
-    label += " :: #{entry.snippet}" if entry.snippet
-    label
+  private def format_noir_callee(callee : Callee) : String
+    location = format_location(callee.path, callee.line)
+    location ? "#{callee.name} #{location}" : callee.name
+  end
+
+  # One-line rendering of an AI-context entry, shared by the plain-text
+  # report (OutputBuilderCommon) and the Postman item description. The two
+  # had separate copies that disagreed on where `[source]` goes, so the same
+  # entry read differently depending on the format; `[source]` sits next to
+  # the name — the terminal ordering, and the more widely seen of the two.
+  protected def format_ai_context_entry(entry : AIContextEntry) : String
+    String.build do |label|
+      label << entry.kind << ": " << entry.name
+      label << " [" << entry.source << ']' if entry.source
+      if location = format_location(entry.path, entry.line)
+        label << ' ' << location
+      end
+      label << " - " << entry.description if entry.description
+      label << " :: " << entry.snippet if entry.snippet
+    end
   end
 
   private def append_ai_context_description(lines : Array(String), label : String, entries : Array(AIContextEntry))
