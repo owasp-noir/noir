@@ -295,6 +295,49 @@ describe "run_options_parser" do
     end
   end
 
+  # The config file is read before OptionParser runs, so `--ai-context=all`
+  # and the bare flag used to `return` before writing `ai_context_features` —
+  # leaving a config-file narrowing in place. Asking for every bucket on the
+  # command line then produced *fewer* buckets than asking for one.
+  ["all", ""].each do |spec|
+    flag = spec.empty? ? "--ai-context" : "--ai-context=all"
+
+    it "#{flag} resets a config-file ai_context_features to every bucket" do
+      original_argv = ARGV.dup
+      config_path = File.tempname("noir-ai-context", ".yaml")
+      File.write(config_path, "ai_context_features: \"guards\"\n")
+      ARGV.clear
+      ARGV.concat(["-b", "./app", "--config-file", config_path, flag])
+
+      begin
+        noir_options = run_options_parser()
+        noir_options["ai_context"].should be_true
+        noir_options["ai_context_features"].to_s.should eq("")
+      ensure
+        File.delete?(config_path)
+        ARGV.clear
+        ARGV.concat(original_argv)
+      end
+    end
+  end
+
+  it "--ai-context=signals overrides a config-file ai_context_features" do
+    original_argv = ARGV.dup
+    config_path = File.tempname("noir-ai-context", ".yaml")
+    File.write(config_path, "ai_context_features: \"guards\"\n")
+    ARGV.clear
+    ARGV.concat(["-b", "./app", "--config-file", config_path, "--ai-context=signals"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["ai_context_features"].to_s.should eq("signals")
+    ensure
+      File.delete?(config_path)
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
   it "--ai-context=callee accepts the explicit-equals form" do
     original_argv = ARGV.dup
     ARGV.clear

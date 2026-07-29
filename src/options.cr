@@ -171,8 +171,8 @@ end
 # <the typo>". A single bare word still has to match a known feature
 # exactly, since that shape is genuinely ambiguous with a real one-word
 # directory name (`noir scan --ai-context myapp` must keep scanning `myapp`).
-# Both this and `AI_CONTEXT_VALID_FEATURES` below used to spell the
-# vocabulary out by hand, and both omitted `sources`.
+# Both this and the flag's own validator used to spell the vocabulary out
+# by hand, and both omitted `sources`.
 AI_CONTEXT_FEATURES = NoirAIContext::ACCEPTED_FEATURES
 
 def normalize_ai_context_flag(args : Array(String)) : Array(String)
@@ -584,6 +584,18 @@ def run_options_parser
     append_to_yaml_array(noir_options, "base", positional)
   end
 
+  # Validate the *effective* feature list, not just the one `--ai-context`
+  # supplied. `ai_context_features` is also a config-file key, and that path
+  # never reached the flag's validator: an unknown bucket name there matched
+  # nothing in `parse_feature_set`, so every bucket was filtered out and the
+  # run emitted `ai_context: null` for every endpoint with no diagnostic.
+  # A CLI flag has already normalized its own value by this point, so this
+  # only ever fires on a config-file value that survived unchanged.
+  validate_ai_context_features(
+    noir_options["ai_context_features"]?.try(&.to_s) || "",
+    "config ai_context_features"
+  )
+
   noir_options
 end
 
@@ -645,24 +657,31 @@ end
 # `--ai-context[=LIST]` always enables AI context output. An empty LIST
 # means "every category"; a non-empty LIST narrows the output to the
 # named categories.
-AI_CONTEXT_VALID_FEATURES = NoirAIContext::ACCEPTED_FEATURES.to_set
-
 def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
   noir_options["ai_context"] = YAML::Any.new(true)
+  validate_ai_context_features(spec, "--ai-context")
 
-  raw_list = spec.split(',').map(&.strip).reject(&.empty?)
-  list = raw_list.map(&.downcase)
-  return if list.empty? || list.includes?("all")
-
-  list.each_with_index do |feature, idx|
-    unless AI_CONTEXT_VALID_FEATURES.includes?(feature)
-      # Echo the user's original spelling (not the lowercased form)
-      # in the error so a typo like `Sinkz` reads as the user wrote
-      # it.
-      STDERR.puts "ERROR: --ai-context: unknown feature '#{raw_list[idx]}'. Valid: #{(AI_CONTEXT_VALID_FEATURES.to_a - ["all"]).join(", ")}.".colorize(:yellow)
-      exit(1)
-    end
-  end
+  list = spec.split(',').map(&.strip.downcase).reject(&.empty?)
+  # An empty list, or one naming `all`, means every bucket. Write that out
+  # as the empty value instead of returning early: the config file is read
+  # before OptionParser runs, so an early return left a config-file
+  # `ai_context_features: "guards"` in place and `--ai-context=all` (and the
+  # bare flag) — the two spellings that mean "everything" — were the only
+  # ones that could not override it.
+  list.clear if list.includes?(NoirAIContext::FEATURE_ALL)
 
   noir_options["ai_context_features"] = YAML::Any.new(list.join(","))
+end
+
+# Rejects AI-context bucket names outside the accepted vocabulary. `origin`
+# names the source in the error so a config-file typo doesn't read as a
+# command-line one.
+def validate_ai_context_features(spec : String, origin : String)
+  unknown = NoirAIContext.unknown_features(spec)
+  return if unknown.empty?
+
+  # Echo the user's original spelling (not the lowercased form) so a typo
+  # like `Sinkz` reads as it was written.
+  STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::FEATURES.join(", ")}.".colorize(:yellow)
+  exit(1)
 end
