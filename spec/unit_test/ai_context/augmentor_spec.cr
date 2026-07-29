@@ -21,6 +21,42 @@ describe "NoirAIContext" do
     end
   end
 
+  # Blank lines used to be emitted as bare `N: ` entries. Handlers are
+  # almost always preceded by a blank line or two, so nearly every
+  # snippet opened with a run of placeholders that carried no evidence
+  # and spent part of the 240-char budget the surrounding code needs.
+  it "omits blank lines instead of emitting bare line-number placeholders" do
+    source = "import os\n\n\n\n@app.route('/run')\ndef run():\n    os.system(q)"
+
+    with_temp_ai_context_source(source) do |path|
+      reader = NoirAIContext::SourceReader.new
+
+      # The radius is unchanged — blank lines are dropped from the
+      # window, not backfilled with lines from outside it.
+      window = reader.snippet_for(path, 5, 2).should_not be_nil
+      window.should_not match(/(?:^|\| )\d+: (?=\||\z)/)
+      window.should start_with("5: @app.route('/run')")
+      window.should contain("7: os.system(q)")
+
+      scope = reader.route_scope_snippet_for(path, 5).should_not be_nil
+      scope.should_not match(/(?:^|\| )\d+: (?=\||\z)/)
+      scope.should start_with("5: @app.route('/run')")
+    end
+  end
+
+  it "still captures decorators separated from the handler by a blank line" do
+    source = "@login_required\n\n@app.route('/admin')\ndef admin():\n    pass"
+
+    with_temp_ai_context_source(source) do |path|
+      reader = NoirAIContext::SourceReader.new
+
+      scope = reader.route_scope_snippet_for(path, 3).should_not be_nil
+      scope.should contain("1: @login_required")
+      scope.should contain("3: @app.route('/admin')")
+      scope.should_not match(/(?:^|\| )\d+: (?=\||\z)/)
+    end
+  end
+
   it "builds aggregated AI context from callees and tags" do
     source = <<-CODE
       app.post("/users/:id/avatar", requireAuth, async (req, res) => {

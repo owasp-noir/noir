@@ -44,8 +44,18 @@ module NoirAIContext
       end_idx = Math.min(line + radius - 1, lines.size - 1)
       selected = [] of String
 
+      # Blank lines carry no evidence, and every entry is already
+      # prefixed with its own line number, so dropping them loses
+      # nothing an LLM or a reviewer can use. Emitting them produced
+      # bare `N: ` placeholders — the run of blank lines that precedes
+      # most handlers turned into `5: | 6: | 7: | …` at the front of
+      # the snippet — and spent part of the character budget that the
+      # surrounding code needs.
       (start_idx..end_idx).each do |idx|
-        selected << "#{idx + 1}: #{lines[idx].strip}"
+        stripped = lines[idx].strip
+        next if stripped.empty?
+
+        selected << "#{idx + 1}: #{stripped}"
       end
 
       snippet = selected.join(" | ").gsub(/\s+/, " ").strip
@@ -71,18 +81,22 @@ module NoirAIContext
       # annotation lines and blank lines between them. Stops at the
       # first line that's not a decorator / annotation / blank —
       # that's the end of the preceding declaration boundary.
+      #
+      # A blank line only lets the scan *continue* (decorators are
+      # often separated by one); it is not itself evidence, so it is
+      # never appended. Appending them emitted bare `N: ` placeholders
+      # for the run of blank lines that precedes almost every handler,
+      # which read as a bug and — worse — spent part of the snippet's
+      # character budget, truncating real code off the end.
       lead_lines = [] of String
       back_idx = line - 2
       MAX_LEAD_DECORATOR_LINES.times do
         break if back_idx < 0
-        raw = lines[back_idx]
-        stripped = raw.strip
-        if stripped.empty? || stripped.starts_with?("@")
-          lead_lines.unshift("#{back_idx + 1}: #{stripped}")
-          back_idx -= 1
-        else
-          break
-        end
+        stripped = lines[back_idx].strip
+        break unless stripped.empty? || stripped.starts_with?("@")
+
+        lead_lines.unshift("#{back_idx + 1}: #{stripped}") unless stripped.empty?
+        back_idx -= 1
       end
 
       start_idx = line - 1
@@ -123,7 +137,13 @@ module NoirAIContext
           end
         end
 
-        selected << "#{idx + 1}: #{raw_line.strip}"
+        # Blank lines inside the body are skipped for the same reason as
+        # the lead-in ones: they add a bare `N: ` placeholder and nothing
+        # else. Only the append is skipped — the block-boundary tracking
+        # below still sees every line, so brace depth and indent
+        # detection are unaffected.
+        body_line = raw_line.strip
+        selected << "#{idx + 1}: #{body_line}" unless body_line.empty?
 
         sanitized = raw_line.gsub(/(['"]).*?\1/, "\"\"")
         opens = sanitized.count('{')
