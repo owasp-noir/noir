@@ -357,29 +357,72 @@ module NoirAIContext
     # Sensitive-response detection runs as a two-step check on the
     # route-scope snippet:
     #
-    #   1. RESPONSE_EMITTER_PATTERN — the snippet calls a response-
-    #      serializing helper (`res.json`, `jsonify`, `render json:`,
-    #      `to_json`, `JsonResponse`, …).
+    #   1. RESPONSE_EMITTER_PATTERN — the snippet serializes a response,
+    #      either through a helper (`res.json`, `jsonify`, `render json:`,
+    #      `to_json`, …) or by returning a literal (`return {...}`).
     #   2. CREDENTIAL_KEY_IN_RESPONSE — the snippet also has a
-    #      credential noun *as a key* (followed by `:`, and not
-    #      preceded by a quote or word character — so the noun
-    #      appearing inside a string value like
-    #      `{ message: "Set X-API-KEY header" }` doesn't fire).
+    #      credential noun *as a key*, in either of the two spellings
+    #      a response literal uses:
+    #        bare   — `{ token: … }`   (JS/TS shorthand, Ruby, YAML)
+    #        quoted — `{ "token": … }` (JSON, Python dicts, Go maps,
+    #                                   PHP arrays, any serialized body)
     #
     # Both have to match in the same scope. The earlier single-regex
     # version was too loose and caught english prose mentioning
-    # credentials in response strings.
-    RESPONSE_EMITTER_PATTERN         = /\b(jsonify|res\.json|json_response|JsonResponse|render\s+json:|to_json|respond_with)\b/i
-    CREDENTIAL_KEY_IN_RESPONSE       = /[^"'\w](password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key)\s*:/i
+    # credentials in response strings, so the fix required the noun
+    # not be preceded by a quote. That over-corrected: it also
+    # excluded every *quoted key*, which is the dominant shape in
+    # most languages, and the signal quietly stopped firing on them.
+    #
+    # The two branches below keep the original guard for bare keys
+    # while admitting quoted ones, and stay narrow because the quoted
+    # branch requires the string to *close* immediately after the
+    # noun. `{ message: "Set X-API-KEY header" }` still doesn't fire —
+    # the noun sits mid-string, so no closing quote follows it.
+    CREDENTIAL_NOUNS_IN_RESPONSE = "password|passwd|token|secret|api[_-]?key|session_id|access_token|refresh_token|private_key"
+
+    # The emitter list was built from helper calls (`jsonify`, `res.json`,
+    # …) and so missed the frameworks that serialize a returned literal
+    # with no helper at all: FastAPI and modern Flask handlers just
+    # `return {...}`, which is the single most common response shape in
+    # the Python corpus. Without it the credential-key check could not run
+    # on those handlers no matter what the payload held.
+    RESPONSE_EMITTER_PATTERN = /\b(jsonify|res\.json|res\.send|json_response|JsonResponse|JSONResponse|make_response|render\s+json:|to_json|respond_with)\b|\breturn\s*\{/i
+
+    # Capture 1 is the bare-key noun, capture 3 the quoted-key noun;
+    # exactly one of them is set per match.
+    CREDENTIAL_KEY_IN_RESPONSE = Regex.new(
+      "(?:[^\"'\\w](#{CREDENTIAL_NOUNS_IN_RESPONSE})|([\"'])(#{CREDENTIAL_NOUNS_IN_RESPONSE})\\2)\\s*:",
+      Regex::Options::IGNORE_CASE
+    )
+
     KOTLIN_CREDENTIAL_RETURN_PATTERN = /\bfun\s+\w+[^{|;]*=\s*(?:this\.)?(password|passwd|token|secret|api[_-]?key|session_?id|access_?token|refresh_?token|private_?key)\b/i
+
+    # This check needs the response emitter and the credential key in the
+    # same window, and in real handlers they sit far apart — the body
+    # assembles a dict/struct first and serializes it at the end. Under the
+    # default 12-line / 240-char route scope the two could not co-occur, so
+    # the signal never fired on the shape it exists to catch. Widen the
+    # window for this check only; the scope walk still stops at the end of
+    # the handler, so it cannot pair one route's emitter with another
+    # route's payload.
+    SENSITIVE_RESPONSE_SCOPE_LINES =   40
+    SENSITIVE_RESPONSE_SCOPE_CHARS = 1200
 
     private def add_sensitive_response_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "sensitive_response" }
       return if endpoint.details.code_paths.empty?
 
       endpoint.details.code_paths.each do |path_info|
+        # `scope` stays the default-width snippet so the emitted evidence
+        # keeps the same size as every other entry; `body` is the wider
+        # view used only for detection.
         scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
         next unless scope
+        body = @reader.route_scope_snippet_for(
+          path_info.path, path_info.line,
+          SENSITIVE_RESPONSE_SCOPE_LINES, SENSITIVE_RESPONSE_SCOPE_CHARS
+        ) || scope
 
         if match = scope.match(KOTLIN_CREDENTIAL_RETURN_PATTERN)
           field = match[1]? || "credential"
@@ -397,9 +440,9 @@ module NoirAIContext
           return
         end
 
-        next unless scope.matches?(RESPONSE_EMITTER_PATTERN)
-        if match = scope.match(CREDENTIAL_KEY_IN_RESPONSE)
-          field = match[1]? || "credential"
+        next unless body.matches?(RESPONSE_EMITTER_PATTERN)
+        if match = body.match(CREDENTIAL_KEY_IN_RESPONSE)
+          field = match[1]? || match[3]? || "credential"
           context.push_signal(AIContextEntry.new(
             "sensitive_response",
             field.downcase,
