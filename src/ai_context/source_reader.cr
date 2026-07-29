@@ -55,11 +55,21 @@ module NoirAIContext
       snippet
     end
 
-    def route_scope_snippet_for(path : String?, line : Int32?) : String?
+    # `max_lines` / `max_chars` default to the limits every caller used
+    # before they were parameterized. A caller that needs to see further
+    # into the handler — `sensitive_response` has to find a response
+    # emitter and a credential key in the *same* scope, and they are
+    # routinely more than 12 lines apart — raises them. The block-boundary
+    # walk below is unchanged either way, so a wider window still stops at
+    # the end of this handler rather than bleeding into the next one.
+    def route_scope_snippet_for(path : String?,
+                                line : Int32?,
+                                max_lines : Int32 = MAX_ROUTE_SCOPE_LINES,
+                                max_chars : Int32 = MAX_SNIPPET_CHARS) : String?
       return unless path && line
       return if line < 1
 
-      cache_key = "#{path}:#{line}"
+      cache_key = "#{path}:#{line}:#{max_lines}:#{max_chars}"
       if cached = @route_scope_cache[cache_key]?
         return cached
       end
@@ -101,7 +111,7 @@ module NoirAIContext
       # that column (= the next top-level statement / next decorator).
       def_indent : Int32? = nil
 
-      start_idx.upto(Math.min(start_idx + MAX_ROUTE_SCOPE_LINES - 1, lines.size - 1)) do |idx|
+      start_idx.upto(Math.min(start_idx + max_lines - 1, lines.size - 1)) do |idx|
         raw_line = lines[idx]
         line_indent = raw_line.size - raw_line.lstrip.size
 
@@ -172,7 +182,7 @@ module NoirAIContext
 
       snippet = selected.join(" | ").gsub(/\s+/, " ").strip
       return if snippet.empty?
-      snippet = snippet.size > MAX_SNIPPET_CHARS ? snippet[0, MAX_SNIPPET_CHARS] : snippet
+      snippet = snippet.size > max_chars ? snippet[0, max_chars] : snippet
       @route_scope_cache[cache_key] = snippet
       snippet
     end

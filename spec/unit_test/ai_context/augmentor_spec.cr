@@ -2256,6 +2256,85 @@ describe "NoirAIContext" do
     end
   end
 
+  # The guard that keeps the check off prose inside a string value —
+  # "the noun must not be preceded by a quote" — also excluded every
+  # *quoted key*, which is how JSON, Python dicts, Go maps and PHP
+  # arrays spell a response field. The check silently stopped firing on
+  # the dominant shape; only JS/Ruby-style bare keys reached it.
+  {
+    {"js", %({ name: u.name, "token": u.access_token })},
+    {"python", %({"user": name, "access_token": tok})},
+    {"single-quoted", %({'refresh_token': tok})},
+  }.each do |(label, payload)|
+    it "emits sensitive_response for a #{label} quoted credential key" do
+      source = <<-CODE
+        app.get('/me', (req, res) => {
+          res.json(#{payload})
+        })
+        CODE
+
+      with_temp_ai_context_source(source) do |path|
+        endpoint = Endpoint.new("/me", "GET")
+        details = endpoint.details
+        details.add_path(PathInfo.new(path, 1))
+        endpoint.details = details
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+        context.signals.map(&.kind).should contain("sensitive_response")
+      end
+    end
+  end
+
+  # A real handler assembles the payload first and serializes it at the
+  # end, so the emitter and the credential key sit further apart than the
+  # default 12-line / 240-char route scope. Under that window the two
+  # could never co-occur and the check could not fire on the shape it
+  # exists to catch.
+  it "emits sensitive_response when the emitter is far below the credential key" do
+    filler = (1..18).map { |i| "  const step#{i} = compute(#{i})" }.join("\n")
+    source = <<-CODE
+      app.get('/session', (req, res) => {
+        const user = { id: u.id, "apiKey": u.api_key }
+      #{filler}
+        res.json({ user: user })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/session", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("sensitive_response")
+    end
+  end
+
+  # FastAPI and modern Flask handlers serialize a returned literal with
+  # no helper call at all, so an emitter list built purely from helper
+  # names (`jsonify`, `res.json`, …) skipped them entirely.
+  it "emits sensitive_response for a handler that returns a bare dict literal" do
+    source = <<-CODE
+      @bp.route('/tokens', methods=['POST'])
+      def get_token():
+          token = basic_auth.current_user().get_token()
+          return {'token': token}
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/tokens", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      signal = context.signals.find { |entry| entry.kind == "sensitive_response" }
+      signal = signal.should_not be_nil
+      signal.name.should eq("token")
+    end
+  end
+
   it "emits sensitive_response when a Kotlin handler directly returns a credential value" do
     source = <<-CODE
       @GetMapping
@@ -2322,6 +2401,28 @@ describe "NoirAIContext" do
       # If it does fire here it's a false positive — surface it via
       # the assertion so it's visible if the regex regresses.
       sensitive.should be_false
+    end
+  end
+
+  # Admitting quoted keys must not admit a credential noun that merely
+  # *opens* a string value. The quoted branch only matches when the
+  # string closes right after the noun, so `"password: required"` — the
+  # case the original quote guard was written for — still stays quiet.
+  it "does NOT emit sensitive_response when a credential noun opens a string value" do
+    source = <<-CODE
+      app.get('/help', (req, res) => {
+        res.json({ hint: "password: required", detail: "token: see docs above" })
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/help", "GET")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.any? { |s| s.kind == "sensitive_response" }.should be_false
     end
   end
 
