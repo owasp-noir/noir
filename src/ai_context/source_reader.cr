@@ -177,10 +177,18 @@ module NoirAIContext
       snippet
     end
 
+    # Read-only view of a file's lines. The result is the cached array
+    # itself, not a copy — callers must not mutate it.
+    #
+    # It used to `.dup`, which copied every line of the file on each
+    # call. `add_query_parameter_binding_validator` calls this for every
+    # endpoint × code_path unconditionally, so a 5000-line controller
+    # scanned for 200 endpoints paid 200 full-array copies for data
+    # nobody writes to. No caller mutates the result.
     def lines_for(path : String?) : Array(String)
       return [] of String unless path
 
-      read_lines(path).dup
+      read_lines(path)
     end
 
     private def read_lines(path : String) : Array(String)

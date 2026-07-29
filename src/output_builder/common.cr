@@ -23,6 +23,8 @@ class OutputBuilderCommon < OutputBuilder
                           "read_permission", "write_permission", "grant_uri_permissions",
                           "path_permissions", "extras"]
 
+  @ai_context_features : Set(String)? = nil
+
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
@@ -228,8 +230,12 @@ class OutputBuilderCommon < OutputBuilder
 
   # Returns the set of AI-context category names that should be emitted.
   # An empty/unset `ai_context_features` option means "all categories".
+  #
+  # Memoized: the option cannot change mid-render, but this is read
+  # inside the per-endpoint loop, so it was parsing the option string and
+  # allocating a fresh Set once per endpoint.
   private def ai_context_feature_filter : Set(String)
-    NoirAIContext.parse_feature_set(@options["ai_context_features"]?.try(&.to_s) || "")
+    @ai_context_features ||= NoirAIContext.parse_feature_set(@options["ai_context_features"]?.try(&.to_s) || "")
   end
 
   private def append_ai_context_block(r_buffer : String::Builder, label : String, entries : Array(AIContextEntry))
