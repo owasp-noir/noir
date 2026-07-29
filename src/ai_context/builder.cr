@@ -1195,22 +1195,41 @@ module NoirAIContext
       true
     end
 
+    OUTBOUND_URI_PATTERN          = /\.\s*uri\s*\(\s*["']([^"']+)["']/
+    OUTBOUND_TEMPLATE_URI_PATTERN = /\.\s*(?:getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/
+    OUTBOUND_ANY_URI_PATTERN      = /\.\s*(?:uri|getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/
+
     private def outbound_uri_from_snippet(snippet : String?, line : Int32?) : String?
       return unless snippet
 
-      if line && (line_match = snippet.match(/(?:^|\|\s*)#{line}:\s*([^|]+)/))
-        if uri_match = line_match[1].match(/\.\s*uri\s*\(\s*["']([^"']+)["']/)
+      if line && (segment = snippet_segment_for_line(snippet, line))
+        if uri_match = segment.match(OUTBOUND_URI_PATTERN)
           return uri_match[1]
         end
-        if uri_match = line_match[1].match(/\.\s*(?:getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/)
+        if uri_match = segment.match(OUTBOUND_TEMPLATE_URI_PATTERN)
           return uri_match[1]
         end
       end
 
-      match = snippet.match(/\.\s*(?:uri|getForObject|postForObject|exchange)\s*\(\s*["']([^"']+)["']/)
+      match = snippet.match(OUTBOUND_ANY_URI_PATTERN)
       return unless match
 
       match[1]
+    end
+
+    # Pulls the `<line>: …` segment out of a snippet. Snippets are built
+    # by joining `"<n>: <code>"` entries with `" | "`, so splitting on the
+    # separator is exact — and it avoids interpolating the line number
+    # into a regex literal, which made Crystal recompile the pattern on
+    # every outbound_http sink.
+    private def snippet_segment_for_line(snippet : String, line : Int32) : String?
+      prefix = "#{line}:"
+      snippet.split('|').each do |part|
+        stripped = part.strip
+        return stripped[prefix.size..].strip if stripped.starts_with?(prefix)
+      end
+
+      nil
     end
 
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint)
@@ -1567,9 +1586,7 @@ module NoirAIContext
       # credential_input signals (analyzer missed the param) so
       # destructured login handlers still light up.
       credential_param = endpoint.params.any? do |p|
-        PARAM_PATTERNS.find { |pattern| pattern.kind == "credential_input" }.try do |pattern|
-          PatternMatcher.matches_any?(p.name, pattern.name_patterns)
-        end
+        PatternMatcher.matches_any?(p.name, CREDENTIAL_INPUT_NAME_PATTERNS)
       end
       credential_signal = context.signals.any? { |s| s.kind == "credential_input" }
       if (credential_param || credential_signal) && !has_rate_limit
@@ -1694,8 +1711,14 @@ module NoirAIContext
       tag.name
     end
 
+    # Resolved once from the catalog instead of re-scanning PARAM_PATTERNS
+    # on every call. `identifier_like?` in particular runs several times
+    # per parameter per endpoint, and the answer never changes.
+    IDENTIFIER_INPUT_NAME_PATTERNS = PARAM_PATTERNS.find! { |pattern| pattern.kind == "identifier_input" }.name_patterns
+    CREDENTIAL_INPUT_NAME_PATTERNS = PARAM_PATTERNS.find! { |pattern| pattern.kind == "credential_input" }.name_patterns
+
     private def identifier_like?(name : String) : Bool
-      return true if PatternMatcher.matches_any?(name, PARAM_PATTERNS.find! { |pattern| pattern.kind == "identifier_input" }.name_patterns)
+      return true if PatternMatcher.matches_any?(name, IDENTIFIER_INPUT_NAME_PATTERNS)
       return true if identifier_suffix_like?(name)
 
       false
