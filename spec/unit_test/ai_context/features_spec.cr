@@ -17,7 +17,6 @@ describe "NoirAIContext::FEATURES" do
     # Not `should eq` on a literal list: the point is that the CLI derives
     # from the constant, so a bucket added in one place cannot be missing
     # from the other.
-    AI_CONTEXT_VALID_FEATURES.should eq NoirAIContext::ACCEPTED_FEATURES.to_set
     AI_CONTEXT_FEATURES.should eq NoirAIContext::ACCEPTED_FEATURES
   end
 
@@ -30,7 +29,7 @@ describe "NoirAIContext::FEATURES" do
 
   it "includes sources" do
     NoirAIContext::FEATURES.should contain "sources"
-    AI_CONTEXT_VALID_FEATURES.should contain "sources"
+    AI_CONTEXT_FEATURES.should contain "sources"
   end
 
   it "names callee in the singular, as the validator accepts it" do
@@ -56,5 +55,26 @@ describe "NoirAIContext.parse_feature_set" do
 
   it "tolerates surrounding whitespace and empty entries" do
     NoirAIContext.parse_feature_set(" guards , ,sources ").should eq Set{"guards", "sources"}
+  end
+
+  # The CLI lowercases before storing, but a config-file `ai_context_features`
+  # reaches the filter verbatim. Without folding here, `Guards` matched no
+  # bucket and silently emptied every endpoint's AI context.
+  it "matches bucket names case-insensitively" do
+    NoirAIContext.parse_feature_set("Guards,SOURCES").should eq Set{"guards", "sources"}
+    NoirAIContext.parse_feature_set("ALL").should eq NoirAIContext.all_features
+  end
+end
+
+describe "NoirAIContext.unknown_features" do
+  it "returns nothing for accepted names, in any case" do
+    NoirAIContext.unknown_features("").should be_empty
+    NoirAIContext.unknown_features("guards, sinks ,all").should be_empty
+    NoirAIContext.unknown_features("Guards,SOURCES").should be_empty
+  end
+
+  it "echoes an unknown name in the spelling the user wrote" do
+    NoirAIContext.unknown_features("Sinkz").should eq ["Sinkz"]
+    NoirAIContext.unknown_features("guards,bogus,sinks").should eq ["bogus"]
   end
 end
