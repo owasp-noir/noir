@@ -486,7 +486,7 @@ module Analyzer::Scala
 
     # Create an endpoint with the given path and method
     private def create_endpoint(path : String, method : String, source : String)
-      details = Details.new(PathInfo.new(source, 0))
+      details = Details.new(PathInfo.new(source))
       params = [] of Param
 
       Endpoint.new(path, method, params, details)
