@@ -163,4 +163,47 @@ describe "OutputBuilderOas2" do
     paths["/jobs"].as_h.has_key?("subscribe").should be_false
     paths["/jobs"]["x-noir-unsupported-methods"].as_a.should contain(JSON::Any.new("SUBSCRIBE"))
   end
+
+  it "keeps every operation's parameter list valid" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    # A header param already named `Cookie` and a cookie param both claim the
+    # `{in: header, name: Cookie}` slot, which Swagger 2.0 requires to be
+    # unique.
+    cookies = Endpoint.new("/login", "POST")
+    cookies.push_param(Param.new("Cookie", "", "header"))
+    cookies.push_param(Param.new("session", "", "cookie"))
+
+    # `id` is both the path template variable and a query param.
+    shadowed = Endpoint.new("/users/:id", "GET")
+    shadowed.push_param(Param.new("id", "", "query"))
+
+    # A path param the emitted path can't express: `in: path` without a
+    # matching template expression is invalid in both OAS versions.
+    concrete = Endpoint.new("/posts/1", "DELETE")
+    concrete.push_param(Param.new("id", "", "path"))
+
+    builder.print([cookies, shadowed, concrete])
+    paths = JSON.parse(builder.io.to_s)["paths"]
+
+    login_params = paths["/login"]["post"]["parameters"].as_a
+    login_params.count { |p| p["in"].as_s == "header" && p["name"].as_s.downcase == "cookie" }.should eq(1)
+    login_params.find! { |p| p["name"].as_s == "Cookie" }["description"].as_s.should contain("session")
+
+    user_params = paths["/users/{id}"]["get"]["parameters"].as_a
+    user_params.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"path", "id"}])
+
+    delete_op = paths["/posts/1"]["delete"]
+    delete_op["parameters"].as_a.any? { |p| p["in"].as_s == "path" }.should be_false
+    delete_op["x-noir-unmapped-path-params"].as_a.should eq([JSON::Any.new("id")])
+  end
 end

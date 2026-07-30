@@ -45,8 +45,15 @@ class OutputBuilderOas2 < OutputBuilder
         end
       end
 
-      oas_path = normalize_oas_path(endpoint.url)
-      path_template_names(oas_path).each do |name|
+      declared_path_params = endpoint.params.compact_map { |p| p.name if p.param_type == "path" }
+      oas_path = normalize_oas_path(endpoint.url, declared_path_params)
+      template_names = path_template_names(oas_path)
+      template_names.each do |name|
+        # A path template variable wins over a same-named query/header
+        # parameter, as it does in the OAS3 builder. `formData` and `body` are
+        # left alone: they are request-payload fields, not another spelling of
+        # the same path segment.
+        parameters.reject! { |p| p["name"].as_s == name && {"query", "header"}.includes?(p["in"].as_s) }
         append_unique_parameter(parameters, swagger_parameter(name, "path", true))
       end
 
@@ -54,6 +61,14 @@ class OutputBuilderOas2 < OutputBuilder
       # Cookies are not directly supported in OAS2, typically sent as Cookie header
       unless cookie_names.empty?
         cookie_desc = "Cookies: " + cookie_names.map { |name| "#{name}=<value>" }.join("; ")
+        # Header names are case-insensitive (RFC 9110), so a header-type param
+        # already named `Cookie`/`cookie` occupies this very slot. Swagger 2.0
+        # keys parameter uniqueness on name+in, so appending unconditionally
+        # put two `{in: header, name: Cookie}` entries in one operation and the
+        # document stopped validating. Replace it — the synthesized entry is
+        # the one that names the cookies. (Mirrors the postman builder's
+        # case-insensitive cookie merge.)
+        parameters.reject! { |p| p["in"].as_s == "header" && p["name"].as_s.downcase == "cookie" }
         parameters << {
           "name"        => JSON::Any.new("Cookie"),
           "in"          => JSON::Any.new("header"),
@@ -91,6 +106,8 @@ class OutputBuilderOas2 < OutputBuilder
         consumes.reject! { |content_type| content_type == "application/json" }
       end
 
+      unmapped_path_params = extract_unmapped_path_parameters(parameters, template_names)
+
       # Build operation object
       operation = {
         "responses" => JSON::Any.new({
@@ -106,6 +123,7 @@ class OutputBuilderOas2 < OutputBuilder
         operation["consumes"] = JSON::Any.new(consumes.map { |c| JSON::Any.new(c) })
       end
 
+      add_unmapped_path_params_extension(operation, unmapped_path_params)
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)
 

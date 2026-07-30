@@ -6,10 +6,25 @@ module OutputBuilderOasCommon
   VALID_OPERATION_METHODS = Set{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
   ANY_OPERATION_METHODS   = WILDCARD_HTTP_METHODS.map(&.downcase)
 
-  private def normalize_oas_path(raw_url : String) : String
+  # Converter names that can appear in a `<…>` path placeholder. Same list the
+  # optimizer's `angle_bracket_param` uses, so the two resolve a placeholder
+  # the same way.
+  PATH_CONVERTER_TYPES = Set{"int", "str", "string", "slug", "uuid", "float", "bool", "path"}
+
+  # `declared_path_params` are the names the endpoint itself records as
+  # `param_type == "path"`. They disambiguate `<a:b>` placeholders, whose two
+  # halves are spelled in either order depending on the framework.
+  private def normalize_oas_path(raw_url : String, declared_path_params : Array(String) = [] of String) : String
     uri = URI.parse(raw_url)
     path = uri.path
     path = "/" if path.empty?
+
+    # Google AIP / gRPC-transcoding resource patterns (`{name=projects/*}`)
+    # embed a path pattern inside the placeholder. Left alone, the `*` pass
+    # below turned it into the nested, unbalanced `{name=projects/{wildcard}}`
+    # — no longer a path template at all. The variable is `name`; the pattern
+    # only says what it matches.
+    path = path.gsub(/\{(\w+)=[^{}]*\}/, "{\\1}")
 
     # Express-style optional segments (`/:id{/:op}`) are not representable as
     # optional in OpenAPI path templates. Drop the route-syntax braces so the
@@ -20,18 +35,54 @@ module OutputBuilderOasCommon
     # Bracket-style path params (`.NET` / Rails-ish `/users/[id]`) → `{id}`.
     path = path.gsub(/\[(\w+)\]/, "{\\1}")
 
+    # Play's routes file spells a constrained param `$path<.+>`. The regex is
+    # a constraint, not a name, and neither `<…>` pass below matches it, so
+    # the placeholder used to survive verbatim into the emitted path.
+    path = path.gsub(/\$(\w+)<[^<>]*>/, "{\\1}")
+
     # Convert typed placeholders before the generic :param pass; otherwise
     # `<int:id>` becomes `<int{id}>` and can no longer be normalized.
-    path = path.gsub(/<[^:>]+:(\w+)>/, "{\\1}")
+    path = path.gsub(/<([^:<>]+):(\w+)>/) do |_, match|
+      "{#{angle_placeholder_name(match[1], match[2], declared_path_params)}}"
+    end
     path = path.gsub(/<(\w+)>/, "{\\1}")
     path = path.gsub(/\*(\w+)/, "{\\1}")
     path = path.gsub(/:(\w+)/, "{\\1}")
 
     # Bare wildcard segments (`/api/*`, `/files/**`) have no name and are not
     # a valid OAS path template char; collapse a run of `*` to a named var.
-    path = path.gsub(/\*+/, "{wildcard}")
+    # Two of them in one path (`/api/*/v1/*`) have to get distinct names —
+    # a repeated template variable is not a valid path template.
+    wildcards = 0
+    path = path.gsub(/\*+/) do
+      wildcards += 1
+      wildcards == 1 ? "{wildcard}" : "{wildcard#{wildcards}}"
+    end
 
     path.starts_with?("/") ? path : "/#{path}"
+  end
+
+  # Resolve the parameter name in a `<head:tail>` placeholder. Both orderings
+  # are in the wild: Django and Flask spell it `<int:id>` (converter first)
+  # while Sanic, Bottle and Marten spell it `<id:int>` (name first). Always
+  # taking the second half named every Sanic route after its converter —
+  # `/users/<id:int>` emitted `{int}`, and two routes sharing a converter
+  # (`/metrics/<metric_id:int>`, `/reports/<report_id:int>`) collapsed onto
+  # the same OAS path.
+  #
+  # The endpoint's own path params are the authoritative signal: the optimizer
+  # resolved the same placeholder when it registered them. The converter list
+  # only decides placeholders they don't cover, and when both halves name a
+  # converter (`<slug:str>`) the Django ordering wins — it is by far the more
+  # common of the two.
+  private def angle_placeholder_name(head : String, tail : String, declared : Array(String)) : String
+    return head if declared.includes?(head)
+    return tail if declared.includes?(tail)
+    # Converter arguments (`<int(min=1):id>`) aren't part of the type name.
+    return tail if PATH_CONVERTER_TYPES.includes?(head.split('(', 2)[0])
+    return head if PATH_CONVERTER_TYPES.includes?(tail)
+
+    tail
   end
 
   private def path_template_names(path : String) : Array(String)
@@ -67,6 +118,36 @@ module OutputBuilderOasCommon
     return if parameters.any? { |existing| parameter_key(existing) == key }
 
     parameters << parameter
+  end
+
+  # Both OAS2 and OAS3 require an `in: path` parameter to correspond to a
+  # template expression in the path, so a declared path param the emitted path
+  # can't express makes the whole document fail validation. Analyzers produce
+  # those routinely: a Rails route whose placeholder the optimizer replaced
+  # with a concrete value (`/posts/1` still reads `id`), a splat literally
+  # named `*`, a param resolved from another file for an otherwise static
+  # route. Drop them from `parameters` and hand the names back so the caller
+  # can keep them in an extension instead of losing them.
+  private def extract_unmapped_path_parameters(parameters : Array(Hash(String, JSON::Any)), template_names : Array(String)) : Array(String)
+    unmapped = [] of String
+
+    parameters.reject! do |parameter|
+      next false unless parameter["in"].as_s == "path"
+
+      name = parameter["name"].as_s
+      next false if template_names.includes?(name)
+
+      unmapped << name
+      true
+    end
+
+    unmapped
+  end
+
+  private def add_unmapped_path_params_extension(operation : Hash(String, JSON::Any), names : Array(String))
+    return if names.empty?
+
+    operation["x-noir-unmapped-path-params"] = JSON::Any.new(names.map { |name| JSON::Any.new(name) })
   end
 
   private def merge_parameters(existing : Array(JSON::Any), incoming : Array(JSON::Any)) : Array(JSON::Any)
