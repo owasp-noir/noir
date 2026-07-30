@@ -163,25 +163,34 @@ class Deliver
     end
   end
 
+  # A `METHOD:url` pattern is only method-scoped when the token before the
+  # first colon really is a verb an endpoint can carry. Splitting on *any*
+  # colon read `--probe-skip https://api.example.com/admin` as method
+  # `HTTPS` + url `//api.example.com/admin`, which matches nothing — so the
+  # filter silently did nothing and every endpoint the user meant to skip
+  # was probed anyway. That is the common shape, not an edge case: every
+  # delivery target requires `-u`, which rewrites each endpoint to
+  # `scheme://host/path`, so pasting a full URL into --probe-match /
+  # --probe-skip is the natural thing to do. A `host:8080/x` pattern hit the
+  # same hole.
   private def matches_pattern?(endpoint : Endpoint, pattern : String) : Bool
-    # Check if pattern contains method:url format
-    if pattern.includes? ":"
-      parts = pattern.split(":", 2)
-      method_pattern = parts[0].upcase
-      url_pattern = parts[1]
+    colon_index = pattern.index(':')
+    if colon_index && endpoint_method_token?(pattern[0...colon_index])
+      method_pattern = pattern[0...colon_index].upcase
+      url_pattern = pattern[(colon_index + 1)..]
 
       # Check if method matches and URL contains pattern
-      endpoint.method.upcase == method_pattern && endpoint.url.includes?(url_pattern)
-    else
-      # Check if pattern is just a method name
-      upper_pattern = pattern.upcase
+      return endpoint.method.upcase == method_pattern && endpoint.url.includes?(url_pattern)
+    end
 
-      if ALLOWED_HTTP_METHODS.includes?(upper_pattern)
-        endpoint.method.upcase == upper_pattern
-      else
-        # Backward compatibility: check URL
-        endpoint.url.includes?(pattern)
-      end
+    # Pattern is just a method name. Matched against every verb an endpoint
+    # can carry (not only the real HTTP ones) so `--probe-skip SEND` and
+    # `--probe-skip CLI` filter the same way `SEND:/ws` does.
+    if endpoint_method_token?(pattern)
+      endpoint.method.upcase == pattern.upcase
+    else
+      # Backward compatibility: check URL
+      endpoint.url.includes?(pattern)
     end
   end
 end

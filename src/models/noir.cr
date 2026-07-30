@@ -213,6 +213,18 @@ class NoirRunner
     end
 
     @endpoints.each do |endpoint|
+      # Mobile deep links (`myapp://`, `intent://`, `content://`), CLI
+      # command surfaces (`cli://`) and realtime `ws://` event surfaces are
+      # not HTTP requests — the same guard SendReq / SendWithProxy already
+      # apply before probing. Without it every one of them was handed to
+      # Crest, which raised "Unsupported scheme" per endpoint: a mobile scan
+      # with --status-codes printed dozens of `Failed to get status code`
+      # errors for endpoints that can never have one.
+      if endpoint.non_http?
+        final << endpoint
+        next
+      end
+
       request_method = requestable_http_methods(endpoint.method).first?
       unless request_method
         final << endpoint
