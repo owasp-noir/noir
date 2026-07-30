@@ -108,8 +108,8 @@ class EndpointOptimizer
 
     normalized = url
 
-    # Python `re_path` named groups: `(?P<name>...)` → `{name}`.
-    normalized = strip_python_named_groups(normalized)
+    # Regex named groups: `(?P<name>...)` / `(?<name>...)` → `{name}`.
+    normalized = strip_named_capture_groups(normalized)
 
     # Spring `{name:regex}` path variables — strip the inline regex
     # constraint so downstream consumers see the canonical placeholder.
@@ -152,24 +152,33 @@ class EndpointOptimizer
     normalized
   end
 
-  # Rewrites every `(?P<name>...)` occurrence in `url` to `{name}`,
-  # consuming the matching `)` even when the inner pattern contains
-  # nested parens. Returns `url` unchanged when no named group is
-  # present.
-  private def strip_python_named_groups(url : String) : String
-    return url unless url.includes?("(?P<")
+  # Rewrites every named capture group in `url` to `{name}`, consuming the
+  # matching `)` even when the inner pattern contains nested parens. Returns
+  # `url` unchanged when no named group is present.
+  #
+  # Both spellings are handled. `(?P<name>…)` is Python's; `(?<name>…)` is
+  # what Perl 5.10+, PCRE, .NET, Java, Ruby and JavaScript use, and it reached
+  # reports raw — Dancer2's `get qr{/ticket/(?<code>[0-9]+)}` was emitted as
+  # the literal URL `/ticket/(?<code>[0-9]+)` even though the analyzer had
+  # already recorded `code` as a path param, so the endpoint's URL and its
+  # parameter list disagreed.
+  #
+  # `(?<=` and `(?<!` are lookbehind assertions, not names, and are left alone.
+  private def strip_named_capture_groups(url : String) : String
+    return url unless url.includes?("(?P<") || url.includes?("(?<")
 
     result = String::Builder.new
     i = 0
     size = url.size
     while i < size
-      if i + 3 < size && url[i] == '(' && url[i + 1] == '?' && url[i + 2] == 'P' && url[i + 3] == '<'
-        close_name = url.index('>', i + 4)
+      name_start = named_group_name_start(url, i, size)
+      if name_start
+        close_name = url.index('>', name_start)
         unless close_name
           result << url[i..]
           break
         end
-        name = url[(i + 4)...close_name]
+        name = url[name_start...close_name]
 
         # Walk to the matching `)` from after the name's `>`.
         depth = 1
@@ -201,6 +210,18 @@ class EndpointOptimizer
     end
 
     result.to_s
+  end
+
+  # Index just past the opening delimiter of a named capture group starting at
+  # `i` (i.e. where the name begins), or nil when `i` isn't one.
+  private def named_group_name_start(url : String, i : Int32, size : Int32) : Int32?
+    return unless i + 2 < size && url[i] == '(' && url[i + 1] == '?'
+
+    if url[i + 2] == 'P' && i + 3 < size && url[i + 3] == '<'
+      i + 4
+    elsif url[i + 2] == '<' && i + 3 < size && url[i + 3] != '=' && url[i + 3] != '!'
+      i + 3
+    end
   end
 
   # Stable ordering key: source location first, then technology as a
