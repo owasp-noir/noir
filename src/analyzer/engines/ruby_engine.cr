@@ -130,6 +130,40 @@ module Analyzer::Ruby
       Endpoint.new("", "")
     end
 
+    # Rails, Hanami and Sinatra all spell a route `get "/books" …`, and every
+    # Ruby analyzer is handed every `.rb` file in the scan, so each one could
+    # parse the others' route table with its own DSL. These two predicates
+    # identify a file as unmistakably belonging to Rails or to Hanami; an
+    # analyzer that is neither uses them to step aside.
+    #
+    # `Rails.application.routes.draw` and `Hanami::Routes` are positive
+    # markers — a router that carries one is that framework's and nobody
+    # else's. There is deliberately no Sinatra equivalent: a Sinatra route
+    # file can be a bare `get "/x" do … end` with no framework reference at
+    # all, which is why the checks run in this direction only.
+    RAILS_ROUTER_RE  = /\.routes\.draw\b|ActionDispatch::Routing/
+    HANAMI_ROUTER_RE = /Hanami::Rout|Hanami\.app\b|Hanami\.routes\b/
+
+    protected def rails_router_source?(source : String) : Bool
+      source.matches?(RAILS_ROUTER_RE)
+    end
+
+    protected def hanami_router_source?(source : String) : Bool
+      source.matches?(HANAMI_ROUTER_RE)
+    end
+
+    protected def rails_router_file?(path : String) : Bool
+      rails_router_source?(read_file_content(path))
+    rescue
+      false
+    end
+
+    protected def hanami_router_file?(path : String) : Bool
+      hanami_router_source?(read_file_content(path))
+    rescue
+      false
+    end
+
     # Ruby's `"#{expr}"` interpolation in a route literal — e.g.
     # `get "#{PREFIX}/items"` — used to leak the raw `#{PREFIX}`
     # text into the URL. Rewrite it as a `{expr}` placeholder so

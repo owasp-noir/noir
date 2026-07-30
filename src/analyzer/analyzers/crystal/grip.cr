@@ -4,6 +4,14 @@ module Analyzer::Crystal
   class Grip < CrystalEngine
     analyzer_for "crystal_grip"
 
+    # Only files inside a project whose `shard.yml` depends on `grip`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["grip"]
+    end
+
     # One combined PCRE2 scan replaces the previous 7 sequential per-verb
     # matchers. Grip requires whitespace after the verb (`get "/x"`, not
     # `get("/x")`) — the `\s+` keeps that shape, so `input "/x"` still

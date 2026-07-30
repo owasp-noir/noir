@@ -4,6 +4,14 @@ module Analyzer::Crystal
   class Lucky < CrystalEngine
     analyzer_for "crystal_lucky"
 
+    # Only files inside a project whose `shard.yml` depends on `lucky`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["lucky"]
+    end
+
     def analyze
       collect_public_dir_endpoints
       super
