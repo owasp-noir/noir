@@ -165,3 +165,60 @@ describe "OutputBuilderPostman" do
     items.map(&.["name"].as_s).should eq(WILDCARD_HTTP_METHODS.map { |method| "#{method} /wildcard" })
   end
 end
+
+describe "OutputBuilderPostman URLs" do
+  options = {
+    "debug"   => YAML::Any.new(false),
+    "verbose" => YAML::Any.new(false),
+    "color"   => YAML::Any.new(false),
+    "nolog"   => YAML::Any.new(false),
+    "output"  => YAML::Any.new(""),
+    "url"     => YAML::Any.new(""),
+  }
+
+  it "keeps the host of an absolute endpoint instead of {{baseUrl}}" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    absolute = Endpoint.new("https://demo.example.com.evil/api/users/{id}", "GET")
+    absolute.push_param(Param.new("id", "", "path"))
+
+    builder.print([absolute])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("https://demo.example.com.evil/api/users/:id")
+    url["host"].as_a.map(&.as_s).should eq(["demo", "example", "com", "evil"])
+    url["protocol"].as_s.should eq("https")
+    # The sidebar shows the name alone, so a host-less name would render this
+    # and `demo.example.com/api/users/{id}` identically.
+    JSON.parse(builder.io.to_s)["item"][0]["name"].as_s
+      .should eq("GET demo.example.com.evil/api/users/{id}")
+  end
+
+  it "still routes a relative endpoint through {{baseUrl}}" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/api/users", "GET")])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/api/users")
+    url["host"].as_a.map(&.as_s).should eq(["{{baseUrl}}"])
+    url.as_h.has_key?("protocol").should be_false
+  end
+
+  it "keeps raw in agreement with the structured query list" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/search", "GET")
+    endpoint.push_param(Param.new("q", "noir", "query"))
+    endpoint.push_param(Param.new("page", "2", "query"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/search?q=noir&page=2")
+    url["query"].as_a.map(&.["key"].as_s).should eq(["q", "page"])
+  end
+end
