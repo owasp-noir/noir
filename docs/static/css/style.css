@@ -187,7 +187,18 @@ a:hover { text-decoration: underline; text-underline-offset: 0.2em; }
    fixed, so content images (e.g. running.png) render stretched. */
 img, svg, picture, video { display: block; max-width: 100%; height: auto; }
 
-code, kbd, pre, samp { font-family: var(--font-mono); }
+/* Geist Mono's code ligatures are drawn backwards out of a single one-cell
+   advance: hyphen_hyphen.liga is 600 units wide with a -476 left side bearing.
+   Two hyphens therefore advance one cell instead of two, and everything after
+   them slides left over the preceding space, so `noir scan . --ai-provider`
+   renders as `noir scan .--ai-provider`. `----`, `||||`, `!=` and `...` fuse
+   the same way. These pages quote literal CLI flags, where `--` has to read as
+   two hyphens, so the ligatures would be wrong even with a correct advance.
+   Any new element that switches to --font-mono needs this line as well. */
+code, kbd, pre, samp {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
 
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 
