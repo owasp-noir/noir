@@ -46,6 +46,17 @@ module OutputBuilderOasCommon
       "{#{angle_placeholder_name(match[1], match[2], declared_path_params)}}"
     end
     path = path.gsub(/<(\w+)>/, "{\\1}")
+
+    # Catch-all placeholders keep the rest-of-path marker inside the braces:
+    # Armeria `{*filePath}`, Salvo `{**path}`, ASP.NET and Spring `{*slug}`.
+    # The variable is the name; the stars only say how much of the path it
+    # eats — which a path template has no way to express anyway. Without this
+    # the `*` passes below ran *inside* the existing placeholder and produced
+    # the nested, unbalanced `{{filePath}}` and `{{wildcard}{path}}`: not path
+    # templates at all, and their declared `filePath` / `path` parameters no
+    # longer bound to anything.
+    path = path.gsub(/\{\*+(\w+)\}/, "{\\1}")
+
     path = path.gsub(/\*(\w+)/, "{\\1}")
     path = path.gsub(/:(\w+)/, "{\\1}")
 

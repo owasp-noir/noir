@@ -64,6 +64,19 @@ describe OutputBuilderOasCommon do
       # Play routes spell a constrained param `$path<.+>`.
       helper.test_normalize_oas_path("/files/$path<.+>").should eq("/files/{path}")
     end
+
+    it "collapses catch-all placeholders that keep the star inside the braces" do
+      # Armeria writes the rest-of-path capture as `{*filePath}`, Salvo as
+      # `{**path}`, ASP.NET and Spring as `{*slug}`. The `*` passes used to run
+      # inside the existing placeholder and emit the nested, unbalanced
+      # `{{filePath}}` / `{{wildcard}{path}}` — not path templates at all, and
+      # their declared `filePath` / `path` parameters bound to nothing.
+      helper.test_normalize_oas_path("/annotated/files/{*filePath}")
+        .should eq("/annotated/files/{filePath}")
+      helper.test_normalize_oas_path("/assets/{**path}").should eq("/assets/{path}")
+      # A bare `*` segment still becomes a named variable.
+      helper.test_normalize_oas_path("/files/*").should eq("/files/{wildcard}")
+    end
   end
 
   describe "#extract_unmapped_path_parameters" do
