@@ -20,11 +20,19 @@ module Analyzer::Php
       endpoints
     end
 
+    # Hyperf keeps its route table at `config/routes.php` too, and writes it
+    # as `Router::get('/items/{itemId}', …)` — a call shape CakePHP 3 also
+    # used, so the verb matchers below hit it. In a repo holding both, CakePHP
+    # reported Hyperf's routes as its own. `Hyperf\` is unambiguous: the file
+    # imports `Hyperf\HttpServer\Router\Router`, and CakePHP never names it.
+    HYPERF_MARKER_RE = /Hyperf\\/
+
     private def analyze_routes_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       include_callee = callees_needed?
       begin
         content = read_file_content(path)
+        return endpoints if content.matches?(HYPERF_MARKER_RE)
         endpoints = analyze_routes_content(content, "", path, include_callee)
       rescue e
         logger.debug "Error analyzing routes file #{path}: #{e}"

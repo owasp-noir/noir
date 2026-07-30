@@ -1,6 +1,7 @@
 require "../../spec_helper"
 require "../../../src/analyzer/analyzers/php/slim"
 require "../../../src/analyzer/analyzers/php/laminas"
+require "../../../src/analyzer/analyzers/php/cakephp"
 
 # Every PHP analyzer is fed every `.php` file in the scan, so each one's
 # relevance gate is the only thing keeping it off the other frameworks' route
@@ -15,6 +16,13 @@ end
 class LaminasRelevanceHarness < Analyzer::Php::Laminas
   def relevant?(path : String, content : String) : Bool
     laminas_relevant?(path, content)
+  end
+end
+
+# CakePHP gates on the `config/routes.php` path, which Hyperf uses too.
+class CakePhpHyperfHarness < Analyzer::Php::CakePHP
+  def hyperf?(content : String) : Bool
+    content.matches?(HYPERF_MARKER_RE)
   end
 end
 
@@ -39,6 +47,26 @@ private LUMEN_ROUTES = <<-PHP
   <?php
   $router->get('/health', 'HealthController@index');
   $router->put('/users/{id}', 'UserController@update');
+  PHP
+
+private MEZZIO_ROUTES = <<-PHP
+  <?php
+  use Mezzio\\Application;
+
+  return function (Application $app) {
+      $app->get('/docs/commented', DocsHandler::class, 'docs');
+      $app->delete('/api/users/{id}', DeleteUserHandler::class);
+  };
+  PHP
+
+private HYPERF_ROUTES = <<-'PHP'
+  <?php
+  use Hyperf\\HttpServer\\Router\\Router;
+
+  Router::get('/items/{itemId}', [App\\Controller\\ItemController::class, 'show']);
+  Router::addGroup('/api/v1', function () {
+      Router::get('/me', [App\\Controller\\AuthController::class, 'me']);
+  });
   PHP
 
 describe "PHP cross-framework relevance gates" do
@@ -71,6 +99,33 @@ describe "PHP cross-framework relevance gates" do
       harness.relevant?(CODEIGNITER_ROUTES).should be_false
       harness.relevant?(CAKEPHP_ROUTES).should be_false
       harness.relevant?(LUMEN_ROUTES).should be_false
+    end
+
+    it "does not claim a Mezzio route table" do
+      # Mezzio registers on `$app->get('/x', Handler::class)` — the same
+      # expression Slim uses — so Slim reported Mezzio's routes as its own.
+      # `Laminas\\` is deliberately not a disqualifier: Slim apps pull in
+      # `Laminas\\Diactoros` for PSR-7 all the time.
+      harness.relevant?(MEZZIO_ROUTES).should be_false
+      harness.relevant?(<<-'PHP').should be_true
+        <?php
+        use Slim\\Factory\\AppFactory;
+        use Laminas\\Diactoros\\ResponseFactory;
+
+        $app = AppFactory::create();
+        $app->get('/status', function ($req, $res) { return $res; });
+        PHP
+    end
+  end
+
+  describe Analyzer::Php::CakePHP do
+    harness = CakePhpHyperfHarness.new(create_test_options)
+
+    it "recognizes a Hyperf route table so it can step aside" do
+      # Hyperf keeps its routes at `config/routes.php` too and writes
+      # `Router::get(...)`, a call shape CakePHP 3 also used.
+      harness.hyperf?(HYPERF_ROUTES).should be_true
+      harness.hyperf?(CAKEPHP_ROUTES).should be_false
     end
   end
 
