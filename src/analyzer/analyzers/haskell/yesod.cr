@@ -23,10 +23,14 @@ module Analyzer::Haskell
         next if File.directory?(path)
 
         if route_file?(path)
+          # The expanded path canonicalizes the dedup key only. Reporting it
+          # as well recorded an absolute machine path in `code_paths`, while
+          # the walker's own spelling (relative, when the scan base is) is
+          # what every other analyzer records.
           expanded_path = File.expand_path(path)
           next if processed_route_files.includes?(expanded_path)
 
-          process_route_content(expanded_path, read_file_content(path), include_callee, handler_bodies)
+          process_route_content(path, read_file_content(path), include_callee, handler_bodies)
           processed_route_files << expanded_path
           next
         end
@@ -44,7 +48,9 @@ module Analyzer::Haskell
           next if File.directory?(referenced_path)
           next if processed_route_files.includes?(referenced_path)
 
-          process_route_content(referenced_path, read_file_content(referenced_path), include_callee, handler_bodies)
+          # Resolved against the referencing file's directory, so report it
+          # the way the walker saw it rather than as an absolute path.
+          process_route_content(walked_path(referenced_path), read_file_content(referenced_path), include_callee, handler_bodies)
           processed_route_files << referenced_path
         end
       end

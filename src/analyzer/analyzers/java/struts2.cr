@@ -246,8 +246,13 @@ module Analyzer::Java
       candidates << File.expand_path(include_name, File.dirname(current_path))
       candidates << File.join(configured_base_for(current_path), include_name.lstrip('/'))
 
+      # `walked_path` maps the resolved candidate back to the walker's own
+      # spelling. Without it an `<include>` target resolved against the
+      # including file's directory was recorded — and reported — as an
+      # absolute machine path, while the top-level `struts.xml` next to it
+      # stayed relative.
       if found = candidates.find { |candidate| File.exists?(candidate) }
-        return found
+        return walked_path(found)
       end
 
       normalized = include_name.lstrip('/')
