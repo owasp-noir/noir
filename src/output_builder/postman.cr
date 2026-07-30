@@ -32,12 +32,7 @@ class OutputBuilderPostman < OutputBuilder
         end
       end
 
-      # Build URL object
-      url_obj = {
-        "raw"  => JSON::Any.new("{{baseUrl}}/#{path_with_vars.join("/")}"),
-        "host" => JSON::Any.new([JSON::Any.new("{{baseUrl}}")]),
-        "path" => JSON::Any.new(path_with_vars.map { |p| JSON::Any.new(p) }),
-      } of String => JSON::Any
+      url_obj = build_url_object(uri, path_with_vars)
 
       # Add query parameters
       query_params = [] of JSON::Any
@@ -52,6 +47,12 @@ class OutputBuilderPostman < OutputBuilder
 
       if !query_params.empty?
         url_obj["query"] = JSON::Any.new(query_params)
+        # `raw` is the field a human reads in the URL bar and the one most
+        # non-Postman importers key off, so it has to agree with the
+        # structured `query` list. It was built from the path alone, which
+        # also dropped a query string the route itself carried
+        # (`admin-ajax.php?action=…`).
+        url_obj["raw"] = JSON::Any.new(raw_with_query(url_obj["raw"].as_s, query_params))
       end
 
       # Add path variables
@@ -162,9 +163,12 @@ class OutputBuilderPostman < OutputBuilder
           request["body"] = JSON::Any.new(body)
         end
 
-        # Build item
+        # Build item. The host is part of the name for an absolute URL:
+        # without it `demo.example.com/api/users/{id}` and
+        # `demo.example.com.evil/api/users/{id}` are two entries in the
+        # sidebar reading exactly the same.
         item = {
-          "name"    => JSON::Any.new("#{method} #{uri.path}"),
+          "name"    => JSON::Any.new("#{method} #{item_label(uri)}"),
           "request" => JSON::Any.new(request),
         } of String => JSON::Any
 
@@ -192,5 +196,62 @@ class OutputBuilderPostman < OutputBuilder
     } of String => JSON::Any
 
     ob_puts JSON::Any.new(collection).to_pretty_json
+  end
+
+  # Postman addresses a request either through the collection's `baseUrl`
+  # variable — the common case, an endpoint discovered as a bare path — or
+  # through its own absolute URL. Spec- and capture-derived endpoints carry a
+  # real host (an OpenAPI `servers` entry, a HAR capture spanning domains),
+  # and rewriting those to `{{baseUrl}}` aimed every request at one host,
+  # throwing away the host Noir had actually found: `demo.example.com` and
+  # `demo.example.com.evil` imported as the same request. curl, httpie and
+  # only-url all keep the host on the same scan; this now does too.
+  private def build_url_object(uri : URI, path_with_vars : Array(String)) : Hash(String, JSON::Any)
+    host = uri.host
+    if host.nil? || host.empty?
+      return {
+        "raw"  => JSON::Any.new("{{baseUrl}}/#{path_with_vars.join("/")}"),
+        "host" => JSON::Any.new([JSON::Any.new("{{baseUrl}}")]),
+        "path" => JSON::Any.new(path_with_vars.map { |p| JSON::Any.new(p) }),
+      } of String => JSON::Any
+    end
+
+    authority = String.build do |io|
+      io << uri.scheme << "://" if uri.scheme
+      io << host
+      io << ':' << uri.port if uri.port
+    end
+
+    url_obj = {
+      # Postman splits a real host into its domain labels.
+      "raw"  => JSON::Any.new("#{authority}/#{path_with_vars.join("/")}"),
+      "host" => JSON::Any.new(host.split('.').map { |label| JSON::Any.new(label) }),
+      "path" => JSON::Any.new(path_with_vars.map { |p| JSON::Any.new(p) }),
+    } of String => JSON::Any
+
+    if scheme = uri.scheme
+      url_obj["protocol"] = JSON::Any.new(scheme)
+    end
+    if port = uri.port
+      url_obj["port"] = JSON::Any.new(port.to_s)
+    end
+
+    url_obj
+  end
+
+  private def raw_with_query(raw : String, query_params : Array(JSON::Any)) : String
+    pairs = query_params.map do |param|
+      entry = param.as_h
+      "#{entry["key"].as_s}=#{entry["value"].as_s}"
+    end
+
+    "#{raw}#{raw.includes?('?') ? '&' : '?'}#{pairs.join("&")}"
+  end
+
+  private def item_label(uri : URI) : String
+    host = uri.host
+    return uri.path if host.nil? || host.empty?
+
+    "#{host}#{uri.path}"
   end
 end
