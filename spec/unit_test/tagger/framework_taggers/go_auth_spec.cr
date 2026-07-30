@@ -251,6 +251,21 @@ describe "GoAuthTagger (root-group static-asset exemption)" do
     endpoint.tags.any? { |t| t.name == "auth" }.should be_true
   end
 
+  it "still tags a non-static route under a chained group .Use(auth)" do
+    # `g.Group("/admin").Use(auth)` creates the group and registers the
+    # middleware in one expression — neither an assignment nor a closure
+    # group, so the receiver has to be read off the chain itself.
+    chained = [
+      "package main",
+      "func main() {",
+      "  g := gin.New()",
+      "  g.Group(\"/admin\").Use(AuthMiddleware())",
+      "}",
+    ]
+    endpoint = run_go_auth(chained, "/admin/users", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
   it "still tags a static route under a truly global engine .Use(auth)" do
     # `r.Use(auth)` (no enclosing group) is a real global middleware: every
     # subsequently registered route, static or not, is guarded. The
@@ -264,5 +279,161 @@ describe "GoAuthTagger (root-group static-asset exemption)" do
     ]
     endpoint = run_go_auth(global, "/index.html", "GET", 30)
     endpoint.tags.any? { |t| t.name == "auth" }.should be_true
+  end
+end
+
+# Assignment groups (`api := r.Group("/api")`) are not delimited by braces, so
+# they cannot share the closure-group stack: modelling both with one stack made
+# sibling groups accumulate, resolving the second group's middleware to
+# "/api/admin". That both dropped the tag from the routes it really guards and
+# — worse for a security tool — claimed auth on unrelated routes that happened
+# to sit under the concatenated prefix.
+describe "GoAuthTagger (sibling route groups)" do
+  #  1 package main
+  #  2 func main() {
+  #  3   r := gin.Default()
+  #  4   api := r.Group("/api")
+  #  5   api.Use(AuthMiddleware())
+  #  6   admin := r.Group("/admin")
+  #  7   admin.Use(AdminAuthMiddleware())
+  #  8   reports := r.Group("/reports")
+  #  9   register(api, admin, reports)
+  # 10 }
+  siblings = [
+    "package main",
+    "func main() {",
+    "  r := gin.Default()",
+    "  api := r.Group(\"/api\")",
+    "  api.Use(AuthMiddleware())",
+    "  admin := r.Group(\"/admin\")",
+    "  admin.Use(AdminAuthMiddleware())",
+    "  reports := r.Group(\"/reports\")",
+    "  register(api, admin, reports)",
+    "}",
+  ]
+
+  it "tags the first group's routes" do
+    endpoint = run_go_auth(siblings, "/api/users", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("AuthMiddleware") }.should be_true
+  end
+
+  it "tags a later sibling group's routes with its own middleware" do
+    endpoint = run_go_auth(siblings, "/admin/stats", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("AdminAuthMiddleware") }.should be_true
+  end
+
+  it "does not tag a sibling group that has no middleware" do
+    endpoint = run_go_auth(siblings, "/reports/daily", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "does not claim auth on a route that merely matches the concatenated prefix" do
+    # `/api` has no middleware here and `/internal` does; the endpoint lives
+    # under neither guarded group, so tagging it would report an
+    # unauthenticated route as authenticated.
+    fixture = [
+      "package main",
+      "func main() {",
+      "  r := gin.Default()",
+      "  public := r.Group(\"/api\")",
+      "  internal := r.Group(\"/internal\")",
+      "  internal.Use(SessionAuth())",
+      "  registerPublic(public)",
+      "}",
+    ]
+    endpoint = run_go_auth(fixture, "/api/internal/status", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  # A group built from a non-literal path (`r.Group(cfg.APIBase + "/v1")`) has a
+  # prefix a line-based scanner cannot read. Treating that as the global scope
+  # made a single `.Use(auth)` claim protection for every endpoint in the app —
+  # on apache/answer, 202 of 412 endpoints, including `/healthz` and the routes
+  # registered on the app's explicitly unauthenticated groups. Declining to tag
+  # an unresolvable scope is the same call `spring_security` makes for a filter
+  # chain scoped only by a matcher it cannot resolve.
+  describe "unresolvable group prefixes" do
+    computed = [
+      "package main",
+      "func main() {",
+      "  r := gin.Default()",
+      "  unAuthV1 := r.Group(cfg.APIBase + \"/api/v1\")",
+      "  authV1 := r.Group(cfg.APIBase + \"/api/v1\")",
+      "  authV1.Use(authUserMiddleware.MustAuth())",
+      "  registerUnAuth(unAuthV1)",
+      "  registerAuth(authV1)",
+      "}",
+    ]
+
+    it "does not tag an unrelated endpoint from a group whose prefix is computed" do
+      endpoint = run_go_auth(computed, "/healthz", "GET", 30)
+      endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+    end
+
+    it "does not tag a sibling public group's routes either" do
+      endpoint = run_go_auth(computed, "/api/v1/siteinfo", "GET", 30)
+      endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+    end
+
+    it "still treats a literal-prefix group as scoped" do
+      literal = [
+        "package main",
+        "func main() {",
+        "  r := gin.Default()",
+        "  authV1 := r.Group(\"/api/v1\")",
+        "  authV1.Use(MustAuth())",
+        "  register(authV1)",
+        "}",
+      ]
+      run_go_auth(literal, "/api/v1/me", "GET", 30)
+        .tags.any? { |t| t.name == "auth" }.should be_true
+      run_go_auth(literal, "/healthz", "GET", 30)
+        .tags.any? { |t| t.name == "auth" }.should be_false
+    end
+
+    it "still treats a bare engine-level .Use(auth) as global" do
+      # Only *group* scopes become unresolvable — a global `.Use` genuinely
+      # guards every route registered after it, so this must keep working.
+      global = [
+        "package main",
+        "func main() {",
+        "  r := gin.Default()",
+        "  r.Use(AuthMiddleware())",
+        "}",
+      ]
+      endpoint = run_go_auth(global, "/anything", "GET", 30)
+      endpoint.tags.any? { |t| t.name == "auth" }.should be_true
+    end
+  end
+
+  it "does not double-count the prefix of a closure group that is also assigned" do
+    # `r.Group("/admin", handler)` is a closure group *and* an assignment; the
+    # two forms must both resolve to /admin, not /admin/admin.
+    both = [
+      "package main",
+      "func main() {",
+      "  r := gin.Default()",
+      "  admin := r.Group(\"/admin\", func(c *gin.Context) { c.Next() })",
+      "  admin.Use(AdminAuth())",
+      "  registerAdmin(admin)",
+      "}",
+    ]
+    endpoint = run_go_auth(both, "/admin/stats", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("AdminAuth") }.should be_true
+  end
+
+  it "still inherits the parent group's middleware in a nested group" do
+    nested = [
+      "package main",
+      "func main() {",
+      "  r := gin.Default()",
+      "  api := r.Group(\"/api\")",
+      "  api.Use(AuthMiddleware())",
+      "  admin := api.Group(\"/admin\")",
+      "  register(api, admin)",
+      "}",
+    ]
+    endpoint = run_go_auth(nested, "/api/admin/stats", "GET", 30)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("AuthMiddleware") }.should be_true
   end
 end
