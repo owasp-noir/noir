@@ -37,8 +37,10 @@ module Analyzer::Rust
     # regular files — no per-path `File.exists?` / `File.directory?`.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
+        roots = crate_roots
         parallel_analyze(get_files_by_extension(".rs")) do |path|
           next if RustEngine.test_path?(path)
+          next unless path_under_crate_roots?(path, roots)
 
           begin
             block.call(path)
@@ -49,6 +51,57 @@ module Analyzer::Rust
       rescue e
         logger.debug e
       end
+    end
+
+    # The Cargo dependencies that identify this analyzer's framework. An
+    # analyzer that declares them is only shown files inside a crate that
+    # actually depends on one — without that, every Rust analyzer sees every
+    # `.rs` file in the scan and the route DSLs are close enough to collide.
+    # axum's `.route("/foo", get(handler))` and actix's glob-imported
+    # `.route("/foo", get().to(handler))` are the same tree, so actix read
+    # axum's whole router as its own. Default is empty, meaning no gate.
+    protected def crate_dependencies : Array(String)
+      [] of String
+    end
+
+    # Directories holding a `Cargo.toml` that depends on one of
+    # `crate_dependencies`. Empty when the analyzer declares no dependencies,
+    # and also empty when the scan has no matching manifest at all — in which
+    # case `path_under_crate_roots?` waves everything through, so a source
+    # tree checked out without its manifest keeps working exactly as before.
+    private def crate_roots : Array(String)
+      dependencies = crate_dependencies
+      return [] of String if dependencies.empty?
+
+      patterns = dependencies.map { |name| cargo_dependency_re(name) }
+      roots = [] of String
+      all_files.each do |file|
+        next unless File.basename(file) == "Cargo.toml"
+        begin
+          content = read_file_content(file)
+        rescue
+          next
+        end
+        next unless patterns.any? { |pattern| content.matches?(pattern) }
+        root = Noir::PathScope.normalize_root(File.dirname(file))
+        roots << root unless roots.includes?(root)
+      end
+      roots
+    end
+
+    # `axum = "0.7"`, `axum = { path = "…" }`, `axum.workspace = true` and
+    # `[dependencies.axum]` all declare the dependency. Anchored on the key so
+    # `actix-web` does not match the `actix-web-lab` line above it.
+    private def cargo_dependency_re(name : String) : Regex
+      escaped = Regex.escape(name)
+      Regex.new("^\\s*(?:#{escaped}\\s*[=.]|\\[(?:[\\w.-]+\\.)?dependencies\\.#{escaped}\\])", Regex::Options::MULTILINE)
+    end
+
+    private def path_under_crate_roots?(path : String, roots : Array(String)) : Bool
+      return true if roots.empty?
+
+      expanded = File.expand_path(path)
+      roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
     end
 
     # Cargo convention: every `.rs` immediately under a crate's

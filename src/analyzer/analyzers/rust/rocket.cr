@@ -13,6 +13,13 @@ module Analyzer::Rust
   class Rocket < RustEngine
     analyzer_for "rust_rocket"
 
+    # Only files inside a crate that depends on `rocket`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["rocket"]
+    end
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias ScopedRouteKey = Tuple(String, String, String)
     alias AliasKey = Tuple(String, String)

@@ -12,6 +12,13 @@ module Analyzer::Rust
   class Loco < RustEngine
     analyzer_for "rust_loco"
 
+    # Only files inside a crate that depends on `loco-rs`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["loco-rs"]
+    end
+
     REST_ACTIONS = Set{"index", "show", "new", "create", "edit", "update", "destroy", "delete"}
     HTTP_VERBS   = Set{"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 

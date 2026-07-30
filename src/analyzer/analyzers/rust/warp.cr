@@ -19,6 +19,13 @@ module Analyzer::Rust
   class Warp < RustEngine
     analyzer_for "rust_warp"
 
+    # Only files inside a crate that depends on `warp`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["warp"]
+    end
+
     @external_handler_callee_cache = {} of String => Array(Noir::RustCalleeExtractor::Entry)
     @external_handler_miss_cache = Set(String).new
     @external_handler_callee_cache_mutex = Mutex.new

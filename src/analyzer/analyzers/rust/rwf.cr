@@ -24,6 +24,13 @@ module Analyzer::Rust
   class Rwf < RustEngine
     analyzer_for "rust_rwf"
 
+    # Only files inside a crate that depends on `rwf`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["rwf"]
+    end
+
     HTTP_METHODS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
 
     # Precompiled union for collect_route_macro_fragments' per-macro
