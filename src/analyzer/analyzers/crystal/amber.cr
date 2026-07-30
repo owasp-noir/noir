@@ -41,11 +41,27 @@ module Analyzer::Crystal
       @result
     end
 
+    # `get "/path"` is the same line in Amber, Kemal and Grip — the DSLs are
+    # indistinguishable one line at a time, and this analyzer is handed every
+    # `.cr` file in the scan. Without a file-level gate it read Kemal's, Grip's
+    # and Lucky's routes as Amber ones (22 phantom endpoints across the Crystal
+    # fixture tree), and swallowed their `public_folder` declarations on the
+    # way through.
+    #
+    # A file that declares Amber routes belongs to an Amber app, so it names
+    # the framework: `require "amber"` in the fixtures and in an app's entry
+    # point, `Amber::Server.configure` in a real `config/routes.cr`, or the
+    # `routes :web do` pipeline block, which is Amber's DSL and nobody else's.
+    AMBER_MARKER_RE = /require\s+"amber"|Amber::|^\s*routes\s+:\w+/m
+
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       file_base = configured_base_for(path)
 
-      lines = mask_crystal_heredocs(read_file_content(path).lines)
+      content = read_file_content(path)
+      return endpoints unless content.matches?(AMBER_MARKER_RE)
+
+      lines = mask_crystal_heredocs(content.lines)
 
       include_callee = callees_needed?
       actions = include_callee ? collect_controller_actions(lines, path) : Hash(String, Array(Noir::CrystalCalleeExtractor::Entry)).new
