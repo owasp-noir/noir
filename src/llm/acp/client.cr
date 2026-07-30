@@ -99,7 +99,7 @@ module LLM
       # One session, one response buffer. Two fibers prompting at once —
       # which is exactly what the bundle analyzer does when it fans out —
       # interleaved their streamed chunks into that single buffer, and each
-      # read back a blend of both answers: unparseable at best, endpoints
+      # read back a blend of both answers: unparsable at best, endpoints
       # attributed to the wrong bundle at worst. Serialize the whole
       # clear -> prompt -> read window. `session.prompt` blocks until the
       # agent's turn ends anyway, so overlapping them never bought
