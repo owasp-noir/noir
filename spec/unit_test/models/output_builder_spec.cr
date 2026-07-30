@@ -214,3 +214,45 @@ describe OutputBuilderDiff do
     result[:removed].should eq [Endpoint.new("GET", "/old", [Param.new("a", "b", "query"), Param.new("c", "d", "json")])]
   end
 end
+
+describe "OutputBuilder#bake_endpoint" do
+  options = create_test_options
+  builder = OutputBuilder.new options
+
+  it "opens the query string with ? and separates the rest with &" do
+    baked = builder.bake_endpoint("/search", [Param.new("q", "1", "query"), Param.new("page", "2", "query")])
+    baked[:url].should eq("/search?q=1&page=2")
+  end
+
+  it "appends to a query string the route already carries" do
+    # WordPress addresses an AJAX handler as `admin-ajax.php?action=…`; a
+    # second `?` would swallow everything after it into the first value.
+    baked = builder.bake_endpoint("/admin-ajax.php?action=x", [Param.new("id", "1", "query")])
+    baked[:url].should eq("/admin-ajax.php?action=x&id=1")
+  end
+
+  it "skips a query pair the route already spells out verbatim" do
+    baked = builder.bake_endpoint("/admin-ajax.php?action=x", [Param.new("action", "x", "query")])
+    baked[:url].should eq("/admin-ajax.php?action=x")
+  end
+
+  it "still appends an overridden value for a name already in the query" do
+    baked = builder.bake_endpoint("/admin-ajax.php?action=x", [Param.new("action", "FUZZ", "query")])
+    baked[:url].should eq("/admin-ajax.php?action=x&action=FUZZ")
+  end
+
+  it "treats route-syntax ? as part of the path, not as a query string" do
+    # Express optional segments (`/geo/:ip?`) and regex routes (`(?:a|b)`)
+    # both spell a `?` that opens no query string.
+    builder.bake_endpoint("/geo/:ip?", [Param.new("q", "1", "query")])[:url]
+      .should eq("/geo/:ip??q=1")
+    builder.bake_endpoint("/grp/(?:a|b)", [Param.new("q", "1", "query")])[:url]
+      .should eq("/grp/(?:a|b)?q=1")
+  end
+
+  it "keeps tags from a query param that was skipped as redundant" do
+    param = Param.new("action", "x", "query")
+    param.add_tag(Tag.new("pii", "personal data", "metadata_tagger"))
+    builder.bake_endpoint("/a.php?action=x", [param])[:tags].should eq(["pii"])
+  end
+end

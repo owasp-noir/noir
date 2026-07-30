@@ -176,7 +176,6 @@ class OutputBuilder
     final_cookies = [] of String
     final_tags = [] of String
     is_json = false
-    first_query = true
     first_form = true
 
     if final_url.starts_with?("//")
@@ -185,14 +184,38 @@ class OutputBuilder
       end
     end
 
+    # A route can arrive carrying its own query string —
+    # `/wp-admin/admin-ajax.php?action=get_user_data` is how WordPress
+    # addresses an AJAX handler, and the analyzer records `action` as a query
+    # param on top of it. Opening the baked params with another `?` produced
+    # `...?action=get_user_data?action=get_user_data`, where the second `?`
+    # and everything after it is swallowed into the first value: a URL that no
+    # longer addresses the endpoint, in every format that bakes one (plain,
+    # only-url, curl, httpie, powershell, html, adb, simctl).
+    #
+    # `?` here does not always open a query string — it is also route syntax
+    # (Express `/geo/:ip?`, regex routes `/grp/(?:a|b)`). Only a `?` that
+    # introduces a `key=value` pair before the next path separator does.
+    existing_query = final_url.match(/\?([^?\/#]*=[^?#]*)/).try(&.[1])
+    existing_pairs = existing_query.try(&.split('&')) || [] of String
+    first_query = existing_query.nil?
+
     unless params.nil?
       params.each do |param|
         if param.param_type == "query"
-          if first_query
-            final_url += "?#{param.name}=#{param.value}"
-            first_query = false
-          else
-            final_url += "&#{param.name}=#{param.value}"
+          pair = "#{param.name}=#{param.value}"
+          # A pair the route already spells out verbatim adds nothing. A
+          # *different* value for the same name is an override (`--pvalue
+          # query=…`) and is still appended — the later pair is the one
+          # servers read, so the override survives. Skipping with `next` would
+          # also skip this param's tag collection at the bottom of the block.
+          unless existing_pairs.includes?(pair)
+            if first_query
+              final_url += "?#{pair}"
+              first_query = false
+            else
+              final_url += "&#{pair}"
+            end
           end
         end
 
