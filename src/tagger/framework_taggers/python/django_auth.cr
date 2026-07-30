@@ -48,7 +48,7 @@ class DjangoAuthTagger < FrameworkTagger
 
     contexts.each do |ctx|
       line = ctx.line
-      lines = ctx.full_content.split("\n")
+      lines = ctx.lines
 
       # Skip stale/out-of-range line refs: a line beyond the content we
       # read would crash the lines[idx] walks below with IndexError.
