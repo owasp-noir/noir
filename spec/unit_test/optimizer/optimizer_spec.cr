@@ -685,6 +685,36 @@ describe "EndpointOptimizer" do
       result[1].url.should eq("/api/0/{event_id}/")
     end
 
+    # `(?P<name>…)` is Python's spelling; `(?<name>…)` is what Perl 5.10+,
+    # PCRE, .NET, Java, Ruby and JavaScript use. Only the first was handled,
+    # so Dancer2's `get qr{/ticket/(?<code>[0-9]+)}` reached reports as the
+    # literal URL `/ticket/(?<code>[0-9]+)` — disagreeing with the `code` path
+    # param the analyzer had already recorded for it.
+    it "normalizes plain (?<name>...) capture groups too" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/ticket/(?<code>[0-9]+)", "GET"),
+        Endpoint.new("/(?<org>[^/]+)/issues/(?<id>\\d+)/", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/ticket/{code}")
+      result[1].url.should eq("/{org}/issues/{id}/")
+    end
+
+    it "leaves lookbehind assertions alone" do
+      # `(?<=` and `(?<!` open a lookbehind, not a name.
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/files/(?<=v2)report", "GET"),
+        Endpoint.new("/files/(?<!beta)report", "GET"),
+      ]
+
+      result = optimizer.normalize_url_shapes(endpoints)
+      result[0].url.should eq("/files/(?<=v2)report")
+      result[1].url.should eq("/files/(?<!beta)report")
+    end
+
     it "still skips verbatim Express regex-literal routes" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [
