@@ -396,7 +396,12 @@ module Analyzer::Python
         source.includes?("RouteTableDef") ||
         source.includes?("web.") ||
         HTTP_METHOD_NAMES.any? { |method| source.includes?(".add_#{method}(") } ||
-        source.includes?(".add_route") ||
+        # The trailing `(` matters. Without it this also fired on Django
+        # Ninja's `api.add_router("/events/", …)`, which contains `.add_route`
+        # as a substring — that let the whole aiohttp pass loose on a
+        # django-ninja module and read its `@api.get(…)` decorators as aiohttp
+        # routes.
+        source.includes?(".add_route(") ||
         source.includes?(".add_routes(") ||
         source.includes?(".add_static(") ||
         source.includes?(".add_view(")

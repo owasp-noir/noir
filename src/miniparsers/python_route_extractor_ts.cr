@@ -309,6 +309,13 @@ module Noir
       end
     end
 
+    # `"PUT"` / `"get"` — a bare verb token, not a route path. `*` is
+    # aiohttp's any-method wildcard.
+    private def bare_http_method?(text : String) : Bool
+      return true if text == "*"
+      HTTP_METHODS.includes?(text.downcase)
+    end
+
     # A `decorator` node wraps either a plain expression (`@foo`) or a
     # call expression (`@foo.route("/x")`). We want the call.
     private def find_call_inside_decorator(decorator : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
@@ -360,11 +367,17 @@ module Noir
 
       path = ""
       methods = [] of String
+      # Positional strings in order. The path is normally the first one, but
+      # aiohttp's `RouteTableDef` spells its generic decorator
+      # `@routes.route('PUT', '/profile')` — method first, path second. Taking
+      # the first string blindly turned that into the route `/PUT`. Collect
+      # them and pick below, so a leading bare verb is read as the method it
+      # is instead of as a path.
+      positional_strings = [] of String
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "string"
-          # First positional string is the path.
-          path = decode_string(arg, source) if path.empty?
+          positional_strings << decode_string(arg, source)
         when "keyword_argument"
           name = Noir::TreeSitter.field(arg, "name")
           value = Noir::TreeSitter.field(arg, "value")
@@ -386,10 +399,22 @@ module Noir
         end
       end
 
+      leading_verb = nil
+      if path.empty?
+        # A leading bare verb is only a verb when something else can be the
+        # path; `@app.route("/get")` must stay a path.
+        if positional_strings.size > 1 && bare_http_method?(positional_strings[0])
+          leading_verb = positional_strings[0].upcase
+          path = positional_strings[1]
+        else
+          path = positional_strings.first? || ""
+        end
+      end
+
       return if path.empty?
 
       if methods.empty?
-        if fallback = method_from_attr
+        if fallback = leading_verb || method_from_attr
           methods = [fallback]
         else
           methods = ["GET"] # Flask default for generic `.route` without methods=
