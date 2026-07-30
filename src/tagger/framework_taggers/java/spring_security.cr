@@ -332,15 +332,15 @@ class SpringSecurityTagger < FrameworkTagger
     read_source_context(endpoint).each do |ctx|
       line = ctx.line
       next if line.nil?
-      lines = ctx.full_content.split("\n")
+      lines = ctx.lines
       next if line < 1 || line > lines.size
       idx = line - 1
 
-      if desc = check_cross_origin(lines, idx)
+      if desc = check_cross_origin(ctx.path, lines, idx)
         endpoint.add_tag(Tag.new("cors", desc, "spring_security"))
       end
 
-      if desc = check_input_validation(lines, idx, endpoint)
+      if desc = check_input_validation(ctx.path, lines, idx, endpoint)
         endpoint.add_tag(Tag.new("input-validation", desc, "spring_security"))
       end
     end
@@ -355,7 +355,7 @@ class SpringSecurityTagger < FrameworkTagger
 
   # `@CrossOrigin` on the handler (walk the annotation block above it) or on
   # the controller class (applies to every handler in the file).
-  private def check_cross_origin(lines : Array(String), method_idx : Int32) : String?
+  private def check_cross_origin(path : String, lines : Array(String), method_idx : Int32) : String?
     # Method-level: the contiguous annotation block directly above the
     # handler. Mirrors spring_auth's backward walk — stop at the previous
     # member/class boundary so we don't bleed into another handler.
@@ -374,7 +374,7 @@ class SpringSecurityTagger < FrameworkTagger
     end
 
     # Class-level: a @CrossOrigin sitting on the controller declaration.
-    if class_line = class_level_annotation(lines, "@CrossOrigin")
+    if class_line = class_level_annotation(path, lines, "@CrossOrigin")
       return describe_cross_origin(class_line, class_level: true)
     end
 
@@ -402,7 +402,7 @@ class SpringSecurityTagger < FrameworkTagger
 
   # `@Valid` / `@Validated` applied to the handler's parameters (scan the
   # signature up to the body brace) or `@Validated` on the controller class.
-  private def check_input_validation(lines : Array(String), method_idx : Int32, endpoint : Endpoint) : String?
+  private def check_input_validation(path : String, lines : Array(String), method_idx : Int32, endpoint : Endpoint) : String?
     idx = method_idx
     end_idx = [method_idx + 10, lines.size - 1].min
     while idx <= end_idx
@@ -420,7 +420,7 @@ class SpringSecurityTagger < FrameworkTagger
       idx += 1
     end
 
-    if endpoint.params.present? && class_level_annotation(lines, "@Validated")
+    if endpoint.params.present? && class_level_annotation(path, lines, "@Validated")
       return "Controller annotated @Validated — Bean Validation is applied to this handler's parameters."
     end
 
@@ -429,27 +429,6 @@ class SpringSecurityTagger < FrameworkTagger
 
   private def spring_mapping_annotation?(line : String) : Bool
     line.matches?(/@(GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\b/)
-  end
-
-  # Find an annotation (`@CrossOrigin`/`@Validated`) that decorates the class
-  # declaration: it must be immediately followed — skipping other annotations
-  # and blank lines — by a `class` line. Returns the annotation line text.
-  private def class_level_annotation(lines : Array(String), annotation_name : String) : String?
-    lines.each_with_index do |raw, i|
-      stripped = raw.strip
-      next unless stripped.starts_with?(annotation_name)
-      j = i + 1
-      while j < lines.size
-        nxt = lines[j].strip
-        if nxt.empty? || nxt.starts_with?("@")
-          j += 1
-          next
-        end
-        return stripped if nxt.includes?("class ")
-        break
-      end
-    end
-    nil
   end
 
   # Ant-style pattern match (`/**` → any depth, `*` → one segment), prefix

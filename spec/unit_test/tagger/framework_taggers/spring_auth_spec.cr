@@ -2,6 +2,27 @@ require "file_utils"
 require "../../../spec_helper"
 require "../../../../src/tagger/tagger"
 
+# Write `source` to a temp controller file and run SpringAuthTagger against a
+# single endpoint whose handler is recorded at `line`.
+def run_spring_class_level(source : String, line : Int32, ext : String = "java") : Endpoint
+  CodeLocator.instance.clear_all
+  tmpdir = File.tempname("spring_class_level")
+  Dir.mkdir_p(tmpdir)
+  file = File.join(tmpdir, "AdminController.#{ext}")
+  File.write(file, source)
+  CodeLocator.instance.push("file_map", file)
+
+  noir_options = create_test_options
+  noir_options["base"] = YAML::Any.new(tmpdir)
+  details = Details.new(PathInfo.new(file, line))
+  details.technology = "java_spring"
+  endpoint = Endpoint.new("/admin/users", "GET", [] of Param, details)
+
+  SpringAuthTagger.new(noir_options).perform([endpoint])
+  FileUtils.rm_rf(tmpdir)
+  endpoint
+end
+
 describe "SpringAuthTagger" do
   fixture_base = "#{__DIR__}/../../../functional_test/fixtures/java/spring_auth"
   controller_path = "#{fixture_base}/src/main/java/com/example/Controller.java"
@@ -373,5 +394,118 @@ describe "SpringAuthTagger" do
     tagger.perform([endpoint])
 
     endpoint.tags.empty?.should be_true
+  end
+end
+
+# A controller-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` guards every
+# handler the class declares. The per-handler backward walk stops at the
+# `public`/`class` boundary by design, so it can never reach the class
+# declaration — every handler of an `@PreAuthorize("hasRole('ADMIN')")`
+# controller was reported as unauthenticated.
+describe "SpringAuthTagger (class-level annotations)" do
+  before_each do
+    CodeLocator.instance.clear_all
+  end
+
+  #  1 package com.example;
+  #  2 (blank)
+  #  3 @RestController
+  #  4 @RequestMapping("/admin")
+  #  5 @PreAuthorize("hasRole('ADMIN')")
+  #  6 public class AdminController {
+  #  7 (blank)
+  #  8     @GetMapping("/users")
+  #  9     public String listUsers() {
+  # 10         return "users";
+  # 11     }
+  # 12 }
+  guarded = <<-JAVA
+    package com.example;
+
+    @RestController
+    @RequestMapping("/admin")
+    @PreAuthorize("hasRole('ADMIN')")
+    public class AdminController {
+
+        @GetMapping("/users")
+        public String listUsers() {
+            return "users";
+        }
+    }
+    JAVA
+
+  it "detects a class-level @PreAuthorize" do
+    endpoint = run_spring_class_level(guarded, 9)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("@PreAuthorize") }.should be_true
+  end
+
+  it "detects a class-level @Secured" do
+    endpoint = run_spring_class_level(guarded.gsub("@PreAuthorize(\"hasRole('ADMIN')\")", "@Secured(\"ROLE_ADMIN\")"), 9)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("@Secured") }.should be_true
+  end
+
+  it "detects a class-level @RolesAllowed" do
+    endpoint = run_spring_class_level(guarded.gsub("@PreAuthorize(\"hasRole('ADMIN')\")", "@RolesAllowed({\"ROLE_ADMIN\"})"), 9)
+    endpoint.tags.any? { |t| t.name == "auth" && t.description.includes?("@RolesAllowed") }.should be_true
+  end
+
+  it "detects a class-level annotation on a Kotlin controller" do
+    kotlin = <<-KT
+      package com.example
+
+      @RestController
+      @PreAuthorize("hasRole('ADMIN')")
+      class AdminController(private val service: Service) {
+
+          @GetMapping("/users")
+          fun listUsers(): String = "users"
+      }
+      KT
+    endpoint = run_spring_class_level(kotlin, 8, "kt")
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_true
+  end
+
+  it "does not tag a controller without a class-level annotation" do
+    # Same shape, annotation removed — proves the class-level check is not a
+    # blanket "any @PreAuthorize anywhere in the file" match.
+    open = <<-JAVA
+      package com.example;
+
+      @RestController
+      @RequestMapping("/admin")
+      public class AdminController {
+
+          @GetMapping("/users")
+          public String listUsers() {
+              return "users";
+          }
+      }
+      JAVA
+    endpoint = run_spring_class_level(open, 8)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_false
+  end
+
+  it "does not treat a method-level annotation as class-level" do
+    # `@PreAuthorize` guards only `secret()`; `listUsers()` above it is open.
+    mixed = <<-JAVA
+      package com.example;
+
+      @RestController
+      public class AdminController {
+
+          @GetMapping("/users")
+          public String listUsers() {
+              return "users";
+          }
+
+          @PreAuthorize("hasRole('ADMIN')")
+          @GetMapping("/secret")
+          public String secret() {
+              return "secret";
+          }
+      }
+      JAVA
+    endpoint = run_spring_class_level(mixed, 7)
+    endpoint.tags.any? { |t| t.name == "auth" }.should be_false
   end
 end

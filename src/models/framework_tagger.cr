@@ -9,7 +9,15 @@ struct SourceContext
   property line : Int32?
   property full_content : String
 
-  def initialize(@path : String, @line : Int32?, @full_content : String)
+  # The file as lines. Every consumer of `read_source_context` immediately
+  # splits `full_content` to walk backwards from the endpoint's line, and a
+  # controller declares many handlers — so splitting per endpoint re-did the
+  # same work once per endpoint per tagger. `read_source_context` passes the
+  # tagger's cached (shared, read-only) array instead.
+  getter lines : Array(String)
+
+  def initialize(@path : String, @line : Int32?, @full_content : String, lines : Array(String)? = nil)
+    @lines = lines || @full_content.split("\n")
   end
 end
 
@@ -76,7 +84,8 @@ class FrameworkTagger < Tagger
       results << SourceContext.new(
         path: path_info.path,
         line: path_info.line,
-        full_content: content
+        full_content: content,
+        lines: read_file_lines(path_info.path)
       )
     end
 
@@ -123,6 +132,46 @@ class FrameworkTagger < Tagger
     lines = content.split("\n")
     @lines_cache[path] = lines
     lines
+  end
+
+  # Find an annotation (`@PreAuthorize`, `@CrossOrigin`, `@Validated`, …) that
+  # decorates the *class* declaration: it must be immediately followed —
+  # skipping other annotations and blank lines — by a `class` line. Returns the
+  # annotation line text.
+  #
+  # Shared by the JVM taggers: a class-level annotation applies to every
+  # handler the class declares, and the per-endpoint backward walks stop at the
+  # `public`/`class` boundary, so they can never see it on their own.
+  #
+  # The answer is a property of the file, not of the endpoint, but every
+  # endpoint in a controller asks it — so memoize per (file, annotation) rather
+  # than re-scanning the controller once per handler per annotation.
+  @class_annotation_cache = Hash(Tuple(String, String), String?).new
+
+  def class_level_annotation(path : String, lines : Array(String), annotation_name : String) : String?
+    key = {path, annotation_name}
+    if @class_annotation_cache.has_key?(key)
+      return @class_annotation_cache[key]
+    end
+    @class_annotation_cache[key] = scan_class_level_annotation(lines, annotation_name)
+  end
+
+  private def scan_class_level_annotation(lines : Array(String), annotation_name : String) : String?
+    lines.each_with_index do |raw, i|
+      stripped = raw.strip
+      next unless stripped.starts_with?(annotation_name)
+      j = i + 1
+      while j < lines.size
+        nxt = lines[j].strip
+        if nxt.empty? || nxt.starts_with?("@")
+          j += 1
+          next
+        end
+        return stripped if nxt.includes?("class ")
+        break
+      end
+    end
+    nil
   end
 
   # Static-asset file extensions. A route ending in one of these serves a

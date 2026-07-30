@@ -8,6 +8,10 @@ class SpringAuthTagger < FrameworkTagger
     /\@RolesAllowed\s*\(/,
   ]
 
+  # The same authorization annotations, as the bare names they are matched by
+  # when they decorate the controller *class* instead of a single handler.
+  CLASS_ANNOTATION_NAMES = ["@PreAuthorize", "@Secured", "@RolesAllowed"]
+
   # Patterns for security config URL rules. `access { ... }` is a
   # protected rule too; `permitAll()` is intentionally tracked so a
   # more-specific public matcher can suppress a broader protected one.
@@ -162,12 +166,20 @@ class SpringAuthTagger < FrameworkTagger
     value.starts_with?("/") ? value : "/#{value}"
   end
 
-  private def ant_pattern_regex(pattern : String) : Regex
-    escaped = Regex.escape(pattern)
-      .gsub("\\*\\*", ".*")
-      .gsub("\\*", "[^/]*")
+  # Every endpoint is matched against every recorded security rule, so this is
+  # called O(endpoints x rules) times over a small set of distinct patterns.
+  # Memoize (as `spring_security` already does) so the same PCRE2 pattern isn't
+  # recompiled thousands of times.
+  @ant_pattern_regexes = Hash(String, Regex).new
 
-    /^#{escaped}\/?$/
+  private def ant_pattern_regex(pattern : String) : Regex
+    @ant_pattern_regexes[pattern] ||= begin
+      escaped = Regex.escape(pattern)
+        .gsub("\\*\\*", ".*")
+        .gsub("\\*", "[^/]*")
+
+      /^#{escaped}\/?$/
+    end
   end
 
   private def pattern_specificity(pattern : String) : Int32
@@ -184,7 +196,7 @@ class SpringAuthTagger < FrameworkTagger
 
     # Walk backwards from endpoint line to find annotations
     # `line` is 1-indexed (from PathInfo), array is 0-indexed
-    lines = ctx.full_content.split("\n")
+    lines = ctx.lines
     endpoint_idx = line - 1
 
     idx = [endpoint_idx - 1, lines.size - 1].min
@@ -207,6 +219,17 @@ class SpringAuthTagger < FrameworkTagger
       end
 
       idx -= 1
+    end
+
+    # A controller-level `@PreAuthorize`/`@Secured`/`@RolesAllowed` applies to
+    # every handler the class declares. The walk above cannot reach it — it
+    # stops at the `public`/`class` boundary by design, so a handler under an
+    # `@PreAuthorize("hasRole('ADMIN')")` controller was reported as
+    # unauthenticated. Check the class declaration separately.
+    CLASS_ANNOTATION_NAMES.each do |annotation_name|
+      if class_line = class_level_annotation(ctx.path, lines, annotation_name)
+        return "Protected by Spring #{class_line.split("(").first.strip} on the controller class"
+      end
     end
 
     nil
