@@ -59,6 +59,31 @@ describe "content cache" do
     end
   end
 
+  it "saturates instead of overflowing on an absurd NOIR_CONTENT_CACHE_MAX_MB" do
+    # Crystal checks integer arithmetic, so scaling the megabyte figure to
+    # bytes *raised* rather than wrapping — the whole scan aborted with an
+    # unhandled OverflowError stack trace before the first file was read.
+    ENV["NOIR_CONTENT_CACHE_MAX_MB"] = "99999999999999"
+    begin
+      locator = CodeLocator.new
+      locator.content_cache_stats[:budget].should eq(Int64::MAX)
+      # A budget that large means "cache everything", so caching still works.
+      locator.register_file("/tmp/noir-cache-spec-overflow.py", "content")
+      locator.content_for("/tmp/noir-cache-spec-overflow.py").should eq("content")
+    ensure
+      ENV.delete("NOIR_CONTENT_CACHE_MAX_MB")
+    end
+  end
+
+  it "still scales an ordinary NOIR_CONTENT_CACHE_MAX_MB to bytes" do
+    ENV["NOIR_CONTENT_CACHE_MAX_MB"] = "8"
+    begin
+      CodeLocator.new.content_cache_stats[:budget].should eq(8_i64 * 1024 * 1024)
+    ensure
+      ENV.delete("NOIR_CONTENT_CACHE_MAX_MB")
+    end
+  end
+
   it "honours NOIR_CONTENT_CACHE_DISABLE" do
     ENV["NOIR_CONTENT_CACHE_DISABLE"] = "true"
     begin
