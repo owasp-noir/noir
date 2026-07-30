@@ -53,7 +53,18 @@ module Analyzer::Php
 
     VERB_CALL_RECEIVER_RE = /\$(\w+)->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i
 
+    # Mezzio registers its programmatic routes on `$app->get('/x', Handler::class)`
+    # — the same expression Slim uses — so Slim read Mezzio's route table as
+    # its own. `Mezzio\` is the one unambiguous marker: a Mezzio application
+    # names it, and Slim never does.
+    #
+    # `Laminas\` deliberately isn't on this list. Slim apps pull in
+    # `Laminas\Diactoros` for PSR-7 all the time, so excluding on it would
+    # drop their routes.
+    MEZZIO_MARKER_RE = /Mezzio\\/
+
     private def slim_relevant?(content : String) : Bool
+      return false if content.matches?(MEZZIO_MARKER_RE) && !content.matches?(RELEVANCE_MARKER_RE)
       return true if content.matches?(RELEVANCE_MARKER_RE)
       # Verb/map/group registrations are always `$var->method(`. Skip the
       # heavier verb regex when no `->` call shape is present.
