@@ -645,25 +645,30 @@ module LLM
     end
     safe_limit = (max_tokens * safety_margin).to_i
     bundles = [] of Tuple(String, Int32)
-    current_bundle = ""
-    current_tokens = estimate_tokens(SYSTEM_BUNDLE)
+    base_tokens = estimate_tokens(SYSTEM_BUNDLE)
+    # Accumulate sections and join once per bundle. The previous
+    # `current_bundle += file_section` reallocated and recopied the whole
+    # bundle for every file, which on a large-context provider (one bundle
+    # can hold hundreds of files) is quadratic in the bundle's size.
+    sections = [] of String
+    current_tokens = base_tokens
 
     files.each do |file_path, content|
       file_section = "- File: \"#{file_path}\"\n```\n#{content}\n```\n"
       file_tokens = estimate_tokens(file_section)
 
-      if current_tokens + file_tokens > safe_limit && !current_bundle.empty?
-        bundles << {current_bundle, current_tokens}
-        current_bundle = ""
-        current_tokens = estimate_tokens(SYSTEM_BUNDLE)
+      if current_tokens + file_tokens > safe_limit && !sections.empty?
+        bundles << {sections.join, current_tokens}
+        sections.clear
+        current_tokens = base_tokens
       end
 
-      current_bundle += file_section
+      sections << file_section
       current_tokens += file_tokens
     end
 
-    if !current_bundle.empty?
-      bundles << {current_bundle, current_tokens}
+    unless sections.empty?
+      bundles << {sections.join, current_tokens}
     end
 
     bundles

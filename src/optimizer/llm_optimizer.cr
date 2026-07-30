@@ -1,5 +1,6 @@
 require "./optimizer"
 require "../llm/adapter"
+require "../llm/cache"
 require "../llm/prompt"
 require "../llm/prompt_overrides"
 
@@ -8,6 +9,8 @@ require "../llm/prompt_overrides"
 class LLMEndpointOptimizer < EndpointOptimizer
   @use_llm : Bool = false
   @adapter : LLM::Adapter? = nil
+  @provider : String = ""
+  @model : String = ""
 
   def initialize(@logger : NoirLogger, @options : Hash(String, YAML::Any))
     super(@logger, @options)
@@ -20,8 +23,17 @@ class LLMEndpointOptimizer < EndpointOptimizer
     optimized = super(endpoints)
 
     # Then apply LLM optimization if enabled
-    if @use_llm && @adapter
-      optimized = llm_optimize_endpoints(optimized)
+    if @use_llm && (adapter = @adapter)
+      begin
+        optimized = llm_optimize_endpoints(optimized)
+      ensure
+        # An ACP provider backs the adapter with a spawned agent process;
+        # without this it outlives the scan (nothing else holds a reference
+        # to close it) and noir exits leaving the agent running.
+        adapter.close
+        @adapter = nil
+        @use_llm = false
+      end
     end
 
     optimized
@@ -87,8 +99,7 @@ class LLMEndpointOptimizer < EndpointOptimizer
     prompt = create_optimization_prompt(endpoint)
 
     begin
-      response = adapter.request(prompt, LLM_OPTIMIZE_FORMAT)
-      response_str = response.to_s
+      response_str = request_optimization(prompt, adapter)
       @logger.debug_sub "LLM optimization response for #{endpoint.method} #{endpoint.url}:"
       @logger.debug_sub response_str
 
@@ -98,6 +109,23 @@ class LLMEndpointOptimizer < EndpointOptimizer
       @logger.debug "LLM optimization failed for endpoint #{endpoint.method} #{endpoint.url}: #{ex.message}"
       endpoint
     end
+  end
+
+  # One request per non-standard endpoint adds up fast: a repeat scan of
+  # the same project used to re-pay for every one of them, because this
+  # path never touched the disk cache the AI analyzer has used all along.
+  # Same key scheme, so `noir cache clear`/`purge` govern both.
+  private def request_optimization(prompt : String, adapter : LLM::Adapter) : String
+    key = LLM::Cache.key(@provider, @model, "LLM_OPTIMIZE", LLM_OPTIMIZE_FORMAT, prompt)
+    if cached = LLM::Cache.fetch(key)
+      return cached
+    end
+
+    response = adapter.request(prompt, LLM_OPTIMIZE_FORMAT).to_s
+    # An empty response means the request failed; caching it would replay
+    # the failure on every later scan until the cache was cleared by hand.
+    LLM::Cache.store(key, response) unless response.empty?
+    response
   end
 
   # Create LLM prompt for endpoint optimization
@@ -188,11 +216,17 @@ class LLMEndpointOptimizer < EndpointOptimizer
               else
                 raw_model
               end
-      api_key = @options["ai_key"]?.try(&.to_s)
+      # `ai_key` defaults to "" in the config, and an empty string is not a
+      # missing key: passed through verbatim it used to suppress the
+      # documented NOIR_AI_KEY fallback, so every optimization request
+      # 401'd for users who authenticate through the env var.
+      api_key = @options["ai_key"]?.try(&.to_s.presence)
     end
 
     if !provider.empty? && (!model.empty? || LLM::ACPClient.acp_provider?(provider))
       @use_llm = true
+      @provider = provider
+      @model = model
       @adapter = LLM::AdapterFactory.for(provider, model, api_key)
       @logger.debug_sub "LLM optimization enabled with #{provider}: #{model}"
     else

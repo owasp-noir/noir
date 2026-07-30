@@ -33,6 +33,12 @@ sort_by = "weight"
 - For custom endpoints, use the full URL: `--ai-provider=http://your-server:port`
 - Enable debug logs with `NOIR_ACP_RAW_LOG=1` for ACP providers
 
+**Symptom:** The AI analysis stalls, or gives up while the model is still working.
+
+- Requests fail after `NOIR_AI_CONNECT_TIMEOUT` (default 10s) if the host is unreachable, and after `NOIR_AI_TIMEOUT` (default 300s) if the provider accepts the request but never answers
+- Raise `NOIR_AI_TIMEOUT` when a slow local model legitimately needs longer to generate; lower `--ai-max-token` to send smaller bundles instead
+- Rate limits (HTTP 429) are retried three times with backoff — if warnings persist, reduce `--concurrency`
+
 ## Docker Permission Issues
 
 **Symptom:** Permission denied errors when running via Docker.

@@ -33,6 +33,12 @@ sort_by = "weight"
 - 사용자 정의 엔드포인트의 경우 전체 URL을 사용하세요: `--ai-provider=http://your-server:port`
 - ACP 제공업체의 경우 `NOIR_ACP_RAW_LOG=1`로 디버그 로그를 활성화하세요
 
+**증상:** AI 분석이 멈춰 있거나, 모델이 아직 생성 중인데 중단됩니다.
+
+- 호스트에 연결할 수 없으면 `NOIR_AI_CONNECT_TIMEOUT`(기본 10초) 후에, 요청은 받았지만 응답이 오지 않으면 `NOIR_AI_TIMEOUT`(기본 300초) 후에 실패합니다
+- 느린 로컬 모델이 실제로 더 오래 걸린다면 `NOIR_AI_TIMEOUT`을 늘리고, 대신 번들을 작게 보내려면 `--ai-max-token`을 낮추세요
+- 요청 한도 초과(HTTP 429)는 백오프를 두고 3회 재시도합니다. 경고가 계속되면 `--concurrency`를 낮추세요
+
 ## Docker 권한 문제
 
 **증상:** Docker로 실행 시 권한 거부 오류가 발생합니다.

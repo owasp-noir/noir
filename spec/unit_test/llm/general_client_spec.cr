@@ -14,6 +14,32 @@ class LLM::General
   def __test_api : String
     @api
   end
+
+  def __test_api_key : String?
+    @api_key
+  end
+
+  def __test_headers : HTTP::Headers
+    request_headers
+  end
+end
+
+private def with_ai_key_env(value : String?, &)
+  prev = ENV["NOIR_AI_KEY"]?
+  if value
+    ENV["NOIR_AI_KEY"] = value
+  else
+    ENV.delete("NOIR_AI_KEY")
+  end
+  begin
+    yield
+  ensure
+    if prev
+      ENV["NOIR_AI_KEY"] = prev
+    else
+      ENV.delete("NOIR_AI_KEY")
+    end
+  end
 end
 
 private def build_tool_response(action : String, arguments_raw : String) : JSON::Any
@@ -143,6 +169,36 @@ describe LLM::General do
     it "resolves prefix 'ollama' to full endpoint URL" do
       client = LLM::General.new("ollama", "test-model", nil)
       client.__test_api.should eq("http://localhost:11434/v1/chat/completions")
+    end
+  end
+
+  describe "API key resolution" do
+    it "sends a bearer token when a key is configured" do
+      client = LLM::General.new("openai", "test-model", "sk-test")
+      client.__test_headers["Authorization"].should eq("Bearer sk-test")
+    end
+
+    it "omits Authorization entirely for keyless local providers" do
+      # `Authorization: Bearer ` is worse than no header: a keyless
+      # provider rejects it instead of serving the request anonymously.
+      with_ai_key_env(nil) do
+        client = LLM::General.new("ollama", "test-model", "")
+        client.__test_api_key.should be_nil
+        client.__test_headers["Authorization"]?.should be_nil
+      end
+    end
+
+    it "falls back to NOIR_AI_KEY when the configured key is empty" do
+      with_ai_key_env("env-key") do
+        LLM::General.new("openai", "test-model", "").__test_api_key.should eq("env-key")
+        LLM::General.new("openai", "test-model", nil).__test_api_key.should eq("env-key")
+      end
+    end
+
+    it "prefers an explicit key over the environment" do
+      with_ai_key_env("env-key") do
+        LLM::General.new("openai", "test-model", "sk-explicit").__test_api_key.should eq("sk-explicit")
+      end
     end
   end
 end

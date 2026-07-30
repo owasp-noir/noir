@@ -2,12 +2,96 @@ require "../../spec_helper"
 require "../../../src/optimizer/llm_optimizer"
 require "../../../src/models/endpoint"
 require "../../../src/models/logger"
+require "file_utils"
 
 # Expose the private LLM-response application path so the FP/FN guards
 # on the correction step can be tested without a live adapter.
 class LLMEndpointOptimizer
   def __test_apply(endpoint : Endpoint, response : String) : Endpoint
     apply_llm_optimizations(endpoint, response)
+  end
+
+  def __test_adapter : LLM::Adapter?
+    @adapter
+  end
+
+  def __test_install_adapter(adapter : LLM::Adapter, provider : String, model : String) : Nil
+    @adapter = adapter
+    @provider = provider
+    @model = model
+    @use_llm = true
+  end
+
+  def __test_request(prompt : String) : String
+    request_optimization(prompt, @adapter.as(LLM::Adapter))
+  end
+end
+
+class LLM::General
+  def __test_api_key : String?
+    @api_key
+  end
+end
+
+# Counts requests so cache hits are observable without a live provider.
+class CountingAdapter
+  include LLM::Adapter
+
+  getter calls : Int32 = 0
+
+  def initialize(@payload : String)
+  end
+
+  def request(prompt : String, format : String = "json") : String
+    @calls += 1
+    @payload
+  end
+
+  def request_messages(messages : LLM::Adapter::Messages, format : String = "json") : String
+    request("", format)
+  end
+end
+
+private def with_isolated_cache_dir(&)
+  prev_home = ENV["NOIR_HOME"]?
+  prev_disable = ENV["NOIR_CACHE_DISABLE"]?
+  tmp = File.tempname("noir-llm-optimizer-spec")
+  Dir.mkdir_p(tmp)
+  ENV["NOIR_HOME"] = tmp
+  ENV.delete("NOIR_CACHE_DISABLE")
+  begin
+    LLM::Cache.enable
+    yield
+  ensure
+    if prev_home
+      ENV["NOIR_HOME"] = prev_home
+    else
+      ENV.delete("NOIR_HOME")
+    end
+    if prev_disable
+      ENV["NOIR_CACHE_DISABLE"] = prev_disable
+    else
+      ENV.delete("NOIR_CACHE_DISABLE")
+    end
+    FileUtils.rm_rf(tmp)
+  end
+end
+
+private def with_ai_key_env(value : String?, &)
+  prev = ENV["NOIR_AI_KEY"]?
+  if value
+    ENV["NOIR_AI_KEY"] = value
+  else
+    ENV.delete("NOIR_AI_KEY")
+  end
+  begin
+    yield
+  ensure
+    if prev
+      ENV["NOIR_AI_KEY"] = prev
+    else
+      ENV.delete("NOIR_AI_KEY")
+    end
   end
 end
 
@@ -129,6 +213,67 @@ describe "LLMEndpointOptimizer" do
 
       result = optimizer.__test_apply(endpoint, response)
       result.url.should eq("/users/{id}")
+    end
+  end
+
+  describe "adapter configuration" do
+    it "treats an empty ai_key as absent so NOIR_AI_KEY still applies" do
+      llm_options = create_test_options
+      llm_options["ai_provider"] = YAML::Any.new("openai")
+      llm_options["ai_model"] = YAML::Any.new("gpt-4o-mini")
+      llm_options["ai_key"] = YAML::Any.new("")
+
+      with_ai_key_env("env-key") do
+        optimizer = LLMEndpointOptimizer.new(logger, llm_options)
+        adapter = optimizer.__test_adapter.as(LLM::GeneralAdapter)
+        adapter.client.__test_api_key.should eq("env-key")
+      end
+    end
+
+    it "stays disabled without an AI provider" do
+      LLMEndpointOptimizer.new(logger, create_test_options).__test_adapter.should be_nil
+    end
+  end
+
+  describe "response caching" do
+    it "reuses a cached correction instead of re-billing the provider" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        adapter = CountingAdapter.new(%({"optimized_url":"/users/{id}","optimized_params":[]}))
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+
+        first = optimizer.__test_request("prompt A")
+        second = optimizer.__test_request("prompt A")
+
+        first.should eq(second)
+        adapter.calls.should eq(1)
+      end
+    end
+
+    it "keys on the prompt so different endpoints are not conflated" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        adapter = CountingAdapter.new(%({"optimized_url":"/users/{id}","optimized_params":[]}))
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A")
+        optimizer.__test_request("prompt B")
+
+        adapter.calls.should eq(2)
+      end
+    end
+
+    it "does not cache a failed request" do
+      with_isolated_cache_dir do
+        optimizer = LLMEndpointOptimizer.new(logger, create_test_options)
+        adapter = CountingAdapter.new("")
+        optimizer.__test_install_adapter(adapter, "openai", "gpt-4o-mini")
+
+        optimizer.__test_request("prompt A")
+        optimizer.__test_request("prompt A")
+
+        adapter.calls.should eq(2)
+      end
     end
   end
 
