@@ -65,6 +65,19 @@ class RubyAuthTagger < FrameworkTagger
     /skip_before_action\s+:require_login/,
   ]
 
+  # Cheap gate for `check_controller_auth`'s backward walk, which runs to the
+  # enclosing `class` — or, in a Sinatra/Grape/Roda file that has none, to line
+  # 0 — for *every* endpoint in the file. Mechanically the union of the three
+  # pattern sets it guards, so a line it rejects cannot match any of them; it
+  # replaces 13 regex evaluations per line with one.
+  CONTROLLER_AUTH_ANY = begin
+    sources = [] of Regex | String
+    SKIP_PATTERNS.each { |pattern| sources << pattern }
+    BEFORE_ACTION_PATTERNS.each { |pattern, _| sources << pattern }
+    HANAMI_AUTH_PATTERNS.each { |pattern, _| sources << pattern }
+    Regex.union(sources)
+  end
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @name = "ruby_auth"
@@ -135,7 +148,15 @@ class RubyAuthTagger < FrameworkTagger
     action_name = extract_action_name(lines, action_line)
 
     while idx >= 0
-      current = lines[idx].strip
+      current = lines[idx]
+
+      unless current.matches?(CONTROLLER_AUTH_ANY)
+        break if current.lstrip.starts_with?("class ")
+        idx -= 1
+        next
+      end
+
+      current = current.strip
 
       # Check for skip_before_action that applies to this action
       SKIP_PATTERNS.each do |pattern|
