@@ -265,7 +265,19 @@ struct PathInfo
     @line = nil
   end
 
-  def initialize(@path : String, @line : Int32?)
+  # Line numbers here are 1-based, so `0` is not a line — it is how a handful
+  # of analyzers spelled "this endpoint came from that file, but there is no
+  # line to point at" (HAR / mitmproxy captures have no source line at all;
+  # akka's nested route DSL had none to hand). `nil` is the representation the
+  # rest of the codebase already uses for that, and every consumer branches on
+  # it: the plain and HTML reports printed a meaningless `(line 0)`, and SARIF
+  # emitted `region.startLine: 0`, which the format forbids — startLine must
+  # be a positive integer, so the report failed validation.
+  #
+  # Normalized here rather than at the three call sites so a future analyzer
+  # can't reintroduce it.
+  def initialize(@path : String, line : Int32?)
+    @line = line && line > 0 ? line : nil
   end
 
   def ==(other : PathInfo) : Bool

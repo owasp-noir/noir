@@ -61,7 +61,7 @@ module Analyzer::Specification
 
           add_post_data_params(endpoint, entry.request)
 
-          details = Details.new(PathInfo.new(har_file, 0))
+          details = Details.new(PathInfo.new(har_file))
           details.status_code = entry.response.status
           endpoint.details = details
           endpoint.protocol = "ws" if is_websocket

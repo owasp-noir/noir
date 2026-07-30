@@ -220,3 +220,25 @@ describe AIContext do
     ctx.sinks.last.name.should eq "s#{AIContext::MAX_PER_SECTION - 1}"
   end
 end
+
+describe PathInfo do
+  it "keeps a real 1-based line" do
+    PathInfo.new("app.cr", 1).line.should eq(1)
+    PathInfo.new("app.cr", 42).line.should eq(42)
+  end
+
+  it "treats a non-positive line as no line at all" do
+    # Line numbers are 1-based, so 0 means "no line to point at" — the same
+    # thing `nil` already means. Leaving it as 0 printed `(line 0)` in the
+    # plain and HTML reports and emitted `region.startLine: 0` into SARIF,
+    # which the format forbids.
+    PathInfo.new("capture.har", 0).line.should be_nil
+    PathInfo.new("capture.har", -1).line.should be_nil
+    PathInfo.new("capture.har", nil).line.should be_nil
+    PathInfo.new("capture.har").line.should be_nil
+  end
+
+  it "does not serialize an absent line" do
+    JSON.parse(PathInfo.new("capture.har", 0).to_json).as_h.has_key?("line").should be_false
+  end
+end
