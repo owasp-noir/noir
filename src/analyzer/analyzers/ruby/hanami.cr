@@ -30,7 +30,7 @@ module Analyzer::Ruby
       framework_roots.each do |framework_root|
         path = "#{framework_root}/config/routes.rb"
         next unless File.exists?(path)
-        next if rails_router?(path)
+        next if rails_router_file?(path)
 
         parse_routes_file(path, framework_root, include_callee)
       end
@@ -48,13 +48,6 @@ module Analyzer::Ruby
     # with no `Hanami::` reference anywhere in it, so requiring a positive
     # marker would drop real routes. `Rails.application.routes.draw` is never
     # Hanami.
-    RAILS_ROUTER_RE = /\.routes\.draw\b|ActionDispatch::Routing/
-
-    private def rails_router?(path : String) : Bool
-      read_file_content(path).matches?(RAILS_ROUTER_RE)
-    rescue
-      false
-    end
 
     private def parse_routes_file(path : String, framework_root : String, include_callee : Bool)
       stack = [] of RouteFrame

@@ -5,6 +5,14 @@ module Analyzer::Crystal
   class Marten < CrystalEngine
     analyzer_for "crystal_marten"
 
+    # Only files inside a project whose `shard.yml` depends on `marten`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["marten"]
+    end
+
     alias HandlerActionKey = Tuple(String, String, String)
     @handler_callees = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 

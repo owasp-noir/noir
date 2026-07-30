@@ -5,6 +5,14 @@ module Analyzer::Crystal
   class Kemal < CrystalEngine
     analyzer_for "crystal_kemal"
 
+    # Only files inside a project whose `shard.yml` depends on `kemal`.
+    # See `CrystalEngine#shard_dependencies` — `get "/path"` is the same
+    # line in Kemal, Grip and Amber, so the manifest is what tells the
+    # frameworks apart.
+    protected def shard_dependencies : Array(String)
+      ["kemal"]
+    end
+
     NAMESPACE_PATTERN = /^(\s*)(?:(\w+)\.)?namespace\s+["'](.+?)["']/
     MOUNT_PATTERN     = /^\s*mount\s+["'](.+?)["']\s*,\s*(\w+)/
     ROUTER_PATTERN    = /^\s*(\w+)\s*=\s*Kemal::Router\.new/

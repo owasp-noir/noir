@@ -10,7 +10,15 @@ module Analyzer::Ruby
       parallel_file_scan do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
         next if ruby_non_production_path?(path)
-        lines = read_file_content(path).each_line.to_a
+        content = read_file_content(path)
+        # `get "/books", to: "books.index"` inside a Rails or Hanami route
+        # table is the same line as a Sinatra route to a line-based matcher.
+        # Sinatra has no `config/routes.rb` convention of its own, so a file
+        # that is unmistakably one of theirs is never also a Sinatra app —
+        # pre-fix this read Rails' and Hanami's route tables as Sinatra
+        # routes, interpolations and all (`GET /#{ENV.fetch(`).
+        next if rails_router_source?(content) || hanami_router_source?(content)
+        lines = content.each_line.to_a
         active_route_endpoints = [] of Endpoint
         active_route_depth = nil.as(Int32?)
         prefix_stack = [] of NamedTuple(depth: Int32, path: String)

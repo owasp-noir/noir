@@ -12,6 +12,56 @@ module Analyzer::Crystal
 
     abstract def analyze_file(path : String) : Array(Endpoint)
 
+    # The shard that identifies this analyzer's framework. An analyzer that
+    # declares one is only shown files inside a project whose `shard.yml`
+    # depends on it. Without that, every Crystal analyzer sees every `.cr`
+    # file in the scan — and `get "/path"` is the same line in Kemal, Grip
+    # and Amber, so in a repo holding two of them each read the other's
+    # routes. Default is empty, meaning no gate.
+    protected def shard_dependencies : Array(String)
+      [] of String
+    end
+
+    # Directories holding a `shard.yml` that depends on one of
+    # `shard_dependencies`. Empty when the analyzer declares none, and also
+    # empty when the scan has no matching manifest at all — in which case
+    # `path_under_shard_roots?` waves everything through, so a source tree
+    # checked out without its manifest keeps working exactly as before.
+    private def shard_roots : Array(String)
+      dependencies = shard_dependencies
+      return [] of String if dependencies.empty?
+
+      patterns = dependencies.map { |name| shard_dependency_re(name) }
+      roots = [] of String
+      all_files.each do |file|
+        next unless File.basename(file) == "shard.yml"
+        begin
+          content = read_file_content(file)
+        rescue
+          next
+        end
+        next unless patterns.any? { |pattern| content.matches?(pattern) }
+        root = Noir::PathScope.normalize_root(File.dirname(file))
+        roots << root unless roots.includes?(root)
+      end
+      roots
+    end
+
+    # A shard entry is a two-space-indented mapping key under `dependencies:`
+    # / `development_dependencies:`. Anchoring on the key keeps `kemal` from
+    # matching a `kemal_json_serializer` line, and keeps the shard's own
+    # `name: kemal` out of it.
+    private def shard_dependency_re(name : String) : Regex
+      Regex.new("^\\s{2}#{Regex.escape(name)}\\s*:\\s*$", Regex::Options::MULTILINE)
+    end
+
+    private def path_under_shard_roots?(path : String, roots : Array(String)) : Bool
+      return true if roots.empty?
+
+      expanded = File.expand_path(path)
+      roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
+    end
+
     # `.cr` sources from the extension index, plus `lib/` exclusion
     # (shards puts dependencies under `lib/` and we don't want to
     # analyze them). Subclasses that need a custom scan shape can
@@ -20,8 +70,10 @@ module Analyzer::Crystal
     # files — no per-path `File.exists?` / `File.directory?`.
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
+        roots = shard_roots
         parallel_analyze(get_files_by_extension(".cr")) do |path|
           next if crystal_dependency_path?(path)
+          next unless path_under_shard_roots?(path, roots)
           # Crystal's standard test directory is `spec/`, and test
           # files always end in `_spec.cr`. Crystal framework repos
           # (lucky, marten, amber, kemal) park hundreds of route
