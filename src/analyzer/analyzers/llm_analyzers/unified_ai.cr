@@ -28,6 +28,10 @@ module Analyzer::AI
     VALID_PARAM_TYPES                  = ["query", "json", "form", "header", "cookie", "path"]
     MAX_ENDPOINT_URL_LENGTH            = 2048
     MAX_PARAM_NAME_LENGTH              =  128
+    # Ceiling on simultaneous bundle requests, independent of a high
+    # `--concurrency`: past a handful of in-flight calls a metered provider
+    # answers with 429s rather than faster.
+    MAX_BUNDLE_WORKERS = 4
     # Bare URL tokens the LLM emits when it has nothing real to report
     # (schema echoes, "no endpoint" stand-ins). Compared case-folded
     # against the whole path with a single leading slash stripped, so a
@@ -154,18 +158,55 @@ module Analyzer::AI
     end
 
     private def process_bundles_concurrently(bundles : Array(Tuple(String, Int32)), adapter : LLM::Adapter)
-      channel = Channel(Tuple(String, Int32)).new
+      total = bundles.size
+      worker_count = bundle_worker_count(total)
+      logger.debug_sub "AI::Processing #{total} bundle(s) with #{worker_count} worker(s)"
 
-      bundles.each_with_index do |bundle, index|
-        spawn do
-          bundle_content, token_count = bundle
-          logger.info "Processing bundle #{index + 1}/#{bundles.size} (#{token_count} tokens)"
-          process_bundle(bundle_content, adapter)
-          channel.send({bundle_content, token_count})
+      queue = Channel(Tuple(Int32, String, Int32)).new(DEFAULT_CHANNEL_CAPACITY)
+
+      WaitGroup.wait do |wg|
+        wg.spawn do
+          bundles.each_with_index do |bundle, index|
+            content, token_count = bundle
+            queue.send({index, content, token_count})
+          end
+          queue.close
+        end
+
+        worker_count.times do
+          wg.spawn do
+            loop do
+              item = queue.receive?
+              break if item.nil?
+              index, content, token_count = item
+              logger.info "Processing bundle #{index + 1}/#{total} (#{token_count} tokens)"
+              begin
+                process_bundle(content, adapter)
+              rescue ex : Exception
+                logger.debug "Error processing bundle #{index + 1}: #{ex.message}"
+              end
+            end
+          end
         end
       end
+    end
 
-      bundles.size.times { channel.receive }
+    # A bundle is a remote LLM call, not a local file read. Spawning one
+    # fiber per bundle — the previous behaviour — opened as many
+    # simultaneous provider requests as there were bundles: a few hundred
+    # on a large repo, which trips rate limits so the retried-and-still-429
+    # bundles come back empty and their endpoints silently vanish. Reuse
+    # `--concurrency` (the bound the delivery and file analyzers already
+    # respect), capped lower because these calls are metered.
+    private def bundle_worker_count(total : Int32) : Int32
+      # An ACP agent is a single session that serializes prompts anyway
+      # (see LLM::ACPClient#request); extra workers would only queue.
+      return 1 if LLM::ACPClient.acp_provider?(@provider)
+
+      limit = @options["concurrency"]?.try(&.to_s.to_i?) || 1
+      limit = 1 if limit < 1
+      limit = MAX_BUNDLE_WORKERS if limit > MAX_BUNDLE_WORKERS
+      total < limit ? total : limit
     end
 
     private def process_bundle(bundle_content : String, adapter : LLM::Adapter)

@@ -15,6 +15,7 @@ module LLM
     @session : ACP::Session?
     @agent_stderr : IO?
     @session_lock : Mutex
+    @request_lock : Mutex
     @response_lock : Mutex
     @response_buffer : String
 
@@ -43,6 +44,7 @@ module LLM
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
       @command, @args = self.class.resolve_command(provider)
       @session_lock = Mutex.new
+      @request_lock = Mutex.new
       @response_lock = Mutex.new
       @response_buffer = ""
       self.class.mute_acp_logs
@@ -94,11 +96,21 @@ module LLM
     end
 
     def request(prompt : String, format : String = "json") : String
-      session = ensure_session
-      clear_response_buffer
-      final_prompt = append_format_instruction(prompt, format)
-      session.prompt(final_prompt)
-      clean_response(read_response_buffer)
+      # One session, one response buffer. Two fibers prompting at once —
+      # which is exactly what the bundle analyzer does when it fans out —
+      # interleaved their streamed chunks into that single buffer, and each
+      # read back a blend of both answers: unparseable at best, endpoints
+      # attributed to the wrong bundle at worst. Serialize the whole
+      # clear -> prompt -> read window. `session.prompt` blocks until the
+      # agent's turn ends anyway, so overlapping them never bought
+      # concurrency to begin with.
+      @request_lock.synchronize do
+        session = ensure_session
+        clear_response_buffer
+        final_prompt = append_format_instruction(prompt, format)
+        session.prompt(final_prompt)
+        clean_response(read_response_buffer)
+      end
     rescue Exception
       close
       ""
