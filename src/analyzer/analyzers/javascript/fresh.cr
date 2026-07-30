@@ -61,14 +61,56 @@ module Analyzer::Javascript
     VERB_KEY_SHORTHAND_RES  = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])(?:async\s+)?#{v}\s*\(/} }.to_h
     VERB_KEY_PROPERTY_RES   = HTTP_METHODS.map { |v| {v, /(^|[\{,\s])#{v}\s*:/} }.to_h
 
+    # Directories holding a Fresh project manifest. A bare `deno.json` is not
+    # enough — a plain Deno project has one too — so it only counts when it
+    # references `$fresh/`.
+    private def fresh_project_roots : Array(String)
+      roots = [] of String
+      all_files.each do |file|
+        base = File.basename(file)
+        marked =
+          if ROOT_CONFIG_BASENAMES.includes?(base)
+            true
+          elsif DENO_MANIFEST_BASENAMES.includes?(base)
+            begin
+              read_file_content(file).matches?(FRESH_IMPORT_MARKER)
+            rescue
+              false
+            end
+          else
+            false
+          end
+        next unless marked
+        root = Noir::PathScope.normalize_root(File.dirname(file))
+        roots << root unless roots.includes?(root)
+      end
+      roots
+    end
+
     # Files that are framework plumbing rather than routes.
     SKIPPED_LEAVES = ["_app", "_layout", "_404", "_500", "_middleware"]
+
+    # A Fresh project is anchored by `fresh.config.{ts,js}`, or by a Deno
+    # manifest that pulls in `$fresh/`. Same shape the detector already
+    # treats as authoritative.
+    ROOT_CONFIG_BASENAMES   = ["fresh.config.ts", "fresh.config.js", "fresh.config.mjs"]
+    DENO_MANIFEST_BASENAMES = ["deno.json", "deno.jsonc"]
+    FRESH_IMPORT_MARKER     = /\$fresh\//
 
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
+      # `routes/` on its own is not a Fresh signal — Remix keeps its route
+      # modules in `app/routes/`, and Koa/Express/Fastify projects routinely
+      # have one too. Treating every `*/routes/*` in the scan as a Fresh
+      # file-system route meant Remix's `users.$id.tsx` and `users._index.tsx`
+      # surfaced as Fresh endpoints named after the file. Scope to the Fresh
+      # project root the same way the SvelteKit and Nitro analyzers do; with
+      # no marker found `path_under_project_roots?` waves everything through.
+      project_roots = fresh_project_roots
 
       parallel_file_scan(EXTENSIONS) do |path|
+        next unless path_under_project_roots?(path, project_roots)
         idx = path.index("/routes/")
         next if idx.nil?
 

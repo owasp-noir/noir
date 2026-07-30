@@ -811,9 +811,51 @@ module Noir
 
     SIBLING_FRAMEWORK_MARKER = Regex.union(OTHER_FRAMEWORK_MARKERS.values.flatten)
 
+    # Constructors that build an HTTP *client*. `client.get('/todo', cb)` is
+    # the same call shape as a route registration, so a client module reads as
+    # a server to the shared extractor: the Express analyzer reported
+    # `GET /todo` and `DELETE /todo/example` out of a restify-clients module
+    # that only calls a remote API.
+    #
+    # The restify analyzer already refused these; the check belongs here so
+    # every framework sharing the extractor gets it. It is deliberately
+    # limited to client *constructors* rather than client package names —
+    # a genuine route file may well `require('axios')` to call downstream
+    # services, and gating on that would drop its routes.
+    HTTP_CLIENT_CONSTRUCTOR_MARKER = Regex.union(
+      "restify-clients", "createJSONClient(", "createStringClient(", "createHttpClient("
+    )
+
+    # A `@fastify/autoload` plugin module names no framework at all — it
+    # receives the instance as a parameter:
+    #
+    #     export default async function (fastify) {
+    #       fastify.get('/status', handler)
+    #     }
+    #
+    # so no import marker fires and the shared extractor happily reads those
+    # registrations for whichever framework asked. Express reported `/status`
+    # and `/go` out of the fastify autoload fixture, without the `autoPrefix`
+    # the Fastify analyzer applies. The receiver name is the only evidence in
+    # the file, and `fastify` is unambiguous — nothing else calls its app
+    # instance that. Consulted only when the file imports no HTTP server.
+    FASTIFY_RECEIVER_MARKER =
+      /\bfastify\s*\.\s*(?:get|post|put|patch|delete|head|options|all|route|register)\s*\(/
+
     def self.other_shared_extractor_framework?(content : String, framework : Symbol) : Bool
       return false if content_matches?(content, OWN_EXTRACTOR_MARKER[framework])
       return true if content_matches?(content, OTHER_EXTRACTOR_MARKER[framework])
+      if framework != :fastify && !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER) &&
+         content_matches?(content, FASTIFY_RECEIVER_MARKER)
+        return true
+      end
+      # Client constructors only disqualify a file that stands up no server of
+      # its own — a test that spins up an Express app and then calls it keeps
+      # its routes.
+      if content_matches?(content, HTTP_CLIENT_CONSTRUCTOR_MARKER) &&
+         !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER)
+        return true
+      end
 
       content_matches?(content, SIBLING_FRAMEWORK_MARKER)
     end
