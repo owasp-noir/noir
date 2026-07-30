@@ -183,6 +183,45 @@ describe SendReq do
     end
   end
 
+  it "matches an absolute-URL pattern instead of reading its scheme as a method" do
+    server = CapturingServer.new
+    begin
+      ep_keep = Endpoint.new(server.url_for("/public/info"), "GET")
+      ep_drop = Endpoint.new(server.url_for("/admin/users"), "GET")
+
+      options = base_deliver_options
+      # Every delivery target requires -u, so endpoint URLs are absolute and
+      # pasting one into --probe-skip is the natural thing to do. Splitting
+      # on the first ':' used to read this as method `HTTP` + url
+      # `//127.0.0.1:PORT/admin`, matching nothing at all.
+      options["probe_skip"] = YAML::Any.new([YAML::Any.new(server.url_for("/admin"))])
+      sender = SendReq.new(options)
+      sender.run([ep_keep, ep_drop])
+
+      paths = server.requests.map(&.[:path])
+      paths.should eq(["/public/info"])
+    ensure
+      server.close
+    end
+  end
+
+  it "still honours the METHOD:url pattern form" do
+    server = CapturingServer.new
+    begin
+      ep_get = Endpoint.new(server.url_for("/admin/users"), "GET")
+      ep_post = Endpoint.new(server.url_for("/admin/users"), "POST")
+
+      options = base_deliver_options
+      options["probe_match"] = YAML::Any.new([YAML::Any.new("POST:/admin")])
+      sender = SendReq.new(options)
+      sender.run([ep_get, ep_post])
+
+      server.requests.map(&.[:method]).should eq(["POST"])
+    ensure
+      server.close
+    end
+  end
+
   it "swallows network errors so one bad endpoint doesn't abort the batch" do
     server = CapturingServer.new
     begin

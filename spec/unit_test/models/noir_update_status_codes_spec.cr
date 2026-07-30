@@ -119,4 +119,28 @@ describe "NoirRunner#update_status_codes" do
 
     runner.last_request_method.should eq(:get)
   end
+
+  it "keeps non-HTTP endpoints without requesting them" do
+    # Mobile deep links, CLI command surfaces and realtime ws:// event
+    # surfaces can't be HTTP-requested at all — Crest raises "Unsupported
+    # scheme" on each. They must pass through untouched, the way SendReq /
+    # SendWithProxy already skip them.
+    runner = TestNoirRunner.new(options)
+
+    deep_link = Endpoint.new("myapp://accounts/profile", "GET")
+    deep_link.protocol = "mobile-scheme"
+    runner.endpoints << deep_link
+
+    cli = Endpoint.new("cli://noir/scan", "CLI")
+    cli.protocol = "cli"
+    runner.endpoints << cli
+
+    runner.endpoints << Endpoint.new("ws://room:lobby/new_msg", "SEND")
+
+    runner.update_status_codes
+
+    runner.endpoints.size.should eq(3)
+    runner.last_request_method.should be_nil
+    runner.endpoints.each(&.details.status_code.should(be_nil))
+  end
 end

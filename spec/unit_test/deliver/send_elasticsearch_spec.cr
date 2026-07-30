@@ -100,6 +100,28 @@ describe SendElasticSearch do
     end
   end
 
+  describe ".normalize_endpoint" do
+    it "defaults a portless http URL to 9200" do
+      SendElasticSearch.normalize_endpoint("http://localhost/noir/_doc").to_s
+        .should eq("http://localhost:9200/noir/_doc")
+    end
+
+    it "leaves a portless https URL on the scheme default" do
+      # Managed clusters (AWS OpenSearch Service, Elastic Cloud) and TLS
+      # reverse proxies listen on 443. Forcing 9200 here turned a working
+      # endpoint into an unreachable one.
+      SendElasticSearch.normalize_endpoint("https://search-x.us-east-1.es.amazonaws.com/noir/_doc").to_s
+        .should eq("https://search-x.us-east-1.es.amazonaws.com/noir/_doc")
+    end
+
+    it "keeps an explicit port on either scheme" do
+      SendElasticSearch.normalize_endpoint("http://localhost:9201/noir/_doc").to_s
+        .should eq("http://localhost:9201/noir/_doc")
+      SendElasticSearch.normalize_endpoint("https://my.cloud.es.io:9243/noir/_doc").to_s
+        .should eq("https://my.cloud.es.io:9243/noir/_doc")
+    end
+  end
+
   it "swallows network errors instead of bubbling out of run" do
     sender = SendElasticSearch.new(base_deliver_options)
     # Unreachable port → Crest raises; the rescue inside `run` must

@@ -3,11 +3,20 @@ require "../utils/http_symbols"
 require "../models/deliver"
 
 class SendElasticSearch < Deliver
-  def run(endpoints : Array(Endpoint), es_endpoint : String)
+  # `http://` with no port means the local/dev cluster shape, where 9200 is
+  # the useful default. `https://` does not: managed clusters (AWS
+  # OpenSearch Service, Elastic Cloud) and anything behind a TLS reverse
+  # proxy listen on 443, so forcing 9200 there rewrote a working endpoint
+  # into an unreachable one and the export failed with a connection error
+  # the user had no way to explain. An explicit port always wins.
+  def self.normalize_endpoint(es_endpoint : String) : URI
     uri = URI.parse es_endpoint
-    if uri.port.nil?
-      uri.port = 9200
-    end
+    uri.port = 9200 if uri.port.nil? && uri.scheme == "http"
+    uri
+  end
+
+  def run(endpoints : Array(Endpoint), es_endpoint : String)
+    uri = SendElasticSearch.normalize_endpoint(es_endpoint)
 
     applied_endpoints = apply_all(endpoints)
 
@@ -40,8 +49,10 @@ class SendElasticSearch < Deliver
     )
   rescue e
     # Surface the failure at warning level so an indexing outage isn't
-    # mistaken for a successful export.
-    @logger.warning "Elasticsearch delivery to #{uri} failed: #{e.message}"
+    # mistaken for a successful export. Reported against the URL the user
+    # passed: `URI.parse` itself can raise, and the local `uri` is then nil,
+    # which rendered the message as "delivery to  failed".
+    @logger.warning "Elasticsearch delivery to #{es_endpoint} failed: #{e.message}"
     @logger.debug_sub e
   end
 end
