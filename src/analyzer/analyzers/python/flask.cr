@@ -1024,6 +1024,16 @@ module Analyzer::Python
       python_base_path_for(file_path)
     end
 
+    # Decorator-based Python web frameworks whose route syntax is
+    # indistinguishable from Flask's at the line level — `@app.get("/x")`,
+    # `@api.post("/x")`. A file that imports one of these and never mentions
+    # flask belongs to that framework's analyzer. `ninja` (Django Ninja),
+    # `bottle` and `aiohttp` were missing from the list, so the Flask analyzer
+    # claimed their handler files and relabelled the routes `python_flask`
+    # with Flask-shaped (usually empty) params.
+    COMPETING_FRAMEWORK_IMPORT_RE =
+      /^\s*(?:from|import)\s+(?:fastapi|sanic|litestar|starlette|quart|robyn|ninja|bottle|aiohttp|falcon|pyramid|tornado)\b/m
+
     private def flask_relevant_source?(source : ::String) : Bool
       # Strip # comments (to EOL) before relevance heuristics. This prevents
       # explanatory comments (in fixtures, docs, or real code) that mention
@@ -1045,7 +1055,7 @@ module Analyzer::Python
       # params. The route's real owner still emits it correctly, so this
       # only drops the duplicate mislabel (jupyterhub examples/service-
       # fastapi was reported as python_flask).
-      return false if clean.matches?(/^\s*(?:from|import)\s+(?:fastapi|sanic|litestar|starlette|quart|robyn)\b/m)
+      return false if clean.matches?(COMPETING_FRAMEWORK_IMPORT_RE)
       return true if clean.matches?(ROUTE_DECORATOR_RE)
       return true if clean.matches?(ROUTE_REGISTRAR_RE)
 

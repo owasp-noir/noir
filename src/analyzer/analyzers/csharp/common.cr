@@ -25,6 +25,29 @@ module Analyzer::CSharp::Common
     base.ends_with?("Test.cs")
   end
 
+  # ASP.NET Core and classic ASP.NET MVC 5 spell a controller almost
+  # identically — `public class UserController : Controller` with `[HttpGet]`
+  # action attributes — and both analyzers are handed every `.cs` file in the
+  # scan. In a solution holding both (a migration in progress, the shape noir
+  # gets pointed at) each read the other's controllers: 35 phantom
+  # `cs_aspnet_core_mvc` endpoints out of the classic fixture, 6 the other way,
+  # several with the wrong route template applied on the way out.
+  #
+  # The namespaces are unmistakable and mutually exclusive — a type can only
+  # come from one of them — so each analyzer skips a file that names the
+  # other's. Nothing positive is required, so a helper file that names neither
+  # is still analyzed by both, exactly as before.
+  ASPNET_CORE_NAMESPACE_RE      = /\bMicrosoft\.AspNetCore\b/
+  ASPNET_FRAMEWORK_NAMESPACE_RE = /\bSystem\.Web\.(?:Mvc|Http|Routing)\b/
+
+  def self.aspnet_core_source?(content : String) : Bool
+    content.matches?(ASPNET_CORE_NAMESPACE_RE)
+  end
+
+  def self.aspnet_framework_source?(content : String) : Bool
+    content.matches?(ASPNET_FRAMEWORK_NAMESPACE_RE)
+  end
+
   # `IFormFile`/`IFormFileCollection`/`IFormCollection` are interfaces but
   # bind from the request body (file upload / form), not from DI — keep
   # them as request inputs even though they match the interface rule below.
