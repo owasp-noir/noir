@@ -8,10 +8,25 @@ module Analyzer::Javascript
       result = [] of Endpoint
       mutex = Mutex.new
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      # `routes/` on its own is not a Nitro signal — it is the conventional
+      # name for a router directory in Koa, Express, Fastify and most other JS
+      # frameworks. Treating every `*/routes/*.ts` in the scan as a Nitro
+      # file-system route meant that in any repo holding a second JS project,
+      # each of those files became seven phantom endpoints (one per HTTP verb,
+      # since a bare file names no method): 42 out of the Koa fixture alone,
+      # against 10 from the real Nitro one. Scope to the Nitro project root
+      # the same way the SvelteKit analyzer does; with no marker found,
+      # `path_under_project_roots?` waves everything through, so a Nitro
+      # project detected only by a `nitropack` import still resolves.
+      project_roots = discover_js_project_roots(
+        ["nitropack"],
+        ["nitro.config.js", "nitro.config.ts", "nitro.config.mjs", "nitro.config.cjs"]
+      )
 
       parallel_file_scan([".js", ".ts", ".mjs", ".mts"]) do |path|
         # Focus on routes/ directory for Nitro
         next unless path.includes?("/routes/")
+        next unless path_under_project_roots?(path, project_roots)
         analyze_nitro_file(path, result, mutex, include_callee)
       end
 
