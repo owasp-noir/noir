@@ -52,11 +52,21 @@ class CodeLocator
     @lock = Mutex.new
   end
 
+  # Megabyte figures at or above this overflow `Int64` once scaled to bytes.
+  # Crystal checks integer arithmetic, so the multiply below *raised* rather
+  # than wrapping: `NOIR_CONTENT_CACHE_MAX_MB=99999999999999` aborted the whole
+  # scan with an unhandled `OverflowError` stack trace before the first file
+  # was read. Saturate instead — a budget that large already means "cache
+  # everything", which is exactly what `Int64::MAX` gives.
+  MAX_CONTENT_CACHE_MB = Int64::MAX // (1024_i64 * 1024)
+
   private def resolve_content_cache_budget : Int64
     return 0_i64 if any_to_bool(ENV["NOIR_CONTENT_CACHE_DISABLE"]?)
     if raw = ENV["NOIR_CONTENT_CACHE_MAX_MB"]?
       parsed = raw.to_i64?
-      return parsed * 1024 * 1024 if parsed && parsed >= 0
+      if parsed && parsed >= 0
+        return parsed >= MAX_CONTENT_CACHE_MB ? Int64::MAX : parsed * 1024 * 1024
+      end
     end
     DEFAULT_CONTENT_CACHE_BUDGET
   end
