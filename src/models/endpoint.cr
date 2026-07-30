@@ -153,7 +153,7 @@ struct Endpoint
     end
 
     @params.each do |param|
-      type = param.param_type
+      type = param.request_type
       params_hash[type] = {} of String => String unless params_hash.has_key?(type)
       params_hash[type][param.name] = param.value
     end
@@ -197,6 +197,25 @@ struct Param
 
   def param_type=(value : String)
     @param_type = value
+  end
+
+  # Request-body param types that share the `json` bucket. Fourteen analyzers
+  # (NestJS, Next.js, Rocket, tRPC, Servant, Play, Scotty, Wisp, Cowboy, Elli,
+  # plumber, Nuxt, Nitro, …) spell a body field `body` rather than `json`, but
+  # every HTTP-shaped consumer dispatches on the six canonical types — the
+  # curl / httpie / PowerShell / mermaid builders take a request body from
+  # `json` + `form`, the OAS and Postman builders map anything else to a query
+  # parameter, and the probe deliverers post `json` or `form`. So `body`
+  # params were invisible in every HTTP-shaped output: 98 of them across the
+  # fixture tree, giving `curl -i -X 'POST' '/submit'` with no `--data-raw` at
+  # all and POST body fields emitted as `in: query` in the OpenAPI document.
+  BODY_TYPE_ALIASES = {"body" => "json"}
+
+  # The canonical bucket this param belongs to. Consumers dispatch on this
+  # rather than on `param_type`, which stays exactly what the analyzer
+  # recorded so the JSON/YAML inventory is unchanged.
+  def request_type : String
+    BODY_TYPE_ALIASES[@param_type]? || @param_type
   end
 
   # Dedup by (name, tagger) like push_callee/push_param do for their

@@ -117,6 +117,14 @@ module Analyzer::R
       end
     end
 
+    # `#* @param msg The message to echo` is roxygen documentation: the text
+    # after the name describes the parameter, it is not a value. Storing it in
+    # `Param#value` — which everywhere else holds an example or default — put
+    # prose into every rendered request: `?msg=The message to echo` in the curl
+    # and Postman output (a query string with spaces in it), and
+    # `{"username":"The username"}` as a JSON body. The annotations are still
+    # parsed, because they are how a parameter with no function argument gets
+    # discovered at all; only the text is dropped.
     private def parse_annotation_block(path : String, comments : Array(String), line_num : Int32, next_line : String, func_line_num : Int32)
       routes = [] of Tuple(String, String) # {method, path}
       param_descriptions = {} of String => String
@@ -155,8 +163,7 @@ module Analyzer::R
         # 1. Path parameters first
         path_params.each do |p_name|
           seen_params.add(p_name)
-          desc = param_descriptions[p_name]? || ""
-          params << Param.new(p_name, desc, "path")
+          params << Param.new(p_name, "", "path")
         end
 
         # 2. Function/annotation parameters next
@@ -165,10 +172,9 @@ module Analyzer::R
           next if seen_params.includes?(p_name)
           seen_params.add(p_name)
 
-          desc = param_descriptions[p_name]? || ""
           # Location: body for POST/PUT/PATCH, query otherwise
           loc = (method == "POST" || method == "PUT" || method == "PATCH") ? "body" : "query"
-          params << Param.new(p_name, desc, loc)
+          params << Param.new(p_name, "", loc)
         end
 
         details = Details.new(PathInfo.new(path, line_num))

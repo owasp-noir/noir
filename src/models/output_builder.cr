@@ -202,7 +202,7 @@ class OutputBuilder
 
     unless params.nil?
       params.each do |param|
-        if param.param_type == "query"
+        if param.request_type == "query"
           pair = "#{param.name}=#{param.value}"
           # A pair the route already spells out verbatim adds nothing. A
           # *different* value for the same name is an override (`--pvalue
@@ -219,7 +219,7 @@ class OutputBuilder
           end
         end
 
-        if param.param_type == "form"
+        if param.request_type == "form"
           if first_form
             final_body += "#{param.name}=#{param.value}"
             first_form = false
@@ -228,19 +228,19 @@ class OutputBuilder
           end
         end
 
-        if param.param_type == "path"
+        if param.request_type == "path"
           final_path_params << "#{param.name}"
         end
 
-        if param.param_type == "header"
+        if param.request_type == "header"
           final_headers << "#{param.name}: #{param.value}"
         end
 
-        if param.param_type == "cookie"
+        if param.request_type == "cookie"
           final_cookies << "#{param.name}=#{param.value}"
         end
 
-        if param.param_type == "json"
+        if param.request_type == "json"
           is_json = true
         end
 
@@ -255,7 +255,7 @@ class OutputBuilder
         json_tmp = Hash(String, String).new
 
         params.each do |param|
-          if param.param_type == "json"
+          if param.request_type == "json"
             json_tmp[param.name] = param.value
           end
         end
