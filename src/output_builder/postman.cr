@@ -37,7 +37,7 @@ class OutputBuilderPostman < OutputBuilder
       # Add query parameters
       query_params = [] of JSON::Any
       endpoint.params.each do |param|
-        if param.param_type == "query"
+        if param.request_type == "query"
           query_params << JSON::Any.new({
             "key"   => JSON::Any.new(param.name),
             "value" => JSON::Any.new(param.value),
@@ -58,7 +58,7 @@ class OutputBuilderPostman < OutputBuilder
       # Add path variables
       path_vars = [] of JSON::Any
       endpoint.params.each do |param|
-        if param.param_type == "path"
+        if param.request_type == "path"
           path_vars << JSON::Any.new({
             "key"   => JSON::Any.new(param.name),
             "value" => JSON::Any.new(param.value),
@@ -73,12 +73,12 @@ class OutputBuilderPostman < OutputBuilder
       # Build headers
       headers = [] of JSON::Any
       endpoint.params.each do |param|
-        if param.param_type == "header"
+        if param.request_type == "header"
           headers << JSON::Any.new({
             "key"   => JSON::Any.new(param.name),
             "value" => JSON::Any.new(param.value),
           } of String => JSON::Any)
-        elsif param.param_type == "cookie"
+        elsif param.request_type == "cookie"
           # Find existing Cookie header or create new one. Header names are
           # case-insensitive (RFC 7230), so match `cookie`/`COOKIE` too —
           # otherwise a header-type param named `cookie` and the cookie-type
@@ -105,13 +105,13 @@ class OutputBuilderPostman < OutputBuilder
 
       # Build request body
       body = nil
-      has_json_body = endpoint.params.any? { |p| p.param_type == "json" }
-      has_form_body = endpoint.params.any? { |p| p.param_type == "form" }
+      has_json_body = endpoint.params.any? { |p| p.request_type == "json" }
+      has_form_body = endpoint.params.any? { |p| p.request_type == "form" }
 
       if has_json_body
         json_body = {} of String => JSON::Any
         endpoint.params.each do |param|
-          if param.param_type == "json"
+          if param.request_type == "json"
             json_body[param.name] = JSON::Any.new(param.value)
           end
         end
@@ -136,7 +136,7 @@ class OutputBuilderPostman < OutputBuilder
       elsif has_form_body
         form_data = [] of JSON::Any
         endpoint.params.each do |param|
-          if param.param_type == "form"
+          if param.request_type == "form"
             form_data << JSON::Any.new({
               "key"   => JSON::Any.new(param.name),
               "value" => JSON::Any.new(param.value),

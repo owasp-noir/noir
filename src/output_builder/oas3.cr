@@ -16,7 +16,7 @@ class OutputBuilderOas3 < OutputBuilder
       form_properties = {} of String => JSON::Any
 
       endpoint.params.each do |param|
-        case param.param_type
+        case param.request_type
         when "json"
           # JSON body parameters go into requestBody
           json_properties[param.name] = JSON::Any.new({
@@ -42,7 +42,7 @@ class OutputBuilderOas3 < OutputBuilder
         end
       end
 
-      declared_path_params = endpoint.params.compact_map { |p| p.name if p.param_type == "path" }
+      declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
       oas_path = normalize_oas_path(endpoint.url, declared_path_params)
       template_names = path_template_names(oas_path)
       template_names.each do |name|
