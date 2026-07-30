@@ -37,12 +37,34 @@ module Analyzer::Php
     # Cheap pre-filter: avoid heavy regex work on files that clearly aren't
     # Slim. Any file that reaches this analyzer via detection is usually in
     # a Slim project, but project-wide scans still feed unrelated PHP here.
+    # Route-collector handles that belong to a different PHP framework by
+    # convention: `$routes` is CodeIgniter 4 and CakePHP, `$builder` is
+    # CakePHP's `RouteBuilder`, `$router` is Lumen. Slim's own docs and
+    # skeleton use `$app` and `$group` throughout.
+    #
+    # This only gates the marker-less fallback below. Every PHP analyzer is fed
+    # every `.php` file in the scan, so in a repo holding more than one PHP
+    # framework that fallback read `$routes->get('users/(:num)', …)` out of
+    # CodeIgniter's `app/Config/Routes.php` and `$builder->get('/status', …)`
+    # out of CakePHP's `config/routes.php`, and emitted both as Slim routes. A
+    # genuine Slim file naming `Slim\` keeps working regardless of what it
+    # calls its variables.
+    FOREIGN_ROUTE_COLLECTORS = Set{"routes", "router", "route", "builder"}
+
+    VERB_CALL_RECEIVER_RE = /\$(\w+)->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i
+
     private def slim_relevant?(content : String) : Bool
       return true if content.matches?(RELEVANCE_MARKER_RE)
       # Verb/map/group registrations are always `$var->method(`. Skip the
       # heavier verb regex when no `->` call shape is present.
       return false unless content.includes?("->")
-      !!content.match(/\$\w+->(?:get|post|put|patch|delete|options|head|map|group)\s*\(/i)
+      # Relevant as soon as one registration is made on a handle that isn't
+      # another framework's — a file where every one of them is foreign is
+      # that framework's route file, not a marker-less Slim one.
+      content.scan(VERB_CALL_RECEIVER_RE) do |match|
+        return true unless FOREIGN_ROUTE_COLLECTORS.includes?(match[1].downcase)
+      end
+      false
     end
 
     private def analyze_routes_content(content : String,

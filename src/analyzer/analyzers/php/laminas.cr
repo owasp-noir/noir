@@ -63,11 +63,26 @@ module Analyzer::Php
     # `.php` file fed into the analyzer during a project-wide scan.
     NAMESPACE_MARKER_RE = /Laminas\\|Zend\\|Mezzio\\/
 
+    # Every PHP analyzer is fed every `.php` file in the scan, so this gate is
+    # the only thing keeping Laminas off other frameworks' route files.
+    #
+    # There used to be a fourth, catch-all branch: any file containing
+    # `->get('…')` was treated as Laminas. That is not a Laminas signal — it is
+    # a "some PHP code calls a getter with a string" signal, and it matched
+    # `$config->get('db.host')` as readily as a route. In a repo holding more
+    # than one PHP framework it claimed CodeIgniter's `app/Config/Routes.php`,
+    # CakePHP's `config/routes.php` and Lumen's `routes/web.php`, inventing 16
+    # phantom endpoints across the fixture tree alone — several with mangled
+    # paths (`/billing` out of `tenant/(:num)/billing`).
+    #
+    # Nothing is lost by dropping it: a Mezzio/Laminas programmatic route is
+    # registered on a `Mezzio\Application`, and a file that gets hold of one
+    # names `Mezzio\` or `Laminas\` in a `use` statement or a type hint, so the
+    # namespace marker below already covers it.
     private def laminas_relevant?(path : String, content : String) : Bool
       return true if path.includes?("/config/") && (content.includes?("'router'") || content.includes?("\"router\""))
       return true if content.matches?(NAMESPACE_MARKER_RE)
-      return true if content.includes?("RouteStackInterface")
-      !!content.match(/->(?:get|post|put|patch|delete|options|head|any|route)\s*\(\s*['"][^'"]+['"]/i)
+      content.includes?("RouteStackInterface")
     end
 
     private def analyze_config_routes(path : String, content : String) : Array(Endpoint)
