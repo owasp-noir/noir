@@ -1,7 +1,10 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "./group_scope"
 
 class GoAuthTagger < FrameworkTagger
+  include GoRouteGroupScope
+
   # Middleware usage patterns in route groups
   USE_AUTH_MIDDLEWARE_PATTERNS = [
     /\.Use\s*\(\s*(\w*[Aa]uth\w*)/,
@@ -82,40 +85,35 @@ class GoAuthTagger < FrameworkTagger
   end
 
   private def scan_group_middleware(content : String, file : String)
-    lines = content.split("\n")
-    # Track current route group context
-    group_stack = [] of String
+    each_group_scoped_line(content) do |stripped, scopes|
+      register_auth_scopes(stripped, scopes)
+    end
+  end
 
-    lines.each_with_index do |line, _idx|
-      stripped = line.strip
+  private def register_auth_scopes(stripped : String, scopes : GoRouteGroupScope::Scopes)
+    scope = resolve_use_scope(stripped, scopes)
+    return if scope.nil?
+    # The middleware guards a route group whose URL prefix we could not read
+    # (`r.Group(cfg.APIBase + "/v1")`). Recording it as global would claim
+    # every endpoint in the app is protected — including the ones registered on
+    # the app's explicitly public groups. Decline instead.
+    return if scope[:kind] == GoRouteGroupScope::ScopeKind::Unknown
 
-      # Track Group/Route prefix definitions
-      group_match = stripped.match(/\.(?:Group|Route)\s*\(\s*"([^"]*)"/)
-      if group_match
-        group_stack << group_match[1]
+    # Check for .Use() with auth middleware
+    USE_AUTH_MIDDLEWARE_PATTERNS.each do |pattern|
+      match = stripped.match(pattern)
+      if match
+        middleware_name = match[1]
+        add_middleware_scope(scope, middleware_name, "Protected by Go middleware #{middleware_name}")
       end
+    end
 
-      # Track closing braces for scope tracking
-      if stripped.starts_with?("}") || stripped == "})"
-        group_stack.pop? unless group_stack.empty?
-      end
-
-      # Check for .Use() with auth middleware
-      USE_AUTH_MIDDLEWARE_PATTERNS.each do |pattern|
-        match = stripped.match(pattern)
-        if match
-          middleware_name = match[1]
-          add_middleware_scope(group_stack, middleware_name, "Protected by Go middleware #{middleware_name}")
-        end
-      end
-
-      # Check for JWT library middleware
-      JWT_PATTERNS.each do |pattern|
-        if stripped.matches?(pattern) && stripped.includes?(".Use")
-          jwt_match = stripped.match(pattern)
-          jwt_name = jwt_match ? jwt_match[0] : "JWT"
-          add_middleware_scope(group_stack, jwt_name, "Protected by Go JWT middleware (#{jwt_name})")
-        end
+    # Check for JWT library middleware
+    JWT_PATTERNS.each do |pattern|
+      if stripped.matches?(pattern) && stripped.includes?(".Use")
+        jwt_match = stripped.match(pattern)
+        jwt_name = jwt_match ? jwt_match[0] : "JWT"
+        add_middleware_scope(scope, jwt_name, "Protected by Go JWT middleware (#{jwt_name})")
       end
     end
   end
@@ -182,19 +180,18 @@ class GoAuthTagger < FrameworkTagger
   end
 
   # Record a group-level middleware scope. `prefix == "/"` arises two ways:
-  # a bare engine-level `.Use(...)` (empty group stack → truly global, every
+  # a bare engine-level `.Use(...)` (no enclosing group → truly global, every
   # subsequently registered route is guarded) or an explicit root/empty
   # *group* `g.Group("")` / `g.Group("/")` with a chained `.Use(...)`. Only
   # the latter is a sub-group whose middleware does not reach engine-level
   # static routes, so flag it to scope the coverage refinement below.
-  private def add_middleware_scope(group_stack : Array(String), middleware : String, description : String)
-    prefix = normalize_prefix(group_stack)
-    root_group = !group_stack.empty? && prefix == "/"
+  private def add_middleware_scope(scope : GoRouteGroupScope::Scope,
+                                   middleware : String, description : String)
     @middleware_scopes << {
-      prefix:      prefix,
+      prefix:      scope[:prefix],
       middleware:  middleware,
       description: description,
-      root_group:  root_group,
+      root_group:  scope[:kind] == GoRouteGroupScope::ScopeKind::Group && scope[:prefix] == "/",
     }
   end
 
@@ -217,20 +214,5 @@ class GoAuthTagger < FrameworkTagger
     end
 
     nil
-  end
-
-  # Segment-aware prefix match so "/api" guards "/api/x" but not "/apiv2".
-  # The root scope "/" guards every endpoint.
-  private def prefix_covers?(prefix : String, url : String) : Bool
-    return true if prefix == "/"
-    url == prefix || url.starts_with?("#{prefix}/")
-  end
-
-  private def normalize_prefix(segments : Array(String)) : String
-    joined = segments.join("")
-    # Ensure segments that lack a leading "/" are joined properly
-    # e.g., ["api", "v1"] → "/api/v1", ["/api", "/v1"] → "/api/v1"
-    parts = joined.split("/").reject(&.empty?)
-    parts.empty? ? "/" : "/" + parts.join("/")
   end
 end

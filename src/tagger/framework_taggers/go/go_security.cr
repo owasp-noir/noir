@@ -1,5 +1,6 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "./group_scope"
 
 # Go security-middleware tagger.
 #
@@ -22,6 +23,8 @@ require "../../../models/endpoint"
 # directly at the registration site is tagged. Cross-file middleware
 # factories are likewise out of scope by design.
 class GoSecurityTagger < FrameworkTagger
+  include GoRouteGroupScope
+
   # Security middleware constructors/identifiers, each mapped to the tag it
   # produces. Patterns are tied to the concrete constructor (`middleware.CSRF`,
   # `csrf.New`, `helmet.New`, …) so a plain local called `secure` or `limiter`
@@ -61,19 +64,10 @@ class GoSecurityTagger < FrameworkTagger
     {pattern: /\bencryptcookie\.New\s*\(/, tag: "secure-cookies", desc: "Fiber encrypted-cookie middleware", wrapper: false},
   ] of NamedTuple(pattern: Regex, tag: String, desc: String, wrapper: Bool)
 
-  # A `.Use(...)` / `.Pre(...)` middleware registration call.
-  USE_CALL = /(\w+)\.(?:Use|Pre)\s*\(/
-
   # A route-definition call. Used only to *exclude* route lines from the
   # global-wrapper branch (inline route middleware is handled per-endpoint),
   # so an over-broad verb set here is safe.
   ROUTE_DEF = /\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|CONNECT|TRACE|Get|Post|Put|Delete|Patch|Options|Head|Connect|Trace|Any|All|Handle|HandleFunc|Match|Add)\s*\(/
-
-  # `name := parent.Group("/seg")` style group declaration (no closure arg).
-  ASSIGN_GROUP = /(\w+)\s*:?=\s*(\w+)\.Group\s*\(\s*"([^"]*)"/
-
-  # `parent.Group("/seg", func(...)` / `.Route` / `.Party` closure group.
-  CLOSURE_GROUP = /(\w+)\.(?:Group|Route|Party|PartyFunc|Mount)\s*\(\s*"([^"]*)"\s*,\s*func/
 
   def initialize(options : Hash(String, YAML::Any))
     super
@@ -111,50 +105,29 @@ class GoSecurityTagger < FrameworkTagger
   end
 
   private def scan_group_middleware(content : String)
-    # variable name -> resolved URL prefix (assignment-style groups)
-    group_vars = {} of String => String
-    # active closure-group prefixes, with the brace depth they live above
-    scope_stack = [] of NamedTuple(threshold: Int32, prefix: String)
-    depth = 0
-
-    content.each_line do |line|
-      stripped = line.strip
-
-      # Closure group: push its prefix; it stays active until braces unwind.
-      if m = stripped.match(CLOSURE_GROUP)
-        base = resolve_receiver(m[1], group_vars, scope_stack)
-        scope_stack << {threshold: depth, prefix: join_prefix(base, m[2])}
-      end
-
-      # Assignment group: remember the variable's prefix for later `.Use`.
-      if m = stripped.match(ASSIGN_GROUP)
-        base = resolve_receiver(m[2], group_vars, scope_stack)
-        group_vars[m[1]] = join_prefix(base, m[3])
-      end
-
-      register_security_scopes(stripped, group_vars, scope_stack)
-
-      # Update brace depth and retire any closure scopes that just closed.
-      depth += line.count('{') - line.count('}')
-      while !scope_stack.empty? && depth <= scope_stack.last[:threshold]
-        scope_stack.pop
-      end
+    each_group_scoped_line(content) do |stripped, scopes|
+      register_security_scopes(stripped, scopes)
     end
   end
 
-  private def register_security_scopes(stripped : String, group_vars, scope_stack)
-    use_receiver = stripped.match(USE_CALL).try &.[1]
+  private def register_security_scopes(stripped : String, scopes : GoRouteGroupScope::Scopes)
+    use_scope = resolve_use_scope(stripped, scopes)
+    # The middleware is registered on a group whose URL prefix could not be
+    # read; scoping it to `/` would claim protection for the whole app.
+    return if use_scope && use_scope[:kind] == GoRouteGroupScope::ScopeKind::Unknown
 
     SECURITY_MIDDLEWARE.each do |mw|
       next unless stripped.matches?(mw[:pattern])
 
-      if use_receiver
+      if use_scope
         # `receiver.Use(middleware.X())` — scope to the receiver's group.
-        prefix = prefix_for(resolve_receiver(use_receiver, group_vars, scope_stack))
+        prefix = use_scope[:prefix]
       elsif mw[:wrapper] && !stripped.matches?(ROUTE_DEF)
         # net/http wrapper around the root handler — applies globally. Route
         # lines are skipped (their inline middleware is tagged per-endpoint).
-        prefix = prefix_for(current_scope(scope_stack))
+        current = scopes.current
+        next if current[:kind] == GoRouteGroupScope::ScopeKind::Unknown
+        prefix = current[:prefix]
       else
         next
       end
@@ -221,38 +194,5 @@ class GoSecurityTagger < FrameworkTagger
       break if opened && depth <= 0
       idx += 1
     end
-  end
-
-  # Resolve a receiver token to its URL prefix: a tracked group variable, the
-  # innermost active closure group, or "" (the root router / global scope).
-  private def resolve_receiver(receiver : String?, group_vars, scope_stack) : String
-    return current_scope(scope_stack) if receiver.nil?
-    if gp = group_vars[receiver]?
-      gp
-    else
-      current_scope(scope_stack)
-    end
-  end
-
-  private def current_scope(scope_stack) : String
-    scope_stack.empty? ? "" : scope_stack.last[:prefix]
-  end
-
-  private def prefix_for(prefix : String) : String
-    prefix.empty? ? "/" : prefix
-  end
-
-  # Join a base prefix and a new path segment into a normalized URL prefix:
-  #   ("", "/web") -> "/web"   ("/api", "v1") -> "/api/v1"
-  private def join_prefix(base : String, seg : String) : String
-    parts = "#{base}/#{seg}".split("/").reject(&.empty?)
-    parts.empty? ? "/" : "/" + parts.join("/")
-  end
-
-  # Segment-aware prefix match so "/web" guards "/web/x" but not "/website".
-  # The root scope "/" guards every endpoint.
-  private def prefix_covers?(prefix : String, url : String) : Bool
-    return true if prefix == "/"
-    url == prefix || url.starts_with?("#{prefix}/")
   end
 end
