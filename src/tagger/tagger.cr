@@ -263,31 +263,27 @@ module NoirTaggers
   def self.run_tagger(endpoints : Array(Endpoint), options : Hash(String, YAML::Any), use_taggers : String)
     validate_tagger_names!(use_taggers)
 
-    # Every entry in HasTaggers maps a tagger key to a runnable
-    # Tagger subclass. The previous `class.to_s == "Class"` guard was
-    # always true (Crystal class objects are instances of Class) and
-    # therefore a no-op; instantiate directly.
-    tagger_list = [] of Tagger
-    HasTaggers.each_value do |tagger|
-      tagger_list << tagger[:runner].new(options)
-    end
-
     # Parsing use_taggers — normalize to lowercase so case-insensitive
     # input matches the lowercase canonical tagger names. Validation
     # (`validate_tagger_names!` above) uses the same shape.
     use_taggers_arr = use_taggers.split(",").map(&.strip.downcase)
+    is_all = use_taggers_arr.includes?("all")
 
     logger = build_logger(options)
 
-    # Run taggers. A single tagger raising must not abort the rest of the
-    # tagging pass (or, for framework taggers below, tear down the whole
-    # program from inside a fiber) — degrade to "this tagger failed".
-    tagger_list.each do |tagger|
-      next unless use_taggers_arr.includes?(tagger.name) || use_taggers_arr.includes?("all")
+    # Every entry in HasTaggers maps a tagger key to a runnable Tagger
+    # subclass, and the key IS the tagger's `name` — so an unselected tagger
+    # can be skipped without constructing it (each `new` builds a logger and
+    # resolves options). Run the selected ones; a single tagger raising must
+    # not abort the rest of the tagging pass (or, for framework taggers below,
+    # tear down the whole program from inside a fiber) — degrade to "this
+    # tagger failed".
+    HasTaggers.each do |key, tagger|
+      next unless is_all || use_taggers_arr.includes?(key.to_s)
       begin
-        tagger.perform(endpoints)
+        tagger[:runner].new(options).perform(endpoints)
       rescue ex
-        logger.warning "Tagger '#{tagger.name}' failed: #{ex.message}"
+        logger.warning "Tagger '#{key}' failed: #{ex.message}"
       end
     end
 
@@ -321,7 +317,12 @@ module NoirTaggers
 
     # Collect tagger work items, then run in parallel
     WaitGroup.wait do |wg|
-      HasFrameworkTaggers.each_value do |tagger_info|
+      HasFrameworkTaggers.each do |key, tagger_info|
+        # The registry key is the tagger's `name`, so selection is decided
+        # before construction — an unselected tagger no longer pays for a
+        # logger and a base-path resolution just to be discarded.
+        next unless is_all || use_taggers_arr.includes?(key.to_s)
+
         target_techs = tagger_info[:runner].target_techs
         matching_endpoints = [] of Endpoint
         target_techs.each do |tech|
@@ -332,11 +333,8 @@ module NoirTaggers
 
         next if matching_endpoints.empty?
 
-        tagger_instance = tagger_info[:runner].new(options)
-        next unless is_all || use_taggers_arr.includes?(tagger_instance.name)
-
         # Bind to local variables to ensure each fiber captures its own copy
-        local_instance = tagger_instance
+        local_instance = tagger_info[:runner].new(options)
         local_endpoints = matching_endpoints
 
         wg.spawn do

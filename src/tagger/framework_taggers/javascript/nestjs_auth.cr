@@ -29,6 +29,11 @@ class NestjsAuthTagger < FrameworkTagger
     {/\@ApiSecurity\s*\(/, "NestJS @ApiSecurity (Swagger)"},
   ]
 
+  # Every decorator a method-level walk looks for. Built once — concatenating
+  # the three lists inside the per-line loop allocated a fresh array for every
+  # line of every handler's decorator block.
+  METHOD_DECORATOR_PATTERNS = GUARD_PATTERNS + ROLE_PATTERNS + AUTH_DECORATORS
+
   # Public/skip auth markers (negative signal)
   PUBLIC_PATTERNS = [
     /\@Public\s*\(\)/,
@@ -110,8 +115,7 @@ class NestjsAuthTagger < FrameworkTagger
       # Stop if we hit another method
       break if current.includes?("async ") && current.includes?("(") && idx < method_line - 1
 
-      all_patterns = GUARD_PATTERNS + ROLE_PATTERNS + AUTH_DECORATORS
-      all_patterns.each do |pattern, desc|
+      METHOD_DECORATOR_PATTERNS.each do |pattern, desc|
         return desc if current.matches?(pattern)
       end
 
