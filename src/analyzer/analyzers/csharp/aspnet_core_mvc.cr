@@ -168,6 +168,7 @@ module Analyzer::CSharp
 
       content = read_file_content(file)
       return unless content.includes?("Controller")
+      return if Common.aspnet_framework_source?(content)
 
       controller_name = extract_controller_name(content)
       return if controller_name.empty?

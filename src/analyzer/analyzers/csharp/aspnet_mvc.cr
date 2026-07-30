@@ -77,6 +77,7 @@ module Analyzer::CSharp
 
       content = read_file_content(file)
       return unless content.includes?("Controller") && content.includes?("ActionResult")
+      return if Common.aspnet_core_source?(content)
 
       lines = content.lines
       masked_lines = Noir::CSharpLexer.new(content).masked_lines
