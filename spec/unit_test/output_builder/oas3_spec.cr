@@ -179,4 +179,38 @@ describe "OutputBuilderOas3" do
     paths["/jobs"].as_h.has_key?("subscribe").should be_false
     paths["/jobs"]["x-noir-unsupported-methods"].as_a.should contain(JSON::Any.new("SUBSCRIBE"))
   end
+
+  it "moves path parameters with no template expression into an extension" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # The optimizer substituted a concrete value for the placeholder, so `id`
+    # has nowhere to bind — `in: path` here fails every OAS validator.
+    concrete = Endpoint.new("/posts/1", "GET")
+    concrete.push_param(Param.new("id", "", "path"))
+    concrete.push_param(Param.new("draft", "", "query"))
+
+    # Sanic-style `<name:type>`, resolved by the endpoint's own path param.
+    typed = Endpoint.new("/reports/<report_id:int>", "GET")
+    typed.push_param(Param.new("report_id", "", "path"))
+
+    builder.print([concrete, typed])
+    paths = JSON.parse(builder.io.to_s)["paths"]
+
+    operation = paths["/posts/1"]["get"]
+    operation["parameters"].as_a.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"query", "draft"}])
+    operation["x-noir-unmapped-path-params"].as_a.should eq([JSON::Any.new("id")])
+
+    paths.as_h.has_key?("/reports/{report_id}").should be_true
+    typed_params = paths["/reports/{report_id}"]["get"]["parameters"].as_a
+    typed_params.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"path", "report_id"}])
+  end
 end

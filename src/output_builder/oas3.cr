@@ -42,8 +42,10 @@ class OutputBuilderOas3 < OutputBuilder
         end
       end
 
-      oas_path = normalize_oas_path(endpoint.url)
-      path_template_names(oas_path).each do |name|
+      declared_path_params = endpoint.params.compact_map { |p| p.name if p.param_type == "path" }
+      oas_path = normalize_oas_path(endpoint.url, declared_path_params)
+      template_names = path_template_names(oas_path)
+      template_names.each do |name|
         # A path template variable must win over a same-named query/header/
         # cookie parameter. Emitting both `in: path` and `in: query` for the
         # same name is redundant and trips strict OAS validators, so drop the
@@ -51,6 +53,7 @@ class OutputBuilderOas3 < OutputBuilder
         parameters.reject! { |p| p["name"].as_s == name && p["in"].as_s != "path" }
         append_unique_parameter(parameters, openapi_parameter(name, "path", true))
       end
+      unmapped_path_params = extract_unmapped_path_parameters(parameters, template_names)
 
       # Build operation object
       operation = {
@@ -98,6 +101,7 @@ class OutputBuilderOas3 < OutputBuilder
         } of String => JSON::Any)
       end
 
+      add_unmapped_path_params_extension(operation, unmapped_path_params)
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)
 

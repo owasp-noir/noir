@@ -4,8 +4,12 @@ require "../../../src/output_builder/oas_common"
 private struct OasCommonTestHelper
   include OutputBuilderOasCommon
 
-  def test_normalize_oas_path(raw_url : String)
-    normalize_oas_path(raw_url)
+  def test_normalize_oas_path(raw_url : String, declared_path_params : Array(String) = [] of String)
+    normalize_oas_path(raw_url, declared_path_params)
+  end
+
+  def test_extract_unmapped_path_parameters(parameters : Array(Hash(String, JSON::Any)), template_names : Array(String))
+    extract_unmapped_path_parameters(parameters, template_names)
   end
 
   def test_path_template_names(path : String)
@@ -31,6 +35,47 @@ describe OutputBuilderOasCommon do
       helper.test_normalize_oas_path("/users/<int:id>").should eq("/users/{id}")
       helper.test_normalize_oas_path("/users/*id").should eq("/users/{id}")
       helper.test_normalize_oas_path("/files/*").should eq("/files/{wildcard}")
+    end
+
+    it "names each bare wildcard distinctly" do
+      # A path template variable may not repeat, so `/api/*/v1/*` cannot emit
+      # `{wildcard}` twice.
+      helper.test_normalize_oas_path("/api/*/v1/*").should eq("/api/{wildcard}/v1/{wildcard2}")
+    end
+
+    it "resolves name-first typed placeholders" do
+      # Sanic / Bottle / Marten spell the placeholder `<name:type>`, the
+      # reverse of Django / Flask's `<type:name>`.
+      helper.test_normalize_oas_path("/users/<id:int>").should eq("/users/{id}")
+      helper.test_normalize_oas_path("/posts/<post_id:uuid>").should eq("/posts/{post_id}")
+      helper.test_normalize_oas_path("/n/<int(min=1):page>").should eq("/n/{page}")
+    end
+
+    it "prefers the endpoint's declared path params for typed placeholders" do
+      helper.test_normalize_oas_path("/a/<foo:bar>", ["bar"]).should eq("/a/{bar}")
+      helper.test_normalize_oas_path("/a/<foo:bar>", ["foo"]).should eq("/a/{foo}")
+    end
+
+    it "collapses resource patterns and constrained placeholders" do
+      # Google AIP / gRPC transcoding — the pattern is a constraint on `name`,
+      # and left in place the `*` pass nested braces inside the placeholder.
+      helper.test_normalize_oas_path("/v1/{name=projects/*/locations/*}/res")
+        .should eq("/v1/{name}/res")
+      # Play routes spell a constrained param `$path<.+>`.
+      helper.test_normalize_oas_path("/files/$path<.+>").should eq("/files/{path}")
+    end
+  end
+
+  describe "#extract_unmapped_path_parameters" do
+    it "drops path parameters with no matching template expression" do
+      parameters = [
+        {"name" => JSON::Any.new("id"), "in" => JSON::Any.new("path")},
+        {"name" => JSON::Any.new("q"), "in" => JSON::Any.new("query")},
+        {"name" => JSON::Any.new("ghost"), "in" => JSON::Any.new("path")},
+      ]
+
+      helper.test_extract_unmapped_path_parameters(parameters, ["id"]).should eq(["ghost"])
+      parameters.map(&.["name"].as_s).should eq(["id", "q"])
     end
   end
 
