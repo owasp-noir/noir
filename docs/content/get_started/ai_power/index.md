@@ -80,6 +80,20 @@ For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:
 
 For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 
+### Environment Variables
+
+| Variable | Description |
+|---|---|
+| `NOIR_AI_KEY` | API key, used when `--ai-key` is not passed |
+| `NOIR_AI_TIMEOUT` | Seconds to wait for a provider response (default: `300`) |
+| `NOIR_AI_CONNECT_TIMEOUT` | Seconds to wait for the connection itself (default: `10`) |
+| `NOIR_ACP_RAW_LOG` | `1` to show raw ACP and agent stderr logs |
+
+Requests that time out, hit a rate limit (HTTP 429), or fail with a
+transient gateway error are retried up to three times with backoff, honoring
+`Retry-After` when the provider sends it. Raise `NOIR_AI_TIMEOUT` if a large
+bundle against a slow local model needs more than five minutes to generate.
+
 ## How AI-Powered Analysis Works
 
 {% mermaid() %}

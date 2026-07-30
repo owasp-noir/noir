@@ -2,17 +2,15 @@ require "json"
 require "uri"
 require "http/client"
 require "../response_cleanup"
+require "../http_transport"
 
 module LLM
   # General OpenAI-compatible LLM client
   class General
     @@tools_cache = {} of String => JSON::Any
     @@tools_cache_mutex = Mutex.new
-    MAX_ERROR_SNIPPET_SIZE = 1024
 
-    private def truncate_error_snippet(body : String)
-      body.size > MAX_ERROR_SNIPPET_SIZE ? "#{body[0, MAX_ERROR_SNIPPET_SIZE]}..." : body
-    end
+    @api_key : String?
 
     def initialize(url : String, model : String, api_key : String?)
       @url = url
@@ -42,7 +40,11 @@ module LLM
              end
 
       @model = model
-      @api_key = api_key || ENV["NOIR_AI_KEY"]?
+      # An empty key means "no key given", not "authenticate with an empty
+      # string". Treating it literally suppressed the documented
+      # NOIR_AI_KEY fallback for every caller that passes the config
+      # default through, and put a blank bearer token on the wire.
+      @api_key = api_key.presence || ENV["NOIR_AI_KEY"]?.presence
     end
 
     # Parse provider response into normalized JSON action payload.
@@ -77,17 +79,11 @@ module LLM
         "response_format" => format == "json" ? {"type" => "json_object"} : JSON.parse(format),
       }.to_json
 
-      headers = HTTP::Headers.new
-      headers["Content-Type"] = "application/json"
-      headers["Authorization"] = "Bearer #{@api_key}" if @api_key
+      raw = LLM::HttpTransport.post_json(@api, body, request_headers)
+      return "" if raw.nil?
 
-      response = HTTP::Client.post(@api, headers: headers, body: body)
-      unless response.success?
-        snippet = truncate_error_snippet(response.body)
-        STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
-        return ""
-      end
-      response_json = JSON.parse(response.body)
+      response_json = JSON.parse(raw)
+      return "" if report_api_error(response_json)
 
       LLM.strip_json_fences(response_json["choices"][0]["message"]["content"].to_s)
     rescue e : Exception
@@ -108,22 +104,43 @@ module LLM
         "tool_choice" => "auto",
       }.to_json
 
-      headers = HTTP::Headers.new
-      headers["Content-Type"] = "application/json"
-      headers["Authorization"] = "Bearer #{@api_key}" if @api_key
+      raw = LLM::HttpTransport.post_json(@api, body, request_headers)
+      return "" if raw.nil?
 
-      response = HTTP::Client.post(@api, headers: headers, body: body)
-      unless response.success?
-        snippet = truncate_error_snippet(response.body)
-        STDERR.puts "WARNING: AI API error (HTTP #{response.status_code}): #{snippet}"
-        return ""
-      end
+      response_json = JSON.parse(raw)
+      return "" if report_api_error(response_json)
 
-      response_json = JSON.parse(response.body)
       self.class.extract_agent_action(response_json)
     rescue e : Exception
       STDERR.puts "WARNING: AI API error (#{e.message})"
       ""
+    end
+
+    private def request_headers : HTTP::Headers
+      headers = HTTP::Headers.new
+      headers["Content-Type"] = "application/json"
+      # `@api_key` is normalized to nil when absent, so a keyless local
+      # provider (ollama, vLLM, LM Studio) is never sent the blank
+      # `Authorization: Bearer ` header that made it reject the request.
+      if key = @api_key
+        headers["Authorization"] = "Bearer #{key}"
+      end
+      headers
+    end
+
+    # Some gateways answer HTTP 200 with `{"error": {...}}` in the body.
+    # Without this the response just fails the `choices` lookup below and
+    # the caller reports a generic parse error, hiding a message that names
+    # the actual problem (unknown model, quota, bad deployment name).
+    private def report_api_error(response_json : JSON::Any) : Bool
+      error = response_json["error"]?
+      return false if error.nil?
+
+      message = error["message"]?.try(&.as_s?) || error.to_s
+      STDERR.puts "WARNING: AI API returned an error: #{LLM::HttpTransport.truncate_error_snippet(message)}"
+      true
+    rescue Exception
+      false
     end
 
     # Make a simple request with a single prompt
