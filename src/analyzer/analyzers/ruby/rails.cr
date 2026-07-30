@@ -135,11 +135,25 @@ module Analyzer::Ruby
 
         routes_path = "#{framework_root}/config/routes.rb"
         next unless known_file?(routes_path)
+        next if hanami_router?(routes_path)
 
         parse_routes_file(routes_path, framework_root)
       end
 
       @result
+    end
+
+    # `config/routes.rb` is the anchor for Rails and for Hanami alike, so in a
+    # repo holding both, Rails parsed Hanami's route table as its own DSL. A
+    # Hanami 2 routes file always names `Hanami::Routes` (it subclasses it), so
+    # unlike the mirror check in the Hanami analyzer this one can key on the
+    # positive marker.
+    HANAMI_ROUTER_RE = /Hanami::Rout|Hanami\.app\b|Hanami\.routes\b/
+
+    private def hanami_router?(path : String) : Bool
+      read_file_content(path).matches?(HANAMI_ROUTER_RE)
+    rescue
+      false
     end
 
     private def parse_routes_file(routes_path : String, framework_root : String)

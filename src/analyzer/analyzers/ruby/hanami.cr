@@ -30,11 +30,30 @@ module Analyzer::Ruby
       framework_roots.each do |framework_root|
         path = "#{framework_root}/config/routes.rb"
         next unless File.exists?(path)
+        next if rails_router?(path)
 
         parse_routes_file(path, framework_root, include_callee)
       end
 
       @result
+    end
+
+    # `config/routes.rb` is the anchor for Hanami and for Rails alike, so in a
+    # repo holding both, Hanami parsed Rails' route table as its own DSL — 44
+    # phantom endpoints out of one Rails fixture, several with the Rails
+    # `resources` shorthand half-expanded.
+    #
+    # The exclusion is stated as "not Rails" rather than "looks like Hanami" on
+    # purpose: a Hanami 1 `apps/<app>/config/routes.rb` is a bare route DSL
+    # with no `Hanami::` reference anywhere in it, so requiring a positive
+    # marker would drop real routes. `Rails.application.routes.draw` is never
+    # Hanami.
+    RAILS_ROUTER_RE = /\.routes\.draw\b|ActionDispatch::Routing/
+
+    private def rails_router?(path : String) : Bool
+      read_file_content(path).matches?(RAILS_ROUTER_RE)
+    rescue
+      false
     end
 
     private def parse_routes_file(path : String, framework_root : String, include_callee : Bool)
