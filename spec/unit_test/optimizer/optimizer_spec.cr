@@ -44,6 +44,29 @@ describe "EndpointOptimizer" do
       result[0].params.map(&.name).should eq(["session_id"])
     end
 
+    # `push_param` / `merge_params` / the graphql merges all dedup on
+    # (name, param_type), and `params_to_hash` collapses on it regardless —
+    # but an analyzer that appends straight to `params` bypasses all of them,
+    # and the duplicate reached the report as two conflicting values for one
+    # field (`-H 'Host: a' -H 'Host: b'`).
+    it "collapses repeated (name, param_type) params, first value wins" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "GET", [
+          Param.new("Host", "api.example.com", "header"),
+          Param.new("Host", "internal.example.com", "header"),
+          # Same name in a different bucket is a different param and stays.
+          Param.new("Host", "query-value", "query"),
+        ]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].params.map { |p| {p.name, p.value, p.param_type} }.should eq([
+        {"Host", "api.example.com", "header"},
+        {"Host", "query-value", "query"},
+      ])
+    end
+
     it "normalizes HTTP methods" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

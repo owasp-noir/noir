@@ -52,12 +52,11 @@ module Analyzer::Specification
       paths = route_paths_json(route)
       return if paths.empty?
       methods = route_methods_json(route)
-      host_params = host_params_json(route)
+      hosts = route_hosts_json(route)
 
       paths.each do |path|
         methods.each do |method|
-          endpoint_params = host_params.dup
-          @result << Endpoint.new(path, method, endpoint_params, details)
+          @result << build_endpoint(path, method, hosts, details)
         end
       end
     end
@@ -68,12 +67,11 @@ module Analyzer::Specification
       paths = route_paths_yaml(route)
       return if paths.empty?
       methods = route_methods_yaml(route)
-      host_params = host_params_yaml(route)
+      hosts = route_hosts_yaml(route)
 
       paths.each do |path|
         methods.each do |method|
-          endpoint_params = host_params.dup
-          @result << Endpoint.new(path, method, endpoint_params, details)
+          @result << build_endpoint(path, method, hosts, details)
         end
       end
     end
@@ -138,21 +136,28 @@ module Analyzer::Specification
       normalize_methods(methods)
     end
 
-    private def host_params_json(route : JSON::Any) : Array(Param)
-      hosts = [] of String
-      if host = route["host"]?.try(&.as_s?)
-        hosts << host unless host.empty?
+    # A request carries exactly one `Host` header, so a route configured with
+    # several (`hosts: [a, b]`) gets one `Host` param — the first, mirroring
+    # the single-representative-server rule the OAS analyzers already apply to
+    # a multi-entry `servers` block. Emitting one param per host produced
+    # `curl -i -X DELETE /internal -H 'Host: a' -H 'Host: b'`, a request no
+    # server can answer, and left a duplicate (name, param_type) entry in the
+    # inventory that every consumer collapses anyway.
+    #
+    # The alternates are real attack surface, so they are kept as an
+    # `apisix-host` tag instead of being dropped — same shape as iris's
+    # `subdomain` and wrangler's `wrangler-zone` tags.
+    private def build_endpoint(path : String, method : String, hosts : Array(String), details : Details) : Endpoint
+      endpoint = Endpoint.new(path, method, details)
+      if primary = hosts.first?
+        endpoint.params << Param.new("Host", primary, "header")
+        alternates = hosts[1..]
+        endpoint.add_tag(Tag.new("apisix-host", alternates.join(", "), "apisix_analyzer")) unless alternates.empty?
       end
-      if host_list = route["hosts"]?.try(&.as_a?)
-        host_list.each do |host_node|
-          next unless host_text = host_node.as_s?
-          hosts << host_text unless host_text.empty?
-        end
-      end
-      hosts.uniq.map { |host_value| Param.new("Host", host_value, "header") }
+      endpoint
     end
 
-    private def host_params_yaml(route : YAML::Any) : Array(Param)
+    private def route_hosts_json(route : JSON::Any) : Array(String)
       hosts = [] of String
       if host = route["host"]?.try(&.as_s?)
         hosts << host unless host.empty?
@@ -163,7 +168,21 @@ module Analyzer::Specification
           hosts << host_text unless host_text.empty?
         end
       end
-      hosts.uniq.map { |host_value| Param.new("Host", host_value, "header") }
+      hosts.uniq
+    end
+
+    private def route_hosts_yaml(route : YAML::Any) : Array(String)
+      hosts = [] of String
+      if host = route["host"]?.try(&.as_s?)
+        hosts << host unless host.empty?
+      end
+      if host_list = route["hosts"]?.try(&.as_a?)
+        host_list.each do |host_node|
+          next unless host_text = host_node.as_s?
+          hosts << host_text unless host_text.empty?
+        end
+      end
+      hosts.uniq
     end
 
     private def normalize_methods(methods : Array(String)) : Array(String)
