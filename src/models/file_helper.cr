@@ -24,6 +24,25 @@ module FileHelper
     CodeLocator.instance.expanded_file_map
   end
 
+  @walked_path_index : Hash(String, String)? = nil
+
+  # The as-walked spelling of a path an analyzer resolved with
+  # `File.expand_path` — a config `<include>` target, a route file named from
+  # a source file. `code_paths` are reported the way the walker handed them
+  # over, so a resolved path has to be mapped back before it reaches a report:
+  # left absolute it puts the scanning machine's directory layout into
+  # anything shared, and a SARIF `artifactLocation.uri` that isn't
+  # repo-relative can't be matched to a file by GitHub code scanning.
+  #
+  # Falls back to the input for a file outside the scan — there is nothing
+  # better to say about it.
+  def walked_path(expanded : String) : String
+    index = (@walked_path_index ||= all_files_expanded.each_with_object({} of String => String) do |(file, file_expanded), map|
+      map[file_expanded] ||= file
+    end)
+    index[expanded]? || expanded
+  end
+
   # Get files filtered by path prefix
   #
   # No `File.directory?` guard: the detector's walk only registers a
