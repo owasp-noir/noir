@@ -13,6 +13,13 @@ module Analyzer::Rust
   class ActixWeb < RustEngine
     analyzer_for "rust_actix_web"
 
+    # Only files inside a crate that depends on `actix-web`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["actix-web"]
+    end
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias GlobalFunctionEntry = NamedTuple(name: String, path: String, hints: Array(String), params_text: String?, callees: Array(Noir::RustCalleeExtractor::Entry))
 

@@ -13,6 +13,13 @@ module Analyzer::Rust
   class Axum < RustEngine
     analyzer_for "rust_axum"
 
+    # Only files inside a crate that depends on `axum`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["axum"]
+    end
+
     alias UtoipaScopedKey = Tuple(String, String, String)
     alias UtoipaNestEdge = Tuple(UtoipaScopedKey, String)
     alias NestScopedKey = Tuple(String, String, String)

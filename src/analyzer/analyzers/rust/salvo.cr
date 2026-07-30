@@ -28,6 +28,13 @@ module Analyzer::Rust
   class Salvo < RustEngine
     analyzer_for "rust_salvo"
 
+    # Only files inside a crate that depends on `salvo`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["salvo"]
+    end
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
     alias ScopedNameKey = Tuple(String, String)
     alias PrefixEdge = Tuple(ScopedNameKey, String)

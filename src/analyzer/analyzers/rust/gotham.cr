@@ -18,6 +18,13 @@ module Analyzer::Rust
   class Gotham < RustEngine
     analyzer_for "rust_gotham"
 
+    # Only files inside a crate that depends on `gotham`. See
+    # `RustEngine#crate_dependencies` — without this every Rust analyzer
+    # sees every `.rs` file in the scan.
+    protected def crate_dependencies : Array(String)
+      ["gotham"]
+    end
+
     HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options"}
 
     def analyze_file(path : String) : Array(Endpoint)
