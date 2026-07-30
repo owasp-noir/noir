@@ -158,10 +158,25 @@ module MediaFilter
       buffer = Bytes.new(512)
       bytes_read = io.read(buffer)
       return false if bytes_read == 0
-      buffer[0, bytes_read].includes?(0_u8)
+      sample = buffer[0, bytes_read]
+      # A UTF-16 BOM means the interior NULs below are the encoding, not a
+      # binary blob — in UTF-16 every ASCII character carries one. Visual
+      # Studio and much of the Windows toolchain still write source that way,
+      # and without this check those files were dropped from the scan
+      # entirely. `Noir::TextFile.read` transcodes them.
+      return false if utf16_bom?(sample)
+      sample.includes?(0_u8)
     end
   rescue
     false
+  end
+
+  private def self.utf16_bom?(sample : Bytes) : Bool
+    return false if sample.size < 2
+    # UTF-32LE opens `FF FE 00 00` and shares the UTF-16LE prefix; leave it
+    # on the binary path rather than decode it at the wrong width.
+    return false if sample.size >= 4 && sample[0] == 0xFF_u8 && sample[1] == 0xFE_u8 && sample[2] == 0_u8 && sample[3] == 0_u8
+    (sample[0] == 0xFF_u8 && sample[1] == 0xFE_u8) || (sample[0] == 0xFE_u8 && sample[1] == 0xFF_u8)
   end
 
   # Combined check - returns true if file should be skipped. Prefer
