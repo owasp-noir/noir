@@ -46,6 +46,31 @@ expected_endpoints = [
 
   # A module's routes mount under its ModuleConfig entryPoint.
   Endpoint.new("/api/v1/status", "GET"),
+
+  # `group( { pattern : "/admin" }, ... )` prefixes the routes declared in
+  # its closure, and `withAction` names one action per verb.
+  Endpoint.new("/admin/reports", "GET"),
+  Endpoint.new("/admin/reports/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/admin/reports/:id", "DELETE", [Param.new("id", "", "path")]),
+
+  # A namespace group mounts where a route puts it. The mount itself
+  # (`route( "/v2" ).toNamespaceRouting( "v2" )`) is not a route.
+  Endpoint.new("/v2/ping", "GET"),
+
+  # `except = skipped` passes a local by name, so `new` and `edit` are
+  # dropped just as they would be for a literal.
+  Endpoint.new("/tags", "GET"),
+  Endpoint.new("/tags", "POST"),
+  Endpoint.new("/tags/:id", "GET", [Param.new("id", "", "path")]),
+  Endpoint.new("/tags/:id", "PUT", [Param.new("id", "", "path")]),
+  Endpoint.new("/tags/:id", "PATCH", [Param.new("id", "", "path")]),
+  Endpoint.new("/tags/:id", "DELETE", [Param.new("id", "", "path")]),
+
+  # A CFML framework owns the `.cfm` page surface, but `access="remote"`
+  # methods stay HTTP-callable and no framework analyzer emits them, so
+  # the generic analyzer runs alongside in components-only mode.
+  Endpoint.new("/remote/Proxy.cfc?method=ping", "GET", [Param.new("token", "", "query")]),
+  Endpoint.new("/remote/Proxy.cfc?method=ping", "POST", [Param.new("token", "", "form")]),
 ]
 
 FunctionalTester.new("fixtures/cfml/coldbox/", {

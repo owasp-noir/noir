@@ -34,9 +34,36 @@ module Analyzer::Cfml
     # Legacy tag-syntax registration, still present in older configs.
     ADD_ROUTE_RE = /(?<![\w.])addRoute\s*\(/i
 
+    # `group( { pattern : "/api" }, function( options ){ ... } )` prefixes
+    # every route declared inside the closure, and groups nest. Ignoring
+    # them is both a false positive and a false negative at once: ColdBox's
+    # own test harness declares `route( "/:user_id" )` inside
+    # `group( { pattern : "/runAWNsync" ... } )`, which was reported as
+    # `/:user_id` — a URL that answers nothing — while the real
+    # `/runAWNsync/:user_id` went unreported.
+    GROUP_CALL_RE = /(?<![\w.])group\s*\(/i
+
+    # A group may name a namespace instead of a path. Namespaces are not
+    # paths in themselves: they become reachable only where a route mounts
+    # them, so the mount pattern is what supplies the prefix.
+    NAMESPACE_MOUNT_RE = /\.\s*toNamespaceRouting\s*\(\s*["']([^"']+)["']/i
+    ADD_NAMESPACE_RE   = /(?<![\w.])addNamespace\s*\(/i
+
+    # `route( "/luis" ).toNamespaceRouting( "luis" )` — the mount pattern
+    # and the namespace it carries, in one statement.
+    NAMESPACE_ROUTE_RE = /(?<![\w.])route\s*\(\s*["']([^"']+)["']\s*\)\s*\.\s*toNamespaceRouting\s*\(\s*["']([^"']+)["']\s*\)/i
+
     # Chained builders that follow `route( ... )` up to the statement end.
     CHAINED_VERBS_RE = /\.\s*withVerbs\s*\(\s*["']([^"']+)["']/i
     CHAIN_LIMIT      = 400
+
+    # `route( "/x" ).withAction( { get : "show", post : "save" } )` binds
+    # one action per verb, so the struct's keys *are* the verbs the route
+    # answers. Without this a `route()` carrying only a `withAction` map
+    # fell back to GET — ColdBox's own harness registers `/invalid-restful`
+    # and `/invalid-main-method` as POST that way.
+    CHAINED_ACTIONS_RE = /\.\s*withAction\s*\(\s*\{([^}]*)\}/i
+    ACTION_VERB_RE     = /["']?(\w+)["']?\s*[:=]/
 
     # `var sitePrefix = "/sites/:site"` — referenced as `#siteprefix#`,
     # case-insensitively.
@@ -68,21 +95,27 @@ module Analyzer::Cfml
     ]
 
     @allowed_methods : Hash(String, Hash(String, Array(String)))? = nil
+    @namespace_mounts : Hash(String, String)? = nil
 
     def analyze
-      routers = cfml_components.select { |path| router_file?(path) } +
-                cfml_pages.select { |path| router_file?(path) }
+      routers = router_files
       return @result if routers.empty?
 
-      # Built once from every handler in the scan; worker fibers must not
-      # race to populate it.
+      # Both indexes are built once from every router/handler in the scan;
+      # worker fibers must not race to populate them.
       allowed_methods
+      @namespace_mounts = build_namespace_mounts(routers)
 
       parallel_analyze(routers) do |path|
         analyze_router(path)
       end
 
       @result
+    end
+
+    private def router_files : Array(String)
+      cfml_components.select { |path| router_file?(path) } +
+        cfml_pages.select { |path| router_file?(path) }
     end
 
     private def router_file?(path : String) : Bool
@@ -93,12 +126,14 @@ module Analyzer::Cfml
       content = strip_all_comments(read_file_content(path))
       prefix = module_prefix(path)
       locals = local_strings(content)
+      groups = group_blocks(content, locals)
 
-      extract_routes(content, path, prefix, locals)
-      extract_resources(content, path, prefix, locals)
+      extract_routes(content, path, prefix, locals, groups)
+      extract_resources(content, path, prefix, locals, groups)
     end
 
-    private def extract_routes(content : String, path : String, prefix : String, locals : Hash(String, String))
+    private def extract_routes(content : String, path : String, prefix : String,
+                               locals : Hash(String, String), groups : Array(Group))
       {ROUTE_CALL_RE, ADD_ROUTE_RE}.each do |pattern|
         content.scan(pattern) do |match|
           start = match.begin(0) || 0
@@ -112,18 +147,26 @@ module Analyzer::Cfml
           close_paren = matching_paren(content, open_paren)
           next unless close_paren
 
-          arguments = call_arguments(content[(open_paren + 1)...close_paren])
+          arguments = call_arguments(content[(open_paren + 1)...close_paren], locals)
           pattern_value = arguments["pattern"]? || arguments["0"]?
           next if pattern_value.nil? || pattern_value.empty?
 
           resolved = interpolate(pattern_value, locals)
           next unless resolved
 
-          url = build_url(prefix, resolved)
+          scoped = scoped_prefix(prefix, groups, start)
+          next unless scoped
+
+          url = build_url(scoped, resolved)
           next if url.empty?
 
           target = arguments["target"]? || arguments["1"]?
-          chain = content[(close_paren + 1), CHAIN_LIMIT]? || ""
+          chain = statement_chain(content, close_paren + 1)
+          # `route( "/luis" ).toNamespaceRouting( "luis" )` mounts a
+          # namespace at that pattern; it is not itself requestable, and
+          # the routes it exposes are emitted under the mount instead.
+          next if chain.matches?(NAMESPACE_MOUNT_RE)
+
           target ||= chained_target(chain)
 
           route_verbs(verb, chain, target).each do |method|
@@ -134,7 +177,8 @@ module Analyzer::Cfml
       end
     end
 
-    private def extract_resources(content : String, path : String, prefix : String, locals : Hash(String, String))
+    private def extract_resources(content : String, path : String, prefix : String,
+                                  locals : Hash(String, String), groups : Array(Group))
       content.scan(RESOURCES_RE) do |match|
         start = match.begin(0) || 0
         next unless statement_start?(content, start)
@@ -145,16 +189,19 @@ module Analyzer::Cfml
         close_paren = matching_paren(content, open_paren)
         next unless close_paren
 
-        arguments = call_arguments(content[(open_paren + 1)...close_paren])
+        scoped = scoped_prefix(prefix, groups, start)
+        next unless scoped
+
+        arguments = call_arguments(content[(open_paren + 1)...close_paren], locals)
         resource = arguments["resource"]? || arguments["0"]?
         next if resource.nil? || resource.empty?
 
         base = interpolate(arguments["pattern"]? || "/#{resource}", locals)
         next unless base
 
-        # `except` names the actions to drop. A non-literal value (a
-        # variable) is unresolvable, so nothing is dropped rather than
-        # guessing.
+        # `except` names the actions to drop. A value that resolves to
+        # neither a literal nor a declared local is unresolvable, so
+        # nothing is dropped rather than guessing.
         excluded = (arguments["except"]? || "").split(',').map(&.strip.downcase).reject(&.empty?).to_set
         only = (arguments["only"]? || "").split(',').map(&.strip.downcase).reject(&.empty?).to_set
 
@@ -164,7 +211,7 @@ module Analyzer::Cfml
           next if excluded.includes?(action)
           next if !only.empty? && !only.includes?(action)
 
-          url = build_url(prefix, "#{base}#{suffix}")
+          url = build_url(scoped, "#{base}#{suffix}")
           next if url.empty?
 
           @result << Endpoint.new(url, method, [] of Param, details)
@@ -172,6 +219,158 @@ module Analyzer::Cfml
           @result << Endpoint.new(url, "PATCH", [] of Param, details) if action == "update"
         end
       end
+    end
+
+    # A `group( options, closure )` call: the character range its closure
+    # occupies, and the path segment it contributes. A `nil` prefix means
+    # the group scopes its routes somewhere this scan cannot resolve, so
+    # the routes inside are dropped rather than reported at the root.
+    private record Group, start : Int32, stop : Int32, prefix : String?
+
+    private def group_blocks(content : String, locals : Hash(String, String)) : Array(Group)
+      groups = [] of Group
+
+      content.scan(GROUP_CALL_RE) do |match|
+        start = match.begin(0) || 0
+        next unless statement_start?(content, start)
+
+        open_paren = content.index('(', start)
+        next unless open_paren
+
+        close_paren = matching_paren(content, open_paren)
+        next unless close_paren
+
+        groups << Group.new(open_paren, close_paren,
+          group_prefix(content, open_paren, close_paren, locals))
+      end
+
+      groups
+    end
+
+    # The group's options struct is its first argument.
+    private def group_prefix(content : String, open_paren : Int32, close_paren : Int32,
+                             locals : Hash(String, String)) : String?
+      open_brace = content.index('{', open_paren)
+      # No options struct at all: the group only wraps the closure, so it
+      # contributes nothing to the path.
+      return "" if open_brace.nil? || open_brace > close_paren
+
+      close_brace = matching_brace(content, open_brace)
+      return "" if close_brace.nil? || close_brace > close_paren
+
+      options = call_arguments(content[(open_brace + 1)...close_brace], locals)
+
+      if pattern = options["pattern"]?
+        resolved = interpolate(pattern, locals)
+        return resolved.nil? ? nil : "/#{resolved.strip.strip('/')}"
+      end
+
+      if namespace = options["namespace"]?
+        # A namespace is reachable only where a route mounts it. With no
+        # mount in the scan there is no URL to report.
+        return namespace_mounts[namespace.downcase]?
+      end
+
+      # `{ handler : "x", action : "y" }` only retargets; the path is
+      # whatever the routes inside declare.
+      ""
+    end
+
+    # Path prefix in force at `index`: the module entry point plus every
+    # enclosing group, outermost first (groups are collected in source
+    # order, which is the same thing).
+    private def scoped_prefix(base : String, groups : Array(Group), index : Int32) : String?
+      return base if groups.empty?
+
+      prefix = base
+      groups.each do |group|
+        next unless index > group.start && index < group.stop
+        segment = group.prefix
+        return unless segment
+
+        prefix = "#{prefix}#{segment}"
+      end
+      prefix
+    end
+
+    # namespace name => the path a route mounts it at, across every router
+    # in the scan (a module may mount a namespace another module declares).
+    private def namespace_mounts : Hash(String, String)
+      @namespace_mounts ||= build_namespace_mounts(router_files)
+    end
+
+    private def build_namespace_mounts(routers : Array(String)) : Hash(String, String)
+      mounts = {} of String => String
+
+      routers.each do |path|
+        content = strip_all_comments(read_file_content(path))
+        collect_namespace_mounts(content, mounts)
+      rescue e
+        logger.debug "Error reading namespace mounts from #{path}: #{e}"
+      end
+
+      mounts
+    end
+
+    private def collect_namespace_mounts(content : String, mounts : Hash(String, String))
+      content.scan(NAMESPACE_ROUTE_RE) do |match|
+        mounts[match[2].downcase] = "/#{match[1].strip.strip('/')}"
+      end
+
+      # `addNamespace( pattern = "/luis", namespace = "luis" )`
+      content.scan(ADD_NAMESPACE_RE) do |match|
+        start = match.begin(0) || 0
+        next unless statement_start?(content, start)
+
+        open_paren = content.index('(', start)
+        next unless open_paren
+
+        close_paren = matching_paren(content, open_paren)
+        next unless close_paren
+
+        arguments = call_arguments(content[(open_paren + 1)...close_paren])
+        pattern = arguments["pattern"]? || arguments["0"]?
+        namespace = arguments["namespace"]? || arguments["1"]?
+        next if pattern.nil? || namespace.nil? || namespace.empty?
+
+        mounts[namespace.downcase] = "/#{pattern.strip.strip('/')}"
+      end
+    end
+
+    # The builder chain attached to a route call, bounded by the end of the
+    # statement: a `;`, or a line break not continued by a `.`.
+    #
+    # The bound is load-bearing. A fixed character window ran past the call
+    # into whatever followed, so a bare `route()` could inherit the `.to()`
+    # of a later statement — and once `toNamespaceRouting` became a
+    # suppression signal, three unrelated routes declared above ColdBox's
+    # namespace mount disappeared with it.
+    private def statement_chain(content : String, from : Int32) : String
+      window = content[from, CHAIN_LIMIT]? || ""
+      cut = window.size
+      after_newline = false
+
+      window.each_char_with_index do |char, index|
+        if char == ';'
+          cut = index
+          break
+        end
+
+        if after_newline
+          next if char.whitespace?
+
+          # A chain continues with `.`; anything else opens a new statement.
+          unless char == '.'
+            cut = index
+            break
+          end
+          after_newline = false
+        elsif char == '\n'
+          after_newline = true
+        end
+      end
+
+      window[0, cut]
     end
 
     # `route( "/x" ).to( "handler.action" )` and friends. Every `to*`
@@ -194,12 +393,26 @@ module Analyzer::Cfml
         return verbs unless verbs.empty?
       end
 
+      if match = chain.match(CHAINED_ACTIONS_RE)
+        verbs = action_verbs(match[1])
+        return verbs unless verbs.empty?
+      end
+
       if target
         verbs = allowed_for(target)
         return verbs unless verbs.empty?
       end
 
       ["GET"]
+    end
+
+    private def action_verbs(raw : String) : Array(String)
+      verbs = [] of String
+      raw.scan(ACTION_VERB_RE) do |entry|
+        verb = entry[1].upcase
+        verbs << verb if HTTP_VERBS.includes?(verb)
+      end
+      verbs.uniq!
     end
 
     private def split_verbs(raw : String) : Array(String)
