@@ -33,6 +33,23 @@ module Analyzer::Go
     # precompiled `Regex.union` (PCRE2 JIT) checks all nine in a single pass.
     FRAMEWORK_IMPORTS_RE = Regex.union(FRAMEWORK_IMPORTS)
 
+    # Cheap pre-gate applied to the RAW file, before the comment strip.
+    #
+    # `GoEngine.strip_comments` materialises an `Array(Char)` of the whole
+    # file and rebuilds it character by character; running it on every
+    # `.go` file in a monorepo — 15k of them in kubernetes, of which a
+    # couple of hundred have any CLI surface — was the whole cost of this
+    # analyzer. Stripping only ever replaces characters with `' '` or
+    # `'\n'` and never changes the character count, so a literal with no
+    # whitespace in it can appear in the stripped text only if it already
+    # appears, unchanged, in the raw text. Every branch of `cli_evidence?`
+    # requires one of these literals verbatim (`FLAG_IMPORT_RE` is the
+    # literal `"flag"`; `OS_ARG_INDEX_RE` needs an adjacent `os.Args`), so
+    # a file that misses all of them cannot pass `cli_evidence?` after the
+    # strip either. Files that do match still go through the full,
+    # comment-aware gate below.
+    RAW_CLI_EVIDENCE_RE = Regex.union(FRAMEWORK_IMPORTS + [%("flag"), "os.Args"])
+
     # Per-framework matchers for the scan dispatch below, which asks the
     # same questions again once `cli_evidence?` has let a file through.
     KONG_IMPORT_RE       = Regex.union("github.com/alecthomas/kong")
@@ -141,7 +158,9 @@ module Analyzer::Go
           # patterns below are shape-based, so a commented-out or merely
           # documented registration read as a live one. Line numbers are
           # preserved, so PathInfo stays accurate.
-          content = GoEngine.strip_comments(read_file_content(path))
+          raw = read_file_content(path)
+          next unless content_matches?(raw, RAW_CLI_EVIDENCE_RE)
+          content = GoEngine.strip_comments(raw)
           next unless cli_evidence?(content)
 
           binary = go_binary_name(modules, path)

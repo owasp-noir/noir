@@ -76,6 +76,9 @@ module Analyzer::Java
       @result
     end
 
+    APPLICATION_PATH_RE = Regex.union("ApplicationPath")
+    WS_RS_PACKAGE_RE    = Regex.union("jakarta.ws.rs", "javax.ws.rs")
+
     private def application_base_paths_for(file_list : Array(String)) : Hash(ApplicationBaseKey, String)
       base_paths = Hash(ApplicationBaseKey, String).new
       application_packages = Hash(String, Array(ApplicationBaseKey)).new { |hash, key| hash[key] = [] of ApplicationBaseKey }
@@ -86,8 +89,10 @@ module Analyzer::Java
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
-        next unless content.includes?("ApplicationPath")
-        next unless content.includes?("jakarta.ws.rs") || content.includes?("javax.ws.rs")
+        # One precompiled matcher per gate instead of a `String#includes?`
+        # scan per `.java` file — this walks the whole Java source set.
+        next unless content_matches?(content, APPLICATION_PATH_RE)
+        next unless content_matches?(content, WS_RS_PACKAGE_RE)
         next if claimed_by_derivative?(content)
 
         Noir::TreeSitter.parse_java(content) do |root|
@@ -332,10 +337,11 @@ module Analyzer::Java
     # Frameworks that ride on JAX-RS but ship their own analyzer.
     # Listing them here keeps the JAX-RS analyzer the fallback for
     # vanilla Jersey / RESTEasy resources without double-counting.
-    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard"]
+    DERIVATIVE_MARKERS    = ["io.quarkus", "io.dropwizard"]
+    DERIVATIVE_MARKERS_RE = Regex.union(DERIVATIVE_MARKERS)
 
     private def claimed_by_derivative?(content : String) : Bool
-      DERIVATIVE_MARKERS.any? { |marker| content.includes?(marker) }
+      content_matches?(content, DERIVATIVE_MARKERS_RE)
     end
 
     # Build the cross-file `@BeanParam` index for `path`. Same

@@ -170,8 +170,13 @@ module Analyzer::Ruby
       GrapeIndex.new(grape, inherited)
     end
 
+    # `Grape::API` is absent from almost every `.rb` file in a large repo,
+    # so `String#includes?` scanned each one end to end. One precompiled
+    # matcher via `content_matches?` is the same test in a single pass.
+    GRAPE_API_MARKER_RE = Regex.union("Grape::API")
+
     private def grape_api_file?(content : String, grape_classes : Set(String)) : Bool
-      return true if content.includes?("Grape::API")
+      return true if content_matches?(content, GRAPE_API_MARKER_RE)
       # With no Grape classes anywhere in the project, the per-line membership
       # loop below can only ever miss, so skip it. This is the common case when
       # the whole-tree scan runs over a non-Grape repo (e.g. a Rails app, where
