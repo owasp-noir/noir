@@ -35,17 +35,34 @@ describe "Cloudflare Wrangler Analyzer" do
       zone_name = "example.com"
       TOML
 
-    endpoints.map(&.url).sort!.should eq ["api.example.com/*", "example.com/api/*"]
+    # A route pattern is host-qualified; the host is routing context, not part
+    # of the request path.
+    endpoints.map(&.url).sort!.should eq ["/*", "/api/*"]
+    endpoints.map { |e| tag_descriptions(e, "wrangler-host") }.sort!.should eq [["api.example.com"], ["example.com"]]
     endpoints.each do |endpoint|
       endpoint.method.should eq "ANY"
       tag_descriptions(endpoint, "wrangler-zone").should eq ["example.com"]
     end
   end
 
+  it "recovers routes from a mixed-type array the TOML shard rejects" do
+    endpoints = analyze_wrangler <<-TOML
+      name = "api"
+      compatibility_date = "2024-01-01"
+      routes = [
+        "static.example.com/assets/*",
+        { pattern = "edge.example.com/edge/*", zone_name = "example.com" }
+      ]
+      TOML
+
+    endpoints.map(&.url).sort!.should eq ["/assets/*", "/edge/*"]
+  end
+
   it "extracts JSON-formatted routes" do
     endpoints = analyze_wrangler(%({"name":"api","routes":[{"pattern":"app.example.com/*","zone_name":"example.com"}]}), ".jsonc")
     endpoints.size.should eq 1
-    endpoints[0].url.should eq "app.example.com/*"
+    endpoints[0].url.should eq "/*"
+    tag_descriptions(endpoints[0], "wrangler-host").should eq ["app.example.com"]
   end
 
   it "handles wrangler.jsonc with comments" do
@@ -61,6 +78,7 @@ describe "Cloudflare Wrangler Analyzer" do
       }
       JSONC
     endpoints.size.should eq 1
-    endpoints[0].url.should eq "api.example.com/*"
+    endpoints[0].url.should eq "/*"
+    tag_descriptions(endpoints[0], "wrangler-host").should eq ["api.example.com"]
   end
 end
