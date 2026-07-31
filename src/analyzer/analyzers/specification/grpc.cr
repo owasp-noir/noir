@@ -147,6 +147,10 @@ module Analyzer::Specification
 
     private def parse_messages(content : String) : Hash(String, MessageFields)
       messages = {} of String => MessageFields
+      # One character array for the whole file, shared by every message's
+      # brace match (see `find_matching_delimiter`). Built lazily so a
+      # `.proto` with no message declarations pays nothing.
+      chars = nil.as(Array(Char)?)
 
       # Find message blocks using brace matching (supports nested messages/enums)
       content.scan(/\bmessage\s+(\w+)\s*\{/m) do |match|
@@ -154,7 +158,8 @@ module Analyzer::Specification
         start_pos = match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
         next if brace_pos.nil?
-        msg_body = extract_brace_block(content, brace_pos)
+        file_chars = (chars ||= content.chars)
+        msg_body = extract_brace_block(content, brace_pos, file_chars)
         next if msg_body.nil?
 
         fields = [] of Param
@@ -179,21 +184,30 @@ module Analyzer::Specification
     end
 
     private def parse_services(content : String, file_path : String, package : String, registry : Hash(String, MessageFields))
+      # As in `parse_messages`: one shared character array for the file.
+      # `content_lines` is likewise shared — `find_line_number` used to
+      # re-walk every line of the document once per rpc method.
+      chars = nil.as(Array(Char)?)
+      content_lines = nil.as(Array(String)?)
+
       # Find service blocks using brace matching
       content.scan(/\bservice\s+(\w+)\s*\{/m) do |service_match|
         service_name = service_match[1]
         start_pos = service_match.begin(0) || 0
         brace_pos = content.index('{', start_pos)
         next if brace_pos.nil?
-        service_body = extract_brace_block(content, brace_pos)
+        file_chars = (chars ||= content.chars)
+        service_body = extract_brace_block(content, brace_pos, file_chars)
         next if service_body.nil?
 
-        parse_rpc_methods(service_body, file_path, package, service_name, registry, content)
+        file_lines = (content_lines ||= content.lines)
+        parse_rpc_methods(service_body, file_path, package, service_name, registry, file_lines)
       end
     end
 
-    private def extract_brace_block(content : String, open_pos : Int32) : String?
-      close = find_matching_delimiter(content, open_pos, '{', '}')
+    private def extract_brace_block(content : String, open_pos : Int32,
+                                    chars : Array(Char) = content.chars) : String?
+      close = find_matching_delimiter(chars, open_pos, '{', '}')
       return if close.nil?
       content[(open_pos + 1)..(close - 1)]
     end
@@ -203,16 +217,23 @@ module Analyzer::Specification
     # a delimiter inside them can't shift the depth. Works for `{}` and `[]`
     # (the array form of `additional_bindings`).
     private def find_matching_delimiter(content : String, open_pos : Int32, open_char : Char, close_char : Char) : Int32?
-      # This walks whole message/service bodies per character, and Crystal's
-      # `String#[](Int)` is O(n) per access on non-ASCII content (no cached
-      # char->byte index) — materialize once and index the array instead.
-      # `String#index` below returns CHAR indices, so positions stay
-      # consistent; the returned index is a CHAR index.
-      chars = content.chars
+      find_matching_delimiter(content.chars, open_pos, open_char, close_char)
+    end
+
+    # `chars` overload: the caller owns the materialised character array.
+    #
+    # This used to take the `String` and call `content.chars` itself, which
+    # meant one `Array(Char)` the size of the whole file per message and per
+    # service — O(messages x file size). `kubernetes`' 339 KB
+    # `core/v1/generated.proto` alone paid for ~500 of them. Callers that
+    # scan a buffer repeatedly now build the array once and hand it in.
+    # Positions in and out are CHAR indices, as before.
+    private def find_matching_delimiter(chars : Array(Char), open_pos : Int32, open_char : Char, close_char : Char) : Int32?
+      size = chars.size
       depth = 0
       pos = open_pos
       in_string = false
-      while pos < chars.size
+      while pos < size
         ch = chars[pos]
         if in_string
           # A quote closes the string only when preceded by an EVEN number of
@@ -226,15 +247,21 @@ module Analyzer::Specification
             end
             in_string = false if bs.even?
           end
-        elsif ch == '/' && pos + 1 < chars.size && chars[pos + 1] == '/'
+        elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '/'
           # Line comment: skip to EOL so a stray delimiter can't shift state.
-          nl = content.index('\n', pos)
-          pos = nl.nil? ? chars.size : nl
+          nl = pos
+          while nl < size && chars[nl] != '\n'
+            nl += 1
+          end
+          pos = nl
           next
-        elsif ch == '/' && pos + 1 < chars.size && chars[pos + 1] == '*'
+        elsif ch == '/' && pos + 1 < size && chars[pos + 1] == '*'
           # Block comment: skip to the closing */.
-          close = content.index("*/", pos + 2)
-          pos = close.nil? ? chars.size : close + 2
+          cur = pos + 2
+          while cur + 1 < size && !(chars[cur] == '*' && chars[cur + 1] == '/')
+            cur += 1
+          end
+          pos = cur + 1 < size ? cur + 2 : size
           next
         elsif ch == '"'
           in_string = true
@@ -249,7 +276,8 @@ module Analyzer::Specification
       nil
     end
 
-    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, registry : Hash(String, MessageFields), full_content : String)
+    private def parse_rpc_methods(service_body : String, file_path : String, package : String, service_name : String, registry : Hash(String, MessageFields), full_content_lines : Array(String))
+      body_chars = nil.as(Array(Char)?)
       # Find each rpc definition and its associated options block
       service_body.scan(/\brpc\s+(\w+)\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)\s*returns\s*\(\s*(stream\s+)?(\.?\w+(?:\.\w+)*)\s*\)/m) do |rpc_match|
         method_name = rpc_match[1]
@@ -263,13 +291,14 @@ module Analyzer::Specification
         if remaining =~ /\A\s*\{/
           brace_pos = service_body.index('{', rpc_end)
           if brace_pos
-            block = extract_brace_block(service_body, brace_pos)
+            service_chars = (body_chars ||= service_body.chars)
+            block = extract_brace_block(service_body, brace_pos, service_chars)
             options_block = block || ""
           end
         end
 
         # Find line number using word boundary match
-        line_number = find_line_number(full_content, method_name)
+        line_number = find_line_number(full_content_lines, method_name)
         details = Details.new(PathInfo.new(file_path, line_number))
 
         # Extract params from request message (resolved across imported files)
@@ -439,6 +468,7 @@ module Analyzer::Specification
     # no-colon, colon, and array (`[ {...}, {...} ]`) forms.
     private def each_additional_binding_body(rule_body : String, & : String ->)
       keyword = "additional_bindings"
+      rule_chars = nil.as(Array(Char)?)
       pos = 0
       while idx = rule_body.index(keyword, pos)
         cur = idx + keyword.size
@@ -452,29 +482,32 @@ module Analyzer::Specification
         case rule_body[cur]
         when '['
           # Array form: iterate each top-level { ... } object inside the [ ... ].
-          array_close = find_matching_delimiter(rule_body, cur, '[', ']')
+          body_chars = (rule_chars ||= rule_body.chars)
+          array_close = find_matching_delimiter(body_chars, cur, '[', ']')
           next if array_close.nil?
           inner = rule_body[(cur + 1)...array_close]
+          inner_chars = inner.chars
           obj_pos = 0
           while obj_open = inner.index('{', obj_pos)
-            obj_close = find_matching_delimiter(inner, obj_open, '{', '}')
+            obj_close = find_matching_delimiter(inner_chars, obj_open, '{', '}')
             break if obj_close.nil?
             yield inner[(obj_open + 1)...obj_close]
             obj_pos = obj_close + 1
           end
         when '{'
-          if body = extract_brace_block(rule_body, cur)
+          body_chars = (rule_chars ||= rule_body.chars)
+          if body = extract_brace_block(rule_body, cur, body_chars)
             yield body
           end
         end
       end
     end
 
-    private def find_line_number(content : String, method_name : String) : Int32?
+    private def find_line_number(lines : Array(String), method_name : String) : Int32?
       # Hoisted out of the loop: an interpolated regex literal recompiles
       # (PCRE2 JIT) on every evaluation, i.e. once per line.
       rpc_regex = /\brpc\s+#{Regex.escape(method_name)}\s*\(/
-      content.each_line.with_index do |line, index|
+      lines.each_with_index do |line, index|
         next unless line.includes?(method_name)
         if line =~ rpc_regex
           return index + 1
