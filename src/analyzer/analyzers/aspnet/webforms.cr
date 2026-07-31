@@ -63,6 +63,31 @@ module Analyzer::Aspnet
     CS_SIGNATURE_RE   = /\b(?:public|internal)\s+(?:(?:static|virtual|override|async)\s+)*[\w<>\[\],.\s]+?\s+(\w+)\s*\(([^)]*)\)/
     WEBMETHOD_WINDOW  = 400
 
+    # Evidence that a page can act on a POST.
+    #
+    # `<form runat="server">` is the decisive one — the framework posts
+    # back to the page's own URL — but the tag name has to be matched
+    # loosely, because control libraries subclass `HtmlForm`: DNN's own
+    # `Default.aspx` carries `<dnn:Form ID="Form" runat="server">`, and an
+    # anchored `<form` missed it.
+    SERVER_FORM_RE = /<[\w:.]*form\b[^>]*\brunat\s*=\s*["']?server/i
+
+    # A content page's form belongs to its master page. The master is
+    # normally resolved and scanned, so `SERVER_FORM_RE` finds it there —
+    # but not always: CarrotCake's plugin pages name `~/Site1.Master` from
+    # a sibling project the scan base does not contain. Declaring a master
+    # is itself the evidence, since a master page without an `HtmlForm` is
+    # not a usable master.
+    CONTENT_PAGE_RE = /\bMasterPageFile\s*=|<asp:Content\b/i
+
+    # Code-behind evidence, for handlers and for pages whose markup carries
+    # no form at all. Reading — or merely enumerating — the form collection
+    # is conclusive: DNN's PayPal IPN receiver has no markup beyond its
+    # directive and does `foreach (string strName in this.Request.Form)`,
+    # which yields no literal parameter name but proves the page is a POST
+    # target. `Files` and `InputStream` are only ever populated by one.
+    POST_HANDLING_RE = /\bIsPostBack\b|__doPostBack|\bRequest\s*\.\s*(?:Form|Files|InputStream)\b/i
+
     # WebForms postback plumbing, not user-facing parameters.
     FRAMEWORK_FIELDS = Set{
       "__viewstate", "__viewstategenerator", "__viewstateencrypted",
@@ -111,19 +136,45 @@ module Analyzer::Aspnet
       end
 
       buckets = ParamBuckets.new
-      sources.each { |source| scan_source(source, buckets) }
+      postable = false
+      sources.each do |source|
+        scan_source(source, buckets)
+        postable ||= post_target?(source)
+      end
 
       urls = [url]
       urls << directory_url(url) if File.basename(path).downcase == DIRECTORY_INDEX
 
-      # A WebForms page with a server-side form answers both verbs by
-      # construction — the framework posts back to the page's own URL —
-      # and `IsPostBack` proves both paths share one handler rather than
-      # distinguishing them.
       urls.each do |page_url|
         @result << Endpoint.new(page_url, "GET", unique_params(buckets.query_side), details)
+      end
+
+      # A WebForms page with a server-side form answers both verbs by
+      # construction, and `IsPostBack` proves both paths share one handler
+      # rather than distinguishing them. Neither is universal, though:
+      # emitting POST for *every* page claimed a verb for pages that
+      # cannot act on it — DNN's `KeepAlive.aspx` is four lines of markup
+      # with no form, no code-behind read and nothing to post to.
+      postable ||= !buckets.body.empty?
+      return unless postable
+
+      urls.each do |page_url|
         @result << Endpoint.new(page_url, "POST", unique_params(buckets.body_side), details)
       end
+    end
+
+    # Whether this source proves the page it belongs to handles a POST.
+    private def post_target?(path : String) : Bool
+      content = read_file_content(path)
+      if markup?(path)
+        return true if content.matches?(SERVER_FORM_RE)
+        return true if content.matches?(CONTENT_PAGE_RE)
+      end
+
+      content.matches?(POST_HANDLING_RE)
+    rescue e
+      logger.debug "Error checking post handling in #{path}: #{e}"
+      false
     end
 
     # A page's params come from its own inline code, its code-behind, its
@@ -270,7 +321,7 @@ module Analyzer::Aspnet
         name = match[1]
         next if skip_field?(name)
 
-        buckets.add_ambiguous(name)
+        record_ambiguous(name, buckets)
       end
     rescue e
       logger.debug "Error scanning #{path}: #{e}"
@@ -282,11 +333,24 @@ module Analyzer::Aspnet
       when "form"        then buckets.body << Param.new(name, "", "form")
       when "cookies"     then buckets.shared << Param.new(name, "", "cookie")
       when "headers"     then buckets.shared << Param.new(name, "", "header")
-      when "params"      then buckets.add_ambiguous(name)
+      when "params"      then record_ambiguous(name, buckets)
       when "servervariables"
         if header = http_header_name(name)
           buckets.shared << Param.new(header, "", "header")
         end
+      end
+    end
+
+    # `Request[...]` and `Request.Params[...]` search QueryString, then
+    # Form, then Cookies, then ServerVariables. An `HTTP_`-prefixed key can
+    # only resolve through the last of those, so it names an inbound header
+    # — reporting it as a query *and* a form parameter invents two keys no
+    # client can send. DNN reads `context.Request["HTTP_ACCEPT"]` this way.
+    private def record_ambiguous(name : String, buckets : ParamBuckets)
+      if header = http_header_name(name)
+        buckets.shared << Param.new(header, "", "header")
+      else
+        buckets.add_ambiguous(name)
       end
     end
 
