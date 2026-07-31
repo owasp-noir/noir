@@ -83,7 +83,7 @@ module Detector::Specification
 
     private def schema_file?(filename : String) : Bool
       return false unless File.basename(filename) == SCHEMA_FILENAME
-      normalize(filename).includes?("/content-types/")
+      normalize(base_relative_path(filename)).includes?("/content-types/")
     end
 
     # A Strapi route module lives at `src/api/<name>/routes/<file>` (or
@@ -94,7 +94,12 @@ module Detector::Specification
     # +server.ts`, which contains both segments the other way round, and
     # any framework that merely keeps route modules in a `routes/`
     # directory.
+    # Scan-base-relative, never absolute: the layout below describes a
+    # location inside the Strapi project, and `String#index` takes the
+    # first occurrence, so an `api/` or `server/` directory above the scan
+    # base decided the ordering.
     private def routes_module?(path : String) : Bool
+      path = base_relative_path(path)
       routes_at = path.rindex("/routes/")
       return false unless routes_at
 

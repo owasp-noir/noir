@@ -10,8 +10,9 @@ module Detector::Php
         return true
       end
 
-      # Check for Yii2 vendor path
-      if filename.includes?("vendor/yiisoft/")
+      # Check for Yii2 vendor path. Scan-base-relative: a `vendor/yiisoft/`
+      # directory above the base belongs to some other checkout.
+      if base_relative_path(filename).includes?("vendor/yiisoft/")
         return true
       end
 
