@@ -59,7 +59,7 @@ module Analyzer::Python
     # `get_files_by_extension(".py")` + nested `base_paths.each`.
     protected def python_source_files : Array(String)
       get_files_by_extension(".py").reject do |path|
-        path.includes?("/site-packages/") || python_test_path?(path)
+        base_relative_path(path).includes?("/site-packages/") || python_test_path?(path)
       end
     end
 

@@ -98,7 +98,9 @@ module Analyzer::Crystal
     end
 
     private def cli_test_path?(path : String) : Bool
-      lower = path.downcase
+      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
+      # scan base is not this project's test tree.
+      lower = base_relative_path(path).downcase
       lower.includes?("_spec.") || lower.includes?("/test/")
     end
 

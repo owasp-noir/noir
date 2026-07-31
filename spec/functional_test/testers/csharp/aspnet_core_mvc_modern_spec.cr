@@ -31,6 +31,20 @@ file_download_head = Endpoint.new("/Files/{id}/Download", "HEAD", [Param.new("id
 file_search_get = Endpoint.new("/Files/Search", "GET", [Param.new("q", "", "query")])
 file_search_post = Endpoint.new("/Files/Search", "POST", [Param.new("q", "", "query")])
 
+# [AcceptVerbs] declares one action answering several verbs, at the
+# conventional route or at an explicit `Route = "…"`.
+banks_update_put = Endpoint.new("/banks", "PUT", [Param.new("accountNumber", "", "form")])
+banks_update_patch = Endpoint.new("/banks", "PATCH", [Param.new("accountNumber", "", "form")])
+banks_transfer_put = Endpoint.new("/banks/transfer", "PUT", [Param.new("amount", "", "form")])
+banks_transfer_post = Endpoint.new("/banks/transfer", "POST", [Param.new("amount", "", "form")])
+
+# `[FromRoute(Name = "branchId")] string internalBranchKey` binds the route
+# value, so the parameter is `branchId`; `{page=5}` carries a template default
+# that is not part of the URL.
+banks_branch = Endpoint.new("/banks/branch/{branchId}", "GET", [Param.new("branchId", "", "path")])
+banks_page = Endpoint.new("/banks/page/{page}", "GET", [Param.new("page", "", "path")])
+banks_audit = Endpoint.new("/banks/audit", "GET", [Param.new("X-Tenant", "", "header")])
+
 expected_endpoints = [
   articles_list,
   article_get,
@@ -41,6 +55,13 @@ expected_endpoints = [
   file_download_head,
   file_search_get,
   file_search_post,
+  banks_update_put,
+  banks_update_patch,
+  banks_transfer_put,
+  banks_transfer_post,
+  banks_branch,
+  banks_page,
+  banks_audit,
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_modern/", {
@@ -67,6 +88,22 @@ describe "ASP.NET Core MVC modern controller edge cases" do
     list = tester.app.endpoints.find { |e| e.url == "/articles" && e.method == "GET" }
     list.should_not be_nil
     list.as(Endpoint).params.any? { |p| p.name == "cancellationToken" }.should be_false
+  end
+
+  it "emits one endpoint per verb listed in [AcceptVerbs]" do
+    tester.app.endpoints.count { |e| e.url == "/banks" }.should eq 2
+    tester.app.endpoints.count { |e| e.url == "/banks/transfer" }.should eq 2
+  end
+
+  it "uses the explicit [From*(Name = ...)] binding name, not the C# identifier" do
+    branch = tester.app.endpoints.find! { |e| e.url == "/banks/branch/{branchId}" }
+    branch.params.map(&.name).sort!.should eq(["branchId"])
+  end
+
+  it "strips a route-template default value from the URL and the param name" do
+    tester.app.endpoints.any?(&.url.includes?("{page=5}")).should be_false
+    page = tester.app.endpoints.find! { |e| e.url == "/banks/page/{page}" }
+    page.params.map(&.name).should eq(["page"])
   end
 
   it "records callees from an expression-bodied action body" do

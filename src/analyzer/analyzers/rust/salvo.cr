@@ -86,7 +86,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?("#[handler]")
@@ -679,7 +679,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)
         src = read_file_content(fpath)
         next unless src.matches?(FN_EDGE_EVIDENCE_RE)
@@ -854,7 +854,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?(": &") && src.includes?("str")

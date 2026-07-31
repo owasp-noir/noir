@@ -40,11 +40,15 @@ module Analyzer::Javascript
       # routes/users.get.ts -> /users (GET only)
       # routes/api/items.ts -> /api/items
 
-      base_path_idx = path.index("/routes/")
+      # Scan-base-relative, never absolute: `String#index` takes the
+      # FIRST occurrence, so a same-named directory above the scan base
+      # won outright and the derived URL changed with the checkout path.
+      scoped = base_relative_path(path)
+      base_path_idx = scoped.index("/routes/")
       return if base_path_idx.nil?
 
       # Get the path after /routes/
-      relative_path = path[(base_path_idx + "/routes/".size)..-1]
+      relative_path = scoped[(base_path_idx + "/routes/".size)..-1]
 
       # Remove file extension
       relative_path = relative_path.gsub(/\.(js|ts|mjs|mts)$/, "")

@@ -91,9 +91,12 @@ module Analyzer::Javascript
     end
 
     private def ignored_nest_path?(path : String) : Bool
-      path.includes?(".test.") || path.includes?(".spec.") ||
-        path.includes?("/__tests__/") || path.includes?("/__mocks__/") ||
-        path.includes?("/test/fixtures/") || path.includes?("/tests/fixtures/")
+      # Scan-base-relative, never absolute: a `__tests__/` or `test/`
+      # directory ABOVE the scan base is not this project's test tree.
+      relative = base_relative_path(path)
+      relative.includes?(".test.") || relative.includes?(".spec.") ||
+        relative.includes?("/__tests__/") || relative.includes?("/__mocks__/") ||
+        relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/")
     end
 
     # Prepend the discovered `app.setGlobalPrefix('api')` value to

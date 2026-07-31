@@ -65,7 +65,10 @@ describe "Mitmproxy Analyzer" do
     endpoints = analyze_flows([flow(request)])
     endpoints.size.should eq 1
     ep = endpoints.first
-    ep.url.should eq "/api/users?active=1"
+    # The query string is reported as `query` params, so it does not belong in
+    # the URL as well — keeping it there duplicated every parameter and split
+    # one endpoint into one per captured value.
+    ep.url.should eq "/api/users"
     ep.method.should eq "GET"
 
     query = ep.params.select { |p| p.param_type == "query" }
@@ -73,7 +76,7 @@ describe "Mitmproxy Analyzer" do
     query.first.value.should eq "1"
 
     headers = ep.params.select { |p| p.param_type == "header" }.map(&.name)
-    headers.should contain "Host"
+    headers.should_not contain "Host"
     headers.should contain "Cookie"
 
     cookies = ep.params.select { |p| p.param_type == "cookie" }.map { |p| {p.name, p.value} }
@@ -222,6 +225,45 @@ describe "Mitmproxy Analyzer" do
     ensure
       File.delete(path) if File.exists?(path)
     end
+  end
+
+  it "drops HTTP/2 pseudo-headers and transport headers" do
+    request = {
+      "method"  => "POST".as(Tnetstring::Value),
+      "scheme"  => "https".as(Tnetstring::Value),
+      "host"    => "example.com".as(Tnetstring::Value),
+      "port"    => 443_i64.as(Tnetstring::Value),
+      "path"    => "/api/cart".as(Tnetstring::Value),
+      "headers" => [
+        header(":authority", "example.com"),
+        header(":method", "POST"),
+        header(":path", "/api/cart"),
+        header(":scheme", "https"),
+        header("content-length", "12"),
+        header("X-Request-Id", "8f2c"),
+      ] of Tnetstring::Value,
+    } of String => Tnetstring::Value
+
+    endpoints = analyze_flows([flow(request)])
+    headers = endpoints.first.params.select { |p| p.param_type == "header" }.map(&.name)
+    headers.should eq ["X-Request-Id"]
+  end
+
+  it "emits absolute URLs when no --url is supplied" do
+    request = {
+      "method" => "GET".as(Tnetstring::Value),
+      "scheme" => "https".as(Tnetstring::Value),
+      "host"   => "shop.example.com".as(Tnetstring::Value),
+      "port"   => 443_i64.as(Tnetstring::Value),
+      "path"   => "/api/orders?page=2".as(Tnetstring::Value),
+    } of String => Tnetstring::Value
+
+    # Previously a capture scanned without `--url` produced nothing at all,
+    # which is the opposite of what pointing noir at a dump is for. HAR falls
+    # back to the absolute URL in the same situation.
+    endpoints = analyze_flows([flow(request)], url: "")
+    endpoints.map(&.url).should eq ["https://shop.example.com/api/orders"]
+    endpoints.first.params.select { |p| p.param_type == "query" }.map(&.name).should eq ["page"]
   end
 
   it "ignores non-http flows" do

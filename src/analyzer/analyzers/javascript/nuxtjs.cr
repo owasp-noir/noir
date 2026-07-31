@@ -15,16 +15,19 @@ module Analyzer::Javascript
       parallel_file_scan(EXTENSIONS) do |path|
         # Focus on server/api and server/routes directories for Nuxt 3
         next unless path.includes?("/server/api/") || path.includes?("/server/routes/")
+        # Scan-base-relative, never absolute: a `test/` or `__tests__/`
+        # directory ABOVE the scan base is not this project's test tree.
+        relative = base_relative_path(path)
         # Skip `*.test.ts` / `*.spec.ts` siblings — they don't
         # define Nuxt event handlers, just exercise neighbors.
-        next if path.includes?(".test.") || path.includes?(".spec.")
+        next if relative.includes?(".test.") || relative.includes?(".spec.")
         # Skip mini-Nuxt fixtures used to test the framework itself.
         # nuxt/nuxt parks 18 phantom endpoints under
         # `test/fixtures/<scenario>/server/api/` — each fixture is a
         # full Nuxt project the test suite spins up, but none of the
         # routes serve real traffic.
-        next if path.includes?("/test/fixtures/") || path.includes?("/tests/fixtures/")
-        next if path.includes?("/__tests__/") || path.includes?("/__mocks__/")
+        next if relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/")
+        next if relative.includes?("/__tests__/") || relative.includes?("/__mocks__/")
         analyze_nuxt_file(path, result, mutex, include_callee)
       end
 
@@ -38,12 +41,16 @@ module Analyzer::Javascript
       # server/api/users.get.ts -> /api/users (GET only)
       # server/routes/custom.ts -> /custom
 
-      relative_path = path
-      base_path_idx = path.index("/server/api/")
+      # Scan-base-relative, never absolute: `String#index` takes the
+      # FIRST occurrence, so a same-named directory above the scan base
+      # won outright and the derived URL changed with the checkout path.
+      scoped = base_relative_path(path)
+      relative_path = scoped
+      base_path_idx = scoped.index("/server/api/")
       is_api_route = true
 
       if base_path_idx.nil?
-        base_path_idx = path.index("/server/routes/")
+        base_path_idx = scoped.index("/server/routes/")
         is_api_route = false
       end
 
@@ -51,9 +58,9 @@ module Analyzer::Javascript
 
       # Get the path after /server/api/ or /server/routes/
       if is_api_route
-        relative_path = path[(base_path_idx + "/server/api/".size)..-1]
+        relative_path = scoped[(base_path_idx + "/server/api/".size)..-1]
       else
-        relative_path = path[(base_path_idx + "/server/routes/".size)..-1]
+        relative_path = scoped[(base_path_idx + "/server/routes/".size)..-1]
       end
 
       # Remove file extension

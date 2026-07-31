@@ -115,7 +115,7 @@ module Analyzer::Rust
       all_files.each do |path|
         next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".rs"
-        next if RustEngine.test_path?(path)
+        next if RustEngine.test_path?(base_relative_path(path))
         base = configured_base_for(path)
         src = read_file_content(path)
         next unless src.matches?(MOUNT_INDEX_EVIDENCE_RE)

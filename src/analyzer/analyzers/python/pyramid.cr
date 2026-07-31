@@ -76,7 +76,7 @@ module Analyzer::Python
       base_paths.each do |current_base_path|
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
-          next if path.includes?("/site-packages/")
+          next if base_relative_path(path).includes?("/site-packages/")
           next if python_test_path?(path)
           @logger.debug "Analyzing #{path}"
 

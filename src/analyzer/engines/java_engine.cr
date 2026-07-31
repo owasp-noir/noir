@@ -19,9 +19,16 @@ module Analyzer::Java
     # Also covers Maven's archetype source-roots
     # (`src/it/`, integration-test convention used by some Quarkus
     # extensions and Apache projects) which sit alongside `src/test/`.
-    def self.test_path?(path : String) : Bool
-      return true if path.includes?("/src/test/")
-      return true if path.includes?("/src/it/")
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. The layout is a contract between the build
+    # tool and the *project*, so matching the absolute path let a
+    # directory above the scan base decide the answer — a CI job that
+    # checks out under a `src/test/` step directory silently lost 375 of
+    # the fixture tree's 396 endpoints.
+    def self.test_path?(relative_path : String) : Bool
+      return true if relative_path.includes?("/src/test/")
+      return true if relative_path.includes?("/src/it/")
       false
     end
   end

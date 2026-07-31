@@ -14,6 +14,13 @@ module Analyzer::Go
 
     IMPORT_MARKER = "github.com/danielgtaylor/huma"
 
+    # One precompiled matcher instead of a `String#includes?` scan per
+    # `.go` file: `includes?` runs Rabin-Karp over the whole buffer and
+    # the marker is absent in the overwhelming majority of files in a
+    # polyglot repo, so every one of them pays the full scan. See
+    # `Analyzer#content_matches?`.
+    IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
+
     # Tags we lift from Input struct fields onto endpoint params.
     PARAM_TAG_KINDS = {
       "path"   => "path",
@@ -61,7 +68,7 @@ module Analyzer::Go
 
       get_files_by_extension(".go").each do |scan_path|
         next if File.directory?(scan_path)
-        next if GoEngine.go_test_file?(scan_path)
+        next if GoEngine.go_test_file?(base_relative_path(scan_path))
         begin
           dir = File.dirname(scan_path)
           package_files[dir] ||= [] of String
@@ -99,11 +106,11 @@ module Analyzer::Go
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
-                  next if GoEngine.go_test_file?(path)
+                  next if GoEngine.go_test_file?(base_relative_path(path))
                   next unless File.exists?(path)
 
                   content = file_contents_cache[path]? || read_file_content(path)
-                  next unless content.includes?(IMPORT_MARKER)
+                  next unless content_matches?(content, IMPORT_MARKER_RE)
 
                   dir = File.dirname(path)
                   structs = package_structs[dir]? || Hash(String, Array(StructField)).new

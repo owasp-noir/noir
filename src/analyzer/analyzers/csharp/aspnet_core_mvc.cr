@@ -29,9 +29,25 @@ module Analyzer::CSharp
 
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-      route_patterns_by_base = load_route_patterns_by_base
-      analyze_controllers(route_patterns_by_base, include_callee)
+      project_roots = Common.project_roots(get_files_by_extension(".csproj"))
+      route_patterns_by_scope = load_route_patterns_by_scope(project_roots)
+      analyze_controllers(route_patterns_by_scope, project_roots, include_callee)
       @result
+    end
+
+    # Conventional routing is declared per project, so scope the collected
+    # `MapControllerRoute` templates to the `.csproj` directory that owns the
+    # declaring `Program.cs`/`Startup.cs`, falling back to the configured scan
+    # base for files outside any project.
+    #
+    # Keying on the scan base alone cross-products every template in a
+    # solution with every controller in it: dotnet/aspnetcore, scanned as one
+    # project, produced routes like
+    # `/ConventionalTransformerRoute/{controller}/Login` by applying one
+    # sample's template to another sample's controller — 138 of its 738
+    # `cs_aspnet_core_mvc` endpoints were such phantoms.
+    private def route_scope_for(file : String, project_roots : Array(String)) : String
+      Common.project_root_for(file, project_roots) || configured_base_for(file)
     end
 
     private def extract_params_from_block(block : String) : Array(Param)
@@ -87,8 +103,8 @@ module Analyzer::CSharp
       params.uniq(&.name)
     end
 
-    private def load_route_patterns_by_base : Hash(String, Array(String))
-      patterns_by_base = Hash(String, Array(String)).new do |hash, key|
+    private def load_route_patterns_by_scope(project_roots : Array(String)) : Hash(String, Array(String))
+      patterns_by_scope = Hash(String, Array(String)).new do |hash, key|
         hash[key] = [] of String
       end
       files = get_files_by_extension(".cs").select do |file|
@@ -99,22 +115,22 @@ module Analyzer::CSharp
       files.each do |file|
         begin
           content = read_file_content(file)
-          patterns_by_base[configured_base_for(file)].concat(extract_route_patterns(content))
+          patterns_by_scope[route_scope_for(file, project_roots)].concat(extract_route_patterns(content))
         rescue e
           logger.debug "Failed to read #{file}: #{e.message}"
         end
       end
 
       @base_paths.each do |base_path|
-        patterns_by_base[base_path] << DEFAULT_ROUTE if patterns_by_base[base_path].empty?
+        patterns_by_scope[base_path] << DEFAULT_ROUTE if patterns_by_scope[base_path].empty?
       end
 
-      patterns_by_base.each do |base_path, patterns|
+      patterns_by_scope.each do |scope, patterns|
         patterns << DEFAULT_ROUTE if patterns.empty?
-        patterns_by_base[base_path] = patterns.uniq
+        patterns_by_scope[scope] = patterns.uniq
       end
 
-      patterns_by_base
+      patterns_by_scope
     end
 
     private def extract_route_patterns(content : String) : Array(String)
@@ -150,15 +166,16 @@ module Analyzer::CSharp
       patterns
     end
 
-    private def analyze_controllers(route_patterns_by_base : Hash(String, Array(String)), include_callee : Bool)
+    private def analyze_controllers(route_patterns_by_scope : Hash(String, Array(String)),
+                                    project_roots : Array(String), include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
         base = File.basename(file)
-        next false if Common.csharp_test_path?(file)
+        next false if Common.csharp_test_path?(base_relative_path(file))
         base.includes?("Controller") && !base.ends_with?("RouteConfig.cs") && base != "Program.cs" && base != "Startup.cs"
       end
 
       controller_files.each do |file|
-        route_patterns = route_patterns_by_base[configured_base_for(file)]? || [DEFAULT_ROUTE]
+        route_patterns = route_patterns_by_scope[route_scope_for(file, project_roots)]? || [DEFAULT_ROUTE]
         analyze_controller_file(file, route_patterns, include_callee)
       end
     end
@@ -203,9 +220,15 @@ module Analyzer::CSharp
           attr_line, advance = stitch_multiline_attribute(lines, i)
           line = attr_line if advance > 0
 
-          verb, verb_route, route_attr, found_attribute = collect_verb_route(line, route_attr)
-          explicit_endpoint_attribute ||= found_attribute
-          verb_routes << {verb, verb_route} if verb
+          if accept = collect_accept_verbs(line, route_attr)
+            accept_verbs, accept_route = accept
+            accept_verbs.each { |accept_verb| verb_routes << {accept_verb, accept_route} }
+            explicit_endpoint_attribute = true
+          else
+            verb, verb_route, route_attr, found_attribute = collect_verb_route(line, route_attr)
+            explicit_endpoint_attribute ||= found_attribute
+            verb_routes << {verb, verb_route} if verb
+          end
           non_action_attribute = true if line.includes?("[NonAction")
 
           # Skip the continuation lines we just consumed; they're
@@ -278,7 +301,7 @@ module Analyzer::CSharp
     # returns `{line, 0}` so the existing fast path is preserved.
     private def stitch_multiline_attribute(lines : Array(String), start : Int32) : Tuple(String, Int32)
       line = lines[start]
-      return {line, 0} unless line =~ /\[(Http(Post|Get|Put|Delete|Patch|Head|Options)|Route)\b/
+      return {line, 0} unless line =~ /\[(Http(Post|Get|Put|Delete|Patch|Head|Options)|Route|AcceptVerbs)\b/
 
       # The attribute closes when paren+bracket depth returns to
       # zero. If the opening line is already balanced (paren and
@@ -303,6 +326,37 @@ module Analyzer::CSharp
       end
 
       {joined, idx - start}
+    end
+
+    # `[AcceptVerbs("PUT", "PATCH")]` / `[AcceptVerbs("PUT", Route = "Bank")]`
+    # declares an action answering several verbs at one route — the MVC
+    # equivalent of stacking `[HttpPut]` and `[HttpPatch]`. It was ignored
+    # entirely, so such actions fell back to the conventional GET route.
+    ACCEPT_VERBS_RE       = /\[AcceptVerbs\s*\(([^\]]*)\)\s*\]/
+    ACCEPT_VERBS_ROUTE_RE = /\bRoute\s*=\s*@?"([^"]+)"/
+    ACCEPT_VERB_TOKENS    = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
+
+    private def collect_accept_verbs(line : String, route_attr : String) : Tuple(Array(String), String)?
+      match = ACCEPT_VERBS_RE.match(line)
+      return unless match
+
+      args = match[1]
+      route = ACCEPT_VERBS_ROUTE_RE.match(args).try(&.[1]) || route_attr
+      verbs = [] of String
+      args.scan(/@?"([^"]+)"/) do |literal|
+        token = literal[1].upcase
+        next unless ACCEPT_VERB_TOKENS.includes?(token)
+        verbs << token unless verbs.includes?(token)
+      end
+      # `HttpMethods.Put`-style arguments carry the verb as an identifier.
+      args.scan(/\bHttpMethods\s*\.\s*([A-Za-z]+)/) do |token|
+        upcased = token[1].upcase
+        next unless ACCEPT_VERB_TOKENS.includes?(upcased)
+        verbs << upcased unless verbs.includes?(upcased)
+      end
+      return if verbs.empty?
+
+      {verbs, route}
     end
 
     # Attribute name carrying each verb, for `extract_attribute_route`.
@@ -385,6 +439,7 @@ module Analyzer::CSharp
       default_param_type = default_param_type(http_method)
 
       split_csharp_parameters(param_list).each do |param_def|
+        explicit_name = Common.explicit_binding_name(param_def)
         cleaned_def, param_type = normalize_param_definition(param_def)
         next if cleaned_def.empty?
         next if param_type == "service"
@@ -402,7 +457,7 @@ module Analyzer::CSharp
             next if type_token && Common.csharp_service_type?(type_token)
           end
 
-          parameters << Param.new(param_name, "", param_type || default_param_type)
+          parameters << Param.new(explicit_name || param_name, "", param_type || default_param_type)
         end
       end
 
@@ -590,16 +645,16 @@ module Analyzer::CSharp
         next unless raw
 
         optional = raw.ends_with?("?")
-        name = raw.split(":").first
-        name = name.gsub(/\?$/, "")
+        name = Common.route_placeholder_name(raw)
 
         if optional && !param_names.includes?(name)
           result = result.gsub("/{#{raw}}", "")
           result = result.gsub("{#{raw}}/", "")
           result = result.gsub("{#{raw}}", "")
-        elsif optional
-          cleaned = raw.gsub("?", "")
-          result = result.gsub("{#{raw}}", "{#{cleaned}}")
+        elsif optional || raw.includes?('=')
+          # `{id?}` -> `{id}` and `{id=5}` -> `{id}`: a default value belongs
+          # to the route template, not to the URL a client sends.
+          result = result.gsub("{#{raw}}", "{#{raw.split('=').first.rstrip('?')}}")
         end
       end
 
@@ -633,10 +688,7 @@ module Analyzer::CSharp
       route.scan(placeholder_regex) do |match|
         raw = match[1]? || match[0]
         next unless raw
-        cleaned = raw.split(":").first
-        cleaned = cleaned.gsub(/\?$/, "")
-        cleaned = cleaned.lstrip("*")
-        keys << cleaned
+        keys << Common.route_placeholder_name(raw)
       end
 
       keys.uniq

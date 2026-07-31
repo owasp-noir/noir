@@ -52,11 +52,12 @@ module Analyzer::Specification
 
           is_websocket = websocket_request?(entry.request, request_uri)
           entry.request.headers.each do |header|
-            endpoint.params << Param.new(header.name, header.value, "header")
+            next if skipped_header?(header.name)
+            add_param_once(endpoint, Param.new(header.name, header.value, "header"))
           end
 
           entry.request.cookies.each do |cookie|
-            endpoint.params << Param.new(cookie.name, cookie.value, "cookie")
+            add_param_once(endpoint, Param.new(cookie.name, cookie.value, "cookie"))
           end
 
           add_post_data_params(endpoint, entry.request)
@@ -292,6 +293,20 @@ module Analyzer::Specification
         names << name unless name.empty?
       end
       names.uniq
+    end
+
+    # Headers that are not request parameters. A browser HAR is recorded over
+    # HTTP/2 or HTTP/3, where the request line is re-encoded as the `:method`
+    # `:scheme` `:authority` `:path` pseudo-headers — every Chrome/Firefox
+    # export carries them, and emitting them as params claims four parameters
+    # per endpoint that no request can actually set. `host` and
+    # `content-length` are the HTTP/1 equivalents and are already skipped by
+    # the Burp and Caido analyzers.
+    private def skipped_header?(name : String) : Bool
+      normalized = name.strip.downcase
+      return true if normalized.empty?
+      return true if normalized.starts_with?(':')
+      normalized == "host" || normalized == "content-length"
     end
 
     private def add_param_once(endpoint : Endpoint, param : Param)

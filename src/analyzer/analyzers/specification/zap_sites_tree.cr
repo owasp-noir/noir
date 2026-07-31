@@ -31,20 +31,31 @@ module Analyzer::Specification
         method = node["method"].as_s?.try(&.upcase) || "GET"
 
         if !path.empty?
-          uri = URI.parse(path)
-          params = [] of Param
-          if data = node["data"]?.try(&.as_s?)
-            begin
-              data.split("&").each do |param|
-                param_name = param.split("=")[0]
-                params << Param.new(param_name.to_s, "", "form")
-              end
-            rescue e
-              logger.debug "Failed to parse ZAP query params for #{path}: #{e}"
-            end
+          uri = begin
+            URI.parse(path)
+          rescue e
+            logger.debug "Failed to parse ZAP site URL '#{path}': #{e}"
+            nil
           end
 
-          @result << Endpoint.new(uri.path, method, params, details)
+          if uri
+            params = [] of Param
+
+            # A ZAP sites tree stores the URL a node was reached with, query
+            # string included. Only `uri.path` was kept, so every query
+            # parameter ZAP had already discovered was thrown away — the node
+            # for `/search?q=noir&page=2` produced a bare `/search` with no
+            # params at all.
+            if query = uri.query
+              add_named_params(query, "query", params)
+            end
+
+            if data = node["data"]?.try(&.as_s?)
+              add_named_params(data, "form", params)
+            end
+
+            @result << Endpoint.new(uri.path, method, params, details)
+          end
         end
       end
 
@@ -52,6 +63,17 @@ module Analyzer::Specification
         children.each do |child|
           process_node(child, details)
         end
+      end
+    end
+
+    # Splits an `a=1&b=2` payload into named params of `param_type`, skipping
+    # blanks and repeats.
+    private def add_named_params(payload : String, param_type : String, params : Array(Param))
+      payload.split('&').each do |pair|
+        name = pair.split('=', 2).first.strip
+        next if name.empty?
+        next if params.any? { |existing| existing.name == name && existing.param_type == param_type }
+        params << Param.new(name, "", param_type)
       end
     end
   end

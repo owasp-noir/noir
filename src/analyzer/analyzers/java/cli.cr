@@ -51,19 +51,41 @@ module Analyzer::Java
     JOPT_ACCEPTS_ALL = /\b(\w+)\.acceptsAll\s*\(\s*(?:Arrays\.asList|List\.of|Collections\.singletonList)\s*\(\s*"([^"]+)"/
 
     LIB_MARKERS      = ["picocli.", "org.kohsuke.args4j", "com.beust.jcommander", "org.apache.commons.cli", "com.github.rvesse.airline", "io.airlift.airline", "joptsimple."]
+    LIB_MARKERS_RE   = Regex.union(LIB_MARKERS)
     WEB_FRAMEWORK_RE = /\bimport\s+(?:org\.springframework|jakarta\.ws\.rs|javax\.ws\.rs|io\.quarkus|io\.micronaut|io\.javalin|io\.vertx|com\.linecorp\.armeria|io\.dropwizard|spark\.|org\.apache\.struts)/
+
+    CLI_GATE_RE = /@Command\b|@Parameter\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/
+
+    # Cheap pre-gate applied to the RAW file, before the comment strip.
+    #
+    # `strip_comments` materialises an `Array(Char)` of the whole file and
+    # rebuilds it character by character; running it on all 8,658 `.java`
+    # files in spring-boot to then reject 97% of them on the gate below was
+    # the bulk of this analyzer. Stripping only replaces characters with
+    # `' '` or `'\n'` and never changes the character count, so a literal
+    # with no whitespace in it can appear in the stripped text only if it
+    # already appears, unchanged, in the raw text. Each alternative of the
+    # real gate requires one of these literals verbatim (the `new\s+X`
+    # forms require `X`; the `\s`-carrying parts are deliberately not
+    # relied on, since blanking a comment *can* manufacture whitespace).
+    # Files that pass still go through the full, comment-aware gate.
+    RAW_CLI_MARKERS_RE = Regex.union(
+      LIB_MARKERS + ["@Command", "@Parameter", "JCommander", "CmdLineParser", "Options"]
+    )
 
     def analyze
       endpoints = {} of String => Endpoint
 
       get_files_by_extension(".java").each do |path|
         next if File.directory?(path)
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         begin
-          content = strip_comments(read_file_content(path))
-          next unless LIB_MARKERS.any? { |m| content.includes?(m) } || content.matches?(/@Command\b|@Parameter\b|new\s+JCommander|new\s+CmdLineParser|new\s+Options\s*\(/)
+          raw = read_file_content(path)
+          next unless content_matches?(raw, RAW_CLI_MARKERS_RE)
+          content = strip_comments(raw)
+          next unless content_matches?(content, LIB_MARKERS_RE) || content_matches?(content, CLI_GATE_RE)
 
           binary = java_binary_name(content, path)
           root_url = "cli://#{binary}"

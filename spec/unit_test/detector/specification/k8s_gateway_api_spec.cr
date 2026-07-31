@@ -27,6 +27,11 @@ describe "Detect Kubernetes Gateway API manifests" do
     locator.all("k8s-gateway-api-spec").should eq ["routes/api.yaml"]
   end
 
+  it "detects an HTTPRoute manifest with a quoted kind" do
+    src = httproute.sub("kind: HTTPRoute", %(kind: "HTTPRoute"))
+    instance.detect("routes/quoted.yaml", src).should be_true
+  end
+
   it "rejects non-HTTPRoute resources" do
     src = <<-YAML
       apiVersion: gateway.networking.k8s.io/v1

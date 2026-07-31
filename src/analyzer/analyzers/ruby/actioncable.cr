@@ -42,6 +42,11 @@ module Analyzer::Ruby
     # it explicitly (a standalone cable server still serves `/cable`).
     DEFAULT_MOUNT = "cable"
 
+    # Whole-buffer gates for the per-file loop below, one precompiled
+    # matcher instead of a `String#includes?` scan per `.rb` file.
+    CABLE_MOUNT_MARKER_RE = Regex.union("ActionCable.server")
+    CHANNEL_MARKER_RE     = Regex.union("Channel")
+
     def analyze
       mount = nil.as(String?)
       channels = [] of ChannelInfo
@@ -54,11 +59,15 @@ module Analyzer::Ruby
           begin
             content = read_file_content(path)
 
-            if mount.nil? && (m = content.match(CABLE_MOUNT))
+            # `CABLE_MOUNT` cannot match without the literal
+            # `ActionCable.server` in the buffer, so the cheap union gate
+            # in front of it is exact — and it keeps PCRE2 from
+            # revalidating the UTF-8 of every `.rb` file in the repo.
+            if mount.nil? && content_matches?(content, CABLE_MOUNT_MARKER_RE) && (m = content.match(CABLE_MOUNT))
               mount = m[1].strip.lstrip('/')
             end
 
-            collect_channels(content, path, channels) if content.includes?("Channel")
+            collect_channels(content, path, channels) if content_matches?(content, CHANNEL_MARKER_RE)
           rescue e
             logger.debug "Error analyzing #{path}: #{e}"
             next

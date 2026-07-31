@@ -105,14 +105,18 @@ module Analyzer::Mobile
         # always declares a MAIN filter, so it never lands here.
         if exported
           emit_explicit_component_endpoint(component_name, handler_name, component_tag,
-            package, attr(component, "permission"), path, seen_urls)
+            package, resolve(attr(component, "permission"), strings, placeholders), path, seen_urls)
         end
         return
       end
 
       filters.each do |filter|
-        actions = collect_names(filter, "action")
-        categories = collect_names(filter, "category")
+        # Actions and categories are templated from gradle just as often as
+        # URIs are (termux declares `${TERMUX_PACKAGE_NAME}.RUN_COMMAND`), so
+        # resolve them through the same placeholder map instead of reporting
+        # the raw `${...}` in metadata.
+        actions = collect_names(filter, "action", placeholders)
+        categories = collect_names(filter, "category", placeholders)
         data_nodes = [] of XML::Node
         each_child(filter, "data") { |d| data_nodes << d }
         auto_verify = bool_attr(filter, "autoVerify")
@@ -120,6 +124,16 @@ module Analyzer::Mobile
         if !data_nodes.empty?
           # Deep-link / app-link URI(s) — the primary entry points. The
           # handling component rides along as metadata["via"].
+          #
+          # `android:exported="false"` makes the component unreachable by an
+          # intent from another app, so its filter never fires from outside
+          # and the URI is not an entry point (WordPress-Android declares
+          # `wordpress://jetpack-connection` on a non-exported activity it
+          # only ever starts itself). Only an *explicit* `false` suppresses:
+          # a filter-bearing component with the attribute absent defaults to
+          # exported below targetSdk 31, and above it the build fails, so
+          # absent means "old manifest, exported".
+          next if attr(component, "exported") == "false"
           emit_filter_endpoints(data_nodes, actions, categories, package, strings,
             placeholders, path, auto_verify, handler_name, seen_urls)
         elsif exported
@@ -148,6 +162,18 @@ module Analyzer::Mobile
     # row), never a remotely reachable deep link — so they are suppressed
     # regardless of host (including a bare `*` wildcard host).
     LOCAL_SCHEMES = Set{"file", "content"}
+
+    # Schemes that only ever appear as the data qualifier of a *protected
+    # system broadcast*, never as an addressable URI. `package:` is the
+    # canonical one: `<data android:scheme="package"/>` pairs with
+    # `ACTION_PACKAGE_ADDED` / `PACKAGE_FULLY_REMOVED` / … so the receiver can
+    # read the affected package name out of `intent.data`. Those actions can
+    # only be broadcast by the system, and `package:` is opaque anyway, so
+    # rendering it produced a bare, meaningless `package://` endpoint
+    # (WordPress-Android's `JetpackAppUninstallReceiver`). The receiver's own
+    # IPC surface is still reported through the `intent://` path when it is
+    # exported with a non-system action.
+    SYSTEM_BROADCAST_SCHEMES = Set{"package"}
 
     # Opaque (authority-less) schemes: `mailto:foo@bar`, `tel:123`, `geo:…`.
     # They take no `//host` part, so the URL is rendered as `scheme:` rather
@@ -221,8 +247,9 @@ module Analyzer::Mobile
       effective_paths = paths.empty? ? [""] : paths
 
       schemes.each do |scheme|
-        # Local-content schemes never describe a remote deep link.
-        next if LOCAL_SCHEMES.includes?(scheme)
+        # Local-content and system-broadcast schemes never describe a
+        # remotely addressable deep link.
+        next if LOCAL_SCHEMES.includes?(scheme) || SYSTEM_BROADCAST_SCHEMES.includes?(scheme)
         if hosts.empty?
           # Host-less: keep only custom schemes. A generic scheme with no
           # host — and any scheme in a content-type (mimeType) filter — is a
@@ -330,9 +357,9 @@ module Analyzer::Mobile
       # covers both unless a more specific one overrides it. All are recorded,
       # not suppressed — the protection level (and so whether another app can
       # actually hold the permission) is the reviewer's call.
-      add_permission(metadata, "permission", attr(provider, "permission"))
-      add_permission(metadata, "read_permission", attr(provider, "readPermission"))
-      add_permission(metadata, "write_permission", attr(provider, "writePermission"))
+      add_permission(metadata, "permission", resolve(attr(provider, "permission"), strings, placeholders))
+      add_permission(metadata, "read_permission", resolve(attr(provider, "readPermission"), strings, placeholders))
+      add_permission(metadata, "write_permission", resolve(attr(provider, "writePermission"), strings, placeholders))
       metadata["grant_uri_permissions"] = "true" if provider_grants_uri?(provider)
       # `<path-permission>` children apply per-path overrides — frequently an
       # unprotected sub-path of an otherwise guarded provider. Flag their
@@ -526,6 +553,13 @@ module Analyzer::Mobile
     # `manifestPlaceholders["key"] = "value"` / `manifestPlaceholders.put("key", "value")` (kts).
     PLACEHOLDER_INDEX_RE = /manifestPlaceholders\s*\[\s*["'](\w+)["']\s*\]\s*=\s*["']([^"']*)["']/
     PLACEHOLDER_PUT_RE   = /manifestPlaceholders\s*\.\s*put\s*\(\s*["'](\w+)["']\s*,\s*["']([^"']*)["']\s*\)/
+    # `manifestPlaceholders.key = "value"` — groovy property-access form on
+    # the placeholder map. Termux declares its whole package name this way
+    # (`manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"`), and without
+    # it every `${TERMUX_PACKAGE_NAME}` authority stayed unresolved in the
+    # emitted `content://` URL. `\.put` is excluded so the call form above
+    # can't be read as a property named `put`.
+    PLACEHOLDER_PROPERTY_RE = /manifestPlaceholders\s*\.\s*(?!put\b)([A-Za-z_]\w*)\s*=\s*["']([^"']*)["']/
 
     private def load_gradle(manifest_path : String) : GradleConfig
       gradle_path = find_gradle_file(manifest_path)
@@ -578,7 +612,7 @@ module Analyzer::Mobile
           placeholders[pair[1]] = pair[2] unless placeholders.has_key?(pair[1])
         end
       end
-      {PLACEHOLDER_INDEX_RE, PLACEHOLDER_PUT_RE}.each do |re|
+      {PLACEHOLDER_INDEX_RE, PLACEHOLDER_PUT_RE, PLACEHOLDER_PROPERTY_RE}.each do |re|
         content.scan(re) do |m|
           placeholders[m[1]] = m[2] unless placeholders.has_key?(m[1])
         end
@@ -755,11 +789,12 @@ module Analyzer::Mobile
       strings
     end
 
-    private def collect_names(parent : XML::Node, tag : String) : Array(String)
+    private def collect_names(parent : XML::Node, tag : String,
+                              placeholders : Hash(String, String)) : Array(String)
       names = [] of String
       each_child(parent, tag) do |node|
         if name = attr(node, "name")
-          names << name
+          names << substitute(name, placeholders)
         end
       end
       names

@@ -106,7 +106,9 @@ module Analyzer::Cpp
     end
 
     private def cpp_test_path?(path : String) : Bool
-      path.matches?(CPP_TEST_PATH_RE)
+      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
+      # scan base is not this project's test tree.
+      base_relative_path(path).matches?(CPP_TEST_PATH_RE)
     end
 
     private def cpp_binary_name(path : String) : String

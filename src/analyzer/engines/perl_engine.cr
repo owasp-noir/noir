@@ -33,9 +33,14 @@ module Analyzer::Perl
     end
 
     # Perl test files live in `.t` scripts or under a `/t/` directory.
+    # Scan-base-relative, never absolute. `t` is a single character, so
+    # matching the absolute path was catastrophic in practice: any
+    # ancestor directory literally named `t` — and every checkout under
+    # one — lost its whole endpoint set (the Perl fixture tree went from
+    # 109 endpoints to 0).
     protected def perl_test_path?(path : String, ext : String) : Bool
       return true if ext == ".t"
-      return true if path.includes?("/t/")
+      return true if base_relative_path(path).includes?("/t/")
       false
     end
 

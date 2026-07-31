@@ -232,7 +232,10 @@ module Analyzer::Zig
     end
 
     private def cli_test_path?(path : String) : Bool
-      path.downcase.includes?("/test") || path.includes?("_test.")
+      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
+      # scan base is not this project's test tree.
+      relative = base_relative_path(path)
+      relative.downcase.includes?("/test") || relative.includes?("_test.")
     end
 
     private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,

@@ -61,7 +61,7 @@ module Analyzer::Zig
     def analyze
       include_callee = callees_needed?
       zig_files = all_files.select do |f|
-        f.ends_with?(".zig") && !Noir::ZigCalleeExtractor.vendored_framework_path?(f)
+        f.ends_with?(".zig") && !Noir::ZigCalleeExtractor.vendored_framework_path?(base_relative_path(f))
       end
 
       bindings = build_path_bindings(zig_files)

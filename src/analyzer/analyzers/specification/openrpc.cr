@@ -120,44 +120,16 @@ module Analyzer::Specification
       params << param
     end
 
-    # Mirrors the OAS3 analyzer's server handling so `--url` behaves the same
-    # across spec families: an absolute server URL only contributes its path
-    # when its host matches the user-supplied URL.
+    # Shares the OAS3 analyzer's `servers` handling so `--url` behaves the same
+    # across spec families: an absolute server URL contributes only its path,
+    # and with `--url` supplied only the matching host contributes at all.
     private def base_path_for(root : JSON::Any) : String
-      servers = root["servers"]?.try(&.as_a?)
-      if servers
-        servers.each do |server_obj|
-          server_url = server_obj["url"]?.try(&.as_s?) || ""
-          next if server_url.empty?
-
-          if server_url.starts_with?("http")
-            next if @url.empty?
-            user_uri = URI.parse(@url)
-            source_uri = URI.parse(server_url)
-            return combine_base_url(source_uri.path) if user_uri.host == source_uri.host
-          elsif server_url.starts_with?("/")
-            return combine_base_url(server_url)
-          else
-            return combine_base_url("/#{server_url}")
-          end
-        rescue
-          next
-        end
+      if servers = root["servers"]?.try(&.as_a?)
+        base = server_base_path(servers.map { |server_obj| server_obj["url"]?.try(&.as_s?) || "" })
+        return base unless base == @url
       end
 
       @url.empty? ? DEFAULT_RPC_PATH : @url
-    end
-
-    private def combine_base_url(path : String) : String
-      return @url if path.empty?
-      return path if @url.empty?
-      if @url.ends_with?("/") && path.starts_with?("/")
-        @url + path[1..]
-      elsif !@url.ends_with?("/") && !path.starts_with?("/")
-        "#{@url}/#{path}"
-      else
-        @url + path
-      end
     end
 
     # Follows a `$ref` chain to its target, guarding against cycles. Returns the

@@ -90,10 +90,35 @@ module Analyzer::Specification
       method_node = match_h[YAML::Any.new("method")]?
       method = resolve_method(method_node)
 
-      emit_endpoint(path_value, method, path_type, hosts, "match", details)
+      # `headers` / `queryParams` matchers are request conditions the route
+      # will not fire without, so they are attack surface in exactly the way a
+      # declared param is — the route is unreachable without sending them.
+      params = collect_params(match_h)
+
+      emit_endpoint(path_value, method, path_type, hosts, "match", details, params)
 
       if url_rewrite && !url_rewrite.empty? && url_rewrite != path_value
-        emit_endpoint(url_rewrite, method, path_type, hosts, "rewrite", details)
+        emit_endpoint(url_rewrite, method, path_type, hosts, "rewrite", details, params)
+      end
+    end
+
+    private def collect_params(match_h : Hash(YAML::Any, YAML::Any)) : Array(Param)
+      params = [] of Param
+      collect_matcher_params(match_h[YAML::Any.new("headers")]?, "header", params)
+      collect_matcher_params(match_h[YAML::Any.new("queryParams")]?, "query", params)
+      params
+    end
+
+    private def collect_matcher_params(node : YAML::Any?, param_type : String, params : Array(Param))
+      return if node.nil?
+      return unless arr = node.as_a?
+
+      arr.each do |entry|
+        next unless entry_h = entry.as_h?
+        name = entry_h[YAML::Any.new("name")]?.try(&.as_s?)
+        next if name.nil? || name.empty?
+        value = entry_h[YAML::Any.new("value")]?.try(&.as_s?) || ""
+        params << Param.new(name, value, param_type)
       end
     end
 
@@ -111,10 +136,10 @@ module Analyzer::Specification
       METHOD_ANY
     end
 
-    private def emit_endpoint(path : String, method : String, path_type : String, hosts : Array(String), origin : String, details : Details)
+    private def emit_endpoint(path : String, method : String, path_type : String, hosts : Array(String), origin : String, details : Details, params : Array(Param) = [] of Param)
       hosts = [""] if hosts.empty?
       hosts.each do |host|
-        endpoint = Endpoint.new(path, method, details)
+        endpoint = Endpoint.new(path, method, params.dup, details)
         endpoint.add_tag(Tag.new("gateway-path-type", path_type.downcase, "k8s_gateway_api_analyzer"))
         endpoint.add_tag(Tag.new("gateway-host", host, "k8s_gateway_api_analyzer")) unless host.empty?
         endpoint.add_tag(Tag.new("gateway-source", origin, "k8s_gateway_api_analyzer"))

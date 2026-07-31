@@ -6,6 +6,7 @@ require "../miniparsers/java_callee_extractor"
 require "../miniparsers/swift_callee_extractor"
 require "../miniparsers/objc_callee_extractor"
 require "../utils/text_file"
+require "../utils/path_scope"
 
 # Post-analysis pass that links mobile deep-link endpoints (produced by the
 # config-file analyzers from AndroidManifest.xml) to the source code that
@@ -528,7 +529,7 @@ module NoirMobileLinker
 
       CodeLocator.instance.files_by_extension(".swift").each do |path|
         next unless in_scope?(path, expanded_scope)
-        next if skip_ios_source?(path)
+        next if skip_ios_source?(path, expanded_scope)
         content = NoirMobileLinker.read_content(path)
         next unless content
         next unless swift_handler_candidate?(content)
@@ -539,7 +540,7 @@ module NoirMobileLinker
       {".m", ".mm"}.each do |ext|
         CodeLocator.instance.files_by_extension(ext).each do |path|
           next unless in_scope?(path, expanded_scope)
-          next if skip_ios_source?(path)
+          next if skip_ios_source?(path, expanded_scope)
           content = NoirMobileLinker.read_content(path)
           next unless content
           next unless objc_handler_candidate?(content)
@@ -588,7 +589,7 @@ module NoirMobileLinker
 
       CodeLocator.instance.files_by_extension(".swift").each do |path|
         next unless in_scope?(path, expanded_root)
-        next if skip_ios_source?(path)
+        next if skip_ios_source?(path, expanded_root)
         content = NoirMobileLinker.read_content(path)
         return true if content && swift_handler_candidate?(content)
       end
@@ -596,7 +597,7 @@ module NoirMobileLinker
       {".m", ".mm"}.each do |ext|
         CodeLocator.instance.files_by_extension(ext).each do |path|
           next unless in_scope?(path, expanded_root)
-          next if skip_ios_source?(path)
+          next if skip_ios_source?(path, expanded_root)
           content = NoirMobileLinker.read_content(path)
           return true if content && objc_handler_candidate?(content)
         end
@@ -605,8 +606,17 @@ module NoirMobileLinker
       false
     end
 
-    private def self.skip_ios_source?(path : String) : Bool
-      normalized = path.gsub('\\', '/')
+    # `scope_root` is the Xcode project root the caller already resolved.
+    # The directory conventions below describe a location inside that
+    # project, so they are matched on the project-relative path — on the
+    # absolute path a `Tests/` directory anywhere above the checkout
+    # excluded every source file in it. With no scope root there is
+    # nothing to relativise against, and the whole path is matched as
+    # before.
+    private def self.skip_ios_source?(path : String, scope_root : String? = nil) : Bool
+      relative = scope_root ? Noir::PathScope.relative_under(path, scope_root) : path
+      normalized = relative.gsub('\\', '/')
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
       basename = File.basename(normalized)
       normalized.includes?("/.build/") || normalized.includes?("/.swiftpm/") ||
         normalized.includes?("/Pods/") || normalized.includes?("/Carthage/") ||
@@ -749,7 +759,7 @@ module NoirMobileLinker
       actions.each do |action|
         CodeLocator.instance.files_by_extension(".swift").each do |path|
           next unless in_scope?(path, expanded_scope)
-          next if skip_ios_source?(path)
+          next if skip_ios_source?(path, expanded_scope)
           content = NoirMobileLinker.read_content(path)
           next unless content
           next unless content.includes?("case .#{action.action}")
@@ -828,7 +838,7 @@ module NoirMobileLinker
                                                  expanded_scope : String?) : String?
       CodeLocator.instance.files_by_extension(".swift").each do |path|
         next unless in_scope?(path, expanded_scope)
-        next if skip_ios_source?(path)
+        next if skip_ios_source?(path, expanded_scope)
         content = NoirMobileLinker.read_content(path)
         next unless content
         next unless content.includes?(receiver_type) && content.includes?("func #{method}")
@@ -891,7 +901,7 @@ module NoirMobileLinker
 
       CodeLocator.instance.files_by_extension(".swift").each do |path|
         next unless in_scope?(path, expanded_scope)
-        next if skip_ios_source?(path)
+        next if skip_ios_source?(path, expanded_scope)
         content = NoirMobileLinker.read_content(path)
         next unless content
         next unless content.includes?("enum #{enum_name}") && content.includes?("case #{case_name}")

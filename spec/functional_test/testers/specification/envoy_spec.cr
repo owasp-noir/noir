@@ -12,6 +12,10 @@ require "../../func_spec.cr"
 #   JSON (virtual_hosts at top level):
 #     - prefix match                  → /api         GET
 #     - path match with :method header → /health      GET
+#   YAML (bootstrap: static_resources.listeners[].filter_chains[].filters[].
+#         typed_config.route_config.virtual_hosts):
+#     - prefix match                  → /bootstrap   GET
+#     - path_separated_prefix match   → /separated   GET
 
 expected_endpoints = [
   # ── YAML ──────────────────────────────────────────────────────────────────
@@ -26,6 +30,9 @@ expected_endpoints = [
   # ── JSON ──────────────────────────────────────────────────────────────────
   Endpoint.new("/api", "GET"),
   Endpoint.new("/status", "GET"),
+  # ── YAML bootstrap ────────────────────────────────────────────────────────
+  Endpoint.new("/bootstrap", "GET"),
+  Endpoint.new("/separated", "GET"),
 ]
 
 FunctionalTester.new("fixtures/specification/envoy/", {

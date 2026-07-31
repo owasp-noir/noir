@@ -4,6 +4,7 @@ require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../utils/spring_property_path"
 require "../../engines/java_engine"
+require "../../../utils/path_scope"
 require "yaml"
 
 module Analyzer::Java
@@ -12,6 +13,62 @@ module Analyzer::Java
 
     REGEX_ROUTER_CODE_BLOCK = /route\(\)?.*?\);/m
     REGEX_ROUTE_CALL        = /((?:andRoute|route)\s*\(|\.)\s*(?:RequestPredicates\.)?(GET|POST|DELETE|PUT|PATCH|HEAD|OPTIONS)\s*\(/
+
+    SPRING_WEB_BIND_PACKAGE      = "org.springframework.web.bind.annotation."
+    FEIGN_CLIENT_PACKAGE         = "org.springframework.cloud.openfeign.FeignClient"
+    SPRING_HTTP_EXCHANGE_PACKAGE = "org.springframework.web.service.annotation."
+
+    # Every `content.includes?(...)` below used to be its own Rabin-Karp
+    # pass over the whole file. This analyzer asks ~30 such questions per
+    # `.java` file across three walks, and on a monorepo the overwhelming
+    # majority of files answer "no" to all of them. One precompiled
+    # `Regex.union` (PCRE2 JIT, via `content_matches?`) is the same
+    # predicate in a single pass — see the note on `Analyzer#content_matches?`.
+    WEBSOCKET_BINDING_RE = Regex.union(
+      "org.springframework.web.socket.config.annotation",
+      "WebSocketMessageBrokerConfigurer",
+      "@EnableWebSocketMessageBroker",
+    )
+    MESSAGE_MAPPING_BINDING_RE = Regex.union(
+      "org.springframework.messaging.handler.annotation",
+      "@MessageMapping",
+      "@SubscribeMapping",
+    )
+    RESOURCE_HANDLER_BINDING_RE = Regex.union("ResourceHandlerRegistry", "addResourceHandler")
+
+    # The OR of every marker the annotation branch keys off. A file that
+    # misses this cannot set any of the individual flags, so the per-flag
+    # scans only run for the handful of files that get past it.
+    ANY_BINDING_RE = Regex.union(
+      SPRING_WEB_BIND_PACKAGE,
+      FEIGN_CLIENT_PACKAGE, "@FeignClient",
+      SPRING_HTTP_EXCHANGE_PACKAGE,
+      "@HttpExchange", "@GetExchange", "@PostExchange",
+      "@PutExchange", "@PatchExchange", "@DeleteExchange",
+      "RouteLocatorBuilder", "PredicateSpec", "org.springframework.cloud.gateway",
+      "org.springframework.web.socket.config.annotation",
+      "WebSocketMessageBrokerConfigurer", "@EnableWebSocketMessageBroker",
+      "org.springframework.messaging.handler.annotation",
+      "@MessageMapping", "@SubscribeMapping",
+      "ResourceHandlerRegistry", "addResourceHandler",
+    )
+
+    # `build_spring_indexes` gate: neither index can want a file that
+    # mentions neither marker.
+    STOMP_PREFIX_RE           = Regex.union("setApplicationDestinationPrefixes")
+    SPRING_WEB_BIND_RE        = Regex.union(SPRING_WEB_BIND_PACKAGE)
+    META_ANNOTATION_RE        = Regex.union("@interface")
+    SPRING_INDEX_PRESCREEN_RE = Regex.union("setApplicationDestinationPrefixes", SPRING_WEB_BIND_PACKAGE)
+
+    # `collect_interface_route_index` gates.
+    INTERFACE_OR_ABSTRACT_RE  = Regex.union("interface", "abstract")
+    INTERFACE_ROUTE_MARKER_RE = Regex.union(
+      SPRING_WEB_BIND_PACKAGE,
+      SPRING_HTTP_EXCHANGE_PACKAGE,
+      "@HttpExchange", "@GetExchange", "@PostExchange",
+      "@PutExchange", "@PatchExchange", "@DeleteExchange",
+      "@RequestMapping", "@GetMapping", "@PostMapping",
+    )
 
     alias SpringRouteMapping = Noir::TreeSitterJavaRouteExtractor::ClassMapping
     alias SpringRoute = Noir::TreeSitterJavaRouteExtractor::Route
@@ -92,7 +149,7 @@ module Analyzer::Java
       # content walks over the Java source set only; webflux /
       # servlet context paths come from `path_config_for` (application.yml
       # / .properties under each project root).
-      java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(path) }
+      java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(base_relative_path(path)) }
       path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index =
         build_spring_indexes(java_files)
 
@@ -106,27 +163,14 @@ module Analyzer::Java
 
         # Only files that mention Spring MVC / Feign bindings carry
         # annotation-based routes. Reactive `router().route()` files
-        # land in the `else` branch below.
-        spring_web_bind_package = "org.springframework.web.bind.annotation."
-        feign_client_package = "org.springframework.cloud.openfeign.FeignClient"
-        http_exchange_package = "org.springframework.web.service.annotation."
-        has_spring_bindings = content.includes?(spring_web_bind_package)
-        has_feign_bindings = content.includes?(feign_client_package) || content.includes?("@FeignClient")
-        has_http_exchange_bindings = http_exchange_bindings?(content, http_exchange_package)
-        has_gateway_bindings = content.includes?("RouteLocatorBuilder") ||
-                               content.includes?("PredicateSpec") ||
-                               content.includes?("org.springframework.cloud.gateway")
-        has_websocket_bindings = content.includes?("org.springframework.web.socket.config.annotation") ||
-                                 content.includes?("WebSocketMessageBrokerConfigurer") ||
-                                 content.includes?("@EnableWebSocketMessageBroker")
-        has_message_mapping_bindings = content.includes?("org.springframework.messaging.handler.annotation") ||
-                                       content.includes?("@MessageMapping") ||
-                                       content.includes?("@SubscribeMapping")
-        has_resource_handler_bindings = content.includes?("ResourceHandlerRegistry") ||
-                                        content.includes?("addResourceHandler")
+        # land in the `else` branch below. `ANY_BINDING_RE` is the OR of
+        # every marker the branch below keys off, so one pass decides
+        # whether the per-flag scans are worth running at all.
+        if content_matches?(content, ANY_BINDING_RE)
+          has_websocket_bindings = content_matches?(content, WEBSOCKET_BINDING_RE)
+          has_message_mapping_bindings = content_matches?(content, MESSAGE_MAPPING_BINDING_RE)
+          has_resource_handler_bindings = content_matches?(content, RESOURCE_HANDLER_BINDING_RE)
 
-        if has_spring_bindings || has_feign_bindings || has_http_exchange_bindings || has_gateway_bindings ||
-           has_websocket_bindings || has_message_mapping_bindings || has_resource_handler_bindings
           # Single tree-sitter parse for the whole file — every
           # extraction below pulls from the same root so a
           # controller with N routes pays for 1 parse instead of
@@ -388,15 +432,17 @@ module Analyzer::Java
       stomp_prefixes = Hash(String, Array(String)).new
       meta_index = SpringMetaAnnotationIndex.new
       project_roots = Set(String).new
-      spring_web_bind_package = "org.springframework.web.bind.annotation."
 
       java_files.each do |path|
         project_root = project_root_for(path)
         project_roots << project_root
 
         content = read_file_content(path)
-        needs_stomp = content.includes?("setApplicationDestinationPrefixes")
-        needs_meta = content.includes?(spring_web_bind_package) && content.includes?("@interface")
+        # One union pass rejects the files that can feed neither index
+        # before the two individual scans run.
+        next unless content_matches?(content, SPRING_INDEX_PRESCREEN_RE)
+        needs_stomp = content_matches?(content, STOMP_PREFIX_RE)
+        needs_meta = content_matches?(content, SPRING_WEB_BIND_RE) && content_matches?(content, META_ANNOTATION_RE)
         next unless needs_stomp || needs_meta
 
         Noir::TreeSitter.parse_java(content) do |root|
@@ -436,8 +482,6 @@ module Analyzer::Java
     private def collect_interface_route_index(java_files : Array(String),
                                               meta_annotation_index : SpringMetaAnnotationIndex) : SpringInterfaceRouteIndex
       index = SpringInterfaceRouteIndex.new
-      spring_web_bind_package = "org.springframework.web.bind.annotation."
-      http_exchange_package = "org.springframework.web.service.annotation."
 
       # `java_files` is already extension-filtered and test-path-free.
       java_files.each do |path|
@@ -447,10 +491,8 @@ module Analyzer::Java
         # classes that concrete controllers extend. Files with neither
         # keyword — the bulk of controller classes — can't contribute, so
         # skip the parse before the annotation gate below.
-        next unless content.includes?("interface") || content.includes?("abstract")
-        next unless content.includes?(spring_web_bind_package) || http_exchange_bindings?(content, http_exchange_package) ||
-                    content.includes?("@RequestMapping") ||
-                    content.includes?("@GetMapping") || content.includes?("@PostMapping")
+        next unless content_matches?(content, INTERFACE_OR_ABSTRACT_RE)
+        next unless content_matches?(content, INTERFACE_ROUTE_MARKER_RE)
 
         Noir::TreeSitter.parse_java(content) do |root|
           package_name = Noir::TreeSitterJavaParameterExtractor.extract_package_name_from(root, content)
@@ -466,16 +508,6 @@ module Analyzer::Java
       end
 
       index
-    end
-
-    private def http_exchange_bindings?(content : String, package_name : String) : Bool
-      content.includes?(package_name) ||
-        content.includes?("@HttpExchange") ||
-        content.includes?("@GetExchange") ||
-        content.includes?("@PostExchange") ||
-        content.includes?("@PutExchange") ||
-        content.includes?("@PatchExchange") ||
-        content.includes?("@DeleteExchange")
     end
 
     private def visible_meta_annotation_mappings(path : String,
@@ -1277,14 +1309,26 @@ module Analyzer::Java
       end
     end
 
+    # The Maven/Gradle module root: everything above the source root that
+    # holds this file.
+    #
+    # The marker is searched inside the scan-base-relative path, never the
+    # absolute one. `String#index` returns the FIRST occurrence, so on an
+    # absolute path a `src/` directory anywhere above the scan base won
+    # outright and the module root resolved to a directory outside the
+    # scan — `application.properties` was then never found and every
+    # `server.servlet.context-path` prefix silently vanished.
     private def project_root_for(path : String) : String
+      base = configured_base_for(path)
+      relative = Noir::PathScope.base_relative(path, base)
+
       ["/src/main/java/", "/src/"].each do |marker|
-        if index = path.index(marker)
-          return path[...index]
+        if index = relative.index(marker)
+          return base.rstrip('/') + relative[...index]
         end
       end
 
-      configured_base_for(path)
+      base
     end
 
     private def normalize_optional_path(path : String?) : String

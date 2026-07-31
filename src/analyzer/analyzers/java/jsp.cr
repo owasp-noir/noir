@@ -462,9 +462,17 @@ module Analyzer::Java
       action
     end
 
+    # Neither branch can hold without one of these two literals, so the
+    # union is an exact pre-gate — and it replaces two `String#includes?`
+    # scans of every `.java` file in the tree with one precompiled pass.
+    SERVLET_MARKERS_RE = Regex.union("@WebServlet", "HttpServlet")
+    AT_WEBSERVLET_RE   = Regex.union("@WebServlet")
+    HTTPSERVLET_RE     = Regex.union("HttpServlet")
+
     private def servlet_source?(content : String) : Bool
-      content.includes?("@WebServlet") ||
-        (content.includes?("HttpServlet") && !!content.match(/\bextends\s+HttpServlet\b/))
+      return false unless content_matches?(content, SERVLET_MARKERS_RE)
+      content_matches?(content, AT_WEBSERVLET_RE) ||
+        (content_matches?(content, HTTPSERVLET_RE) && !!content.match(/\bextends\s+HttpServlet\b/))
     end
 
     private def java_package_name(content : String) : String?

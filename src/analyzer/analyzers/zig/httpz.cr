@@ -40,7 +40,7 @@ module Analyzer::Zig
 
       all_files.each do |path|
         next unless path.ends_with?(".zig")
-        next if Noir::ZigCalleeExtractor.vendored_framework_path?(path)
+        next if Noir::ZigCalleeExtractor.vendored_framework_path?(base_relative_path(path))
         content = read_file_content(path)
         # Route-bearing files don't always reference `httpz` literally — a
         # common layout registers routes in a helper `fn group(router: *Foo)`

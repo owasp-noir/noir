@@ -39,7 +39,7 @@ module Analyzer::Rust
       begin
         roots = crate_roots
         parallel_analyze(get_files_by_extension(".rs")) do |path|
-          next if RustEngine.test_path?(path)
+          next if RustEngine.test_path?(base_relative_path(path))
           next unless path_under_crate_roots?(path, roots)
 
           begin
@@ -113,14 +113,20 @@ module Analyzer::Rust
     # all park hundreds of route registrations under one of these
     # patterns. Promoted from `axum.cr#test_only_path?` (#1569) to
     # the shared engine so the rest of the Rust family benefits.
-    def self.test_path?(path : String) : Bool
-      return true if path.includes?("/tests/")
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. Cargo's conventions are relative to the
+    # crate, so matching the absolute path let a directory *above* the
+    # scan base decide the answer: the same tree cloned into
+    # `~/work/tests/myapp` reported 0 endpoints instead of 220.
+    def self.test_path?(relative_path : String) : Bool
+      return true if relative_path.includes?("/tests/")
       # Cargo's `benches/` directory holds `cargo bench` harnesses
       # (`Router::new().route(...)` scaffolding for throughput tests),
       # never production endpoints — axum/tide park route-building
       # benchmarks here. Exclude it like `tests/`.
-      return true if path.includes?("/benches/")
-      base = File.basename(path)
+      return true if relative_path.includes?("/benches/")
+      base = File.basename(relative_path)
       base == "tests.rs" || base.ends_with?("_test.rs") || base.ends_with?("_tests.rs")
     end
 

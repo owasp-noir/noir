@@ -13,25 +13,29 @@ module Analyzer::Swift
 
     # `Tests/...` directory + `*Tests.swift` filename: the rigid Swift
     # Package Manager / XCTest conventions for test sources.
-    def self.swift_test_path?(path : String) : Bool
-      return true if path.includes?("/Tests/")
-      File.basename(path).ends_with?("Tests.swift")
+    #
+    # Both take the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one — SwiftPM's layout is relative to the package,
+    # and matching the absolute path made the scan's answer depend on where
+    # the package happened to be checked out.
+    def self.swift_test_path?(relative_path : String) : Bool
+      return true if relative_path.includes?("/Tests/")
+      File.basename(relative_path).ends_with?("Tests.swift")
     end
 
     private def swift_test_path?(path : String) : Bool
-      SwiftEngine.swift_test_path?(path)
+      SwiftEngine.swift_test_path?(base_relative_path(path))
     end
 
     # SwiftPM parks resolved dependency sources under `.build/` (and Xcode
     # under `.swiftpm/`). Scanning them pulls every transitive package's
     # routes into the report — pure noise against the project under test.
-    def self.swift_vendor_path?(path : String) : Bool
-      path.includes?("/.build/") || path.starts_with?(".build/") ||
-        path.includes?("/.swiftpm/") || path.starts_with?(".swiftpm/")
+    def self.swift_vendor_path?(relative_path : String) : Bool
+      relative_path.includes?("/.build/") || relative_path.includes?("/.swiftpm/")
     end
 
     private def swift_vendor_path?(path : String) : Bool
-      SwiftEngine.swift_vendor_path?(path)
+      SwiftEngine.swift_vendor_path?(base_relative_path(path))
     end
 
     # `.swift` sources from the extension index. Subclasses that need a

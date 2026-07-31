@@ -36,9 +36,13 @@ module Analyzer::Fsharp
     # `\A`) anchors each match to the exact byte offset passed to
     # `Regex#match_at_byte_index`, mirroring what `\A` did against a
     # freshly sliced `cleaned[i..]` remainder -- but without the slice.
-    SUB_ROUTE_RE   = /\G(subRoute(?:Ci|f)?)\s+"([^"]+)"\s*([\(\[])/
-    VERB_CHOOSE_RE = /\G(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*>=>\s*choose\s*\[/
-    VERB_LIST_RE   = /\G(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\[/
+    SUB_ROUTE_RE = /\G(subRoute(?:Ci|f)?)\s+"([^"]+)"\s*([\(\[])/
+    # `GET_HEAD` is Giraffe's own Endpoint-Routing combinator for
+    # `[ GET; HEAD ]`; it must come first in the alternation so `GET` cannot
+    # claim its prefix. `VERB_METHODS` maps a matched token to the verbs it
+    # actually applies.
+    VERB_CHOOSE_RE = /\G(GET_HEAD|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*>=>\s*choose\s*\[/
+    VERB_LIST_RE   = /\G(GET_HEAD|GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\[/
     ROUTE_BIND_RE  = /\GrouteBind(?:\s*<[^>\n]*>)?\s+"([^"]+)"/
     ROUTEF_RE      = /\G(?:routef|routeCif)\s+"([^"]+)"/
     ROUTE_RE       = /\G(?:routeCix|routexp|routeCi|routex|route)\s+"([^"]+)"/
@@ -56,6 +60,10 @@ module Analyzer::Fsharp
     # a 4x-larger synthetic file went from ~16.7s to ~0.014s once this was
     # applied to the combinator matchers below (~1000x).
     NO_UTF_CHECK = Regex::MatchOptions::NO_UTF_CHECK
+
+    # Verbs a matched Endpoint-Routing verb token dispatches on. Only tokens
+    # that mean more than themselves need an entry.
+    VERB_METHODS = {"GET_HEAD" => ["GET", "HEAD"]}
 
     # Mapping of routef format specifiers to noir path-param types.
     ROUTEF_PARAM_TYPES = {
@@ -88,15 +96,19 @@ module Analyzer::Fsharp
       @result
     end
 
+    # Scan-base-relative, never absolute: a `tests/` directory ABOVE the
+    # scan base is not this project's test tree — the fixture tree
+    # dropped all 61 of its endpoints when scanned from one.
     private def fsharp_test_path?(path : String) : Bool
-      return true if path.includes?("/tests/")
-      return true if path.includes?("/test/")
+      relative = base_relative_path(path)
+      return true if relative.includes?("/tests/")
+      return true if relative.includes?("/test/")
       base = File.basename(path)
       return true if base.ends_with?("Tests.fs")
       base.ends_with?("Test.fs")
     end
 
-    alias SubRouteScope = NamedTuple(prefix: String, end_pos: Int32, params: Array(Param), method: String?)
+    alias SubRouteScope = NamedTuple(prefix: String, end_pos: Int32, params: Array(Param), methods: Array(String)?)
 
     private def process_file(path : String, content : String, include_callee : Bool)
       cleaned = strip_fsharp_comments(content)
@@ -147,7 +159,7 @@ module Analyzer::Fsharp
           match_end = sub_match.end(0)
           if match_end
             open_abs = match_end - 1
-            close_pos = opener == "(" ? find_matching_paren(cleaned, open_abs) : find_matching_bracket(cleaned, open_abs)
+            close_pos = opener == "(" ? find_matching_paren(cleaned_chars, open_abs) : find_matching_bracket(cleaned_chars, open_abs)
             if close_pos
               translated_prefix, prefix_params = if combinator == "subRoutef"
                                                    translate_routef(raw_prefix)
@@ -158,7 +170,7 @@ module Analyzer::Fsharp
                 prefix:  translated_prefix,
                 end_pos: close_pos,
                 params:  prefix_params,
-                method:  nil,
+                methods: nil,
               }
               i = match_end
               next
@@ -178,13 +190,13 @@ module Analyzer::Fsharp
           match_end = verb_choose_match.end(0)
           if match_end
             open_bracket_abs = match_end - 1
-            close_bracket = find_matching_bracket(cleaned, open_bracket_abs)
+            close_bracket = find_matching_bracket(cleaned_chars, open_bracket_abs)
             if close_bracket
               scope_stack << {
                 prefix:  "",
                 end_pos: close_bracket,
                 params:  [] of Param,
-                method:  verb,
+                methods: VERB_METHODS[verb]? || [verb],
               }
               i = match_end
               next
@@ -202,13 +214,13 @@ module Analyzer::Fsharp
           match_end = verb_list_match.end(0)
           if match_end
             open_bracket_abs = match_end - 1
-            close_bracket = find_matching_bracket(cleaned, open_bracket_abs)
+            close_bracket = find_matching_bracket(cleaned_chars, open_bracket_abs)
             if close_bracket
               scope_stack << {
                 prefix:  "",
                 end_pos: close_bracket,
                 params:  [] of Param,
-                method:  verb,
+                methods: VERB_METHODS[verb]? || [verb],
               }
               i = match_end
               next
@@ -224,7 +236,7 @@ module Analyzer::Fsharp
         if bind_match && token_boundary?(cleaned, i)
           path_pattern = bind_match[1]
           match_end = bind_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, bind: true, newline_offsets: newline_offsets)
+          emit_route(path, content, cleaned, cleaned_chars, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, bind: true, newline_offsets: newline_offsets)
           i = match_end || (i + 1)
           next
         end
@@ -235,7 +247,7 @@ module Analyzer::Fsharp
         if routef_match && token_boundary?(cleaned, i)
           path_pattern = routef_match[1]
           match_end = routef_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: true, include_callee: include_callee, newline_offsets: newline_offsets)
+          emit_route(path, content, cleaned, cleaned_chars, i, scope_stack, path_pattern, routef: true, include_callee: include_callee, newline_offsets: newline_offsets)
           i = match_end || (i + 1)
           next
         end
@@ -248,7 +260,7 @@ module Analyzer::Fsharp
         if route_match && token_boundary?(cleaned, i)
           path_pattern = route_match[1]
           match_end = route_match.end(0)
-          emit_route(path, content, cleaned, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
+          emit_route(path, content, cleaned, cleaned_chars, i, scope_stack, path_pattern, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
           i = match_end || (i + 1)
           next
         end
@@ -264,7 +276,7 @@ module Analyzer::Fsharp
           match_end = route_const_match.end(0)
           resolved = string_constants[ident.split('.').last]?
           if resolved
-            emit_route(path, content, cleaned, i, scope_stack, resolved, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
+            emit_route(path, content, cleaned, cleaned_chars, i, scope_stack, resolved, routef: false, include_callee: include_callee, newline_offsets: newline_offsets)
           end
           i = match_end || (i + 1)
           next
@@ -324,10 +336,10 @@ module Analyzer::Fsharp
       params
     end
 
-    # Innermost scope-supplied HTTP verb (Endpoint Routing wrapper), if any.
-    private def scope_method(scope_stack : Array(SubRouteScope)) : String?
+    # Innermost scope-supplied HTTP verbs (Endpoint Routing wrapper), if any.
+    private def scope_methods(scope_stack : Array(SubRouteScope)) : Array(String)?
       scope_stack.reverse_each do |scope|
-        m = scope[:method]
+        m = scope[:methods]
         return m if m
       end
       nil
@@ -349,6 +361,7 @@ module Analyzer::Fsharp
     end
 
     private def emit_route(path : String, content : String, cleaned : String,
+                           cleaned_chars : Array(Char),
                            offset : Int32, scope_stack : Array(SubRouteScope),
                            path_pattern : String, routef : Bool, include_callee : Bool,
                            newline_offsets : Array(Int32), bind : Bool = false)
@@ -362,12 +375,12 @@ module Analyzer::Fsharp
       full_url = current_prefix(scope_stack) + url
       full_params = current_prefix_params(scope_stack) + params
 
-      method = find_method_for_route(cleaned, offset) || scope_method(scope_stack)
-      methods = method ? [method] : FALLBACK_METHODS
+      method = find_method_for_route(cleaned, offset)
+      methods = method ? [method] : (scope_methods(scope_stack) || FALLBACK_METHODS)
 
       line = line_for_offset(newline_offsets, offset)
       details = Details.new(PathInfo.new(path, line))
-      callees = include_callee ? callees_for_route(path, content, cleaned, offset, newline_offsets) : [] of Noir::FsharpCalleeExtractor::Entry
+      callees = include_callee ? callees_for_route(path, content, cleaned, cleaned_chars, offset, newline_offsets) : [] of Noir::FsharpCalleeExtractor::Entry
 
       methods.each do |verb|
         endpoint_params = full_params.map { |p| Param.new(p.name, p.value, p.param_type) }
@@ -380,9 +393,10 @@ module Analyzer::Fsharp
     private def callees_for_route(path : String,
                                   content : String,
                                   cleaned : String,
+                                  cleaned_chars : Array(Char),
                                   offset : Int32,
                                   newline_offsets : Array(Int32)) : Array(Noir::FsharpCalleeExtractor::Entry)
-      body_info = route_handler_body(cleaned, offset)
+      body_info = route_handler_body(cleaned, cleaned_chars, offset)
       return [] of Noir::FsharpCalleeExtractor::Entry unless body_info
 
       body, body_start = body_info
@@ -390,12 +404,12 @@ module Analyzer::Fsharp
       Noir::FsharpCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
-    private def route_handler_body(text : String, offset : Int32) : Tuple(String, Int32)?
-      # Integer `String#[](Int)` is O(n) on non-ASCII source (one multi-byte
-      # char defeats the single-byte optimization), so the char walks in the
-      # helpers below would be O(n²); materialize once here and thread the
-      # array through them instead.
-      chars = text.chars
+    # `chars` is the file's `Array(Char)`, materialized once per file by
+    # `process_file`: integer `String#[](Int)` is O(n) on non-ASCII source
+    # (one multi-byte char defeats the single-byte optimization), so the char
+    # walks in the helpers below would be O(n²). This used to re-materialize
+    # it per route, which is O(file size) allocated per emitted route.
+    private def route_handler_body(text : String, chars : Array(Char), offset : Int32) : Tuple(String, Int32)?
       body_start = route_pattern_end(chars, offset)
       return unless body_start
 
@@ -551,11 +565,19 @@ module Analyzer::Fsharp
           spec = pattern[i + 1]
           type = ROUTEF_PARAM_TYPES[spec]?
           if type
-            counter[type] += 1
-            name = counter[type] == 1 ? type : "#{type}_#{counter[type]}"
+            # Endpoint Routing lets a specifier name its parameter,
+            # `%<type>:<name>` (`routef "/pet/%i:petId"`). Reading the name
+            # is what keeps the `:petId` suffix out of the URL — it used to
+            # be copied through verbatim, yielding `/pet/:int:petId`.
+            explicit_name, i = read_routef_param_name(pattern, i + 2)
+            if explicit_name
+              name = explicit_name
+            else
+              counter[type] += 1
+              name = counter[type] == 1 ? type : "#{type}_#{counter[type]}"
+            end
             buffer << ":#{name}"
             params << Param.new(name, type, "path")
-            i += 2
             next
           end
         end
@@ -564,6 +586,23 @@ module Analyzer::Fsharp
       end
 
       {buffer.to_s, params}
+    end
+
+    # Reads the optional `:<name>` suffix of a routef specifier starting at
+    # `pos` (just past `%x`). Returns `{name, cursor}`; `{nil, pos}` when the
+    # specifier is unnamed, so an ordinary literal colon in the pattern
+    # (`/time/%i:%i`) is left alone.
+    private def read_routef_param_name(pattern : String, pos : Int32) : Tuple(String?, Int32)
+      return {nil, pos} unless pos < pattern.size && pattern[pos] == ':'
+
+      start = pos + 1
+      return {nil, pos} unless start < pattern.size && (pattern[start].ascii_letter? || pattern[start] == '_')
+
+      finish = start
+      while finish < pattern.size && identifier_char?(pattern[finish])
+        finish += 1
+      end
+      {pattern[start...finish], finish}
     end
 
     # Translates a `routeBind<'T>` pattern, turning `{name}` placeholders
@@ -661,12 +700,12 @@ module Analyzer::Fsharp
       size
     end
 
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      find_matching_delimiter(text, open_idx, '(', ')')
+    private def find_matching_paren(chars : Array(Char), open_idx : Int32) : Int32?
+      find_matching_delimiter(chars, open_idx, '(', ')')
     end
 
-    private def find_matching_bracket(text : String, open_idx : Int32) : Int32?
-      find_matching_delimiter(text, open_idx, '[', ']')
+    private def find_matching_bracket(chars : Array(Char), open_idx : Int32) : Int32?
+      find_matching_delimiter(chars, open_idx, '[', ']')
     end
 
     # Returns the index of the closing quote if chars[i] opens a genuine F#
@@ -693,9 +732,13 @@ module Analyzer::Fsharp
       end
     end
 
-    private def find_matching_delimiter(text : String, open_idx : Int32,
+    # Scans the file's `Array(Char)`, materialized once per file by
+    # `process_file`. This used to call `text.chars` itself, allocating a
+    # fresh array of the whole cleaned file on every `subRoute` / verb-list
+    # match — O(file size) per match, so a routing module with many mounts
+    # paid O(matches x file size) in allocation alone.
+    private def find_matching_delimiter(chars : Array(Char), open_idx : Int32,
                                         opener : Char, closer : Char) : Int32?
-      chars = text.chars
       return unless open_idx < chars.size && chars[open_idx] == opener
       depth = 1
       i = open_idx + 1

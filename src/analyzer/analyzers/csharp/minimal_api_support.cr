@@ -12,21 +12,34 @@ module Analyzer::CSharp::MinimalApiSupport
     "IServiceProvider", "ILogger", "ILoggerFactory", "LinkGenerator",
   }
 
+  # `Map<Verb>` may carry an explicit generic argument — Carter's
+  # `app.MapPut<Person>("/", …)` and the typed `MapGet<T>` helpers some
+  # libraries ship. Without the optional `<…>` the route literal was never
+  # reached and the registration produced no endpoint at all.
+  MAP_VERB_ROUTE_RE = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"/m
+  MAP_METHODS_RE    = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*(?:<[^<>()]*>\s*)?\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"\s*,\s*([\s\S]+?)(?:=>|\);)/m
+  MAP_CALL_RE       = /\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*(?:<[^<>()]*>\s*)?\(/
+  MAP_ANY_PREFIX_RE = /\.?\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*(?:<[^<>()]*>\s*)?\(/
+
   private def analyze_minimal_api_files(include_callee : Bool)
     get_files_by_extension(".cs").each do |file|
       next unless File.exists?(file)
-      next if Common.csharp_test_path?(file)
+      next if Common.csharp_test_path?(base_relative_path(file))
 
       content = read_file_content(file)
-      next if content.includes?("ICarterModule")
+      # Carter modules register minimal-API routes too, but under a module
+      # base path this analyzer can't see — `cs_carter` owns them.
+      next if Common.carter_module_source?(content)
       next unless minimal_api_source?(content)
 
       analyze_minimal_api_content(file, content, include_callee)
     end
   end
 
+  MINIMAL_API_MARKER_RE = /\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*(?:<[^<>()]*>\s*)?\(/
+
   private def minimal_api_source?(content : String) : Bool
-    content.matches?(/\.\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)\s*\(/) ||
+    content_matches?(content, MINIMAL_API_MARKER_RE) ||
       (content.matches?(/\.\s*Map\s*\(/) && minimal_api_context?(content))
   end
 
@@ -37,9 +50,15 @@ module Analyzer::CSharp::MinimalApiSupport
   end
 
   private def analyze_minimal_api_content(file : String, content : String, include_callee : Bool)
-    group_prefixes = extract_map_group_prefixes(content)
-    lines = content.lines
-    masked_lines = Noir::CSharpLexer.new(content).masked_lines
+    lexer = Noir::CSharpLexer.new(content)
+    # Scan comment-blanked source: ASP.NET Core's own libraries carry
+    # `/// app.MapGet("/from-route/{id}", …)` inside `<example>` XML docs and
+    # `// app.MapGet("/form-todo", …)` in explanatory comments, each of which
+    # the raw scan emitted as a real endpoint. Line numbers and column offsets
+    # are preserved, so reported locations are unchanged.
+    lines = lexer.code_lines
+    masked_lines = lexer.masked_lines
+    group_prefixes = extract_map_group_prefixes(lexer.code_source)
 
     lines.each_with_index do |line, index|
       next unless route_builder_line?(line)
@@ -63,9 +82,12 @@ module Analyzer::CSharp::MinimalApiSupport
                                                line : Int32,
                                                file_lines : Array(String),
                                                masked_lines : Array(String),
-                                               include_callee : Bool) : Array(Endpoint)
+                                               include_callee : Bool,
+                                               route_prefix : String = "") : Array(Endpoint)
     route, methods = extract_route_and_methods(block, group_prefixes)
     return [] of Endpoint unless route && methods.size > 0
+
+    route = join_route_parts(route_prefix, route) unless route_prefix.empty?
 
     extra_params = extract_params_from_block(block)
     extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
@@ -104,7 +126,7 @@ module Analyzer::CSharp::MinimalApiSupport
     end
 
     inline_prefix = extract_inline_group_prefix(block, group_prefixes)
-    if match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"/m)
+    if match = block.match(MAP_VERB_ROUTE_RE)
       receiver = match[1]?
       route = apply_group_prefix(match[3], receiver, group_prefixes)
       route = join_route_parts(inline_prefix, route) unless inline_prefix.empty?
@@ -124,7 +146,7 @@ module Analyzer::CSharp::MinimalApiSupport
   private def extract_map_methods_route(block : String, group_prefixes : Hash(String, String)) : Tuple(String?, Array(String))
     inline_prefix = extract_inline_group_prefix(block, group_prefixes)
 
-    if match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?@?"([^"]+)"\s*,\s*([\s\S]+?)(?:=>|\);)/m)
+    if match = block.match(MAP_METHODS_RE)
       receiver = match[1]?
       route = apply_group_prefix(match[2], receiver, group_prefixes)
       route = join_route_parts(inline_prefix, route) unless inline_prefix.empty?
@@ -147,7 +169,7 @@ module Analyzer::CSharp::MinimalApiSupport
   end
 
   private def extract_inline_group_prefix(block : String, group_prefixes : Hash(String, String)) : String
-    map_index = block.index(/\.?\s*Map(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+    map_index = block.index(MAP_ANY_PREFIX_RE)
     return "" unless map_index
 
     prefix_source = block[0...map_index]
@@ -336,6 +358,12 @@ module Analyzer::CSharp::MinimalApiSupport
       .split(/\s+/).last? || ""
     type_name = type_name.split(".").last
 
+    # A lambda parameter with no type annotation only compiles against the
+    # `RequestDelegate` overload — `endpoints.MapGet("/headers", async context
+    # => …)` — so the name is the HttpContext, never a bound request value.
+    # Every such registration used to contribute a phantom `query` param.
+    return if type_name.empty? && param_type.nil?
+
     return if service_binding?(type_name, cleaned, param_type)
 
     if route_params.includes?(name)
@@ -433,14 +461,16 @@ module Analyzer::CSharp::MinimalApiSupport
       next unless raw
 
       optional = raw.ends_with?("?")
-      name = raw.split(":").first.gsub(/\?$/, "")
+      name = Common.route_placeholder_name(raw)
 
       if optional && !param_names.includes?(name)
         result = result.gsub("/{#{raw}}", "")
         result = result.gsub("{#{raw}}/", "")
         result = result.gsub("{#{raw}}", "")
-      elsif optional
-        result = result.gsub("{#{raw}}", "{#{raw.gsub("?", "")}}")
+      elsif optional || raw.includes?('=')
+        # `{id?}` -> `{id}` and `{id=5}` -> `{id}`: a default value is part of
+        # the route *template*, never of the URL a client sends.
+        result = result.gsub("{#{raw}}", "{#{raw.split('=').first.rstrip('?')}}")
       end
     end
 
@@ -453,8 +483,7 @@ module Analyzer::CSharp::MinimalApiSupport
       raw = match[1]? || match[0]
       next unless raw
 
-      cleaned = raw.split(":").first.gsub(/\?$/, "").lstrip("*")
-      keys << cleaned
+      keys << Common.route_placeholder_name(raw)
     end
 
     keys.uniq
@@ -493,7 +522,7 @@ module Analyzer::CSharp::MinimalApiSupport
   # split on commas while respecting nested parens/brackets/braces/generics
   # and string literals.
   private def map_call_arguments(block : String) : Array(String)
-    m = block.match(/\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+    m = block.match(MAP_CALL_RE)
     return [] of String unless m
 
     open = block.index('(', m.begin)
@@ -535,7 +564,7 @@ module Analyzer::CSharp::MinimalApiSupport
       next unless line.includes?(name)
       next unless line.matches?(decl)
       # The `Map*("/x", Name)` line also references the handler — skip it.
-      next if line.matches?(/\bMap(?:Get|Post|Put|Delete|Patch|Head|Options|Methods)?\s*\(/)
+      next if line.matches?(MAP_CALL_RE)
 
       sig, end_idx = build_signature(lines, masked_lines, idx)
       block, body_idx, skip_first = extract_callable_body(lines, masked_lines, end_idx)

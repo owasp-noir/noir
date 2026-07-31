@@ -9,8 +9,11 @@ module Detector::Specification
 
     # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
     # match, so they stay separate probes rather than a union.
-    ISTIO_API_PREFIX_MARKER     = /networking\.istio\.io\//
-    VIRTUAL_SERVICE_KIND_MARKER = /kind: VirtualService/
+    ISTIO_API_PREFIX_MARKER = /networking\.istio\.io\//
+    # `kind: "VirtualService"` is as valid as the bare form and is what Helm
+    # charts and generators emit; the marker has to allow the quotes or the
+    # whole manifest is dropped before the parse ever runs.
+    VIRTUAL_SERVICE_KIND_MARKER = /kind:[ \t]*["']?VirtualService/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)

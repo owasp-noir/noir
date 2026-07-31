@@ -49,7 +49,7 @@ module Analyzer::Java
       path_configs = path_configs_for(file_list)
       dropwizard_roots = dropwizard_project_roots_for(file_list)
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
         project_root = project_root_for(path)
@@ -109,7 +109,7 @@ module Analyzer::Java
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
         project_roots << project_root_for(path)
@@ -126,7 +126,7 @@ module Analyzer::Java
       roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
