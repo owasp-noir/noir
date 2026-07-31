@@ -41,6 +41,11 @@ module Analyzer::Python
     # across query/form/json access, so one cache serves all three).
     @var_access_regex_cache = Hash(::String, Tuple(Regex, Regex)).new
 
+    STDLIB_SERVER_MARKERS_RE = Regex.union(
+      "http.server", "HTTPServer", "BaseHTTPRequestHandler",
+      "SimpleHTTPRequestHandler", "wsgiref.simple_server",
+    )
+
     private def var_access_regexes(var : ::String) : Tuple(Regex, Regex)
       @var_access_regex_cache[var] ||= {
         /#{Regex.escape(var)}\s*\[\s*[rf]?['"]([^'"]+)['"]\s*\]/,
@@ -53,8 +58,13 @@ module Analyzer::Python
         @logger.debug "Analyzing #{path}"
 
         source = read_file_content(path)
+        # None of these markers can straddle a newline, so "some line
+        # contains one" is exactly "the file contains one" — one
+        # precompiled union pass over the buffer replaces five
+        # `String#includes?` scans per line, and the `lines` array is only
+        # built for files that actually pass.
+        next unless content_matches?(source, STDLIB_SERVER_MARKERS_RE)
         lines = source.lines
-        next unless lines.any? { |l| l.includes?("http.server") || l.includes?("HTTPServer") || l.includes?("BaseHTTPRequestHandler") || l.includes?("SimpleHTTPRequestHandler") || l.includes?("wsgiref.simple_server") }
 
         analyze_file(path, lines, source, current_base_path)
       end

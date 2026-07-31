@@ -110,17 +110,23 @@ module Analyzer::Python
       @result
     end
 
+    # The seven literal markers below were seven separate Rabin-Karp
+    # passes over the whole file, run for every `.py` in the tree. One
+    # precompiled union is the same predicate in a single pass. The
+    # remaining tests go through `content_matches?` so PCRE2 skips its
+    # per-call UTF-8 revalidation of the buffer. The gate is a pure OR,
+    # so collapsing and reordering its terms cannot change the answer.
+    CLI_LITERAL_MARKERS_RE = Regex.union(
+      "argparse.ArgumentParser", "click.command", "click.group",
+      "typer.Typer", "fire.Fire", "getopt.getopt", "docopt",
+    )
+
     private def cli_entrypoint?(content : String) : Bool
-      return true if content.includes?("argparse.ArgumentParser")
-      return true if content.matches?(DECORATOR_CMD_RE) || content.includes?("click.command") ||
-                     content.includes?("click.group")
-      return true if content.includes?("typer.Typer")
-      return true if content.includes?("fire.Fire")
-      return true if content.includes?("getopt.getopt")
-      return true if content.includes?("docopt")
-      return true if content.matches?(ABSL_DEFINE_CALL_RE)
-      return true if content.matches?(CLEO_IMPORT_RE) && content.matches?(CLEO_COMMAND_CLASS_ANYWHERE_RE)
-      content.matches?(SYS_ARGV_RE) && content.matches?(MAIN_GUARD_RE)
+      return true if content_matches?(content, CLI_LITERAL_MARKERS_RE)
+      return true if content_matches?(content, DECORATOR_CMD_RE)
+      return true if content_matches?(content, ABSL_DEFINE_CALL_RE)
+      return true if content_matches?(content, CLEO_IMPORT_RE) && content_matches?(content, CLEO_COMMAND_CLASS_ANYWHERE_RE)
+      content_matches?(content, SYS_ARGV_RE) && content_matches?(content, MAIN_GUARD_RE)
     end
 
     private def python_binary_name(content : String, path : String) : String
