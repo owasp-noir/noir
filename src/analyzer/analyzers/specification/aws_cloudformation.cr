@@ -66,6 +66,11 @@ module Analyzer::Specification
           path = props["Path"]?.try(&.as_s?)
           method = props["Method"]?.try(&.as_s?)
           next if path.nil? || path.empty?
+          # `$default` (and the WebSocket `$connect` / `$disconnect` keys) are
+          # API Gateway route selectors, not paths — `/$default` is a URL no
+          # client ever requests. SAM writes them with and without the leading
+          # slash. The Terraform analyzer already drops the same keys.
+          next if path.lchop('/').starts_with?('$')
 
           resolved_method = (method.nil? || method.empty?) ? METHOD_ANY : method.upcase
           kind = event_type == "HttpApi" ? "httpapi" : "rest"
