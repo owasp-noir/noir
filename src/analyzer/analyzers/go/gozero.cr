@@ -7,6 +7,13 @@ module Analyzer::Go
 
     IMPORT_MARKER = "github.com/zeromicro/go-zero"
 
+    # One precompiled matcher instead of a `String#includes?` scan per
+    # `.go` file: `includes?` runs Rabin-Karp over the whole buffer and
+    # the marker is absent in the overwhelming majority of files in a
+    # polyglot repo, so every one of them pays the full scan. See
+    # `Analyzer#content_matches?`.
+    IMPORT_MARKER_RE = Regex.union(IMPORT_MARKER)
+
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile). The accessor set is fixed, so precompile
     # the per-accessor matchers once at load time.
@@ -51,7 +58,7 @@ module Analyzer::Go
                     content = read_file_content(path)
                     # `.api` files are gozero's DSL (no Go imports);
                     # only gate `.go` files on the import marker.
-                    next if File.extname(path) == ".go" && !content.includes?(IMPORT_MARKER)
+                    next if File.extname(path) == ".go" && !content_matches?(content, IMPORT_MARKER_RE)
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 

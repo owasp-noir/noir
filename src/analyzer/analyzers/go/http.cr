@@ -9,15 +9,30 @@ module Analyzer::Go
 
     def analyze
       # Source Analysis
-      # We only need the file_contents cache (and the side-effect of having
-      # walked with the import marker). Groups are irrelevant for net/http.
-      _, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
+      # Groups are irrelevant for net/http — this analyzer only ever wanted
+      # the `{path => source}` cache. It used to get it from
+      # `collect_package_groups_ts`, whose group fixpoint it then threw
+      # away: that cost one `extract_engine_names_and_groups` tree-sitter
+      # parse per `net/http`-importing file plus at least two
+      # `extract_groups` parses per file in every multi-file package.
+      # `read_package_file_contents` builds the identical hash (same
+      # extension index, same `_test.go` filter, same reads) with no
+      # parses at all.
+      file_contents = read_package_file_contents
       package_function_bodies = collect_package_function_bodies(file_contents)
       package_method_bodies = collect_package_controller_method_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      # `route_dirs` exists only to bound the two request-param pre-passes
+      # below, and those maps are consulted exclusively from
+      # `params_for_routes`, which returns immediately when the file
+      # produced no route. A directory whose candidate files cannot yield
+      # a net/http route (`net_http_route_source?` is the extractor's own
+      # necessary condition) is therefore never looked up — including it
+      # only bought a tree-sitter parse of every `.go` file in it.
       route_dirs = Set(String).new
       file_contents.each do |path, content|
         dir = File.dirname(path)
+        next unless Noir::TreeSitterGoRouteExtractor.net_http_route_source?(content)
         if framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
           route_dirs << dir
         end
@@ -45,10 +60,19 @@ module Analyzer::Go
                     content = file_contents[path]? || read_file_content(path)
                     dir = File.dirname(path)
                     next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
+
+                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(content)
+                    # With no route in the file the line loop below is a
+                    # no-op by construction: it only ever appends to
+                    # `last_endpoint`, and `add_param_to_endpoint` (plus
+                    # the body-param branch) require a non-empty URL,
+                    # which the seed endpoint never has. Bail before
+                    # splitting the file into lines.
+                    next if ts_routes.empty?
+
                     lines = content.lines
                     last_endpoint = Endpoint.new("", "")
 
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(content)
                     routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
                     ts_routes.each do |r|
                       routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
