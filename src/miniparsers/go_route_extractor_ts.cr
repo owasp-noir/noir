@@ -3006,30 +3006,32 @@ module Noir
     # aliased `h "net/http"`, etc). Mirrors the logic in GoCalleeExtractor
     # but kept private here to avoid widening any public surface and to stay
     # isolated from other miniparsers.
-    private def collect_http_aliases(source : String) : Set(String)
+    # `root` is passed in so the caller's parse is reused: this used to
+    # open its own `parse_go` and its only caller then opened a second
+    # one over the same buffer, i.e. two full tree-sitter parses per
+    # candidate `.go` file.
+    private def collect_http_aliases(root : LibTreeSitter::TSNode, source : String) : Set(String)
       aliases = Set(String).new
-      Noir::TreeSitter.parse_go(source) do |root|
-        walk(root) do |node|
-          next unless Noir::TreeSitter.node_type(node) == "import_spec"
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "import_spec"
 
-          alias_name : String? = nil
-          import_path : String? = nil
-          Noir::TreeSitter.each_named_child(node) do |child|
-            case Noir::TreeSitter.node_type(child)
-            when "package_identifier"
-              alias_name = Noir::TreeSitter.node_text(child, source)
-            when "interpreted_string_literal", "raw_string_literal"
-              txt = Noir::TreeSitter.node_text(child, source)
-              import_path = unquote_like(txt)
-            end
+        alias_name : String? = nil
+        import_path : String? = nil
+        Noir::TreeSitter.each_named_child(node) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "package_identifier"
+            alias_name = Noir::TreeSitter.node_text(child, source)
+          when "interpreted_string_literal", "raw_string_literal"
+            txt = Noir::TreeSitter.node_text(child, source)
+            import_path = unquote_like(txt)
           end
-
-          next unless path = import_path
-          next unless path == "net/http"
-          name = alias_name || "http"
-          next if name.empty? || name == "_" || name == "."
-          aliases << name
         end
+
+        next unless path = import_path
+        next unless path == "net/http"
+        name = alias_name || "http"
+        next if name.empty? || name == "_" || name == "."
+        aliases << name
       end
       if aliases.empty? && source.includes?("net/http")
         aliases << "http"
@@ -3070,13 +3072,31 @@ module Noir
     # the handler decides at runtime) or the concrete verb when the modern
     # "METHOD /path" pattern form is used. Callers (the go_http analyzer) are
     # responsible for fanning ANY via `fan_out_verbs`.
+    # `decode_net_http_registration` accepts a registration only when the
+    # selector field is the identifier `Handle` or `HandleFunc`. An
+    # identifier is a single contiguous token, so a file that does not
+    # contain the substring `Handle` anywhere cannot produce a route here
+    # — and 15,800 of kubernetes' 17,874 `.go` files don't. Checking that
+    # first keeps the tree-sitter parse for the files that can actually
+    # match.
+    NET_HTTP_HANDLE_MARKER_RE = Regex.union("Handle")
+
+    # Necessary condition for `extract_net_http_routes` to return
+    # anything. Exposed so callers can skip the per-directory pre-passes
+    # that only ever feed net/http route resolution.
+    def net_http_route_source?(source : String) : Bool
+      NET_HTTP_HANDLE_MARKER_RE.matches?(source, options: Noir::TextFile::MATCH_OPTIONS)
+    end
+
     def extract_net_http_routes(source : String,
                                 external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
       routes = [] of Route
-      http_aliases = collect_http_aliases(source)
-      return routes if http_aliases.empty?
+      return routes unless net_http_route_source?(source)
 
       Noir::TreeSitter.parse_go(source) do |root|
+        http_aliases = collect_http_aliases(root, source)
+        next if http_aliases.empty?
+
         string_values = collect_string_values(root, source)
         external_string_values.each { |k, v| string_values[k] ||= v }
 
