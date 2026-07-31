@@ -1,0 +1,13 @@
+openapi: 3.0.0
+info:
+  title: Bare Host Server
+  version: 1.0.0
+servers:
+  - url: api.example.com/hosted
+paths:
+  /tickets:
+    get:
+      summary: List tickets
+      responses:
+        '200':
+          description: OK

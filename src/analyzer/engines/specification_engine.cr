@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../models/code_locator"
+require "uri"
 
 module Analyzer::Specification
   # Base for the specification-format analyzers (OpenAPI, Postman, HAR,
@@ -77,6 +78,85 @@ module Analyzer::Specification
     protected def each_spec_file_with_details(key : String, &block : String, Details -> Nil) : Nil
       each_spec_file(key) do |path|
         block.call(path, Details.new(PathInfo.new(path)))
+      end
+    end
+
+    # `scheme://` prefix of an absolute URL. `//host/path` is deliberately not
+    # matched here — it is protocol-relative and handled separately.
+    ABSOLUTE_SERVER_URL = /\A[A-Za-z][A-Za-z0-9+.\-]*:\/\//
+
+    # Turns an OpenAPI-style `servers[].url` list into the base path every
+    # endpoint in the document hangs off. Shared by OAS3 and OpenRPC, which
+    # use the same `servers` object.
+    #
+    # The first entry that yields a usable path wins, mirroring how OAS2's
+    # single `basePath` and RAML's single `baseUri` behave.
+    protected def server_base_path(server_urls : Array(String)) : String
+      server_urls.each do |server_url|
+        path = server_url_path(server_url)
+        next if path.nil?
+        return combine_base_url(path)
+      rescue
+        next
+      end
+
+      @url
+    end
+
+    # The path a single `servers[].url` contributes, or nil when the entry
+    # contributes nothing (unusable, or a host the user did not ask about).
+    protected def server_url_path(server_url : String) : String?
+      return if server_url.empty?
+
+      # Absolute (`https://host/v1`) and protocol-relative (`//host/v1`) URLs
+      # both carry an authority; only the path part belongs in the endpoint
+      # URL. Treating the whole thing as a path is what produced base paths
+      # like `/api.openapi-generator.tech`.
+      absolute = server_url.matches?(ABSOLUTE_SERVER_URL)
+      if absolute || server_url.starts_with?("//")
+        uri = URI.parse(absolute ? server_url : "http:#{server_url}")
+        # With `--url` supplied, a multi-host document should only contribute
+        # the server the user actually pointed at.
+        unless @url.empty?
+          return unless URI.parse(@url).host == uri.host
+        end
+        return uri.path
+      end
+
+      return server_url if server_url.starts_with?('/')
+
+      # An unrooted relative reference such as `api/v1` is a legal server URL,
+      # but a bare host (`api.example.com/v1`) or an unresolved placeholder
+      # (`<local-terminal-IP-address>`) is not a path — rooting either invents
+      # a leading segment no request ever carries.
+      return unless relative_server_path?(server_url)
+      "/#{server_url}"
+    end
+
+    # True when an unrooted `servers[].url` reads as a path rather than as a
+    # host or a placeholder. `.` and `:` in the first segment mean a hostname
+    # or a `host:port`; anything outside the unreserved URL characters (plus
+    # the `{}` of a server variable) means the document left a placeholder in.
+    private def relative_server_path?(server_url : String) : Bool
+      first = server_url.split('/', 2).first
+      return false if first.empty?
+      return false if first.includes?('.') || first.includes?(':')
+      first.each_char.all? do |char|
+        char.ascii_alphanumeric? || "-_~%{}".includes?(char)
+      end
+    end
+
+    # Joins the user-supplied `--url` with a document-declared base path
+    # without doubling or dropping the separator.
+    protected def combine_base_url(path : String) : String
+      return @url if path.empty?
+      return path if @url.empty?
+      if @url.ends_with?("/") && path.starts_with?("/")
+        @url + path[1..]
+      elsif !@url.ends_with?("/") && !path.starts_with?("/")
+        "#{@url}/#{path}"
+      else
+        @url + path
       end
     end
   end
