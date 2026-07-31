@@ -155,8 +155,11 @@ module Analyzer::Javascript
     end
 
     private def js_test_or_vendor?(path : String) : Bool
-      path.includes?("/node_modules/") || path.includes?("/__tests__/") ||
-        path.includes?(".test.") || path.includes?(".spec.") || path.includes?(".d.ts")
+      # Scan-base-relative, never absolute: a `node_modules/` or
+      # `__tests__/` directory ABOVE the scan base is not this project's.
+      relative = base_relative_path(path)
+      relative.includes?("/node_modules/") || relative.includes?("/__tests__/") ||
+        relative.includes?(".test.") || relative.includes?(".spec.") || relative.includes?(".d.ts")
     end
 
     private def scan(lines : Array(String), path : String, root_url : String,

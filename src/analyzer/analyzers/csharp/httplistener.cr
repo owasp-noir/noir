@@ -63,7 +63,7 @@ module Analyzer::CSharp
 
       get_files_by_extension(".cs").each do |file|
         next unless File.exists?(file)
-        next if Common.csharp_test_path?(file)
+        next if Common.csharp_test_path?(base_relative_path(file))
 
         content = read_file_content(file)
         next unless httplistener_related_source?(content)

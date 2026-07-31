@@ -22,15 +22,21 @@ module Analyzer::Kotlin
     # ktor's own repo registers ~370 phantom endpoints from
     # `ktor-client/...-tests/` modules and `*/jvm/test/...` directories
     # that exercise the routing DSL under inline test servers.
-    def self.test_path?(path : String) : Bool
-      return true if path.includes?("/src/test/")
-      return true if path.includes?("/jvmTest/")
-      return true if path.includes?("/commonTest/")
-      return true if path.includes?("/jsTest/")
-      return true if path.includes?("/nativeTest/")
-      return true if path.includes?("/test/")
-      return true if path.includes?("/testData/")
-      base = File.basename(path)
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. `/test/` is generic enough that matching the
+    # absolute path made the answer depend on where the checkout lived:
+    # the same tree under `~/work/test/` reported 0 endpoints instead of
+    # 93.
+    def self.test_path?(relative_path : String) : Bool
+      return true if relative_path.includes?("/src/test/")
+      return true if relative_path.includes?("/jvmTest/")
+      return true if relative_path.includes?("/commonTest/")
+      return true if relative_path.includes?("/jsTest/")
+      return true if relative_path.includes?("/nativeTest/")
+      return true if relative_path.includes?("/test/")
+      return true if relative_path.includes?("/testData/")
+      base = File.basename(relative_path)
       return true if base.ends_with?("Test.kt")
       base.ends_with?("Tests.kt")
     end

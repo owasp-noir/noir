@@ -57,7 +57,7 @@ module Analyzer::Kotlin
 
       get_files_by_extension(".kt").each do |path|
         next if File.directory?(path)
-        next if KotlinEngine.test_path?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         begin

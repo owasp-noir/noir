@@ -275,7 +275,7 @@ module Analyzer::Rust
       all_files.each do |path|
         next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".rs"
-        next if RustEngine.test_path?(path)
+        next if RustEngine.test_path?(base_relative_path(path))
         base = configured_base_for(path)
         src = read_file_content(path)
         next unless src.includes?("scope(") && src.includes?(".service(")
@@ -400,7 +400,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)
         src = read_file_content(fpath)
         next unless src.includes?(".configure(") && src.includes?("scope(")
@@ -504,7 +504,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
         read_file_content(fpath).scan(/\bpub\s+use\s+([^;{}]+?)\s+as\s+([A-Za-z_]\w*)\s*;/) do |m|
           aliases[m[2]] = m[1].strip
         end
@@ -945,7 +945,7 @@ module Analyzer::Rust
       all_files.each do |fpath|
         next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
-        next if RustEngine.test_path?(fpath)
+        next if RustEngine.test_path?(base_relative_path(fpath))
         src = read_file_content(fpath)
         begin
           Noir::TreeSitter.parse_rust(src) do |root|

@@ -1,3 +1,5 @@
+require "./utils"
+
 module Noir
   # Path-boundary helpers shared by the analyzers and engines. Monorepo
   # scans (multiple `-b` base paths) have to answer two questions
@@ -55,6 +57,42 @@ module Noir
         best_size = normalized.size
       end
       best_base
+    end
+
+    # The form every *convention filter* must match on: `path`'s location
+    # relative to the scan base that owns it, `/`-separated and rooted
+    # with a leading `/`.
+    #
+    # "Is this file under `tests/`?", "is this vendored?", "is this build
+    # output?" are all statements about a location inside the project. Ask
+    # them of the absolute path and the answer depends on where the
+    # checkout happens to sit: a clone into `~/work/tests/myapp`, or a CI
+    # job that checks out under a `test/` step directory, matches every
+    # file in the project and silently reports nothing. Rooting the result
+    # means one `includes?("/tests/")` also covers a `tests/` directory at
+    # the top of the project, and keeps every match on a whole path
+    # segment (`/test/` never matches `latest/`).
+    #
+    # A path outside `base_path` keeps its own (absolute) form, exactly as
+    # `get_relative_path` returns it — the filters then behave as they did
+    # before, which is the conservative choice for a file the scan base
+    # does not own.
+    def base_relative(path : String, base_path : String) : String
+      relative = get_relative_path(base_path, path)
+      relative = relative.gsub(File::SEPARATOR, "/") unless File::SEPARATOR == '/'
+      relative.starts_with?("/") ? relative : "/#{relative}"
+    end
+
+    # Multi-base overload: resolves the owning base first. Callers with a
+    # per-path base cache (`Analyzer#configured_base_for`) should use that
+    # and call the single-base form instead.
+    def base_relative(path : String, base_paths : Array(String)) : String
+      base = if base_paths.size <= 1
+               base_paths.first?
+             else
+               longest_base(path, base_paths)
+             end
+      base_relative(path, base || "")
     end
 
     # Remainder of `path` beneath `base_path`, or the bare basename when

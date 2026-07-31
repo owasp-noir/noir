@@ -54,8 +54,11 @@ module Noir::ZigCalleeExtractor
   # a vendor directory immediately followed by a framework package directory.
   VENDORED_FRAMEWORK_RE = %r{/(?:deps|dep|lib|libs|vendor|vendored|pkg|pkgs|zig-pkg|packages|third_party|third-party|modules|subprojects|external|\.deps)/(?:zap|httpz|http\.zig|tokamak|jetzig|zmpl|zmd)/}
 
-  def vendored_framework_path?(path : String) : Bool
-    path.gsub('\\', '/').matches?(VENDORED_FRAMEWORK_RE)
+  # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+  # never the absolute one — the vendoring layout is a property of the
+  # project, not of the directory the checkout happens to sit in.
+  def vendored_framework_path?(relative_path : String) : Bool
+    relative_path.gsub('\\', '/').matches?(VENDORED_FRAMEWORK_RE)
   end
 
   # `test { … }` / `test "name" { … }` block opener. Route registrations inside

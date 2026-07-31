@@ -33,7 +33,10 @@ module Analyzer::Scala
         # convention) and `/src/sbt-test/` (sbt-plugin's per-fixture
         # test trees) are unambiguous — production code never adopts
         # either.
-        next if path.includes?("/src/test/") || path.includes?("/src/sbt-test/")
+        # Scan-base-relative, never absolute: a `src/test/` directory
+        # ABOVE the scan base is not this project's test tree.
+        relative = base_relative_path(path)
+        next if relative.includes?("/src/test/") || relative.includes?("/src/sbt-test/")
 
         if path.ends_with?("routes") || path.ends_with?("routes.conf") || path.includes?("/conf/routes")
           routes_files << path

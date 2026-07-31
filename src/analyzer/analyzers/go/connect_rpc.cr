@@ -75,7 +75,7 @@ module Analyzer::Go
     private def discover_connect_go_endpoints(seen_urls : Set(String))
       get_files_by_extension(".go").each do |path|
         next if File.directory?(path)
-        next if GoEngine.go_test_file?(path)
+        next if GoEngine.go_test_file?(base_relative_path(path))
         begin
           content = read_file_content(path)
           next unless content_matches?(content, IMPORT_MARKER_RE)
@@ -128,7 +128,7 @@ module Analyzer::Go
       begin
         get_files_by_extension(".go").each do |path|
           next if File.directory?(path)
-          next if GoEngine.go_test_file?(path)
+          next if GoEngine.go_test_file?(base_relative_path(path))
           base_path = configured_base_for(path)
           content = read_file_content(path)
           next unless content_matches?(content, IMPORT_OR_HANDLER_RE)

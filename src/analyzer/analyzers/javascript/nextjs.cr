@@ -48,25 +48,35 @@ module Analyzer::Javascript
     end
 
     private def ignored_next_path?(path : String) : Bool
-      path.includes?(".test.") || path.includes?(".spec.") ||
-        path.includes?("/__tests__/") || path.includes?("/__mocks__/") ||
-        path.includes?("/test/fixtures/") || path.includes?("/tests/fixtures/")
+      # Scan-base-relative, never absolute: a `__tests__/` or `test/`
+      # directory ABOVE the scan base is not this project's test tree.
+      relative = base_relative_path(path)
+      relative.includes?(".test.") || relative.includes?(".spec.") ||
+        relative.includes?("/__tests__/") || relative.includes?("/__mocks__/") ||
+        relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/")
     end
 
+    # The router-directory markers below name directories *inside* the
+    # Next.js project, so they are matched on the scan-base-relative
+    # path. On the absolute path a checkout that merely lived under an
+    # `app/` directory turned every `route.ts` in the tree into an
+    # app-router handler, and `String#index` (first occurrence) then
+    # derived the URL from that outside directory.
     private def app_router_file?(path : String) : Bool
-      return false unless path.includes?("/app/")
+      return false unless base_relative_path(path).includes?("/app/")
       EXTENSIONS.any? { |ext| path.ends_with?("/route#{ext}") }
     end
 
     private def pages_router_file?(path : String) : Bool
-      path.includes?("/pages/api/")
+      base_relative_path(path).includes?("/pages/api/")
     end
 
     private def analyze_pages_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      idx = path.index("/pages/api/")
+      scoped = base_relative_path(path)
+      idx = scoped.index("/pages/api/")
       return if idx.nil?
 
-      relative = path[(idx + "/pages/api/".size)..-1]
+      relative = scoped[(idx + "/pages/api/".size)..-1]
       relative = strip_extension(relative)
 
       # Skip private folders/files (leading underscore)
@@ -103,10 +113,11 @@ module Analyzer::Javascript
     end
 
     private def analyze_app_router_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
-      idx = path.index("/app/")
+      scoped = base_relative_path(path)
+      idx = scoped.index("/app/")
       return if idx.nil?
 
-      relative = path[(idx + "/app/".size)..-1]
+      relative = scoped[(idx + "/app/".size)..-1]
       # Drop /route.ext
       EXTENSIONS.each do |ext|
         if relative.ends_with?("/route#{ext}")

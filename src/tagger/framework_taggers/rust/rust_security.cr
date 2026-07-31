@@ -167,10 +167,15 @@ class RustSecurityTagger < FrameworkTagger
 
   # Integration tests / benches / examples define throwaway apps whose
   # middleware must not leak onto real endpoints.
+  #
+  # Scan-base-relative, never absolute: a `tests/` directory above the
+  # scan base belongs to whatever the checkout sits in, and matching it
+  # skipped the whole middleware pre-scan.
   private def test_path?(path : String) : Bool
-    path.includes?("/tests/") ||
-      path.includes?("/benches/") ||
-      path.includes?("/examples/")
+    relative = base_relative_path(path)
+    relative.includes?("/tests/") ||
+      relative.includes?("/benches/") ||
+      relative.includes?("/examples/")
   end
 
   private def scan_rust_source(content : String)

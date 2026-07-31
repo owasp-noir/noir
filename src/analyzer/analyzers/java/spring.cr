@@ -4,6 +4,7 @@ require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../utils/spring_property_path"
 require "../../engines/java_engine"
+require "../../../utils/path_scope"
 require "yaml"
 
 module Analyzer::Java
@@ -92,7 +93,7 @@ module Analyzer::Java
       # content walks over the Java source set only; webflux /
       # servlet context paths come from `path_config_for` (application.yml
       # / .properties under each project root).
-      java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(path) }
+      java_files = get_files_by_extension(".java").reject { |path| JavaEngine.test_path?(base_relative_path(path)) }
       path_configs, spring_property_maps, stomp_prefixes, meta_annotation_index, interface_route_index =
         build_spring_indexes(java_files)
 
@@ -1277,14 +1278,26 @@ module Analyzer::Java
       end
     end
 
+    # The Maven/Gradle module root: everything above the source root that
+    # holds this file.
+    #
+    # The marker is searched inside the scan-base-relative path, never the
+    # absolute one. `String#index` returns the FIRST occurrence, so on an
+    # absolute path a `src/` directory anywhere above the scan base won
+    # outright and the module root resolved to a directory outside the
+    # scan — `application.properties` was then never found and every
+    # `server.servlet.context-path` prefix silently vanished.
     private def project_root_for(path : String) : String
+      base = configured_base_for(path)
+      relative = Noir::PathScope.base_relative(path, base)
+
       ["/src/main/java/", "/src/"].each do |marker|
-        if index = path.index(marker)
-          return path[...index]
+        if index = relative.index(marker)
+          return base.rstrip('/') + relative[...index]
         end
       end
 
-      configured_base_for(path)
+      base
     end
 
     private def normalize_optional_path(path : String?) : String

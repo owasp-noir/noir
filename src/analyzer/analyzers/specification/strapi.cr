@@ -167,8 +167,13 @@ module Analyzer::Specification
     end
 
     # `src/api/<name>/content-types/<name>/schema.json` -> `<name>`.
+    #
+    # Scan-base-relative, never absolute: `String#index` takes the FIRST
+    # occurrence, so an `api/` directory above the scan base named the
+    # content type instead of the project's own.
     private def api_directory_name(source : String) : String?
-      path = source.includes?('\\') ? source.gsub('\\', '/') : source
+      scoped = base_relative_path(source)
+      path = scoped.includes?('\\') ? scoped.gsub('\\', '/') : scoped
       marker = path.index("/api/")
       return unless marker
       rest = path[(marker + 5)..]

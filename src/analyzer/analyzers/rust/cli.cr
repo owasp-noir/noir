@@ -60,7 +60,7 @@ module Analyzer::Rust
 
       get_files_by_extension(".rs").each do |path|
         next if File.directory?(path)
-        next if RustEngine.test_path?(path)
+        next if RustEngine.test_path?(base_relative_path(path))
 
         begin
           content = read_file_content(path)

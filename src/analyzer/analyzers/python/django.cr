@@ -134,7 +134,7 @@ module Analyzer::Python
 
       candidates = all_files.select do |file|
         next false unless file.ends_with?(".py")
-        next false if file.includes?("/site-packages/")
+        next false if base_relative_path(file).includes?("/site-packages/")
         next false if PythonEngine.python_test_path?(file, base_path_for(file))
         File.basename(file) == "urls.py" || file.includes?("/urls/")
       end
@@ -198,7 +198,7 @@ module Analyzer::Python
                 break if file.nil?
                 # No `File.directory?` — `all_files` is `file_map`, which
                 # holds regular files only.
-                next if file.includes?("/site-packages/")
+                next if base_relative_path(file).includes?("/site-packages/")
                 # `django_settings_path?` is pure string work and rejects
                 # all but a handful of files, so it runs before
                 # `base_path_for` / `python_test_path?`. Every gate here
@@ -606,7 +606,7 @@ module Analyzer::Python
 
       candidates = all_files.select do |file|
         next false unless file.ends_with?(".py")
-        next false if file.includes?("/site-packages/")
+        next false if base_relative_path(file).includes?("/site-packages/")
         next false if PythonEngine.python_test_path?(file, base_path_for(file))
         base = File.basename(file)
         base == "apps.py" || base == "config.py"

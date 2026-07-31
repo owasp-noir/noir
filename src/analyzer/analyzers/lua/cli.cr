@@ -144,7 +144,9 @@ module Analyzer::Lua
     end
 
     private def cli_test_path?(path : String) : Bool
-      path.downcase.matches?(TEST_PATH_RE)
+      # Scan-base-relative, never absolute: a `test/` directory ABOVE the
+      # scan base is not this project's test tree.
+      base_relative_path(path).downcase.matches?(TEST_PATH_RE)
     end
 
     private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,

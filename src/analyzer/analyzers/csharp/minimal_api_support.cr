@@ -24,7 +24,7 @@ module Analyzer::CSharp::MinimalApiSupport
   private def analyze_minimal_api_files(include_callee : Bool)
     get_files_by_extension(".cs").each do |file|
       next unless File.exists?(file)
-      next if Common.csharp_test_path?(file)
+      next if Common.csharp_test_path?(base_relative_path(file))
 
       content = read_file_content(file)
       # Carter modules register minimal-API routes too, but under a module

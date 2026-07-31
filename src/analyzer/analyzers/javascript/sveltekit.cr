@@ -51,10 +51,14 @@ module Analyzer::Javascript
 
       parallel_file_scan(EXTENSIONS) do |path|
         next unless path_under_project_roots?(path, project_roots)
-        idx = path.index("/src/routes/")
+        # Scan-base-relative, never absolute: `String#index` takes the
+        # FIRST occurrence, so a same-named directory above the scan base
+        # won outright and the derived URL changed with the checkout path.
+        scoped = base_relative_path(path)
+        idx = scoped.index("/src/routes/")
         next if idx.nil?
 
-        relative = path[(idx + "/src/routes/".size)..-1]
+        relative = scoped[(idx + "/src/routes/".size)..-1]
         leaf = File.basename(relative)
         next if private_segment_in?(relative)
 

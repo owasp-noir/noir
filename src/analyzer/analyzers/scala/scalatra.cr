@@ -73,8 +73,10 @@ module Analyzer::Scala
       prefix.rstrip("/*")
     end
 
+    # Scan-base-relative, never absolute: a `src/test/` directory ABOVE
+    # the scan base is not this project's test tree.
     private def scalatra_test_path?(path : String) : Bool
-      path.matches?(TEST_PATH_RE)
+      base_relative_path(path).matches?(TEST_PATH_RE)
     end
 
     # Extract routes from Scalatra DSL

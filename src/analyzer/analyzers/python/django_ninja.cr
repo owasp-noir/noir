@@ -66,7 +66,7 @@ module Analyzer::Python
       # Phase 1 — collect NinjaAPI/Router instances, their operations and
       # `add_router(...)` edges.
       python_files.each do |path|
-        next if path.includes?("/site-packages/")
+        next if base_relative_path(path).includes?("/site-packages/")
         next if python_test_path?(path)
         begin
           source = read_file_content(path)
@@ -371,7 +371,7 @@ module Analyzer::Python
 
     private def resolve_mount_prefixes(python_files : Array(::String), instances : Hash(::String, NinjaInstance)) : Nil
       python_files.each do |path|
-        next if path.includes?("/site-packages/")
+        next if base_relative_path(path).includes?("/site-packages/")
         next if python_test_path?(path)
         begin
           source = read_file_content(path)

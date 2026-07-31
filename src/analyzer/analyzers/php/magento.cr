@@ -67,7 +67,7 @@ module Analyzer::Php
 
       get_files_by_extension(".xml").each do |path|
         next unless File.basename(path) == "routes.xml"
-        next if PhpEngine.test_path?(path)
+        next if PhpEngine.test_path?(base_relative_path(path))
 
         area = area_for_routes_path(path)
         begin

@@ -19,8 +19,15 @@ module Analyzer::Php
       endpoints = [] of Endpoint
       return endpoints unless path.ends_with?(".php")
 
-      is_route = path.includes?("route/") || File.basename(path) == "route.php"
-      is_controller = path.includes?("controller/")
+      # ThinkPHP's `route/`, `controller/` and multi-app `app/<name>/`
+      # conventions describe a location inside the project, so they are
+      # matched on the scan-base-relative path. On the absolute path a
+      # checkout that merely sat under an `app/` directory picked up a
+      # phantom module prefix on every route it declared
+      # (`/blog/{id}` became `/thinkphp/blog/{id}`).
+      relative = base_relative_path(path)
+      is_route = relative.includes?("route/") || File.basename(path) == "route.php"
+      is_controller = relative.includes?("controller/")
 
       # PERFORMANCE OPTIMIZATION: Skip opening, reading, and parsing files that are
       # neither explicit route definitions nor implicit controller classes.
@@ -34,8 +41,8 @@ module Analyzer::Php
       if is_route
         # Determine base prefix from multi-app route files (e.g. app/shop/route/app.php -> prefix is "/shop")
         base_prefix = ""
-        if path.includes?("app/") || path.includes?("application/")
-          segments = path.split('/')
+        if relative.includes?("app/") || relative.includes?("application/")
+          segments = relative.split('/')
           route_idx = segments.index("route")
           if route_idx && route_idx > 1
             parent = segments[route_idx - 1]

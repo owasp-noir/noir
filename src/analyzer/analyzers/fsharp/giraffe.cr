@@ -96,9 +96,13 @@ module Analyzer::Fsharp
       @result
     end
 
+    # Scan-base-relative, never absolute: a `tests/` directory ABOVE the
+    # scan base is not this project's test tree — the fixture tree
+    # dropped all 61 of its endpoints when scanned from one.
     private def fsharp_test_path?(path : String) : Bool
-      return true if path.includes?("/tests/")
-      return true if path.includes?("/test/")
+      relative = base_relative_path(path)
+      return true if relative.includes?("/tests/")
+      return true if relative.includes?("/test/")
       base = File.basename(path)
       return true if base.ends_with?("Tests.fs")
       base.ends_with?("Test.fs")

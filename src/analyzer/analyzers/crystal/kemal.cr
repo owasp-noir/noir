@@ -202,7 +202,10 @@ module Analyzer::Crystal
       base_paths.each do |base|
         next if @static_disabled_bases.includes?(base)
         get_public_files(base).each do |file|
-          if file =~ /\/public\/(.*)/
+          # Scan-base-relative, never absolute: the leftmost `/public/`
+          # wins, so a `public/` directory above the scan base put the
+          # whole intervening path into the served URL.
+          if base_relative_path(file) =~ /\/public\/(.*)/
             relative_path = $1
             @result << Endpoint.new("/#{relative_path}", "GET")
           end

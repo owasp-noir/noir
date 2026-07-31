@@ -54,10 +54,14 @@ module Analyzer::Javascript
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
       parallel_file_scan(EXTENSIONS) do |path|
-        idx = path.index("/app/routes/")
+        # Scan-base-relative, never absolute: `String#index` takes the
+        # FIRST occurrence, so a same-named directory above the scan base
+        # won outright and the derived URL changed with the checkout path.
+        scoped = base_relative_path(path)
+        idx = scoped.index("/app/routes/")
         next if idx.nil?
 
-        relative = path[(idx + "/app/routes/".size)..-1]
+        relative = scoped[(idx + "/app/routes/".size)..-1]
         # Remix only looks at the directly-named route file. Files
         # nested deeper inside a route's directory (`route.tsx` /
         # subcomponents) are component wiring, not route hosts.
