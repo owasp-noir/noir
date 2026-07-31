@@ -5,6 +5,8 @@ module Analyzer::Specification
   class Traefik < SpecificationEngine
     analyzer_for "traefik"
 
+    METHOD_ANY = "ANY"
+
     def analyze
       # Shared across every file so one route defined in two providers
       # (a TOML and a YAML dynamic-config pair) is emitted once.
@@ -152,7 +154,10 @@ module Analyzer::Specification
         end
 
         paths = ["/"] of String if paths.empty?
-        methods = ["GET"] of String if methods.empty?
+        # A rule with no `Method()` matcher matches every verb. `GET` claimed
+        # the route answered one verb and hid the rest; `ANY` is the label the
+        # rest of this analyzer group already uses for an unfiltered route.
+        methods = [METHOD_ANY] of String if methods.empty?
 
         paths.each do |path|
           methods.each do |method|
