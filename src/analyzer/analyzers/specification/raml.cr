@@ -91,6 +91,7 @@ module Analyzer::Specification
     private def base_path_from(yaml_obj : YAML::Any) : String
       base_uri = base_uri_value(yaml_obj[YAML::Any.new("baseUri")]?)
       return "" if base_uri.empty?
+      base_uri = resolve_base_uri_parameters(base_uri, yaml_obj)
       if base_uri.starts_with?("http")
         begin
           uri = URI.parse(base_uri)
@@ -100,6 +101,31 @@ module Analyzer::Specification
         end
       end
       base_uri.rstrip('/')
+    end
+
+    # RAML reserves `{version}` in `baseUri` for the root `version` property,
+    # so `baseUri: http://host/{version}` with `version: v1` is served at
+    # `/v1`. Other placeholders can carry a `default` under
+    # `baseUriParameters`. Without this the literal `{version}` leaked into
+    # every endpoint URL (`/{version}/songs` instead of `/v1/songs`).
+    private def resolve_base_uri_parameters(base_uri : String, yaml_obj : YAML::Any) : String
+      return base_uri unless base_uri.includes?('{')
+
+      resolved = base_uri
+      if version = yaml_obj[YAML::Any.new("version")]?.try { |node| node.as_s? || node.as_i?.try(&.to_s) || node.as_f?.try(&.to_s) }
+        resolved = resolved.gsub("{version}", version) unless version.empty?
+      end
+
+      if parameters = yaml_obj[YAML::Any.new("baseUriParameters")]?.try(&.as_h?)
+        parameters.each do |name, definition|
+          next unless definition_h = definition.as_h?
+          next unless default = definition_h[YAML::Any.new("default")]?.try(&.as_s?)
+          next if default.empty?
+          resolved = resolved.gsub("{#{name}}", default)
+        end
+      end
+
+      resolved
     end
 
     # `baseUri` is normally a scalar URL, but RAML lets you annotate it,
