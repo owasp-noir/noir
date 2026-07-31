@@ -82,6 +82,14 @@ expected_endpoints = [
   build.call("myapp://links.example.com", "mobile-scheme", no_params, [] of String),
   # Placeholder missing from build.gradle: kept verbatim (tagged unresolved)
   build.call("myapp://${missingHost}", "mobile-scheme", no_params, [] of String),
+  # gradle placeholders declared with the groovy property-assignment form
+  # (`manifestPlaceholders.propScheme = "..."`) resolve like map entries.
+  # Absent from the expected list, and asserted by the total count:
+  #   * myapp://internal-only — declared on android:exported="false", so the
+  #     filter can only be matched from inside the app.
+  #   * package:// — the PACKAGE_FULLY_REMOVED receiver's `<data scheme="package"/>`
+  #     is a protected-system-broadcast qualifier, not an addressable URI.
+  build.call("propapp://prop.example.com", "mobile-scheme", no_params, [] of String),
   # Jetpack Navigation deep link: {userId} -> :userId path param, ?ref={ref}
   # -> query param; linked to ProfileFragment.onViewCreated for callees.
   build.call("myapp://users/:userId", "mobile-scheme", [

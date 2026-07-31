@@ -49,12 +49,29 @@ expected_endpoints = [
   Endpoint.new("https://www.hahwul.com/graphql", "POST", [
     Param.new("graphql_operation_query_GetUserData", "{\"query\":\"GetUserData\"}", "json"),
   ]),
+  # prose.md — a URL literal carries the surrounding prose/markup with it
+  # unless it is trimmed: `](url)` drops the closing paren, `<url>` and
+  # `<link>url</link>` stop at the angle bracket, and a sentence-final `.`
+  # is not part of the URL.
+  Endpoint.new("https://www.hahwul.com/changelog/", "GET"),
+  Endpoint.new("https://www.hahwul.com/feed.xml", "GET"),
+  Endpoint.new("https://www.hahwul.com/sitemap", "GET"),
+  # Both URLs on one line are reported, not only the first.
+  Endpoint.new("https://www.hahwul.com/first", "GET"),
+  Endpoint.new("https://www.hahwul.com/second", "GET"),
+  # base64_mixed.txt — an undecodable base64-shaped token earlier in the
+  # file must not abandon the rest of it.
+  Endpoint.new("https://www.hahwul.com/hidden", "GET"),
 ]
 
 tester = FunctionalTester.new("fixtures/etc/file_based/", {
-  :techs => 0,
-  # Adjusted count: original 12 + 1 new unique GraphQL endpoint (POST /graphql)
-  :endpoints => expected_endpoints.size, # This will now be 13 if original was 12
+  :techs     => 1, # http_file (the `.http` request files)
+  :endpoints => expected_endpoints.size,
 }, expected_endpoints)
 
 tester.app.options["url"] = YAML::Any.new("https://www.hahwul.com")
+
+# The url-matching FileAnalyzer hooks only run with `-u`, which is set on the
+# runner above — so the assertions have to be kicked off after it, not by the
+# constructor.
+tester.perform_tests

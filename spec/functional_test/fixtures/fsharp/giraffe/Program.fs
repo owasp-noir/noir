@@ -54,4 +54,11 @@ let endpoints =
             GET [ route "/dashboard" handlerDashboard ]
             DELETE [ routef "/sessions/%i" handlerKillSession ]
         ]
+        // Giraffe's own combinator for [ GET; HEAD ]; the routes it wraps
+        // answer both verbs, not the whole fallback set.
+        GET_HEAD [
+            route "/healthz" handlerPing
+            // Endpoint Routing lets a format specifier name its parameter.
+            routef "/pet/%i:petId" handlerPet
+        ]
     ]
