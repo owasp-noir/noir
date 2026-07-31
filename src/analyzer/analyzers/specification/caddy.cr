@@ -13,7 +13,7 @@ module Analyzer::Specification
     NAMED_MATCH_OPEN = /^(@[A-Za-z_]\w*)\s*\{?/
     METHOD_RE        = /^method\s+(.+)/
     PATH_RE          = /^path\s+(.+)/
-    HANDLE_REF_RE    = /^handle\s+(@[A-Za-z_]\w*)\s*\{?/
+    HANDLE_REF_RE    = /^(?:handle(?:_path)?|route)\s+(@[A-Za-z_]\w*)\s*\{?/
     SITE_BLOCK_RE    = /^([A-Za-z0-9_.:\/@*?-]+(?:\s*,\s*[A-Za-z0-9_.:\/@*?-]+)*)\s*\{$/
 
     def analyze
@@ -93,30 +93,32 @@ module Analyzer::Specification
 
         if m = HANDLE_OPEN_RE.match(line)
           kind = m[1]? == "_path" ? "handle_path" : "handle"
-          emit_endpoint(m[2], METHOD_ANY, kind, site_hosts, source_path, line_no)
+          emit_endpoint(m[2], METHOD_ANY, kind, site_hosts, source_path, line_no) if path_matcher?(m[2])
           depth += brace_delta(line)
           next
         end
 
         if m = ROUTE_OPEN_RE.match(line)
-          emit_endpoint(m[1], METHOD_ANY, "route", site_hosts, source_path, line_no)
+          emit_endpoint(m[1], METHOD_ANY, "route", site_hosts, source_path, line_no) if path_matcher?(m[1])
           depth += brace_delta(line)
           next
         end
 
         if m = REDIR_RE.match(line)
-          emit_endpoint(m[1], METHOD_ANY, "redir", site_hosts, source_path, line_no, target: m[2])
+          # `redir [<matcher>] <to> [<code>]`. Without a matcher the first
+          # argument is the *destination* — `redir https://example.com{uri}
+          # permanent` describes where traffic goes, not a route this server
+          # serves, so emitting it produced a phantom absolute-URL endpoint.
+          emit_endpoint(m[1], METHOD_ANY, "redir", site_hosts, source_path, line_no, target: m[2]) if path_matcher?(m[1])
           depth += brace_delta(line)
           next
         end
 
         if m = RESPOND_RE.match(line)
-          target = m[1]
-          # `respond` may be invoked with a status code (no path). Skip
-          # bare-status forms so we don't surface "200" as a URL.
-          unless target.matches?(/\A\d+\z/)
-            emit_endpoint(target, METHOD_ANY, "respond", site_hosts, source_path, line_no)
-          end
+          # `respond [<matcher>] <status>|<body>`. Only a matcher token names a
+          # route; the far more common `respond "Hello, world!"` / `respond 404`
+          # forms carry a body or status and used to surface as `/"Hello,`.
+          emit_endpoint(m[1], METHOD_ANY, "respond", site_hosts, source_path, line_no) if path_matcher?(m[1])
           depth += brace_delta(line)
           next
         end
@@ -128,6 +130,14 @@ module Analyzer::Specification
           site_hosts = [] of String
         end
       end
+    end
+
+    # An inline Caddyfile matcher token is `*`, or a path starting with `/`
+    # (a named `@matcher` is handled separately by `HANDLE_REF_RE`). Anything
+    # else in that argument position is a body, a destination, a status code
+    # or the block's opening brace — `handle {` used to emit `/{`.
+    private def path_matcher?(token : String) : Bool
+      token == "*" || token.starts_with?('/')
     end
 
     # Net brace movement for the line. A bare `{` opens (+1), a bare
