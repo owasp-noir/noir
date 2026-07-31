@@ -10,7 +10,10 @@ module Detector::Specification
     # Every `.yaml`/`.yml` in the tree reaches these guards. Both must
     # match, so they stay separate probes rather than a union.
     GATEWAY_API_PREFIX_MARKER = /gateway\.networking\.k8s\.io\//
-    HTTP_ROUTE_KIND_MARKER    = /kind: HTTPRoute/
+    # `kind: "HTTPRoute"` is as valid as the bare form and is what Helm charts
+    # and generators emit; the marker has to allow the quotes or the whole
+    # manifest is dropped before the parse ever runs.
+    HTTP_ROUTE_KIND_MARKER = /kind:[ \t]*["']?HTTPRoute/
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)

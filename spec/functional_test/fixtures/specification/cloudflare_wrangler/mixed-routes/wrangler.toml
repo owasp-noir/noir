@@ -1,0 +1,10 @@
+# `routes` mixes a bare string with an inline table. That is valid TOML 1.0 and
+# is how wrangler documents the key, but the bundled TOML shard rejects it — the
+# analyzer falls back to scanning the array rather than dropping every route.
+name = "mixed"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+routes = [
+  "static.example.com/assets/*",
+  { pattern = "mixed.example.com/edge/*", zone_name = "example.com" }
+]

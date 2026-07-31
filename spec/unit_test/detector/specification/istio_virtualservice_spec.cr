@@ -29,6 +29,11 @@ describe "Detect Istio VirtualService manifest" do
     locator.all("istio-virtualservice-spec").should eq ["mesh/api.yaml"]
   end
 
+  it "detects a VirtualService manifest with a quoted kind" do
+    src = vs.sub("kind: VirtualService", %(kind: "VirtualService"))
+    instance.detect("mesh/quoted.yaml", src).should be_true
+  end
+
   it "rejects non-VirtualService Istio resources" do
     src = <<-YAML
       apiVersion: networking.istio.io/v1

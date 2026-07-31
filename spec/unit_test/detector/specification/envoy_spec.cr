@@ -34,6 +34,31 @@ describe "Detect Envoy route config" do
     locator.all("envoy-json").should eq ["envoy.json"]
   end
 
+  it "detects a bootstrap config that nests route_config under a listener filter" do
+    locator = CodeLocator.instance
+    locator.clear "envoy-yaml"
+
+    bootstrap = <<-YAML
+      static_resources:
+        listeners:
+          - name: listener_0
+            filter_chains:
+              - filters:
+                  - name: envoy.filters.network.http_connection_manager
+                    typed_config:
+                      route_config:
+                        virtual_hosts:
+                          - name: local_service
+                            domains: ["*"]
+                            routes:
+                              - match:
+                                  prefix: "/"
+      YAML
+
+    instance.detect("envoy.yaml", bootstrap).should be_true
+    locator.all("envoy-yaml").should eq ["envoy.yaml"]
+  end
+
   it "rejects yaml without virtual_hosts/domains markers" do
     instance.detect("app.yaml", "version: '3.9'\nservices:\n  app:\n    image: test").should be_false
   end

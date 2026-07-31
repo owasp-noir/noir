@@ -17,6 +17,13 @@ Resources:
           Properties:
             Method: POST
             Path: /users
+        # `$default` is an API Gateway route selector, not a path. `/$default`
+        # is a URL no client ever requests, so it must not become an endpoint.
+        DefaultEvent:
+          Type: HttpApi
+          Properties:
+            Method: ANY
+            Path: /$default
 
   Api:
     Type: AWS::ApiGateway::RestApi

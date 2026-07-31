@@ -76,7 +76,11 @@ module Analyzer::Specification
       paths.each do |path|
         # We currently model Kong route path mode as regex (`~...`) vs non-regex.
         # Non-regex routes (including exact `=...`) are tagged as `prefix`.
-        path_type = path.starts_with?("~") ? "regex" : "prefix"
+        regex = path.starts_with?("~")
+        path_type = regex ? "regex" : "prefix"
+        # In Kong 3.x the leading `~` is the marker that selects regex mode, not
+        # a path segment; leaving it in produced URLs like `/~/status/\d+`.
+        path = path.lchop('~') if regex
         methods.each do |method|
           endpoint = Endpoint.new(path, method, details)
           endpoint.add_tag(Tag.new("kong-path-type", path_type, "kong_analyzer"))
