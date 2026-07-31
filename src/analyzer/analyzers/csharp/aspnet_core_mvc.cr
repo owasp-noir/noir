@@ -170,7 +170,7 @@ module Analyzer::CSharp
                                     project_roots : Array(String), include_callee : Bool)
       controller_files = get_files_by_extension(".cs").select do |file|
         base = File.basename(file)
-        next false if Common.csharp_test_path?(file)
+        next false if Common.csharp_test_path?(base_relative_path(file))
         base.includes?("Controller") && !base.ends_with?("RouteConfig.cs") && base != "Program.cs" && base != "Startup.cs"
       end
 

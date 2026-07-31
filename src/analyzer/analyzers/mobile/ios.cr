@@ -382,8 +382,12 @@ module Analyzer::Mobile
     # test targets. Mirrors `NoirMobileLinker::IosHandlers.skip_ios_source?`
     # in `src/mobile/linker.cr` (private to that module, so not reusable
     # directly from here).
+    #
+    # Matched on the scan-base-relative path, never the absolute one: a
+    # `Tests/` or `Pods/` directory ABOVE the scan base belongs to
+    # whatever the checkout happens to sit in, not to this app.
     private def ios_source_excluded?(path : String) : Bool
-      normalized = path.gsub('\\', '/')
+      normalized = base_relative_path(path).gsub('\\', '/')
       basename = File.basename(normalized)
       normalized.includes?("/.build/") || normalized.includes?("/.swiftpm/") ||
         normalized.includes?("/Pods/") || normalized.includes?("/Carthage/") ||

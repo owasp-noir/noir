@@ -78,7 +78,7 @@ module Analyzer::Java
 
       get_files_by_extension(".java").each do |path|
         next if File.directory?(path)
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         begin

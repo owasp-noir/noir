@@ -16,11 +16,15 @@ module Analyzer::CSharp::Common
   # dotnet/aspnetcore alone parks ~3,600 phantom endpoints under
   # `src/Mvc/test/...` and similar trees. Production code never
   # adopts any of these.
-  def self.csharp_test_path?(path : String) : Bool
-    return true if path.includes?("/test/")
-    return true if path.includes?("/tests/")
-    return true if path.includes?("/testassets/")
-    base = File.basename(path)
+  # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+  # never the absolute one. The conventions describe a location inside
+  # the solution, so on an absolute path a `test/` directory above the
+  # scan base suppressed the whole project.
+  def self.csharp_test_path?(relative_path : String) : Bool
+    return true if relative_path.includes?("/test/")
+    return true if relative_path.includes?("/tests/")
+    return true if relative_path.includes?("/testassets/")
+    base = File.basename(relative_path)
     return true if base.ends_with?("Tests.cs")
     base.ends_with?("Test.cs")
   end

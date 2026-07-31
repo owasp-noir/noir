@@ -230,8 +230,7 @@ class Analyzer
   # from `/srv/inc/site` instead of `/srv/site` dropped 33 of its 35
   # endpoints, because every page looked like an `#include` fragment.
   def base_relative_path(path : String) : String
-    relative = get_relative_path(configured_base_for(path), path).gsub(File::SEPARATOR, "/")
-    relative.starts_with?("/") ? relative : "/#{relative}"
+    Noir::PathScope.base_relative(path, configured_base_for(path))
   end
 
   def web_root_path(path : String, markers : Array(String)) : String

@@ -1,3 +1,5 @@
+require "../utils/path_scope"
+
 class CodeLocator
   @@instance : CodeLocator? = nil
 
@@ -25,6 +27,7 @@ class CodeLocator
   @content_cache_skipped : Int32
   @expanded_file_map : Array(Tuple(String, String))?
   @expanded_path_index : Hash(String, String)?
+  @scan_base_paths : Array(String)
 
   @lock : Mutex
 
@@ -49,7 +52,35 @@ class CodeLocator
     @content_cache_skipped = 0
     @expanded_file_map = nil
     @expanded_path_index = nil
+    @scan_base_paths = [] of String
     @lock = Mutex.new
+  end
+
+  # The `-b` roots of the current scan, published once by `NoirRunner`.
+  #
+  # Convention filters ("is this file under `tests/`?", "is this bundled
+  # output?") must run on the path *relative to the scan base*, never on
+  # the absolute path — otherwise a directory above the base decides the
+  # result and the same source tree reports different endpoints depending
+  # on where it is checked out. Analyzers get that through
+  # `Analyzer#base_relative_path`; the shared parser layer
+  # (`Noir::JSRouteExtractor` and friends) has no analyzer instance, so it
+  # reads the roots from here.
+  def scan_base_paths=(paths : Array(String))
+    @scan_base_paths = paths.reject(&.empty?)
+  end
+
+  def scan_base_paths : Array(String)
+    @scan_base_paths
+  end
+
+  # `path` relative to the scan base that owns it, `/`-separated and
+  # rooted with a leading `/`. With no registered bases (library callers,
+  # unit specs that drive a parser directly) the path is returned
+  # unchanged, which is exactly the pre-registry behaviour.
+  def base_relative(path : String) : String
+    return path if @scan_base_paths.empty?
+    Noir::PathScope.base_relative(path, @scan_base_paths)
   end
 
   # Megabyte figures at or above this overflow `Int64` once scaled to bytes.

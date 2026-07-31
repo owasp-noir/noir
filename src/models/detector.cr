@@ -1,4 +1,5 @@
 require "./logger"
+require "./code_locator"
 require "../utils/text_file"
 require "../utils/utils"
 require "yaml"
@@ -37,6 +38,23 @@ class Detector
   def detect(filename : String, file_contents : String) : Bool
     # After inheriting the class, write an action code here.
     false
+  end
+
+  # `filename` relative to the scan base that owns it, `/`-separated and
+  # rooted with a leading `/`.
+  #
+  # A detector that keys off a DIRECTORY (`wp-content/`, `vendor/yiisoft/`,
+  # `routes/`) rather than a filename must match on this: on the absolute
+  # path, a checkout that merely sat under a same-named directory made
+  # every file in the project look like the framework's. Filename markers
+  # (`composer.json`, `Cargo.toml`) are unaffected either way — an
+  # ancestor directory contributes no filename.
+  #
+  # Reads the roots from `CodeLocator`, which `NoirRunner#detect` publishes
+  # before the walk; with none registered (detector unit specs) the path is
+  # returned unchanged.
+  def base_relative_path(filename : String) : String
+    CodeLocator.instance.base_relative(filename)
   end
 
   # Declares the detector's tech name and the cheap filename gate that lets

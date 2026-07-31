@@ -96,7 +96,7 @@ module Analyzer::Java
       seen = Set(String).new
 
       java_files = file_list.select do |path|
-        File.exists?(path) && path.ends_with?(".java") && !JavaEngine.test_path?(path)
+        File.exists?(path) && path.ends_with?(".java") && !JavaEngine.test_path?(base_relative_path(path))
       end
 
       # Build a FQCN → source-path index up front so XML `<action
@@ -172,7 +172,7 @@ module Analyzer::Java
         # deployed action — gate it the same way the `.java` selection at
         # the top of `analyze` does via the shared `JavaEngine.test_path?`
         # convention.
-        next false if JavaEngine.test_path?(path)
+        next false if JavaEngine.test_path?(base_relative_path(path))
         basename = File.basename(path)
         STRUTS_CONFIG_BASENAMES.includes?(basename) || basename.ends_with?("-struts.xml")
       end

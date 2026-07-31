@@ -74,7 +74,7 @@ module Analyzer::CSharp
 
       get_files_by_extension(".cs").each do |path|
         next if File.directory?(path)
-        next if Common.csharp_test_path?(path)
+        next if Common.csharp_test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         begin

@@ -29,7 +29,7 @@ module Analyzer::Java
       application_base_paths = application_base_paths_for(file_list)
       derivative_project_roots = derivative_project_roots_for(file_list)
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if derivative_project_roots.includes?(project_root_for(path))
@@ -84,7 +84,7 @@ module Analyzer::Java
       application_packages = Hash(String, Array(ApplicationBaseKey)).new { |hash, key| hash[key] = [] of ApplicationBaseKey }
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
@@ -123,7 +123,7 @@ module Analyzer::Java
       roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
@@ -175,7 +175,7 @@ module Analyzer::Java
       global_candidates = Hash(String, Array(String)).new { |hash, key| hash[key] = [] of String }
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.basename(path) == "web.xml"
         next unless File.exists?(path)
 

@@ -33,7 +33,7 @@ module Analyzer::CSharp
     def analyze
       include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
 
-      cs_files = get_files_by_extension(".cs").reject { |f| Common.csharp_test_path?(f) }
+      cs_files = get_files_by_extension(".cs").reject { |f| Common.csharp_test_path?(base_relative_path(f)) }
       # One pass picks the FastEndpoints sources and, from the same content,
       # the request-DTO names their `Endpoint<TRequest>` bases refer to. Only
       # those DTOs are worth indexing: the old code extracted the property

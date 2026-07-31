@@ -22,7 +22,9 @@ module Detector::Dart
         return true
       end
 
-      if filename.includes?("/routes/") &&
+      # Scan-base-relative: `routes/` is Dart Frog's project-root
+      # convention, not a directory the checkout happens to sit under.
+      if base_relative_path(filename).includes?("/routes/") &&
          file_contents.match(/\b(?:Response|Future<Response>)\s+onRequest\s*\(/)
         return true
       end

@@ -32,7 +32,7 @@ module Analyzer::Php
     protected def parallel_file_scan(&block : String -> Nil) : Nil
       begin
         parallel_analyze(php_source_files) do |path|
-          next if PhpEngine.test_path?(path)
+          next if PhpEngine.test_path?(base_relative_path(path))
 
           begin
             block.call(path)
@@ -57,10 +57,17 @@ module Analyzer::Php
     # under `src/Symfony/Bundle/FrameworkBundle/Tests/...`. The
     # conventions are unambiguous — production routing never adopts
     # any of them.
-    def self.test_path?(path : String) : Bool
-      return true if path.includes?("/Tests/")
-      return true if path.includes?("/tests/")
-      base = File.basename(path)
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. The conventions describe a location inside
+    # the project, so matching the absolute path handed the decision to
+    # whatever directory the checkout happened to live in: the same tree
+    # scanned from `~/work/tests/myapp` reported 0 endpoints instead of
+    # 235.
+    def self.test_path?(relative_path : String) : Bool
+      return true if relative_path.includes?("/Tests/")
+      return true if relative_path.includes?("/tests/")
+      base = File.basename(relative_path)
       return true if base.ends_with?("Test.php")
       base.ends_with?("Tests.php")
     end

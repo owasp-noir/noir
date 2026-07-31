@@ -78,7 +78,7 @@ module Analyzer::Php
 
       get_files_by_extension(".php").each do |path|
         next if File.directory?(path)
-        next if PhpEngine.test_path?(path)
+        next if PhpEngine.test_path?(base_relative_path(path))
 
         begin
           content = read_file_content(path)

@@ -64,7 +64,7 @@ module Analyzer::CSharp
       map_hub_types = Set(String).new # types named in MapHub<T>
 
       files = get_files_by_extension(".cs").reject do |path|
-        File.directory?(path) || Common.csharp_test_path?(path) || !File.exists?(path)
+        File.directory?(path) || Common.csharp_test_path?(base_relative_path(path)) || !File.exists?(path)
       end
 
       # Pass 1 — routes + mounted types across every file. A hub class and

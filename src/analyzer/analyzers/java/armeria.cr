@@ -46,7 +46,7 @@ module Analyzer::Java
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
-                  next if JavaEngine.test_path?(path)
+                  next if JavaEngine.test_path?(base_relative_path(path))
 
                   if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
                     content = read_file_content(path)
@@ -461,7 +461,7 @@ module Analyzer::Java
       registrations = Hash(ScopedClassKey, Array(String)).new { |hash, key| hash[key] = [] of String }
 
       get_files_by_extension(".java").each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?(".annotatedService")
@@ -486,7 +486,7 @@ module Analyzer::Java
       index = Hash(ScopedClassKey, Array(RouteEntry)).new
 
       get_files_by_extension(".java").each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?("HttpServiceWithRoutes") || content.includes?("ServiceWithRoutes")

@@ -30,7 +30,7 @@ module Analyzer::Go
         file_contents = Hash(String, String).new
         go_files.each do |fp|
           next if File.directory?(fp)
-          next if GoEngine.go_test_file?(fp)
+          next if GoEngine.go_test_file?(base_relative_path(fp))
           begin
             file_contents[fp] = read_file_content(fp)
           rescue File::NotFoundError
@@ -45,7 +45,7 @@ module Analyzer::Go
         base_paths.each do |current_base_path|
           go_files.each do |path|
             next unless path_under_root?(path, current_base_path)
-            next if GoEngine.go_test_file?(path)
+            next if GoEngine.go_test_file?(base_relative_path(path))
             if File.exists?(path)
               content = read_file_content(path)
               next unless content_matches?(content, IMPORT_MARKER_RE)

@@ -690,13 +690,21 @@ module Noir
     CLIENT_SIDE_FRAMEWORK_MARKER = Regex.union(CLIENT_SIDE_FRAMEWORK_MARKERS)
     HTTP_SERVER_LIBRARY_MARKER   = Regex.union(HTTP_SERVER_LIBRARY_MARKERS)
 
+    # Every marker below names a directory *inside the project*
+    # (`__tests__/`, `dist/`, `vendor/`, `public/`, ...), so they are
+    # matched on the scan-base-relative path. Matched on the absolute
+    # path they also fired on directories ABOVE the base: a checkout
+    # under `~/build/` or `~/vendor/` looked like bundled output and
+    # every route in it disappeared (the JS fixture tree dropped from
+    # 430 endpoints to 394, and to 191 under `__tests__/`).
     def self.test_stub_only?(file_path : String, content : String,
                              include_client_frameworks : Bool = true) : Bool
-      return true if file_path.matches?(TEST_STUB_FILENAME_MARKER)
-      return true if file_path.matches?(STRICT_TEST_PATH_MARKER)
+      relative_path = CodeLocator.instance.base_relative(file_path)
+      return true if File.basename(file_path).matches?(TEST_STUB_FILENAME_MARKER)
+      return true if relative_path.matches?(STRICT_TEST_PATH_MARKER)
       has_library = content_matches?(content, TEST_STUB_LIBRARY_MARKER) ||
                     (include_client_frameworks && content_matches?(content, CLIENT_SIDE_FRAMEWORK_MARKER))
-      has_path_marker = file_path.matches?(TEST_STUB_PATH_MARKER)
+      has_path_marker = relative_path.matches?(TEST_STUB_PATH_MARKER)
       return false unless has_library || has_path_marker
       !content_matches?(content, HTTP_SERVER_LIBRARY_MARKER)
     end

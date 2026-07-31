@@ -3,6 +3,7 @@ require "./endpoint"
 require "./code_locator"
 require "./file_helper"
 require "../utils/text_file"
+require "../utils/path_scope"
 
 struct SourceContext
   property path : String
@@ -57,6 +58,13 @@ class FrameworkTagger < Tagger
     else
       [raw.to_s]
     end
+  end
+
+  # Convention filters ("is this a test file?", "is this vendored?") must
+  # match on this, never on the absolute path — see
+  # `Noir::PathScope.base_relative`.
+  def base_relative_path(path : String) : String
+    Noir::PathScope.base_relative(path, @base_paths)
   end
 
   # Collect files with the given extension across every configured base

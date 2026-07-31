@@ -4,6 +4,7 @@ require "../../../miniparsers/kotlin_parameter_extractor_ts"
 require "../../../miniparsers/kotlin_callee_extractor"
 require "../../engines/kotlin_engine"
 require "../../../utils/utils.cr"
+require "../../../utils/path_scope"
 
 module Analyzer::Kotlin
   class Spring < Analyzer
@@ -234,7 +235,7 @@ module Analyzer::Kotlin
       files.select do |path|
         File.exists?(path) &&
           path.ends_with?(".#{KOTLIN_EXTENSION}") &&
-          !KotlinEngine.test_path?(path) &&
+          !KotlinEngine.test_path?(base_relative_path(path)) &&
           !spring_ignored_path?(path)
       end
     end
@@ -243,9 +244,14 @@ module Analyzer::Kotlin
       dirs = Set(String).new
       files.each do |path|
         next if spring_ignored_path?(path)
-        index = path.index("/src/")
+        # Scan-base-relative, never absolute: `String#index` takes the
+        # FIRST occurrence, so a `src/` directory above the scan base
+        # made every module resolve to a source root outside the scan.
+        base = configured_base_for(path)
+        relative = Noir::PathScope.base_relative(path, base)
+        index = relative.index("/src/")
         next unless index
-        dirs << path[0, index + 4]
+        dirs << base.rstrip('/') + relative[0, index + 4]
       end
       dirs.to_a
     end
@@ -257,8 +263,10 @@ module Analyzer::Kotlin
     # each in spring_kotlin_files and spring_src_dirs.
     IGNORED_PATH_SEGMENT_RE = Regex.union("/.git/", "/.gradle/", "/build/", "/out/", "/target/", "/node_modules/")
 
+    # Scan-base-relative, never absolute: a `build/` or `target/`
+    # directory ABOVE the scan base is not this project's build output.
     private def spring_ignored_path?(path : String) : Bool
-      path.matches?(IGNORED_PATH_SEGMENT_RE)
+      base_relative_path(path).matches?(IGNORED_PATH_SEGMENT_RE)
     end
 
     # Read Spring Webflux base-path + static-locations from
@@ -357,7 +365,7 @@ module Analyzer::Kotlin
 
       file_list.each do |path|
         next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?("interface")
@@ -385,7 +393,7 @@ module Analyzer::Kotlin
 
       file_list.each do |path|
         next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?("fun") && content.matches?(CLASS_OR_OBJECT_RE)
@@ -597,7 +605,7 @@ module Analyzer::Kotlin
 
       file_list.each do |path|
         next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
         next unless content.includes?("setApplicationDestinationPrefixes")
@@ -622,7 +630,7 @@ module Analyzer::Kotlin
 
       file_list.each do |path|
         next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
         project_roots << project_root_for(path)
       end
 
@@ -710,7 +718,7 @@ module Analyzer::Kotlin
       roots = Set(String).new
       file_list.each do |path|
         next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
-        next if KotlinEngine.test_path?(path)
+        next if KotlinEngine.test_path?(base_relative_path(path))
         roots << project_root_for(path)
       end
 

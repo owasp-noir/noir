@@ -51,13 +51,17 @@ module Detector::Php
         return true
       end
 
-      # Core directory layout. Accept both absolute scan paths
-      # (`/repo/wp-content/...`) and repo-relative ones (`wp-content/...`).
-      if filename.ends_with?(".php") &&
-         (filename.includes?("/wp-content/") || filename.starts_with?("wp-content/") ||
-         filename.includes?("/wp-includes/") || filename.starts_with?("wp-includes/") ||
-         filename.includes?("/wp-admin/") || filename.starts_with?("wp-admin/"))
-        return true
+      # Core directory layout, matched on the scan-base-relative path so
+      # the leading `/` covers a repo-root `wp-content/` too. On the
+      # absolute path a checkout that merely lived under a `wp-content/`
+      # directory made every `.php` file in it look like WordPress.
+      if filename.ends_with?(".php")
+        relative = base_relative_path(filename)
+        if relative.includes?("/wp-content/") ||
+           relative.includes?("/wp-includes/") ||
+           relative.includes?("/wp-admin/")
+          return true
+        end
       end
 
       # Plugin / theme file headers (`Plugin Name:` / `Theme Name:` in the

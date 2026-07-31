@@ -44,10 +44,14 @@ module Analyzer::Javascript
       mutex = Mutex.new
 
       parallel_file_scan(EXTENSIONS) do |path|
-        idx = path.index("/src/pages/")
+        # Scan-base-relative, never absolute: `String#index` takes the
+        # FIRST occurrence, so a same-named directory above the scan base
+        # won outright and the derived URL changed with the checkout path.
+        scoped = base_relative_path(path)
+        idx = scoped.index("/src/pages/")
         next if idx.nil?
 
-        relative = path[(idx + "/src/pages/".size)..-1]
+        relative = scoped[(idx + "/src/pages/".size)..-1]
         # Skip private files / dirs (`_` prefix) and Astro components
         # nested under non-pages directories like `src/pages/_partials`.
         next if relative.split("/").any?(&.starts_with?("_"))

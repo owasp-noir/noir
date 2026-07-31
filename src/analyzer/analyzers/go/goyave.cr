@@ -44,7 +44,7 @@ module Analyzer::Go
                   path = channel.receive?
                   break if path.nil?
                   next if File.directory?(path)
-                  next if GoEngine.go_test_file?(path)
+                  next if GoEngine.go_test_file?(base_relative_path(path))
                   if File.exists?(path)
                     content = read_file_content(path)
                     next unless content_matches?(content, IMPORT_MARKER_RE)

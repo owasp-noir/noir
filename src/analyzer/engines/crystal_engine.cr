@@ -119,8 +119,13 @@ module Analyzer::Crystal
     # application directories like `library/`, `glib/`, or a project
     # literally named `amber-library` aren't silently dropped (that bug
     # made a real Amber app surface 0 routes — only public files).
+    #
+    # Scan-base-relative, never absolute: `lib` is common enough as a
+    # directory name that matching the absolute path let an ancestor of
+    # the checkout (`/usr/lib/...`, `~/lib/work/...`) suppress every
+    # source file in the project.
     protected def crystal_dependency_path?(path : String) : Bool
-      path.includes?("/lib/") || path.starts_with?("lib/")
+      base_relative_path(path).includes?("/lib/")
     end
 
     # Crystal `"…"` strings interpolate `#{expr}`. The Kemal/Lucky/

@@ -18,9 +18,20 @@ module Analyzer::Go
     # `kataras/iris` alone parks 392 phantom endpoints under
     # `_examples/...`; they're documented apps, not production
     # routes the framework ships.
-    def self.go_test_file?(path : String) : Bool
-      return true if path.ends_with?("_test.go")
-      path.split("/").any?(&.starts_with?("_"))
+    #
+    # Takes the scan-base-relative path (`Analyzer#base_relative_path`),
+    # never the absolute one. Go's toolchain rule is relative to the
+    # module, so on an absolute path a single `_`-prefixed directory
+    # anywhere above the scan base — `~/_work/repo` on a self-hosted CI
+    # runner — excluded every `.go` file in the project.
+    #
+    # `relative_path` from `base_relative_path` is `/`-rooted, so `"/_"`
+    # is exactly "a path segment starts with `_`" without the per-call
+    # `split` allocation. The leading-`_` check covers a caller that
+    # passes an unrooted relative path.
+    def self.go_test_file?(relative_path : String) : Bool
+      return true if relative_path.ends_with?("_test.go")
+      relative_path.starts_with?('_') || relative_path.includes?("/_")
     end
 
     # Blanks out `//` line comments and `/* */` block comments, replacing
@@ -126,7 +137,7 @@ module Analyzer::Go
       file_contents = Hash(String, String).new
 
       get_files_by_extension(".go").each do |path|
-        next if GoEngine.go_test_file?(path)
+        next if GoEngine.go_test_file?(base_relative_path(path))
         dir = File.dirname(path)
         files_by_dir[dir] ||= [] of String
         files_by_dir[dir] << path
@@ -417,7 +428,7 @@ module Analyzer::Go
     def read_package_file_contents : Hash(String, String)
       file_contents = Hash(String, String).new
       get_files_by_extension(".go").each do |path|
-        next if GoEngine.go_test_file?(path)
+        next if GoEngine.go_test_file?(base_relative_path(path))
         begin
           file_contents[path] = read_file_content(path)
         rescue File::NotFoundError
@@ -543,7 +554,11 @@ module Analyzer::Go
       # handful of entries out of tens of thousands. No `File.directory?`
       # either — the detector only registers regular files.
       get_files_by_basename("go.mod").each do |path|
-        next if path.split("/").includes?("vendor")
+        # Scan-base-relative: a `vendor` directory *above* the base is
+        # not this project's vendor tree, and matching it dropped the
+        # module map (and with it 13 of the fixture tree's 276
+        # endpoints) for any checkout that lived under one.
+        next if base_relative_path(path).includes?("/vendor/")
 
         begin
           content = read_file_content(path)

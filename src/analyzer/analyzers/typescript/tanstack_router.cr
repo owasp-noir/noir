@@ -92,10 +92,13 @@ module Analyzer::Typescript
       "/test-files/",
     ]
 
+    # Scan-base-relative, never absolute: a `test/` directory ABOVE the
+    # scan base is not this project's test tree.
     private def tanstack_test_fixture_path?(path : String) : Bool
-      TEST_FIXTURE_PATH_MARKERS.any? { |marker| path.includes?(marker) } ||
-        path.includes?(".test.") ||
-        path.includes?(".spec.")
+      relative = base_relative_path(path)
+      TEST_FIXTURE_PATH_MARKERS.any? { |marker| relative.includes?(marker) } ||
+        relative.includes?(".test.") ||
+        relative.includes?(".spec.")
     end
 
     private def analyze_file_routes(content : String, path : String, result : Array(Endpoint), literal_mask : Array(Bool))

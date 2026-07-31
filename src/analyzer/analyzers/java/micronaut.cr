@@ -66,7 +66,7 @@ module Analyzer::Java
       end
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
@@ -120,7 +120,7 @@ module Analyzer::Java
       index = MicronautInterfaceRouteIndex.new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
@@ -190,7 +190,7 @@ module Analyzer::Java
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next if JavaEngine.test_path?(path)
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
         project_roots << project_root_for(path)

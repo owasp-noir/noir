@@ -27,7 +27,7 @@ module Detector::Php
         return true
       end
       if base == "module.xml" && file_contents.includes?("<module") &&
-         (file_contents.includes?("Magento_") || filename.includes?("/Magento/"))
+         (file_contents.includes?("Magento_") || base_relative_path(filename).includes?("/Magento/"))
         return true
       end
 

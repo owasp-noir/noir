@@ -113,6 +113,10 @@ class NoirRunner
 
   def detect
     base_paths = options["base"].as_a.map(&.to_s)
+    # Publish the scan roots before anything walks a file: the shared
+    # parser layer relativises convention filters against them (see
+    # `CodeLocator#base_relative`).
+    CodeLocator.instance.scan_base_paths = base_paths
     detected_techs = detect_techs base_paths, options, @passive_scans, @logger
     @techs = detected_techs[0]
     @passive_results = detected_techs[1]
