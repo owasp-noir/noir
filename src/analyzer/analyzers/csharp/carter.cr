@@ -1,22 +1,45 @@
 require "../../../models/analyzer"
 require "./common"
+require "./minimal_api_support"
 
 module Analyzer::CSharp
   # Extracts endpoints from Carter (https://github.com/CarterCommunity/Carter)
-  # modules — classes implementing `ICarterModule` that register
-  # minimal-API routes inside `AddRoutes(IEndpointRouteBuilder)`.
+  # modules. A Carter module is a class that either implements
+  # `ICarterModule` or derives from the `CarterModule` base class, and
+  # registers minimal-API routes inside `AddRoutes(IEndpointRouteBuilder)`.
   #
-  # The extraction is scoped to each `AddRoutes` body so that
-  # MapGroup prefixes don't leak across modules, and so that files
-  # owned by the `cs_aspnet_core_mvc` analyzer (which skips
-  # `ICarterModule` files) are not double-counted with a stale tech
-  # tag.
+  # `CarterModule` additionally takes a **base path** through its constructor
+  # (`public DirectorsModule() : base("/directors")`), which every route in
+  # that module hangs off. Modules using that base were previously invisible
+  # to this analyzer (it required the literal string `ICarterModule`), so they
+  # fell through to `cs_aspnet_core_minimal_api`, which emitted their routes
+  # without the base path — `GET /` and `GET /qs` instead of `GET /directors`
+  # and `GET /directors/qs`.
+  #
+  # Route parsing itself is the same job the minimal-API analyzer does, so it
+  # runs on the shared `MinimalApiSupport` helpers with the module base path
+  # passed in as a prefix. That also brings delegate parameter binding,
+  # `MapGroup` composition, method-group handlers and generic
+  # `MapPut<T>("/x", …)` registrations to Carter, none of which the previous
+  # hand-rolled copy supported.
+  #
+  # Extraction is scoped to each module's `AddRoutes` body so MapGroup
+  # prefixes and base paths don't leak between modules declared in one file.
   class Carter < Analyzer
     analyzer_for "cs_carter"
 
     include Common
+    include MinimalApiSupport
 
-    MAP_METHODS = %w[Get Post Put Delete Patch Head Options]
+    # `class X : ICarterModule` / `class X : CarterModule` / with generics or
+    # extra interfaces in the base list.
+    MODULE_CLASS_RE = /\bclass\s+(\w+)(?:\s*<[^>]*>)?\s*:[^{]*\bI?CarterModule\b/
+
+    # `public DirectorsModule() : base("/directors")` — Carter's constructor
+    # base path. `base()` with no literal leaves the prefix empty.
+    BASE_PATH_RE = /:\s*base\s*\(\s*@?"([^"]*)"/
+
+    ADD_ROUTES_RE = /\bAddRoutes\s*\(/
 
     def analyze
       include_callee = callees_needed?
@@ -26,329 +49,110 @@ module Analyzer::CSharp
         next if Common.csharp_test_path?(file)
 
         content = read_file_content(file)
-        next unless content.includes?("ICarterModule")
+        next unless Common.carter_module_source?(content)
 
-        lines = content.lines
-        masked_lines = Noir::CSharpLexer.new(content).masked_lines
-        each_add_routes_block(lines, masked_lines) do |block_lines, block_start_index|
-          group_prefixes = extract_map_group_prefixes(block_lines)
-          analyze_add_routes_block(block_lines, block_start_index, file, lines, masked_lines, group_prefixes, include_callee)
-        end
+        analyze_carter_file(file, content, include_callee)
       end
 
       @result
     end
 
-    private def each_add_routes_block(lines : Array(String), masked_lines : Array(String), &)
-      i = 0
-      while i < lines.size
-        line = lines[i]
-        if add_routes_signature?(line)
-          _, end_index = build_signature(lines, masked_lines, i)
-          body_start = end_index
-          block_lines, body_end = collect_method_body_lines(lines, body_start)
-          yield block_lines, body_start
-          i = body_end
-        end
-        i += 1
-      end
-    end
+    private def analyze_carter_file(file : String, content : String, include_callee : Bool)
+      lexer = Noir::CSharpLexer.new(content)
+      # Comment-blanked, string-preserving view: a commented-out
+      # `//app.MapPut<Person>("/", …)` must not register a route, but the live
+      # route literals still have to be readable.
+      lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
 
-    private def add_routes_signature?(line : String) : Bool
-      return false unless line.includes?("AddRoutes")
-      line.includes?("public") || line.includes?("void")
-    end
-
-    private def collect_method_body_lines(lines : Array(String), start_index : Int32) : Tuple(Array(String), Int32)
-      collected = [] of String
-      brace = 0
-      started = false
-      index = start_index
-
-      while index < lines.size
-        line = lines[index]
-        brace += line.count('{') - line.count('}')
-        if !started && line.includes?("{")
-          started = true
-          collected << line
-          if brace <= 0 && line.includes?("}")
-            return {collected, index}
-          end
-          index += 1
-          next
-        end
-
-        if started
-          collected << line
-          if brace <= 0
-            return {collected, index}
-          end
-        end
-
-        index += 1
-      end
-
-      {collected, index}
-    end
-
-    private def analyze_add_routes_block(block_lines : Array(String), block_start_index : Int32, file : String, file_lines : Array(String), masked_lines : Array(String), group_prefixes : Hash(String, String), include_callee : Bool)
-      map_regex = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/m
-      chained_group_map_regex = /MapGroup\s*\(\s*"([^"]+)"\s*\)\s*\.Map(Get|Post|Put|Delete|Patch|Head|Options)\s*\(\s*"([^"]+)"/m
-      map_methods_block_regex = /(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/m
-      chained_group_map_methods_regex = /MapGroup\s*\(\s*"([^"]+)"\s*\)\s*\.MapMethods\s*\(\s*"([^"]+)"\s*,\s*([\s\S]+?)=>/m
-
-      block_lines.each_with_index do |line, local_index|
-        absolute_index = block_start_index + local_index
-
-        if route_builder_line?(line)
-          block = extract_map_block(block_lines, local_index)
-          if chained_match = chained_group_map_regex.match(block)
-            http_method = chained_match[2].upcase
-            route = join_route_parts(chained_match[1], chained_match[3])
-          elsif match = map_regex.match(block)
-            receiver = match[1]?
-            http_method = match[2].upcase
-            route = apply_group_prefix(match[3], receiver, group_prefixes)
-          else
-            route = nil
-            http_method = nil
-          end
-
-          if route && http_method
-            extra_params = extract_params_from_block(block)
-            extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
-            endpoint = build_endpoint_from_route(route, http_method, file, absolute_index + 1, extra_params)
-            if endpoint
-              attach_csharp_callees(endpoint, block, file, absolute_index + 1, include_callee)
-              @result << endpoint
-            end
-          end
-        end
-
-        if line.includes?("MapMethods")
-          block = extract_map_block(block_lines, local_index)
-          route = nil
-          methods = [] of String
-
-          if chained_match = chained_group_map_methods_regex.match(block)
-            route = join_route_parts(chained_match[1], chained_match[2])
-            methods_section = chained_match[3]
-            methods = methods_section.scan(/"([A-Za-z]+)"/).map(&.[1]?.to_s.upcase).reject(&.empty?).uniq!
-          elsif match = block.match(/(?:\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*)?MapMethods\s*\(\s*"([^"]+)"\s*,\s*new[^{]*\{([^}]*)\}/m)
-            receiver = match[1]?
-            route = apply_group_prefix(match[2], receiver, group_prefixes)
-            methods = match[3].split(",").map(&.gsub(/["\s]/, "").upcase).reject(&.empty?).uniq!
-          elsif match = map_methods_block_regex.match(block)
-            receiver = match[1]?
-            route = apply_group_prefix(match[2], receiver, group_prefixes)
-            methods_section = match[3]
-            methods = methods_section.scan(/"([A-Za-z]+)"/).map(&.[1]?.to_s.upcase).reject(&.empty?).uniq!
-          end
-
-          if route && methods.size > 0
-            extra_params = extract_params_from_block(block)
-            extra_params.concat(extract_bind_params_from_file(block, file_lines, masked_lines))
-            methods.each do |method|
-              endpoint = build_endpoint_from_route(route, method, file, absolute_index + 1, extra_params)
-              if endpoint
-                attach_csharp_callees(endpoint, block, file, absolute_index + 1, include_callee)
-                @result << endpoint
-              end
-            end
-          end
+      each_module(lines, masked_lines) do |prefix, class_start, class_end|
+        each_add_routes_body(lines, masked_lines, class_start, class_end) do |body_start, body_end|
+          analyze_add_routes_body(file, lines, masked_lines, body_start, body_end, prefix, include_callee)
         end
       end
     end
 
-    private def route_builder_line?(line : String) : Bool
-      MAP_METHODS.any? { |verb| line.includes?("Map#{verb}") }
-    end
-
-    private def extract_map_group_prefixes(block_lines : Array(String)) : Hash(String, String)
-      prefixes = Hash(String, String).new
-      group_assignment_regex = /(?:var\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\.MapGroup\s*\(\s*"([^"]+)"\s*\)/
-
-      block_lines.each_with_index do |line, idx|
-        # The assignment can only match a line that mentions `MapGroup`. Skipping
-        # the rest keeps the unbounded identifier captures from backtracking across
-        # a long token run (e.g. a multi-kilobyte route literal), which is O(n²).
-        next unless line.includes?("MapGroup")
-
-        # The `var x =` head may sit on the previous line
-        # (`var g =\n  app.MapGroup("/x")`), so match over a two-line window. The
-        # window is bounded, so it can't reintroduce the cross-block backtracking
-        # the per-line guard removed. A single-line assignment matched again from
-        # the next line's window just rewrites the same key with the same value.
-        window = idx > 0 ? "#{block_lines[idx - 1]}\n#{line}" : line
-        window.scan(group_assignment_regex) do |match|
-          variable = match[1]
-          parent = match[2]
-          prefix = match[3]
-          parent_prefix = prefixes[parent]? || ""
-          prefixes[variable] = join_route_parts(parent_prefix, prefix)
-        end
-      end
-
-      prefixes
-    end
-
-    private def apply_group_prefix(route : String, receiver : String?, group_prefixes : Hash(String, String)) : String
-      return route unless receiver
-      prefix = group_prefixes[receiver]?
-      return route unless prefix
-      join_route_parts(prefix, route)
-    end
-
-    private def join_route_parts(*parts : String) : String
-      clean_parts = parts.compact_map do |part|
-        clean = part.strip.gsub(/^\//, "").gsub(/\/$/, "")
-        clean.empty? ? nil : clean
-      end
-      return "/" if clean_parts.empty?
-      "/" + clean_parts.join("/")
-    end
-
-    private def extract_map_block(lines : Array(String), start_index : Int32) : String
-      io = String::Builder.new
-      paren_depth = 0
-      brace_depth = 0
-      i = start_index
-
-      while i < lines.size
-        line = lines[i]
-        paren_depth += line.count('(') - line.count(')')
-        brace_depth += line.count('{') - line.count('}')
-        io << line
-        io << '\n'
-
-        if paren_depth <= 0 && brace_depth <= 0 && line.includes?(";")
-          break
-        end
-
-        i += 1
-      end
-
-      io.to_s
-    end
-
-    private def extract_params_from_block(block : String) : Array(Param)
-      params = [] of Param
-      query_regex = /Request\.Query\["([^"]+)"\]/
-      header_regex = /Request\.Headers\["([^"]+)"\]/
-      cookie_regex = /Request\.Cookies\["([^"]+)"\]/
-      form_regex = /Request\.Form\["([^"]+)"\]/
-      json_property_regex = /GetProperty\s*\(\s*"([^"]+)"\s*\)/
-
-      block.scan(query_regex) do |match|
-        key = match[1]? || match[0]
-        params << Param.new(key, "", "query") if key && !key.empty?
-      end
-      block.scan(header_regex) do |match|
-        key = match[1]? || match[0]
-        params << Param.new(key, "", "header") if key && !key.empty?
-      end
-      block.scan(cookie_regex) do |match|
-        key = match[1]? || match[0]
-        params << Param.new(key, "", "cookie") if key && !key.empty?
-      end
-      block.scan(form_regex) do |match|
-        key = match[1]? || match[0]
-        params << Param.new(key, "", "form") if key && !key.empty?
-      end
-      block.scan(json_property_regex) do |match|
-        key = match[1]? || match[0]
-        params << Param.new(key, "", "json") if key && !key.empty?
-      end
-
-      params.uniq(&.name)
-    end
-
-    private def extract_bind_params_from_file(block : String, lines : Array(String), masked_lines : Array(String)) : Array(Param)
-      return [] of Param unless block.includes?("Bind(") || block.includes?("BindAsync(")
-
-      params = [] of Param
+    # Yields `{base_path, class_body_start, class_body_end}` for every Carter
+    # module class in the file. Classes are located by their base list, so a
+    # module nested inside a plain holder class (`static class Outer { class
+    # HomeModule : ICarterModule { … } }`) is still found.
+    private def each_module(lines : Array(String), masked_lines : Array(String), &)
       lines.each_with_index do |line, index|
-        next unless line.includes?("Bind(") || line.includes?("BindAsync(")
-        next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
+        next unless (masked_lines[index]? || line).includes?("class")
+        next unless line.matches?(MODULE_CLASS_RE)
 
-        _, end_idx = build_signature(lines, masked_lines, index)
-        body = extract_method_block(lines, masked_lines, end_idx)
-        params.concat(extract_params_from_block(body))
-      end
-
-      params.uniq(&.name)
-    end
-
-    private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32, extra_params : Array(Param) = [] of Param) : Endpoint?
-      return if raw_route.empty?
-
-      route = normalize_route(raw_route)
-      params = build_path_params(route)
-      extra_params.each do |param|
-        params << param unless params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      end
-      route = prune_optional_placeholders(route, params)
-
-      details = Details.new(PathInfo.new(file, line))
-      endpoint = Endpoint.new(route, http_method, details)
-      params.each { |param| endpoint.params << param }
-      endpoint
-    end
-
-    private def normalize_route(route : String) : String
-      normalized = route.strip
-      normalized = normalized.gsub(/^\//, "").gsub(/\/+/, "/")
-      normalized = "/" + normalized unless normalized.starts_with?("/")
-      normalized = "/" if normalized == "//" || normalized == "/"
-      normalized
-    end
-
-    private def build_path_params(route : String) : Array(Param)
-      extract_route_placeholders(route).map do |name|
-        Param.new(name, "", "path")
+        class_end = block_end(masked_lines, index)
+        prefix = module_base_path(lines, index, class_end)
+        yield prefix, index, class_end
       end
     end
 
-    private def prune_optional_placeholders(route : String, parameters : Array(Param)) : String
-      param_names = parameters.map(&.name)
-      result = route.dup
-
-      placeholder_regex = /\{([^}]+)\}/
-      route.scan(placeholder_regex) do |match|
-        raw = match[1]? || match[0]
-        next unless raw
-
-        optional = raw.ends_with?("?")
-        name = raw.split(":").first
-        name = name.gsub(/\?$/, "")
-
-        if optional && !param_names.includes?(name)
-          result = result.gsub("/{#{raw}}", "")
-          result = result.gsub("{#{raw}}/", "")
-          result = result.gsub("{#{raw}}", "")
-        elsif optional
-          cleaned = raw.gsub("?", "")
-          result = result.gsub("{#{raw}}", "{#{cleaned}}")
+    # The constructor base path declared inside the module class body. Only
+    # the module's own constructor can carry it, and a `: base("…")` clause
+    # appears nowhere else in a Carter module, so the first match within the
+    # class body wins.
+    private def module_base_path(lines : Array(String), class_start : Int32, class_end : Int32) : String
+      (class_start..Math.min(class_end, lines.size - 1)).each do |idx|
+        line = lines[idx]
+        next unless line.includes?("base")
+        if match = BASE_PATH_RE.match(line)
+          return match[1]
         end
       end
-
-      result
+      ""
     end
 
-    private def extract_route_placeholders(route : String) : Array(String)
-      keys = [] of String
-      placeholder_regex = /\{([^}]+)\}/
-
-      route.scan(placeholder_regex) do |match|
-        raw = match[1]? || match[0]
-        next unless raw
-        cleaned = raw.split(":").first
-        cleaned = cleaned.gsub(/\?$/, "")
-        cleaned = cleaned.lstrip("*")
-        keys << cleaned
+    private def each_add_routes_body(lines : Array(String), masked_lines : Array(String),
+                                     class_start : Int32, class_end : Int32, &)
+      idx = class_start
+      limit = Math.min(class_end, lines.size - 1)
+      while idx <= limit
+        line = lines[idx]
+        if line.matches?(ADD_ROUTES_RE) && (line.includes?("public") || line.includes?("void"))
+          _, sig_end = build_signature(lines, masked_lines, idx)
+          body_end = block_end(masked_lines, sig_end)
+          yield sig_end, Math.min(body_end, limit)
+          idx = body_end
+        end
+        idx += 1
       end
+    end
 
-      keys.uniq
+    private def analyze_add_routes_body(file : String, lines : Array(String), masked_lines : Array(String),
+                                        body_start : Int32, body_end : Int32,
+                                        prefix : String, include_callee : Bool)
+      body_text = lines[body_start..Math.min(body_end, lines.size - 1)].join('\n')
+      group_prefixes = extract_map_group_prefixes(body_text)
+
+      idx = body_start
+      while idx <= body_end && idx < lines.size
+        line = lines[idx]
+        if route_builder_line?(line)
+          block = extract_map_block(lines, idx)
+          extract_endpoints_from_map_block(block, group_prefixes, file, idx + 1,
+            lines, masked_lines, include_callee, prefix).each do |endpoint|
+            @result << endpoint
+          end
+        end
+        idx += 1
+      end
+    end
+
+    # Index of the line closing the brace block that opens at or after
+    # `start_index`. Counting runs over the masked twin so a `}` inside a
+    # string literal can't close the block early.
+    private def block_end(masked_lines : Array(String), start_index : Int32) : Int32
+      depth = 0
+      started = false
+      idx = start_index
+      while idx < masked_lines.size
+        masked = masked_lines[idx]
+        depth += masked.count('{') - masked.count('}')
+        started ||= masked.includes?("{")
+        return idx if started && depth <= 0
+        idx += 1
+      end
+      masked_lines.size - 1
     end
   end
 end

@@ -47,6 +47,8 @@ module Noir
     @tokens : Array(CSharpToken)?
     @skip_ranges : Array(Range(Int32, Int32))?
     @masked_lines : Array(String)?
+    @code_lines : Array(String)?
+    @code_source : String?
 
     def initialize(source : String)
       @chars = source.chars
@@ -56,6 +58,8 @@ module Noir
       @tokens = nil
       @skip_ranges = nil
       @masked_lines = nil
+      @code_lines = nil
+      @code_source = nil
       scan
     end
 
@@ -422,6 +426,40 @@ module Noir
         end
         masked_str.lines
       end
+    end
+
+    # The source with **comments only** blanked to spaces — string and char
+    # literals are kept intact. Line count and every column index are
+    # preserved, so a caller can keep reporting the original line number while
+    # scanning text that a commented-out (or documentation-example) route can
+    # no longer reach.
+    #
+    # `masked_lines` is the wrong tool for that job: it also blanks the string
+    # literals a route extractor needs to read. ASP.NET Core's own source
+    # carries `/// app.MapGet("/from-route/{id}", …)` inside `<example>` XML
+    # docs, which a raw scan happily emits as an endpoint.
+    def code_source : String
+      @code_source ||= begin
+        if @spans.none? { |(kind, _, _)| kind == :comment }
+          # No comments at all — the common case for generated or terse
+          # sources. Skip the char-array copy entirely.
+          String.build(@size) { |io| @chars.each { |c| io << c } }
+        else
+          chars = @chars.dup
+          @spans.each do |(kind, start, finish)|
+            next unless kind == :comment
+            (start...finish).each do |idx|
+              next if idx >= @size
+              chars[idx] = ' ' unless chars[idx] == '\n'
+            end
+          end
+          String.build(@size) { |io| chars.each { |c| io << c } }
+        end
+      end
+    end
+
+    def code_lines : Array(String)
+      @code_lines ||= code_source.lines
     end
 
     # ---- token stream ------------------------------------------------------

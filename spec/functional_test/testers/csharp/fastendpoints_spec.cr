@@ -27,6 +27,14 @@ expected_endpoints = [
     Param.new("Payload", "", "json"),
     Param.new("SessionId", "", "cookie"),
   ]),
+  # Two feature folders each declaring `class Request` — the vertical-slice
+  # layout FastEndpoints documents. Each endpoint keeps its own DTO.
+  Endpoint.new("/archive", "POST", [
+    Param.new("ArchiveId", "", "json"),
+  ]),
+  Endpoint.new("/restore", "POST", [
+    Param.new("RestoreToken", "", "json"),
+  ]),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/fastendpoints/", {
@@ -41,6 +49,14 @@ describe "FastEndpoints analyzer edge cases" do
     status = tester.app.endpoints.find { |e| e.url == "/status" && e.method == "GET" }
     status.should_not be_nil
     status.as(Endpoint).params.empty?.should be_true
+  end
+
+  it "resolves a same-named request DTO per feature folder, not as a union" do
+    archive = tester.app.endpoints.find! { |e| e.url == "/archive" && e.method == "POST" }
+    archive.params.map(&.name).sort!.should eq(["ArchiveId"])
+
+    restore = tester.app.endpoints.find! { |e| e.url == "/restore" && e.method == "POST" }
+    restore.params.map(&.name).sort!.should eq(["RestoreToken"])
   end
 
   it "ignores commented-out verb calls inside Configure()" do

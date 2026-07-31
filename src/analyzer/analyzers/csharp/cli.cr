@@ -63,7 +63,7 @@ module Analyzer::CSharp
     # detector uses). Cocona is matched via its `using Cocona` / `CoconaApp.*`
     # forms for the same reason ("Cocona" alone is specific enough as a
     # substring, but we keep the same regex shape for consistency).
-    CLI_LIB_MARKERS  = ["System.CommandLine", "CliFx", "Spectre.Console.Cli", "McMaster.Extensions.CommandLineUtils"]
+    CLI_LIB_MARKERS  = /System\.CommandLine|CliFx|Spectre\.Console\.Cli|McMaster\.Extensions\.CommandLineUtils/
     CLP_NAMESPACE    = /\busing\s+CommandLine\b|\bCommandLine\.Parser\b|\bParser\.Default\.ParseArguments\b/
     COCONA_NAMESPACE = /\busing\s+Cocona\b|\bCoconaApp\.(?:Create|Run)\b/
     WEB_HOST_RE      = /\bWebApplication\.(?:Create(?:Builder|SlimBuilder|EmptyBuilder)?|CreateDefault)\b|\bnew\s+HttpListener\b|\.MapGet\s*\(|\.MapControllers\s*\(|\[\s*ApiController\s*\]|:\s*ControllerBase\b|\bHost\.CreateDefaultBuilder\b/
@@ -97,8 +97,8 @@ module Analyzer::CSharp
     end
 
     private def cli_library?(content : String) : Bool
-      CLI_LIB_MARKERS.any? { |m| content.includes?(m) } ||
-        content.matches?(CLP_NAMESPACE) || content.matches?(COCONA_NAMESPACE)
+      content_matches?(content, CLI_LIB_MARKERS) ||
+        content_matches?(content, CLP_NAMESPACE) || content_matches?(content, COCONA_NAMESPACE)
     end
 
     private def cli_evidence?(content : String) : Bool
