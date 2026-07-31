@@ -1,0 +1,3 @@
+# 21 base64-alphabet chars: not a decodable length, must not abort the file
+checksum = AAAAAAAAAAAAAAAAAAAAB
+payload  = aHR0cHM6Ly93d3cuaGFod3VsLmNvbS9oaWRkZW4=
