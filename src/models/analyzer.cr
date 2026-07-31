@@ -220,8 +220,22 @@ class Analyzer
   # Keep `markers` unambiguous. Generic names like `public/` or `www/`
   # collide with build output (`docs/public/`) — the false positive
   # `FileHelper#get_public_files` documents.
-  def web_root_path(path : String, markers : Array(String)) : String
+  # The file's location relative to the configured scan base, `/`-separated
+  # and rooted with a leading `/`.
+  #
+  # Convention filters — "is this file under `includes/`?", "is this a test
+  # fixture?" — must be applied to this, never to the absolute path. A
+  # checkout that merely *lives* under a directory with a matching name
+  # otherwise matches every file in it: scanning the same Classic ASP site
+  # from `/srv/inc/site` instead of `/srv/site` dropped 33 of its 35
+  # endpoints, because every page looked like an `#include` fragment.
+  def base_relative_path(path : String) : String
     relative = get_relative_path(configured_base_for(path), path).gsub(File::SEPARATOR, "/")
+    relative.starts_with?("/") ? relative : "/#{relative}"
+  end
+
+  def web_root_path(path : String, markers : Array(String)) : String
+    relative = base_relative_path(path)
 
     best = -1
     markers.each do |marker|
