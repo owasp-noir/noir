@@ -26,3 +26,21 @@ spec:
       route:
         - destination:
             host: legacy.default.svc.cluster.local
+---
+# `kind` quoted — the same manifest a Helm chart renders.
+apiVersion: networking.istio.io/v1
+kind: "VirtualService"
+metadata:
+  name: search-vs
+spec:
+  hosts:
+    - api.example.com
+  http:
+    - match:
+        - uri:
+            prefix: /v1/search
+          method:
+            exact: GET
+      route:
+        - destination:
+            host: search.default.svc.cluster.local
