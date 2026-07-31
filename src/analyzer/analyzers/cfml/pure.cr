@@ -19,6 +19,9 @@ module Analyzer::Cfml
   class Pure < CfmlEngine
     analyzer_for "cfml_pure"
 
+    # Set by the dispatcher when a CFML framework owns the route table.
+    COMPONENTS_ONLY_OPTION = "cfml_pure_components_only"
+
     # Only unambiguous web-root directory names. Bare `public/` and
     # `www/` were tried and dropped: they collide with build output such
     # as `docs/public/`, the same false positive `FileHelper` documents.
@@ -80,17 +83,31 @@ module Analyzer::Cfml
     INTERPOLATION_RE = /#[^#\n]+#/
 
     def analyze
-      pages = cfml_pages.reject { |path| LIFECYCLE_PAGES.includes?(File.basename(path).downcase) }
-
       parallel_analyze(cfml_components) do |path|
         analyze_component(path)
       end
+
+      # With a CFML framework in the scan, the framework's route table
+      # decides which `.cfm` templates are reachable, and most of them are
+      # not: `views/`, `layouts/` and Wheels' `app/events/*.cfm` are
+      # rendered or invoked by the framework, never requested. The
+      # `remote` methods above are a different matter — they stay callable
+      # over HTTP whatever framework is in front of them, and no framework
+      # analyzer emits them, which is why this analyzer is narrowed here
+      # rather than dropped outright. See `filter_redundant_generic_techs`.
+      return @result if components_only?
+
+      pages = cfml_pages.reject { |path| LIFECYCLE_PAGES.includes?(File.basename(path).downcase) }
 
       parallel_analyze(pages) do |path|
         analyze_page(path)
       end
 
       @result
+    end
+
+    private def components_only? : Bool
+      any_to_bool(@options[COMPONENTS_ONLY_OPTION]?)
     end
 
     # `.cfc` — only `access="remote"` methods are reachable over HTTP.
@@ -225,16 +242,6 @@ module Analyzer::Cfml
           io << (char == '\n' || keep[index] ? char : ' ')
         end
       end
-    end
-
-    # TestBox names suites `<Something>Test.cfc` / `<Something>Spec.cfc`.
-    # The leading `.+` is load-bearing: a component named exactly
-    # `Test.cfc` is a demo, not a suite (fw1 ships one that declares a
-    # real `remote` method), and an anchored `ends_with?` swallowed it.
-    private def test_path?(path : String) : Bool
-      return true if path.includes?("/tests/") || path.includes?("/test/")
-
-      File.basename(path).matches?(TEST_COMPONENT_RE)
     end
   end
 end

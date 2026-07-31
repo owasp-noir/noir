@@ -123,8 +123,10 @@ module Analyzer::Asp
 
       return true if included.includes?(File.expand_path(path))
 
-      normalized = path.gsub(File::SEPARATOR, "/")
-      return true if normalized.matches?(INCLUDE_DIR_RE)
+      # Scan-base-relative, never absolute: the directory the checkout
+      # happens to live in must not decide whether its pages are
+      # fragments.
+      return true if base_relative_path(path).matches?(INCLUDE_DIR_RE)
 
       File.basename(path).matches?(INCLUDE_NAME_RE)
     end
@@ -154,10 +156,16 @@ module Analyzer::Asp
           header = http_header_name(name)
           headers << Param.new(header, "", "header") if header
         else
-          # Bare `Request("x")` searches QueryString, then Form, then
-          # Cookies — it is genuinely both, so report it as both rather
-          # than guessing.
-          ambiguous << name
+          # Bare `Request("x")` searches QueryString, Form, Cookies and
+          # then ServerVariables. An `HTTP_`-prefixed key can only come
+          # from the last of those, so it names an inbound header; the
+          # rest are genuinely both query and form, so report them as
+          # both rather than guessing.
+          if header = http_header_name(name)
+            headers << Param.new(header, "", "header")
+          else
+            ambiguous << name
+          end
         end
       end
 

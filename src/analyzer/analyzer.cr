@@ -38,6 +38,14 @@ def initialize_analyzers(logger : NoirLogger)
   analyzers
 end
 
+# CFML frameworks that own their application's route table.
+CFML_FRAMEWORK_TECHS = Set{
+  "cfml_taffy",
+  "cfml_coldbox",
+  "cfml_wheels",
+  "cfml_fw1",
+}
+
 def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   filtered = techs.dup
 
@@ -50,20 +58,13 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   # Laravel app — vanished with it. `Analyzer::Php::Php` now resolves URLs
   # against the document root, so the noise is gone at the source and the
   # generic analyzer can run alongside the framework one. See #2358.
-
-  # Same shape as php_pure: a CFML framework owns its route table, so the
-  # generic `.cfm`/`remote`-method analyzer is redundant noise once one is
-  # present.
-  cfml_frameworks = Set{
-    "cfml_taffy",
-    "cfml_coldbox",
-    "cfml_wheels",
-    "cfml_fw1",
-  }
-
-  if filtered.includes?("cfml_pure") && filtered.any? { |tech| cfml_frameworks.includes?(tech) }
-    filtered.reject!("cfml_pure")
-  end
+  #
+  # `cfml_pure` used to be dropped for the same reason and paid the same
+  # price — the `remote` methods on a ColdBox app's proxy components are
+  # HTTP-callable whatever framework fronts them, and no framework
+  # analyzer emits them. It now runs in components-only mode instead (see
+  # `CFML_FRAMEWORK_TECHS` below), which keeps those and still leaves the
+  # `.cfm` page surface to the framework that owns it.
 
   # Lumen and Laravel share enough surface (Illuminate namespaces, the `routes/`
   # convention) that the Laravel detector also fires on Lumen projects. When
@@ -148,6 +149,14 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
 
   # Run tech analyzers concurrently to avoid long stalls from a single analyzer
   selected_techs = filter_redundant_generic_techs(techs).select { |t| analyzer.has_key?(t) }
+
+  # A CFML framework owns the `.cfm` page surface, so the generic analyzer
+  # narrows to the half no framework analyzer covers: `access="remote"`
+  # methods on `.cfc` components.
+  if selected_techs.includes?("cfml_pure") && selected_techs.any? { |tech| CFML_FRAMEWORK_TECHS.includes?(tech) }
+    options[Analyzer::Cfml::Pure::COMPONENTS_ONLY_OPTION] = YAML::Any.new(true)
+  end
+
   mutex = Mutex.new
 
   # Pre-build extension index synchronously to avoid concurrent mutation in multiple threads/fibers

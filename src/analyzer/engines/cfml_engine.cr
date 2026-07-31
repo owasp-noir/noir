@@ -102,7 +102,12 @@ module Analyzer::Cfml
     end
 
     protected def cfml_test_path?(path : String) : Bool
-      return true if path.includes?("/tests/") || path.includes?("/test/")
+      # Scan-base-relative, never absolute. Checking the absolute path made
+      # the result depend on where the checkout happens to live: the same
+      # Taffy tree scanned from `/srv/test/app` reported zero endpoints
+      # instead of 23, because every component looked like a test suite.
+      relative = base_relative_path(path)
+      return true if relative.includes?("/tests/") || relative.includes?("/test/")
 
       File.basename(path).matches?(TEST_COMPONENT_RE)
     end
@@ -204,20 +209,37 @@ module Analyzer::Cfml
     # ..., named ones by their downcased name. Only literals resolve — a
     # value built at runtime is not something to report as a route.
     # `##` is CFML's escape for a literal `#`.
-    protected def call_arguments(raw : String) : Hash(String, String)
+    #
+    # `locals` additionally resolves a bare identifier against the string
+    # variables declared earlier in the same file. Route files hoist shared
+    # values into a local and pass them by name, which is invisible to a
+    # literals-only reading: ContentBox writes `var except = "new,edit";`
+    # and then `resources( resource = "authors", except = except )`, and
+    # without the lookup every one of its resource blocks reported a
+    # `/new` and an `/:id/edit` route that the framework never registers.
+    protected def call_arguments(raw : String, locals : Hash(String, String)? = nil) : Hash(String, String)
       arguments = {} of String => String
 
       split_arguments(raw).each_with_index do |chunk, index|
         if match = chunk.match(NAMED_ARGUMENT_RE)
-          if value = argument_literal(match[2])
+          if value = argument_literal(match[2]) || local_reference(match[2], locals)
             arguments[match[1].downcase] = value
           end
-        elsif value = argument_literal(chunk)
+        elsif value = argument_literal(chunk) || local_reference(chunk, locals)
           arguments[index.to_s] = value
         end
       end
 
       arguments
+    end
+
+    private def local_reference(raw : String, locals : Hash(String, String)?) : String?
+      return unless locals
+
+      identifier = raw.strip
+      return unless identifier.matches?(/\A[A-Za-z_]\w*\z/)
+
+      locals[identifier.downcase]?
     end
 
     protected def argument_literal(raw : String) : String?
@@ -246,6 +268,10 @@ module Analyzer::Cfml
 
     protected def matching_bracket(content : String, open_bracket : Int32) : Int32?
       matching_delimiter(content, open_bracket, BYTE_OPEN_BRACKET, BYTE_CLOSE_BRACKET)
+    end
+
+    protected def matching_brace(content : String, open_brace : Int32) : Int32?
+      matching_delimiter(content, open_brace, BYTE_OPEN_BRACE, BYTE_CLOSE_BRACE)
     end
 
     # Index of the delimiter closing the one at `open_index`.
