@@ -1,4 +1,5 @@
 require "../utils/text_file"
+require "./extraction_result_cache"
 
 module Noir
   # Shared file-level import-graph traversal for cross-file route /
@@ -25,6 +26,37 @@ module Noir
   module ImportGraph
     @@sibling_source_roots_cache = Hash(String, Array(String)).new
     @@sibling_source_roots_mutex = Mutex.new
+
+    IMPORT_RESOLUTION_MAX_ENTRIES = 262_144
+    PACKAGE_SIBLINGS_MAX_ENTRIES  =  32_768
+
+    @@import_resolution_cache = Hash(String, Array(String)).new
+    @@import_resolution_order = [] of String
+    @@import_resolution_mutex = Mutex.new
+
+    @@package_siblings_cache = Hash(String, Array(String)).new
+    @@package_siblings_order = [] of String
+    @@package_siblings_mutex = Mutex.new
+
+    DIRECTORY_MAX_ENTRIES = 262_144
+
+    @@directory_cache = Hash(String, Bool).new
+    @@directory_mutex = Mutex.new
+
+    # Filesystem-derived memos must not survive into a second scan of a
+    # different tree in the same process (`--diff`, library use).
+    Noir::ExtractionResultCache.register_clearer do
+      @@sibling_source_roots_mutex.synchronize { @@sibling_source_roots_cache.clear }
+      @@import_resolution_mutex.synchronize do
+        @@import_resolution_cache.clear
+        @@import_resolution_order.clear
+      end
+      @@package_siblings_mutex.synchronize do
+        @@package_siblings_cache.clear
+        @@package_siblings_order.clear
+      end
+      @@directory_mutex.synchronize { @@directory_cache.clear }
+    end
 
     # An import declaration extracted from a source file.
     #
@@ -68,7 +100,7 @@ module Noir
       visit.call(path)
 
       package_dir = File.dirname(path)
-      safe_glob("#{package_dir}/*.#{extension}") do |sibling|
+      package_siblings(package_dir, extension).each do |sibling|
         next if sibling == path
         visit.call(sibling)
       end
@@ -76,28 +108,127 @@ module Noir
       return if package_name.empty?
       source_root = source_root_for(path, package_name)
       return unless source_root
-      sibling_roots = sibling_source_roots(source_root)
 
       imports.each do |imp|
-        relative = imp.path.gsub(".", "/")
-        if imp.wildcard?
-          ([source_root] + sibling_roots).each do |root|
-            dir = File.join(root, relative)
-            next unless Dir.exists?(dir)
-            safe_glob("#{dir}/*.#{extension}") { |match| visit.call(match) }
-          end
+        resolve_import(source_root, imp, extension).each { |file| visit.call(file) }
+      end
+    end
+
+    # Files an import declaration resolves to, under `source_root` and
+    # its sibling module roots.
+    #
+    # Memoized. The resolution is a pure function of
+    # `(source_root, import, extension)` — `sibling_source_roots` is
+    # itself derived from `source_root` — while the inputs repeat
+    # heavily: every controller in a module imports the same JDK and
+    # framework classes, and each one used to re-probe
+    # `1 + sibling_roots.size` paths per import. On `spring-boot`
+    # (386 `src/main/java` roots) that was ~500k `access(2)` calls,
+    # a quarter of the whole `java_spring` analyzer.
+    private def self.resolve_import(source_root : String,
+                                    imp : ImportRef,
+                                    extension : String) : Array(String)
+      relative = imp.path.gsub(".", "/")
+      kind = imp.wildcard? ? "wildcard" : "single"
+      cache_key = "#{kind} #{extension} #{source_root} #{relative}"
+      @@import_resolution_mutex.synchronize do
+        if cached = @@import_resolution_cache[cache_key]?
+          return cached
+        end
+      end
+
+      sibling_roots = sibling_source_roots(source_root)
+      last_sep = relative.rindex('/')
+      relative_dir = last_sep ? relative[0, last_sep] : ""
+      resolved = [] of String
+      if imp.wildcard?
+        ([source_root] + sibling_roots).each do |root|
+          dir = File.join(root, relative)
+          next unless directory?(dir)
+          safe_glob("#{dir}/*.#{extension}") { |match| resolved << match }
+        end
+      else
+        # `File.exists?(root/pkg/Name.ext)` can only be true when
+        # `root/pkg` is a directory, and the package directory is shared
+        # by every class in that package — so the memoised directory test
+        # collapses a whole package's worth of misses into one `stat`.
+        # A JDK import like `java.util.List` otherwise probed every one of
+        # spring-boot's sibling module roots, per importing file.
+        file = File.join(source_root, "#{relative}.#{extension}")
+        if directory?(File.join(source_root, relative_dir)) && File.exists?(file)
+          resolved << file
         else
-          file = File.join(source_root, "#{relative}.#{extension}")
-          if File.exists?(file)
-            visit.call(file)
-          else
-            sibling_roots.each do |root|
-              sibling_file = File.join(root, "#{relative}.#{extension}")
-              visit.call(sibling_file) if File.exists?(sibling_file)
-            end
+          sibling_roots.each do |root|
+            next unless directory?(File.join(root, relative_dir))
+            sibling_file = File.join(root, "#{relative}.#{extension}")
+            resolved << sibling_file if File.exists?(sibling_file)
           end
         end
       end
+
+      @@import_resolution_mutex.synchronize do
+        store_capped(@@import_resolution_cache, @@import_resolution_order, cache_key, resolved, IMPORT_RESOLUTION_MAX_ENTRIES)
+      end
+    end
+
+    # Same-package siblings for one directory. Every file in a package
+    # asks the identical question, so one `Dir.glob` per directory
+    # replaces one per file.
+    private def self.package_siblings(package_dir : String, extension : String) : Array(String)
+      cache_key = "#{extension} #{package_dir}"
+      @@package_siblings_mutex.synchronize do
+        if cached = @@package_siblings_cache[cache_key]?
+          return cached
+        end
+      end
+
+      siblings = [] of String
+      safe_glob("#{package_dir}/*.#{extension}") { |sibling| siblings << sibling }
+
+      @@package_siblings_mutex.synchronize do
+        store_capped(@@package_siblings_cache, @@package_siblings_order, cache_key, siblings, PACKAGE_SIBLINGS_MAX_ENTRIES)
+      end
+    end
+
+    # Memoised `Dir.exists?`. See the call site for why the directory
+    # test is an exact short-circuit for the file test.
+    private def self.directory?(path : String) : Bool
+      @@directory_mutex.synchronize do
+        if cached = @@directory_cache[path]?
+          return cached
+        end
+      end
+      exists = Dir.exists?(path)
+      @@directory_mutex.synchronize do
+        if @@directory_cache.size >= DIRECTORY_MAX_ENTRIES
+          @@directory_cache.clear
+        end
+        @@directory_cache[path] = exists
+      end
+      exists
+    end
+
+    # FIFO-capped insert-or-keep; the caller holds the store's mutex.
+    # Keeps the memos from growing without bound on a monorepo while
+    # staying large enough that the working set never thrashes.
+    private def self.store_capped(store : Hash(String, Array(String)),
+                                  order : Array(String),
+                                  key : String,
+                                  value : Array(String),
+                                  max_entries : Int32) : Array(String)
+      unless store.has_key?(key)
+        if store.size >= max_entries
+          drop = store.size // 2
+          drop.times do
+            old = order.shift?
+            break unless old
+            store.delete(old)
+          end
+        end
+        store[key] = value
+        order << key
+      end
+      store[key]
     end
 
     # Infer the source root by stripping the package path from the
