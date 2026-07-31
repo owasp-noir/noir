@@ -74,11 +74,14 @@ module Analyzer::CSharp
       @result
     end
 
+    # One JIT-compiled union in place of up to five Rabin-Karp passes over the
+    # whole file — the gate runs on every `.cs` file in the scan.
+    LISTENER_MARKER_RE = /HttpListener/
+    PATH_MARKER_RE     = /AbsolutePath|LocalPath|PathAndQuery|RawUrl/
+
     private def httplistener_related_source?(content : String) : Bool
-      return true if content.includes?("HttpListener")
-      content.includes?("HttpMethod") &&
-        (content.includes?("AbsolutePath") || content.includes?("LocalPath") ||
-          content.includes?("PathAndQuery") || content.includes?("RawUrl"))
+      return true if content_matches?(content, LISTENER_MARKER_RE)
+      content.includes?("HttpMethod") && content_matches?(content, PATH_MARKER_RE)
     end
 
     private def analyze_file(file : String, content : String, include_callee : Bool)
@@ -87,8 +90,7 @@ module Analyzer::CSharp
       # strings/comments/chars for structural brace counting. Both views come
       # from the same scan, so we avoid lexing the source twice.
       lexer = Noir::CSharpLexer.new(content)
-      clean_source = strip_comments_preserving_strings(content, lexer)
-      clean_lines = clean_source.lines
+      clean_lines = lexer.code_lines
       masked_lines = lexer.masked_lines
       method_vars, path_vars = extract_request_aliases(clean_lines)
 
@@ -198,18 +200,6 @@ module Analyzer::CSharp
       end
     rescue e
       logger.debug "csharp httplistener: failed to analyze #{file}: #{e.message}"
-    end
-
-    private def strip_comments_preserving_strings(source : String, lexer : Noir::CSharpLexer) : String
-      chars = source.chars
-      lexer.tokens.each do |token|
-        next unless token.kind == :comment
-
-        (token.start...token.end).each do |idx|
-          chars[idx] = chars[idx] == '\n' ? '\n' : ' '
-        end
-      end
-      chars.join
     end
 
     private def extract_request_aliases(lines : Array(String)) : Tuple(Array(String), Array(String))

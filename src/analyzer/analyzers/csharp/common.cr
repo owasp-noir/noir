@@ -48,6 +48,62 @@ module Analyzer::CSharp::Common
     content.matches?(ASPNET_FRAMEWORK_NAMESPACE_RE)
   end
 
+  # A Carter module is either `class X : ICarterModule` or
+  # `class X : CarterModule` — the latter being Carter's abstract base, which
+  # adds a constructor base path (`: base("/directors")`) and the request
+  # filters. Both shapes own their `AddRoutes` body, so the Carter analyzer
+  # claims them and the minimal-API analyzer skips them.
+  #
+  # `\bCarterModule\b` alone does not match inside `ICarterModule` (`I` and `C`
+  # are both word characters), hence the explicit optional `I`.
+  CARTER_MODULE_RE = /\bI?CarterModule\b/
+
+  def self.carter_module_source?(content : String) : Bool
+    content.matches?(CARTER_MODULE_RE)
+  end
+
+  # Directories that own a `.csproj`, longest first. A .NET *project* is the
+  # unit that owns a routing table: `MapControllerRoute` in one project's
+  # `Program.cs` says nothing about a controller compiled into a sibling
+  # project, even though both sit under one configured scan base.
+  def self.project_roots(csproj_paths : Array(String)) : Array(String)
+    roots = csproj_paths.map { |path| File.dirname(path) }
+    roots.uniq!
+    roots.sort_by! { |dir| -dir.size }
+    roots
+  end
+
+  # The longest project root containing `path`, or nil when the file sits
+  # outside every discovered project (no `.csproj` in the scan at all, the
+  # shape most fixtures and single-file samples have).
+  def self.project_root_for(path : String, roots : Array(String)) : String?
+    roots.find do |root|
+      path == root || path.starts_with?("#{root}/")
+    end
+  end
+
+  # `[FromRoute(Name = "organizationId")] Guid sponsoringOrgId` binds the
+  # *route* value `organizationId`; the C# identifier is only the local name.
+  # Reporting the identifier invents a parameter the client cannot send and
+  # hides the one it must.
+  EXPLICIT_BINDING_NAME_RE = /\[From(?:Query|Route|Body|Header|Form|Cookie)\s*\(\s*(?:[A-Za-z]+\s*(?:=|:)\s*)?@?"([^"]+)"/
+
+  def self.explicit_binding_name(param_def : String) : String?
+    EXPLICIT_BINDING_NAME_RE.match(param_def).try(&.[1])
+  end
+
+  # Strips a route-template placeholder down to its bare parameter name:
+  # `{id:int}` → `id`, `{slug?}` → `slug`, `{*catchAll}` → `catchAll`,
+  # `{id=5}` → `id` (a default value), `{**slug:regex(a=b)}` → `slug`.
+  #
+  # The `=default` form was previously kept verbatim, so a template like
+  # `/items/{id=5}` emitted a parameter literally named `id=5`.
+  def self.route_placeholder_name(raw : String) : String
+    name = raw.split(':').first
+    name = name.split('=').first
+    name.strip.lstrip('*').rstrip('?')
+  end
+
   # `IFormFile`/`IFormFileCollection`/`IFormCollection` are interfaces but
   # bind from the request body (file upload / form), not from DI — keep
   # them as request inputs even though they match the interface rule below.
@@ -66,9 +122,15 @@ module Analyzer::CSharp::Common
   # common domain/entity names (e.g. `Client`, `Provider`, `Factory`) are
   # left out so request DTOs aren't dropped by mistake. Interface-typed
   # DI is caught separately by the `I<Pascal>` rule.
+  #
+  # `Handler` and `DataSource` joined the list after a minimal-API sweep:
+  # Bitwarden injects `AccessRequestEndpointsHandler handler` straight into its
+  # handler delegates and Carter's sample injects `EndpointDataSource`, both of
+  # which surfaced as query parameters. Neither suffix names a request DTO in
+  # practice.
   SERVICE_TYPE_SUFFIXES = %w[
     Repository Service Services Manager Mediator Mapper Accessor
-    Dispatcher Publisher DbContext Context Logger
+    Dispatcher Publisher DbContext Context Logger Handler DataSource
   ]
 
   # Heuristic for whether a parameter's *type* names a dependency-injected

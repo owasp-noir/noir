@@ -87,11 +87,19 @@ module Analyzer::CSharp
         end
       end
 
+      # A file is worth lexing only if it declares a hub base or a type named
+      # in a `MapHub<T>` mount. `includes?("Hub")` alone matched every file
+      # that so much as mentions `IHubContext`, and each of those paid for a
+      # full `CSharpLexer` pass.
+      mounted_re = map_hub_types.empty? ? nil : Regex.union(map_hub_types.to_a.map { |t| /\b#{Regex.escape(t)}\b/ })
+
       # Pass 2 — hub classes and their callable methods.
       files.each do |path|
         begin
           content = read_file_content(path)
-          next unless content.includes?("Hub")
+          next unless content.includes?("class")
+          next unless content_matches?(content, HUB_CLASS) ||
+                      (mounted_re && content_matches?(content, mounted_re))
           collect_hubs(content, path, hubs, map_hub_types)
         rescue e
           logger.debug "Error analyzing SignalR hub in #{path}: #{e}"
