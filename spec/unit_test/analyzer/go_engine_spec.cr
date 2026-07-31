@@ -25,6 +25,14 @@ describe Analyzer::Go::GoEngine do
       Analyzer::Go::GoEngine.go_test_file?("_testdata/fixture.go").should be_true
     end
 
+    # Callers hand it `Analyzer#base_relative_path`, which is rooted with a
+    # leading `/` so the check never sees the absolute path.
+    it "accepts the `/`-rooted scan-base-relative form" do
+      Analyzer::Go::GoEngine.go_test_file?("/path/_examples/main.go").should be_true
+      Analyzer::Go::GoEngine.go_test_file?("/_testdata/fixture.go").should be_true
+      Analyzer::Go::GoEngine.go_test_file?("/path/to/server.go").should be_false
+    end
+
     it "returns false for standard production files" do
       Analyzer::Go::GoEngine.go_test_file?("main.go").should be_false
       Analyzer::Go::GoEngine.go_test_file?("path/to/server.go").should be_false
