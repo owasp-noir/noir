@@ -70,17 +70,30 @@ module Analyzer::Specification
       port = port_raw.is_a?(Int64) ? port_raw : nil
 
       base_url = build_url(scheme, host, port)
-      full_url = base_url + raw_path
+      # The query string is emitted as `query` params below, so it does not
+      # belong in the URL as well: leaving it in duplicated every parameter
+      # and split one endpoint into one-per-captured-value
+      # (`/search?q=a`, `/search?q=b`, …). HAR reports `uri.path` for the
+      # same reason.
+      path_only, _ = split_query(raw_path)
+      path_only = "/" if path_only.empty?
+      full_url = base_url + path_only
 
-      # Match HAR's filter semantics: only emit endpoints that fall
-      # under the user-provided --url. Without a URL we cannot infer
-      # what slice of the capture the user cares about.
-      return if @url.empty? || !full_url.includes?(@url)
+      # Match HAR's semantics. With `--url` the capture is filtered down to
+      # that origin and the prefix is stripped; without one, HAR emits the
+      # absolute URL rather than dropping the flow — a mitmproxy dump scanned
+      # on its own used to produce zero endpoints, which is the whole reason
+      # someone points noir at one.
+      if @url.empty?
+        endpoint_path = full_url
+      else
+        return unless (base_url + raw_path).includes?(@url)
 
-      # Strip the user URL as a LEADING prefix only — gsub removed every
-      # occurrence, mangling paths where the prefix recurs (e.g. a redirect param).
-      endpoint_path = full_url.starts_with?(@url) ? full_url[@url.size..]? || "" : full_url
-      endpoint_path = "/#{endpoint_path}" unless endpoint_path.starts_with?("/")
+        # Strip the user URL as a LEADING prefix only — gsub removed every
+        # occurrence, mangling paths where the prefix recurs (e.g. a redirect param).
+        endpoint_path = full_url.starts_with?(@url) ? full_url[@url.size..]? || "" : full_url
+      end
+      endpoint_path = "/#{endpoint_path}" unless endpoint_path.starts_with?("/") || endpoint_path.includes?("://")
       endpoint_path = "/" if endpoint_path.empty?
       endpoint = Endpoint.new(endpoint_path, method)
 
@@ -95,9 +108,16 @@ module Analyzer::Specification
           hvalue = stringify(entry[1])
           next unless hname && hvalue
 
-          endpoint.params << Param.new(hname, hvalue, "header")
-
           lname = hname.downcase
+          # A mitmproxy capture of an HTTP/2 or HTTP/3 flow carries the
+          # request line as `:method` / `:scheme` / `:authority` / `:path`
+          # pseudo-headers. They are not parameters a request can set, and
+          # `host` / `content-length` are the HTTP/1 equivalents the Burp and
+          # Caido analyzers already skip.
+          unless lname.starts_with?(':') || lname == "host" || lname == "content-length"
+            endpoint.params << Param.new(hname, hvalue, "header")
+          end
+
           case lname
           when "content-type"
             content_type = hvalue

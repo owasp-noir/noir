@@ -88,39 +88,6 @@ module Analyzer::Specification
       url
     end
 
-    private def server_base_path(server_urls : Array(String)) : String
-      server_urls.each do |server_url|
-        next if server_url.empty?
-
-        if server_url.starts_with?("http")
-          next if @url.empty?
-          user_uri = URI.parse(@url)
-          source_uri = URI.parse(server_url)
-          return combine_base_url(source_uri.path) if user_uri.host == source_uri.host
-        elsif server_url.starts_with?("/")
-          return combine_base_url(server_url)
-        else
-          return combine_base_url("/#{server_url}")
-        end
-      rescue
-        next
-      end
-
-      @url
-    end
-
-    private def combine_base_url(path : String) : String
-      return @url if path.empty?
-      return path if @url.empty?
-      if @url.ends_with?("/") && path.starts_with?("/")
-        @url + path[1..]
-      elsif !@url.ends_with?("/") && !path.starts_with?("/")
-        "#{@url}/#{path}"
-      else
-        @url + path
-      end
-    end
-
     # Walks an OAS3 schema, emitting one Param per top-level property.
     # Follows `$ref` and flattens `allOf` so referenced/composed schemas
     # surface their members.
