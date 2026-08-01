@@ -1847,11 +1847,11 @@ module Analyzer::Python
         REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
           field_name, field_methods, param_type, bracket_re, get_re = field_pattern
           matches = line.scan(bracket_re)
-          if matches.size == 0
+          if matches.empty?
             matches = line.scan(get_re)
           end
 
-          if matches.size != 0
+          unless matches.empty?
             matches.each do |match|
               next if match.size != 2
               param_name = match[1]
@@ -1878,11 +1878,11 @@ module Analyzer::Python
 
       if line.includes? "form.cleaned_data"
         matches = line.scan(/form\.cleaned_data\[[rf]?['"]([^'"]*)['"]\]/)
-        if matches.size == 0
+        if matches.empty?
           matches = line.scan(/form\.cleaned_data\.get\([rf]?['"]([^'"]*)['"]/)
         end
 
-        if matches.size != 0
+        unless matches.empty?
           matches.each do |match|
             next if match.size != 2
             suspicious_params << Param.new(match[1], "", "form")
