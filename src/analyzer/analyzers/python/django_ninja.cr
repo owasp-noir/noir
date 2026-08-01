@@ -155,13 +155,13 @@ module Analyzer::Python
       args = split_python_arguments(match[2])
       return if args.size < 2
 
-      prefix = extract_python_string(args[0]) || extract_python_keyword_string(args, "prefix")
+      prefix = Helper.extract_python_string(args[0]) || extract_python_keyword_string(args, "prefix")
       return unless prefix
 
       target_expr = extract_python_keyword_expression(args, "router") || args[1]?.try(&.strip)
       return unless target_expr
 
-      if literal = extract_python_string(target_expr)
+      if literal = Helper.extract_python_string(target_expr)
         return {var, RouterEdge.new(prefix, literal, true, path, base)}
       end
 
@@ -190,7 +190,7 @@ module Analyzer::Python
         arg_list = split_python_arguments(args)
         return if arg_list.size < 2
         methods = extract_methods_list(arg_list[0])
-        op_path = extract_python_string(arg_list[1]) || extract_route_path(args)
+        op_path = Helper.extract_python_string(arg_list[1]) || extract_route_path(args)
       elsif HTTP_DECORATOR_METHODS.includes?(attr)
         methods = [attr.upcase]
         op_path = extract_route_path(args)
@@ -239,11 +239,11 @@ module Analyzer::Python
         stripped = arg.strip
         next if stripped.empty?
         break if top_level_keyword_argument?(stripped)
-        return extract_python_string(stripped)
+        return Helper.extract_python_string(stripped)
       end
 
       if kw = extract_python_keyword_expression(args, "path")
-        return extract_python_string(kw)
+        return Helper.extract_python_string(kw)
       end
       nil
     end
@@ -628,15 +628,10 @@ module Analyzer::Python
       ""
     end
 
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
-    end
-
     private def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
       args.each do |arg|
         if match = arg.match(/^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m)
-          return extract_python_string(match[1].strip)
+          return Helper.extract_python_string(match[1].strip)
         end
       end
       nil

@@ -287,7 +287,7 @@ module Analyzer::Python
       return unless call_match
 
       args = split_python_arguments(call_match[1])
-      extract_keyword_string(args, "prefix") || args[0]?.try { |arg| extract_python_string(arg) }
+      extract_keyword_string(args, "prefix") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
     end
 
     private def split_python_arguments(args : ::String) : Array(::String)
@@ -349,15 +349,10 @@ module Analyzer::Python
         keyword_match = arg.match(keyword_re)
         next unless keyword_match
 
-        return extract_python_string(keyword_match[1])
+        return Helper.extract_python_string(keyword_match[1])
       end
 
       nil
-    end
-
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
     end
 
     private def static_route_path(route_path : ::String) : ::String
