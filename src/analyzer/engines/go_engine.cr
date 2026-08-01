@@ -468,7 +468,7 @@ module Analyzer::Go
 
     def resolve_public_dirs_with_glob(public_dirs : Array(Hash(String, String)))
       public_dirs.each do |p_dir|
-        next if p_dir["file_path"].size == 0
+        next if p_dir["file_path"].empty?
         full_path = resolve_public_dir_path(p_dir)
 
         next unless File.directory?(full_path)

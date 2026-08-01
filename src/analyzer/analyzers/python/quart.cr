@@ -791,7 +791,7 @@ module Analyzer::Python
         REQUEST_PARAM_FIELD_PATTERNS.each do |field_pattern|
           noir_param_type, bracket_re, get_re = field_pattern
           matches = codeblock_line.scan(bracket_re)
-          if matches.size == 0
+          if matches.empty?
             matches = codeblock_line.scan(get_re)
           end
 
@@ -810,10 +810,10 @@ module Analyzer::Python
         json_variable_names.each do |json_variable_name|
           bracket_json_re, get_json_re = json_param_regexes(json_variable_name)
           matches = codeblock_line.scan(bracket_json_re)
-          if matches.size == 0
+          if matches.empty?
             matches = codeblock_line.scan(get_json_re)
           end
-          next if matches.size == 0
+          next if matches.empty?
 
           matches.each do |parameter_match|
             next if parameter_match.size != 2

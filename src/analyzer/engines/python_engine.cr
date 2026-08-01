@@ -227,7 +227,7 @@ module Analyzer::Python
         var_patterns.each do |json_var_name, subscript_regex, get_regex|
           next unless codeblock_line.includes?(json_var_name)
           matches = codeblock_line.scan(subscript_regex)
-          if matches.size == 0
+          if matches.empty?
             matches = codeblock_line.scan(get_regex)
           end
 
@@ -390,7 +390,7 @@ module Analyzer::Python
       return data if data.numeric?
 
       # Check if the data is a string
-      if data.size != 0
+      unless data.empty?
         if data[0] == data[-1] && data[0].in?('"', '\'')
           return data[1..-2]
         end
@@ -635,14 +635,12 @@ module Analyzer::Python
       end
 
       def to_s : ::String
-        if @type.size != 0
-          if @default.size != 0
-            "Name(#{@name}): Type(#{@type}) = Default(#{@default})"
-          else
-            "Name(#{@name}): Type(#{@type})"
-          end
-        else
+        if @type.empty?
           "Name(#{@name})"
+        elsif @default.empty?
+          "Name(#{@name}): Type(#{@type})"
+        else
+          "Name(#{@name}): Type(#{@type}) = Default(#{@default})"
         end
       end
 

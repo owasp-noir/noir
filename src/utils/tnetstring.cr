@@ -86,7 +86,7 @@ module Tnetstring
       else              raise ParseError.new("invalid boolean payload: #{s}")
       end
     when NULL_TYPE
-      raise ParseError.new("null payload must be empty") unless payload.size == 0
+      raise ParseError.new("null payload must be empty") unless payload.empty?
       nil
     when LIST_TYPE
       list = [] of Value
