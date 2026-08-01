@@ -156,7 +156,7 @@ module Analyzer::Python
         next unless call_match
 
         args = split_python_arguments(call_match[1])
-        name = extract_python_keyword_string(args, "name") || args[0]?.try { |arg| extract_python_string(arg) }
+        name = extract_python_keyword_string(args, "name") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
         next if name.nil? || name.empty?
 
         result << Endpoint.new(static_view_route_path(name), "GET", Details.new(PathInfo.new(path, line_index + 1)))
@@ -381,15 +381,10 @@ module Analyzer::Python
         keyword_match = arg.match(keyword_re)
         next unless keyword_match
 
-        return extract_python_string(keyword_match[1])
+        return Helper.extract_python_string(keyword_match[1])
       end
 
       nil
-    end
-
-    private def extract_python_string(expression : String) : String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
     end
 
     private def static_view_route_path(name : String) : String

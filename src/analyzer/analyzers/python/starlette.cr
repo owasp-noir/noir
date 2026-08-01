@@ -109,7 +109,7 @@ module Analyzer::Python
             receiver = normalize_receiver(programmatic_match[1])
             websocket_route = !(programmatic_match[2]?).to_s.empty?
             args = split_python_arguments(programmatic_match[3])
-            route_path = extract_python_keyword_string(args, "path") || args[0]?.try { |arg| extract_python_string(arg) }
+            route_path = extract_python_keyword_string(args, "path") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
             next unless route_path
 
             handler_expr = extract_python_keyword_expression(args, "endpoint") || args[1]?.try(&.strip)
@@ -620,15 +620,10 @@ module Analyzer::Python
 
     private def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
       if expression = extract_python_keyword_expression(args, keyword)
-        return extract_python_string(expression)
+        return Helper.extract_python_string(expression)
       end
 
       nil
-    end
-
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
     end
 
     private def clean_reference(expression : ::String) : ::String

@@ -803,7 +803,7 @@ module Analyzer::Python
         args = split_python_arguments(call_match[1])
         next if args.size < 2
 
-        route = extract_python_string(args[0])
+        route = Helper.extract_python_string(args[0])
         route ||= extract_python_keyword_string(args, "route")
         route ||= extract_python_keyword_string(args, "regex")
         next unless route
@@ -937,7 +937,7 @@ module Analyzer::Python
         args = split_python_arguments(register_match[2])
         next if args.empty?
 
-        prefix = extract_python_string(args[0]) || extract_python_keyword_string(args, "prefix")
+        prefix = Helper.extract_python_string(args[0]) || extract_python_keyword_string(args, "prefix")
         next unless prefix
 
         view_ref = extract_python_keyword_expression(args, "viewset") || args[1]?.try(&.strip)
@@ -1174,11 +1174,6 @@ module Analyzer::Python
       view
     end
 
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
-    end
-
     private def keyword_expression_regex(keyword : ::String) : Regex
       @keyword_regex_cache[keyword] ||= /^\s*#{Regex.escape(keyword)}\s*=\s*(.+)$/m
     end
@@ -1195,7 +1190,7 @@ module Analyzer::Python
 
     private def extract_python_keyword_string(args : Array(::String), keyword : ::String) : ::String?
       if expression = extract_python_keyword_expression(args, keyword)
-        return extract_python_string(expression)
+        return Helper.extract_python_string(expression)
       end
 
       nil

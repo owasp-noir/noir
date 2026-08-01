@@ -433,7 +433,7 @@ module Analyzer::Python
       args = split_python_arguments(call_match[2])
       static_path = extract_keyword_string(args, "uri") ||
                     extract_keyword_string(args, "path") ||
-                    args[0]?.try { |arg| extract_python_string(arg) } || ""
+                    args[0]?.try { |arg| Helper.extract_python_string(arg) } || ""
       return if static_path.empty?
 
       {router_name, static_path}
@@ -515,7 +515,7 @@ module Analyzer::Python
       end
 
       return "" if args.size < 2
-      extract_python_string(args[1]) || ""
+      Helper.extract_python_string(args[1]) || ""
     end
 
     private def extract_programmatic_methods(args : Array(::String)) : Array(::String)
@@ -548,15 +548,10 @@ module Analyzer::Python
 
     private def extract_keyword_string(args : Array(::String), keyword : ::String) : ::String?
       if expression = extract_keyword_expression(args, keyword)
-        return extract_python_string(expression)
+        return Helper.extract_python_string(expression)
       end
 
       nil
-    end
-
-    private def extract_python_string(expression : ::String) : ::String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
     end
 
     private def clean_reference(expression : ::String) : ::String

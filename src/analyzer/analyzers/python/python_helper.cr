@@ -18,5 +18,10 @@ module Analyzer::Python
 
       normalize_path("#{prefix}/#{path}")
     end
+
+    def extract_python_string(expression : ::String) : ::String?
+      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
+      string_match ? string_match[1] : nil
+    end
   end
 end

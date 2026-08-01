@@ -159,7 +159,7 @@ module Analyzer::Python
       route_path = extract_keyword_string(args, "path") ||
                    extract_keyword_string(args, "rule") ||
                    extract_keyword_string(args, "uri") ||
-                   args[0]?.try { |arg| extract_python_string(arg) }
+                   args[0]?.try { |arg| Helper.extract_python_string(arg) }
       return unless route_path
 
       callback_name = extract_callback_name(args)
@@ -414,15 +414,10 @@ module Analyzer::Python
         keyword_match = arg.match(keyword_re)
         next unless keyword_match
 
-        return extract_python_string(keyword_match[1])
+        return Helper.extract_python_string(keyword_match[1])
       end
 
       nil
-    end
-
-    private def extract_python_string(expression : String) : String?
-      string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
-      string_match ? string_match[1] : nil
     end
 
     private def extract_callback_name(args : Array(String)) : String?
