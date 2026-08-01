@@ -635,14 +635,12 @@ module Analyzer::Python
       end
 
       def to_s : ::String
-        unless @type.empty?
-          unless @default.empty?
-            "Name(#{@name}): Type(#{@type}) = Default(#{@default})"
-          else
-            "Name(#{@name}): Type(#{@type})"
-          end
-        else
+        if @type.empty?
           "Name(#{@name})"
+        elsif @default.empty?
+          "Name(#{@name}): Type(#{@type})"
+        else
+          "Name(#{@name}): Type(#{@type}) = Default(#{@default})"
         end
       end
 
