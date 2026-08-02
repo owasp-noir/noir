@@ -2,8 +2,8 @@
 name: OWASP Noir Action
 description: Hunt every Endpoint in your code, expose Shadow APIs, map the Attack Surface
 branding:
-  icon: search
-  color: purple
+  icon: crosshair
+  color: red
 inputs:
   base_path:
     description: The base path to analyze for endpoints (equivalent to -b/--base-path)
