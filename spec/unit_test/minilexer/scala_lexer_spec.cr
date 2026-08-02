@@ -24,8 +24,8 @@ describe Noir::ScalaLexer do
       masked.should_not contain("real")
       code.should_not contain("phantom")
       code.should contain("path(\"real\")")
-      lexer.in_code?(source.index("phantom").not_nil!.to_i).should be_false
-      lexer.in_code?(source.index("path(\"real\")").not_nil!.to_i).should be_true
+      lexer.in_code?(source.index!("phantom")).should be_false
+      lexer.in_code?(source.index!("path(\"real\")")).should be_true
     end
 
     it "keeps masked and code line counts aligned with the source" do
@@ -44,27 +44,27 @@ describe Noir::ScalaLexer do
       source = "call([item({value})])"
       lexer = Noir::ScalaLexer.new(source)
 
-      lexer.matching_delimiter(source.index('(').not_nil!.to_i).should eq(source.rindex(')').not_nil!.to_i)
-      lexer.matching_delimiter(source.index('[').not_nil!.to_i).should eq(source.rindex(']').not_nil!.to_i)
-      lexer.matching_delimiter(source.index('{').not_nil!.to_i).should eq(source.index('}').not_nil!.to_i)
+      lexer.matching_delimiter(source.index!('(')).should eq(source.rindex!(')'))
+      lexer.matching_delimiter(source.index!('[')).should eq(source.rindex!(']'))
+      lexer.matching_delimiter(source.index!('{')).should eq(source.index!('}'))
     end
 
     it "ignores delimiters inside strings and comments" do
       source = "val text = \"{ not code }\" /* ( not code ) */ { real }"
       lexer = Noir::ScalaLexer.new(source)
-      open_pos = source.rindex('{').not_nil!.to_i
-      close_pos = source.rindex('}').not_nil!.to_i
+      open_pos = source.rindex!('{')
+      close_pos = source.rindex!('}')
 
       lexer.matching_delimiter(open_pos).should eq(close_pos)
-      lexer.matching_delimiter(source.index('{').not_nil!.to_i).should be_nil
-      lexer.matching_delimiter(source.index('(').not_nil!.to_i).should be_nil
+      lexer.matching_delimiter(source.index!('{')).should be_nil
+      lexer.matching_delimiter(source.index!('(')).should be_nil
       lexer.matching_delimiter(0).should be_nil
     end
 
     it "returns nil for an unbalanced delimiter" do
       lexer = Noir::ScalaLexer.new("call(value")
 
-      lexer.matching_delimiter(lexer.masked.index('(').not_nil!.to_i).should be_nil
+      lexer.matching_delimiter(lexer.masked.index!('(')).should be_nil
     end
   end
 
@@ -72,8 +72,8 @@ describe Noir::ScalaLexer do
     it "stops at a top-level semicolon" do
       source = "call(a; b); next"
       lexer = Noir::ScalaLexer.new(source)
-      first = source.index(';').not_nil!.to_i
-      second = source.index(';', first + 1).not_nil!.to_i
+      first = source.index!(';')
+      second = source.index!(';', first + 1)
 
       lexer.statement_end(0).should eq(second + 1)
     end
@@ -94,7 +94,7 @@ describe Noir::ScalaLexer do
       tokens.map(&.kind).should eq([:ident, :ident, :string, :ident, :lparen, :string, :rparen])
       tokens[0].value.should eq("val")
       tokens[2].value.should eq("\"/users\"")
-      tokens[2].start.should eq(source.index('"').not_nil!.to_i)
+      tokens[2].start.should eq(source.index!('"'))
       tokens[2].end.should eq(tokens[2].start + tokens[2].value.size)
       tokens[0].line.should eq(1)
       tokens[3].line.should eq(2)
