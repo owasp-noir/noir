@@ -3,7 +3,7 @@
 # =============================================================================
 
 title = "OWASP Noir"
-description = "Hunt every endpoint in your code. Noir statically analyses source across 23 languages and 144 frameworks, exposing shadow APIs and mapping the attack surface."
+description = "Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 193 frameworks, exposing shadow APIs and mapping the attack surface."
 base_url = "https://owasp-noir.github.io/noir"
 
 # =============================================================================
