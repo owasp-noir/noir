@@ -17,7 +17,7 @@ Crystal-based attack surface detector that identifies endpoints by static analys
 
 ```bash
 # Docker build (for CI or consistent environments)
-docker run --rm -v $(pwd):/app -w /app crystallang/crystal:1.19.0-alpine sh -c "apk add --no-cache yaml-dev zstd-dev && shards install && shards build"
+docker run --rm -v $(pwd):/app -w /app crystallang/crystal:1.21.0-alpine sh -c "apk add --no-cache yaml-dev zstd-dev && shards install && shards build"
 
 # Local install (Ubuntu/Debian)
 curl -fsSL https://crystal-lang.org/install.sh | sudo bash
@@ -161,6 +161,6 @@ Key design notes:
 4. Verify basic functionality: `./bin/noir -b spec/functional_test/fixtures/crystal`
 
 ## Environment
-- Crystal ~> 1.19 (CI: 1.19.0)
-- Docker image: `crystallang/crystal:1.19.0-alpine`
+- Crystal ~> 1.19 (CI: 1.21.0)
+- Docker image: `crystallang/crystal:1.21.0-alpine`
 - Dependencies: `libyaml-dev`, `libzstd-dev`, `zlib1g-dev`, `pkg-config`
