@@ -141,6 +141,28 @@ describe SendWebhook do
     end
   end
 
+  # The counterpart to SendReq skipping them: probing an outbound client
+  # declaration is wrong, but the exported catalog is data and should still
+  # describe every endpoint noir found.
+  it "still exports endpoints marked internal" do
+    server = WebhookCapturingServer.new
+    begin
+      feign_client = Endpoint.new("/billing/charge", "POST")
+      feign_client.internal = true
+
+      SendWebhook.new(base_deliver_options).run([
+        Endpoint.new("/api/orders", "GET"),
+        feign_client,
+      ], server.url)
+
+      parsed = JSON.parse(server.requests.first[:body])
+      parsed["endpoint_count"].as_i.should eq(2)
+      parsed["endpoints"].as_a.map(&.["url"].as_s).should contain("/billing/charge")
+    ensure
+      server.close
+    end
+  end
+
   it "merges --probe-header (send_with_headers) into the POST" do
     server = WebhookCapturingServer.new
     begin

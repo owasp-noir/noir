@@ -369,6 +369,24 @@ describe SendReq do
     end
   end
 
+  # `internal` marks Spring @FeignClient / @HttpExchange declarations: calls
+  # the app makes to other services, not routes it serves. Firing them at the
+  # -u target hits a host that doesn't own those paths.
+  it "does not probe endpoints marked internal" do
+    server = CapturingServer.new
+    begin
+      own_route = Endpoint.new(server.url_for("/api/orders"), "GET")
+      feign_client = Endpoint.new(server.url_for("/billing/charge"), "POST")
+      feign_client.internal = true
+
+      SendReq.new(base_deliver_options).run([own_route, feign_client])
+
+      server.requests.map(&.[:path]).should eq(["/api/orders"])
+    ensure
+      server.close
+    end
+  end
+
   it "swallows network errors so one bad endpoint doesn't abort the batch" do
     server = CapturingServer.new
     begin

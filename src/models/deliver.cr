@@ -176,6 +176,19 @@ class Deliver
   EXPORT_CONNECT_TIMEOUT = 10.seconds
   EXPORT_READ_TIMEOUT    = 60.seconds
 
+  # True for endpoints that belong in the reported catalog but must not be
+  # probed. `internal` is set by the Spring analyzer for `@FeignClient` /
+  # `@HttpExchange` interfaces, which declare requests the app makes to
+  # *other* services — they are not routes this app serves. Probing them
+  # fired those paths at the `-u` target, which does not own them, producing
+  # noise the user can't act on.
+  #
+  # Probe-side only: export ships the catalog as data, and the catalog
+  # legitimately includes outbound client declarations.
+  protected def skip_probe_target?(endpoint : Endpoint) : Bool
+    endpoint.internal
+  end
+
   # Read through accessors rather than the constants directly so a spec can
   # subclass with sub-second values and still exercise the real plumbing —
   # asserting against the shipped defaults would mean 15-second specs.

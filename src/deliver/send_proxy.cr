@@ -58,6 +58,7 @@ class SendWithProxy < Deliver
 
     applied_endpoints.each do |endpoint|
       next if endpoint.non_http? # can't replay an app deep link or CLI command through an HTTP proxy
+      next if skip_probe_target?(endpoint)
       requestable_http_methods(endpoint.method).each do |request_method|
         wg.add(1)
         sem.send(nil) # acquire a slot (blocks once concurrency_limit are in flight)
