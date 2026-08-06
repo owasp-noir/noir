@@ -112,4 +112,71 @@ describe SendWithProxy do
     # cleanly so noir keeps running after a misconfigured proxy.
     sender.run([ep])
   end
+
+  # Crest's `set_proxy!` bails out unless it receives both a host and a
+  # port, and then sends the request *directly to the target* — silently,
+  # and (because proxy delivery forces an insecure TLS context) with
+  # certificate verification off and any --probe-header credentials
+  # attached. These two pin the refusal: no proxy, no traffic.
+  describe ".resolve_proxy_target" do
+    it "resolves a well-formed proxy URL" do
+      SendWithProxy.resolve_proxy_target("http://127.0.0.1:8080").should eq({"127.0.0.1", 8080})
+      SendWithProxy.resolve_proxy_target("https://proxy.local:3128").should eq({"proxy.local", 3128})
+    end
+
+    it "refuses a portless URL rather than letting Crest drop the proxy" do
+      SendWithProxy.resolve_proxy_target("http://127.0.0.1").should be_nil
+      SendWithProxy.resolve_proxy_target("https://burp.local").should be_nil
+    end
+
+    it "refuses a schemeless host:port, where URI#host is nil" do
+      SendWithProxy.resolve_proxy_target("127.0.0.1:8080").should be_nil
+      # `localhost:8080` parses as scheme=localhost, opaque=8080.
+      SendWithProxy.resolve_proxy_target("localhost:8080").should be_nil
+    end
+
+    it "refuses an out-of-range port" do
+      SendWithProxy.resolve_proxy_target("http://127.0.0.1:99999").should be_nil
+    end
+
+    it "refuses an empty value" do
+      SendWithProxy.resolve_proxy_target("").should be_nil
+    end
+  end
+
+  describe "unusable --probe-via" do
+    it "sends nothing when the proxy URL has no port" do
+      target = StubProxy.new
+      begin
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(".")])
+        # URI#port is nil here, so Crest used to drop the proxy entirely.
+        options["probe_via"] = YAML::Any.new("http://127.0.0.1")
+
+        SendWithProxy.new(options).run([Endpoint.new("#{target.url}/api/ping", "GET")])
+
+        target.requests.size.should eq(0)
+      ensure
+        target.close
+      end
+    end
+
+    it "sends nothing when the proxy URL has no scheme (URI#host is nil)" do
+      target = StubProxy.new
+      begin
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(".")])
+        # `curl -x` accepts this shape; URI.parse yields host=nil. The CLI
+        # normalizes it to http:// before we get here, but config-file and
+        # library callers skip that path, so the deliverer must refuse.
+        options["probe_via"] = YAML::Any.new("127.0.0.1:#{target.address.port}")
+
+        SendWithProxy.new(options).run([Endpoint.new("#{target.url}/api/ping", "GET")])
+
+        target.requests.size.should eq(0)
+      ensure
+        target.close
+      end
+    end
+  end
 end
