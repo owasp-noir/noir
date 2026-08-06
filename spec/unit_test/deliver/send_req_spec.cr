@@ -59,15 +59,22 @@ private class CapturingServer
   end
 end
 
-# A server that accepts the connection and then goes quiet. Stands in for
-# a blackholed or wedged host.
+# A server that accepts the connection and then never answers — a wedged or
+# blackholed host.
+#
+# The handler blocks on a channel rather than sleeping a fixed span. A bare
+# `sleep` keeps running after `close`, so the handler would wake up inside
+# whatever spec file happened to be executing by then and write to a
+# torn-down server. Closing the channel releases the fiber immediately, and
+# the stall is unbounded while the spec runs, which is a truer blackhole.
 private class StallingServer
   getter address : Socket::IPAddress
 
-  def initialize(@stall : Time::Span)
-    st = @stall
+  def initialize
+    @release = Channel(Nil).new
+    release = @release
     @server = HTTP::Server.new do |ctx|
-      sleep st
+      release.receive?
       ctx.response.print "late"
     end
     @address = @server.bind_tcp("127.0.0.1", 0)
@@ -81,6 +88,7 @@ private class StallingServer
 
   def close
     @server.close
+    @release.close
   end
 end
 
@@ -325,7 +333,7 @@ describe SendReq do
   # connection and then went quiet held its --concurrency slot forever and
   # `run` never returned. Enough such hosts starved every other endpoint.
   it "gives up on a stalled host instead of blocking forever" do
-    server = StallingServer.new(10.seconds)
+    server = StallingServer.new
     begin
       finished = Channel(Nil).new(1)
       spawn do
@@ -350,7 +358,7 @@ describe SendReq do
   end
 
   it "counts a timed-out probe as undeliverable" do
-    server = StallingServer.new(10.seconds)
+    server = StallingServer.new
     begin
       sender = ImpatientSendReq.new(base_deliver_options)
       sender.run([Endpoint.new(server.url_for("/hang"), "GET")])

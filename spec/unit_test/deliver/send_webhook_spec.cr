@@ -47,16 +47,19 @@ private class WebhookCapturingServer
   end
 end
 
-# Accepts the connection then goes quiet, standing in for a wedged
-# receiver. Real export timeout is 60s; the subclass below shortens it so
-# the spec stays fast while exercising the same plumbing.
+# Accepts the connection then never answers, standing in for a wedged
+# receiver. Real export timeout is 60s; the subclass below shortens it so the
+# spec stays fast while exercising the same plumbing. The handler blocks on a
+# channel rather than sleeping so `close` releases it immediately — see the
+# note on send_req_spec.cr's StallingServer.
 private class StallingReceiver
   getter address : Socket::IPAddress
 
-  def initialize(@stall : Time::Span)
-    st = @stall
+  def initialize
+    @release = Channel(Nil).new
+    release = @release
     @server = HTTP::Server.new do |ctx|
-      sleep st
+      release.receive?
       ctx.response.print "late"
     end
     @address = @server.bind_tcp("127.0.0.1", 0)
@@ -70,6 +73,7 @@ private class StallingReceiver
 
   def close
     @server.close
+    @release.close
   end
 end
 
@@ -90,7 +94,7 @@ describe SendWebhook do
   # BEFORE `report` — so a wedged webhook host used to hang noir before any
   # output was written and the user lost the entire scan.
   it "gives up on a stalled receiver instead of blocking the scan forever" do
-    server = StallingReceiver.new(10.seconds)
+    server = StallingReceiver.new
     begin
       finished = Channel(Nil).new(1)
       spawn do

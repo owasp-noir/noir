@@ -52,10 +52,11 @@ end
 private class StallingCluster
   getter address : Socket::IPAddress
 
-  def initialize(@stall : Time::Span)
-    st = @stall
+  def initialize
+    @release = Channel(Nil).new
+    release = @release
     @server = HTTP::Server.new do |ctx|
-      sleep st
+      release.receive?
       ctx.response.print "late"
     end
     @address = @server.bind_tcp("127.0.0.1", 0)
@@ -69,6 +70,7 @@ private class StallingCluster
 
   def close
     @server.close
+    @release.close
   end
 end
 
@@ -88,7 +90,7 @@ describe SendElasticSearch do
   # `deliver` runs before `report`, so a wedged cluster hung noir before any
   # output was written — the user lost the whole scan, not just the export.
   it "gives up on a stalled cluster instead of blocking the scan forever" do
-    server = StallingCluster.new(10.seconds)
+    server = StallingCluster.new
     begin
       finished = Channel(Nil).new(1)
       spawn do
