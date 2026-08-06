@@ -59,6 +59,8 @@ class SendWithProxy < Deliver
     applied_endpoints.each do |endpoint|
       next if endpoint.non_http? # can't replay an app deep link or CLI command through an HTTP proxy
       next if skip_probe_target?(endpoint)
+      # See send_req.cr — built once per endpoint, outside the spawn.
+      request_headers = probe_headers(endpoint)
       requestable_http_methods(endpoint.method).each do |request_method|
         wg.add(1)
         sem.send(nil) # acquire a slot (blocks once concurrency_limit are in flight)
@@ -82,7 +84,7 @@ class SendWithProxy < Deliver
                 tls: proxy_tls,
                 user_agent: "Noir/#{Noir::VERSION}",
                 params: endpoint_hash["query"],
-                headers: @headers,
+                headers: request_headers,
                 form: body,
                 json: is_json,
                 handle_errors: false,
@@ -96,7 +98,7 @@ class SendWithProxy < Deliver
                 url: endpoint.url,
                 p_addr: proxy_host,
                 p_port: proxy_port,
-                headers: @headers,
+                headers: request_headers,
                 tls: proxy_tls,
                 user_agent: "Noir/#{Noir::VERSION}",
                 handle_errors: false,

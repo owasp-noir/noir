@@ -369,6 +369,78 @@ describe SendReq do
     end
   end
 
+  # Probes read only the query/json/form buckets, so an endpoint whose auth is
+  # a discovered header param was probed without it and came back 401 with no
+  # visible cause.
+  describe "discovered header / cookie params" do
+    it "sends header params as request headers" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/api/items"), "GET")
+        ep.params << Param.new("X-API-Key", "discovered-key", "header")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        server.requests.first[:headers]["X-API-Key"]?.should eq("discovered-key")
+      ensure
+        server.close
+      end
+    end
+
+    it "folds cookie params into a single Cookie header" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/dashboard"), "GET")
+        ep.params << Param.new("session", "abc", "cookie")
+        ep.params << Param.new("csrf", "xyz", "cookie")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        cookie = server.requests.first[:headers]["Cookie"]?
+        cookie.should_not be_nil
+        cookie.not_nil!.should contain("session=abc")
+        cookie.not_nil!.should contain("csrf=xyz")
+      ensure
+        server.close
+      end
+    end
+
+    it "lets an explicit --probe-header win over a discovered param" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/api/items"), "GET")
+        ep.params << Param.new("X-API-Key", "discovered-key", "header")
+
+        options = base_deliver_options
+        options["probe_header"] = YAML::Any.new([YAML::Any.new("X-API-Key: user-key")])
+        SendReq.new(options).run([ep])
+
+        server.requests.first[:headers]["X-API-Key"]?.should eq("user-key")
+      ensure
+        server.close
+      end
+    end
+
+    it "does not leak one endpoint's discovered headers onto another's request" do
+      server = CapturingServer.new
+      begin
+        with_header = Endpoint.new(server.url_for("/secured"), "GET")
+        with_header.params << Param.new("X-Tenant", "acme", "header")
+        without = Endpoint.new(server.url_for("/public"), "GET")
+
+        # `@headers` is shared across every probe fiber, so building the
+        # per-request set by mutating it in place would bleed across endpoints.
+        SendReq.new(base_deliver_options).run([with_header, without])
+
+        by_path = server.requests.to_h { |r| {r[:path], r[:headers]} }
+        by_path["/secured"]["X-Tenant"]?.should eq("acme")
+        by_path["/public"]["X-Tenant"]?.should be_nil
+      ensure
+        server.close
+      end
+    end
+  end
+
   # `internal` marks Spring @FeignClient / @HttpExchange declarations: calls
   # the app makes to other services, not routes it serves. Firing them at the
   # -u target hits a host that doesn't own those paths.

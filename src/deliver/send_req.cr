@@ -37,6 +37,9 @@ class SendReq < Deliver
     applied_endpoints.each do |endpoint|
       next if endpoint.non_http? # can't HTTP-probe an app deep link or CLI command
       next if skip_probe_target?(endpoint)
+      # Built once per endpoint, outside the spawn: `probe_headers` reads
+      # endpoint state, and every fiber for this endpoint sends the same set.
+      request_headers = probe_headers(endpoint)
       requestable_http_methods(endpoint.method).each do |request_method|
         wg.add(1)
         sem.send(nil) # acquire a slot (blocks once `concurrency_limit` are in flight)
@@ -59,7 +62,7 @@ class SendReq < Deliver
                 user_agent: "Noir/#{Noir::VERSION}",
                 params: endpoint_hash["query"],
                 form: body,
-                headers: @headers,
+                headers: request_headers,
                 json: is_json,
                 handle_errors: false,
                 max_redirects: 0,
@@ -70,7 +73,7 @@ class SendReq < Deliver
               Crest::Request.execute(
                 method: get_symbol(request_method),
                 url: endpoint.url,
-                headers: @headers,
+                headers: request_headers,
                 tls: tls,
                 user_agent: "Noir/#{Noir::VERSION}",
                 handle_errors: false,

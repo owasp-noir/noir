@@ -176,6 +176,32 @@ class Deliver
   EXPORT_CONNECT_TIMEOUT = 10.seconds
   EXPORT_READ_TIMEOUT    = 60.seconds
 
+  # Headers for one probe: the analyzer-discovered `header` and `cookie`
+  # params for this endpoint, with the user's `--probe-header` values layered
+  # on top so an explicit flag always wins over a discovered default.
+  #
+  # Probes previously read only the query/json/form buckets, so an endpoint
+  # whose auth is a discovered `X-API-Key` header was probed without it and
+  # came back 401 for no visible reason.
+  #
+  # Returns a fresh Hash every call. `@headers` is shared across every probe
+  # fiber, so merging into it in place would race and leak one endpoint's
+  # headers onto another's request.
+  protected def probe_headers(endpoint : Endpoint) : Hash(String, String)
+    params = endpoint.params_to_hash
+    discovered = params["header"]
+    cookies = params["cookie"]
+    return @headers if discovered.empty? && cookies.empty?
+
+    result = {} of String => String
+    discovered.each { |name, value| result[name] = value }
+    # One `Cookie` header carries the whole jar, per RFC 6265.
+    unless cookies.empty?
+      result["Cookie"] = cookies.map { |name, value| "#{name}=#{value}" }.join("; ")
+    end
+    result.merge(@headers)
+  end
+
   # True for endpoints that belong in the reported catalog but must not be
   # probed. `internal` is set by the Spring analyzer for `@FeignClient` /
   # `@HttpExchange` interfaces, which declare requests the app makes to
