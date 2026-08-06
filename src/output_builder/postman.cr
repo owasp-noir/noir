@@ -32,28 +32,8 @@ class OutputBuilderPostman < OutputBuilder
         end
       end
 
-      url_obj = build_url_object(uri, path_with_vars)
-
-      # Add query parameters
-      query_params = [] of JSON::Any
-      endpoint.params.each do |param|
-        if param.request_type == "query"
-          query_params << JSON::Any.new({
-            "key"   => JSON::Any.new(param.name),
-            "value" => JSON::Any.new(param.value),
-          } of String => JSON::Any)
-        end
-      end
-
-      if !query_params.empty?
-        url_obj["query"] = JSON::Any.new(query_params)
-        # `raw` is the field a human reads in the URL bar and the one most
-        # non-Postman importers key off, so it has to agree with the
-        # structured `query` list. It was built from the path alone, which
-        # also dropped a query string the route itself carried
-        # (`admin-ajax.php?action=…`).
-        url_obj["raw"] = JSON::Any.new(raw_with_query(url_obj["raw"].as_s, query_params))
-      end
+      query_pairs = merged_query_pairs(uri, endpoint)
+      url_obj = build_url_object(uri, path_with_vars, query_pairs)
 
       # Add path variables
       path_vars = [] of JSON::Any
@@ -206,14 +186,52 @@ class OutputBuilderPostman < OutputBuilder
   # throwing away the host Noir had actually found: `demo.example.com` and
   # `demo.example.com.evil` imported as the same request. curl, httpie and
   # only-url all keep the host on the same scan; this now does too.
-  private def build_url_object(uri : URI, path_with_vars : Array(String)) : Hash(String, JSON::Any)
+  # The query string the emitted request actually carries: the one the route
+  # itself spells out, plus the query params the analyzer recorded.
+  #
+  # This builder is the only one that *reconstructs* the URL (`URI.parse` then
+  # `uri.path`) instead of passing `endpoint.url` through, so `uri.query` was
+  # dropped on the floor. `raw` was rebuilt from the path alone and the
+  # structured `query` list only ever came from declared params, so a route
+  # addressed through its query — `admin-ajax.php?action=get_user_data`, which
+  # is how WordPress reaches an AJAX handler — imported as a request that hits
+  # a different handler entirely. curl, httpie, powershell and only-url all
+  # keep it because they never take the URL apart.
+  #
+  # Merge order mirrors `bake_endpoint`: a pair the route already spells
+  # verbatim is not repeated, while a *different* value for the same name is
+  # appended as an override (the later pair is the one servers read).
+  private def merged_query_pairs(uri : URI, endpoint : Endpoint) : Array(Tuple(String, String))
+    pairs = [] of Tuple(String, String)
+
+    if query = uri.query
+      query.split('&').each do |pair|
+        next if pair.empty?
+        name, _, value = pair.partition('=')
+        pairs << {name, value}
+      end
+    end
+
+    endpoint.params.each do |param|
+      next unless param.request_type == "query"
+      next if pairs.includes?({param.name, param.value})
+      pairs << {param.name, param.value}
+    end
+
+    pairs
+  end
+
+  private def build_url_object(uri : URI, path_with_vars : Array(String),
+                               query_pairs : Array(Tuple(String, String))) : Hash(String, JSON::Any)
     host = uri.host
     if host.nil? || host.empty?
-      return {
-        "raw"  => JSON::Any.new("{{baseUrl}}/#{path_with_vars.join("/")}"),
+      url_obj = {
+        "raw"  => JSON::Any.new(with_query("{{baseUrl}}/#{path_with_vars.join("/")}", query_pairs)),
         "host" => JSON::Any.new([JSON::Any.new("{{baseUrl}}")]),
         "path" => JSON::Any.new(path_with_vars.map { |p| JSON::Any.new(p) }),
       } of String => JSON::Any
+      add_query_list(url_obj, query_pairs)
+      return url_obj
     end
 
     authority = String.build do |io|
@@ -224,7 +242,7 @@ class OutputBuilderPostman < OutputBuilder
 
     url_obj = {
       # Postman splits a real host into its domain labels.
-      "raw"  => JSON::Any.new("#{authority}/#{path_with_vars.join("/")}"),
+      "raw"  => JSON::Any.new(with_query("#{authority}/#{path_with_vars.join("/")}", query_pairs)),
       "host" => JSON::Any.new(host.split('.').map { |label| JSON::Any.new(label) }),
       "path" => JSON::Any.new(path_with_vars.map { |p| JSON::Any.new(p) }),
     } of String => JSON::Any
@@ -236,22 +254,48 @@ class OutputBuilderPostman < OutputBuilder
       url_obj["port"] = JSON::Any.new(port.to_s)
     end
 
+    add_query_list(url_obj, query_pairs)
     url_obj
   end
 
-  private def raw_with_query(raw : String, query_params : Array(JSON::Any)) : String
-    pairs = query_params.map do |param|
-      entry = param.as_h
-      "#{entry["key"].as_s}=#{entry["value"].as_s}"
-    end
+  # `raw` is the field a human reads in the URL bar and the one most
+  # non-Postman importers key off, so it has to agree with the structured
+  # `query` list built from the same pairs.
+  private def with_query(raw : String, query_pairs : Array(Tuple(String, String))) : String
+    return raw if query_pairs.empty?
 
-    "#{raw}#{raw.includes?('?') ? '&' : '?'}#{pairs.join("&")}"
+    "#{raw}?#{query_pairs.map { |name, value| "#{name}=#{value}" }.join("&")}"
   end
 
+  private def add_query_list(url_obj : Hash(String, JSON::Any), query_pairs : Array(Tuple(String, String)))
+    return if query_pairs.empty?
+
+    url_obj["query"] = JSON::Any.new(query_pairs.map do |name, value|
+      JSON::Any.new({
+        "key"   => JSON::Any.new(name),
+        "value" => JSON::Any.new(value),
+      } of String => JSON::Any)
+    end)
+  end
+
+  # The sidebar shows this name alone, so it has to carry every part of the URL
+  # that distinguishes one entry from another: the host (an absolute
+  # `demo.example.com/api/users/{id}` and `demo.example.com.evil/api/users/{id}`
+  # otherwise read identically) and the route's own query string — the only
+  # thing telling `admin-ajax.php?action=get_user_data` from
+  # `?action=save_settings`, which is 8 endpoints under 4 names on the
+  # WordPress fixture.
+  #
+  # Deliberately `uri.query` and not the merged pairs `build_url_object` uses:
+  # an inline query is part of how the route is addressed, while a declared
+  # query param is an input *to* a route and doesn't change its identity.
+  # Folding declared params in here would rename every parameterised endpoint.
   private def item_label(uri : URI) : String
     host = uri.host
-    return uri.path if host.nil? || host.empty?
+    label = host.nil? || host.empty? ? uri.path : "#{host}#{uri.path}"
+    query = uri.query
+    return label if query.nil? || query.empty?
 
-    "#{host}#{uri.path}"
+    "#{label}?#{query}"
   end
 end

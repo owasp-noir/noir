@@ -221,4 +221,73 @@ describe "OutputBuilderPostman URLs" do
     url["raw"].as_s.should eq("{{baseUrl}}/search?q=noir&page=2")
     url["query"].as_a.map(&.["key"].as_s).should eq(["q", "page"])
   end
+
+  it "keeps a query string the route itself carries, with no declared param" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # How WordPress addresses an AJAX handler. This builder rebuilds the URL
+    # from `uri.path`, so the query used to be dropped outright and the
+    # imported request addressed a different handler.
+    builder.print([Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET")])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    url = item["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/wp-admin/admin-ajax.php?action=get_user_data")
+    url["query"].as_a.map(&.["key"].as_s).should eq(["action"])
+    url["query"].as_a.map(&.["value"].as_s).should eq(["get_user_data"])
+    item["name"].as_s.should eq("GET /wp-admin/admin-ajax.php?action=get_user_data")
+  end
+
+  it "does not repeat a pair the route and a declared param both spell out" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # The WordPress analyzer records `action` as a query param on top of the
+    # URL that already carries it. Emitting both would produce
+    # `?action=get_user_data&action=get_user_data`.
+    endpoint = Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET")
+    endpoint.push_param(Param.new("action", "get_user_data", "query"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/wp-admin/admin-ajax.php?action=get_user_data")
+    url["query"].as_a.size.should eq(1)
+  end
+
+  it "appends a declared param that overrides the route's own value" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # `--pvalue query=…` style override: the later pair is the one servers
+    # read, so it survives alongside the route's own.
+    endpoint = Endpoint.new("/search?q=old", "GET")
+    endpoint.push_param(Param.new("q", "new", "query"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/search?q=old&q=new")
+    url["query"].as_a.map(&.["value"].as_s).should eq(["old", "new"])
+  end
+
+  it "gives endpoints that differ only by query string distinct names" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # `action` is the only discriminator for WordPress AJAX, so a path-only
+    # name renders these two identically in the Postman sidebar.
+    builder.print([
+      Endpoint.new("/wp-admin/admin-ajax.php?action=get_user_data", "GET"),
+      Endpoint.new("/wp-admin/admin-ajax.php?action=save_settings", "GET"),
+    ])
+    names = JSON.parse(builder.io.to_s)["item"].as_a.map(&.["name"].as_s)
+
+    names.uniq.size.should eq(2)
+    names.should eq([
+      "GET /wp-admin/admin-ajax.php?action=get_user_data",
+      "GET /wp-admin/admin-ajax.php?action=save_settings",
+    ])
+  end
 end
