@@ -6,6 +6,13 @@ require "json"
 class OutputBuilderOas2 < OutputBuilder
   include OutputBuilderOasCommon
 
+  # A TRACE endpoint — or any `ANY` route, which expands across every verb —
+  # is reported through `x-noir-unsupported-methods` instead, the same place
+  # every other verb Swagger 2.0 can't express already goes.
+  private def supported_operation_methods : Set(String)
+    OAS2_OPERATION_METHODS
+  end
+
   def print(endpoints : Array(Endpoint))
     paths = {} of String => Hash(String, JSON::Any)
 
@@ -17,7 +24,16 @@ class OutputBuilderOas2 < OutputBuilder
       json_properties = {} of String => JSON::Any
       has_form = false
 
+      url_parts = split_route_url(endpoint.url)
+      route_query = route_query_parameters(url_parts[:query], endpoint)
+      route_query.each do |name, values|
+        append_unique_parameter(parameters, swagger_parameter(name, "query", false, values))
+      end
+
       endpoint.params.each do |param|
+        # Already emitted above, with the value the route spells out.
+        next if param.request_type == "query" && route_query.has_key?(param.name)
+
         case param.request_type
         when "json"
           # JSON body parameters should be represented as a body parameter in OAS2
@@ -46,7 +62,7 @@ class OutputBuilderOas2 < OutputBuilder
       end
 
       declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
-      oas_path = normalize_oas_path(endpoint.url, declared_path_params)
+      oas_path = normalize_oas_path(route_path(url_parts[:route]), declared_path_params)
       template_names = path_template_names(oas_path)
       template_names.each do |name|
         # A path template variable wins over a same-named query/header
@@ -123,6 +139,16 @@ class OutputBuilderOas2 < OutputBuilder
         operation["consumes"] = JSON::Any.new(consumes.map { |c| JSON::Any.new(c) })
       end
 
+      # Swagger 2.0 has one document-level `host`, with no per-operation
+      # override to put an absolute endpoint's real host in (OAS3 has
+      # `servers`, which the oas3 builder uses). Recording it as an extension
+      # at least stops the host Noir found from disappearing when two
+      # different hosts collapse onto one path+method.
+      if authority = route_authority(url_parts[:route])
+        operation["x-noir-hosts"] = JSON::Any.new([JSON::Any.new(authority)])
+      end
+
+      add_operation_names_extension(operation, url_parts[:fragment])
       add_unmapped_path_params_extension(operation, unmapped_path_params)
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)

@@ -70,6 +70,17 @@ class OutputBuilder
   # introducers aren't consumed as a bare two-character escape.
   ANSI_ESCAPE = /\e\[[0-?]*[ -\/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)|\e[ -\/]*[0-~]/
 
+  # A `?` in a Noir URL is not always a query separator — it is also route
+  # syntax (Express `/geo/:ip?`, F# `/legacy(/?)`, a regex route
+  # `/grp/(?:a|b)/(.*)?`). Only a `?` that introduces a `key=value` pair
+  # before the next path separator opens a query string. Shared by
+  # `bake_endpoint`, which appends to a URL, and the builders that take one
+  # apart, so the two can never disagree about where the route ends.
+  INLINE_QUERY = /\?([^?\/#]*=[^?#]*)/
+
+  # `scheme://authority` at the head of an absolute endpoint URL.
+  ROUTE_AUTHORITY = /\A[a-z][a-z0-9+.\-]*:\/\/[^\/]*/i
+
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @is_debug : Bool
@@ -196,20 +207,29 @@ class OutputBuilder
     # `?` here does not always open a query string — it is also route syntax
     # (Express `/geo/:ip?`, regex routes `/grp/(?:a|b)`). Only a `?` that
     # introduces a `key=value` pair before the next path separator does.
-    existing_query = final_url.match(/\?([^?\/#]*=[^?#]*)/).try(&.[1])
+    existing_query = final_url.match(INLINE_QUERY).try(&.[1])
     existing_pairs = existing_query.try(&.split('&')) || [] of String
+    existing_names = existing_pairs.map { |pair| pair.split('=', 2)[0] }
     first_query = existing_query.nil?
 
     unless params.nil?
       params.each do |param|
         if param.request_type == "query"
           pair = "#{param.name}=#{param.value}"
-          # A pair the route already spells out verbatim adds nothing. A
-          # *different* value for the same name is an override (`--pvalue
-          # query=…`) and is still appended — the later pair is the one
-          # servers read, so the override survives. Skipping with `next` would
-          # also skip this param's tag collection at the bottom of the block.
-          unless existing_pairs.includes?(pair)
+          # A pair the route already spells out verbatim adds nothing, and
+          # neither does a value-less declaration of a name the route already
+          # pins — the analyzer records `action` precisely *because* the route
+          # spells `action=save_settings`. Appending `&action=` there would
+          # blank the value out, since the later pair is the one servers read:
+          # the URL would stop addressing the handler it was found on.
+          #
+          # A *different, non-empty* value is a real override (`--pvalue
+          # query=…`) and is still appended, for that same last-pair-wins
+          # reason. Skipping with `next` would also skip this param's tag
+          # collection at the bottom of the block.
+          redundant = existing_pairs.includes?(pair) ||
+                      (param.value.empty? && existing_names.includes?(param.name))
+          unless redundant
             if first_query
               final_url += "?#{pair}"
               first_query = false
@@ -281,6 +301,57 @@ class OutputBuilder
       tags:       final_tags.uniq,
       body_type:  is_json ? "json" : "form",
     }
+  end
+
+  # Splits a Noir endpoint URL into the route itself and the two parts a
+  # `paths` key / Postman URL cannot hold: the query string the route spells
+  # out (`admin-ajax.php?action=save_settings`, how WordPress addresses an
+  # AJAX handler) and the `#fragment` Noir uses to address many operations on
+  # one path (`POST /graphql#Query.users`, `POST /rpc#eth_getBalance`).
+  #
+  # Deliberately not `URI.parse`: an endpoint URL is a route *pattern*, not a
+  # URI. `URI.parse` reads the `?` in `/grp/(?:a|b)/(.*)?` as a query
+  # separator, truncating the path to `/grp/(` and handing back a query
+  # parameter named `:a|b)/(.*)?` that nothing ever declared.
+  protected def split_route_url(url : String) : NamedTuple(route: String, query: Array(Tuple(String, String)), fragment: String?)
+    route = url
+    query = [] of Tuple(String, String)
+
+    if match = route.match(INLINE_QUERY)
+      query = match[1].split('&').compact_map do |pair|
+        next if pair.empty?
+        name, _, value = pair.partition('=')
+        {name, value}
+      end
+      route = route[0...match.begin] + route[match.end..]
+    end
+
+    fragment = nil
+    if index = route.index('#')
+      candidate = route[(index + 1)..]
+      fragment = candidate unless candidate.empty?
+      route = route[0...index]
+    end
+
+    {route: route, query: query, fragment: fragment}
+  end
+
+  # `scheme://host[:port]` when the route is absolute, nil when it is a bare
+  # path. Absolute endpoint URLs are real — an OpenAPI `servers` entry, a HAR
+  # capture spanning domains — and the host is the only thing telling
+  # `demo.example.com` from `demo.example.com.evil`.
+  protected def route_authority(route : String) : String?
+    route.match(ROUTE_AUTHORITY).try(&.[0])
+  end
+
+  # The path portion of a route, with any `scheme://authority` prefix removed.
+  # Textual rather than `URI#path` for the same reason as `split_route_url`.
+  protected def route_path(route : String) : String
+    authority = route_authority(route)
+    return route unless authority
+
+    tail = route[authority.size..]
+    tail.empty? ? "/" : tail
   end
 
   protected def noir_callee_json(callee : Callee) : JSON::Any

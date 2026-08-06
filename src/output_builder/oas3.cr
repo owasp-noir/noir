@@ -15,7 +15,16 @@ class OutputBuilderOas3 < OutputBuilder
       json_properties = {} of String => JSON::Any
       form_properties = {} of String => JSON::Any
 
+      url_parts = split_route_url(endpoint.url)
+      route_query = route_query_parameters(url_parts[:query], endpoint)
+      route_query.each do |name, values|
+        append_unique_parameter(parameters, openapi_parameter(name, "query", false, values))
+      end
+
       endpoint.params.each do |param|
+        # Already emitted above, with the value the route spells out.
+        next if param.request_type == "query" && route_query.has_key?(param.name)
+
         case param.request_type
         when "json"
           # JSON body parameters go into requestBody
@@ -43,7 +52,7 @@ class OutputBuilderOas3 < OutputBuilder
       end
 
       declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
-      oas_path = normalize_oas_path(endpoint.url, declared_path_params)
+      oas_path = normalize_oas_path(route_path(url_parts[:route]), declared_path_params)
       template_names = path_template_names(oas_path)
       template_names.each do |name|
         # A path template variable must win over a same-named query/header/
@@ -101,6 +110,20 @@ class OutputBuilderOas3 < OutputBuilder
         } of String => JSON::Any)
       end
 
+      # An absolute endpoint URL names the host Noir actually found. Without
+      # this the document sent every operation to the single global server, so
+      # `https://demo.example.com/api/users/{id}` and
+      # `https://demo.example.com.evil/api/users/{id}` merged into one
+      # operation aimed at `http://localhost` — the same host loss the Postman
+      # builder was fixed for. `servers` is an Operation Object field in OAS3
+      # and overrides the document-level list.
+      if authority = route_authority(url_parts[:route])
+        operation["servers"] = JSON::Any.new([
+          JSON::Any.new({"url" => JSON::Any.new(authority)} of String => JSON::Any),
+        ])
+      end
+
+      add_operation_names_extension(operation, url_parts[:fragment])
       add_unmapped_path_params_extension(operation, unmapped_path_params)
       add_noir_callees_extension(operation, endpoint)
       add_noir_ai_context_extension(operation, endpoint)
