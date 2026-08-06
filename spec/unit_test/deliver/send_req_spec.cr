@@ -435,6 +435,26 @@ describe SendReq do
       end
     end
 
+    it "fills per-verb across an ANY endpoint's fan-out" do
+      server = CapturingServer.new
+      begin
+        # `ANY` expands to all eight wildcard verbs, and the fill rule is
+        # applied per expanded verb — so one discovered endpoint deliberately
+        # produces both filled and unfilled requests.
+        ep = Endpoint.new(server.url_for("/users/{id}"), "ANY")
+        ep.params << Param.new("id", "", "path")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        filled = server.requests.select { |r| r[:path] == "/users/1" }
+        literal = server.requests.select { |r| r[:path] == "/users/{id}" }
+        filled.map(&.[:method]).sort!.should eq(%w[GET HEAD OPTIONS])
+        literal.map(&.[:method]).sort!.should eq(%w[DELETE PATCH POST PUT TRACE])
+      ensure
+        server.close
+      end
+    end
+
     it "does not touch a param --set-pvalue-path already resolved" do
       server = CapturingServer.new
       begin

@@ -10,19 +10,22 @@ require "../../../src/models/endpoint"
 # but for assertion purposes we only need to confirm that send_proxy
 # routed the request through this server's address.
 private class StubProxy
-  getter requests : Array(NamedTuple(method: String, target: String, body: String))
+  getter requests : Array(NamedTuple(method: String, target: String, headers: HTTP::Headers, body: String))
   getter address : Socket::IPAddress
 
   def initialize(@status : Int32 = 200)
-    @requests = [] of NamedTuple(method: String, target: String, body: String)
+    @requests = [] of NamedTuple(method: String, target: String, headers: HTTP::Headers, body: String)
     status = @status
     @server = HTTP::Server.new do |context|
       body = context.request.body.try(&.gets_to_end) || ""
+      hdrs = HTTP::Headers.new
+      context.request.headers.each { |k, v| v.each { |vv| hdrs.add(k, vv) } }
       @requests << {
         method: context.request.method,
         # In proxy mode, the request line carries the absolute URI.
-        target: context.request.resource,
-        body:   body,
+        target:  context.request.resource,
+        headers: hdrs,
+        body:    body,
       }
       context.response.status_code = status
       context.response.print "ok"
@@ -119,6 +122,53 @@ describe SendWithProxy do
   # and (because proxy delivery forces an insecure TLS context) with
   # certificate verification off and any --probe-header credentials
   # attached. These two pin the refusal: no proxy, no traffic.
+  # The path-fill and header-merge features are shared via Deliver but wired
+  # into each deliverer's own Crest calls. These cover the proxy half so a
+  # future refactor can't drop it from one file and stay green.
+  it "fills a path template for a read-only verb routed through the proxy" do
+    proxy = StubProxy.new
+    begin
+      ep = Endpoint.new("http://example.test/users/{id}", "GET")
+      ep.params << Param.new("id", "", "path")
+
+      SendWithProxy.new(base_deliver_options(proxy.url)).run([ep])
+
+      proxy.requests.first[:target].should contain("/users/1")
+    ensure
+      proxy.close
+    end
+  end
+
+  it "keeps the template for a destructive verb routed through the proxy" do
+    proxy = StubProxy.new
+    begin
+      ep = Endpoint.new("http://example.test/users/{id}", "DELETE")
+      ep.params << Param.new("id", "", "path")
+
+      SendWithProxy.new(base_deliver_options(proxy.url)).run([ep])
+
+      # The proxy receives the literal template, so the user can edit and
+      # replay it deliberately rather than noir inventing an id to delete.
+      proxy.requests.first[:target].should contain("/users/{id}")
+    ensure
+      proxy.close
+    end
+  end
+
+  it "sends discovered header params through the proxy" do
+    proxy = StubProxy.new
+    begin
+      ep = Endpoint.new("http://example.test/api/items", "GET")
+      ep.params << Param.new("X-API-Key", "discovered-key", "header")
+
+      SendWithProxy.new(base_deliver_options(proxy.url)).run([ep])
+
+      proxy.requests.first[:headers]["X-API-Key"]?.should eq("discovered-key")
+    ensure
+      proxy.close
+    end
+  end
+
   # Same `handle_errors: false` reasoning as SendReq — an upstream 404
   # relayed by the proxy is a delivered request, not a delivery failure.
   it "treats a non-2xx relayed through the proxy as a delivered request" do
