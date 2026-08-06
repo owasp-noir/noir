@@ -47,6 +47,37 @@ private class EsCapturingServer
   end
 end
 
+# See send_webhook_spec.cr for the same pattern — a receiver that accepts
+# and then stalls, plus a subclass with a short timeout so the spec is fast.
+private class StallingCluster
+  getter address : Socket::IPAddress
+
+  def initialize(@stall : Time::Span)
+    st = @stall
+    @server = HTTP::Server.new do |ctx|
+      sleep st
+      ctx.response.print "late"
+    end
+    @address = @server.bind_tcp("127.0.0.1", 0)
+    spawn { @server.listen }
+    Fiber.yield
+  end
+
+  def url : String
+    "http://#{@address.address}:#{@address.port}/noir/_doc"
+  end
+
+  def close
+    @server.close
+  end
+end
+
+private class ImpatientSendElasticSearch < SendElasticSearch
+  protected def export_read_timeout : Time::Span
+    150.milliseconds
+  end
+end
+
 private def base_deliver_options
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(".")])
@@ -54,6 +85,31 @@ private def base_deliver_options
 end
 
 describe SendElasticSearch do
+  # `deliver` runs before `report`, so a wedged cluster hung noir before any
+  # output was written — the user lost the whole scan, not just the export.
+  it "gives up on a stalled cluster instead of blocking the scan forever" do
+    server = StallingCluster.new(10.seconds)
+    begin
+      finished = Channel(Nil).new(1)
+      spawn do
+        ImpatientSendElasticSearch.new(base_deliver_options).run([Endpoint.new("/x", "GET")], server.url)
+        finished.send(nil)
+      end
+
+      returned = false
+      select
+      when finished.receive
+        returned = true
+      when timeout(4.seconds)
+        returned = false
+      end
+
+      returned.should be_true
+    ensure
+      server.close
+    end
+  end
+
   it "POSTs the endpoint payload as JSON with ES content-type/accept headers" do
     server = EsCapturingServer.new
     begin

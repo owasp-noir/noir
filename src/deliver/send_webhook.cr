@@ -44,7 +44,9 @@ class SendWebhook < Deliver
       user_agent: "Noir/#{Noir::VERSION}",
       form: body,
       headers: webhook_headers,
-      json: true
+      json: true,
+      connect_timeout: export_connect_timeout,
+      read_timeout: export_read_timeout
     )
   rescue e
     # Surface the failure at warning level: a swallowed debug line let the

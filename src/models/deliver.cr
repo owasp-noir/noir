@@ -153,6 +153,48 @@ class Deliver
     # After inheriting the class, write an action code here.
   end
 
+  # Crest defaults both `connect_timeout` and `read_timeout` to nil, i.e.
+  # no timeout at all, and every delivery class relied on that default. A
+  # host that accepted the connection and then went quiet blocked forever:
+  #
+  #   - probe / proxy: the stalled request keeps holding its --concurrency
+  #     slot, so enough blackholed hosts starve every remaining endpoint.
+  #   - export: `deliver` runs at the end of `analyze`, which is BEFORE
+  #     `report` is called, so a hung Elasticsearch or webhook host hangs
+  #     noir before any output is written and the user loses the whole scan.
+  #
+  # Values are deliberately generous rather than snappy. A probe's purpose
+  # is to *deliver* the request (so an intercepting proxy or the app's own
+  # logs see it); a slow-but-working target answering in 12s should not
+  # start being reported as undeliverable. These bound the pathological
+  # case without second-guessing a live one.
+  PROBE_CONNECT_TIMEOUT = 5.seconds
+  PROBE_READ_TIMEOUT    = 15.seconds
+
+  # Export ships one request carrying the entire catalog, so it gets more
+  # room: the body can be megabytes and the receiver may index it inline.
+  EXPORT_CONNECT_TIMEOUT = 10.seconds
+  EXPORT_READ_TIMEOUT    = 60.seconds
+
+  # Read through accessors rather than the constants directly so a spec can
+  # subclass with sub-second values and still exercise the real plumbing —
+  # asserting against the shipped defaults would mean 15-second specs.
+  protected def probe_connect_timeout : Time::Span
+    PROBE_CONNECT_TIMEOUT
+  end
+
+  protected def probe_read_timeout : Time::Span
+    PROBE_READ_TIMEOUT
+  end
+
+  protected def export_connect_timeout : Time::Span
+    EXPORT_CONNECT_TIMEOUT
+  end
+
+  protected def export_read_timeout : Time::Span
+    EXPORT_READ_TIMEOUT
+  end
+
   # Max concurrent in-flight probe requests. Bounds the fiber/socket fan-out
   # so a large endpoint set can't exhaust file descriptors. Backed by the
   # validated --concurrency value (already clamped to a sane ceiling).

@@ -47,6 +47,38 @@ private class WebhookCapturingServer
   end
 end
 
+# Accepts the connection then goes quiet, standing in for a wedged
+# receiver. Real export timeout is 60s; the subclass below shortens it so
+# the spec stays fast while exercising the same plumbing.
+private class StallingReceiver
+  getter address : Socket::IPAddress
+
+  def initialize(@stall : Time::Span)
+    st = @stall
+    @server = HTTP::Server.new do |ctx|
+      sleep st
+      ctx.response.print "late"
+    end
+    @address = @server.bind_tcp("127.0.0.1", 0)
+    spawn { @server.listen }
+    Fiber.yield
+  end
+
+  def url : String
+    "http://#{@address.address}:#{@address.port}/hook"
+  end
+
+  def close
+    @server.close
+  end
+end
+
+private class ImpatientSendWebhook < SendWebhook
+  protected def export_read_timeout : Time::Span
+    150.milliseconds
+  end
+end
+
 private def base_deliver_options
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(".")])
@@ -54,6 +86,32 @@ private def base_deliver_options
 end
 
 describe SendWebhook do
+  # Export runs on the main fiber at the end of `analyze`, which happens
+  # BEFORE `report` — so a wedged webhook host used to hang noir before any
+  # output was written and the user lost the entire scan.
+  it "gives up on a stalled receiver instead of blocking the scan forever" do
+    server = StallingReceiver.new(10.seconds)
+    begin
+      finished = Channel(Nil).new(1)
+      spawn do
+        ImpatientSendWebhook.new(base_deliver_options).run([Endpoint.new("/x", "GET")], server.url)
+        finished.send(nil)
+      end
+
+      returned = false
+      select
+      when finished.receive
+        returned = true
+      when timeout(4.seconds)
+        returned = false
+      end
+
+      returned.should be_true
+    ensure
+      server.close
+    end
+  end
+
   it "POSTs a JSON body with endpoints + endpoint_count + noir_version" do
     server = WebhookCapturingServer.new
     begin

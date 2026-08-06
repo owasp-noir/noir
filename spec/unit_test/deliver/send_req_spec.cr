@@ -59,6 +59,39 @@ private class CapturingServer
   end
 end
 
+# A server that accepts the connection and then goes quiet. Stands in for
+# a blackholed or wedged host.
+private class StallingServer
+  getter address : Socket::IPAddress
+
+  def initialize(@stall : Time::Span)
+    st = @stall
+    @server = HTTP::Server.new do |ctx|
+      sleep st
+      ctx.response.print "late"
+    end
+    @address = @server.bind_tcp("127.0.0.1", 0)
+    spawn { @server.listen }
+    Fiber.yield
+  end
+
+  def url_for(path : String) : String
+    "http://#{@address.address}:#{@address.port}#{path}"
+  end
+
+  def close
+    @server.close
+  end
+end
+
+# Real timeouts are 5s/15s; overriding keeps the spec fast while still
+# exercising the same plumbing into Crest.
+private class ImpatientSendReq < SendReq
+  protected def probe_read_timeout : Time::Span
+    150.milliseconds
+  end
+end
+
 private def base_deliver_options
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(".")])
@@ -285,6 +318,46 @@ describe SendReq do
       end
     ensure
       final.close
+    end
+  end
+
+  # Crest defaults read_timeout to nil, so a host that accepted the
+  # connection and then went quiet held its --concurrency slot forever and
+  # `run` never returned. Enough such hosts starved every other endpoint.
+  it "gives up on a stalled host instead of blocking forever" do
+    server = StallingServer.new(10.seconds)
+    begin
+      finished = Channel(Nil).new(1)
+      spawn do
+        ImpatientSendReq.new(base_deliver_options).run([Endpoint.new(server.url_for("/hang"), "GET")])
+        finished.send(nil)
+      end
+
+      returned = false
+      select
+      when finished.receive
+        returned = true
+      when timeout(4.seconds)
+        returned = false
+      end
+
+      # Pre-fix this waited out the full 10s stall; with no timeout at all a
+      # genuinely wedged host waited forever.
+      returned.should be_true
+    ensure
+      server.close
+    end
+  end
+
+  it "counts a timed-out probe as undeliverable" do
+    server = StallingServer.new(10.seconds)
+    begin
+      sender = ImpatientSendReq.new(base_deliver_options)
+      sender.run([Endpoint.new(server.url_for("/hang"), "GET")])
+
+      sender.undeliverable_count.should eq(1)
+    ensure
+      server.close
     end
   end
 

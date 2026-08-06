@@ -61,7 +61,9 @@ class SendReq < Deliver
                 headers: @headers,
                 json: is_json,
                 handle_errors: false,
-                max_redirects: 0
+                max_redirects: 0,
+                connect_timeout: probe_connect_timeout,
+                read_timeout: probe_read_timeout
               )
             else
               Crest::Request.execute(
@@ -71,7 +73,9 @@ class SendReq < Deliver
                 tls: tls,
                 user_agent: "Noir/#{Noir::VERSION}",
                 handle_errors: false,
-                max_redirects: 0
+                max_redirects: 0,
+                connect_timeout: probe_connect_timeout,
+                read_timeout: probe_read_timeout
               )
             end
           rescue e
