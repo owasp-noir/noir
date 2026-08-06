@@ -70,6 +70,7 @@ module Noir::CLI::ScanCommand
     apply_cache_flags(noir_options)
     apply_prompt_overrides(noir_options)
     normalize_url!(noir_options)
+    normalize_probe_via!(noir_options)
     validate_url_dependent_flags(noir_options)
     validate_options!(noir_options)
 
@@ -164,6 +165,63 @@ module Noir::CLI::ScanCommand
       dropped = url[cut..]
       STDERR.puts "WARNING: -u/--url should be a base URL — query string / fragment '#{dropped}' would corrupt the per-endpoint URL. Stripping.".colorize(WARNING_COLOR)
       noir_options["url"] = YAML::Any.new(stripped)
+    end
+  end
+
+  # `--probe-via` is handed to Crest as a `p_addr` / `p_port` pair, and
+  # Crest's `set_proxy!` does `return unless p_addr && p_port` — so any
+  # value that doesn't yield BOTH a host and a port made it drop the proxy
+  # and send the probe *directly to the target instead*, with no error.
+  # That is worse than a plain misconfiguration: `SendWithProxy` also
+  # forces an insecure TLS context (correct when talking to an
+  # intercepting proxy's own cert), so the fall-through shipped
+  # `--probe-header` credentials to the real target with certificate
+  # verification off, while the user believed the traffic was sitting in
+  # Burp.
+  #
+  # Two shapes hit it, both of them things users actually type:
+  #   `--probe-via 127.0.0.1:8080`   → URI#host is nil (curl -x accepts this)
+  #   `--probe-via http://burp.local` → URI#port is nil
+  private def self.normalize_probe_via!(noir_options : Hash(String, YAML::Any))
+    probe_via = noir_options["probe_via"]?.try(&.to_s) || ""
+    return if probe_via.empty?
+
+    # Bare `host:port` is the form `curl -x` and the `HTTP_PROXY` env var
+    # take, so accept it rather than rejecting a reasonable habit. An HTTP
+    # proxy is the only thing this flag ever points at, hence http://.
+    unless probe_via.includes?("://")
+      probe_via = "http://#{probe_via}"
+      noir_options["probe_via"] = YAML::Any.new(probe_via)
+    end
+
+    lowered = probe_via.downcase
+    unless lowered.starts_with?("http://") || lowered.starts_with?("https://")
+      Noir::CLI.die("--probe-via must use http:// or https:// (got '#{probe_via}').")
+    end
+
+    begin
+      parsed = URI.parse(probe_via)
+    rescue ex : URI::Error
+      Noir::CLI.die("--probe-via is not a valid proxy URL: '#{probe_via}' (#{ex.message}).")
+    end
+
+    host = parsed.host
+    if host.nil? || host.empty?
+      Noir::CLI.die("--probe-via has no host in '#{probe_via}'. Expected proxy_host:port, e.g. --probe-via http://127.0.0.1:8080.")
+    end
+
+    # The port is required, not defaulted. Guessing would silently pick
+    # the wrong peer: 8080 (Burp/ZAP's default) and 80 (the scheme
+    # default) are both plausible readings of `http://burp.local`, and
+    # picking either one for the user is how the original bug felt from
+    # the outside — traffic going somewhere they didn't ask for.
+    port = parsed.port
+    if port.nil?
+      Noir::CLI.die("--probe-via needs an explicit proxy port in '#{probe_via}' — otherwise probes would silently bypass the proxy and hit the target directly. Burp/ZAP default to 8080, e.g. --probe-via #{parsed.scheme}://#{host}:8080.")
+    end
+
+    unless (1..65535).includes?(port)
+      Noir::CLI.die("--probe-via port #{port} is out of range (1-65535) in '#{probe_via}'.")
     end
   end
 

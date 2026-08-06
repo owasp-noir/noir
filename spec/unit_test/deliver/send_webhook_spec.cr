@@ -47,6 +47,42 @@ private class WebhookCapturingServer
   end
 end
 
+# Accepts the connection then never answers, standing in for a wedged
+# receiver. Real export timeout is 60s; the subclass below shortens it so the
+# spec stays fast while exercising the same plumbing. The handler blocks on a
+# channel rather than sleeping so `close` releases it immediately — see the
+# note on send_req_spec.cr's StallingServer.
+private class StallingReceiver
+  getter address : Socket::IPAddress
+
+  def initialize
+    @release = Channel(Nil).new
+    release = @release
+    @server = HTTP::Server.new do |ctx|
+      release.receive?
+      ctx.response.print "late"
+    end
+    @address = @server.bind_tcp("127.0.0.1", 0)
+    spawn { @server.listen }
+    Fiber.yield
+  end
+
+  def url : String
+    "http://#{@address.address}:#{@address.port}/hook"
+  end
+
+  def close
+    @server.close
+    @release.close
+  end
+end
+
+private class ImpatientSendWebhook < SendWebhook
+  protected def export_read_timeout : Time::Span
+    150.milliseconds
+  end
+end
+
 private def base_deliver_options
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new(".")])
@@ -54,6 +90,32 @@ private def base_deliver_options
 end
 
 describe SendWebhook do
+  # Export runs on the main fiber at the end of `analyze`, which happens
+  # BEFORE `report` — so a wedged webhook host used to hang noir before any
+  # output was written and the user lost the entire scan.
+  it "gives up on a stalled receiver instead of blocking the scan forever" do
+    server = StallingReceiver.new
+    begin
+      finished = Channel(Nil).new(1)
+      spawn do
+        ImpatientSendWebhook.new(base_deliver_options).run([Endpoint.new("/x", "GET")], server.url)
+        finished.send(nil)
+      end
+
+      returned = false
+      select
+      when finished.receive
+        returned = true
+      when timeout(4.seconds)
+        returned = false
+      end
+
+      returned.should be_true
+    ensure
+      server.close
+    end
+  end
+
   it "POSTs a JSON body with endpoints + endpoint_count + noir_version" do
     server = WebhookCapturingServer.new
     begin
@@ -74,6 +136,28 @@ describe SendWebhook do
       parsed["endpoint_count"].as_i.should eq(2)
       parsed["noir_version"].as_s.should_not be_empty
       parsed["endpoints"][0]["url"].as_s.should eq("/api/users")
+    ensure
+      server.close
+    end
+  end
+
+  # The counterpart to SendReq skipping them: probing an outbound client
+  # declaration is wrong, but the exported catalog is data and should still
+  # describe every endpoint noir found.
+  it "still exports endpoints marked internal" do
+    server = WebhookCapturingServer.new
+    begin
+      feign_client = Endpoint.new("/billing/charge", "POST")
+      feign_client.internal = true
+
+      SendWebhook.new(base_deliver_options).run([
+        Endpoint.new("/api/orders", "GET"),
+        feign_client,
+      ], server.url)
+
+      parsed = JSON.parse(server.requests.first[:body])
+      parsed["endpoint_count"].as_i.should eq(2)
+      parsed["endpoints"].as_a.map(&.["url"].as_s).should contain("/billing/charge")
     ensure
       server.close
     end

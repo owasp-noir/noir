@@ -122,6 +122,17 @@ class Deliver
     result
   end
 
+  # Requests that never completed during the last `run` — connection
+  # refused, TLS handshake rejected, DNS failure, timeout. Deliberately
+  # *not* incremented for an HTTP error response: a 404 or 500 means the
+  # probe was delivered and answered. Exposed so the distinction is
+  # assertable, since the count is otherwise only visible as a log line.
+  getter undeliverable_count : Int32 = 0
+
+  protected def undeliverable_count=(count : Int32)
+    @undeliverable_count = count
+  end
+
   def proxy
     @proxy
   end
@@ -140,6 +151,134 @@ class Deliver
 
   def run
     # After inheriting the class, write an action code here.
+  end
+
+  # Crest defaults both `connect_timeout` and `read_timeout` to nil, i.e.
+  # no timeout at all, and every delivery class relied on that default. A
+  # host that accepted the connection and then went quiet blocked forever:
+  #
+  #   - probe / proxy: the stalled request keeps holding its --concurrency
+  #     slot, so enough blackholed hosts starve every remaining endpoint.
+  #   - export: `deliver` runs at the end of `analyze`, which is BEFORE
+  #     `report` is called, so a hung Elasticsearch or webhook host hangs
+  #     noir before any output is written and the user loses the whole scan.
+  #
+  # Values are deliberately generous rather than snappy. A probe's purpose
+  # is to *deliver* the request (so an intercepting proxy or the app's own
+  # logs see it); a slow-but-working target answering in 12s should not
+  # start being reported as undeliverable. These bound the pathological
+  # case without second-guessing a live one.
+  PROBE_CONNECT_TIMEOUT = 5.seconds
+  PROBE_READ_TIMEOUT    = 15.seconds
+
+  # Export ships one request carrying the entire catalog, so it gets more
+  # room: the body can be megabytes and the receiver may index it inline.
+  EXPORT_CONNECT_TIMEOUT = 10.seconds
+  EXPORT_READ_TIMEOUT    = 60.seconds
+
+  # Verbs whose path templates get filled in before probing. Restricted to
+  # the read-only ones on purpose.
+  #
+  # `register_path_param` in the optimizer only substitutes a placeholder when
+  # `--set-pvalue-path` supplied a value, so on a default scan `/users/{id}`
+  # is probed literally and 404s. Filling it makes the probe actually reach
+  # the route — but it also makes destructive verbs real: `DELETE
+  # /users/{id}` is a harmless 404 today and would become `DELETE /users/1`
+  # against a live record. Read-only verbs get the benefit without that risk;
+  # for the rest the literal template still reaches an intercepting proxy,
+  # where the user can edit and replay it deliberately.
+  PROBE_PATH_FILL_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+
+  # Path-param names that name a number. A framework route constrained to an
+  # integer (`/users/{id:int}`, Django's `<int:pk>`) rejects a word, so these
+  # get `1`; anything else gets a harmless string.
+  NUMERIC_PATH_PARAM_RE = /\A(?:.*_)?(?:id|ids|pk|no|num|number|count|page|size|limit|offset|index|idx|version|seq|year|month|day|port)\z/i
+
+  # The URL to probe for this endpoint and verb. Leaves `endpoint.url`
+  # untouched — the reported catalog keeps the template, which is what the
+  # user wants to read; only the outbound request is concretized.
+  protected def probe_url(endpoint : Endpoint, request_method : String) : String
+    return endpoint.url unless PROBE_PATH_FILL_METHODS.includes?(request_method.upcase)
+
+    url = endpoint.url
+    endpoint.params.each do |param|
+      next unless param.param_type == "path"
+      # A non-empty value means --set-pvalue-path already applied and the
+      # optimizer substituted it; nothing left to fill.
+      next unless param.value.empty?
+      next if param.name.empty?
+
+      filler = NUMERIC_PATH_PARAM_RE.matches?(param.name) ? "1" : "noir"
+      escaped = Regex.escape(param.name)
+      # `{name}` and `<name>` are delimited, so a plain replace is safe.
+      url = url.gsub("{#{param.name}}", filler)
+      url = url.gsub("<#{param.name}>", filler)
+      # `:name` only counts at a segment boundary. Anchoring to a preceding
+      # `/` keeps the scheme/port colon in `http://host:8080` and embedded
+      # example text like `/profiles/celeb_:USERNAME` out of it. No trailing
+      # anchor, so Play-style `/:lang.json` fills correctly.
+      url = url.gsub(/(\A|\/):#{escaped}/) { "#{$1}#{filler}" }
+    end
+
+    url
+  end
+
+  # Headers for one probe: the analyzer-discovered `header` and `cookie`
+  # params for this endpoint, with the user's `--probe-header` values layered
+  # on top so an explicit flag always wins over a discovered default.
+  #
+  # Probes previously read only the query/json/form buckets, so an endpoint
+  # whose auth is a discovered `X-API-Key` header was probed without it and
+  # came back 401 for no visible reason.
+  #
+  # Returns a fresh Hash every call. `@headers` is shared across every probe
+  # fiber, so merging into it in place would race and leak one endpoint's
+  # headers onto another's request.
+  protected def probe_headers(endpoint : Endpoint) : Hash(String, String)
+    params = endpoint.params_to_hash
+    discovered = params["header"]
+    cookies = params["cookie"]
+    return @headers if discovered.empty? && cookies.empty?
+
+    result = {} of String => String
+    discovered.each { |name, value| result[name] = value }
+    # One `Cookie` header carries the whole jar, per RFC 6265.
+    unless cookies.empty?
+      result["Cookie"] = cookies.map { |name, value| "#{name}=#{value}" }.join("; ")
+    end
+    result.merge(@headers)
+  end
+
+  # True for endpoints that belong in the reported catalog but must not be
+  # probed. `internal` is set by the Spring analyzer for `@FeignClient` /
+  # `@HttpExchange` interfaces, which declare requests the app makes to
+  # *other* services — they are not routes this app serves. Probing them
+  # fired those paths at the `-u` target, which does not own them, producing
+  # noise the user can't act on.
+  #
+  # Probe-side only: export ships the catalog as data, and the catalog
+  # legitimately includes outbound client declarations.
+  protected def skip_probe_target?(endpoint : Endpoint) : Bool
+    endpoint.internal
+  end
+
+  # Read through accessors rather than the constants directly so a spec can
+  # subclass with sub-second values and still exercise the real plumbing —
+  # asserting against the shipped defaults would mean 15-second specs.
+  protected def probe_connect_timeout : Time::Span
+    PROBE_CONNECT_TIMEOUT
+  end
+
+  protected def probe_read_timeout : Time::Span
+    PROBE_READ_TIMEOUT
+  end
+
+  protected def export_connect_timeout : Time::Span
+    EXPORT_CONNECT_TIMEOUT
+  end
+
+  protected def export_read_timeout : Time::Span
+    EXPORT_READ_TIMEOUT
   end
 
   # Max concurrent in-flight probe requests. Bounds the fiber/socket fan-out

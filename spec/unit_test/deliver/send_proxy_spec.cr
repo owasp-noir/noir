@@ -10,20 +10,24 @@ require "../../../src/models/endpoint"
 # but for assertion purposes we only need to confirm that send_proxy
 # routed the request through this server's address.
 private class StubProxy
-  getter requests : Array(NamedTuple(method: String, target: String, body: String))
+  getter requests : Array(NamedTuple(method: String, target: String, headers: HTTP::Headers, body: String))
   getter address : Socket::IPAddress
 
-  def initialize
-    @requests = [] of NamedTuple(method: String, target: String, body: String)
+  def initialize(@status : Int32 = 200)
+    @requests = [] of NamedTuple(method: String, target: String, headers: HTTP::Headers, body: String)
+    status = @status
     @server = HTTP::Server.new do |context|
       body = context.request.body.try(&.gets_to_end) || ""
+      hdrs = HTTP::Headers.new
+      context.request.headers.each { |k, v| v.each { |vv| hdrs.add(k, vv) } }
       @requests << {
         method: context.request.method,
         # In proxy mode, the request line carries the absolute URI.
-        target: context.request.resource,
-        body:   body,
+        target:  context.request.resource,
+        headers: hdrs,
+        body:    body,
       }
-      context.response.status_code = 200
+      context.response.status_code = status
       context.response.print "ok"
     end
     @address = @server.bind_tcp("127.0.0.1", 0)
@@ -111,5 +115,134 @@ describe SendWithProxy do
     # Just asserting "doesn't raise" — the run call must return
     # cleanly so noir keeps running after a misconfigured proxy.
     sender.run([ep])
+  end
+
+  # Crest's `set_proxy!` bails out unless it receives both a host and a
+  # port, and then sends the request *directly to the target* — silently,
+  # and (because proxy delivery forces an insecure TLS context) with
+  # certificate verification off and any --probe-header credentials
+  # attached. These two pin the refusal: no proxy, no traffic.
+  # The path-fill and header-merge features are shared via Deliver but wired
+  # into each deliverer's own Crest calls. These cover the proxy half so a
+  # future refactor can't drop it from one file and stay green.
+  it "fills a path template for a read-only verb routed through the proxy" do
+    proxy = StubProxy.new
+    begin
+      ep = Endpoint.new("http://example.test/users/{id}", "GET")
+      ep.params << Param.new("id", "", "path")
+
+      SendWithProxy.new(base_deliver_options(proxy.url)).run([ep])
+
+      proxy.requests.first[:target].should contain("/users/1")
+    ensure
+      proxy.close
+    end
+  end
+
+  it "keeps the template for a destructive verb routed through the proxy" do
+    proxy = StubProxy.new
+    begin
+      ep = Endpoint.new("http://example.test/users/{id}", "DELETE")
+      ep.params << Param.new("id", "", "path")
+
+      SendWithProxy.new(base_deliver_options(proxy.url)).run([ep])
+
+      # The proxy receives the literal template, so the user can edit and
+      # replay it deliberately rather than noir inventing an id to delete.
+      proxy.requests.first[:target].should contain("/users/{id}")
+    ensure
+      proxy.close
+    end
+  end
+
+  it "sends discovered header params through the proxy" do
+    proxy = StubProxy.new
+    begin
+      ep = Endpoint.new("http://example.test/api/items", "GET")
+      ep.params << Param.new("X-API-Key", "discovered-key", "header")
+
+      SendWithProxy.new(base_deliver_options(proxy.url)).run([ep])
+
+      proxy.requests.first[:headers]["X-API-Key"]?.should eq("discovered-key")
+    ensure
+      proxy.close
+    end
+  end
+
+  # Same `handle_errors: false` reasoning as SendReq — an upstream 404
+  # relayed by the proxy is a delivered request, not a delivery failure.
+  it "treats a non-2xx relayed through the proxy as a delivered request" do
+    proxy = StubProxy.new(404)
+    begin
+      sender = SendWithProxy.new(base_deliver_options(proxy.url))
+      sender.run([Endpoint.new("http://example.test/gone", "GET")])
+
+      proxy.requests.size.should eq(1)
+      sender.undeliverable_count.should eq(0)
+    ensure
+      proxy.close
+    end
+  end
+
+  describe ".resolve_proxy_target" do
+    it "resolves a well-formed proxy URL" do
+      SendWithProxy.resolve_proxy_target("http://127.0.0.1:8080").should eq({"127.0.0.1", 8080})
+      SendWithProxy.resolve_proxy_target("https://proxy.local:3128").should eq({"proxy.local", 3128})
+    end
+
+    it "refuses a portless URL rather than letting Crest drop the proxy" do
+      SendWithProxy.resolve_proxy_target("http://127.0.0.1").should be_nil
+      SendWithProxy.resolve_proxy_target("https://burp.local").should be_nil
+    end
+
+    it "refuses a schemeless host:port, where URI#host is nil" do
+      SendWithProxy.resolve_proxy_target("127.0.0.1:8080").should be_nil
+      # `localhost:8080` parses as scheme=localhost, opaque=8080.
+      SendWithProxy.resolve_proxy_target("localhost:8080").should be_nil
+    end
+
+    it "refuses an out-of-range port" do
+      SendWithProxy.resolve_proxy_target("http://127.0.0.1:99999").should be_nil
+    end
+
+    it "refuses an empty value" do
+      SendWithProxy.resolve_proxy_target("").should be_nil
+    end
+  end
+
+  describe "unusable --probe-via" do
+    it "sends nothing when the proxy URL has no port" do
+      target = StubProxy.new
+      begin
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(".")])
+        # URI#port is nil here, so Crest used to drop the proxy entirely.
+        options["probe_via"] = YAML::Any.new("http://127.0.0.1")
+
+        SendWithProxy.new(options).run([Endpoint.new("#{target.url}/api/ping", "GET")])
+
+        target.requests.size.should eq(0)
+      ensure
+        target.close
+      end
+    end
+
+    it "sends nothing when the proxy URL has no scheme (URI#host is nil)" do
+      target = StubProxy.new
+      begin
+        options = create_test_options
+        options["base"] = YAML::Any.new([YAML::Any.new(".")])
+        # `curl -x` accepts this shape; URI.parse yields host=nil. The CLI
+        # normalizes it to http:// before we get here, but config-file and
+        # library callers skip that path, so the deliverer must refuse.
+        options["probe_via"] = YAML::Any.new("127.0.0.1:#{target.address.port}")
+
+        SendWithProxy.new(options).run([Endpoint.new("#{target.url}/api/ping", "GET")])
+
+        target.requests.size.should eq(0)
+      ensure
+        target.close
+      end
+    end
   end
 end
