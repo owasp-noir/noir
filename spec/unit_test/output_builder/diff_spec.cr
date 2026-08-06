@@ -165,5 +165,24 @@ describe "OutputBuilderDiff" do
       output.should contain("[removed]")
       output.should_not contain("[changed]")
     end
+
+    it "quotes a metadata key that is not a bare TOML key" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      # This builder used to emit keys raw, so a key containing a dot would be
+      # read as a dotted table path (`path.permissions` -> [path].permissions)
+      # and corrupt the document. Endpoint field names are all bare-safe, but
+      # `metadata` keys come from analyzers, so the quoting has to be here.
+      endpoint = Endpoint.new("content://com.example/items", "GET")
+      endpoint.protocol = "android-provider"
+      endpoint.metadata = {"path.permissions" => "read"}
+
+      builder.print_toml([endpoint], NoirRunner.new(create_test_options))
+      output = builder.io.to_s
+
+      output.should contain(%("path.permissions" = "read"))
+      output.should_not contain(%(path.permissions = "read"))
+    end
   end
 end
