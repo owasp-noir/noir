@@ -14,8 +14,9 @@ private class CapturingServer
   getter requests : Array(NamedTuple(method: String, path: String, headers: HTTP::Headers, body: String))
   getter address : Socket::IPAddress
 
-  def initialize
+  def initialize(@status : Int32 = 200)
     @requests = [] of NamedTuple(method: String, path: String, headers: HTTP::Headers, body: String)
+    status = @status
     @server = HTTP::Server.new do |context|
       body = context.request.body.try(&.gets_to_end) || ""
       # Dup headers so the spec sees a stable snapshot, not the live
@@ -38,7 +39,7 @@ private class CapturingServer
         headers: hdrs,
         body:    body,
       }
-      context.response.status_code = 200
+      context.response.status_code = status
       context.response.print "ok"
     end
     @address = @server.bind_tcp("127.0.0.1", 0)
@@ -219,6 +220,71 @@ describe SendReq do
       server.requests.map(&.[:method]).should eq(["POST"])
     ensure
       server.close
+    end
+  end
+
+  # Crest raises on any non-2xx unless `handle_errors: false`, which fed
+  # the failure counter and — because `/users/{id}` templates are probed
+  # literally — made "N request(s) failed" fire on nearly every real scan,
+  # burying the genuinely-broken-target case it exists for.
+  it "treats an HTTP error response as a delivered probe, not a failure" do
+    [404, 500].each do |status|
+      server = CapturingServer.new(status)
+      begin
+        sender = SendReq.new(base_deliver_options)
+        sender.run([Endpoint.new(server.url_for("/gone"), "GET")])
+
+        server.requests.size.should eq(1)
+        server.requests.first[:path].should eq("/gone")
+        # Pre-fix Crest raised Crest::RequestFailed here, landing in the
+        # rescue and bumping the counter that drives the warning.
+        sender.undeliverable_count.should eq(0)
+      ensure
+        server.close
+      end
+    end
+  end
+
+  it "still counts a request that never reached the host" do
+    # Nothing listening — a real delivery failure, which must keep
+    # surfacing now that HTTP error responses no longer do.
+    sender = SendReq.new(base_deliver_options)
+    sender.run([Endpoint.new("http://127.0.0.1:1/dead", "GET")])
+
+    sender.undeliverable_count.should eq(1)
+  end
+
+  # `max_redirects: 0` has to travel with `handle_errors: false`: Crest's
+  # `check_max_redirects` raises when `max_redirects <= 0 && handle_errors`,
+  # so setting it alone turns every 3xx into a counted failure.
+  it "does not follow redirects, so --probe-header credentials stay on the target host" do
+    final = CapturingServer.new
+    begin
+      redirect_target = final.url_for("/elsewhere")
+      redirector = HTTP::Server.new do |ctx|
+        ctx.response.status_code = 302
+        ctx.response.headers["Location"] = redirect_target
+      end
+      addr = redirector.bind_tcp("127.0.0.1", 0)
+      spawn { redirector.listen }
+      Fiber.yield
+
+      begin
+        options = base_deliver_options
+        options["probe_header"] = YAML::Any.new([
+          YAML::Any.new("Authorization: Bearer probe-secret"),
+        ])
+        SendReq.new(options).run([Endpoint.new("http://#{addr.address}:#{addr.port}/start", "GET")])
+
+        # Crest copies request headers onto the redirected request and
+        # follows absolute Locations to other hosts, so pre-fix the token
+        # landed here.
+        final.requests.size.should eq(0)
+      ensure
+        redirector.close
+      end
+    ensure
+      final.close
     end
   end
 

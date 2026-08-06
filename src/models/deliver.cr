@@ -122,6 +122,17 @@ class Deliver
     result
   end
 
+  # Requests that never completed during the last `run` — connection
+  # refused, TLS handshake rejected, DNS failure, timeout. Deliberately
+  # *not* incremented for an HTTP error response: a 404 or 500 means the
+  # probe was delivered and answered. Exposed so the distinction is
+  # assertable, since the count is otherwise only visible as a log line.
+  getter undeliverable_count : Int32 = 0
+
+  protected def undeliverable_count=(count : Int32)
+    @undeliverable_count = count
+  end
+
   def proxy
     @proxy
   end

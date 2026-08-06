@@ -13,8 +13,9 @@ private class StubProxy
   getter requests : Array(NamedTuple(method: String, target: String, body: String))
   getter address : Socket::IPAddress
 
-  def initialize
+  def initialize(@status : Int32 = 200)
     @requests = [] of NamedTuple(method: String, target: String, body: String)
+    status = @status
     @server = HTTP::Server.new do |context|
       body = context.request.body.try(&.gets_to_end) || ""
       @requests << {
@@ -23,7 +24,7 @@ private class StubProxy
         target: context.request.resource,
         body:   body,
       }
-      context.response.status_code = 200
+      context.response.status_code = status
       context.response.print "ok"
     end
     @address = @server.bind_tcp("127.0.0.1", 0)
@@ -118,6 +119,21 @@ describe SendWithProxy do
   # and (because proxy delivery forces an insecure TLS context) with
   # certificate verification off and any --probe-header credentials
   # attached. These two pin the refusal: no proxy, no traffic.
+  # Same `handle_errors: false` reasoning as SendReq — an upstream 404
+  # relayed by the proxy is a delivered request, not a delivery failure.
+  it "treats a non-2xx relayed through the proxy as a delivered request" do
+    proxy = StubProxy.new(404)
+    begin
+      sender = SendWithProxy.new(base_deliver_options(proxy.url))
+      sender.run([Endpoint.new("http://example.test/gone", "GET")])
+
+      proxy.requests.size.should eq(1)
+      sender.undeliverable_count.should eq(0)
+    ensure
+      proxy.close
+    end
+  end
+
   describe ".resolve_proxy_target" do
     it "resolves a well-formed proxy URL" do
       SendWithProxy.resolve_proxy_target("http://127.0.0.1:8080").should eq({"127.0.0.1", 8080})

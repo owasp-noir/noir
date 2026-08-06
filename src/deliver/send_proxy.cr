@@ -44,6 +44,12 @@ class SendWithProxy < Deliver
     failures = Atomic(Int32).new(0)
     # Bound in-flight requests to --concurrency (see send_req.cr).
     sem = Channel(Nil).new(concurrency_limit)
+    # `handle_errors: false, max_redirects: 0` on every call below — see the
+    # comment on SendReq#run for why the two are inseparable. Redirects
+    # matter even more here: the point of proxy delivery is that the proxy
+    # sees exactly the endpoints noir discovered, and following a Location
+    # pollutes the history with requests noir never found.
+    #
     # Proxy delivery targets an intercepting proxy (Burp/ZAP) that presents
     # its own certificate, so verification is intentionally off here
     # regardless of --tls-skip-verify — otherwise every replayed request
@@ -77,7 +83,9 @@ class SendWithProxy < Deliver
                 params: endpoint_hash["query"],
                 headers: @headers,
                 form: body,
-                json: is_json
+                json: is_json,
+                handle_errors: false,
+                max_redirects: 0
               )
             else
               Crest::Request.execute(
@@ -87,7 +95,9 @@ class SendWithProxy < Deliver
                 p_port: proxy_port,
                 headers: @headers,
                 tls: proxy_tls,
-                user_agent: "Noir/#{Noir::VERSION}"
+                user_agent: "Noir/#{Noir::VERSION}",
+                handle_errors: false,
+                max_redirects: 0
               )
             end
           rescue e
@@ -104,7 +114,9 @@ class SendWithProxy < Deliver
 
     wg.wait
 
+    # Counts only requests that never reached the proxy — see SendReq#run.
     failed = failures.get
-    @logger.warning "Proxy delivery: #{failed} request(s) failed (run with --debug for details)." if failed > 0
+    self.undeliverable_count = failed
+    @logger.warning "Proxy delivery: #{failed} request(s) could not be sent (run with --debug for details)." if failed > 0
   end
 end
