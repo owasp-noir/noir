@@ -57,7 +57,11 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << "\n#{r_method} #{r_kind} #{r_name}"
       end
 
-      if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
+      # `[]?` throughout: `config_initializer` seeds every key for CLI runs,
+      # but a builder constructed with a partial options hash (specs, library
+      # use) raised KeyError on the first endpoint. `any_to_bool` is untyped
+      # and reads `nil` as false, matching each option's default.
+      if any_to_bool(@options["status_codes"]?) || !@options["exclude_codes"]?.to_s.empty?
         status_color = :light_green
         status_code = endpoint.details.status_code
         if status_code
@@ -175,12 +179,12 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       # Show technology only if include_techs flag is set
-      if any_to_bool(@options["include_techs"]) && endpoint.details.technology
+      if any_to_bool(@options["include_techs"]?) && endpoint.details.technology
         r_tech = endpoint.details.technology.to_s.colorize(:light_blue).toggle(@is_color)
         r_buffer << "\n  ○ tech: #{r_tech}"
       end
 
-      if any_to_bool(@options["include_path"])
+      if any_to_bool(@options["include_path"]?)
         details = endpoint.details
         if details.code_paths && !details.code_paths.empty?
           details.code_paths.each do |code_path|
@@ -194,7 +198,7 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       context = endpoint.ai_context
-      if any_to_bool(@options["ai_context"]) && !context.nil?
+      if any_to_bool(@options["ai_context"]?) && !context.nil?
         unless context.empty?
           features = ai_context_feature_filter
           visible = (features.includes?("guards") && !context.guards.empty?) ||
@@ -214,7 +218,7 @@ class OutputBuilderCommon < OutputBuilder
             append_ai_context_block(r_buffer, "signals", context.signals) if features.includes?("signals")
           end
         end
-      elsif any_to_bool(@options["include_callee"]) && !endpoint.callees.empty?
+      elsif any_to_bool(@options["include_callee"]?) && !endpoint.callees.empty?
         r_buffer << "\n  ○ callees: "
         endpoint.callees.each_with_index do |callee, index|
           prefix = index == endpoint.callees.size - 1 ? "└── " : "├── "

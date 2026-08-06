@@ -37,4 +37,35 @@ describe "OutputBuilderOnlyParam" do
     lines.should contain("id")
     lines.should contain("username")
   end
+
+  it "includes body-typed params, which alias onto the json bucket" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOnlyParam.new(options)
+    builder.io = IO::Memory.new
+
+    # NestJS/Nuxt/Nitro/Rocket/Servant/Scotty/Cowboy/Elli/Wisp/Drogon/oatpp all
+    # record a request-body field as `param_type == "body"`, which resolves to
+    # the `json` bucket via `Param#request_type`. Matching on the raw
+    # `param_type` dropped them from this format entirely.
+    endpoint = Endpoint.new("/admin/upload", "POST")
+    endpoint.push_param(Param.new("avatar", "", "body"))
+    endpoint.push_param(Param.new("file", "", "body"))
+    endpoint.push_param(Param.new("include", "", "query"))
+    endpoint.push_param(Param.new("authorization", "", "header"))
+
+    builder.print([endpoint])
+    lines = builder.io.to_s.split("\n").reject(&.empty?)
+
+    lines.should contain("avatar")
+    lines.should contain("file")
+    lines.should contain("include")
+    # Headers are not a fuzzable body/query bucket, so they stay out.
+    lines.should_not contain("authorization")
+  end
 end

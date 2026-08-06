@@ -129,12 +129,20 @@ class OutputBuilderOas3 < OutputBuilder
       } of String => JSON::Any),
       "servers" => JSON::Any.new([
         JSON::Any.new({
-          "url" => JSON::Any.new(@options["url"].to_s.empty? ? "http://localhost" : @options["url"].to_s),
+          "url" => JSON::Any.new(target_url),
         } of String => JSON::Any),
       ]),
       "paths" => JSON::Any.new(paths.transform_values { |v| JSON::Any.new(v) }),
     } of String => JSON::Any
 
     ob_puts JSON::Any.new(oas3_hash).to_pretty_json
+  end
+
+  # `[]?`, not `[]`: `config_initializer` seeds every key for CLI runs, but a
+  # builder constructed with a partial options hash (specs, library use) hit a
+  # KeyError here while the sibling oas2 builder read the same option safely.
+  private def target_url : String
+    url = @options["url"]?.to_s
+    url.empty? ? "http://localhost" : url
   end
 end

@@ -1,7 +1,10 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "./toml_serializer"
 
 class OutputBuilderToml < OutputBuilder
+  include OutputBuilderTomlSerializer
+
   def print(endpoints : Array(Endpoint))
     message = {"endpoints" => endpoints, "passive_results" => [] of PassiveScanResult}.to_json
     json_obj = JSON.parse(message)
@@ -50,59 +53,5 @@ class OutputBuilderToml < OutputBuilder
       end
     end
     result
-  end
-
-  private def generate_table_content(data : Hash(String, JSON::Any)) : String
-    result = String.build do |io|
-      data.each do |key, value|
-        case value.raw
-        when String, Int64, Float64, Bool
-          io << "#{toml_key(key)} = #{toml_value(value)}\n"
-        when Array
-          io << "#{toml_key(key)} = ["
-          items = value.as_a.map { |item| toml_value(item) }
-          io << items.join(", ")
-          io << "]\n"
-        when Hash
-          # Nested inline table
-          io << "#{toml_key(key)} = { "
-          pairs = value.as_h.map { |k, v| "#{toml_key(k)} = #{toml_value(v)}" }
-          io << pairs.join(", ")
-          io << " }\n"
-        end
-      end
-    end
-    result
-  end
-
-  # TOML bare keys allow only [A-Za-z0-9_-]. A key with a dot, space, or
-  # quote would otherwise be read as a dotted table path (config.file →
-  # [config].file) and corrupt the document, so quote anything non-bare.
-  private def toml_key(key : String) : String
-    return key if key.matches?(/\A[A-Za-z0-9_-]+\z/)
-    %("#{key.gsub("\\", "\\\\").gsub("\"", "\\\"")}")
-  end
-
-  private def toml_value(value : JSON::Any) : String
-    case raw = value.raw
-    when String
-      # TOML basic strings can't contain raw newlines/control chars — escape
-      # them so a multi-line snippet/description doesn't break the document.
-      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"").gsub("\b", "\\b").gsub("\t", "\\t").gsub("\n", "\\n").gsub("\f", "\\f").gsub("\r", "\\r")}")
-    when Int64, Float64
-      raw.to_s
-    when Bool
-      raw.to_s
-    when Nil
-      %("")
-    when Array
-      items = raw.map { |item| toml_value(item) }
-      "[#{items.join(", ")}]"
-    when Hash
-      pairs = raw.map { |k, v| "#{toml_key(k)} = #{toml_value(v)}" }
-      "{ #{pairs.join(", ")} }"
-    else
-      %("#{raw}")
-    end
   end
 end

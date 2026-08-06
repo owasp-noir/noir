@@ -10,7 +10,13 @@ class OutputBuilderOnlyParam < OutputBuilder
 
     endpoints.each do |endpoint|
       endpoint.params.each do |param|
-        if targets.includes? param.param_type
+        # `request_type`, not `param_type`: the canonical bucket is what every
+        # consumer dispatches on (see `Param#request_type`). Fourteen analyzers
+        # spell a body field `body` rather than `json`, and matching on the raw
+        # `param_type` dropped every one of them — 82 params across the fixture
+        # tree were invisible here while `-f plain` and `-f curl` (which bake
+        # through `request_type`) showed them.
+        if targets.includes? param.request_type
           common_params << param.name
         end
       end

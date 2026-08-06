@@ -36,11 +36,16 @@ class OutputBuilderHttpie < OutputBuilder
           end
         else
           option_parts << "--form"
-          form_parts = baked[:body].split('&')
-          form_parts.each do |part|
-            if part.includes?('=')
-              request_items << shell_quote(part)
-            end
+          # Read the params directly instead of re-splitting the `k=v&k=v`
+          # body `bake_endpoint` joined them into. That round trip has no way
+          # to tell a separator from a `&` inside a value, so a form param
+          # `note=a&b=c` came out as `'note=a' 'b=c'` — the real value
+          # truncated and a field named `b` that the endpoint never had.
+          # httpie takes everything after the first `=` as the value, so one
+          # shell-quoted item per param is exact.
+          endpoint.params.each do |param|
+            next unless param.request_type == "form"
+            request_items << shell_quote("#{param.name}=#{param.value}")
           end
         end
       end

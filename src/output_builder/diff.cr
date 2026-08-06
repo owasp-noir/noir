@@ -1,11 +1,14 @@
 require "../models/output_builder"
 require "../models/endpoint"
+require "./toml_serializer"
 
 require "json"
 require "yaml"
 require "colorize"
 
 class OutputBuilderDiff < OutputBuilder
+  include OutputBuilderTomlSerializer
+
   def diff(new_endpoints : Array(Endpoint), old_endpoints : Array(Endpoint))
     added = [] of Endpoint
     changed = [] of Endpoint
@@ -93,44 +96,5 @@ class OutputBuilderDiff < OutputBuilder
       end
     end
     result
-  end
-
-  private def generate_table_content(data : Hash(String, JSON::Any)) : String
-    String.build do |io|
-      data.each do |key, value|
-        case value.raw
-        when String, Int64, Float64, Bool
-          io << "#{key} = #{toml_value(value)}\n"
-        when Array
-          io << "#{key} = ["
-          io << value.as_a.map { |item| toml_value(item) }.join(", ")
-          io << "]\n"
-        when Hash
-          io << "#{key} = { "
-          io << value.as_h.map { |k, v| "#{k} = #{toml_value(v)}" }.join(", ")
-          io << " }\n"
-        end
-      end
-    end
-  end
-
-  private def toml_value(value : JSON::Any) : String
-    case raw = value.raw
-    when String
-      # Escape control chars so a multi-line value can't break the TOML document.
-      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"").gsub("\b", "\\b").gsub("\t", "\\t").gsub("\n", "\\n").gsub("\f", "\\f").gsub("\r", "\\r")}")
-    when Int64, Float64
-      raw.to_s
-    when Bool
-      raw.to_s
-    when Nil
-      %("")
-    when Array
-      "[#{raw.map { |item| toml_value(item) }.join(", ")}]"
-    when Hash
-      "{ #{raw.map { |k, v| "#{k} = #{toml_value(v)}" }.join(", ")} }"
-    else
-      %("#{raw}")
-    end
   end
 end
