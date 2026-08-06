@@ -78,4 +78,51 @@ describe "OutputBuilderHttpie" do
     lines.map { |line| line.split("'")[1] }.should eq(WILDCARD_HTTP_METHODS)
     lines.any?(&.includes?("'ANY'")).should be_false
   end
+
+  it "keeps a form value containing & in one request item" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    # Re-splitting the joined `k=v&k=v` body on `&` cannot tell a separator
+    # from a `&` inside a value: this came out as `'note=a' 'b=c'`, truncating
+    # the real value and inventing a `b` field the endpoint never had.
+    endpoint = Endpoint.new("/submit", "POST")
+    endpoint.push_param(Param.new("note", "a&b=c", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should eq("http --form 'POST' '/submit' 'note=a&b=c'")
+    line.should_not contain("'b=c'")
+  end
+
+  it "emits form params whose param_type is the body alias" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    # `body` aliases onto the `json` bucket, so these take the JSON branch —
+    # the form branch must not pick them up and must not lose them either.
+    endpoint = Endpoint.new("/upload", "POST")
+    endpoint.push_param(Param.new("avatar", "", "body"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should contain("'avatar='")
+    line.should_not contain("--form")
+  end
 end
