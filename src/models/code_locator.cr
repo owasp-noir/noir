@@ -1,4 +1,6 @@
 require "../utils/path_scope"
+require "../utils/utils"
+require "./logger"
 
 class CodeLocator
   @@instance : CodeLocator? = nil
