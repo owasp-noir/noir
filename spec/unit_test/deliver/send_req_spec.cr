@@ -369,6 +369,120 @@ describe SendReq do
     end
   end
 
+  # The optimizer only substitutes a path placeholder when --set-pvalue-path
+  # supplied a value, so a default scan probes `/users/{id}` literally and
+  # 404s. Filling it is restricted to read-only verbs: `DELETE /users/{id}` is
+  # a harmless 404 today and must not silently become a real delete.
+  describe "path template filling" do
+    it "fills the template for a GET so the probe reaches the route" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/users/{id}"), "GET")
+        ep.params << Param.new("id", "", "path")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        server.requests.first[:path].should eq("/users/1")
+      ensure
+        server.close
+      end
+    end
+
+    it "uses a string for a non-numeric param name" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/files/{key}"), "GET")
+        ep.params << Param.new("key", "", "path")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        server.requests.first[:path].should eq("/files/noir")
+      ensure
+        server.close
+      end
+    end
+
+    it "fills Express-style :name and Django-style <name> too" do
+      server = CapturingServer.new
+      begin
+        express = Endpoint.new(server.url_for("/posts/:post_id"), "GET")
+        express.params << Param.new("post_id", "", "path")
+        django = Endpoint.new(server.url_for("/tags/<slug>"), "GET")
+        django.params << Param.new("slug", "", "path")
+
+        SendReq.new(base_deliver_options).run([express, django])
+
+        server.requests.map(&.[:path]).sort!.should eq(["/posts/1", "/tags/noir"])
+      ensure
+        server.close
+      end
+    end
+
+    it "leaves the template alone for destructive verbs" do
+      server = CapturingServer.new
+      begin
+        %w[DELETE POST PUT PATCH].each do |verb|
+          ep = Endpoint.new(server.url_for("/users/{id}"), verb)
+          ep.params << Param.new("id", "", "path")
+          SendReq.new(base_deliver_options).run([ep])
+        end
+
+        # Every one keeps the literal template — nothing resolves to /users/1.
+        server.requests.map(&.[:path]).uniq!.should eq(["/users/{id}"])
+        server.requests.map(&.[:method]).sort!.should eq(%w[DELETE PATCH POST PUT])
+      ensure
+        server.close
+      end
+    end
+
+    it "does not touch a param --set-pvalue-path already resolved" do
+      server = CapturingServer.new
+      begin
+        # The optimizer substitutes into the URL and records the value, so
+        # there is no placeholder left and the recorded value must win.
+        ep = Endpoint.new(server.url_for("/users/42"), "GET")
+        ep.params << Param.new("id", "42", "path")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        server.requests.first[:path].should eq("/users/42")
+      ensure
+        server.close
+      end
+    end
+
+    it "does not mangle the port in an absolute URL" do
+      server = CapturingServer.new
+      begin
+        # `:id` is only filled at a segment boundary, so `host:PORT` and
+        # embedded text like `celeb_:USERNAME` are left intact.
+        ep = Endpoint.new(server.url_for("/profiles/celeb_:USERNAME"), "GET")
+        ep.params << Param.new("USERNAME", "", "path")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        server.requests.size.should eq(1)
+        server.requests.first[:path].should contain("celeb_:USERNAME")
+      ensure
+        server.close
+      end
+    end
+
+    it "leaves endpoint.url itself unchanged so the report keeps the template" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/users/{id}"), "GET")
+        ep.params << Param.new("id", "", "path")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        ep.url.should eq(server.url_for("/users/{id}"))
+      ensure
+        server.close
+      end
+    end
+  end
+
   # Probes read only the query/json/form buckets, so an endpoint whose auth is
   # a discovered header param was probed without it and came back 401 with no
   # visible cause.

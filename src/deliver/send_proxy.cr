@@ -78,7 +78,7 @@ class SendWithProxy < Deliver
 
               Crest::Request.execute(
                 method: get_symbol(request_method),
-                url: endpoint.url,
+                url: probe_url(endpoint, request_method),
                 p_addr: proxy_host,
                 p_port: proxy_port,
                 tls: proxy_tls,
@@ -95,7 +95,7 @@ class SendWithProxy < Deliver
             else
               Crest::Request.execute(
                 method: get_symbol(request_method),
-                url: endpoint.url,
+                url: probe_url(endpoint, request_method),
                 p_addr: proxy_host,
                 p_port: proxy_port,
                 headers: request_headers,

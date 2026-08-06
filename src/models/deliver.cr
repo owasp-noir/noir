@@ -176,6 +176,53 @@ class Deliver
   EXPORT_CONNECT_TIMEOUT = 10.seconds
   EXPORT_READ_TIMEOUT    = 60.seconds
 
+  # Verbs whose path templates get filled in before probing. Restricted to
+  # the read-only ones on purpose.
+  #
+  # `register_path_param` in the optimizer only substitutes a placeholder when
+  # `--set-pvalue-path` supplied a value, so on a default scan `/users/{id}`
+  # is probed literally and 404s. Filling it makes the probe actually reach
+  # the route — but it also makes destructive verbs real: `DELETE
+  # /users/{id}` is a harmless 404 today and would become `DELETE /users/1`
+  # against a live record. Read-only verbs get the benefit without that risk;
+  # for the rest the literal template still reaches an intercepting proxy,
+  # where the user can edit and replay it deliberately.
+  PROBE_PATH_FILL_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+
+  # Path-param names that name a number. A framework route constrained to an
+  # integer (`/users/{id:int}`, Django's `<int:pk>`) rejects a word, so these
+  # get `1`; anything else gets a harmless string.
+  NUMERIC_PATH_PARAM_RE = /\A(?:.*_)?(?:id|ids|pk|no|num|number|count|page|size|limit|offset|index|idx|version|seq|year|month|day|port)\z/i
+
+  # The URL to probe for this endpoint and verb. Leaves `endpoint.url`
+  # untouched — the reported catalog keeps the template, which is what the
+  # user wants to read; only the outbound request is concretized.
+  protected def probe_url(endpoint : Endpoint, request_method : String) : String
+    return endpoint.url unless PROBE_PATH_FILL_METHODS.includes?(request_method.upcase)
+
+    url = endpoint.url
+    endpoint.params.each do |param|
+      next unless param.param_type == "path"
+      # A non-empty value means --set-pvalue-path already applied and the
+      # optimizer substituted it; nothing left to fill.
+      next unless param.value.empty?
+      next if param.name.empty?
+
+      filler = NUMERIC_PATH_PARAM_RE.matches?(param.name) ? "1" : "noir"
+      escaped = Regex.escape(param.name)
+      # `{name}` and `<name>` are delimited, so a plain replace is safe.
+      url = url.gsub("{#{param.name}}", filler)
+      url = url.gsub("<#{param.name}>", filler)
+      # `:name` only counts at a segment boundary. Anchoring to a preceding
+      # `/` keeps the scheme/port colon in `http://host:8080` and embedded
+      # example text like `/profiles/celeb_:USERNAME` out of it. No trailing
+      # anchor, so Play-style `/:lang.json` fills correctly.
+      url = url.gsub(/(\A|\/):#{escaped}/) { "#{$1}#{filler}" }
+    end
+
+    url
+  end
+
   # Headers for one probe: the analyzer-discovered `header` and `cookie`
   # params for this endpoint, with the user's `--probe-header` values layered
   # on top so an explicit flag always wins over a discovered default.

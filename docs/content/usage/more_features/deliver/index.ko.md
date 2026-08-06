@@ -23,6 +23,22 @@ Noir의 결과 전송은 성격이 다른 두 family로 나뉩니다.
 | `--probe-match VAL` | 패턴에 매칭되는 endpoint만 probe (URL / method / `method:URL`) |
 | `--probe-skip VAL` | 패턴에 매칭되는 endpoint를 제외 |
 
+`--probe`와 `--probe-via`는 서로 독립적입니다. 둘을 함께 주면 모든 endpoint에 요청이 두 번 나갑니다(proxy 경유 1회 + 직접 1회). 타깃 부하가 2배가 되므로, proxy에만 트래픽을 넣고 싶으면 `--probe-via`만 주세요.
+
+### Path template
+
+`/users/{id}` 같은 route는 그대로 요청할 수 없으므로, noir가 probe 전에 placeholder를 채웁니다. 단 **read-only verb에만** 적용합니다(GET, HEAD, OPTIONS). 숫자로 보이는 이름(`id`, `page`, `*_id` 등)은 `1`, 나머지는 `noir`가 들어갑니다.
+
+POST, PUT, PATCH, DELETE는 template을 그대로 둡니다. 여기서 채우면 무해한 404가 실제 쓰기로 바뀌기 때문입니다 — 살아있는 레코드에 `DELETE /users/1`이 나갑니다. proxy 경유 시 template 그대로 도착하므로, 필요하면 직접 수정해서 replay 하면 됩니다.
+
+값을 직접 지정하려면 `--set-pvalue-path`를 쓰세요. 이쪽은 모든 verb에 적용됩니다.
+
+```bash
+noir scan ./source -u http://localhost:3000 --probe --set-pvalue-path id=42
+```
+
+리포트 출력은 항상 원래 template을 유지합니다. 실제로 나가는 요청만 구체화됩니다.
+
 ### Replay through proxy
 
 로컬 Burp/ZAP proxy로 모든 endpoint를 흘려보내서 scanner가 처리하도록 합니다.

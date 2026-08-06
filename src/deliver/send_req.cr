@@ -57,7 +57,7 @@ class SendReq < Deliver
 
               Crest::Request.execute(
                 method: get_symbol(request_method),
-                url: endpoint.url,
+                url: probe_url(endpoint, request_method),
                 tls: tls,
                 user_agent: "Noir/#{Noir::VERSION}",
                 params: endpoint_hash["query"],
@@ -72,7 +72,7 @@ class SendReq < Deliver
             else
               Crest::Request.execute(
                 method: get_symbol(request_method),
-                url: endpoint.url,
+                url: probe_url(endpoint, request_method),
                 headers: request_headers,
                 tls: tls,
                 user_agent: "Noir/#{Noir::VERSION}",
