@@ -170,7 +170,7 @@ class OutputBuilderPostman < OutputBuilder
       "variable" => JSON::Any.new([
         JSON::Any.new({
           "key"   => JSON::Any.new("baseUrl"),
-          "value" => JSON::Any.new(@options["url"].to_s.empty? ? "http://localhost" : @options["url"].to_s),
+          "value" => JSON::Any.new(base_url),
         } of String => JSON::Any),
       ]),
     } of String => JSON::Any
@@ -186,6 +186,14 @@ class OutputBuilderPostman < OutputBuilder
   # throwing away the host Noir had actually found: `demo.example.com` and
   # `demo.example.com.evil` imported as the same request. curl, httpie and
   # only-url all keep the host on the same scan; this now does too.
+  # `[]?`, not `[]`: `config_initializer` seeds every key for CLI runs, but a
+  # builder constructed with a partial options hash (specs, library use) hit a
+  # KeyError here while the oas2 builder read the same option safely.
+  private def base_url : String
+    url = @options["url"]?.to_s
+    url.empty? ? "http://localhost" : url
+  end
+
   # The query string the emitted request actually carries: the one the route
   # itself spells out, plus the query params the analyzer recorded.
   #
