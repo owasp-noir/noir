@@ -3,6 +3,12 @@ require "../models/endpoint"
 require "../models/passive_scan"
 
 class OutputBuilderMermaid < OutputBuilder
+  # CLI inputs get a plural label; the bucket key is the singular param type.
+  CLI_PARAM_LABELS = {"flag" => "flags", "argument" => "arguments", "env" => "env"}
+
+  # Buckets `output_tree` renders explicitly, under a label of their own.
+  RENDERED_BUCKETS = Set{"header", "cookie", "query", "json", "form", "path"}
+
   def print(endpoints : Array(Endpoint))
     build_mindmap(endpoints)
   end
@@ -171,9 +177,20 @@ class OutputBuilderMermaid < OutputBuilder
       # CLI inputs (protocol "cli") live outside the six canonical HTTP
       # buckets — render flags / positional arguments / env reads as their
       # own groups so they aren't silently dropped from the mindmap.
-      {"flag" => "flags", "argument" => "arguments", "env" => "env"}.each do |param_type, label|
+      CLI_PARAM_LABELS.each do |param_type, label|
         bucket = params_hash[param_type]?
         render_param_group(bucket, label, indent) unless bucket.nil?
+      end
+
+      # Anything left is still a named input the endpoint reads: a multipart
+      # `file` field, an `xml` request body, an Android intent `extra`. The
+      # fixed list above covered nine of the fourteen param types analyzers
+      # actually emit, so the rest were dropped from the map while every
+      # other format showed them. Render the remaining buckets by name so a
+      # new param type is never silently lost here again.
+      params_hash.each do |param_type, bucket|
+        next if RENDERED_BUCKETS.includes?(param_type) || CLI_PARAM_LABELS.has_key?(param_type)
+        render_param_group(bucket, sanitize_label(param_type), indent)
       end
     end
 

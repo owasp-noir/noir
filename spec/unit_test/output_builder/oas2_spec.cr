@@ -148,9 +148,12 @@ describe "OutputBuilderOas2" do
 
     paths.as_h.has_key?("/users/{user_id}").should be_true
     paths["/users/{user_id}"].as_h.has_key?("any").should be_false
-    %w[get post put patch delete options head trace].each do |method|
+    %w[get post put patch delete options head].each do |method|
       paths["/users/{user_id}"].as_h.has_key?(method).should be_true
     end
+    # `trace` is an OpenAPI 3.0 addition; Swagger 2.0's Path Item Object has
+    # no such field and rejects the whole document over it.
+    paths["/users/{user_id}"].as_h.has_key?("trace").should be_false
 
     get_params = paths["/users/{user_id}"]["get"]["parameters"].as_a
     get_params.any? { |p| p["in"].as_s == "path" && p["name"].as_s == "user_id" }.should be_true

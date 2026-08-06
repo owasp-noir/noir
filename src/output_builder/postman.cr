@@ -13,10 +13,18 @@ class OutputBuilderPostman < OutputBuilder
       # request item (URI.parse + {{baseUrl}} + HTTP verbs) is meaningless
       # for them — keep them out of the collection.
       next if endpoint.non_http?
+      # `URI.parse` is used for the authority only — scheme / host / port sit
+      # ahead of anything a route pattern can spell, so it reads those
+      # correctly. The path, query and fragment come from `split_route_url`,
+      # which knows a `?` in a route is as often regex or optional-segment
+      # syntax as it is a query separator. Taking them from `URI` truncated
+      # Giraffe's `/legacy(/?)` to `/legacy(` and emitted a query parameter
+      # named `:a|b)/(.*)?` for Drogon's `/grp/(?:a|b)/(.*)?`.
       uri = URI.parse(endpoint.url)
+      url_parts = split_route_url(endpoint.url)
 
       # Build URL parts
-      path_parts = uri.path.split("/").reject(&.empty?)
+      path_parts = route_path(url_parts[:route]).split("/").reject(&.empty?)
       path_with_vars = path_parts.map do |part|
         if part.starts_with?("<") && part.ends_with?(">") && part.includes?(":")
           # Handle <type:param> format - convert to :param
@@ -32,7 +40,7 @@ class OutputBuilderPostman < OutputBuilder
         end
       end
 
-      query_pairs = merged_query_pairs(uri, endpoint)
+      query_pairs = merged_query_pairs(url_parts[:query], endpoint)
       url_obj = build_url_object(uri, path_with_vars, query_pairs)
 
       # Add path variables
@@ -148,7 +156,7 @@ class OutputBuilderPostman < OutputBuilder
         # `demo.example.com.evil/api/users/{id}` are two entries in the
         # sidebar reading exactly the same.
         item = {
-          "name"    => JSON::Any.new("#{method} #{item_label(uri)}"),
+          "name"    => JSON::Any.new("#{method} #{item_label(uri, url_parts)}"),
           "request" => JSON::Any.new(request),
         } of String => JSON::Any
 
@@ -209,20 +217,17 @@ class OutputBuilderPostman < OutputBuilder
   # Merge order mirrors `bake_endpoint`: a pair the route already spells
   # verbatim is not repeated, while a *different* value for the same name is
   # appended as an override (the later pair is the one servers read).
-  private def merged_query_pairs(uri : URI, endpoint : Endpoint) : Array(Tuple(String, String))
-    pairs = [] of Tuple(String, String)
-
-    if query = uri.query
-      query.split('&').each do |pair|
-        next if pair.empty?
-        name, _, value = pair.partition('=')
-        pairs << {name, value}
-      end
-    end
+  private def merged_query_pairs(route_query : Array(Tuple(String, String)), endpoint : Endpoint) : Array(Tuple(String, String))
+    pairs = route_query.dup
 
     endpoint.params.each do |param|
       next unless param.request_type == "query"
       next if pairs.includes?({param.name, param.value})
+      # A value-less declaration of a name the route already pins is the same
+      # parameter, not an override: appending `action=` after
+      # `action=save_settings` blanks out the value that reaches the handler.
+      next if param.value.empty? && pairs.any? { |name, _| name == param.name }
+
       pairs << {param.name, param.value}
     end
 
@@ -294,16 +299,30 @@ class OutputBuilderPostman < OutputBuilder
   # `?action=save_settings`, which is 8 endpoints under 4 names on the
   # WordPress fixture.
   #
-  # Deliberately `uri.query` and not the merged pairs `build_url_object` uses:
-  # an inline query is part of how the route is addressed, while a declared
-  # query param is an input *to* a route and doesn't change its identity.
-  # Folding declared params in here would rename every parameterised endpoint.
-  private def item_label(uri : URI) : String
+  # It also has to carry the `#fragment` Noir uses to address many operations
+  # on one path: every GraphQL resolver and JSON-RPC method lives at the same
+  # `POST /graphql`, so without it Hasura's 15 operations were 15 sidebar
+  # entries all reading `POST /v1/graphql`, with nothing saying which was
+  # which. The fragment stays out of the request URL — it is Noir's
+  # discriminator, not something a server ever sees — so only the name
+  # carries it.
+  #
+  # Deliberately the route's own query and not the merged pairs
+  # `build_url_object` uses: an inline query is part of how the route is
+  # addressed, while a declared query param is an input *to* a route and
+  # doesn't change its identity. Folding declared params in here would rename
+  # every parameterised endpoint.
+  private def item_label(uri : URI, url_parts) : String
     host = uri.host
-    label = host.nil? || host.empty? ? uri.path : "#{host}#{uri.path}"
-    query = uri.query
-    return label if query.nil? || query.empty?
+    path = route_path(url_parts[:route])
+    label = host.nil? || host.empty? ? path : "#{host}#{path}"
 
-    "#{label}?#{query}"
+    query = url_parts[:query]
+    unless query.empty?
+      label = "#{label}?#{query.map { |name, value| "#{name}=#{value}" }.join("&")}"
+    end
+
+    fragment = url_parts[:fragment]
+    fragment ? "#{label}##{fragment}" : label
   end
 end
