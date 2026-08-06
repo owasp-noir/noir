@@ -729,4 +729,82 @@ describe "OutputBuilderHtml" do
     output.should contain("severity-high")
     output.should contain("severity-info")
   end
+
+  # Only the *failure* path of the custom-template feature was covered (an
+  # unreadable template falling back to the built-in report). A bare `rescue`
+  # in `apply_template` swallows every exception, so a regression in the
+  # substitution itself would have silently degraded to the default report with
+  # nothing to notice it — the documented `report-template.html` feature had no
+  # test that it works at all.
+  it "substitutes every placeholder in a custom report template" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    temp_dir = File.join(Dir.tempdir, "noir_tpl_#{Process.pid}_#{Time.utc.to_unix_ms}")
+    Dir.mkdir_p(temp_dir)
+    ENV["NOIR_HOME"] = temp_dir
+
+    begin
+      File.write(File.join(temp_dir, "report-template.html"), <<-TPL)
+        <!DOCTYPE html><html><head><%= noir_head %></head><body>
+        MARK-HEADER<%= noir_header %>
+        MARK-SUMMARY<%= noir_summary %>
+        MARK-ENDPOINTS<%= noir_endpoints %>
+        MARK-PASSIVE<%= noir_passive_scans %>
+        MARK-FOOTER<%= noir_footer %>
+        <%= noir_scripts %></body></html>
+        TPL
+
+      endpoint = Endpoint.new("/api/users", "GET")
+      endpoint.push_param(Param.new("page", "1", "query"))
+      scan_yaml = YAML.parse <<-YAML
+        id: tpl-rule
+        info:
+          name: "Test finding"
+          author: ["a"]
+          severity: "high"
+          description: "A finding rendered through the custom template"
+          reference: ["https://example.com"]
+        matchers-condition: "or"
+        matchers:
+          - type: "regex"
+            patterns: ["x"]
+            condition: "or"
+        category: "secret"
+        techs: ["*"]
+        YAML
+      finding = PassiveScanResult.new(PassiveScan.new(scan_yaml), "app/config.rb", 4, "SECRET=abc")
+
+      builder.print([endpoint], [finding])
+      output = builder.io.to_s
+
+      # The template's own markup survives — this is the custom layout, not the
+      # built-in one silently substituted for it.
+      output.should contain("MARK-HEADER")
+      output.should contain("MARK-SUMMARY")
+      output.should contain("MARK-ENDPOINTS")
+      output.should contain("MARK-PASSIVE")
+      output.should contain("MARK-FOOTER")
+
+      # Every placeholder is consumed; a leftover tag would ship to the browser.
+      output.should_not match(/<%=\s*noir_\w+\s*%>/)
+
+      # And each section actually rendered its content.
+      output.should contain("data-endpoint")
+      output.should contain("/api/users")
+      output.should contain("page")
+      output.should contain("Test finding")
+      output.should contain("noir-theme")
+    ensure
+      FileUtils.rm_rf(temp_dir)
+      ENV.delete("NOIR_HOME")
+    end
+  end
 end
