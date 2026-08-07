@@ -389,19 +389,6 @@ module Analyzer::Swift
       ""
     end
 
-    private def join_paths(prefix : String, path : String) : String
-      return normalize_path(path) if prefix.empty? || prefix == "/"
-      return normalize_path(prefix) if path.empty? || path == "/"
-
-      "#{normalize_path(prefix).rstrip("/")}/#{path.lstrip("/")}"
-    end
-
-    private def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized.gsub(%r{/+}, "/")
-    end
-
     private def code_line(line : String) : String
       # String-aware: only truncate at a `//` OUTSIDE a string literal, so a path
       # like "api//v2" or a "https://..." redirect arg isn't cut (which made

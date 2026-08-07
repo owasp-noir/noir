@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 
 module Noir
@@ -1970,18 +1971,7 @@ module Noir
     # + `@GetMapping` (no path) maps to `/api`, not `/api/` (see the
     # empty-path branch below).
     private def join_paths(prefix : String, path : String) : String
-      return path if prefix.empty?
-      # A bare method mapping (`@GetMapping` with no path arg) on a class
-      # mapped to `/api/article` resolves to `/api/article` in Spring —
-      # the empty segment is absorbed, not turned into `/api/article/`.
-      # An explicit `@GetMapping("/")` still carries its own `/` segment
-      # and falls through to the last branch. Only an all-slash class
-      # prefix (`@RequestMapping("/")`) keeps the root `/`.
-      if path.empty?
-        trimmed = prefix.rstrip('/')
-        return trimmed.empty? ? "/" : trimmed
-      end
-      "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
+      Noir::URLPath.join_absorbing(prefix, path)
     end
   end
 end

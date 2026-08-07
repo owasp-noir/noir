@@ -1098,19 +1098,6 @@ module Analyzer::Swift
       ""
     end
 
-    private def join_paths(prefix : String, path : String) : String
-      return normalize_path(path) if prefix.empty? || prefix == "/"
-      return normalize_path(prefix) if path.empty? || path == "/"
-
-      "#{normalize_path(prefix).rstrip("/")}/#{path.lstrip("/")}"
-    end
-
-    private def normalize_path(path : String) : String
-      normalized = path.empty? ? "/" : path
-      normalized = "/#{normalized}" unless normalized.starts_with?("/")
-      normalized.gsub(%r{/+}, "/")
-    end
-
     private def strip_code_line(line : String) : String
       stripped, _, _ = Noir::SwiftCalleeExtractor.strip_non_code_with_state(line, 0, false)
       stripped

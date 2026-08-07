@@ -39,6 +39,23 @@ module Analyzer::Swift
       get_files_by_extension(".swift")
     end
 
+    # Route-path composition shared by the Vapor and Hummingbird
+    # analyzers (which carried byte-identical copies): prefix and path
+    # join with exactly one `/`, a bare or root side yields the other
+    # side normalized, and repeated slashes collapse.
+    protected def join_paths(prefix : String, path : String) : String
+      return normalize_path(path) if prefix.empty? || prefix == "/"
+      return normalize_path(prefix) if path.empty? || path == "/"
+
+      "#{normalize_path(prefix).rstrip("/")}/#{path.lstrip("/")}"
+    end
+
+    protected def normalize_path(path : String) : String
+      normalized = path.empty? ? "/" : path
+      normalized = "/#{normalized}" unless normalized.starts_with?("/")
+      normalized.gsub(%r{/+}, "/")
+    end
+
     protected def scan_accepts?(path : String) : Bool
       # Swift Package Manager convention parks tests under
       # `Tests/<TargetName>Tests/`. Real route handlers never
