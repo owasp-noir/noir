@@ -113,6 +113,55 @@ module Analyzer::Dart
       nil
     end
 
+    # Index of the `)` closing the `(` at `open_idx`, or nil when the
+    # expression never balances. String literals are skipped so a paren
+    # inside `'a)b'` doesn't close the call, and backslash escapes inside
+    # them are honoured.
+    #
+    # Both the argument and the result stay in CHAR space, consistent with
+    # `Regex::MatchData#begin`, `Analyzer#line_number_for_index` and the
+    # `char_index_to_byte_index` conversions the analyzers use for callee
+    # extraction.
+    def find_matching_paren(text : String, open_idx : Int32) : Int32?
+      # `String#[]` re-walks from byte 0 on every call once the source
+      # contains any multi-byte char, turning this scan O(n^2); index a
+      # materialized Array(Char) instead (O(1) per access).
+      chars = text.chars
+      depth = 0
+      i = open_idx
+      in_string = false
+      string_quote = '\0'
+
+      while i < chars.size
+        c = chars[i]
+        if in_string
+          if c == '\\' && i + 1 < chars.size
+            i += 2
+            next
+          end
+          in_string = false if c == string_quote
+          i += 1
+          next
+        end
+
+        case c
+        when '"', '\''
+          in_string = true
+          string_quote = c
+        when '('
+          depth += 1
+        when ')'
+          depth -= 1
+          return i if depth == 0
+        else
+          # ignore
+        end
+        i += 1
+      end
+
+      nil
+    end
+
     private def relative_for_match(path : String, base_path : String?) : String
       Noir::PathScope.relative_under(path, base_path)
     end

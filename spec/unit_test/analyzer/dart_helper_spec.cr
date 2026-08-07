@@ -47,4 +47,38 @@ describe Analyzer::Dart::Helper do
       Analyzer::Dart::Helper.extract_string_literal("RouteRoot()").should be_nil
     end
   end
+
+  describe ".find_matching_paren" do
+    it "returns the index of the balancing paren" do
+      text = "get('/a', handler)"
+      Analyzer::Dart::Helper.find_matching_paren(text, 3).should eq(text.size - 1)
+    end
+
+    it "skips nested calls" do
+      text = "get(join('/a', '/b'), handler)"
+      Analyzer::Dart::Helper.find_matching_paren(text, 3).should eq(text.size - 1)
+    end
+
+    it "ignores parens inside string literals" do
+      # The `)` in the path literal must not close the call.
+      text = "get('/a)b', handler)"
+      Analyzer::Dart::Helper.find_matching_paren(text, 3).should eq(text.size - 1)
+    end
+
+    it "honours backslash escapes inside literals" do
+      # Dart source: get('it\'s )', h) — the escaped quote must not end the
+      # literal, so the `)` inside it must not close the call either.
+      text = "get('it\\'s )', h)"
+      Analyzer::Dart::Helper.find_matching_paren(text, 3).should eq(text.size - 1)
+    end
+
+    it "returns char indices on multi-byte sources" do
+      text = "get('한글', handler)"
+      Analyzer::Dart::Helper.find_matching_paren(text, 3).should eq(text.size - 1)
+    end
+
+    it "returns nil when the expression never balances" do
+      Analyzer::Dart::Helper.find_matching_paren("get('/a', handler", 3).should be_nil
+    end
+  end
 end

@@ -152,14 +152,14 @@ module Analyzer::Dart
         match_begin = m.begin(0)
         open_paren = m.end(0).try &.- 1
         next unless match_begin && open_paren
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
 
         args = named_args(cleaned[(open_paren + 1)...close_paren])
         name_arg = args["name"]?
         next unless name_arg
 
-        line = line_for_offset(content, match_begin)
+        line = line_number_for_index(content, match_begin)
         pages << {
           name_arg:   name_arg,
           method_arg: args["method"]?,
@@ -307,43 +307,6 @@ module Analyzer::Dart
       nil
     end
 
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      chars = text.chars
-      depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
-
     private def split_top_level_args(text : String) : Array(String)
       result = [] of String
       chars = text.chars
@@ -400,21 +363,6 @@ module Analyzer::Dart
       end
       result << chars[start..].join if start <= chars.size
       result
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      # `each_char` walks the UTF-8 buffer once with a reader instead of
-      # re-scanning from byte 0 on every indexed `content[i]` access.
-      content.each_char do |c|
-        break if i >= limit
-        count += 1 if c == '\n'
-        i += 1
-      end
-      count
     end
   end
 end

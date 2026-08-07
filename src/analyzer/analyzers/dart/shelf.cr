@@ -197,7 +197,7 @@ module Analyzer::Dart
         match_begin = m.begin(0)
         open_paren = m.end(0).try &.- 1
         next unless match_begin && open_paren
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
 
         args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
@@ -213,7 +213,7 @@ module Analyzer::Dart
         prefix = owner ? prefixes[owner]? : nil
         route_path = normalize_path(prefix ? join_path(prefix, normalize_path(literal)) : literal)
 
-        line = line_for_offset(content, match_begin)
+        line = line_number_for_index(content, match_begin)
         callees = include_callee ? annotation_callees(content, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
 
         key = owner || "@route:#{path}"
@@ -234,7 +234,7 @@ module Analyzer::Dart
         match_begin = m.begin(0)
         open_paren = m.end(0).try &.- 1
         next unless match_begin && open_paren
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
         args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
         next if args.empty?
@@ -368,7 +368,7 @@ module Analyzer::Dart
             j += 1
           end
           if j < chars.size && chars[j] == '(' && relevant_method?(name)
-            close_paren = find_matching_paren(cleaned, j)
+            close_paren = Helper.find_matching_paren(cleaned, j)
             if close_paren && close_paren < end_idx
               handle_call(name, cleaned, j, close_paren, file_content, path, include_callee, routes, mounts)
               i = close_paren + 1
@@ -394,7 +394,7 @@ module Analyzer::Dart
         match_end = m.end(0)
         next unless match_end
         open_paren = match_end - 1
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
         handle_call(method, cleaned, open_paren, close_paren, file_content, path, include_callee, routes, mounts)
       end
@@ -421,7 +421,7 @@ module Analyzer::Dart
       literal = extract_string_literal(args[0])
       return unless literal
 
-      line = line_for_offset(file_content, open_paren)
+      line = line_number_for_index(file_content, open_paren)
 
       case method
       when "mount"
@@ -623,43 +623,6 @@ module Analyzer::Dart
       chars.size
     end
 
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      chars = text.chars
-      depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
-
     private def split_top_level_args(text : String) : Array(String)
       result = [] of String
       chars = text.chars
@@ -786,21 +749,6 @@ module Analyzer::Dart
       end
 
       result.to_s
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      # `each_char` walks the UTF-8 buffer once with a reader instead of
-      # re-scanning from byte 0 on every indexed `content[i]` access.
-      content.each_char do |c|
-        break if i >= limit
-        count += 1 if c == '\n'
-        i += 1
-      end
-      count
     end
   end
 end
