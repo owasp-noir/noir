@@ -1,0 +1,205 @@
+# NoirTechs catalog: rust technologies.
+# Entry shape and helpers live in src/techs/techs.cr, which
+# merges every Catalog constant into NoirTechs::TECHS.
+module NoirTechs::Catalog
+  RUST = {
+    :rust_axum => {
+      :framework => "Axum",
+      :language  => "Rust",
+      :similar   => ["axum", "rust-axum", "rust_axum"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_rocket => {
+      :framework => "Rocket",
+      :language  => "Rust",
+      :similar   => ["rocket", "rust-rocket", "rust_rocket"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => false,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_cli => {
+      :framework => "CLI (std::env / clap / structopt / argh / getopts)",
+      :language  => "Rust",
+      :similar   => ["rust-cli", "rust_cli", "clap", "structopt", "argh", "bpaf", "pico-args", "getopts"],
+      :supported => {
+        :endpoint => true,
+        :method   => false,
+        :params   => {
+          :query  => false,
+          :path   => false,
+          :body   => false,
+          :header => false,
+          :cookie => false,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_actix_web => {
+      :framework => "Actix Web",
+      :language  => "Rust",
+      :similar   => ["actix-web", "actix_web", "rust-actix-web", "rust_actix_web"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_loco => {
+      :framework => "Loco",
+      :language  => "Rust",
+      :similar   => ["loco", "loco-rs", "rust-loco", "rust_loco"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_rwf => {
+      :framework => "RWF",
+      :language  => "Rust",
+      :similar   => ["rwf", "rust-rwf", "rust_rwf"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_tide => {
+      :framework => "Tide",
+      :language  => "Rust",
+      :similar   => ["tide", "rust-tide", "rust_tide"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_warp => {
+      :framework => "Warp",
+      :language  => "Rust",
+      :similar   => ["warp", "rust-warp", "rust_warp"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_gotham => {
+      :framework => "Gotham",
+      :language  => "Rust",
+      :similar   => ["gotham", "rust-gotham", "rust_gotham"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => false,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_salvo => {
+      :framework => "Salvo",
+      :language  => "Rust",
+      :similar   => ["salvo", "salvo-rs", "rust-salvo", "rust_salvo"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+    :rust_poem => {
+      :framework => "Poem",
+      :language  => "Rust",
+      :similar   => ["poem", "poem-openapi", "rust-poem", "rust_poem"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => {
+          :query  => true,
+          :path   => true,
+          :body   => true,
+          :header => true,
+          :cookie => true,
+        },
+        :static_path => false,
+        :websocket   => false,
+      },
+    },
+  }
+end
