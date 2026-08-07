@@ -199,6 +199,30 @@ class Analyzer
     end
   end
 
+  # Engine scan skeleton shared by the per-language engines: runs `block`
+  # over `files` in parallel, skipping paths `scan_accepts?` vetoes, and
+  # isolating failures so one unreadable or unparsable file costs only
+  # itself (logged at debug), never the whole scan. Before this existed,
+  # nine engines carried byte-identical copies of the double-rescue body.
+  protected def scan_files(files : Array(String), &block : String -> Nil) : Nil
+    parallel_analyze(files) do |path|
+      next unless scan_accepts?(path)
+      begin
+        block.call(path)
+      rescue e
+        logger.debug "Error analyzing #{path}: #{e}"
+      end
+    end
+  rescue e
+    logger.debug e
+  end
+
+  # Per-path veto consulted by `scan_files`. Engines override this with
+  # their language's test/vendor/dependency filters.
+  protected def scan_accepts?(path : String) : Bool
+    true
+  end
+
   # Order-preserving dedup of params by (name, param_type). Analyzers
   # that accumulate every reference they see (rather than every route)
   # collect the same key many times over.

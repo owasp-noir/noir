@@ -207,17 +207,7 @@ module Analyzer::Ruby
     RUBY_SOURCE_EXTENSIONS = [".rb", ".ru"]
 
     protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(get_files_by_extensions(RUBY_SOURCE_EXTENSIONS)) do |path|
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+      scan_files(get_files_by_extensions(RUBY_SOURCE_EXTENSIONS), &block)
     end
 
     protected def attach_ruby_callees(endpoint : Endpoint, callees : Array(Noir::RubyCalleeExtractor::Entry))

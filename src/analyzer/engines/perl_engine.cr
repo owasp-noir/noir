@@ -1,16 +1,9 @@
 require "../../models/analyzer"
 
+require "./file_scan_engine"
+
 module Analyzer::Perl
-  abstract class PerlEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
+  abstract class PerlEngine < FileScanEngine
     # Perl ships in `.pl`, `.pm`, `.psgi`, and `.t`. Pull those from the
     # extension index instead of walking the whole monorepo `file_map`.
     # Adapters still re-filter inside `analyze_file` for framework-specific
@@ -18,18 +11,8 @@ module Analyzer::Perl
     # regular files — no per-path `File.exists?` / `File.directory?`.
     PERL_SOURCE_EXTENSIONS = [".pl", ".pm", ".psgi", ".t"]
 
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(get_files_by_extensions(PERL_SOURCE_EXTENSIONS)) do |path|
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    protected def scan_target_files : Array(String)
+      get_files_by_extensions(PERL_SOURCE_EXTENSIONS)
     end
 
     # Perl test files live in `.t` scripts or under a `/t/` directory.

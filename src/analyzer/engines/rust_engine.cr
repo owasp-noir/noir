@@ -1,17 +1,9 @@
 require "../../models/analyzer"
+require "./file_scan_engine"
 require "../../miniparsers/rust_callee_extractor"
 
 module Analyzer::Rust
-  abstract class RustEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
+  abstract class RustEngine < FileScanEngine
     # Standard set of HTTP methods that `axum::routing::any(...)` /
     # actix `web::route()` / similar method-agnostic registrations
     # accept. Mirrors the Go `fan_out_verbs` set so output formats
@@ -30,27 +22,15 @@ module Analyzer::Rust
       end
     end
 
-    # `.rs` sources from the extension index. Subclasses that want a
-    # different scan shape (e.g. a post-pass after the file walk) can
-    # override `analyze` and call this helper directly; the default
-    # `analyze` above is the simpler path. Paths are detector-registered
-    # regular files — no per-path `File.exists?` / `File.directory?`.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        roots = crate_roots
-        parallel_analyze(get_files_by_extension(".rs")) do |path|
-          next if RustEngine.test_path?(base_relative_path(path))
-          next unless path_under_crate_roots?(path, roots)
+    # `.rs` sources from the extension index; test-path and crate-root
+    # gating lives in `scan_accepts?`.
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".rs")
+    end
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    protected def scan_accepts?(path : String) : Bool
+      return false if RustEngine.test_path?(base_relative_path(path))
+      path_under_crate_roots?(path, crate_roots)
     end
 
     # The Cargo dependencies that identify this analyzer's framework. An
@@ -70,6 +50,12 @@ module Analyzer::Rust
     # case `path_under_crate_roots?` waves everything through, so a source
     # tree checked out without its manifest keeps working exactly as before.
     private def crate_roots : Array(String)
+      @crate_roots ||= compute_crate_roots
+    end
+
+    @crate_roots : Array(String)?
+
+    private def compute_crate_roots : Array(String)
       dependencies = crate_dependencies
       return [] of String if dependencies.empty?
 

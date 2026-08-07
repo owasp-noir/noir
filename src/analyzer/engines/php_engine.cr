@@ -2,20 +2,13 @@ require "../../models/analyzer"
 require "../../miniparsers/php_callee_extractor"
 require "../../utils/utils.cr"
 
+require "./file_scan_engine"
+
 module Analyzer::Php
-  abstract class PhpEngine < Analyzer
+  abstract class PhpEngine < FileScanEngine
     # See AGENTS.md §"Two engine shapes" (and
     # docs/content/development/analyzer_architecture/) for when to override
     # `analyze_file` vs. `analyze` + `parallel_file_scan`.
-
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
 
     # Default source set for PHP framework adapters: every registered
     # `.php` file. Symfony overrides this to also include YAML route
@@ -25,24 +18,15 @@ module Analyzer::Php
       get_files_by_extension(".php")
     end
 
-    # Walk PHP sources concurrently. Extension + test-path filtering
-    # lives here so adapters don't re-check every monorepo path.
-    # Paths come from CodeLocator (regular files only); missing files
-    # error on read and are logged.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(php_source_files) do |path|
-          next if PhpEngine.test_path?(base_relative_path(path))
+    # Extension + test-path filtering lives here so adapters don't
+    # re-check every monorepo path. Paths come from CodeLocator (regular
+    # files only); missing files error on read and are logged.
+    protected def scan_target_files : Array(String)
+      php_source_files
+    end
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    protected def scan_accepts?(path : String) : Bool
+      !PhpEngine.test_path?(base_relative_path(path))
     end
 
     # Standard PHP test-source conventions:

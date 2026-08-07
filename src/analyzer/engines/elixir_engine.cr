@@ -1,17 +1,9 @@
 require "../../models/analyzer"
+require "./file_scan_engine"
 require "../../miniparsers/elixir_callee_extractor"
 
 module Analyzer::Elixir
-  abstract class ElixirEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
+  abstract class ElixirEngine < FileScanEngine
     protected def attach_elixir_callees(endpoint : Endpoint, callees : Array(Noir::ElixirCalleeExtractor::Entry))
       Noir::ElixirCalleeExtractor.attach_to(endpoint, callees)
     end
@@ -134,23 +126,15 @@ module Analyzer::Elixir
     # Walk only Elixir sources concurrently. Extension + ExUnit-test
     # filtering lives here so framework adapters don't re-check every
     # path the monorepo file map yields.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        # CodeLocator already registered these paths during detection;
-        # skip the per-file `File.exists?` syscall. Missing files surface
-        # as read errors inside the analyzer and are logged there.
-        parallel_analyze(elixir_source_files) do |path|
-          next if elixir_test_path?(path)
+    # CodeLocator already registered these paths during detection; skip
+    # the per-file `File.exists?` syscall. Missing files surface as read
+    # errors inside the analyzer and are logged there.
+    protected def scan_target_files : Array(String)
+      elixir_source_files
+    end
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    protected def scan_accepts?(path : String) : Bool
+      !elixir_test_path?(path)
     end
   end
 end
