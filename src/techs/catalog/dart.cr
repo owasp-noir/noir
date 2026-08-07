@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :dart_angel3 => {
       :framework => "Angel3",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :dart_get_server => {
       :framework => "GetServer",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :dart_frog => {
       :framework => "Dart Frog",
@@ -92,6 +95,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true},
     },
     :dart_http => {
       :framework => "dart:io HttpServer",
@@ -128,6 +132,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :dart_shelf => {
       :framework => "Shelf",
@@ -146,6 +151,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
   }
 end

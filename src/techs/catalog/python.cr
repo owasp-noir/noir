@@ -20,6 +20,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :python_django_ninja => {
       :framework => "Django Ninja",
@@ -38,6 +39,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :python_fastapi => {
       :framework => "FastAPI",
@@ -56,6 +58,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :python_aiohttp => {
       :framework => "aiohttp",
@@ -74,6 +77,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true},
     },
     :python_bottle => {
       :framework => "Bottle",
@@ -92,6 +96,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :python_cli => {
       :framework => "CLI (argparse / click / typer / fire / docopt / getopt / absl / cleo)",
@@ -131,6 +136,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :python_flask => {
       :framework => "Flask",
@@ -149,6 +155,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :python_litestar => {
       :framework => "Litestar",
@@ -167,6 +174,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true},
     },
     :python_pyramid => {
       :framework => "Pyramid",
@@ -185,6 +193,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :python_quart => {
       :framework => "Quart",
@@ -203,6 +212,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true, :guards => true},
     },
     :python_robyn => {
       :framework => "Robyn",
@@ -221,6 +231,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true},
     },
     :python_sanic => {
       :framework => "Sanic",
@@ -239,6 +250,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true, :guards => true},
     },
     :python_starlette => {
       :framework => "Starlette",
@@ -257,6 +269,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :python_tornado => {
       :framework => "Tornado",
@@ -275,6 +288,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true, :guards => true},
     },
     :python_http_server => {
       :framework => "http.server",
@@ -293,6 +307,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
   }
 end

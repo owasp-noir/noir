@@ -56,6 +56,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :ruby_hanami => {
       :framework => "Hanami",
@@ -74,6 +75,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :ruby_rails => {
       :framework => "Rails",
@@ -92,6 +94,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :ruby_roda => {
       :framework => "Roda",
@@ -110,6 +113,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :ruby_sinatra => {
       :framework => "Sinatra",
@@ -128,6 +132,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :ruby_webrick => {
       :framework => "WEBrick",
@@ -146,6 +151,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
   }
 end

@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_laravel => {
       :framework => "Laravel",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_lumen => {
       :framework => "Lumen",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :php_mautic => {
       :framework => "Mautic",
@@ -110,6 +113,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_slim => {
       :framework => "Slim",
@@ -128,6 +132,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_symfony => {
       :framework => "Symfony",
@@ -146,6 +151,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_yii => {
       :framework => "Yii2",
@@ -164,6 +170,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_thinkphp => {
       :framework => "ThinkPHP",
@@ -182,6 +189,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_cakephp => {
       :framework => "CakePHP",
@@ -200,6 +208,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_codeigniter => {
       :framework => "CodeIgniter",
@@ -218,6 +227,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :php_hyperf => {
       :framework => "Hyperf",
@@ -236,6 +246,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :php_wordpress => {
       :framework => "WordPress",

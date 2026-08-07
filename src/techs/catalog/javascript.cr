@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_astro => {
       :framework => "Astro",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_elysia => {
       :framework => "Elysia",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_express => {
       :framework => "Express",
@@ -92,6 +95,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :js_socketio => {
       :framework => "Socket.IO",
@@ -128,6 +132,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :js_remix => {
       :framework => "Remix",
@@ -146,6 +151,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_sveltekit => {
       :framework => "SvelteKit",
@@ -164,6 +170,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_fastify => {
       :framework => "Fastify",
@@ -182,6 +189,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :js_fresh => {
       :framework => "Fresh",
@@ -200,6 +208,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_hapi => {
       :framework => "Hapi",
@@ -218,6 +227,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_apollo => {
       :framework => "Apollo Server",
@@ -236,6 +246,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true},
     },
     :js_graphql_yoga => {
       :framework => "GraphQL Yoga",
@@ -272,6 +283,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :js_http => {
       :framework => "Node.js http/https",
@@ -308,6 +320,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :js_nestjs => {
       :framework => "NestJS",
@@ -326,6 +339,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :js_nextjs => {
       :framework => "Next.js",
@@ -344,6 +358,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_nitro => {
       :framework => "Nitro",
@@ -362,6 +377,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :js_nuxtjs => {
       :framework => "NuxtJS",
@@ -380,6 +396,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
   }
 end
