@@ -59,5 +59,26 @@ module Noir
       return prefix.rstrip('/') if suffix.empty?
       "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
+
+    # Spring's mapping-composition rule, shared by the Java and Kotlin
+    # tree-sitter route extractors (which carried byte-identical copies):
+    # a bare method mapping (`@GetMapping` with no path arg) on a class
+    # mapped to `/api/article` resolves to `/api/article` — the empty
+    # segment is absorbed, not turned into `/api/article/`. An explicit
+    # `@GetMapping("/")` still carries its own `/` segment and falls
+    # through to the seam join. Only an all-slash class prefix
+    # (`@RequestMapping("/")`) keeps the root `/`.
+    #
+    # Not `join_trimmed`: that keeps an empty-prefix suffix untouched but
+    # trims a trailing slash when the *suffix* is empty without the
+    # root-`/` restore this rule needs.
+    def self.join_absorbing(prefix : String, path : String) : String
+      return path if prefix.empty?
+      if path.empty?
+        trimmed = prefix.rstrip('/')
+        return trimmed.empty? ? "/" : trimmed
+      end
+      "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
+    end
   end
 end

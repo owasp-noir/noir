@@ -1,3 +1,4 @@
+require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "./extraction_result_cache"
 require "../models/endpoint"
@@ -1291,30 +1292,10 @@ module Noir
       nil
     end
 
-    # Join a class prefix and a method path with exactly one `/`. Also
-    # handles the leading-slash ambiguity Spring is famously relaxed
-    # about: `@RequestMapping("items")` + `@GetMapping("{id}")` maps to
-    # `/items/{id}` even though neither segment has a leading slash.
-    #
-    # Empty method path (`@PostMapping` with no argument, or
-    # `@GetMapping("")`) collapses onto the class prefix — Spring absorbs
-    # the empty segment, so `@RequestMapping("/api")` + `@GetMapping`
-    # maps to `/api`, not `/api/` (see the empty-path branch below).
+    # Join a class prefix and a method path under Spring's
+    # mapping-composition rule — see `Noir::URLPath.join_absorbing`.
     private def join_paths(prefix : String, path : String) : String
-      return path if prefix.empty?
-      # A bare method mapping (`@GetMapping` / `@GetMapping("")`) on a
-      # class mapped to `/api/polls` resolves to `/api/polls` in Spring,
-      # NOT `/api/polls/` — the empty segment is absorbed into the class
-      # prefix. Mirror the jaxrs/quarkus/micronaut extractors and drop
-      # the trailing slash here; only a class prefix that is itself all
-      # slashes (`@RequestMapping("/")`) keeps the root `/`.
-      if path.empty?
-        trimmed = prefix.rstrip('/')
-        return trimmed.empty? ? "/" : trimmed
-      end
-      trimmed_prefix = prefix.rstrip('/')
-      trimmed_path = path.lstrip('/')
-      "#{trimmed_prefix}/#{trimmed_path}"
+      Noir::URLPath.join_absorbing(prefix, path)
     end
   end
 end
