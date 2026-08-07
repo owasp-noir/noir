@@ -82,7 +82,7 @@ module Analyzer::Dart
         next unless body_info
         body, body_start = body_info
 
-        line = line_for_offset(content, match_start)
+        line = line_number_for_index(content, match_start)
         methods = web_route_methods(body)
         callees = include_callee ? web_handler_callees(path, body, body_start, content) : [] of Noir::DartCalleeExtractor::Entry
         route_classes[{base_path, class_name}] = {methods: methods, file: path, line: line, callees: callees}
@@ -90,7 +90,7 @@ module Analyzer::Dart
 
       cleaned.scan(/\baddRoute\s*\(/) do |match|
         open_paren = (match.end(0) || 0) - 1
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
         args = split_top_level_commas(cleaned[(open_paren + 1)...close_paren])
         next if args.size < 2
@@ -137,19 +137,19 @@ module Analyzer::Dart
       m = class_body.match(/\b(?:handleCall|build)\s*\(/)
       return [] of Noir::DartCalleeExtractor::Entry unless m
       open_paren = (m.end(0) || 0) - 1
-      close_paren = find_matching_paren(class_body, open_paren)
+      close_paren = Helper.find_matching_paren(class_body, open_paren)
       return [] of Noir::DartCalleeExtractor::Entry unless close_paren
 
-      # close_paren is a CHAR index (find_matching_paren is char-based); the
+      # close_paren is a CHAR index (Helper.find_matching_paren is char-based); the
       # extractor scans/returns BYTE offsets. Convert at the boundary so the
-      # body slice is correct and line_for_offset (char-based) gets char offsets.
+      # body slice is correct and line_number_for_index (char-based) gets char offsets.
       start_byte = class_body.char_index_to_byte_index(close_paren + 1)
       return [] of Noir::DartCalleeExtractor::Entry unless start_byte
       body_info = Noir::DartCalleeExtractor.extract_body_after(class_body, start_byte)
       return [] of Noir::DartCalleeExtractor::Entry unless body_info
       body, body_start, _ = body_info
       body_start_char = class_body.byte_index_to_char_index(body_start) || 0
-      start_line = line_for_offset(file_content, class_body_start + body_start_char)
+      start_line = line_number_for_index(file_content, class_body_start + body_start_char)
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
@@ -180,7 +180,7 @@ module Analyzer::Dart
         next unless body_info
 
         body, body_start = body_info
-        line_number = line_for_offset(content, match_start)
+        line_number = line_number_for_index(content, match_start)
         endpoint_name = endpoint_name_for(class_name)
         process_class_body(path, endpoint_name, body, body_start, content, line_number, include_callee)
       end
@@ -245,11 +245,11 @@ module Analyzer::Dart
           if rest.match(/\A\s*Session\s+[A-Za-z_][A-Za-z0-9_]*/)
             method_name = method_name_before(body, i)
             if method_name && !method_name.empty? && !method_name.starts_with?("_")
-              close_paren = find_matching_paren(body, i)
+              close_paren = Helper.find_matching_paren(body, i)
               if close_paren
                 params_text = body[(i + 1)...close_paren]
                 params = parse_method_params(params_text)
-                line = line_for_offset(file_content, body_start + i)
+                line = line_number_for_index(file_content, body_start + i)
                 line = fallback_line if line <= 0
                 callees = include_callee ? callees_for_method_body(path, body, body_start, close_paren, file_content) : [] of Noir::DartCalleeExtractor::Entry
                 emit_endpoint(path, endpoint_name, method_name, params, line, callees)
@@ -379,48 +379,8 @@ module Analyzer::Dart
 
       body, body_start, _ = body_info
       body_start_char = class_body.byte_index_to_char_index(body_start) || 0
-      start_line = line_for_offset(file_content, class_body_start + body_start_char)
+      start_line = line_number_for_index(file_content, class_body_start + body_start_char)
       Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
-    end
-
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      # `String#[]` re-walks from byte 0 on every call once the source
-      # contains any multi-byte char, turning this scan O(n^2); index a
-      # materialized Array(Char) instead (O(1) per access).
-      chars = text.chars
-      depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
     end
 
     private def extract_braced_block(text : String, start : Int32) : Tuple(String, Int32)?
@@ -538,21 +498,6 @@ module Analyzer::Dart
       end
 
       result.to_s
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      # `each_char` walks the UTF-8 buffer once with a reader instead of
-      # re-scanning from byte 0 on every indexed `content[i]` access.
-      content.each_char do |c|
-        break if i >= limit
-        count += 1 if c == '\n'
-        i += 1
-      end
-      count
     end
   end
 end

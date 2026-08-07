@@ -148,7 +148,7 @@ module Analyzer::Dart
           base = prefixes[recv]?
           next unless base
           open_paren = (m.end(0) || 0) - 1
-          close_paren = find_matching_paren(cleaned, open_paren)
+          close_paren = Helper.find_matching_paren(cleaned, open_paren)
           next unless close_paren
           args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
           next if args.empty?
@@ -180,7 +180,7 @@ module Analyzer::Dart
         match_end = m.end(0)
         next unless match_end
         open_paren = match_end - 1
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
         handle_call(method, cleaned, open_paren, close_paren, prefix, content, path, include_callee, endpoints, seen)
       end
@@ -202,7 +202,7 @@ module Analyzer::Dart
         base = prefixes[rvar]?
         next unless base
         open_paren = (m.end(0) || 0) - 1
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
         args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
         next if args.empty?
@@ -261,7 +261,7 @@ module Analyzer::Dart
         break unless i < stmt_end && chars[i] == '('
 
         open_paren = i
-        close_paren = find_matching_paren(cleaned, open_paren)
+        close_paren = Helper.find_matching_paren(cleaned, open_paren)
         break unless close_paren && close_paren <= stmt_end
 
         if relevant_method?(name)
@@ -302,7 +302,7 @@ module Analyzer::Dart
       return unless literal
 
       url = prefix.empty? ? normalize_path(literal) : normalize_path(alfred_compose(prefix, literal))
-      line = line_for_offset(content, open_paren)
+      line = line_number_for_index(content, open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
       if include_callee
@@ -388,49 +388,6 @@ module Analyzer::Dart
     end
 
     # ---------- Source-string utilities ----------
-
-    # Char-based matching `)` for the `(` at `open_idx`, so the returned
-    # offset stays in CHAR space (consistent with `line_for_offset` and the
-    # `char_index_to_byte_index` conversions used for callee extraction).
-    private def find_matching_paren(text : String, open_idx : Int32) : Int32?
-      # `String#[]` re-walks from byte 0 on every call once the source
-      # contains any multi-byte char, turning this scan O(n^2); index a
-      # materialized Array(Char) instead (O(1) per access).
-      chars = text.chars
-      depth = 0
-      i = open_idx
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
 
     # Char index just past the end of the statement beginning at `start`:
     # the first `;` at bracket depth zero (or end of source). Used to bound
@@ -569,21 +526,6 @@ module Analyzer::Dart
       end
       result << chars[start..].join if start <= chars.size
       result
-    end
-
-    private def line_for_offset(content : String, offset : Int32) : Int32
-      return 1 if offset <= 0
-      limit = offset > content.size ? content.size : offset
-      count = 1
-      i = 0
-      # `each_char` walks the UTF-8 buffer once with a reader instead of
-      # re-scanning from byte 0 on every indexed `content[i]` access.
-      content.each_char do |c|
-        break if i >= limit
-        count += 1 if c == '\n'
-        i += 1
-      end
-      count
     end
   end
 end
