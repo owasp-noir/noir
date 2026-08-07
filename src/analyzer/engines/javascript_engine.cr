@@ -21,17 +21,7 @@ module Analyzer::Javascript
     #
     # Name-consistent with the other engines' `parallel_file_scan` helpers.
     protected def parallel_file_scan(extensions : Array(String) = DEFAULT_EXTENSIONS, &block : String -> Nil) : Nil
-      begin
-        parallel_analyze(get_files_by_extensions(extensions)) do |path|
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+      scan_files(get_files_by_extensions(extensions), &block)
     end
 
     # Crystal recompiles an interpolated regex literal (/...#{x}.../) on

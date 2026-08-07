@@ -1,16 +1,9 @@
 require "../../models/analyzer"
 
+require "./file_scan_engine"
+
 module Analyzer::Swift
-  abstract class SwiftEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
+  abstract class SwiftEngine < FileScanEngine
     # `Tests/...` directory + `*Tests.swift` filename: the rigid Swift
     # Package Manager / XCTest conventions for test sources.
     #
@@ -42,28 +35,20 @@ module Analyzer::Swift
     # custom scan shape can override `analyze` and call this helper
     # directly. Paths are detector-registered regular files — no per-path
     # `File.exists?` / `File.directory?`.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(get_files_by_extension(".swift")) do |path|
-          # Swift Package Manager convention parks tests under
-          # `Tests/<TargetName>Tests/`. Real route handlers never
-          # live there, but vapor's own repo accounts for ~58
-          # phantom endpoints from `Tests/VaporTests/*Tests.swift`
-          # files that register routes against an inline test app.
-          # XCTest-style `*Tests.swift` filenames carry the same
-          # signal — pick them both up.
-          next if swift_test_path?(path)
-          next if swift_vendor_path?(path)
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".swift")
+    end
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    protected def scan_accepts?(path : String) : Bool
+      # Swift Package Manager convention parks tests under
+      # `Tests/<TargetName>Tests/`. Real route handlers never
+      # live there, but vapor's own repo accounts for ~58
+      # phantom endpoints from `Tests/VaporTests/*Tests.swift`
+      # files that register routes against an inline test app.
+      # XCTest-style `*Tests.swift` filenames carry the same
+      # signal — pick them both up.
+      return false if swift_test_path?(path)
+      !swift_vendor_path?(path)
     end
   end
 end

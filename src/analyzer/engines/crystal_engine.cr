@@ -1,17 +1,9 @@
 require "../../models/analyzer"
+require "./file_scan_engine"
 require "../../miniparsers/crystal_callee_extractor"
 
 module Analyzer::Crystal
-  abstract class CrystalEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
+  abstract class CrystalEngine < FileScanEngine
     # The shard that identifies this analyzer's framework. An analyzer that
     # declares one is only shown files inside a project whose `shard.yml`
     # depends on it. Without that, every Crystal analyzer sees every `.cr`
@@ -28,6 +20,12 @@ module Analyzer::Crystal
     # `path_under_shard_roots?` waves everything through, so a source tree
     # checked out without its manifest keeps working exactly as before.
     private def shard_roots : Array(String)
+      @shard_roots ||= compute_shard_roots
+    end
+
+    @shard_roots : Array(String)?
+
+    private def compute_shard_roots : Array(String)
       dependencies = shard_dependencies
       return [] of String if dependencies.empty?
 
@@ -62,37 +60,25 @@ module Analyzer::Crystal
       roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
     end
 
-    # `.cr` sources from the extension index, plus `lib/` exclusion
-    # (shards puts dependencies under `lib/` and we don't want to
-    # analyze them). Subclasses that need a custom scan shape can
-    # override `analyze` (e.g. Amber/Kemal run a public-dir post-pass
-    # after the file walk). Paths are detector-registered regular
-    # files — no per-path `File.exists?` / `File.directory?`.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        roots = shard_roots
-        parallel_analyze(get_files_by_extension(".cr")) do |path|
-          next if crystal_dependency_path?(path)
-          next unless path_under_shard_roots?(path, roots)
-          # Crystal's standard test directory is `spec/`, and test
-          # files always end in `_spec.cr`. Crystal framework repos
-          # (lucky, marten, amber, kemal) park hundreds of route
-          # declarations there to exercise the framework. Production
-          # code never adopts either convention. The `spec/` dir
-          # is checked relative to the project root so nested
-          # fixtures under noir's own `spec/functional_test/...`
-          # tree don't accidentally trip the filter.
-          next if crystal_spec_path?(path)
+    # `.cr` sources from the extension index; `lib/` exclusion (shards
+    # puts dependencies there) and the spec filter live in
+    # `scan_accepts?`.
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".cr")
+    end
 
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    protected def scan_accepts?(path : String) : Bool
+      return false if crystal_dependency_path?(path)
+      return false unless path_under_shard_roots?(path, shard_roots)
+      # Crystal's standard test directory is `spec/`, and test
+      # files always end in `_spec.cr`. Crystal framework repos
+      # (lucky, marten, amber, kemal) park hundreds of route
+      # declarations there to exercise the framework. Production
+      # code never adopts either convention. The `spec/` dir
+      # is checked relative to the project root so nested
+      # fixtures under noir's own `spec/functional_test/...`
+      # tree don't accidentally trip the filter.
+      !crystal_spec_path?(path)
     end
 
     # `*_spec.cr` is Crystal's official spec filename — unambiguous

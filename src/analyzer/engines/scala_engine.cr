@@ -2,33 +2,16 @@ require "../../models/analyzer"
 require "../../miniparsers/scala_callee_extractor"
 require "../../minilexers/scala_lexer"
 
+require "./file_scan_engine"
+
 module Analyzer::Scala
-  abstract class ScalaEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
-    end
-
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
+  abstract class ScalaEngine < FileScanEngine
     # `.scala` sources from the extension index. Subclasses that need a
     # custom scan shape can override `analyze` and call this helper
     # directly. Paths are detector-registered regular files — no per-path
     # `File.exists?` / `File.directory?`.
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      begin
-        parallel_analyze(get_files_by_extension(".scala")) do |path|
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".scala")
     end
 
     protected def attach_scala_callees(endpoint : Endpoint, callees : Array(Noir::ScalaCalleeExtractor::Entry))
