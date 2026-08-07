@@ -2,60 +2,6 @@ require "json"
 require "./catalog/*"
 
 module NoirTechs
-  CALLEE_SUPPORTED_TECHS = [
-    "android", "ios",
-    "cpp_crow", "cpp_drogon", "cpp_httplib", "cpp_oatpp",
-    "clojure_compojure", "clojure_pedestal", "clojure_reitit",
-    "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
-    "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints", "cs_httplistener",
-    "dart_alfred", "dart_angel3", "dart_get_server", "dart_frog", "dart_serverpod", "dart_shelf",
-    "elixir_bandit", "elixir_phoenix", "elixir_plug",
-    "fs_giraffe",
-    "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gf", "go_gin", "go_http",
-    "go_gozero", "go_goyave", "go_hertz", "go_httprouter", "go_huma", "go_iris", "go_mux", "go_pocketbase", "go_restful",
-    "groovy_grails",
-    "haskell_scotty", "haskell_servant", "haskell_yesod",
-    "java_armeria", "java_dropwizard", "java_httpserver", "java_jaxrs", "java_javalin", "java_micronaut",
-    "java_play", "java_quarkus", "java_spark", "java_spring", "java_struts2", "java_vertx", "java_wicket",
-    "js_adonisjs", "js_apollo", "js_astro", "js_elysia", "js_express", "js_fastify",
-    "js_fresh", "js_hapi", "js_hono", "js_koa", "js_nestjs", "js_nextjs",
-    "js_nitro", "js_nuxtjs", "js_remix", "js_restify", "js_sveltekit",
-    "kotlin_http4k", "kotlin_ktor", "kotlin_spring",
-    "lua_lapis", "lua_lor",
-    "perl_catalyst", "perl_dancer2", "perl_mojolicious",
-    "php_cakephp", "php_codeigniter", "php_hyperf", "php_laminas", "php_laravel", "php_lumen", "php_pure", "php_slim", "php_symfony", "php_thinkphp", "php_yii",
-    "python_aiohttp", "python_bottle", "python_django", "python_django_ninja", "python_falcon", "python_fastapi",
-    "python_flask", "python_litestar", "python_pyramid", "python_quart", "python_robyn", "python_sanic", "python_starlette", "python_tornado", "python_http_server",
-    "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra", "ruby_webrick",
-    "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_poem",
-    "rust_rocket", "rust_rwf", "rust_salvo", "rust_tide", "rust_warp",
-    "scala_akka", "scala_http4s", "scala_play", "scala_scalatra", "scala_tapir", "scala_zio_http",
-    "swift_hummingbird", "swift_kitura", "swift_vapor",
-    "ts_nestjs", "ts_tanstack_router", "ts_trpc",
-    "zig_jetzig", "zig_zap", "zig_http", "zig_httpz", "zig_tokamak",
-    "r_plumber",
-  ]
-
-  AI_CONTEXT_GUARD_SUPPORTED_TECHS = [
-    "android", "ios",
-    "crystal_amber", "crystal_grip", "crystal_kemal", "crystal_lucky", "crystal_marten",
-    "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_aspnet_mvc", "cs_carter", "cs_fastendpoints",
-    "elixir_bandit", "elixir_phoenix", "elixir_plug",
-    "go_beego", "go_chi", "go_echo", "go_fasthttp", "go_fiber", "go_gf", "go_gin", "go_http", "go_gozero", "go_goyave", "go_hertz", "go_iris", "go_mux", "go_restful",
-    "java_armeria", "java_jsp", "java_play", "java_spring", "java_vertx",
-    "js_express", "js_fastify", "js_hono", "js_koa", "js_nestjs", "js_nuxtjs", "js_restify",
-    "kotlin_ktor", "kotlin_spring",
-    "perl_catalyst", "perl_dancer2", "perl_mojolicious",
-    "php_cakephp", "php_codeigniter", "php_laminas", "php_laravel", "php_pure", "php_slim", "php_symfony", "php_thinkphp", "php_yii",
-    "python_django", "python_fastapi", "python_flask", "python_quart", "python_sanic", "python_tornado",
-    "ruby_grape", "ruby_hanami", "ruby_rails", "ruby_roda", "ruby_sinatra", "ruby_webrick",
-    "rust_actix_web", "rust_axum", "rust_gotham", "rust_loco", "rust_rocket", "rust_rwf", "rust_tide", "rust_warp",
-    "scala_akka", "scala_http4s", "scala_play", "scala_scalatra", "scala_tapir",
-    "swift_hummingbird", "swift_kitura", "swift_vapor",
-    "ts_nestjs",
-    "r_plumber",
-  ]
-
   TECHS = Catalog::ASP
     .merge(Catalog::ASPNET)
     .merge(Catalog::CFML)
@@ -87,6 +33,21 @@ module NoirTechs
     .merge(Catalog::SWIFT)
     .merge(Catalog::TYPESCRIPT)
     .merge(Catalog::ZIG)
+
+  # Derived from the per-tech :context flags in the catalog files, so a
+  # capability can only be declared on an entry that exists — the drift
+  # class the tech-registry integrity spec (#2384) exists to catch.
+  CALLEE_SUPPORTED_TECHS = TECHS.compact_map do |key, value|
+    context = value[:context]?
+    next unless context.is_a?(Hash)
+    key.to_s if context[:callee]?
+  end
+
+  AI_CONTEXT_GUARD_SUPPORTED_TECHS = TECHS.compact_map do |key, value|
+    context = value[:context]?
+    next unless context.is_a?(Hash)
+    key.to_s if context[:guards]?
+  end
 
   def self.techs
     TECHS

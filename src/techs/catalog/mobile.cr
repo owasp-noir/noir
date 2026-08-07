@@ -17,6 +17,7 @@ module NoirTechs::Catalog
           :cookie => false,
         },
       },
+      :context => {:callee => true, :guards => true},
     },
     :ios => {
       :format    => ["PLIST"],
@@ -32,6 +33,7 @@ module NoirTechs::Catalog
           :cookie => false,
         },
       },
+      :context => {:callee => true, :guards => true},
     },
     :well_known_applinks => {
       :format    => ["JSON"],

@@ -20,6 +20,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_beego => {
       :framework => "Beego",
@@ -38,6 +39,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_cli => {
       :framework => "CLI (flag / cobra / urfave / pflag / go-arg / go-flags / kong / kingpin / mitchellh)",
@@ -78,6 +80,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_fasthttp => {
       :framework => "fasthttp",
@@ -96,6 +99,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_fiber => {
       :framework => "Fiber",
@@ -114,6 +118,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_gin => {
       :framework => "Gin",
@@ -132,6 +137,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_hertz => {
       :framework => "Hertz",
@@ -150,6 +156,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_iris => {
       :framework => "Iris",
@@ -168,6 +175,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_restful => {
       :framework => "go-restful",
@@ -186,6 +194,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_chi => {
       :framework => "Chi",
@@ -204,6 +213,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_gozero => {
       :framework => "go-zero",
@@ -222,6 +232,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_goyave => {
       :framework => "Goyave",
@@ -240,6 +251,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_http => {
       :framework => "net/http",
@@ -258,6 +270,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_mux => {
       :framework => "Gorilla Mux",
@@ -276,6 +289,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :go_connect_rpc => {
       :framework => "Connect-RPC",
@@ -312,6 +326,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :go_httprouter => {
       :framework => "httprouter",
@@ -330,6 +345,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :go_huma => {
       :framework => "Huma",
@@ -348,6 +364,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
   }
 end

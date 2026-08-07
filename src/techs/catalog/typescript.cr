@@ -20,6 +20,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :ts_tanstack_router => {
       :framework => "TanStack Router",
@@ -38,6 +39,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :ts_trpc => {
       :framework => "tRPC",
@@ -56,6 +58,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => true,
       },
+      :context => {:callee => true},
     },
   }
 end

@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :cpp_httplib => {
       :framework => "cpp-httplib",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :cpp_oatpp => {
       :framework => "oat++",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :cpp_crow => {
       :framework => "Crow",
@@ -92,6 +95,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true},
     },
   }
 end

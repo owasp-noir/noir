@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :java_dropwizard => {
       :framework => "Dropwizard",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_httpserver => {
       :framework => "JDK HttpServer",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_jaxrs => {
       :framework => "JAX-RS",
@@ -92,6 +95,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_quarkus => {
       :framework => "Quarkus",
@@ -110,6 +114,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_javalin => {
       :framework => "Javalin",
@@ -128,6 +133,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_spark => {
       :framework => "Spark Java",
@@ -146,6 +152,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_micronaut => {
       :framework => "Micronaut",
@@ -164,6 +171,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_jsp => {
       :framework => "JSP",
@@ -182,6 +190,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:guards => true},
     },
     :java_spring => {
       :framework => "Spring",
@@ -200,6 +209,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :java_struts2 => {
       :framework => "Apache Struts 2",
@@ -218,6 +228,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_vertx => {
       :framework => "Vert.x",
@@ -236,6 +247,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :java_wicket => {
       :framework => "Apache Wicket",
@@ -254,6 +266,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :java_play => {
       :framework => "Play Framework",
@@ -272,6 +285,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
   }
 end

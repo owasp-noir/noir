@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :lua_lor => {
       :framework => "lor",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
   }
 end

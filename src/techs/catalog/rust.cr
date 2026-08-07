@@ -20,6 +20,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_rocket => {
       :framework => "Rocket",
@@ -38,6 +39,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_cli => {
       :framework => "CLI (std::env / clap / structopt / argh / getopts)",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_loco => {
       :framework => "Loco",
@@ -92,6 +95,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_rwf => {
       :framework => "RWF",
@@ -110,6 +114,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_tide => {
       :framework => "Tide",
@@ -128,6 +133,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_warp => {
       :framework => "Warp",
@@ -146,6 +152,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_gotham => {
       :framework => "Gotham",
@@ -164,6 +171,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :rust_salvo => {
       :framework => "Salvo",
@@ -182,6 +190,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :rust_poem => {
       :framework => "Poem",
@@ -200,6 +209,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
   }
 end

@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :haskell_servant => {
       :framework => "Servant",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
     :haskell_yesod => {
       :framework => "Yesod",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
   }
 end

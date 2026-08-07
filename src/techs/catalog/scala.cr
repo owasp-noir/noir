@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :scala_http4s => {
       :framework => "http4s",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :scala_scalatra => {
       :framework => "Scalatra",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :scala_play => {
       :framework => "Play Framework",
@@ -92,6 +95,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :scala_tapir => {
       :framework => "Tapir",
@@ -110,6 +114,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :scala_zio_http => {
       :framework => "ZIO HTTP",
@@ -128,6 +133,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true},
     },
   }
 end

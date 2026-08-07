@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => true,
       },
+      :context => {:callee => true, :guards => true},
     },
     :crystal_kemal => {
       :framework => "Kemal",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :crystal_lucky => {
       :framework => "Lucky",
@@ -74,6 +76,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :crystal_marten => {
       :framework => "Marten",
@@ -92,6 +95,7 @@ module NoirTechs::Catalog
         :static_path => true,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :crystal_grip => {
       :framework => "Grip",
@@ -110,6 +114,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true, :guards => true},
     },
     :crystal_http => {
       :framework => "HTTP::Server",

@@ -38,6 +38,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
     :elixir_phoenix => {
       :framework => "Phoenix",
@@ -56,6 +57,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => true,
       },
+      :context => {:callee => true, :guards => true},
     },
     :elixir_phoenix_channel => {
       :framework => "Phoenix Channels",
@@ -92,6 +94,7 @@ module NoirTechs::Catalog
         :static_path => false,
         :websocket   => false,
       },
+      :context => {:callee => true, :guards => true},
     },
   }
 end
