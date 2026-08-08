@@ -555,6 +555,50 @@ describe SendReq do
       end
     end
 
+    it "withholds --probe-header secrets from a host that isn't the --url target" do
+      target = CapturingServer.new
+      third_party = CapturingServer.new
+      begin
+        # A path endpoint, already joined to `-u` by the optimizer.
+        own = Endpoint.new(target.url_for("/api/orders"), "GET")
+        # An endpoint that carried its own scheme+host in the scanned source
+        # (OAS `servers:`, a HAR capture, a hosted-backend client). Those are
+        # passed through un-rewritten, so the host comes from the repo.
+        offhost = Endpoint.new(third_party.url_for("/collect"), "GET")
+
+        options = base_deliver_options
+        options["url"] = YAML::Any.new(target.url_for(""))
+        options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer s3cret")])
+        SendReq.new(options).run([own, offhost])
+
+        target.requests.first[:headers]["Authorization"]?.should eq("Bearer s3cret")
+        # Still probed — just not with the user's credential attached.
+        third_party.requests.size.should eq(1)
+        third_party.requests.first[:headers]["Authorization"]?.should be_nil
+      ensure
+        target.close
+        third_party.close
+      end
+    end
+
+    it "keeps sending --probe-header when the endpoint host matches the target" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/api/items"), "GET")
+
+        options = base_deliver_options
+        # Same origin, different path and a trailing slash — the comparison is
+        # on scheme/host/port, so this must not be read as a different host.
+        options["url"] = YAML::Any.new(server.url_for("/api/"))
+        options["probe_header"] = YAML::Any.new([YAML::Any.new("Authorization: Bearer s3cret")])
+        SendReq.new(options).run([ep])
+
+        server.requests.first[:headers]["Authorization"]?.should eq("Bearer s3cret")
+      ensure
+        server.close
+      end
+    end
+
     it "does not leak one endpoint's discovered headers onto another's request" do
       server = CapturingServer.new
       begin
