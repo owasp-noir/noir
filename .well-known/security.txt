@@ -1,0 +1,8 @@
+# OWASP Noir — security contact (RFC 9116)
+Contact: https://github.com/owasp-noir/noir/security/advisories
+Contact: mailto:hahwul@gmail.com
+Contact: mailto:h.lee@owasp.org
+Expires: 2027-06-02T00:00:00.000Z
+Preferred-Languages: en, ko
+Canonical: https://owasp-noir.github.io/noir/.well-known/security.txt
+Policy: https://github.com/owasp-noir/noir/blob/main/SECURITY.md
