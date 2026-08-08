@@ -92,9 +92,14 @@ class ConfigInitializer
   end
 
   def setup
-    # Create the directory if it doesn't exist
-    Dir.mkdir(@config_dir) unless Dir.exists?(@config_dir)
-    Dir.mkdir("#{@config_dir}/passive_rules") unless Dir.exists?("#{@config_dir}/passive_rules")
+    # Create the directory if it doesn't exist. 0700, not the default 0755:
+    # everything Noir keeps here is private to the user — the 0600 config
+    # below with its `ai_key`, and the AI response cache, whose entries are
+    # answers about the user's source. A world-readable parent leaks the
+    # cache filenames and contents even though the config file itself is
+    # locked down.
+    Dir.mkdir(@config_dir, 0o700) unless Dir.exists?(@config_dir)
+    Dir.mkdir("#{@config_dir}/passive_rules", 0o700) unless Dir.exists?("#{@config_dir}/passive_rules")
 
     # Create the config file if it doesn't exist — but only when this
     # is the *default* config path. When the user passed
