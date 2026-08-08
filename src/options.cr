@@ -63,7 +63,7 @@ end
 private def positive_int_or_die!(flag : String, raw : String) : Int32
   value = raw.to_i?
   if value.nil? || value < 1
-    STDERR.puts "ERROR: Invalid #{flag} '#{raw}'. Must be a positive integer.".colorize(:yellow)
+    STDERR.puts "ERROR: Invalid #{flag} '#{raw}'. Must be a positive integer.".colorize(:red)
     exit(1)
   end
   value
@@ -78,7 +78,7 @@ private def process_override_flag(
     noir_options[option_key] = YAML::Any.new(args[i + 1])
     i + 2
   else
-    STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:yellow)
+    STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:red)
     exit(1)
   end
 end
@@ -138,7 +138,7 @@ def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAM
       i += 1
     elsif pvalue_key = LEGACY_PVALUE_TARGETS[arg]?
       if i + 1 >= args.size
-        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:yellow)
+        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:red)
         exit(1)
       end
       append_to_yaml_array(noir_options, pvalue_key, args[i + 1])
@@ -362,7 +362,7 @@ def run_options_parser
       if lvl.in?(%w[critical high medium low])
         noir_options["passive_scan_severity"] = YAML::Any.new(lvl)
       else
-        STDERR.puts "ERROR: Invalid severity '#{v}'. Valid: critical, high, medium, low".colorize(:yellow)
+        STDERR.puts "ERROR: Invalid severity '#{v}'. Valid: critical, high, medium, low".colorize(:red)
         exit(1)
       end
     end
@@ -527,7 +527,7 @@ def run_options_parser
     parser.on "--concurrency N", "Concurrency level" do |v|
       value = v.to_i?
       if value.nil? || value < 1
-        STDERR.puts "ERROR: Invalid concurrency '#{v}'. Concurrency must be an integer greater than or equal to 1.".colorize(:yellow)
+        STDERR.puts "ERROR: Invalid concurrency '#{v}'. Concurrency must be an integer greater than or equal to 1.".colorize(:red)
         exit(1)
       end
 
@@ -559,19 +559,19 @@ def run_options_parser
     parser.invalid_option do |flag|
       case flag
       when "--ollama", "--ollama-model"
-        STDERR.puts "ERROR: #{flag} was removed in v1.0.".colorize(:yellow)
+        STDERR.puts "ERROR: #{flag} was removed in v1.0.".colorize(:red)
         STDERR.puts "       Use --ai-provider ollama [--ai-model NAME] instead."
         STDERR.puts "       Example: noir scan ./app --ai-provider ollama --ai-model llama3"
         exit(1)
       else
-        STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:yellow)
+        STDERR.puts "ERROR: #{flag} is not a valid option.".colorize(:red)
         STDERR.puts parser
         exit(1)
       end
     end
 
     parser.missing_option do |flag|
-      STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:yellow)
+      STDERR.puts "ERROR: #{flag} requires an argument.".colorize(:red)
       exit(1)
     end
   end
@@ -629,7 +629,7 @@ def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
 
   key = PVALUE_TYPE_KEYS[type]?
   if key.nil?
-    STDERR.puts "ERROR: --pvalue: unknown type '#{type}'. Valid: #{PVALUE_TYPE_KEYS.keys.join(", ")}.".colorize(:yellow)
+    STDERR.puts "ERROR: --pvalue: unknown type '#{type}'. Valid: #{PVALUE_TYPE_KEYS.keys.join(", ")}.".colorize(:red)
     exit(1)
   end
 
@@ -647,7 +647,7 @@ def apply_include_list(noir_options : Hash(String, YAML::Any), spec : String)
     target = raw.strip.downcase
     key = INCLUDE_TARGETS[target]?
     if key.nil?
-      STDERR.puts "ERROR: --include: unknown target '#{raw.strip}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:yellow)
+      STDERR.puts "ERROR: --include: unknown target '#{raw.strip}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:red)
       exit(1)
     end
     noir_options[key] = YAML::Any.new(true)
@@ -682,6 +682,6 @@ def validate_ai_context_features(spec : String, origin : String)
 
   # Echo the user's original spelling (not the lowercased form) so a typo
   # like `Sinkz` reads as it was written.
-  STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::FEATURES.join(", ")}.".colorize(:yellow)
+  STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::FEATURES.join(", ")}.".colorize(:red)
   exit(1)
 end
