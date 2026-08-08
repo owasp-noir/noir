@@ -338,6 +338,20 @@ module Noir
                                      import_specifier : String,
                                      extensions : Array(String) = JS_RESOLVE_EXTENSIONS,
                                      boundary : String? = nil) : String?
+      resolved = resolve_relative_candidate(from_file, import_specifier, extensions, boundary)
+      return unless resolved
+      return resolved unless boundary
+      # Second gate, on the real path this time — see `under_boundary?`.
+      # Runs once per successfully resolved import (not per candidate
+      # extension), so it costs a pair of `realpath` calls on a path that
+      # already paid for several `File.exists?` probes.
+      real_under_boundary?(resolved, boundary) ? resolved : nil
+    end
+
+    private def self.resolve_relative_candidate(from_file : String,
+                                                import_specifier : String,
+                                                extensions : Array(String),
+                                                boundary : String?) : String?
       return unless import_specifier.starts_with?("./") || import_specifier.starts_with?("../")
 
       base_dir = File.dirname(from_file)
@@ -391,13 +405,17 @@ module Noir
     # the comparison works even when callers hand over a relative
     # `./project` form.
     #
-    # The check is purely lexical — symlinks aren't followed. A
-    # `<boundary>/foo -> /etc` symlink could still leak; defense in
-    # depth on top of this would call `File.realpath` after a
-    # successful `File.exists?` and compare the realpath. Skipped
-    # for now because the symlink scenario requires both an
-    # attacker-controlled checkout and pre-existing symlinks on the
-    # scanner's disk pointing at sensitive paths.
+    # The check is purely lexical — symlinks aren't followed, so
+    # `<boundary>/foo -> /etc/passwd` passes it. That is not a
+    # pre-existing-symlink-on-the-scanner's-disk scenario as once assumed:
+    # git tracks symlinks, absolute target and all, so the hostile checkout
+    # brings its own. Followed outside the boundary, the target gets parsed
+    # as source and can surface in `code_paths` or a passive-scan extract.
+    #
+    # This stays as the cheap first gate — it rejects `../../etc/passwd`
+    # before any disk I/O, which is what the caller wants — and
+    # `real_under_boundary?` re-checks the resolved path once the disk has
+    # confirmed it exists.
     private def self.under_boundary?(combined : String, boundary : String) : Bool
       # `File.expand_path` does NOT strip a trailing separator in Crystal, so
       # a caller passing `-b project/` would yield `boundary_abs` ending in
@@ -407,6 +425,18 @@ module Noir
       # to both `project` and `project/` forms.
       boundary_abs = File.expand_path(boundary).chomp(File::SEPARATOR)
       combined == boundary_abs || combined.starts_with?(boundary_abs + File::SEPARATOR)
+    end
+
+    # Containment of the symlink-resolved path. Both sides are resolved, so a
+    # boundary that is itself reached through a link (`/tmp` -> `/private/tmp`
+    # on macOS) still matches its own contents. An unresolvable path — a
+    # dangling link, a directory we can't traverse — is treated as outside.
+    private def self.real_under_boundary?(resolved : String, boundary : String) : Bool
+      real_path = File.realpath(resolved)
+      real_boundary = File.realpath(boundary).chomp(File::SEPARATOR)
+      real_path == real_boundary || real_path.starts_with?(real_boundary + File::SEPARATOR)
+    rescue File::Error
+      false
     end
   end
 end
