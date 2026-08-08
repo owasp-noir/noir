@@ -63,6 +63,14 @@ noir scan ./source -u http://localhost:3000 \
 
 <img src="./deliver-header.png" alt="A proxied request in the intercepting proxy, carrying the custom Abcd and X-API-Key headers Noir was told to add." width="1136" height="460" loading="lazy" decoding="async">
 
+These headers go to the `-u` target and nowhere else. Most endpoints are paths that noir joined onto `-u`, but an endpoint that already carried its own scheme and host in the source — an OAS `servers:` entry, a HAR capture, a hosted-backend URL — keeps that host, and the host came from the code you are scanning. Those endpoints are still probed; your headers are not attached, and noir names the host once so you can see what was withheld:
+
+```
+▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target.
+```
+
+Export destinations (`--export-es`, `--export-webhook`) are unaffected — you named those hosts yourself, so `--probe-header` still authenticates them.
+
 ### Match / skip
 
 Narrow the set of endpoints sent through the proxy. Patterns accept a URL substring, an HTTP method (case-insensitive), or `method:URL` combined.

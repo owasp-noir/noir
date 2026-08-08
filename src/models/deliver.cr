@@ -3,6 +3,7 @@ require "openssl"
 require "./logger"
 require "../utils/utils"
 require "../utils/http_symbols"
+require "../utils/url_origin"
 
 class Deliver
   @logger : NoirLogger
@@ -15,6 +16,13 @@ class Deliver
   @headers : Hash(String, String) = {} of String => String
   @matchers : Array(String) = [] of String
   @filters : Array(String) = [] of String
+  # Origin of `--url`, resolved lazily (see `target_origin`) and the set of
+  # off-target origins already warned about, so the warning fires once per
+  # host instead of once per endpoint.
+  @target_origin : String? = nil
+  @target_origin_resolved = false
+  @offhost_origins = Set(String).new
+  @offhost_mutex = Mutex.new
 
   def initialize(options : Hash(String, YAML::Any))
     @options = options
@@ -235,10 +243,11 @@ class Deliver
   # fiber, so merging into it in place would race and leak one endpoint's
   # headers onto another's request.
   protected def probe_headers(endpoint : Endpoint) : Hash(String, String)
+    user_headers = user_headers_for(endpoint)
     params = endpoint.params_to_hash
     discovered = params["header"]
     cookies = params["cookie"]
-    return @headers if discovered.empty? && cookies.empty?
+    return user_headers if discovered.empty? && cookies.empty?
 
     result = {} of String => String
     discovered.each { |name, value| result[name] = value }
@@ -246,7 +255,64 @@ class Deliver
     unless cookies.empty?
       result["Cookie"] = cookies.map { |name, value| "#{name}=#{value}" }.join("; ")
     end
-    result.merge(@headers)
+    result.merge(user_headers)
+  end
+
+  # `--probe-header` values are the user's own secrets — a session cookie, a
+  # bearer token for the app they are testing. They are meant for the `-u`
+  # target and nowhere else.
+  #
+  # Most endpoints are paths that `combine_url_and_endpoints` prefixed with
+  # `-u`, so they carry the target's origin by construction. But an endpoint
+  # that already had a scheme and host in the source — an OAS `servers:`
+  # entry, a HAR capture, a hosted-backend URL in a schema-generated client —
+  # is passed through untouched by design, and the source is the tree being
+  # scanned. Attaching the token to those means a repo can name a host and
+  # have Noir hand the user's credential to it.
+  #
+  # `send_req` already refuses to follow redirects for exactly this reason
+  # ("Crest copies the request headers onto the redirected request, including
+  # a --probe-header Authorization token"); the same leak was reachable
+  # without any redirect at all. Off-origin endpoints are still probed — that
+  # part is intentional — just without the user's headers, and the dropped
+  # hosts are named once so the omission is visible rather than silent.
+  private def user_headers_for(endpoint : Endpoint) : Hash(String, String)
+    return @headers if @headers.empty?
+
+    target = target_origin
+    # No `-u` means no origin to trust or distrust: the user pointed the
+    # probe straight at whatever the catalog holds, so their headers ride
+    # along as before.
+    return @headers if target.nil?
+
+    origin = Noir::UrlOrigin.of(endpoint.url)
+    return @headers if origin.nil? || origin == target
+
+    note_offhost_header_drop(origin)
+    {} of String => String
+  end
+
+  private def target_origin : String?
+    origin = @target_origin
+    return origin unless origin.nil?
+    return if @target_origin_resolved
+
+    @target_origin_resolved = true
+    @target_origin = Noir::UrlOrigin.of(@options["url"]?.to_s)
+  end
+
+  private def note_offhost_header_drop(origin : String)
+    fresh = false
+    @offhost_mutex.synchronize do
+      unless @offhost_origins.includes?(origin)
+        @offhost_origins << origin
+        fresh = true
+      end
+    end
+    return unless fresh
+
+    @logger.warning "Probe: --probe-header values withheld from #{origin} — it is not the --url target. " \
+                    "Endpoints on that host are still probed, without your headers."
   end
 
   # True for endpoints that belong in the reported catalog but must not be

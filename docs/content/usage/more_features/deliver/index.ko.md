@@ -63,6 +63,14 @@ noir scan ./source -u http://localhost:3000 \
 
 <img src="./deliver-header.png" alt="인터셉트 프록시에 잡힌 요청. Noir가 추가하도록 지정한 Abcd 와 X-API-Key 헤더가 함께 실려 있다." width="1136" height="460" loading="lazy" decoding="async">
 
+이 헤더는 `-u` 타깃에만 붙습니다. 대부분의 endpoint는 noir가 `-u`에 이어붙인 경로지만, 소스에 이미 scheme과 host가 적혀 있던 endpoint(OAS `servers:` 항목, HAR 캡처, 호스팅 백엔드 URL)는 그 host를 그대로 유지하며, 그 host는 지금 스캔 중인 코드에서 온 값입니다. 이런 endpoint도 probe는 그대로 나가지만 사용자의 헤더는 실리지 않고, 어떤 host에서 빠졌는지 한 번 알려줍니다.
+
+```
+▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target.
+```
+
+export 대상(`--export-es`, `--export-webhook`)은 영향을 받지 않습니다. 그 host는 사용자가 직접 지정한 것이므로 `--probe-header`가 그대로 인증에 쓰입니다.
+
 ### Match / skip
 
 proxy로 흘려보낼 endpoint를 좁힐 수 있습니다. 패턴은 URL 부분 문자열, HTTP 메서드(대소문자 무시), 또는 `method:URL` 조합을 받습니다.
