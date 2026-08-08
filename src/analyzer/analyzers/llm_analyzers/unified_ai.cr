@@ -52,11 +52,13 @@ module Analyzer::AI
     @api_key : String?
     @max_tokens : Int32
     @expanded_base_paths : Array(String)
+    @real_base_paths : Array(String)
     @use_agentic : Bool
     @agent_max_steps : Int32
     @native_tool_calling_allowlist : Array(String)?
     @agent_tool_cache : Hash(String, String)
     @agent_tool_cache_order : Array(String)
+    @symlinked_dir_cache = {} of String => Bool
 
     def initialize(options : Hash(String, YAML::Any))
       super(options)
@@ -88,6 +90,10 @@ module Analyzer::AI
       @expanded_base_paths.uniq!
       @expanded_base_paths.sort_by!(&.size)
       @expanded_base_paths.reverse!
+      # Symlink-resolved twins of the bases, for the containment check in
+      # `path_within_base?`. Resolved once here: `realpath` hits the
+      # filesystem, and the agent runs the check on every tool call.
+      @real_base_paths = @expanded_base_paths.map { |path| resolved_real_path(path) || path }.uniq!
       @use_agentic = options["ai_agent"]?.try { |val| any_to_bool(val) } || false
       @agent_max_steps = options["ai_agent_max_steps"]?.try(&.as_i) || 20
       @native_tool_calling_allowlist = parse_native_tool_allowlist(options["ai_native_tools_allowlist"]?.try(&.as_s))
@@ -762,11 +768,65 @@ module Analyzer::AI
       resolve_agent_roots(path).first?
     end
 
-    private def path_within_base?(path : String) : Bool
+    # Containment gate for every agent file tool. The agent picks these
+    # paths from LLM output, and the LLM is steered by the source tree being
+    # scanned, so "stay inside the scan base" is a boundary an untrusted repo
+    # gets to push on.
+    #
+    # `File.expand_path` is purely lexical — it folds `..` and makes the path
+    # absolute but never follows a link. A checked-out repo containing
+    # `notes -> /home/user/.ssh/id_rsa` therefore passed as an in-base path,
+    # and `read_file` shipped the target's contents to the LLM provider.
+    # (The tree walk, the grep and the bundling path all skip symlinks
+    # already; these two entry points were the gap.)
+    #
+    # So resolve both sides and require containment of the *real* path. A
+    # base that is itself reached through a link (`/tmp` -> `/private/tmp` on
+    # macOS) still matches, because `@real_base_paths` went through the same
+    # resolution. The lexical check stays as the first gate: it rejects the
+    # plain `../../etc/passwd` case without touching the filesystem.
+    #
+    # Public rather than private so the rule can be asserted directly:
+    # reaching it through a live LLM round trip is not a test.
+    def path_within_base?(path : String) : Bool
       expanded = File.expand_path(path)
-      @expanded_base_paths.any? do |base|
-        expanded == base || expanded.starts_with?(base == File::SEPARATOR ? base : "#{base}/")
+      return false unless contained_in?(expanded, @expanded_base_paths)
+      return true unless File.symlink?(expanded) || symlinked_ancestor?(expanded)
+
+      real = resolved_real_path(expanded)
+      return false if real.nil?
+      contained_in?(real, @real_base_paths)
+    end
+
+    private def contained_in?(path : String, bases : Array(String)) : Bool
+      bases.any? do |base|
+        path == base || path.starts_with?(base == File::SEPARATOR ? base : "#{base}/")
       end
+    end
+
+    # Only the part of the path below the base can be a planted link, so the
+    # walk stops at the base rather than at `/` — that keeps the stat count
+    # proportional to the repo-relative depth and leaves a symlinked base
+    # (already accounted for in `@real_base_paths`) out of it. Per-directory
+    # answers are memoized because grep runs this once per candidate file and
+    # the ancestors repeat for every file in a directory.
+    private def symlinked_ancestor?(path : String) : Bool
+      current = File.dirname(path)
+      while current != "/" && current != "." && !current.empty?
+        return false if @expanded_base_paths.includes?(current)
+        return true if @symlinked_dir_cache.fetch(current) { |dir| @symlinked_dir_cache[dir] = File.symlink?(dir) }
+        parent = File.dirname(current)
+        break if parent == current
+        current = parent
+      end
+      false
+    end
+
+    private def resolved_real_path(path : String) : String?
+      File.realpath(path)
+    rescue ex : Exception
+      logger.debug "Failed to resolve real path for '#{path}': #{ex.message}"
+      nil
     end
 
     private def agent_relative_path(path : String) : String
