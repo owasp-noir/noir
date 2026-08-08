@@ -85,9 +85,17 @@ module LLM
       File.join(cache_dir, "#{key}#{CACHE_FILE_SUFFIX}")
     end
 
+    # 0700, and entries below are written 0600 (see `store`). A cache entry
+    # is the model's answer about a specific chunk of the user's source, and
+    # the prompt it answers is that source — private code, on a box that may
+    # have other accounts. The default 0755/0644 published it to every local
+    # user. `$NOIR_HOME/config.yaml` is already 0600 for the same reason.
+    CACHE_DIR_PERMISSIONS  = 0o700
+    CACHE_FILE_PERMISSIONS = 0o600
+
     def self.ensure_dir : Nil
       return if File.directory?(cache_dir)
-      FileUtils.mkdir_p(cache_dir)
+      FileUtils.mkdir_p(cache_dir, CACHE_DIR_PERMISSIONS)
     end
 
     def self.fetch(key : String) : String?
@@ -110,7 +118,9 @@ module LLM
       ensure_dir
       final = path_for(key)
       tmp = "#{final}#{CACHE_TMP_MARKER}#{Process.pid}-#{Random::Secure.hex(4)}"
-      File.write(tmp, content)
+      # Permission set at create time, not chmod'd after: a reader racing the
+      # write would otherwise get a window where the file is world-readable.
+      File.write(tmp, content, perm: CACHE_FILE_PERMISSIONS)
       File.rename(tmp, final)
       true
     rescue e
