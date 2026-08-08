@@ -144,7 +144,7 @@ class OutputBuilder
         # far cheaper than the open+write+close this replaced.
         file.flush
       rescue e : IO::Error
-        STDERR.puts "ERROR: Could not write output file '#{@output_file}': #{e.message}".colorize(:yellow)
+        STDERR.puts "ERROR: Could not write output file '#{@output_file}': #{e.message}".colorize(:red)
         exit(1)
       end
     end

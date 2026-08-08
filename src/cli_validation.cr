@@ -310,7 +310,7 @@ module Noir::CliValidation
 
   def self.exit_with_error(message : String) : NoReturn
     lines = message.lines
-    STDERR.puts "ERROR: #{lines.first}".colorize(:yellow)
+    STDERR.puts "ERROR: #{lines.first}".colorize(:red)
     lines[1..]?.try do |rest|
       rest.each { |line| STDERR.puts line }
     end

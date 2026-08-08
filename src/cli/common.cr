@@ -35,7 +35,7 @@ module Noir::CLI
   end
 
   def self.die(message : String, code : Int32 = 1) : NoReturn
-    STDERR.puts "ERROR: #{message}".colorize(:yellow)
+    STDERR.puts "ERROR: #{message}".colorize(:red)
     exit(code)
   end
 
