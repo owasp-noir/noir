@@ -65,6 +65,61 @@ describe LLM::ACPClient do
       LLM::ACPClient.default_model("acp:codex", "custom-model").should eq("custom-model")
     end
   end
+
+  # The agent asks before running a tool — a shell command, a file write. The
+  # prompt driving it is source code from the tree being scanned, so a blanket
+  # "yes" turns a scan of an untrusted repo into local code execution.
+  describe "#answer_permission_request" do
+    permission_request = JSON.parse(<<-JSON)
+      {
+        "sessionId": "s1",
+        "toolCall": {"toolCallId": "t1", "title": "Run shell command", "kind": "execute"},
+        "options": [
+          {"optionId": "proceed_once", "name": "Yes", "kind": "allow_once"},
+          {"optionId": "proceed_always", "name": "Yes, always", "kind": "allow_always"},
+          {"optionId": "cancel", "name": "No", "kind": "reject_once"}
+        ]
+      }
+      JSON
+
+    it "rejects a tool permission request by default" do
+      ENV.delete("NOIR_ACP_ALLOW_TOOL_PERMISSIONS")
+      client = LLM::ACPClient.new("acp:gemini", "gemini")
+      outcome = client.answer_permission_request(permission_request)["outcome"]
+      outcome["outcome"].should eq("selected")
+      outcome["optionId"].should eq("cancel")
+    end
+
+    it "allows only with the explicit opt-in, using an id the agent offered" do
+      ENV["NOIR_ACP_ALLOW_TOOL_PERMISSIONS"] = "1"
+      begin
+        client = LLM::ACPClient.new("acp:gemini", "gemini")
+        outcome = client.answer_permission_request(permission_request)["outcome"]
+        outcome["outcome"].should eq("selected")
+        # Not the hardcoded "allow-once" the old code invented — option ids
+        # are agent-defined, and only `kind` is standardised.
+        outcome["optionId"].should eq("proceed_once")
+      ensure
+        ENV.delete("NOIR_ACP_ALLOW_TOOL_PERMISSIONS")
+      end
+    end
+
+    it "cancels when the agent offers no way to decline" do
+      ENV.delete("NOIR_ACP_ALLOW_TOOL_PERMISSIONS")
+      allow_only = JSON.parse(<<-JSON)
+        {
+          "sessionId": "s1",
+          "toolCall": {"toolCallId": "t1", "title": "Write file", "kind": "edit"},
+          "options": [{"optionId": "yes", "name": "Yes", "kind": "allow_once"}]
+        }
+        JSON
+
+      client = LLM::ACPClient.new("acp:gemini", "gemini")
+      outcome = client.answer_permission_request(allow_only)["outcome"]
+      outcome["outcome"].should eq("cancelled")
+      outcome["optionId"]?.should be_nil
+    end
+  end
 end
 
 describe LLM::AdapterFactory do

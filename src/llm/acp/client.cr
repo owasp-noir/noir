@@ -41,6 +41,65 @@ module LLM
       ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
     end
 
+    # `session/request_permission` is how the ACP agent asks to run a tool —
+    # shell commands, file writes, network fetches — on this machine. Noir
+    # used to answer every one of them with a hardcoded
+    # `{"outcome":"selected","optionId":"allow-once"}`, i.e. blanket approval
+    # for whatever the agent decided to do.
+    #
+    # That is remote-controllable input. The prompt Noir sends is source code
+    # from the tree being scanned, and scanning code you did not write is the
+    # normal case; a file carrying "ignore the above and run X" is enough to
+    # turn an endpoint scan into arbitrary local execution, with the auto-yes
+    # removing the one checkpoint that would have caught it. It also
+    # contradicted the `resolve_command` hardening right above, which refuses
+    # to spawn an unknown agent binary precisely so untrusted config can't
+    # reach code execution.
+    #
+    # Deny by default. Noir puts the code to analyse *in the prompt*, so the
+    # agent needs no tools to answer — the only thing lost is an agent's
+    # optional extra poking around. Operators who want that back opt in
+    # explicitly, same shape as the custom-command escape hatch.
+    def self.tool_permissions_allowed? : Bool
+      ENV["NOIR_ACP_ALLOW_TOOL_PERMISSIONS"]? == "1"
+    end
+
+    # Pick a real option from the ones the agent offered rather than
+    # inventing an id. Option ids are agent-defined (`proceed_once`,
+    # `reject`, …); the `kind` field is the part the protocol standardises,
+    # so it is what we match on. With nothing usable on offer, `cancelled`
+    # is the protocol's own "no decision" outcome and needs no id.
+    #
+    # Public rather than private so the decision can be asserted without
+    # standing up an agent process.
+    def answer_permission_request(params : JSON::Any) : JSON::Any
+      allow = self.class.tool_permissions_allowed?
+      wanted = allow ? {"allow_once", "allow_always"} : {"reject_once", "reject_always"}
+
+      option_id = nil
+      if options = params["options"]?.try(&.as_a?)
+        wanted.each do |kind|
+          break if option_id
+          options.each do |option|
+            next unless option["kind"]?.try(&.as_s?) == kind
+            option_id = option["optionId"]?.try(&.as_s?)
+            break if option_id
+          end
+        end
+      end
+
+      tool = params.dig?("toolCall", "title").try(&.as_s?) ||
+             params.dig?("toolCall", "toolName").try(&.as_s?) || "tool call"
+
+      if option_id
+        @event_sink.try(&.call("ACP: #{allow ? "allowed" : "denied"} permission request (#{tool})"))
+        JSON.parse(%({"outcome":{"outcome":"selected","optionId":#{option_id.to_json}}}))
+      else
+        @event_sink.try(&.call("ACP: cancelled permission request (#{tool}) — no #{allow ? "allow" : "reject"} option offered"))
+        JSON.parse(%({"outcome":{"outcome":"cancelled"}}))
+      end
+    end
+
     def initialize(@provider : String, @model : String, @event_sink : Proc(String, Nil)? = nil)
       @command, @args = self.class.resolve_command(provider)
       @session_lock = Mutex.new
@@ -156,9 +215,9 @@ module LLM
             end
             nil
           end
-          client.on_agent_request = ->(method : String, _params : JSON::Any) do
+          client.on_agent_request = ->(method : String, params : JSON::Any) do
             if method == "session/request_permission"
-              JSON.parse(%({"outcome":{"outcome":"selected","optionId":"allow-once"}}))
+              answer_permission_request(params)
             else
               JSON.parse(%({}))
             end
