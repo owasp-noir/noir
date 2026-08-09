@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/clojure_callee_extractor"
 require "../../../utils/utils"
+require "./clojure_helper"
 
 module Analyzer::Clojure
   # Reitit is data-driven: routes are a vector tree
@@ -83,22 +84,22 @@ module Analyzer::Clojure
         c = source.byte_at(i).unsafe_chr
         case c
         when ';'
-          i = skip_comment(source, i, limit)
+          i = Helper.skip_comment(source, i, limit)
         when '"'
-          i = skip_string(source, i, limit) + 1
+          i = Helper.skip_string(source, i, limit) + 1
         when '('
-          form_end = find_matching_delimiter(source, i, '(', ')', limit)
+          form_end = Helper.find_matching_delimiter(source, i, '(', ')', limit)
           break if form_end <= i
           walk_forms(source, i + 1, form_end, prefix, path, include_callee, function_callees)
           i = form_end + 1
         when '['
-          vec_end = find_matching_delimiter(source, i, '[', ']', limit)
+          vec_end = Helper.find_matching_delimiter(source, i, '[', ']', limit)
           break if vec_end <= i
           handled = try_process_routes(source, i, vec_end, prefix, path, include_callee, function_callees)
           walk_forms(source, i + 1, vec_end, prefix, path, include_callee, function_callees) unless handled
           i = vec_end + 1
         when '{'
-          map_end = find_matching_delimiter(source, i, '{', '}', limit)
+          map_end = Helper.find_matching_delimiter(source, i, '{', '}', limit)
           break if map_end <= i
           walk_forms(source, i + 1, map_end, prefix, path, include_callee, function_callees)
           i = map_end + 1
@@ -122,7 +123,7 @@ module Analyzer::Clojure
       case source.byte_at(i).unsafe_chr
       when '"'
         # Single route node: ["/path" ...body]
-        str_end = skip_string(source, i, vec_end)
+        str_end = Helper.skip_string(source, i, vec_end)
         return false if str_end <= i
         route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
         return false unless route_path.starts_with?("/")
@@ -130,12 +131,12 @@ module Analyzer::Clojure
         true
       when '['
         # List of routes: [["/a" ...] ["/b" ...]]
-        child_end = find_matching_delimiter(source, i, '[', ']', vec_end)
+        child_end = Helper.find_matching_delimiter(source, i, '[', ']', vec_end)
         return false if child_end <= i
         j = skip_ws_and_comments(source, i + 1, child_end)
         return false if j >= child_end
         return false unless source.byte_at(j).unsafe_chr == '"'
-        str_end = skip_string(source, j, child_end)
+        str_end = Helper.skip_string(source, j, child_end)
         return false if str_end <= j
         peek = decode_string_literal(source.byte_slice(j, str_end - j + 1))
         return false unless peek.starts_with?("/")
@@ -159,7 +160,7 @@ module Analyzer::Clojure
         break if i >= limit
         c = source.byte_at(i).unsafe_chr
         if c == '['
-          vec_end = find_matching_delimiter(source, i, '[', ']', limit)
+          vec_end = Helper.find_matching_delimiter(source, i, '[', ']', limit)
           break if vec_end <= i
           process_route_vec(source, i, vec_end, prefix, path, include_callee, function_callees)
           i = vec_end + 1
@@ -180,7 +181,7 @@ module Analyzer::Clojure
       return if i >= vec_end
       return unless source.byte_at(i).unsafe_chr == '"'
 
-      str_end = skip_string(source, i, vec_end)
+      str_end = Helper.skip_string(source, i, vec_end)
       return if str_end <= i
 
       route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
@@ -224,12 +225,12 @@ module Analyzer::Clojure
         c = source.byte_at(i).unsafe_chr
         case c
         when '{'
-          map_end = find_matching_delimiter(source, i, '{', '}', limit)
+          map_end = Helper.find_matching_delimiter(source, i, '{', '}', limit)
           break if map_end <= i
           process_route_data_map(source, i + 1, map_end, prefix, path, include_callee, function_callees)
           i = map_end + 1
         when '['
-          vec_end = find_matching_delimiter(source, i, '[', ']', limit)
+          vec_end = Helper.find_matching_delimiter(source, i, '[', ']', limit)
           break if vec_end <= i
           process_route_vec(source, i, vec_end, prefix, path, include_callee, function_callees)
           i = vec_end + 1
@@ -314,14 +315,14 @@ module Analyzer::Clojure
                               include_callee : Bool,
                               function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry)),
                               data_handler : Tuple(Int32, Int32)? = nil)
-      endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, line_number_for(source, key_pos))))
+      endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, Helper.line_number_for(source, key_pos))))
 
       extract_path_param_names(route_path).each do |name|
         endpoint.push_param(Param.new(name, "", "path"))
       end
 
       if v_start < v_end && source.byte_at(v_start).unsafe_chr == '{'
-        map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+        map_end = Helper.find_matching_delimiter(source, v_start, '{', '}', v_end)
         if map_end > v_start
           extract_params_from_method_map(source, v_start + 1, map_end, endpoint, route_path)
         end
@@ -342,7 +343,7 @@ module Analyzer::Clojure
       return if v_start >= v_end
 
       if source.byte_at(v_start).unsafe_chr == '{'
-        map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+        map_end = Helper.find_matching_delimiter(source, v_start, '{', '}', v_end)
         return unless map_end > v_start
         attached = attach_handler_map_callees(source, v_start + 1, map_end, endpoint, path, function_callees)
         # `{:get {:parameters ...}}` carries no method-level handler; fall back
@@ -396,13 +397,13 @@ module Analyzer::Clojure
 
       if token.starts_with?('(')
         body = source.byte_slice(value_start, value_end - value_start)
-        line = line_number_for(source, value_start)
+        line = Helper.line_number_for(source, value_start)
         Noir::ClojureCalleeExtractor.attach_to(endpoint, Noir::ClojureCalleeExtractor.callees_for_body(body, path, line))
       elsif handler_name = normalized_handler_symbol(token)
         if callees = function_callees[handler_name]?
           Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
         else
-          endpoint.push_callee(Callee.new(handler_name, path: path, line: line_number_for(source, value_start)))
+          endpoint.push_callee(Callee.new(handler_name, path: path, line: Helper.line_number_for(source, value_start)))
         end
       end
     end
@@ -440,16 +441,16 @@ module Analyzer::Clojure
 
       case source.byte_at(i).unsafe_chr
       when '"'
-        e = skip_string(source, i, limit)
+        e = Helper.skip_string(source, i, limit)
         {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)}
       when '('
-        e = find_matching_delimiter(source, i, '(', ')', limit)
+        e = Helper.find_matching_delimiter(source, i, '(', ')', limit)
         e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
       when '['
-        e = find_matching_delimiter(source, i, '[', ']', limit)
+        e = Helper.find_matching_delimiter(source, i, '[', ']', limit)
         e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
       when '{'
-        e = find_matching_delimiter(source, i, '{', '}', limit)
+        e = Helper.find_matching_delimiter(source, i, '{', '}', limit)
         e > i ? {source.byte_slice(i, e - i + 1), skip_ws_and_comments(source, e + 1, limit)} : {"", i}
       else
         read_symbol(source, i, limit)
@@ -473,7 +474,7 @@ module Analyzer::Clojure
         val_end = end_of_value(source, v_start, limit)
 
         if key == ":parameters" && v_start < val_end && source.byte_at(v_start).unsafe_chr == '{'
-          map_end = find_matching_delimiter(source, v_start, '{', '}', val_end)
+          map_end = Helper.find_matching_delimiter(source, v_start, '{', '}', val_end)
           if map_end > v_start
             extract_param_groups(source, v_start + 1, map_end, endpoint, route_path)
           end
@@ -515,12 +516,12 @@ module Analyzer::Clojure
       names = case source.byte_at(v_start).unsafe_chr
               when '{'
                 # Schema / map literal: `{:x int?, (s/optional-key :y) int?}`.
-                map_end = find_matching_delimiter(source, v_start, '{', '}', v_end)
+                map_end = Helper.find_matching_delimiter(source, v_start, '{', '}', v_end)
                 return unless map_end > v_start
                 extract_map_keys(source, v_start + 1, map_end)
               when '['
                 # malli map schema vector: `[:map [:x int?] [:y {…} int?]]`.
-                vec_end = find_matching_delimiter(source, v_start, '[', ']', v_end)
+                vec_end = Helper.find_matching_delimiter(source, v_start, '[', ']', v_end)
                 return unless vec_end > v_start
                 extract_malli_map_keys(source, v_start + 1, vec_end)
               else
@@ -551,7 +552,7 @@ module Analyzer::Clojure
         j = skip_ws_and_comments(source, j, limit)
         break if j >= limit
         if source.byte_at(j).unsafe_chr == '['
-          entry_end = find_matching_delimiter(source, j, '[', ']', limit)
+          entry_end = Helper.find_matching_delimiter(source, j, '[', ']', limit)
           break if entry_end <= j
           if name = first_keyword_in(source, j + 1, entry_end)
             keys << name
@@ -641,16 +642,16 @@ module Analyzer::Clojure
 
       case source.byte_at(i).unsafe_chr
       when '"'
-        e = skip_string(source, i, limit)
+        e = Helper.skip_string(source, i, limit)
         e >= i ? e + 1 : limit
       when '('
-        e = find_matching_delimiter(source, i, '(', ')', limit)
+        e = Helper.find_matching_delimiter(source, i, '(', ')', limit)
         e > i ? e + 1 : limit
       when '['
-        e = find_matching_delimiter(source, i, '[', ']', limit)
+        e = Helper.find_matching_delimiter(source, i, '[', ']', limit)
         e > i ? e + 1 : limit
       when '{'
-        e = find_matching_delimiter(source, i, '{', '}', limit)
+        e = Helper.find_matching_delimiter(source, i, '{', '}', limit)
         e > i ? e + 1 : limit
       when '\'', '`'
         end_of_value(source, i + 1, limit)
@@ -661,10 +662,10 @@ module Analyzer::Clojure
         when '{', '('
           inner_open = nxt
           inner_close = nxt == '{' ? '}' : ')'
-          e = find_matching_delimiter(source, i + 1, inner_open, inner_close, limit)
+          e = Helper.find_matching_delimiter(source, i + 1, inner_open, inner_close, limit)
           e > i + 1 ? e + 1 : limit
         when '"'
-          e = skip_string(source, i + 1, limit)
+          e = Helper.skip_string(source, i + 1, limit)
           e >= i + 1 ? e + 1 : limit
         when '_'
           end_of_value(source, i + 2, limit)
@@ -704,62 +705,12 @@ module Analyzer::Clojure
           # Clojure treats commas as whitespace.
           i += 1
         elsif char == ';'
-          i = skip_comment(source, i, limit)
+          i = Helper.skip_comment(source, i, limit)
         else
           break
         end
       end
       i
-    end
-
-    private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
-      i = index
-      while i < limit && source.byte_at(i).unsafe_chr != '\n'
-        i += 1
-      end
-      i
-    end
-
-    private def skip_string(source : String, index : Int32, limit : Int32) : Int32
-      i = index + 1
-      escaping = false
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        if escaping
-          escaping = false
-        elsif char == '\\'
-          escaping = true
-        elsif char == '"'
-          return i
-        end
-        i += 1
-      end
-      limit - 1
-    end
-
-    private def find_matching_delimiter(source : String, index : Int32, open_char : Char, close_char : Char, limit : Int32) : Int32
-      depth = 0
-      i = index
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        case char
-        when ';'
-          i = skip_comment(source, i, limit)
-        when '"'
-          i = skip_string(source, i, limit)
-        when open_char
-          depth += 1
-        when close_char
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-      index
-    end
-
-    private def line_number_for(source : String, index : Int32) : Int32
-      source.byte_slice(0, index).count('\n') + 1
     end
 
     private def whitespace?(char : Char) : Bool

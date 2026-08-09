@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "./clojure_helper"
 
 module Analyzer::Clojure
   # Surfaces the command-line attack surface of Clojure programs as `cli://`
@@ -140,16 +141,16 @@ module Analyzer::Clojure
       # A dispatch entry surfaces its `cli://root/cmd` endpoint even if its
       # `:spec` map is empty/absent (e.g. a bare `help` subcommand).
       entries.each do |(o, _, segments)|
-        fetch_endpoint(endpoints, "#{root_url}/#{segments}", path, line_number_for(content, o))
+        fetch_endpoint(endpoints, "#{root_url}/#{segments}", path, Helper.line_number_for(content, o))
       end
 
       content.scan(/:spec\s*(\{)/) do |m|
         spec_open = m.byte_begin(1)
-        spec_close = find_matching_delimiter(content, spec_open, '{', '}', content.bytesize)
+        spec_close = Helper.find_matching_delimiter(content, spec_open, '{', '}', content.bytesize)
         owner = entries.find { |(o, c, _)| o <= spec_open && spec_close <= c }
         target_url = owner ? "#{root_url}/#{owner[2]}" : root_url
         spec_options(content, spec_open, spec_close).each do |(opt_name, key_pos)|
-          fetch_endpoint(endpoints, target_url, path, line_number_for(content, key_pos)).push_param(Param.new(opt_name, "", "flag"))
+          fetch_endpoint(endpoints, target_url, path, Helper.line_number_for(content, key_pos)).push_param(Param.new(opt_name, "", "flag"))
         end
       end
     end
@@ -167,9 +168,9 @@ module Analyzer::Clojure
         char = content.byte_at(i).unsafe_chr
         case char
         when ';'
-          i = skip_comment(content, i, spec_close)
+          i = Helper.skip_comment(content, i, spec_close)
         when '"'
-          i = skip_string(content, i, spec_close)
+          i = Helper.skip_string(content, i, spec_close)
         when '{'
           depth += 1
         when '}'
@@ -197,9 +198,9 @@ module Analyzer::Clojure
         char = content.byte_at(i).unsafe_chr
         case char
         when ';'
-          i = skip_comment(content, i, limit)
+          i = Helper.skip_comment(content, i, limit)
         when '"'
-          i = skip_string(content, i, limit)
+          i = Helper.skip_string(content, i, limit)
         when '{'
           stack.push(i)
         when '}'
@@ -210,60 +211,6 @@ module Analyzer::Clojure
         i += 1
       end
       pairs
-    end
-
-    private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
-      i = index
-      while i < limit && source.byte_at(i).unsafe_chr != '\n'
-        i += 1
-      end
-      i
-    end
-
-    private def skip_string(source : String, index : Int32, limit : Int32) : Int32
-      i = index + 1
-      escaping = false
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        if escaping
-          escaping = false
-        elsif char == '\\'
-          escaping = true
-        elsif char == '"'
-          return i
-        end
-        i += 1
-      end
-
-      limit - 1
-    end
-
-    private def find_matching_delimiter(source : String, index : Int32, open_char : Char, close_char : Char, limit : Int32) : Int32
-      depth = 0
-      i = index
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        case char
-        when ';'
-          i = skip_comment(source, i, limit)
-        when '"'
-          i = skip_string(source, i, limit)
-        when open_char
-          depth += 1
-        when close_char
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-
-      index
-    end
-
-    private def line_number_for(source : String, index : Int32) : Int32
-      source.byte_slice(0, index).count('\n') + 1
     end
   end
 end

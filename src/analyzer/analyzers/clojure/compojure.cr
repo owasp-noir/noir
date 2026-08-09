@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/clojure_callee_extractor"
 require "../../../utils/utils"
+require "./clojure_helper"
 
 module Analyzer::Clojure
   class Compojure < Analyzer
@@ -71,11 +72,11 @@ module Analyzer::Clojure
       while i < end_index
         case source.byte_at(i).unsafe_chr
         when ';'
-          i = skip_comment(source, i, end_index)
+          i = Helper.skip_comment(source, i, end_index)
         when '"'
-          i = skip_string(source, i, end_index) + 1
+          i = Helper.skip_string(source, i, end_index) + 1
         when '('
-          form_end = find_matching_delimiter(source, i, '(', ')', end_index)
+          form_end = Helper.find_matching_delimiter(source, i, '(', ')', end_index)
           break if form_end <= i
 
           symbol_start = skip_ws_and_comments(source, i + 1, form_end)
@@ -121,7 +122,7 @@ module Analyzer::Clojure
       route_path = normalize_route_path(raw_route_path)
 
       full_path = join_path(prefix, route_path)
-      endpoint = Endpoint.new(full_path, method, Details.new(PathInfo.new(path, line_number_for(source, form_start))))
+      endpoint = Endpoint.new(full_path, method, Details.new(PathInfo.new(path, Helper.line_number_for(source, form_start))))
 
       path_param_names = extract_path_param_names(route_path)
       path_param_names.each do |name|
@@ -148,7 +149,7 @@ module Analyzer::Clojure
       return if body_start >= form_end
 
       body = source.byte_slice(body_start, form_end - body_start)
-      start_line = line_number_for(source, body_start)
+      start_line = Helper.line_number_for(source, body_start)
       callees = Noir::ClojureCalleeExtractor.callees_for_body(body, path, start_line)
       Noir::ClojureCalleeExtractor.attach_to(endpoint, callees)
     end
@@ -171,7 +172,7 @@ module Analyzer::Clojure
 
           if (ptype = RESTRUCTURING_PARAMS[keyword]?) &&
              value_start < value_end && source.byte_at(value_start).unsafe_chr == '['
-            bind_end = find_matching_delimiter(source, value_start, '[', ']', value_end)
+            bind_end = Helper.find_matching_delimiter(source, value_start, '[', ']', value_end)
             if bind_end > value_start
               binding_param_names(source, value_start + 1, bind_end).each do |name|
                 add_param_once(endpoint, name, ptype)
@@ -260,7 +261,7 @@ module Analyzer::Clojure
       return false if i >= form_end
       return false unless source.byte_at(i).unsafe_chr == '{'
 
-      map_end = find_matching_delimiter(source, i, '{', '}', form_end)
+      map_end = Helper.find_matching_delimiter(source, i, '{', '}', form_end)
       return false if map_end <= i
 
       route_path = prefix.empty? ? "/" : prefix
@@ -284,14 +285,14 @@ module Analyzer::Clojure
 
     private def emit_resource_endpoint(source : String, offset : Int32, route_path : String, method : String,
                                        path : String, include_callee : Bool, handler_range : Tuple(Int32, Int32)?)
-      endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, line_number_for(source, offset))))
+      endpoint = Endpoint.new(route_path, method, Details.new(PathInfo.new(path, Helper.line_number_for(source, offset))))
       extract_path_param_names(route_path).each do |name|
         endpoint.push_param(Param.new(name, "", "path"))
       end
 
       if include_callee && handler_range
         body = source.byte_slice(handler_range[0], handler_range[1] - handler_range[0])
-        start_line = line_number_for(source, handler_range[0])
+        start_line = Helper.line_number_for(source, handler_range[0])
         Noir::ClojureCalleeExtractor.attach_to(endpoint,
           Noir::ClojureCalleeExtractor.callees_for_body(body, path, start_line))
       end
@@ -309,7 +310,7 @@ module Analyzer::Clojure
       inner_start = i
       inner_limit = limit
       if source.byte_at(i).unsafe_chr == '{'
-        map_end = find_matching_delimiter(source, i, '{', '}', limit)
+        map_end = Helper.find_matching_delimiter(source, i, '{', '}', limit)
         return if map_end <= i
         inner_start = i + 1
         inner_limit = map_end
@@ -348,16 +349,16 @@ module Analyzer::Clojure
 
       case source.byte_at(i).unsafe_chr
       when '"'
-        e = skip_string(source, i, limit)
+        e = Helper.skip_string(source, i, limit)
         e >= i ? e + 1 : limit
       when '('
-        e = find_matching_delimiter(source, i, '(', ')', limit)
+        e = Helper.find_matching_delimiter(source, i, '(', ')', limit)
         e > i ? e + 1 : limit
       when '['
-        e = find_matching_delimiter(source, i, '[', ']', limit)
+        e = Helper.find_matching_delimiter(source, i, '[', ']', limit)
         e > i ? e + 1 : limit
       when '{'
-        e = find_matching_delimiter(source, i, '{', '}', limit)
+        e = Helper.find_matching_delimiter(source, i, '{', '}', limit)
         e > i ? e + 1 : limit
       when '\'', '`'
         resource_end_of_value(source, i + 1, limit)
@@ -366,10 +367,10 @@ module Analyzer::Clojure
         case nxt
         when '{', '('
           inner_close = nxt == '{' ? '}' : ')'
-          e = find_matching_delimiter(source, i + 1, nxt, inner_close, limit)
+          e = Helper.find_matching_delimiter(source, i + 1, nxt, inner_close, limit)
           e > i + 1 ? e + 1 : limit
         when '"'
-          e = skip_string(source, i + 1, limit)
+          e = Helper.skip_string(source, i + 1, limit)
           e >= i + 1 ? e + 1 : limit
         when '_'
           resource_end_of_value(source, i + 2, limit)
@@ -389,10 +390,10 @@ module Analyzer::Clojure
 
       case source.byte_at(i).unsafe_chr
       when '['
-        binding_end = find_matching_delimiter(source, i, '[', ']', limit)
+        binding_end = Helper.find_matching_delimiter(source, i, '[', ']', limit)
         binding_end > i ? binding_end + 1 : i
       when '{'
-        binding_end = find_matching_delimiter(source, i, '{', '}', limit)
+        binding_end = Helper.find_matching_delimiter(source, i, '{', '}', limit)
         binding_end > i ? binding_end + 1 : i
       when '('
         i
@@ -521,10 +522,10 @@ module Analyzer::Clojure
 
       case source.byte_at(i).unsafe_chr
       when '['
-        binding_end = find_matching_delimiter(source, i, '[', ']', limit)
+        binding_end = Helper.find_matching_delimiter(source, i, '[', ']', limit)
         binding_end > i ? source.byte_slice(i, binding_end - i + 1) : nil
       when '{'
-        binding_end = find_matching_delimiter(source, i, '{', '}', limit)
+        binding_end = Helper.find_matching_delimiter(source, i, '{', '}', limit)
         binding_end > i ? source.byte_slice(i, binding_end - i + 1) : nil
       when '('
         nil
@@ -542,7 +543,7 @@ module Analyzer::Clojure
     private def route_path_literal(source : String, index : Int32, limit : Int32) : Tuple(String?, Int32)
       i = skip_ws_and_comments(source, index, limit)
       if i < limit && source.byte_at(i).unsafe_chr == '['
-        vec_end = find_matching_delimiter(source, i, '[', ']', limit)
+        vec_end = Helper.find_matching_delimiter(source, i, '[', ']', limit)
         return {nil, index} if vec_end <= i
         route_path, _ = first_string_literal(source, i + 1, vec_end)
         return {route_path, vec_end}
@@ -556,9 +557,9 @@ module Analyzer::Clojure
       while i < limit
         case source.byte_at(i).unsafe_chr
         when ';'
-          i = skip_comment(source, i, limit)
+          i = Helper.skip_comment(source, i, limit)
         when '"'
-          literal_end = skip_string(source, i, limit)
+          literal_end = Helper.skip_string(source, i, limit)
           return {decode_string_literal(source.byte_slice(i, literal_end - i + 1)), literal_end}
         when '(', '[', '{'
           break
@@ -602,66 +603,12 @@ module Analyzer::Clojure
         if whitespace?(char) || char == ','
           i += 1
         elsif char == ';'
-          i = skip_comment(source, i, limit)
+          i = Helper.skip_comment(source, i, limit)
         else
           break
         end
       end
       i
-    end
-
-    private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
-      i = index
-      while i < limit && source.byte_at(i).unsafe_chr != '\n'
-        i += 1
-      end
-      i
-    end
-
-    private def skip_string(source : String, index : Int32, limit : Int32) : Int32
-      i = index + 1
-      escaping = false
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        if escaping
-          escaping = false
-        elsif char == '\\'
-          escaping = true
-        elsif char == '"'
-          return i
-        end
-        i += 1
-      end
-
-      limit - 1
-    end
-
-    private def find_matching_delimiter(source : String, index : Int32, open_char : Char, close_char : Char, limit : Int32) : Int32
-      depth = 0
-      i = index
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        case char
-        when ';'
-          i = skip_comment(source, i, limit)
-        when '"'
-          i = skip_string(source, i, limit)
-        when open_char
-          depth += 1
-        when close_char
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-
-      index
-    end
-
-    private def line_number_for(source : String, index : Int32) : Int32
-      source.byte_slice(0, index).count('\n') + 1
     end
 
     private def whitespace?(char : Char) : Bool

@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../utils/utils"
+require "./clojure_helper"
 
 module Analyzer::Clojure
   # Generic Ring handler analyzer — extracts endpoints from Clojure code that
@@ -60,7 +61,7 @@ module Analyzer::Clojure
         method = METHOD_KEYWORDS[match[1].downcase]
         route = decode_string(match[2])
         next unless route.starts_with?('/')
-        # byte offset (line_number_for uses byte_slice; begin(0) is a char index)
+        # byte offset (Helper.line_number_for uses byte_slice; begin(0) is a char index)
         offset = match.byte_begin(0)
         emit_endpoint(content, path, offset, method, route, seen)
       end
@@ -76,11 +77,11 @@ module Analyzer::Clojure
       while i < end_index
         case source.byte_at(i).unsafe_chr
         when ';'
-          i = skip_comment(source, i, end_index)
+          i = Helper.skip_comment(source, i, end_index)
         when '"'
-          i = skip_string(source, i, end_index) + 1
+          i = Helper.skip_string(source, i, end_index) + 1
         when '('
-          form_end = find_matching_delimiter(source, i, '(', ')', end_index)
+          form_end = Helper.find_matching_delimiter(source, i, '(', ')', end_index)
           break if form_end <= i
 
           symbol_start = skip_ws_and_comments(source, i + 1, form_end)
@@ -153,7 +154,7 @@ module Analyzer::Clojure
             emit_endpoint(source, path, i, "GET", route, seen) if route.starts_with?('/')
           elsif token.starts_with?('(')
             # Fall-through list of keys: `("/a" "/b")` — each string is a route.
-            emit_list_string_keys(source, i + 1, find_matching_delimiter(source, i, '(', ')', limit), path, seen)
+            emit_list_string_keys(source, i + 1, Helper.find_matching_delimiter(source, i, '(', ')', limit), path, seen)
           end
         end
 
@@ -198,11 +199,11 @@ module Analyzer::Clojure
       while i < end_index
         case source.byte_at(i).unsafe_chr
         when ';'
-          i = skip_comment(source, i, end_index)
+          i = Helper.skip_comment(source, i, end_index)
         when '"'
-          i = skip_string(source, i, end_index) + 1
+          i = Helper.skip_string(source, i, end_index) + 1
         when '('
-          form_end = find_matching_delimiter(source, i, '(', ')', end_index)
+          form_end = Helper.find_matching_delimiter(source, i, '(', ')', end_index)
           break if form_end <= i
 
           sym_start = skip_ws_and_comments(source, i + 1, form_end)
@@ -266,7 +267,7 @@ module Analyzer::Clojure
       char = source.byte_at(i).unsafe_chr
       case char
       when '('
-        form_end = find_matching_delimiter(source, i, '(', ')', end_index)
+        form_end = Helper.find_matching_delimiter(source, i, '(', ')', end_index)
         if form_end > i
           token = source.byte_slice(i, form_end - i + 1)
           {token, skip_ws_and_comments(source, form_end + 1, end_index)}
@@ -274,7 +275,7 @@ module Analyzer::Clojure
           {"", i}
         end
       when '['
-        form_end = find_matching_delimiter(source, i, '[', ']', end_index)
+        form_end = Helper.find_matching_delimiter(source, i, '[', ']', end_index)
         if form_end > i
           token = source.byte_slice(i, form_end - i + 1)
           {token, skip_ws_and_comments(source, form_end + 1, end_index)}
@@ -282,7 +283,7 @@ module Analyzer::Clojure
           {"", i}
         end
       when '{'
-        form_end = find_matching_delimiter(source, i, '{', '}', end_index)
+        form_end = Helper.find_matching_delimiter(source, i, '{', '}', end_index)
         if form_end > i
           token = source.byte_slice(i, form_end - i + 1)
           {token, skip_ws_and_comments(source, form_end + 1, end_index)}
@@ -290,7 +291,7 @@ module Analyzer::Clojure
           {"", i}
         end
       when '"'
-        str_end = skip_string(source, i, end_index)
+        str_end = Helper.skip_string(source, i, end_index)
         token = source.byte_slice(i, str_end - i + 1)
         {token, skip_ws_and_comments(source, str_end + 1, end_index)}
       else
@@ -315,7 +316,7 @@ module Analyzer::Clojure
       return if seen.includes?(key)
       seen << key
 
-      line = line_number_for(content, offset)
+      line = Helper.line_number_for(content, offset)
       endpoint = Endpoint.new(route, method, Details.new(PathInfo.new(path, line)))
 
       extract_path_param_names(route).each do |name|
@@ -355,66 +356,12 @@ module Analyzer::Clojure
         if whitespace?(char)
           i += 1
         elsif char == ';'
-          i = skip_comment(source, i, limit)
+          i = Helper.skip_comment(source, i, limit)
         else
           break
         end
       end
       i
-    end
-
-    private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
-      i = index
-      while i < limit && source.byte_at(i).unsafe_chr != '\n'
-        i += 1
-      end
-      i
-    end
-
-    private def skip_string(source : String, index : Int32, limit : Int32) : Int32
-      i = index + 1
-      escaping = false
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        if escaping
-          escaping = false
-        elsif char == '\\'
-          escaping = true
-        elsif char == '"'
-          return i
-        end
-        i += 1
-      end
-
-      limit - 1
-    end
-
-    private def find_matching_delimiter(source : String, index : Int32, open_char : Char, close_char : Char, limit : Int32) : Int32
-      depth = 0
-      i = index
-
-      while i < limit
-        char = source.byte_at(i).unsafe_chr
-        case char
-        when ';'
-          i = skip_comment(source, i, limit)
-        when '"'
-          i = skip_string(source, i, limit)
-        when open_char
-          depth += 1
-        when close_char
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-
-      index
-    end
-
-    private def line_number_for(source : String, index : Int32) : Int32
-      source.byte_slice(0, index).count('\n') + 1
     end
 
     private def whitespace?(char : Char) : Bool
