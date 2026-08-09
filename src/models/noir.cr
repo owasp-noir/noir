@@ -148,7 +148,7 @@ class NoirRunner
 
     # Set status code
     if any_to_bool(@options["status_codes"]) || !@options["exclude_codes"].to_s.empty?
-      update_status_codes
+      @endpoints = StatusCodeProbe.new(@options, @logger).apply(@endpoints)
     end
 
     # Run tagger
@@ -199,123 +199,6 @@ class NoirRunner
     raw = @options["ai_context_features"]?.try(&.to_s) || ""
     features = NoirAIContext.parse_feature_set(raw)
     NoirAIContext.apply_feature_filter(@endpoints, features)
-  end
-
-  def update_status_codes
-    @logger.sub "➔ Updating status codes."
-    final = [] of Endpoint
-
-    # A Set dedupes repeated codes (--exclude-codes 404,404,500) for free and
-    # gives O(1) membership; empty tokens (a trailing comma) are skipped.
-    exclude_codes = Set(Int32).new
-    unless @options["exclude_codes"].to_s.empty?
-      @options["exclude_codes"].to_s.split(",").each do |code|
-        stripped = code.strip
-        next if stripped.empty?
-        exclude_codes << stripped.to_i
-      end
-    end
-
-    @endpoints.each do |endpoint|
-      # Mobile deep links (`myapp://`, `intent://`, `content://`), CLI
-      # command surfaces (`cli://`) and realtime `ws://` event surfaces are
-      # not HTTP requests — the same guard SendReq / SendWithProxy already
-      # apply before probing. Without it every one of them was handed to
-      # Crest, which raised "Unsupported scheme" per endpoint: a mobile scan
-      # with --status-codes printed dozens of `Failed to get status code`
-      # errors for endpoints that can never have one.
-      if endpoint.non_http?
-        final << endpoint
-        next
-      end
-
-      request_method = requestable_http_methods(endpoint.method).first?
-      unless request_method
-        final << endpoint
-        next
-      end
-
-      begin
-        if endpoint.params.empty?
-          response = perform_request(
-            get_symbol(request_method),
-            endpoint.url
-          )
-          endpoint.details.status_code = response.status_code
-          unless exclude_codes.includes?(response.status_code)
-            final << endpoint
-          end
-        else
-          endpoint_hash = endpoint.params_to_hash
-          is_json = false
-          body = if endpoint_hash["json"].empty?
-                   endpoint_hash["form"]
-                 else
-                   is_json = true
-                   endpoint_hash["json"]
-                 end
-
-          response = perform_request(
-            get_symbol(request_method),
-            endpoint.url,
-            endpoint_hash["query"],
-            body,
-            is_json
-          )
-          endpoint.details.status_code = response.status_code
-          unless exclude_codes.includes?(response.status_code)
-            final << endpoint
-          end
-        end
-      rescue e
-        @logger.error "Failed to get status code for #{endpoint.url} (#{e.message})."
-        final << endpoint
-      end
-    end
-
-    @endpoints = final
-  end
-
-  def perform_request(method, url, params = {} of String => String, form = {} of String => String, json = false)
-    # Verify TLS by default; --tls-skip-verify opts into the insecure
-    # context for self-signed internal hosts (see Deliver#tls_context).
-    tls = if any_to_bool(@options["tls_skip_verify"]?)
-            OpenSSL::SSL::Context::Client.insecure
-          else
-            OpenSSL::SSL::Context::Client.new
-          end
-    Crest::Request.execute(
-      method: method,
-      url: url,
-      tls: tls,
-      user_agent: "Noir/#{Noir::VERSION}",
-      params: params,
-      form: form,
-      json: json,
-      handle_errors: false,
-      read_timeout: 5.second
-    )
-  end
-
-  # Backward compatibility wrapper methods for tests
-  def optimize_endpoints
-    optimizer = LLMEndpointOptimizer.new(@logger, @options)
-    @endpoints = optimizer.optimize_endpoints(@endpoints)
-  end
-
-  def combine_url_and_endpoints
-    optimizer = LLMEndpointOptimizer.new(@logger, @options)
-    @endpoints = optimizer.combine_url_and_endpoints(@endpoints)
-  end
-
-  def add_path_parameters
-    optimizer = LLMEndpointOptimizer.new(@logger, @options)
-    @endpoints = optimizer.add_path_parameters(@endpoints)
-  end
-
-  def apply_pvalue(param_type, param_name, param_value) : String
-    optimizer = LLMEndpointOptimizer.new(@logger, @options)
-    optimizer.apply_pvalue(param_type, param_name, param_value)
   end
 
   def deliver
