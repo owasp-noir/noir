@@ -2,13 +2,9 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "sarif"
 
+@[Noir::OutputFormat(name: "sarif", description: "SARIF format", order: 70)]
 class OutputBuilderSarif < OutputBuilder
-  def print(endpoints : Array(Endpoint))
-    message = build_sarif(endpoints, [] of PassiveScanResult)
-    ob_puts message
-  end
-
-  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     message = build_sarif(endpoints, passive_results)
     ob_puts message
   end

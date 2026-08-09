@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "only-cookie", description: "Only cookies", order: 200)]
 class OutputBuilderOnlyCookie < OutputBuilder
   def print(endpoints : Array(Endpoint))
     cookies = [] of String

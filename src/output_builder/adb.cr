@@ -14,6 +14,7 @@ require "./mobile_launch"
 # `xcrun simctl openurl` — a dedicated `-f simctl` format is a follow-up). The
 # dropped endpoints are reported once per category as a warning (to STDERR, so
 # the command list on STDOUT stays pipe-clean).
+@[Noir::OutputFormat(name: "adb", description: "ADB commands for Android entry points", order: 120)]
 class OutputBuilderAdb < OutputBuilder
   include MobileLaunch
 

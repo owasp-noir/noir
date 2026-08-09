@@ -3,6 +3,7 @@ require "../models/endpoint"
 require "../utils/http_symbols"
 require "../utils/curl_command"
 
+@[Noir::OutputFormat(name: "curl", description: "cURL commands", order: 90)]
 class OutputBuilderCurl < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|

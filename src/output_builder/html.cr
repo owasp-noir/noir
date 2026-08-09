@@ -8,13 +8,9 @@ require "./html_assets/js"
 require "./html_assets/logo"
 require "html"
 
+@[Noir::OutputFormat(name: "html", description: "HTML report", order: 80)]
 class OutputBuilderHtml < OutputBuilder
-  def print(endpoints : Array(Endpoint))
-    html = build_html(endpoints, [] of PassiveScanResult)
-    ob_puts html
-  end
-
-  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     html = build_html(endpoints, passive_results)
     ob_puts html
   end

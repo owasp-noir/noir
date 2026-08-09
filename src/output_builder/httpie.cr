@@ -3,6 +3,7 @@ require "../models/endpoint"
 require "../utils/http_symbols"
 require "json"
 
+@[Noir::OutputFormat(name: "httpie", description: "HTTPie commands", order: 100)]
 class OutputBuilderHttpie < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|

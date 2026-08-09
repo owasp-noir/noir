@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "only-param", description: "Only parameters", order: 180)]
 class OutputBuilderOnlyParam < OutputBuilder
   # Excluded rather than an allow-list of what to print. This format exists to
   # feed parameter fuzzers, so the question is which inputs *aren't* wanted:

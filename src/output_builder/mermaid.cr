@@ -2,6 +2,7 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "../models/passive_scan"
 
+@[Noir::OutputFormat(name: "mermaid", description: "Mermaid diagram", order: 220)]
 class OutputBuilderMermaid < OutputBuilder
   # CLI inputs get a plural label; the bucket key is the singular param type.
   CLI_PARAM_LABELS = {"flag" => "flags", "argument" => "arguments", "env" => "env"}
@@ -9,11 +10,7 @@ class OutputBuilderMermaid < OutputBuilder
   # Buckets `output_tree` renders explicitly, under a label of their own.
   RENDERED_BUCKETS = Set{"header", "cookie", "query", "json", "form", "path"}
 
-  def print(endpoints : Array(Endpoint))
-    build_mindmap(endpoints)
-  end
-
-  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     build_mindmap(endpoints, passive_results)
   end
 

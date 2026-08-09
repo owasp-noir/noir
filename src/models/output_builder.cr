@@ -1,5 +1,6 @@
 require "./logger"
 require "./endpoint"
+require "./passive_scan"
 require "../utils/*"
 require "colorize"
 
@@ -55,6 +56,29 @@ module NoirOutputFiles
     file.close unless file.closed?
   rescue IO::Error
   end
+end
+
+# Marks an `OutputBuilder` subclass as the implementation of one
+# `-f/--format` value.
+#
+#     @[Noir::OutputFormat(name: "json", description: "JSON", order: 30)]
+#     class OutputBuilderJson < OutputBuilder
+#
+# `Noir::OutputFormats` reads the catalog off the annotated classes, so this
+# line is the only place a format's name, its help/`noir list formats`
+# description, and the class that renders it are written down. Before it,
+# those three facts lived in five hand-maintained lists (the dispatch `case`
+# in `NoirRunner#report`, `CliValidation::VALID_OUTPUT_FORMATS`, the `-f`
+# help text, and the zsh/bash/fish completion strings) that nothing linked
+# together — a new format silently missed whichever ones the author forgot.
+#
+# `order` decides where the format appears in help output and `noir list
+# formats`; it has no runtime meaning. Values are spaced by 10 so a format
+# can be slotted between two others without renumbering.
+#
+# Builders that are not `-f` values (the diff renderer, the passive-scan
+# section) carry no annotation and stay out of the registry.
+annotation Noir::OutputFormat
 end
 
 class OutputBuilder
@@ -171,6 +195,14 @@ class OutputBuilder
 
   def print
     # After inheriting the class, write an action code here.
+  end
+
+  # Two-argument entry point every `-f` format answers to, so
+  # `Noir::OutputFormats.render` can hand each builder the same pair.
+  # Formats with nothing to say about passive findings inherit this and
+  # implement only `print(endpoints)`.
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+    print(endpoints)
   end
 
   # The block form of `NoirLogger#debug`, not the String one: `bake_endpoint`

@@ -4,7 +4,7 @@ require "yaml"
 require "../common"
 require "../../techs/techs"
 require "../../tagger/tagger"
-require "../../cli_validation"
+require "../../output_builder/formats"
 
 # `noir list <techs|taggers|formats>`
 #
@@ -138,8 +138,8 @@ module Noir::CLI::ListCommand
 
   def self.print_formats(format : String = "text", io : IO = STDOUT)
     case format
-    when "json" then io.puts({"formats" => Noir::CliValidation::VALID_OUTPUT_FORMATS}.to_json)
-    when "yaml" then io.puts({"formats" => Noir::CliValidation::VALID_OUTPUT_FORMATS}.to_yaml)
+    when "json" then io.puts({"formats" => Noir::OutputFormats::NAMES}.to_json)
+    when "yaml" then io.puts({"formats" => Noir::OutputFormats::NAMES}.to_yaml)
     else             print_formats_text(io)
     end
   end
@@ -173,10 +173,13 @@ module Noir::CLI::ListCommand
     end
   end
 
+  # The one-line description beside each name is the same string `noir scan
+  # -h` prints, because both read the annotation on the builder class.
   private def self.print_formats_text(io : IO)
     io.puts "Available output formats:"
-    Noir::CliValidation::VALID_OUTPUT_FORMATS.each do |fmt|
-      io.puts " #{fmt.colorize(:green)}"
+    width = Noir::OutputFormats::ENTRIES.max_of(&.name.size)
+    Noir::OutputFormats::ENTRIES.each do |entry|
+      io.puts " #{entry.name.ljust(width).colorize(:green)}  #{entry.description}"
     end
   end
 

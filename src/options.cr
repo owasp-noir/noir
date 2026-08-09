@@ -1,5 +1,6 @@
 require "./ai_context/features.cr"
 require "./completions.cr"
+require "./output_builder/formats.cr"
 require "./config_initializer.cr"
 require "./banner.cr"
 require "yaml"
@@ -272,31 +273,10 @@ def run_options_parser
     end
 
     parser.separator "\n OUTPUT:".colorize(:blue)
-    parser.on "-f FMT", "--format json", <<-DESC do |v|
-      Output format:
-        plain                Plain text (default)
-        yaml                 YAML
-        json                 JSON
-        jsonl                JSON Lines
-        toml                 TOML
-        markdown-table       Markdown table
-        sarif                SARIF format
-        html                 HTML report
-        curl                 cURL commands
-        httpie               HTTPie commands
-        powershell           PowerShell Invoke-WebRequest commands
-        adb                  ADB commands for Android entry points
-        simctl               simctl commands for iOS entry points
-        oas2                 OpenAPI 2.0 (Swagger)
-        oas3                 OpenAPI 3.0
-        postman              Postman collection
-        only-url             Only endpoint URLs
-        only-param           Only parameters
-        only-header          Only headers
-        only-cookie          Only cookies
-        only-tag             Only tags
-        mermaid              Mermaid diagram
-      DESC
+    # The per-format lines come from the annotated builder classes
+    # (`Noir::OutputFormats`), so a new format shows up in `-h` without this
+    # list having to be updated alongside the builder.
+    parser.on "-f FMT", "--format json", "Output format:\n#{Noir::OutputFormats.help_text}" do |v|
       noir_options["format"] = YAML::Any.new(v)
     end
     parser.on "-o PATH", "--output out.txt", "Write result to file" do |v|

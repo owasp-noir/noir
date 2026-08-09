@@ -1,7 +1,9 @@
 require "../ai_context/features"
 require "../models/output_builder"
 require "../models/endpoint"
+require "./passive_scan"
 
+@[Noir::OutputFormat(name: "plain", description: "Plain text (default)", order: 10)]
 class OutputBuilderCommon < OutputBuilder
   # Mobile entry points keep method = "GET" internally; the protocol
   # carries the real semantics and drives the display prefix.
@@ -24,6 +26,27 @@ class OutputBuilderCommon < OutputBuilder
                           "path_permissions", "extras"]
 
   @ai_context_features : Set(String)? = nil
+
+  # The plain report is the only format that frames itself — a heading over
+  # the endpoint list, and the passive-scan findings appended below a second
+  # one. Both used to sit in `NoirRunner#report`, which forced the runner to
+  # special-case "is this the default format?" on either side of a dispatch
+  # that otherwise treats every format alike.
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+    logger.heading "Endpoint Results:"
+    print(endpoints)
+    return if passive_results.empty?
+
+    # Separator through a builder, not `logger.puts`: the logger `exit(0)`s
+    # the process on a broken pipe, so `noir scan . -P -o report.txt | head`
+    # died on this one blank line and the `-o` file kept the endpoint list
+    # but lost every finding. `ob_puts` marks stdout broken and keeps
+    # filling the file. It also puts the blank line in `-o`, so the saved
+    # report matches what stdout showed.
+    ob_puts ""
+    logger.heading "Passive Results:"
+    OutputBuilderPassiveScan.new(@options).print(passive_results)
+  end
 
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|

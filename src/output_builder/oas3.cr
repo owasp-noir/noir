@@ -3,6 +3,7 @@ require "../models/endpoint"
 require "./oas_common"
 require "json"
 
+@[Noir::OutputFormat(name: "oas3", description: "OpenAPI 3.0", order: 150)]
 class OutputBuilderOas3 < OutputBuilder
   include OutputBuilderOasCommon
 
