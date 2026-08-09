@@ -1,11 +1,12 @@
 require "../common"
+require "../catalog"
 require "../../completions"
 
 # `noir completion <zsh|bash|fish|elvish>`
 #
 # Replaces v0 `--generate-completion SHELL`.
 module Noir::CLI::CompletionCommand
-  SHELLS = %w[zsh bash fish elvish]
+  SHELLS = Noir::CLI::Catalog::SHELLS
 
   # Parsed argv. Extracted from `run` so the parser stays unit-testable
   # without going through the `exit`/`die` side effects.

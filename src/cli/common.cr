@@ -1,18 +1,10 @@
 require "colorize"
+require "./catalog"
 
 module Noir::CLI
   # Known top-level verbs. The router falls back to `scan` when ARGV[0]
   # is not one of these (preserving the `noir -b ./app` v0 usage pattern).
-  KNOWN_COMMANDS = [
-    "scan",
-    "list",
-    "cache",
-    "config",
-    "rules",
-    "completion",
-    "version",
-    "help",
-  ]
+  KNOWN_COMMANDS = Catalog::NAMES
 
   # Disable Crystal's Colorize globally when the user asks for plain
   # output via `--no-color` or the `NO_COLOR` env var. Applied at the

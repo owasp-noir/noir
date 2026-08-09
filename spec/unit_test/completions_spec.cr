@@ -254,10 +254,15 @@ describe "Completion Script Generation" do
       generate_elvish_completion_script.should contain("--tls-skip-verify")
     end
 
-    it "offers the documented --ai-context=all value" do
-      generate_zsh_completion_script.should contain("guards sinks validators signals callee all")
-      generate_bash_completion_script.should contain("guards sinks validators signals callee all")
-      generate_fish_completion_script.should contain("guards sinks validators signals callee all")
+    # Asserted against the vocabulary itself, not a copy of it: the
+    # hand-written completion strings this replaced had been missing
+    # `sources` since the bucket was added, and a literal expectation here
+    # agreed with them instead of catching it.
+    it "offers every documented --ai-context bucket, including all" do
+      buckets = NoirAIContext::ACCEPTED_FEATURES.join(" ")
+      generate_zsh_completion_script.should contain(buckets)
+      generate_bash_completion_script.should contain(buckets)
+      generate_fish_completion_script.should contain(buckets)
     end
 
     it "zsh completes scan positional paths (base paths)" do

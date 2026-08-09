@@ -1,6 +1,7 @@
 require "colorize"
 require "process"
 require "../common"
+require "../catalog"
 require "../../config_initializer"
 require "../../utils/home"
 
@@ -8,7 +9,7 @@ require "../../utils/home"
 #
 # Managed resource: the user-level YAML configuration file.
 module Noir::CLI::ConfigCommand
-  ACTIONS = %w[show edit init path]
+  ACTIONS = Noir::CLI::Catalog::CONFIG_ACTIONS
 
   def self.run(argv : Array(String))
     action = nil

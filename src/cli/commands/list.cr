@@ -2,6 +2,7 @@ require "colorize"
 require "json"
 require "yaml"
 require "../common"
+require "../catalog"
 require "../../techs/techs"
 require "../../tagger/tagger"
 require "../../output_builder/formats"
@@ -12,7 +13,7 @@ require "../../output_builder/formats"
 # so they live under a shared `list` namespace rather than as their own
 # subcommand modules.
 module Noir::CLI::ListCommand
-  SUBJECTS         = %w[techs taggers formats]
+  SUBJECTS         = Noir::CLI::Catalog::LIST_SUBJECTS
   AI_CONTEXT_KINDS = %w[guards sinks validators signals]
 
   # Output formats `list` itself understands. `text` is the human-readable
