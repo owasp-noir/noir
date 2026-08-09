@@ -113,7 +113,7 @@ describe Noir::CLI::ListCommand do
       io = IO::Memory.new
       Noir::CLI::ListCommand.print_formats("json", io)
       doc = JSON.parse(io.to_s)
-      doc["formats"].as_a.map(&.as_s).should eq(Noir::CliValidation::VALID_OUTPUT_FORMATS)
+      doc["formats"].as_a.map(&.as_s).should eq(Noir::OutputFormats::NAMES)
     end
   end
 end

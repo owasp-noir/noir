@@ -2,6 +2,7 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "../utils/http_symbols"
 
+@[Noir::OutputFormat(name: "powershell", description: "PowerShell Invoke-WebRequest commands", order: 110)]
 class OutputBuilderPowershell < OutputBuilder
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|

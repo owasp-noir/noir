@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "only-url", description: "Only endpoint URLs", order: 170)]
 class OutputBuilderOnlyUrl < OutputBuilder
   def print(endpoints : Array(Endpoint))
     printed_urls = Set(String).new

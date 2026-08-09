@@ -2,17 +2,11 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "./toml_serializer"
 
+@[Noir::OutputFormat(name: "toml", description: "TOML", order: 50)]
 class OutputBuilderToml < OutputBuilder
   include OutputBuilderTomlSerializer
 
-  def print(endpoints : Array(Endpoint))
-    message = {"endpoints" => endpoints, "passive_results" => [] of PassiveScanResult}.to_json
-    json_obj = JSON.parse(message)
-    toml_output = generate_toml(json_obj.as_h)
-    ob_puts toml_output
-  end
-
-  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult))
+  def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     message = {"endpoints" => endpoints, "passive_results" => passive_results}.to_json
     json_obj = JSON.parse(message)
     toml_output = generate_toml(json_obj.as_h)

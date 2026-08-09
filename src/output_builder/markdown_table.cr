@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "markdown-table", description: "Markdown table", order: 60)]
 class OutputBuilderMarkdownTable < OutputBuilder
   def print(endpoints : Array(Endpoint))
     ob_puts "| Endpoint | Protocol | Params |"

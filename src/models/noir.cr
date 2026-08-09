@@ -367,94 +367,18 @@ class NoirRunner
     end
   end
 
+  # Renders the report in the requested format. Which builder that is, and
+  # which formats exist at all, is the annotated-builder catalog's business
+  # (`Noir::OutputFormats`) — this used to be a 70-line `case` that was the
+  # fourth place a format had to be listed.
   def report
-    case options["format"]
-    when "yaml"
-      builder = OutputBuilderYaml.new @options
-      builder.print @endpoints, @passive_results
-    when "json"
-      builder = OutputBuilderJson.new @options
-      builder.print @endpoints, @passive_results
-    when "jsonl"
-      builder = OutputBuilderJsonl.new @options
-      builder.print @endpoints, @passive_results
-    when "toml"
-      builder = OutputBuilderToml.new @options
-      builder.print @endpoints, @passive_results
-    when "markdown-table"
-      builder = OutputBuilderMarkdownTable.new @options
-      builder.print @endpoints
-    when "httpie"
-      builder = OutputBuilderHttpie.new @options
-      builder.print @endpoints
-    when "curl"
-      builder = OutputBuilderCurl.new @options
-      builder.print @endpoints
-    when "powershell"
-      builder = OutputBuilderPowershell.new @options
-      builder.print @endpoints
-    when "adb"
-      builder = OutputBuilderAdb.new @options
-      builder.print @endpoints
-    when "simctl"
-      builder = OutputBuilderSimctl.new @options
-      builder.print @endpoints
-    when "sarif"
-      builder = OutputBuilderSarif.new @options
-      builder.print @endpoints, @passive_results
-    when "oas2"
-      builder = OutputBuilderOas2.new @options
-      builder.print @endpoints
-    when "oas3"
-      builder = OutputBuilderOas3.new @options
-      builder.print @endpoints
-    when "postman"
-      builder = OutputBuilderPostman.new @options
-      builder.print @endpoints
-    when "only-url"
-      builder = OutputBuilderOnlyUrl.new @options
-      builder.print @endpoints
-    when "only-param"
-      builder = OutputBuilderOnlyParam.new @options
-      builder.print @endpoints
-    when "only-header"
-      builder = OutputBuilderOnlyHeader.new @options
-      builder.print @endpoints
-    when "only-cookie"
-      builder = OutputBuilderOnlyCookie.new @options
-      builder.print @endpoints
-    when "only-tag"
-      builder = OutputBuilderOnlyTag.new @options
-      builder.print @endpoints
-    when "mermaid"
-      builder = OutputBuilderMermaid.new @options
-      builder.print @endpoints, @passive_results
-    when "html"
-      builder = OutputBuilderHtml.new @options
-      builder.print @endpoints, @passive_results
-    else
-      builder = OutputBuilderCommon.new @options
+    format = options["format"].to_s
+    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results)
 
-      @logger.heading "Endpoint Results:"
-      builder.print @endpoints
-
-      print_passive_results
-    end
-  end
-
-  def print_passive_results
-    unless @passive_results.empty?
-      builder = OutputBuilderPassiveScan.new @options
-      # Separator through the builder, not `@logger.puts`: the logger
-      # `exit(0)`s the process on a broken pipe, so `noir scan . -P -o
-      # report.txt | head` died on this one blank line and the `-o` file
-      # kept the endpoint list but lost every finding. `ob_puts` marks
-      # stdout broken and keeps filling the file. It also puts the blank
-      # line in `-o`, so the saved report matches what stdout showed.
-      builder.ob_puts ""
-      @logger.heading "Passive Results:"
-      builder.print @passive_results
-    end
+    # `CliValidation` rejects an unknown `-f` before a scan starts, so this
+    # only catches a library caller that built the options hash itself:
+    # fall back to the default format rather than printing nothing at all.
+    Noir::OutputFormats.render(Noir::OutputFormats::DEFAULT, @options, @endpoints, @passive_results)
   end
 
   def techs=(value : Array(String))

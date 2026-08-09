@@ -3,35 +3,11 @@ require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
 require "./llm/native_tool_calling"
+require "./output_builder/formats"
 
 module Noir::CliValidation
   class Error < Exception
   end
-
-  VALID_OUTPUT_FORMATS = %w[
-    plain
-    yaml
-    json
-    jsonl
-    toml
-    markdown-table
-    sarif
-    html
-    curl
-    httpie
-    powershell
-    adb
-    simctl
-    oas2
-    oas3
-    postman
-    only-url
-    only-param
-    only-header
-    only-cookie
-    only-tag
-    mermaid
-  ]
 
   def self.validate!(options : Hash(String, YAML::Any))
     validate_base_paths!(options)
@@ -257,9 +233,9 @@ module Noir::CliValidation
 
   def self.validate_output_format!(options : Hash(String, YAML::Any))
     format = options["format"].to_s
-    return if VALID_OUTPUT_FORMATS.includes?(format)
+    return if Noir::OutputFormats.known?(format)
 
-    raise Error.new("Invalid output format '#{format}'. Valid formats: #{VALID_OUTPUT_FORMATS.join(", ")}")
+    raise Error.new("Invalid output format '#{format}'. Valid formats: #{Noir::OutputFormats::NAMES.join(", ")}")
   end
 
   # Upper bound for --concurrency. A user asking for hundreds of thousands

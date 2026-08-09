@@ -1,6 +1,7 @@
 require "../models/output_builder"
 require "../models/endpoint"
 
+@[Noir::OutputFormat(name: "only-tag", description: "Only tags", order: 210)]
 class OutputBuilderOnlyTag < OutputBuilder
   def print(endpoints : Array(Endpoint))
     tags = [] of Tag
