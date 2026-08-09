@@ -82,27 +82,6 @@ module Analyzer::CSharp
       params.uniq(&.name)
     end
 
-    private def extract_bind_params_from_file(block : String, lines : Array(String)) : Array(Param)
-      return [] of Param unless block.includes?("Bind(")
-
-      params = [] of Param
-      masked_lines = Noir::CSharpLexer.new(lines.join('\n')).masked_lines
-      lines.each_with_index do |line, index|
-        next unless line.includes?("Bind(")
-        next unless line.includes?("public") || line.includes?("private") || line.includes?("protected") || line.includes?("internal") || line.includes?("static")
-
-        _, end_idx = build_signature(lines, masked_lines, index)
-        body = extract_method_block(lines, masked_lines, end_idx)
-        params.concat(extract_params_from_block(body))
-      end
-
-      if params.empty? && block =~ /parameters\.Url/
-        params << Param.new("url", "", "query")
-      end
-
-      params.uniq(&.name)
-    end
-
     private def load_route_patterns_by_scope(project_roots : Array(String)) : Hash(String, Array(String))
       patterns_by_scope = Hash(String, Array(String)).new do |hash, key|
         hash[key] = [] of String
@@ -611,28 +590,6 @@ module Analyzer::CSharp
       normalized = "/" + normalized unless normalized.starts_with?("/")
       normalized = "/" if normalized == "//" || normalized == "/"
       normalized
-    end
-
-    private def build_endpoint_from_route(raw_route : String, http_method : String, file : String, line : Int32, extra_params : Array(Param) = [] of Param) : Endpoint?
-      return if raw_route.empty?
-
-      route = normalize_route(raw_route)
-      params = build_path_params(route)
-      extra_params.each do |param|
-        params << param unless params.any? { |p| p.name == param.name && p.param_type == param.param_type }
-      end
-      route = prune_optional_placeholders(route, params)
-
-      details = Details.new(PathInfo.new(file, line))
-      endpoint = Endpoint.new(route, http_method, details)
-      params.each { |param| endpoint.params << param }
-      endpoint
-    end
-
-    private def build_path_params(route : String) : Array(Param)
-      extract_route_placeholders(route).map do |name|
-        Param.new(name, "", "path")
-      end
     end
 
     private def prune_optional_placeholders(route : String, parameters : Array(Param)) : String
