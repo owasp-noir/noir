@@ -1,13 +1,14 @@
 require "colorize"
 require "file"
 require "../common"
+require "../catalog"
 require "../../llm/cache"
 
 # `noir cache <info|clear|purge>`
 #
 # Managed resource: the on-disk LLM response cache.
 module Noir::CLI::CacheCommand
-  ACTIONS = %w[info clear purge]
+  ACTIONS = Noir::CLI::Catalog::CACHE_ACTIONS
 
   # Positionals each action accepts after the action word. `purge` takes
   # `<days>`; the rest take none. Used to reject surplus argv rather than

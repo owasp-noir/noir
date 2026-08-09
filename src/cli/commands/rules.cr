@@ -1,6 +1,7 @@
 require "colorize"
 require "file"
 require "../common"
+require "../catalog"
 require "../../models/logger"
 require "../../utils/home"
 require "../../utils/passive_rules_updater"
@@ -10,7 +11,7 @@ require "../../utils/passive_rules_updater"
 # Managed resource: the passive-scan rules repository (cloned from
 # owasp-noir/noir-passive-rules into ~/.config/noir/passive_rules/).
 module Noir::CLI::RulesCommand
-  ACTIONS = %w[list update path]
+  ACTIONS = Noir::CLI::Catalog::RULES_ACTIONS
 
   # Parsed argv. Pulled out of `run` so the parser can be exercised in
   # unit specs without triggering the `exit`/`die` side effects. `error`

@@ -1,5 +1,6 @@
 require "colorize"
 require "../common"
+require "../catalog"
 require "../../banner"
 
 # `noir help [command]`
@@ -8,11 +9,11 @@ require "../../banner"
 # what `noir` with no arguments and `noir -h` resolve to.
 # `noir help scan` (etc.) defers to the matching command's help.
 module Noir::CLI::HelpCommand
-  # Commands recognised by `noir help <cmd>`. Kept here (rather than
-  # via KNOWN_COMMANDS) because each entry maps to a specific help
-  # printer, and adding a new subcommand needs a deliberate edit to
-  # both routes.
-  KNOWN_HELP_TARGETS = %w[scan list cache config rules completion version help]
+  # Commands recognised by `noir help <cmd>`. The same verbs the router
+  # dispatches — `route_for` below maps each to its help printer, and a
+  # catalog entry with no branch there is a compile error rather than a
+  # verb that quietly has no help page.
+  KNOWN_HELP_TARGETS = Noir::CLI::Catalog::NAMES
 
   # Returns a routing symbol so the spec layer can verify dispatch
   # without invoking the downstream command's help printer (which in
@@ -75,14 +76,7 @@ module Noir::CLI::HelpCommand
         noir [flags]                       # v0-compatible: routes to `noir scan`
 
       #{green.call("COMMANDS:")}
-        #{cyan.call("scan")} [PATHS...]                   Discover endpoints in one or more codebases
-        #{cyan.call("list")} techs | taggers | formats    Enumerate built-in catalogs
-        #{cyan.call("cache")} info | clear | purge        Manage the on-disk LLM response cache
-        #{cyan.call("config")} show | edit | init | path  Manage the user-level YAML configuration
-        #{cyan.call("rules")} list | update | path        Manage the passive-scan rules repository
-        #{cyan.call("completion")} <shell>                Generate shell completion (zsh, bash, fish, elvish)
-        #{cyan.call("version")} [--verbose]               Print version (or full build details)
-        #{cyan.call("help")} [command]                    Show this overview or a command's help
+      #{command_lines(cyan)}
 
       #{green.call("GLOBAL FLAGS:")}
         --no-color        Strip ANSI color from every command's output (NO_COLOR env also works)
@@ -92,5 +86,21 @@ module Noir::CLI::HelpCommand
 
       Run `noir help <command>` (or `noir <command> -h`) for command-specific flags.
       HELP
+  end
+
+  # The COMMANDS block, laid out from the catalog. The description column is
+  # aligned on the widest `verb args` pair, so a new subcommand doesn't need
+  # the whole block re-padded by hand — nor does it need to be added here at
+  # all.
+  private def self.command_lines(cyan : Proc(String, String)) : String
+    commands = Noir::CLI::Catalog::COMMANDS
+    width = commands.max_of { |command| "#{command.name} #{command.usage_args}".size }
+
+    commands.map do |command|
+      # Padding is measured on the uncolored text: the ANSI escapes around
+      # the verb are zero-width on screen but count toward String#size.
+      padding = " " * (width - "#{command.name} #{command.usage_args}".size)
+      "  #{cyan.call(command.name)} #{command.usage_args}#{padding}  #{command.summary}"
+    end.join("\n")
   end
 end
