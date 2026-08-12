@@ -71,3 +71,82 @@ describe "Noir::URLPath.join_trimmed" do
     Noir::URLPath.join_trimmed("/api/", "").should eq "/api"
   end
 end
+
+# The Spring mapping-composition rule, shared by the Java and Kotlin
+# tree-sitter route extractors.
+describe "Noir::URLPath.join_absorbing" do
+  it "absorbs a bare method mapping onto the class prefix" do
+    Noir::URLPath.join_absorbing("/api/article", "").should eq "/api/article"
+    Noir::URLPath.join_absorbing("/api/article/", "").should eq "/api/article"
+  end
+
+  it "keeps the root when an all-slash prefix has no path" do
+    Noir::URLPath.join_absorbing("/", "").should eq "/"
+    Noir::URLPath.join_absorbing("///", "").should eq "/"
+  end
+
+  it "carries an explicit @GetMapping(\"/\") through the seam" do
+    Noir::URLPath.join_absorbing("/api", "/").should eq "/api/"
+  end
+
+  # Deliberate: an unmapped class with a bare mapping resolves to `""`, and
+  # the extractors rely on that staying empty so the analyzer above them can
+  # apply the context path. Adding a root guard here would silently move
+  # every JVM route — `join_rooted` exists for callers that need one.
+  it "returns the path untouched when the prefix is empty" do
+    Noir::URLPath.join_absorbing("", "/users").should eq "/users"
+    Noir::URLPath.join_absorbing("", "").should eq ""
+  end
+
+  it "differs from join_trimmed on an all-slash prefix" do
+    Noir::URLPath.join_trimmed("/", "").should eq ""
+    Noir::URLPath.join_absorbing("/", "").should eq "/"
+  end
+end
+
+# `join_rooted` replaced a top-level `def join_paths(*paths) = File.join(paths)`
+# that unqualified calls in `java/spring.cr` and `kotlin/spring.cr` fell
+# through to. These pin the three inputs where `File.join` was wrong and the
+# two where the other `URLPath` joins would regress.
+describe "Noir::URLPath.join_rooted" do
+  it "absorbs an empty path instead of leaving a trailing slash" do
+    Noir::URLPath.join_rooted("/portal", "").should eq "/portal"
+    Noir::URLPath.join_rooted("/portal/", "").should eq "/portal"
+  end
+
+  it "roots a path that carries no leading slash" do
+    Noir::URLPath.join_rooted("", "users").should eq "/users"
+    Noir::URLPath.join_rooted("", "/users").should eq "/users"
+  end
+
+  it "returns the root when both sides are empty" do
+    Noir::URLPath.join_rooted("", "").should eq "/"
+    Noir::URLPath.join_rooted("/", "").should eq "/"
+  end
+
+  it "collapses repeated slashes at the seam" do
+    Noir::URLPath.join_rooted("/api//", "/users").should eq "/api/users"
+    Noir::URLPath.join_rooted("/api", "//users").should eq "/api/users"
+  end
+
+  # What the File.join-based composition used to produce. Each of these is a
+  # URL Spring's servlet container would not serve at that address.
+  it "differs from File.join where File.join was wrong" do
+    File.join("/portal", "").should eq "/portal/"
+    Noir::URLPath.join_rooted("/portal", "").should eq "/portal"
+
+    File.join("", "users").should eq "users"
+    Noir::URLPath.join_rooted("", "users").should eq "/users"
+
+    File.join("/api//", "/users").should eq "/api//users"
+    Noir::URLPath.join_rooted("/api//", "/users").should eq "/api/users"
+  end
+
+  # And why neither of the existing joins could be reused: both emit an
+  # empty URL for the unmapped-class-with-bare-mapping case.
+  it "differs from join_trimmed and join_absorbing on the empty pair" do
+    Noir::URLPath.join_trimmed("", "").should eq ""
+    Noir::URLPath.join_absorbing("", "").should eq ""
+    Noir::URLPath.join_rooted("", "").should eq "/"
+  end
+end
