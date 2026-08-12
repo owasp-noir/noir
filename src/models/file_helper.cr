@@ -13,7 +13,7 @@ module FileHelper
   # Get all files from CodeLocator
   def all_files : Array(String)
     locator = CodeLocator.instance
-    locator.all("file_map")
+    locator.all_files
   end
 
   # `{original, expanded}` pairs for every file, expanded once and cached

@@ -26,7 +26,7 @@ describe "KtorAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 15))
@@ -49,7 +49,7 @@ describe "KtorAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 15))
@@ -70,7 +70,7 @@ describe "KtorAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 10))
@@ -90,7 +90,7 @@ describe "KtorAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 33))
@@ -110,7 +110,7 @@ describe "KtorAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 27))

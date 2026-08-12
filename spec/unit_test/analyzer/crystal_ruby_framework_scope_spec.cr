@@ -25,7 +25,7 @@ private def scan_tree(root : String) : Array(Endpoint)
   runner.analyze
   runner.endpoints
 ensure
-  CodeLocator.instance.clear("file_map")
+  CodeLocator.instance.reset_files
 end
 
 private def tech_sources(endpoints : Array(Endpoint), technology : String) : Array(String)
@@ -111,7 +111,7 @@ describe "analyzer project scoping (crystal, ruby)" do
       runner.detect
       runner.analyze
       runner.endpoints.map(&.url).should contain("/edge/health")
-      CodeLocator.instance.clear("file_map")
+      CodeLocator.instance.reset_files
     ensure
       FileUtils.rm_rf(root) if Dir.exists?(root)
     end

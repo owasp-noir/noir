@@ -29,7 +29,7 @@ describe "RustAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 18))
@@ -52,7 +52,7 @@ describe "RustAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 25))
@@ -74,7 +74,7 @@ describe "RustAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 31))
@@ -96,7 +96,7 @@ describe "RustAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 6))
@@ -116,7 +116,7 @@ describe "RustAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 12))

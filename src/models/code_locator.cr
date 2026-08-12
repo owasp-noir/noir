@@ -119,24 +119,63 @@ class CodeLocator
   end
 
   def push(key : String, value : String)
+    # Compat shim: `file_map` is no longer a key. Removed in the PR that
+    # tightens these signatures; until then, a caller reaching for the old
+    # spelling must still get the derived-view invalidation.
+    return register_path(value) if key == FILE_MAP
+
     @a_map[key] ||= Array(String).new
     @a_map[key] << value
+  end
 
-    # Pushing into file_map invalidates every derived view of it.
-    #
-    # The extension/basename indexes are memoised behind a `_built`
-    # flag, so without this a lookup taken before a later push would
-    # keep serving the older file list. Nothing pushes to `file_map`
-    # after the detector finishes today — the indexes are only read
-    # during analysis, by which point the map is complete — so this
-    # costs nothing in a normal scan and just stops the caches from
-    # being able to go stale.
-    if key == "file_map"
-      @expanded_file_map = nil
-      @expanded_path_index = nil
-      @extension_index_built = false
-      @basename_index_built = false
-    end
+  # The scanned-file registry.
+  #
+  # `file_map` was never a blackboard key like the other 64. It is a file
+  # registry with four derived views (`@extension_index`, `@basename_index`,
+  # `@expanded_file_map`, `@expanded_path_index`) plus a content cache bolted
+  # to it, and it was the only reason `push` and `clear` each carried an
+  # `if key == "file_map"` branch. Giving it methods makes the coupling
+  # structural instead of a string comparison that behaves differently in two
+  # places.
+  private FILE_MAP = "file_map"
+
+  # Register a path with no content — the detector's content-free fast path,
+  # for files nothing will read during detection or passive scan.
+  #
+  # Invalidates the four derived views but deliberately NOT `@file_contents`.
+  # A newly registered path has no cached content to invalidate, and dropping
+  # the cache here would throw away every file read so far. `content_for`
+  # returning nil for a registered path is the contract — `register_file`
+  # skips over-budget files the same way — so callers keep a `File.read`
+  # fallback regardless.
+  def register_path(path : String)
+    @a_map[FILE_MAP] ||= Array(String).new
+    @a_map[FILE_MAP] << path
+    invalidate_file_views
+  end
+
+  # Every registered path, in registration order.
+  def all_files : Array(String)
+    @a_map[FILE_MAP]? || Array(String).new
+  end
+
+  # Forget every registered file, its cached content, and every derived view.
+  def reset_files
+    @a_map.delete(FILE_MAP)
+    @file_contents.clear
+    @content_cache_used = 0_i64
+    @content_cache_skipped = 0
+    invalidate_file_views
+  end
+
+  # The memoised views are rebuilt on next read; the indexes sit behind a
+  # `_built` flag, so a lookup taken before a later registration would
+  # otherwise keep serving the older file list.
+  private def invalidate_file_views
+    @expanded_file_map = nil
+    @expanded_path_index = nil
+    @extension_index_built = false
+    @basename_index_built = false
   end
 
   # One-shot used by the detector's file reader: push the path into
@@ -146,7 +185,7 @@ class CodeLocator
   # and `content_for(path)` returns `nil` for them — callers must keep
   # a `File.read` fallback.
   def register_file(path : String, content : String)
-    push("file_map", path)
+    register_path(path)
 
     return if @content_cache_budget <= 0
     size = content.bytesize.to_i64
@@ -189,7 +228,7 @@ class CodeLocator
       cached = @expanded_file_map
       return cached if cached
 
-      files = @a_map["file_map"]?
+      files = @a_map[FILE_MAP]?
       built = files ? files.map { |file| {file, File.expand_path(file)} } : [] of Tuple(String, String)
       @expanded_file_map = built
       built
@@ -232,7 +271,7 @@ class CodeLocator
   # flag false so a later lookup retries. Callers must hold `@lock`.
   private def rebuild_path_index(index : Hash(String, Array(String)), & : String -> String) : Bool
     index.clear
-    files = @a_map["file_map"]?
+    files = @a_map[FILE_MAP]?
     return false unless files
     files.each do |file|
       (index[yield file] ||= Array(String).new) << file
@@ -284,19 +323,11 @@ class CodeLocator
   end
 
   def clear(key : String)
+    # Compat shim, as in `push`.
+    return reset_files if key == FILE_MAP
+
     @s_map.delete(key)
     @a_map.delete(key)
-    if key == "file_map"
-      @extension_index.clear
-      @extension_index_built = false
-      @basename_index.clear
-      @basename_index_built = false
-      @file_contents.clear
-      @content_cache_used = 0_i64
-      @content_cache_skipped = 0
-      @expanded_file_map = nil
-      @expanded_path_index = nil
-    end
   end
 
   def clear_all

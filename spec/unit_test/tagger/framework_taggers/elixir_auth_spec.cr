@@ -22,7 +22,7 @@ describe "ElixirAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 5))
@@ -45,7 +45,7 @@ describe "ElixirAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(public_path, 4))

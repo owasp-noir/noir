@@ -24,7 +24,7 @@ describe "content cache" do
     locator = CodeLocator.new
     locator.register_file("/tmp/noir-cache-spec-a.py", "print('hello')")
 
-    locator.all("file_map").should contain("/tmp/noir-cache-spec-a.py")
+    locator.all_files.should contain("/tmp/noir-cache-spec-a.py")
     locator.content_for("/tmp/noir-cache-spec-a.py").should eq("print('hello')")
   end
 
@@ -33,16 +33,60 @@ describe "content cache" do
     locator.content_for("/does/not/exist.rb").should be_nil
   end
 
-  it "clear(\"file_map\") drops cached content" do
+  it "reset_files drops cached content" do
     locator = CodeLocator.new
     locator.register_file("/tmp/noir-cache-spec-b.py", "x = 1")
     locator.content_for("/tmp/noir-cache-spec-b.py").should_not be_nil
 
-    locator.clear("file_map")
+    locator.reset_files
     locator.content_for("/tmp/noir-cache-spec-b.py").should be_nil
     stats = locator.content_cache_stats
     stats[:bytes].should eq(0)
     stats[:files].should eq(0)
+  end
+
+  # The asymmetry `register_path` and `reset_files` replaced. It used to be a
+  # string comparison behaving differently in `push` and `clear`, explained
+  # only by a comment; registering a path must invalidate the derived views
+  # without discarding content already read for other files.
+  it "register_path invalidates the derived views but keeps cached content" do
+    locator = CodeLocator.new
+    locator.register_file("/tmp/noir-registry-spec.py", "x = 1")
+    locator.files_by_extension(".py").should eq(["/tmp/noir-registry-spec.py"])
+
+    locator.register_path("/tmp/noir-registry-spec-2.py")
+
+    # Index rebuilt to include the new path...
+    locator.files_by_extension(".py").sort.should eq(
+      ["/tmp/noir-registry-spec-2.py", "/tmp/noir-registry-spec.py"])
+    # ...and the first file's content survived.
+    locator.content_for("/tmp/noir-registry-spec.py").should eq("x = 1")
+    # The newly registered one has none, as documented.
+    locator.content_for("/tmp/noir-registry-spec-2.py").should be_nil
+  end
+
+  it "all_files reports registrations in order and reset_files empties it" do
+    locator = CodeLocator.new
+    locator.register_path("/a.rb")
+    locator.register_path("/b.rb")
+    locator.all_files.should eq(["/a.rb", "/b.rb"])
+
+    locator.reset_files
+    locator.all_files.should be_empty
+    locator.files_by_extension(".rb").should be_empty
+  end
+
+  # `reset_files` must not disturb the other 64 keys — the detector calls it
+  # at the top of every scan, and the spec-format keys are drained later.
+  it "reset_files leaves unrelated keys alone" do
+    locator = CodeLocator.new
+    locator.push("oas3-json", "/spec/openapi.json")
+    locator.register_path("/a.rb")
+
+    locator.reset_files
+
+    locator.all_files.should be_empty
+    locator.all("oas3-json").should eq(["/spec/openapi.json"])
   end
 
   it "stops caching once the total budget is exhausted" do
@@ -52,7 +96,7 @@ describe "content cache" do
       locator.register_file("/tmp/noir-cache-spec-c.py", "anything")
       # Budget is 0 bytes, so nothing gets cached, but the path still
       # makes it into file_map.
-      locator.all("file_map").should contain("/tmp/noir-cache-spec-c.py")
+      locator.all_files.should contain("/tmp/noir-cache-spec-c.py")
       locator.content_for("/tmp/noir-cache-spec-c.py").should be_nil
     ensure
       ENV.delete("NOIR_CONTENT_CACHE_MAX_MB")
@@ -100,9 +144,9 @@ end
 describe "basename index" do
   it "groups file_map entries by basename" do
     locator = CodeLocator.new
-    locator.push("file_map", "/a/urls.py")
-    locator.push("file_map", "/b/urls.py")
-    locator.push("file_map", "/c/views.py")
+    locator.register_path("/a/urls.py")
+    locator.register_path("/b/urls.py")
+    locator.register_path("/c/views.py")
 
     locator.files_by_basename("urls.py").should eq(["/a/urls.py", "/b/urls.py"])
     locator.files_by_basename("views.py").should eq(["/c/views.py"])
@@ -113,19 +157,19 @@ describe "basename index" do
   # after the first lookup must not keep serving the stale build.
   it "rebuilds after clear(\"file_map\")" do
     locator = CodeLocator.new
-    locator.push("file_map", "/a/urls.py")
+    locator.register_path("/a/urls.py")
     locator.files_by_basename("urls.py").should eq(["/a/urls.py"])
 
-    locator.clear("file_map")
+    locator.reset_files
     locator.files_by_basename("urls.py").should be_empty
 
-    locator.push("file_map", "/b/urls.py")
+    locator.register_path("/b/urls.py")
     locator.files_by_basename("urls.py").should eq(["/b/urls.py"])
   end
 
   it "rebuilds after clear_all" do
     locator = CodeLocator.new
-    locator.push("file_map", "/a/urls.py")
+    locator.register_path("/a/urls.py")
     locator.files_by_basename("urls.py").should eq(["/a/urls.py"])
 
     locator.clear_all
@@ -136,19 +180,19 @@ end
 describe "derived index invalidation" do
   it "does not serve a stale basename index after a later push" do
     locator = CodeLocator.new
-    locator.push("file_map", "/a/urls.py")
+    locator.register_path("/a/urls.py")
     locator.files_by_basename("urls.py").should eq(["/a/urls.py"])
 
-    locator.push("file_map", "/b/urls.py")
+    locator.register_path("/b/urls.py")
     locator.files_by_basename("urls.py").should eq(["/a/urls.py", "/b/urls.py"])
   end
 
   it "does not serve a stale extension index after a later push" do
     locator = CodeLocator.new
-    locator.push("file_map", "/a/one.py")
+    locator.register_path("/a/one.py")
     locator.files_by_extension(".py").should eq(["/a/one.py"])
 
-    locator.push("file_map", "/b/two.py")
+    locator.register_path("/b/two.py")
     locator.files_by_extension(".py").should eq(["/a/one.py", "/b/two.py"])
   end
 end

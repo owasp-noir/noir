@@ -24,7 +24,7 @@ describe "Analyzer::Mobile::Ios (multi-target monorepo scoping)" do
 
   CodeLocator.instance.clear("ios-info-plist")
   CodeLocator.instance.clear("ios-entitlements")
-  CodeLocator.instance.clear("file_map")
+  CodeLocator.instance.reset_files
   CodeLocator.instance.push("ios-info-plist", File.join(base, "Vendor", "AppC", "Info.plist"))
   CodeLocator.instance.push("ios-info-plist", File.join(base, "AppA", "Info.plist"))
   CodeLocator.instance.push("ios-info-plist", File.join(base, "AppB", "Info.plist"))

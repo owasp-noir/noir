@@ -343,7 +343,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # Clear detector-populated locator keys before starting. These arrays
   # are side effects of idempotent? == false mobile/spec detectors, so
   # they should represent the current detection run only.
-  locator.clear("file_map")
+  locator.reset_files
   locator.clear("android-manifest")
   locator.clear("android-assetlinks")
   locator.clear("ios-info-plist")
@@ -510,7 +510,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 # read/cache content that neither detection nor passive
                 # scan will inspect. Analyzer reads still fall back to
                 # a disk read when a file was not cached here.
-                locator.push("file_map", full_path)
+                locator.register_path(full_path)
                 skipped_content_reads += 1
                 next
               end
@@ -671,6 +671,6 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     )
   end
 
-  logger.debug "Added #{locator.all("file_map").size} files to file_map"
+  logger.debug "Added #{locator.all_files.size} files to file_map"
   {techs.uniq, passive_result}
 end

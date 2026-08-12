@@ -15,7 +15,7 @@ private def scan_tree(root : String) : Array(Endpoint)
   runner.analyze
   runner.endpoints
 ensure
-  CodeLocator.instance.clear("file_map")
+  CodeLocator.instance.reset_files
 end
 
 private def write_file(path : String, content : String)

@@ -232,7 +232,7 @@ module Analyzer::AI
 
     private def select_target_paths(adapter : LLM::Adapter) : Array(String)
       locator = CodeLocator.instance
-      all_paths = locator.all("file_map")
+      all_paths = locator.all_files
 
       if all_paths.size > 10
         logger.debug_sub "AI::Filtering files using LLM"

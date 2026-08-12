@@ -19,7 +19,7 @@ describe "JavaMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Line 9: router.get("/api/secure").handler(ctx -> {
@@ -43,7 +43,7 @@ describe "JavaMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Line 9: router.get("/admin/dashboard").handler(ctx -> {
@@ -66,7 +66,7 @@ describe "JavaMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Line 8: router.get("/api/profile").handler(ctx -> {
@@ -89,7 +89,7 @@ describe "JavaMiscAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Line 8: router.get("/public/health").handler(ctx -> {

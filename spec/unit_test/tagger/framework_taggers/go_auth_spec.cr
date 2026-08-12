@@ -17,7 +17,7 @@ def run_go_auth(fixture_lines : Array(String), url : String, method : String, li
   locator = CodeLocator.instance
   Dir.glob("#{tmpdir}/**/*").each do |f|
     next if File.directory?(f)
-    locator.push("file_map", f)
+    locator.register_path(f)
   end
 
   noir_options = create_test_options
@@ -55,7 +55,7 @@ describe "GoAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 29))
@@ -78,7 +78,7 @@ describe "GoAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 34))
@@ -100,7 +100,7 @@ describe "GoAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 24))
@@ -122,7 +122,7 @@ describe "GoAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(main_path, 13))
@@ -163,7 +163,7 @@ describe "GoAuthTagger (expanded targets)" do
       locator = CodeLocator.instance
       Dir.glob("#{fixture_base}/**/*").each do |file|
         next if File.directory?(file)
-        locator.push("file_map", file)
+        locator.register_path(file)
       end
 
       details = Details.new(PathInfo.new(main_path, 29))

@@ -18,7 +18,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Routes.scala line 10: get { complete("Secure content") }
@@ -42,7 +42,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Routes.scala line 21: get { complete("OAuth resource") }
@@ -65,7 +65,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # Routes.scala line 32: get { complete("Admin settings") }
@@ -88,7 +88,7 @@ describe "ScalaAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # HealthRoutes.scala line 11: get { complete("ok") }
