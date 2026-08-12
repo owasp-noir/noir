@@ -17,7 +17,7 @@ describe "NoirAIContext::FEATURES" do
     # Not `should eq` on a literal list: the point is that the CLI derives
     # from the constant, so a bucket added in one place cannot be missing
     # from the other.
-    AI_CONTEXT_FEATURES.should eq NoirAIContext::ACCEPTED_FEATURES
+    Noir::OptionsParsing::AI_CONTEXT_FEATURES.should eq NoirAIContext::ACCEPTED_FEATURES
   end
 
   it "accepts every bucket plus the all alias, and nothing else" do
@@ -29,7 +29,7 @@ describe "NoirAIContext::FEATURES" do
 
   it "includes sources" do
     NoirAIContext::FEATURES.should contain "sources"
-    AI_CONTEXT_FEATURES.should contain "sources"
+    Noir::OptionsParsing::AI_CONTEXT_FEATURES.should contain "sources"
   end
 
   it "names callee in the singular, as the validator accepts it" do

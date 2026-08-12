@@ -82,7 +82,3 @@ module Noir::Completions::Elvish
     Noir::CLI::ScanFlags::NAMES.each_slice(8).map { |chunk| "  #{chunk.join(" ")}" }.join("\n")
   end
 end
-
-def generate_elvish_completion_script
-  Noir::Completions::Elvish.script
-end

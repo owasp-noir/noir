@@ -55,7 +55,7 @@ module Noir::CLI::ScanFlags
   end
 
   # Suggested `--include` values. The first three are the vocabulary
-  # (`INCLUDE_TARGETS` in options.cr); the combined forms are there because
+  # (`Noir::OptionsParsing::INCLUDE_TARGETS` in options.cr); the combined forms are there because
   # the flag is comma-separated and those two are what people actually type.
   INCLUDE_CHOICES = ["path", "techs", "callee", "path,techs", "path,techs,callee"]
 

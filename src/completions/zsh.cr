@@ -114,7 +114,3 @@ module Noir::Completions::Zsh
     end
   end
 end
-
-def generate_zsh_completion_script
-  Noir::Completions::Zsh.script
-end
