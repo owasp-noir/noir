@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "python_misc_auth", name: "Python Misc Auth Tagger", desc: "Identifies Sanic/Tornado authentication patterns", order: 110)]
 class PythonMiscAuthTagger < FrameworkTagger
   # Sanic auth patterns
   SANIC_PATTERNS = [

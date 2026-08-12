@@ -22,6 +22,7 @@ require "../../../models/endpoint"
 # controller the action lives in. Cross-file concerns (a `null_session`
 # base controller inherited by children, a Rack::Attack initializer) are
 # out of scope by design — those live outside the action's own file.
+@[Noir::TaggerFor(key: "rails_security", name: "Rails Security Tagger", desc: "Identifies Rails controller security signals (CSRF protection, mass assignment, rate limiting)", order: 130)]
 class RailsSecurityTagger < FrameworkTagger
   # Class-level macros that turn CSRF verification OFF for (some) actions.
   CSRF_DISABLE_PATTERNS = [

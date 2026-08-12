@@ -5,6 +5,7 @@ require "../../models/endpoint"
 # targets for broken access control, privilege escalation, and forced
 # browsing — surfacing them tells a reviewer where the blast radius of a
 # missing authorization check is largest.
+@[Noir::TaggerFor(key: "admin", name: "Admin Tagger", desc: "Identifies administrative and privileged endpoints", order: 110)]
 class AdminTagger < Tagger
   # Path segments that strongly imply an administrative surface. Matched
   # as whole path segments (after splitting on `/`, `-`, `_`, `.`) so

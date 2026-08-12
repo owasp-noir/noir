@@ -5,6 +5,7 @@ require "../../models/endpoint"
 # specific review (XXE, SOAP-action spoofing, WS-Security handling) that
 # differs from a typical REST/JSON route, so calling them out helps a
 # reviewer pick the right lens.
+@[Noir::TaggerFor(key: "soap", name: "SOAP Tagger", desc: "Identifies SOAP endpoints", order: 40)]
 class SoapTagger < Tagger
   # Request headers that mark a SOAP call. `SOAPAction` is mandatory in
   # SOAP 1.1; `Content-Type: application/soap+xml` is the SOAP 1.2 marker.

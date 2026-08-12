@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "nestjs_auth", name: "NestJS Auth Tagger", desc: "Identifies NestJS authentication patterns (Guards, decorators)", order: 150)]
 class NestjsAuthTagger < FrameworkTagger
   # NestJS guard decorators
   GUARD_PATTERNS = [

@@ -2,6 +2,7 @@ require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 require "./group_scope"
 
+@[Noir::TaggerFor(key: "go_auth", name: "Go Auth Tagger", desc: "Identifies Go authentication patterns (middleware, JWT, session)", order: 50)]
 class GoAuthTagger < FrameworkTagger
   include GoRouteGroupScope
 

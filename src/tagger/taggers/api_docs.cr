@@ -6,6 +6,7 @@ require "../../models/endpoint"
 # expose the full API surface (every route, parameter, and model) and
 # are very frequently reachable without authentication, so they are a
 # high-value recon target and an information-disclosure risk.
+@[Noir::TaggerFor(key: "api_docs", name: "API Docs Tagger", desc: "Identifies API documentation/schema endpoints (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL)", order: 160)]
 class ApiDocsTagger < Tagger
   # Matched against slash/dot-delimited segments (hyphens and
   # underscores kept inside a segment) so `/swagger-ui.html`,

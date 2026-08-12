@@ -157,7 +157,7 @@ class NoirRunner
       NoirTaggers.run_tagger @endpoints, @options, "all"
       if @is_debug
         NoirTaggers.taggers.each do |tagger|
-          @logger.debug "Tagger: #{tagger}"
+          @logger.debug "Tagger: #{tagger.key} (#{tagger.name})"
         end
       end
     elsif !@options["use_taggers"].to_s.empty?

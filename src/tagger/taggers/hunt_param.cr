@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "hunt", name: "HuntParam Tagger", desc: "Identifies common parameters vulnerable to certain vulnerability classes", order: 10)]
 class HuntParamTagger < Tagger
   PATH_ALLOWED_TAGS     = Set{"idor", "file-inclusion"}
   BODY_LIKE_PARAM_TYPES = Set{"json", "form", "body"}

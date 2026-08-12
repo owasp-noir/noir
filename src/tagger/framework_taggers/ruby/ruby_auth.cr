@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "ruby_auth", name: "Ruby Auth Tagger", desc: "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)", order: 120)]
 class RubyAuthTagger < FrameworkTagger
   # Rails before_action patterns
   BEFORE_ACTION_PATTERNS = [

@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "flask_auth", name: "Flask Auth Tagger", desc: "Identifies Flask authentication patterns (flask-login, flask-jwt, flask-httpauth)", order: 90)]
 class FlaskAuthTagger < FrameworkTagger
   DECORATOR_PATTERNS = [
     {/\@login_required/, "flask-login login_required"},

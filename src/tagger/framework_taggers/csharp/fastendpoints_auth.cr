@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "fastendpoints_auth", name: "FastEndpoints Auth Tagger", desc: "Identifies FastEndpoints authentication patterns (Roles, Permissions, Policies)", order: 180)]
 class FastEndpointsAuthTagger < FrameworkTagger
   ALLOW_ANONYMOUS_PATTERN = /\bAllowAnonymous\s*\(/
   ROLES_PATTERN           = /\bRoles\s*\(/

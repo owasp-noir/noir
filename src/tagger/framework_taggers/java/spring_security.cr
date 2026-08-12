@@ -35,6 +35,7 @@ require "../../../models/endpoint"
 # `@CrossOrigin` and input-validation signals are per-endpoint, line-based
 # walks of the handler the endpoint maps to. Cross-file concerns (a custom
 # Filter bean, a bespoke CorsConfigurationSource) are out of scope.
+@[Noir::TaggerFor(key: "spring_security", name: "Spring Security Tagger", desc: "Identifies Spring security signals beyond auth (CSRF disabled, CORS policy, security headers, input validation)", order: 30)]
 class SpringSecurityTagger < FrameworkTagger
   STATE_CHANGING_METHODS = Set{"POST", "PUT", "PATCH", "DELETE"}
 

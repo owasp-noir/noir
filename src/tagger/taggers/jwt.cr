@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "jwt", name: "JWT Tagger", desc: "Identifies JWT authentication endpoints", order: 80)]
 class JwtTagger < Tagger
   STRONG_NAMES = Set{
     "jwt", "bearer", "authorization", "access_token", "refresh_token", "id_token",

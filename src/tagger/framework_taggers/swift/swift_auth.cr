@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "swift_auth", name: "Swift Auth Tagger", desc: "Identifies Vapor/Kitura/Hummingbird authentication patterns", order: 220)]
 class SwiftAuthTagger < FrameworkTagger
   # Vapor middleware patterns
   VAPOR_MIDDLEWARE_PATTERNS = [

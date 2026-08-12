@@ -6,6 +6,7 @@ require "../../models/endpoint"
 # flaws (amount/price tampering, currency confusion, negative amounts),
 # IDOR on financial records, and replay. Surfacing them helps a reviewer
 # focus on the highest-stakes surface.
+@[Noir::TaggerFor(key: "payment", name: "Payment Tagger", desc: "Identifies payment and financial transaction endpoints", order: 120)]
 class PaymentTagger < Tagger
   # Path segments that strongly imply a payment/financial surface.
   # Matched as whole path segments after splitting on `/`, `-`, `_`, `.`.

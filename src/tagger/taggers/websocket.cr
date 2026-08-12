@@ -4,6 +4,7 @@ require "../../models/endpoint"
 # Flags WebSocket endpoints — long-lived, bidirectional channels whose
 # threat model (origin checks on the handshake, per-message authz, no
 # CSRF token on the upgrade) differs from a request/response route.
+@[Noir::TaggerFor(key: "websocket", name: "Websocket Tagger", desc: "Identifies Websocket endpoints", order: 50)]
 class WebsocketTagger < Tagger
   # AsyncAPI specs carry the raw server protocol (`ws`, `wss`,
   # `websocket`); HTTP analyzers set `ws`. Accept every spelling so

@@ -5,239 +5,77 @@ require "../models/framework_tagger"
 require "wait_group"
 
 module NoirTaggers
-  HasTaggers = {
-    hunt: {
-      name:   "HuntParam Tagger",
-      desc:   "Identifies common parameters vulnerable to certain vulnerability classes",
-      runner: HuntParamTagger,
-    },
-    oauth: {
-      name:   "OAuth Tagger",
-      desc:   "Identifies OAuth endpoints",
-      runner: OAuthTagger,
-    },
-    cors: {
-      name:   "CORS Tagger",
-      desc:   "Identifies CORS endpoints",
-      runner: CorsTagger,
-    },
-    soap: {
-      name:   "SOAP Tagger",
-      desc:   "Identifies SOAP endpoints",
-      runner: SoapTagger,
-    },
-    websocket: {
-      name:   "Websocket Tagger",
-      desc:   "Identifies Websocket endpoints",
-      runner: WebsocketTagger,
-    },
-    graphql: {
-      name:   "GraphQL Tagger",
-      desc:   "Identifies GraphQL endpoints",
-      runner: GraphqlTagger,
-    },
-    mcp: {
-      name:   "MCP Tagger",
-      desc:   "Identifies Model Context Protocol endpoints",
-      runner: McpTagger,
-    },
-    jwt: {
-      name:   "JWT Tagger",
-      desc:   "Identifies JWT authentication endpoints",
-      runner: JwtTagger,
-    },
-    file_upload: {
-      name:   "FileUpload Tagger",
-      desc:   "Identifies file upload endpoints",
-      runner: FileUploadTagger,
-    },
-    pii: {
-      name:   "PII Tagger",
-      desc:   "Identifies endpoints handling personally identifiable information",
-      runner: PiiTagger,
-    },
-    admin: {
-      name:   "Admin Tagger",
-      desc:   "Identifies administrative and privileged endpoints",
-      runner: AdminTagger,
-    },
-    payment: {
-      name:   "Payment Tagger",
-      desc:   "Identifies payment and financial transaction endpoints",
-      runner: PaymentTagger,
-    },
-    webhook: {
-      name:   "Webhook Tagger",
-      desc:   "Identifies inbound webhook and callback endpoints",
-      runner: WebhookTagger,
-    },
-    crypto: {
-      name:   "Crypto Tagger",
-      desc:   "Identifies cryptographic operation endpoints (encryption, signing, hashing, key management)",
-      runner: CryptoTagger,
-    },
-    debug: {
-      name:   "Debug Tagger",
-      desc:   "Identifies debug, diagnostic, and internal-only endpoints (debug consoles, profilers, actuator, pprof, internal APIs)",
-      runner: DebugTagger,
-    },
-    api_docs: {
-      name:   "API Docs Tagger",
-      desc:   "Identifies API documentation/schema endpoints (Swagger, OpenAPI, GraphiQL, ReDoc, WSDL)",
-      runner: ApiDocsTagger,
-    },
-    account_recovery: {
-      name:   "Account Recovery Tagger",
-      desc:   "Identifies credential-management and account-recovery endpoints (password reset/change, MFA/OTP, verification)",
-      runner: AccountRecoveryTagger,
-    },
-  }
+  # One tagger, as declared by its class's `Noir::TaggerFor` annotation.
+  #
+  # `runner` is deliberately not a field. Storing the class object erases
+  # `self.target_techs` — it lives on `FrameworkTagger`, not on `Tagger` —
+  # so every read would need a cast back. The two macro-generated `case`
+  # dispatchers below resolve per concrete class instead, the same shape
+  # `Noir::OutputFormats.render` uses.
+  record Entry, key : String, name : String, desc : String, framework : Bool
 
-  HasFrameworkTaggers = {
-    django_auth: {
-      name:   "Django Auth Tagger",
-      desc:   "Identifies Django authentication patterns (decorators, mixins, DRF permissions)",
-      runner: DjangoAuthTagger,
-    },
-    spring_auth: {
-      name:   "Spring Auth Tagger",
-      desc:   "Identifies Spring Security patterns (annotations, security config)",
-      runner: SpringAuthTagger,
-    },
-    spring_security: {
-      name:   "Spring Security Tagger",
-      desc:   "Identifies Spring security signals beyond auth (CSRF disabled, CORS policy, security headers, input validation)",
-      runner: SpringSecurityTagger,
-    },
-    express_auth: {
-      name:   "Express Auth Tagger",
-      desc:   "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)",
-      runner: ExpressAuthTagger,
-    },
-    go_auth: {
-      name:   "Go Auth Tagger",
-      desc:   "Identifies Go authentication patterns (middleware, JWT, session)",
-      runner: GoAuthTagger,
-    },
-    go_security: {
-      name:   "Go Security Tagger",
-      desc:   "Identifies Go security middleware (CSRF, security headers, rate limiting, body-size limits)",
-      runner: GoSecurityTagger,
-    },
-    rust_auth: {
-      name:   "Rust Auth Tagger",
-      desc:   "Identifies Rust authentication patterns (guards, extractors, middleware)",
-      runner: RustAuthTagger,
-    },
-    rust_security: {
-      name:   "Rust Security Tagger",
-      desc:   "Identifies Rust framework security protections (CORS, rate limiting, security headers, body-size limits)",
-      runner: RustSecurityTagger,
-    },
-    flask_auth: {
-      name:   "Flask Auth Tagger",
-      desc:   "Identifies Flask authentication patterns (flask-login, flask-jwt, flask-httpauth)",
-      runner: FlaskAuthTagger,
-    },
-    fastapi_auth: {
-      name:   "FastAPI Auth Tagger",
-      desc:   "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)",
-      runner: FastAPIAuthTagger,
-    },
-    python_misc_auth: {
-      name:   "Python Misc Auth Tagger",
-      desc:   "Identifies Sanic/Tornado authentication patterns",
-      runner: PythonMiscAuthTagger,
-    },
-    ruby_auth: {
-      name:   "Ruby Auth Tagger",
-      desc:   "Identifies Ruby authentication patterns (Devise, Pundit, CanCanCan, Warden)",
-      runner: RubyAuthTagger,
-    },
-    rails_security: {
-      name:   "Rails Security Tagger",
-      desc:   "Identifies Rails controller security signals (CSRF protection, mass assignment, rate limiting)",
-      runner: RailsSecurityTagger,
-    },
-    php_auth: {
-      name:   "PHP Auth Tagger",
-      desc:   "Identifies PHP authentication patterns (Laravel, Symfony, CakePHP)",
-      runner: PhpAuthTagger,
-    },
-    nestjs_auth: {
-      name:   "NestJS Auth Tagger",
-      desc:   "Identifies NestJS authentication patterns (Guards, decorators)",
-      runner: NestjsAuthTagger,
-    },
-    js_misc_auth: {
-      name:   "JS Misc Auth Tagger",
-      desc:   "Identifies Fastify/Koa/Restify authentication patterns",
-      runner: JsMiscAuthTagger,
-    },
-    aspnet_auth: {
-      name:   "ASP.NET Auth Tagger",
-      desc:   "Identifies ASP.NET authentication patterns ([Authorize], policies)",
-      runner: AspnetAuthTagger,
-    },
-    fastendpoints_auth: {
-      name:   "FastEndpoints Auth Tagger",
-      desc:   "Identifies FastEndpoints authentication patterns (Roles, Permissions, Policies)",
-      runner: FastEndpointsAuthTagger,
-    },
-    elixir_auth: {
-      name:   "Elixir Auth Tagger",
-      desc:   "Identifies Phoenix/Plug authentication patterns (plugs, Guardian, Pow)",
-      runner: ElixirAuthTagger,
-    },
-    ktor_auth: {
-      name:   "Ktor Auth Tagger",
-      desc:   "Identifies Ktor authentication patterns (authenticate blocks, principals)",
-      runner: KtorAuthTagger,
-    },
-    java_misc_auth: {
-      name:   "Java Misc Auth Tagger",
-      desc:   "Identifies Vert.x/Armeria/JSP authentication patterns",
-      runner: JavaMiscAuthTagger,
-    },
-    swift_auth: {
-      name:   "Swift Auth Tagger",
-      desc:   "Identifies Vapor/Kitura/Hummingbird authentication patterns",
-      runner: SwiftAuthTagger,
-    },
-    scala_auth: {
-      name:   "Scala Auth Tagger",
-      desc:   "Identifies Play/Akka/Scalatra authentication patterns",
-      runner: ScalaAuthTagger,
-    },
-    crystal_auth: {
-      name:   "Crystal Auth Tagger",
-      desc:   "Identifies Crystal framework authentication patterns (Kemal, Amber, Lucky)",
-      runner: CrystalAuthTagger,
-    },
-    hono_auth: {
-      name:   "Hono Auth Tagger",
-      desc:   "Identifies Hono authentication patterns (bearerAuth, jwt, basicAuth, custom middleware)",
-      runner: HonoAuthTagger,
-    },
-    perl_auth: {
-      name:   "Perl Auth Tagger",
-      desc:   "Identifies Perl authentication patterns (Dancer2 Auth::Extensible, Mojolicious, Catalyst)",
-      runner: PerlAuthTagger,
-    },
-  }
-
-  def self.taggers
-    HasTaggers
+  # Every annotated tagger, in `order`. Derived from the classes, so a
+  # tagger joins the registry by existing: the two hand-maintained hash
+  # literals this replaces were a second place to remember, where
+  # forgetting produced no error and no failing spec — just a tagger that
+  # never ran.
+  ENTRIES = begin
+    {% begin %}
+      [
+        {% for tagger in Tagger.all_subclasses
+                           .select(&.annotation(Noir::TaggerFor))
+                           .sort_by { |sub| sub.annotation(Noir::TaggerFor)[:order] } %}
+          {% ann = tagger.annotation(Noir::TaggerFor) %}
+          Entry.new({{ ann[:key] }}, {{ ann[:name] }}, {{ ann[:desc] }},
+            {{ tagger.ancestors.includes?(FrameworkTagger) }}),
+        {% end %}
+      ] of Entry
+    {% end %}
   end
 
-  def self.framework_taggers
-    HasFrameworkTaggers
+  PLAIN_ENTRIES     = ENTRIES.reject(&.framework)
+  FRAMEWORK_ENTRIES = ENTRIES.select(&.framework)
+
+  # Instantiates the tagger `key` names, or nil when nothing claims it.
+  def self.build(key : String, options : Hash(String, YAML::Any)) : Tagger?
+    {% begin %}
+      case key
+      {% for tagger in Tagger.all_subclasses.select(&.annotation(Noir::TaggerFor)) %}
+      when {{ tagger.annotation(Noir::TaggerFor)[:key] }}
+        {{ tagger }}.new(options)
+      {% end %}
+      else
+        nil
+      end
+    {% end %}
+  end
+
+  # Techs a framework tagger declares an interest in; empty for plain
+  # taggers, which run against every endpoint.
+  def self.target_techs(key : String) : Array(String)
+    {% begin %}
+      case key
+      {% for tagger in Tagger.all_subclasses
+                         .select { |sub| sub.annotation(Noir::TaggerFor) && sub.ancestors.includes?(FrameworkTagger) } %}
+      when {{ tagger.annotation(Noir::TaggerFor)[:key] }}
+        {{ tagger }}.target_techs
+      {% end %}
+      else
+        [] of String
+      end
+    {% end %}
+  end
+
+  def self.taggers : Array(Entry)
+    PLAIN_ENTRIES
+  end
+
+  def self.framework_taggers : Array(Entry)
+    FRAMEWORK_ENTRIES
   end
 
   def self.available_tagger_names : Array(String)
-    names = [] of String
-    HasTaggers.each_key { |name| names << name.to_s }
-    HasFrameworkTaggers.each_key { |name| names << name.to_s }
+    names = ENTRIES.map(&.key)
     names << "all"
     names.sort
   end
@@ -271,19 +109,20 @@ module NoirTaggers
 
     logger = build_logger(options)
 
-    # Every entry in HasTaggers maps a tagger key to a runnable Tagger
-    # subclass, and the key IS the tagger's `name` — so an unselected tagger
-    # can be skipped without constructing it (each `new` builds a logger and
-    # resolves options). Run the selected ones; a single tagger raising must
-    # not abort the rest of the tagging pass (or, for framework taggers below,
-    # tear down the whole program from inside a fiber) — degrade to "this
-    # tagger failed".
-    HasTaggers.each do |key, tagger|
-      next unless is_all || use_taggers_arr.includes?(key.to_s)
+    # The registry key IS the tagger's `name` (`Tagger#initialize` reads it
+    # back off the class), so an unselected tagger can be skipped without
+    # constructing it — each `new` builds a logger and resolves options. Run
+    # the selected ones in registry order, which is user-visible: tags are
+    # appended in the order taggers run and nothing sorts them before
+    # output. A single tagger raising must not abort the rest of the pass
+    # (or, for framework taggers below, tear down the whole program from
+    # inside a fiber) — degrade to "this tagger failed".
+    PLAIN_ENTRIES.each do |entry|
+      next unless is_all || use_taggers_arr.includes?(entry.key)
       begin
-        tagger[:runner].new(options).perform(endpoints)
+        build(entry.key, options).try(&.perform(endpoints))
       rescue ex
-        logger.warning "Tagger '#{key}' failed: #{ex.message}"
+        logger.warning "Tagger '#{entry.key}' failed: #{ex.message}"
       end
     end
 
@@ -317,15 +156,14 @@ module NoirTaggers
 
     # Collect tagger work items, then run in parallel
     WaitGroup.wait do |wg|
-      HasFrameworkTaggers.each do |key, tagger_info|
+      FRAMEWORK_ENTRIES.each do |entry|
         # The registry key is the tagger's `name`, so selection is decided
         # before construction — an unselected tagger no longer pays for a
         # logger and a base-path resolution just to be discarded.
-        next unless is_all || use_taggers_arr.includes?(key.to_s)
+        next unless is_all || use_taggers_arr.includes?(entry.key)
 
-        target_techs = tagger_info[:runner].target_techs
         matching_endpoints = [] of Endpoint
-        target_techs.each do |tech|
+        target_techs(entry.key).each do |tech|
           if endpoints_by_tech.has_key?(tech)
             matching_endpoints.concat(endpoints_by_tech[tech])
           end
@@ -334,7 +172,8 @@ module NoirTaggers
         next if matching_endpoints.empty?
 
         # Bind to local variables to ensure each fiber captures its own copy
-        local_instance = tagger_info[:runner].new(options)
+        local_instance = build(entry.key, options)
+        next if local_instance.nil?
         local_endpoints = matching_endpoints
 
         wg.spawn do

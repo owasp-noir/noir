@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "fastapi_auth", name: "FastAPI Auth Tagger", desc: "Identifies FastAPI authentication patterns (Depends, Security, OAuth2)", order: 100)]
 class FastAPIAuthTagger < FrameworkTagger
   # Depends() with auth-related callables
   DEPENDS_AUTH_PATTERNS = [

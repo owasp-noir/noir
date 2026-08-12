@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "mcp", name: "MCP Tagger", desc: "Identifies Model Context Protocol endpoints", order: 70)]
 class McpTagger < Tagger
   LEGACY_SSE_SEGMENT      = "sse"
   LEGACY_MESSAGE_SEGMENTS = ["message", "messages"]

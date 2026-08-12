@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "graphql", name: "GraphQL Tagger", desc: "Identifies GraphQL endpoints", order: 60)]
 class GraphqlTagger < Tagger
   WORDS = ["query", "mutation", "subscription", "operationname", "__schema", "__type", "graphql", "variables"]
 

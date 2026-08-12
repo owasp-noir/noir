@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "aspnet_auth", name: "ASP.NET Auth Tagger", desc: "Identifies ASP.NET authentication patterns ([Authorize], policies)", order: 170)]
 class AspnetAuthTagger < FrameworkTagger
   # ASP.NET [Authorize] attribute patterns
   AUTHORIZE_PATTERNS = [
