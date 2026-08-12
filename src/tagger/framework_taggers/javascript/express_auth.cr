@@ -27,7 +27,6 @@ class ExpressAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "express_auth"
     @app_use_auth_patterns = [] of {prefix: String, description: String}
   end
 

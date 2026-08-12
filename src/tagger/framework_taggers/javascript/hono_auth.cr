@@ -29,7 +29,6 @@ class HonoAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "hono_auth"
     @use_auth_scopes = [] of {prefix: String, description: String}
   end
 

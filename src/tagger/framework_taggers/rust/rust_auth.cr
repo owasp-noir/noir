@@ -44,7 +44,6 @@ class RustAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "rust_auth"
     @middleware_scopes = [] of {prefix: String, description: String}
   end
 

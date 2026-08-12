@@ -27,11 +27,6 @@ class AspnetAuthTagger < FrameworkTagger
     {/HttpContext\.User/, "ASP.NET HttpContext.User check"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "aspnet_auth"
-  end
-
   def self.target_techs : Array(String)
     ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter"]
   end

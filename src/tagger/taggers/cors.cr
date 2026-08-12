@@ -3,11 +3,6 @@ require "../../models/endpoint"
 
 @[Noir::TaggerFor(key: "cors", name: "CORS Tagger", desc: "Identifies CORS endpoints", order: 30)]
 class CorsTagger < Tagger
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "cors"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       # CORS is a header-level concern: `Origin` and the whole

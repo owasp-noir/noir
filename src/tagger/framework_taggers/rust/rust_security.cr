@@ -113,7 +113,6 @@ class RustSecurityTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "rust_security"
     @protections = [] of Protection
   end
 

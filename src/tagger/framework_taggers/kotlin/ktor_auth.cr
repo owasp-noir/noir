@@ -19,7 +19,6 @@ class KtorAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "ktor_auth"
     @auth_scopes = [] of {prefix: String, description: String}
   end
 

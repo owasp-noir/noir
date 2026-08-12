@@ -45,7 +45,6 @@ class NestjsAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "nestjs_auth"
     @class_guards = Hash(String, String).new
   end
 

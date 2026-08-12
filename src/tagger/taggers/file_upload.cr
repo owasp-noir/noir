@@ -42,11 +42,6 @@ class FileUploadTagger < Tagger
   # (`POST /media`) still tags.
   SEGMENT_ONLY_PATH_PARTS = Set{"media"}
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "file_upload"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       has_upload_param = endpoint.params.any? { |param| upload_param?(param) }

@@ -23,11 +23,6 @@ class PythonMiscAuthTagger < FrameworkTagger
     {/\@authenticated/, "Tornado @authenticated"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "python_misc_auth"
-  end
-
   def self.target_techs : Array(String)
     ["python_sanic", "python_tornado"]
   end

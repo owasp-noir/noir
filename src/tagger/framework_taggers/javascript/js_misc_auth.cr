@@ -43,11 +43,6 @@ class JsMiscAuthTagger < FrameworkTagger
     {/\bauthMiddleware\b/, "authMiddleware"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "js_misc_auth"
-  end
-
   def self.target_techs : Array(String)
     ["js_fastify", "js_koa", "js_restify", "js_nuxtjs"]
   end

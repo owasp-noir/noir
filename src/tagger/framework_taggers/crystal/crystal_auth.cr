@@ -35,11 +35,6 @@ class CrystalAuthTagger < FrameworkTagger
     {/context\.session/, "Crystal session check"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "crystal_auth"
-  end
-
   def self.target_techs : Array(String)
     ["crystal_kemal", "crystal_amber", "crystal_lucky", "crystal_grip", "crystal_marten"]
   end

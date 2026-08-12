@@ -64,11 +64,6 @@ class WebhookTagger < Tagger
     "svix_id", "svix_signature", "svix_timestamp",
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "webhook"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       header_names = endpoint.params.compact_map do |param|

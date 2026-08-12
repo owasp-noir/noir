@@ -79,11 +79,6 @@ class RubyAuthTagger < FrameworkTagger
     Regex.union(sources)
   end
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "ruby_auth"
-  end
-
   def self.target_techs : Array(String)
     ["ruby_rails", "ruby_sinatra", "ruby_hanami", "ruby_grape", "ruby_roda"]
   end

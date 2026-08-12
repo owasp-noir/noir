@@ -52,11 +52,6 @@ class RailsSecurityTagger < FrameworkTagger
   MASS_ASSIGN_WRITER_PATTERN =
     /\.(?:new|create|create!|update|update!|update_attributes|update_attributes!|assign_attributes)\s*\(\s*params\[/
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "rails_security"
-  end
-
   def self.target_techs : Array(String)
     ["ruby_rails"]
   end

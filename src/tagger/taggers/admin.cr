@@ -43,11 +43,6 @@ class AdminTagger < Tagger
 
   READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS"}
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "admin"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       is_admin_url = admin_url?(endpoint.url)

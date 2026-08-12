@@ -31,11 +31,6 @@ class FastAPIAuthTagger < FrameworkTagger
     {/:\s*HTTPAuthorizationCredentials\s*=\s*Security/, "FastAPI HTTP authorization"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "fastapi_auth"
-  end
-
   def self.target_techs : Array(String)
     ["python_fastapi"]
   end

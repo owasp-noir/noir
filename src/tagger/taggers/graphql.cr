@@ -16,11 +16,6 @@ class GraphqlTagger < Tagger
   # values (a JSON body, a search string) for GraphQL syntax.
   BODY_PARAM_NAMES = Set{"query", "mutation", "subscription", "graphql", "gql"}
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "graphql"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       names = endpoint.params.map(&.name.to_s.downcase)

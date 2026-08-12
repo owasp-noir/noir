@@ -51,11 +51,6 @@ class PiiTagger < Tagger
     "marital_status",
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "pii"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set
