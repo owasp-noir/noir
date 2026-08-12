@@ -22,10 +22,15 @@ module NoirTechs::Catalog
       },
     },
     :zig_jetzig => {
-      :framework => "Jetzig",
-      :language  => "Zig",
-      :similar   => ["jetzig", "zig-jetzig", "zig_jetzig"],
-      :supported => {
+      # Jetzig is built on http.zig, so a project vendoring it also carries the
+      # `@import("httpz")` / `.httpz` markers the httpz detector keys on. The
+      # framework owns the routing DSL; dropping httpz also stops its analyzer
+      # scanning the framework's own internals.
+      :supersedes => ["zig_httpz"],
+      :framework  => "Jetzig",
+      :language   => "Zig",
+      :similar    => ["jetzig", "zig-jetzig", "zig_jetzig"],
+      :supported  => {
         :endpoint => true,
         :method   => true,
         :params   => {
@@ -98,10 +103,12 @@ module NoirTechs::Catalog
       :context => {:callee => true},
     },
     :zig_tokamak => {
-      :framework => "Tokamak",
-      :language  => "Zig",
-      :similar   => ["tokamak", "zig-tokamak", "zig_tokamak"],
-      :supported => {
+      # Same as Jetzig: Tokamak is built on http.zig and carries its markers.
+      :supersedes => ["zig_httpz"],
+      :framework  => "Tokamak",
+      :language   => "Zig",
+      :similar    => ["tokamak", "zig-tokamak", "zig_tokamak"],
+      :supported  => {
         :endpoint => true,
         :method   => true,
         :params   => {

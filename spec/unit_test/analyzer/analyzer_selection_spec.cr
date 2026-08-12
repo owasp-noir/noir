@@ -37,4 +37,32 @@ describe "filter_redundant_generic_techs" do
   it "keeps python_starlette when python_fastapi is also present" do
     filter_redundant_generic_techs(["python_fastapi", "python_starlette"]).should eq(["python_fastapi", "python_starlette"])
   end
+
+  # The four supersede rules, which had no unit coverage at all until now —
+  # `spec/functional_test/testers/php/lumen_spec.cr` tested one of them.
+  # Each is asserted in both input orders, because the rules used to be an
+  # `if` chain reading a mutating array and the new form evaluates presence
+  # against the input list.
+  {
+    {"php_lumen", "php_laravel"},
+    {"elixir_bandit", "elixir_plug"},
+    {"zig_jetzig", "zig_httpz"},
+    {"zig_tokamak", "zig_httpz"},
+    {"php_drupal", "php_symfony"},
+    {"php_magento", "php_symfony"},
+  }.each do |superseder, superseded|
+    it "drops #{superseded} when #{superseder} is present" do
+      filter_redundant_generic_techs([superseder, superseded]).should eq([superseder])
+      filter_redundant_generic_techs([superseded, superseder]).should eq([superseder])
+    end
+
+    it "keeps #{superseded} when #{superseder} is absent" do
+      filter_redundant_generic_techs([superseded]).should eq([superseded])
+    end
+  end
+
+  it "preserves input order for the techs it keeps" do
+    techs = ["python_django", "php_laravel", "js_express", "php_lumen", "go_gin"]
+    filter_redundant_generic_techs(techs).should eq(["python_django", "js_express", "php_lumen", "go_gin"])
+  end
 end

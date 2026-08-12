@@ -165,3 +165,46 @@ describe "tagger registry integrity" do
     fail "framework taggers target techs with no catalog entry: #{sorted(unknown)}" unless unknown.empty?
   end
 end
+
+# `:supersedes` moved the "when both are detected, X owns the routes" rules
+# out of an `if` chain in `filter_redundant_generic_techs` and onto the
+# superseding tech's catalog entry. A rule is now a data edge between two
+# catalog keys, so it can be checked — the `if` chain could name a tech that
+# no longer existed and nothing would notice.
+describe "tech supersede integrity" do
+  catalog = NoirTechs.techs.keys.map(&.to_s).to_set
+  supersedes = NoirTechs::SUPERSEDES
+
+  it "names only real techs on both ends of every rule" do
+    unknown = supersedes.flat_map do |superseder, targets|
+      ([superseder] + targets).reject { |tech| catalog.includes?(tech) }
+    end.uniq!
+    fail ":supersedes references techs with no catalog entry: #{sorted(unknown)}" unless unknown.empty?
+  end
+
+  it "never lets a tech supersede itself" do
+    self_referential = supersedes.select { |superseder, targets| targets.includes?(superseder) }.keys
+    fail "techs that supersede themselves: #{sorted(self_referential)}" unless self_referential.empty?
+  end
+
+  # What keeps `filter_redundant_generic_techs` order-independent. It
+  # evaluates presence against its input rather than against the array it is
+  # building, which is only equivalent to the old progressive form while no
+  # chain exists. A chain would also be a design mistake in its own right:
+  # if A supersedes B and B supersedes C, whether C survives depends on
+  # whether A is present, which is not what either rule says.
+  it "declares no supersede chains" do
+    superseders = supersedes.keys.to_set
+    chained = supersedes.flat_map { |_, targets| targets }.select { |target| superseders.includes?(target) }.uniq!
+    fail "techs that are both a superseder and superseded: #{sorted(chained)}" unless chained.empty?
+  end
+
+  it "supersedes only techs that have an analyzer to suppress" do
+    # A rule dropping a tech nothing analyzes is dead code that reads as a
+    # live policy decision.
+    logger = NoirLogger.new(false, false, false, true)
+    analyzers = initialize_analyzers(logger).keys.to_set
+    orphaned = supersedes.flat_map { |_, targets| targets }.reject { |t| analyzers.includes?(t) }.uniq!
+    fail ":supersedes drops techs with no analyzer: #{sorted(orphaned)}" unless orphaned.empty?
+  end
+end
