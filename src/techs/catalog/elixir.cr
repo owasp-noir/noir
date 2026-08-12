@@ -22,10 +22,16 @@ module NoirTechs::Catalog
       },
     },
     :elixir_bandit => {
-      :framework => "Bandit",
-      :language  => "Elixir",
-      :similar   => ["bandit", "elixir-bandit", "elixir_bandit"],
-      :supported => {
+      # Bandit hosts the same `Plug.Router` modules the Plug analyzer already
+      # understands, so both detectors fire on a Bandit project. Bandit is the
+      # more specific signal — it names the HTTP server actually serving the
+      # routes — so keeping both would extract every endpoint twice under two
+      # technology tags. Phoenix is unaffected: it owns the Phoenix.Router DSL.
+      :supersedes => ["elixir_plug"],
+      :framework  => "Bandit",
+      :language   => "Elixir",
+      :similar    => ["bandit", "elixir-bandit", "elixir_bandit"],
+      :supported  => {
         :endpoint => true,
         :method   => true,
         :params   => {

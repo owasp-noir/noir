@@ -1,6 +1,7 @@
 require "./analyzers/**"
 require "./analyzers/file_analyzers/*"
 require "../miniparsers/extraction_result_cache"
+require "../techs/techs"
 
 def initialize_analyzers(logger : NoirLogger)
   # Initializing analyzers
@@ -46,77 +47,19 @@ CFML_FRAMEWORK_TECHS = Set{
   "cfml_fw1",
 }
 
+# Drops techs that another detected tech supersedes. The rules live on the
+# superseding tech's catalog entry as `:supersedes`; see the doc on
+# `NoirTechs::SUPERSEDES` for what belongs there and — more importantly —
+# what must never be added.
+#
+# Presence is evaluated against the *input* list rather than the array being
+# filtered, so the result no longer depends on the order the rules happen to
+# be written in. `SUPERSEDES` chains are rejected by the tech-registry
+# integrity spec, which keeps that equivalence true.
 def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
-  filtered = techs.dup
-
-  # NOTE: `php_pure` is deliberately NOT dropped when a framework is
-  # present. It used to be, because it emitted every `.php` file in the
-  # tree as an endpoint and drowned framework scans in paths that are not
-  # web-reachable (`/config/app.php`, `/app/Models/User.php`). That was a
-  # workaround for a defect in the analyzer, and it cost real findings: a
-  # legacy script inside the document root — `public/upload.php` beside a
-  # Laravel app — vanished with it. `Analyzer::Php::Php` now resolves URLs
-  # against the document root, so the noise is gone at the source and the
-  # generic analyzer can run alongside the framework one. See #2358.
-  #
-  # `cfml_pure` used to be dropped for the same reason and paid the same
-  # price — the `remote` methods on a ColdBox app's proxy components are
-  # HTTP-callable whatever framework fronts them, and no framework
-  # analyzer emits them. It now runs in components-only mode instead (see
-  # `CFML_FRAMEWORK_TECHS` below), which keeps those and still leaves the
-  # `.cfm` page surface to the framework that owns it.
-
-  # Lumen and Laravel share enough surface (Illuminate namespaces, the `routes/`
-  # convention) that the Laravel detector also fires on Lumen projects. When
-  # Lumen is the actual framework, the Laravel signal is just noise.
-  if filtered.includes?("php_lumen") && filtered.includes?("php_laravel")
-    filtered.reject!("php_laravel")
-  end
-
-  # Bandit hosts the same `Plug.Router` modules the Plug analyzer
-  # already understands, so both detectors fire on a Bandit project.
-  # When both are present, the Bandit signal is the more specific one
-  # (it tells you which HTTP server is actually serving the routes);
-  # keep it and drop the redundant Plug entry so endpoints aren't
-  # extracted twice with two different technology tags. The Phoenix
-  # analyzer is unaffected — it owns the Phoenix.Router DSL.
-  if filtered.includes?("elixir_bandit") && filtered.includes?("elixir_plug")
-    filtered.reject!("elixir_plug")
-  end
-
-  # Jetzig and Tokamak are both built on top of http.zig (httpz), so a
-  # project that vendors either framework's source also carries the
-  # `@import("httpz")` / `.httpz` dependency markers the httpz detector
-  # keys on. When the more specific framework is present it owns the
-  # routing DSL; keep it and drop the redundant httpz entry so the httpz
-  # analyzer doesn't also scan the framework's internals.
-  if filtered.includes?("zig_httpz") && (filtered.includes?("zig_jetzig") || filtered.includes?("zig_tokamak"))
-    filtered.reject!("zig_httpz")
-  end
-
-  # Drupal and Magento are both built on Symfony components, so their
-  # composer.json pulls in `symfony/*` and the Symfony detector fires on
-  # every Drupal/Magento project. Those apps do not expose Symfony-native
-  # routes (Drupal uses `*.routing.yml`, Magento uses `webapi.xml` /
-  # `routes.xml`), and the Symfony YAML analyzer would otherwise
-  # double-parse Drupal routing files that happen to sit under a `config`
-  # path. Keep the specific CMS analyzer and drop the redundant Symfony
-  # entry so endpoints aren't extracted twice under a misleading tech tag.
-  if filtered.includes?("php_symfony") && (filtered.includes?("php_drupal") || filtered.includes?("php_magento"))
-    filtered.reject!("php_symfony")
-  end
-
-  # NOTE: do not add "generic stdlib analyzer is redundant when framework
-  # X is present" rules here. `techs` is a flat, repo-wide list with no
-  # path granularity, so a framework detected anywhere suppresses the
-  # generic analyzer *everywhere*. In a monorepo that silently drops real
-  # attack surface: a standalone `net/http` admin listener exposing
-  # /debug/pprof next to a Gin API, or a standalone Starlette service next
-  # to a FastAPI one. Framework-vs-framework rules above are safe because
-  # both analyzers target the same routing DSL; framework-vs-stdlib rules
-  # are not. Scoping this correctly needs a per-tech path map from the
-  # detector (the detect loop does know the file), not a global list.
-  filtered
+  drop = Set(String).new
+  techs.each { |tech| NoirTechs.supersedes(tech).each { |target| drop << target } }
+  techs.reject { |tech| drop.includes?(tech) }
 end
 
 def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger)

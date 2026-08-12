@@ -60,10 +60,15 @@ module NoirTechs::Catalog
       :context => {:callee => true, :guards => true},
     },
     :php_lumen => {
-      :framework => "Lumen",
-      :language  => "PHP",
-      :similar   => ["lumen", "php-lumen", "php_lumen", "laravel/lumen", "laravel-lumen", "lumen-framework"],
-      :supported => {
+      # Lumen and Laravel share enough surface (Illuminate namespaces, the
+      # `routes/` convention) that the Laravel detector also fires on Lumen
+      # projects. When Lumen is the actual framework, the Laravel signal is
+      # just noise.
+      :supersedes => ["php_laravel"],
+      :framework  => "Lumen",
+      :language   => "PHP",
+      :similar    => ["lumen", "php-lumen", "php_lumen", "laravel/lumen", "laravel-lumen", "lumen-framework"],
+      :supported  => {
         :endpoint => true,
         :method   => true,
         :params   => {
@@ -267,10 +272,16 @@ module NoirTechs::Catalog
       },
     },
     :php_drupal => {
-      :framework => "Drupal",
-      :language  => "PHP",
-      :similar   => ["drupal", "php-drupal", "php_drupal", "drupal/core"],
-      :supported => {
+      # Drupal is built on Symfony components, so its composer.json pulls in
+      # `symfony/*` and the Symfony detector fires on every Drupal project.
+      # Drupal exposes no Symfony-native routes (it uses `*.routing.yml`), and
+      # the Symfony YAML analyzer would otherwise double-parse Drupal routing
+      # files that happen to sit under a `config` path.
+      :supersedes => ["php_symfony"],
+      :framework  => "Drupal",
+      :language   => "PHP",
+      :similar    => ["drupal", "php-drupal", "php_drupal", "drupal/core"],
+      :supported  => {
         :endpoint => true,
         :method   => true,
         :params   => {
@@ -285,10 +296,13 @@ module NoirTechs::Catalog
       },
     },
     :php_magento => {
-      :framework => "Magento",
-      :language  => "PHP",
-      :similar   => ["magento", "magento2", "php-magento", "php_magento", "magento/product-community-edition"],
-      :supported => {
+      # Same as Drupal: Symfony components underneath, but the routes live in
+      # `webapi.xml` / `routes.xml` and only the Magento analyzer reads them.
+      :supersedes => ["php_symfony"],
+      :framework  => "Magento",
+      :language   => "PHP",
+      :similar    => ["magento", "magento2", "php-magento", "php_magento", "magento/product-community-edition"],
+      :supported  => {
         :endpoint => true,
         :method   => true,
         :params   => {
