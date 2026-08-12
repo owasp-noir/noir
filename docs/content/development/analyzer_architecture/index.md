@@ -31,18 +31,19 @@ Every analyzer is composed of three layers. Keeping them separate is a hard rule
 
 | Layer | Lives in | Responsibility |
 |---|---|---|
-| **L0 Language Engine** | `src/analyzer/engines/{lang}_engine.cr` | File walking, concurrency (`parallel_analyze`), channel setup, per-path error handling. One per language. |
-| **L1 Route Extractor** | `src/miniparsers/{lang}_route_extractor.cr` | Parses source content. Takes a string (file contents), yields route declarations (method, path, location). No file I/O, no framework-specific rules. |
+| **L0 Language Engine** | `src/analyzer/engines/{lang}_engine.cr` | The language's source-file set and per-path filters. One per language. Most engines get the walk itself from `FileScanEngine`, which owns `analyze` + `parallel_file_scan`; concurrency comes from `Analyzer#parallel_analyze`. |
+| **L1 Route Extractor** | `src/miniparsers/{lang}_route_extractor*.cr` | Parses source content. Takes a string (file contents), yields route declarations (method, path, location). No file I/O, no framework-specific rules. |
 | **L2 Framework Adapter** | `src/analyzer/analyzers/{lang}/{framework}.cr` | Thin per-framework class. Consumes routes from the extractor and applies framework-specific param mappings, filters, and special cases. |
 
-**Reference implementation**: [`src/analyzer/analyzers/javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr) on top of [`src/miniparsers/js_route_extractor.cr`](https://github.com/owasp-noir/noir/blob/main/src/miniparsers/js_route_extractor.cr). Hono is ~205 lines because it follows the split; contrast with analyzers that inline all three responsibilities and grow to 500–800 lines.
+**Reference implementation**: [`src/analyzer/analyzers/javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr) on top of [`src/miniparsers/js_route_extractor.cr`](https://github.com/owasp-noir/noir/blob/main/src/miniparsers/js_route_extractor.cr). It stays thin because it follows the split; contrast with analyzers that inline all three responsibilities.
 
 ## Current coverage
 
-- **Language engines** (in `engines/`): PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala, JavaScript/TypeScript, Python, Go.
-- **Route extractors** (in `miniparsers/`): JavaScript (used by Hono, Express, Fastify, Koa, NestJS, Restify, TypeScript NestJS) and Go (used by eight analyzers).
-- **Deliberately outside the engine stack**: CSharp's two orchestrators and Scala Play (multi-phase flows that don't fit a per-file scan), plus Go's Chi/Httprouter/Fasthttp (self-contained extraction). These inherit from `Analyzer` directly.
-- Python, Kotlin, Java have full parsers (in `miniparsers/`) but no dedicated route extractor yet (a known follow-up).
+- **Language engines** (in `engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, Elixir.
+- **`FileScanEngine`** sits *under* seven of those (Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) and holds the file-walk skeleton they used to each carry a byte-identical copy of.
+- `java_engine.cr` and `kotlin_engine.cr` are **not** engines despite the filenames — they are modules exposing a shared `self.test_path?`, and no analyzer inherits from them.
+- **Route extractors** (in `miniparsers/`): JavaScript (`js_route_extractor.cr`, used by Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS, Elysia, Hapi and more) plus Tree-sitter extractors for Go, Java, Kotlin and Python. Go and Kotlin ship as directories of part files behind an umbrella `require` (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
+- **Deliberately outside the engine stack**: languages whose analyzers orchestrate multiple phases or carry self-contained extraction — CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, and Go's Chi/Httprouter/Fasthttp. These inherit from `Analyzer` directly.
 
 ## Two engine shapes
 
@@ -59,7 +60,7 @@ class MyFramework < PhpEngine
 end
 ```
 
-The engine's default `analyze` drives the walk and concats returned endpoints. Used by most Php / Rust / Swift / Crystal / Elixir / Scala analyzers.
+`FileScanEngine#analyze` drives the walk and concats returned endpoints; the engine supplies the candidate list through `scan_target_files` and an optional per-path veto through `scan_accepts?`. Used by most Php / Rust / Swift / Crystal / Elixir / Scala analyzers.
 
 **Shape B: custom `analyze`** (for closure state, pre-/post-phases):
 
@@ -89,16 +90,16 @@ Detectors are almost always a one-line match:
 # src/detector/detectors/go/hertz.cr
 module Detector::Go
   class Hertz < Detector
+    detector_for "go_hertz", extensions: %w[.go], path_segments: %w[go.mod]
+
     def detect(filename : String, file_contents : String) : Bool
       filename.includes?("go.mod") && file_contents.includes?("github.com/cloudwego/hertz")
-    end
-
-    def set_name
-      @name = "go_hertz"
     end
   end
 end
 ```
+
+`detector_for` declares the tech name once and generates the cheap file gate (`applicable?`) that decides which files `detect` is even offered. The gate keys are `extensions:`, `basenames:` and `path_segments:`; a detector whose `detect` has side effects — registering spec paths in `CodeLocator`, say — must also pass `idempotent: false` so the pass keeps calling it after its first match.
 
 The detector runs once per candidate file in the project. Returning `true` marks the framework as present and tells the pipeline to run the matching analyzer.
 
@@ -115,12 +116,10 @@ require "../../../models/detector"
 
 module Detector::Go
   class Hertz < Detector
+    detector_for "go_hertz", extensions: %w[.go], path_segments: %w[go.mod]
+
     def detect(filename : String, file_contents : String) : Bool
       filename.includes?("go.mod") && file_contents.includes?("github.com/cloudwego/hertz")
-    end
-
-    def set_name
-      @name = "go_hertz"
     end
   end
 end
@@ -135,6 +134,8 @@ require "../../engines/go_engine"
 
 module Analyzer::Go
   class Hertz < GoEngine
+    analyzer_for "go_hertz"
+
     HTTP_METHODS_EXPANDED = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
 
     def analyze
@@ -157,30 +158,37 @@ end
 Key points:
 
 - **Inherit from the language engine** (`GoEngine` here). You get `get_route_path`, `add_param_to_endpoint`, `collect_package_groups`, `resolve_public_dirs` for free.
+- **Declare the tech with `analyzer_for`**. That single line *is* the registration — see step 3.
 - **Override overridable methods** if your framework's parsing differs (`get_static_path`, `get_route_path`; see Mux or GoZero for examples).
 - **Use `parallel_file_scan`** for the file walk; don't re-implement the channel + worker pool.
 
-### 3. Register in three places
+### 3. Declare the tech metadata
+
+There is **no registration list to edit**. The analyzer and detector registries are derived from the classes themselves: `initialize_analyzers` (`src/analyzer/analyzer.cr`) and `build_detector_list` (`src/detector/detector.cr`) each sweep `all_subclasses` and read the name off `analyzer_for` / `detector_for`. Both lists used to be hand-maintained, and forgetting an entry produced no error and no failing spec — just a component that silently never ran.
+
+So the only thing left to add is the catalog entry, in the per-language file under `src/techs/catalog/`:
 
 ```crystal
-# src/analyzer/analyzer.cr
-{"go_hertz", Go::Hertz},
-
-# src/detector/detector.cr
-Go::Hertz,
-
-# src/techs/techs.cr
+# src/techs/catalog/go.cr
 :go_hertz => {
   :framework => "Hertz",
   :language  => "Go",
-  :similar   => ["hertz", "go-hertz", "cloudwego"],
+  :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
   :supported => {
     :endpoint => true,
     :method   => true,
     :params   => { :query => true, :path => true, :body => true, :header => true, :cookie => true },
+    :static_path => false,
+    :websocket   => false,
   },
+  # Optional. Declares which AI-context capabilities this tech supports;
+  # CALLEE_SUPPORTED_TECHS and AI_CONTEXT_GUARD_SUPPORTED_TECHS are derived
+  # from these flags rather than hand-listed.
+  :context => { :callee => true },
 },
 ```
+
+`spec/unit_test/techs/registry_integrity_spec.cr` asserts the three-way linkage in both directions: every analyzer and detector has a catalog entry, and every catalog entry is backed by both. A missing catalog entry fails there rather than at runtime.
 
 ### 4. Fixture
 
@@ -233,8 +241,7 @@ The tester asserts:
 ```bash
 just build                 # compiles cleanly
 just test                  # unit + functional spec pass
-crystal tool format --check
-crystal run lib/ameba/bin/ameba.cr
+just check                 # crystal tool format --check + ameba
 
 # Manual smoke test
 ./bin/noir -b spec/functional_test/fixtures/{lang}/{framework}
@@ -242,45 +249,38 @@ crystal run lib/ameba/bin/ameba.cr
 
 ## Adding a new language engine
 
-When a language has 2+ analyzers that share a file-walk pattern, extract an engine. Template, using `SwiftEngine` as the model:
+When a language has 2+ analyzers that share a file-walk pattern, extract an engine. **Inherit from `FileScanEngine`** — it already owns the walk. Your engine declares only what is language-specific: which files to scan, which to skip, and any shared route-composition helpers.
 
 ```crystal
 # src/analyzer/engines/swift_engine.cr
 require "../../models/analyzer"
 
+require "./file_scan_engine"
+
 module Analyzer::Swift
-  abstract class SwiftEngine < Analyzer
-    def analyze
-      parallel_file_scan do |path|
-        result.concat(analyze_file(path))
-      end
-      result
+  abstract class SwiftEngine < FileScanEngine
+    # Candidate files. Prefer the detector-built extension index over
+    # walking the whole `file_map` — these are registered regular files,
+    # so no per-path `File.exists?` / `File.directory?` is needed.
+    protected def scan_target_files : Array(String)
+      get_files_by_extension(".swift")
     end
 
-    abstract def analyze_file(path : String) : Array(Endpoint)
-
-    protected def parallel_file_scan(&block : String -> Nil) : Nil
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-
-      begin
-        populate_channel_with_files(channel)
-        parallel_analyze(channel) do |path|
-          next if File.directory?(path)
-          next unless File.exists?(path) && File.extname(path) == ".swift"
-
-          begin
-            block.call(path)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
-      rescue e
-        logger.debug e
-      end
+    # Optional per-path veto. Runs on the scan-base-relative path, never
+    # the absolute one: a convention filter that matches the absolute path
+    # hands the decision to whatever directory the checkout happens to
+    # live in, so the same tree reports different endpoints depending on
+    # where it was cloned.
+    protected def scan_accepts?(path : String) : Bool
+      relative = base_relative_path(path)
+      return false if relative.includes?("/Tests/")
+      !relative.includes?("/.build/")
     end
   end
 end
 ```
+
+`FileScanEngine` supplies `analyze` (walk, call `analyze_file` per path, concat), the `abstract def analyze_file(path) : Array(Endpoint)` contract, and `parallel_file_scan` for subclasses that need a custom `analyze` shape. Do not re-implement the channel + worker pool: nine engines each carried a byte-identical copy of it before [#2465](https://github.com/owasp-noir/noir/pull/2465) hoisted it, and a hand-rolled copy re-opens that duplication.
 
 When adding the engine, migrate existing analyzers to inherit from it in the same PR. See [#1236](https://github.com/owasp-noir/noir/pull/1236) (Elixir), [#1237](https://github.com/owasp-noir/noir/pull/1237) (Swift), [#1238](https://github.com/owasp-noir/noir/pull/1238) (Crystal) for worked examples.
 
@@ -308,7 +308,7 @@ class MyLangEngine < Analyzer
 end
 ```
 
-See [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split) for the canonical example.
+See [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split) for the canonical example. Once an extractor outgrows one file, split it into a directory of part files behind an umbrella `require` rather than letting it grow — [`go_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/go_route_extractor_ts) is split by framework family, [`kotlin_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/kotlin_route_extractor_ts) by concern.
 
 ## Execution model note
 
@@ -319,6 +319,7 @@ A `@result_mutex` plus `append_endpoint` helpers were added to the engines in #2
 ## Where to look next
 
 - Reference analyzer: [`javascript/hono.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/hono.cr)
-- Reference engine + extractor pair: [`engines/go_engine.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/go_engine.cr) + [`miniparsers/go_route_extractor.cr`](https://github.com/owasp-noir/noir/blob/main/src/miniparsers/go_route_extractor.cr)
+- Shared file-walk base: [`engines/file_scan_engine.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/file_scan_engine.cr)
+- Reference engine + extractor pair: [`engines/go_engine.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/engines/go_engine.cr) + [`miniparsers/go_route_extractor_ts.cr`](https://github.com/owasp-noir/noir/blob/main/src/miniparsers/go_route_extractor_ts.cr)
 - Custom-shape example: [`javascript/express.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/javascript/express.cr) (pre-phase + closure state)
 - Framework-adapter-only example: [`go/hertz.cr`](https://github.com/owasp-noir/noir/blob/main/src/analyzer/analyzers/go/hertz.cr) (first framework added after the engine refactor)

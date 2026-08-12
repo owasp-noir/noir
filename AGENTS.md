@@ -28,8 +28,8 @@ sudo apt install -y just
 
 ```bash
 ./bin/noir -h                                           # Help (includes all output formats)
-./bin/noir --list-techs                                 # List all supported technologies
-./bin/noir --list-taggers                               # List available taggers
+./bin/noir list techs                                   # List all supported technologies
+./bin/noir list taggers                                 # List available taggers
 ./bin/noir -b path/to/source                            # Basic analysis
 ./bin/noir -b . -f json                                 # JSON output (see -h for all formats)
 ./bin/noir -b . --verbose                               # Detailed analysis
@@ -43,11 +43,15 @@ sudo apt install -y just
 ```
 src/
 ├── analyzer/analyzers/     # Endpoint/parameter analyzers by language/framework
+├── analyzer/engines/       # Shared per-language bases (see Analyzer Layering)
 ├── detector/detectors/     # Technology detection by language/framework
+├── cli/                    # Subcommand router and commands (scan, list, config, …)
 ├── ext/                    # External C/C++ bindings (e.g., Tree-sitter integration)
 ├── output_builder/         # Output format generation (JSON, YAML, OAS, etc.)
-├── models/                 # Data structures (includes delivers/, minilexer/)
-├── llm/                    # AI/LLM integration (general/, ollama/)
+├── models/                 # Base classes + data structures (includes minilexer/)
+├── llm/                    # AI/LLM integration (general/, ollama/, acp/)
+├── ai_context/             # AI review-context assembly
+├── mobile/                 # Mobile deep-link linking (Android/iOS)
 ├── optimizer/              # Endpoint normalization/dedup and LLM optimizer
 ├── tagger/taggers/         # Endpoint tagging implementations
 ├── tagger/framework_taggers/ # Framework-specific auth taggers (by language)
@@ -55,7 +59,7 @@ src/
 ├── minilexers/             # Custom lexers
 ├── miniparsers/            # Custom parsers
 ├── passive_scan/           # Passive security scanning
-├── techs/                  # Supported technologies catalog
+├── techs/catalog/          # Technology metadata, one file per language group
 ├── utils/                  # Utility functions
 ├── noir.cr                 # Main entry point
 ├── options.cr              # CLI options parser
@@ -86,16 +90,18 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 
 **Rule**: the framework adapter receives routes; it does not walk the filesystem or parse tokens itself.
 
-**Reference implementation**: `src/analyzer/analyzers/javascript/hono.cr` on top of `src/miniparsers/js_route_extractor.cr`. Hono is ~205 lines because it follows this split; contrast with analyzers that inline all three responsibilities and grow to 500–800 lines.
+**Reference implementation**: `src/analyzer/analyzers/javascript/hono.cr` on top of `src/miniparsers/js_route_extractor.cr`. It stays thin because it follows this split; contrast with analyzers that inline all three responsibilities.
 
 **Current coverage**:
-- Language engines: PHP, Ruby, Rust, Elixir, Swift, Crystal, Scala (Akka + Scalatra), JavaScript/TypeScript, Python, Go, Java, Kotlin, Perl. CSharp, Scala Play, and some others stay on the `Analyzer` base because their flows orchestrate multiple phases or carry self-contained extraction that doesn't share with other analyzers.
+- Language engines (`src/analyzer/engines/`, subclass count in parentheses): `SpecificationEngine` (45), `JavascriptEngine` (18), `GoEngine` (16), `PythonEngine` (16), `PhpEngine` (15), `RustEngine` (10), `RubyEngine` (8), `CrystalEngine` (6), `CfmlEngine` (5), `ScalaEngine` (5), `SwiftEngine` (3), `PerlEngine` (3), `ElixirEngine` (2). `java_engine.cr` and `kotlin_engine.cr` are **not** engines — they are modules exposing a shared `self.test_path?` and nothing inherits from them.
+- `FileScanEngine` (`src/analyzer/engines/file_scan_engine.cr`) is the shared base *under* seven of those engines (Crystal, Elixir, Perl, Php, Rust, Scala, Swift). It owns the `analyze` + `parallel_file_scan` skeleton those engines used to each carry a copy of.
+- Languages with no engine — including CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua and Groovy — extend the `Analyzer` base directly: their flows orchestrate multiple phases or carry self-contained extraction that doesn't share with other analyzers.
 - Route extractors:
   - JavaScript/TypeScript: `js_route_extractor.cr` (used by Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS, Elysia, Hapi, etc.)
-  - High-fidelity Tree-sitter-based extractors (`*_route_extractor_ts.cr` and `*_parameter_extractor_ts.cr`) utilising vendored libtree-sitter bindings:
-    - Go: `go_route_extractor_ts.cr`
+  - High-fidelity Tree-sitter-based extractors (`*_route_extractor_ts.cr` and `*_parameter_extractor_ts.cr`) utilising vendored libtree-sitter bindings. The Go and Kotlin ones are **directories** of part files behind an umbrella `require`, not single files:
+    - Go: `go_route_extractor_ts.cr` + `go_route_extractor_ts/`
     - Java: `java_route_extractor_ts.cr`, `java_parameter_extractor_ts.cr` (used by Spring, JAX-RS, Micronaut, etc.)
-    - Kotlin: `kotlin_route_extractor_ts.cr`, `kotlin_ktor_route_extractor_ts.cr`, `kotlin_parameter_extractor_ts.cr` (used by Spring, Ktor, etc.)
+    - Kotlin: `kotlin_route_extractor_ts.cr` + `kotlin_route_extractor_ts/`, `kotlin_ktor_route_extractor_ts.cr`, `kotlin_parameter_extractor_ts.cr` (used by Spring, Ktor, etc.)
     - Python: `python_route_extractor_ts.cr` (used by FastAPI, Flask, Django, etc.)
     - Framework-specific AST extractors: `adonisjs_extractor_ts.cr`, `elysia_extractor_ts.cr`, `hapi_extractor_ts.cr`, `http4k_extractor_ts.cr`, `jaxrs_extractor_ts.cr`, `micronaut_extractor_ts.cr`, `jvm_lambda_dsl_extractor_ts.cr`
   - Traditional / Callee Extractors: Used as a fallback or framework-specific extraction across languages (e.g., `cpp_callee_extractor.cr`, `crystal_callee_extractor.cr`, `go_callee_extractor.cr`, `js_callee_extractor.cr`, `ruby_callee_extractor.cr`, etc.).
@@ -104,29 +110,30 @@ When adding a new framework in a language that already has an extractor, extend 
 
 **Two engine shapes** — every engine exposes `parallel_file_scan(&block)` as a protected helper. Subclasses pick one of:
 
-- **Simple per-file**: override `abstract def analyze_file(path) : Array(Endpoint)`. The engine's default `analyze` drives the walk and concats the returned endpoints. Used by Php/Rust/Swift/Crystal/Elixir/Scala analyzers.
+- **Simple per-file**: override `abstract def analyze_file(path) : Array(Endpoint)`. `FileScanEngine#analyze` drives the walk and concats the returned endpoints; the engine supplies the candidate list via `scan_target_files` and an optional per-path veto via `scan_accepts?`. Used by Php/Rust/Swift/Crystal/Elixir/Scala analyzers.
 - **Custom `analyze`**: override `analyze` directly and call `parallel_file_scan` when you need closure state, a pre-phase (e.g., Express's `scan_for_router_mounts`), or post-processing (e.g., Hono's `process_static_dirs`, Amber/Kemal's public-dir pass). Used by Ruby/JavaScript/TypeScript analyzers and by the handful of Crystal/Elixir analyzers that override.
 
 ## Adding New Components
 
+**There are no registration lists to edit.** Analyzers, detectors and output formats each join their registry by declaring their own name on the class; the registry is derived from the classes by macro. Adding a name to a hand-maintained list used to be a second place to remember, where forgetting produced no error and no failing spec — just a component that never ran.
+
 ### Analyzers
 1. Create `src/analyzer/analyzers/{language}/{framework}.cr` — framework adapter only. Delegate parsing to the language's route extractor (see **Analyzer Layering** above).
-2. Add functional test: `spec/functional_test/testers/{language}/{framework}_spec.cr`
-3. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
-4. Register in `src/analyzer/analyzer.cr` if needed
-5. Update `src/techs/techs.cr` with technology metadata
+2. Declare the tech inside the class: `analyzer_for "{language}_{framework}"`. This is the whole registration (`src/models/analyzer.cr`); `initialize_analyzers` reads it off `Analyzer.all_subclasses`. Omitting it is a compile error.
+3. Add functional test: `spec/functional_test/testers/{language}/{framework}_spec.cr`
+4. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
+5. Add technology metadata to `src/techs/catalog/{language}.cr`
 
 ### Detectors
 1. Create `src/detector/detectors/{language}/{framework}.cr`
-2. Add unit test: `spec/unit_test/detector/{language}/{framework}_detector_spec.cr`
-3. Register in `src/detector/detector.cr` if needed
-4. Update `src/techs/techs.cr` with technology metadata
+2. Declare the tech and its file gate inside the class: `detector_for "go_hertz", extensions: %w[.go], path_segments: %w[go.mod]` (`src/models/detector.cr`). The gate keys are `extensions:`, `basenames:` and `path_segments:`; pass `idempotent: false` only if `detect` has side effects, such as registering paths in `CodeLocator`.
+3. Add unit test: `spec/unit_test/detector/{language}/{framework}_detector_spec.cr`
+4. Add technology metadata to `src/techs/catalog/{language}.cr`
 
 ### Output Formats
-1. Create `src/output_builder/{format}_builder.cr`
-2. Add unit test: `spec/unit_test/output_builder/{format}_builder_spec.cr`
-3. Register in output builder selection logic
-4. Update `src/options.cr` help text
+1. Create `src/output_builder/{format}.cr` (no `_builder` suffix)
+2. Annotate the class: `@[Noir::OutputFormat(name: "{format}", description: "…", order: 40)]`. `src/output_builder/formats.cr` derives the catalog, the `-f` help text and the render dispatch from the annotation — `src/options.cr` needs no edit.
+3. Add unit test: `spec/unit_test/output_builder/{format}_spec.cr`
 
 ### Taggers
 1. Create `src/tagger/taggers/{tagger_name}.cr`
