@@ -12,9 +12,12 @@ describe "initialize" do
     lexer.mode.should eq(:normal)
   end
 
+  # Its own lexer: mutating the one shared by the examples above makes
+  # "default mode" pass only while it happens to run first.
   it "persistent mode" do
-    lexer.mode = :persistent
-    lexer.mode.should eq(:persistent)
+    persistent_lexer = GolangLexer.new
+    persistent_lexer.mode = :persistent
+    persistent_lexer.mode.should eq(:persistent)
   end
 end
 
