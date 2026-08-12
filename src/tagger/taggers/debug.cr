@@ -8,6 +8,7 @@ require "../../models/endpoint"
 # heap contents, and some allow unsafe diagnostic actions (shutdown, GC,
 # logger changes). Surfacing them points a reviewer at a high-value,
 # frequently-misexposed surface.
+@[Noir::TaggerFor(key: "debug", name: "Debug Tagger", desc: "Identifies debug, diagnostic, and internal-only endpoints (debug consoles, profilers, actuator, pprof, internal APIs)", order: 150)]
 class DebugTagger < Tagger
   # Unambiguous debug/diagnostic path segments — one is enough. Matched
   # as whole segments after splitting on `/`, `-`, `_`, `.`, so

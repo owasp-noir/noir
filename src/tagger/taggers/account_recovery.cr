@@ -7,6 +7,7 @@ require "../../models/endpoint"
 # takeover surface: review for reset-token leakage, host-header
 # injection in reset links, account enumeration, missing rate limiting,
 # and weak step-up verification.
+@[Noir::TaggerFor(key: "account_recovery", name: "Account Recovery Tagger", desc: "Identifies credential-management and account-recovery endpoints (password reset/change, MFA/OTP, verification)", order: 170)]
 class AccountRecoveryTagger < Tagger
   # Path segments that on their own mark a credential/recovery action.
   # `password`/`mfa`/`otp`/`forgot` are not benign as a standalone path

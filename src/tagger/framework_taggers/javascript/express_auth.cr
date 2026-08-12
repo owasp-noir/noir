@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "express_auth", name: "Express Auth Tagger", desc: "Identifies Express.js authentication patterns (Passport, JWT, auth middleware)", order: 40)]
 class ExpressAuthTagger < FrameworkTagger
   PASSPORT_PATTERNS = [
     /passport\.authenticate\s*\(/,

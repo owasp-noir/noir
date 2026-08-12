@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "crystal_auth", name: "Crystal Auth Tagger", desc: "Identifies Crystal framework authentication patterns (Kemal, Amber, Lucky)", order: 240)]
 class CrystalAuthTagger < FrameworkTagger
   # Amber auth pipe patterns
   AMBER_AUTH_PATTERNS = [

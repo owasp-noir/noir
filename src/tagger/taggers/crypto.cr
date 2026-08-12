@@ -9,6 +9,7 @@ require "../../models/endpoint"
 # `key`, `sign`, and `verify` are deliberately *not* standalone signals:
 # "API key", "sign in", and "verify email" are overwhelmingly non-crypto.
 # Bare auth routes (`/signin`, `/signup`) therefore never match here.
+@[Noir::TaggerFor(key: "crypto", name: "Crypto Tagger", desc: "Identifies cryptographic operation endpoints (encryption, signing, hashing, key management)", order: 140)]
 class CryptoTagger < Tagger
   # Unambiguous crypto path segments — one is enough. Matched as whole
   # segments after splitting on `/`, `-`, `_`, `.`. Includes named

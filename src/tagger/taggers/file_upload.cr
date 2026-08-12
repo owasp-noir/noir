@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "file_upload", name: "FileUpload Tagger", desc: "Identifies file upload endpoints", order: 90)]
 class FileUploadTagger < Tagger
   # Param names that denote an actual uploaded file regardless of how the
   # value is carried — a `filename`, an `attachment`, a `multipart`

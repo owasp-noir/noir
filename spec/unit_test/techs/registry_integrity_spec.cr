@@ -3,6 +3,7 @@ require "../../../src/utils/*"
 require "../../../src/techs/techs"
 require "../../../src/detector/detector"
 require "../../../src/analyzer/analyzer"
+require "../../../src/tagger/tagger"
 require "../../../src/models/logger"
 
 # Tech identity lives in three hand-maintained lists with no compile-time
@@ -94,5 +95,73 @@ describe "tech registry integrity" do
     # through. A key it cannot round-trip is unreachable from the CLI.
     unresolvable = catalog.reject { |tech| NoirTechs.similar_to_tech(tech) == tech }
     fail "catalog keys similar_to_tech cannot resolve: #{sorted(unresolvable)}" unless unresolvable.empty?
+  end
+end
+
+# The tagger registry is derived from `Noir::TaggerFor` annotations rather
+# than from a hand-maintained hash literal, but the derivation only sees
+# classes that carry the annotation. A new tagger file that forgets it
+# compiles, ships, and never runs — the exact failure the two literals used
+# to have, moved one step. This sweep is what closes it.
+describe "tagger registry integrity" do
+  catalog = NoirTechs.techs.keys.map(&.to_s).to_set
+  entries = NoirTaggers::ENTRIES
+  keys = entries.map(&.key)
+
+  it "annotates every concrete tagger class" do
+    annotated = keys.to_set
+    declared = [] of String
+
+    # `Tagger::` is not a namespace here — taggers are top-level classes —
+    # so the sweep excludes the two base classes by name instead. They stay
+    # un-annotated on purpose: `spec/unit_test/models/tagger_spec.cr` and
+    # `framework_tagger_spec.cr` instantiate them directly to exercise the
+    # default `perform`, so neither can be made abstract.
+    {% for sub in Tagger.all_subclasses %}
+      {% unless sub.name == "FrameworkTagger" %}
+        declared << {{ sub.stringify }}
+      {% end %}
+    {% end %}
+
+    missing = [] of String
+    {% for sub in Tagger.all_subclasses %}
+      {% unless sub.name == "FrameworkTagger" || sub.annotation(Noir::TaggerFor) %}
+        missing << {{ sub.stringify }}
+      {% end %}
+    {% end %}
+
+    fail "tagger classes with no Noir::TaggerFor annotation (they will never run): #{sorted(missing)}" unless missing.empty?
+    declared.size.should eq annotated.size
+  end
+
+  it "gives each tagger a unique key that is not the 'all' sentinel" do
+    duplicates = keys.tally.select { |_, count| count > 1 }.keys
+    fail "duplicate tagger keys: #{sorted(duplicates)}" unless duplicates.empty?
+    keys.includes?("all").should be_false
+  end
+
+  it "gives every tagger a name and a description" do
+    blank = entries.select { |entry| entry.name.blank? || entry.desc.blank? }.map(&.key)
+    fail "taggers missing name/desc: #{sorted(blank)}" unless blank.empty?
+  end
+
+  it "reports each tagger's key as its runtime name" do
+    # `run_tagger` selects by registry key and then logs failures by the
+    # instance's `name`; the two disagreeing would make an unselectable
+    # tagger, or a warning naming something the user never asked for.
+    options = create_test_options
+    mismatched = entries.compact_map do |entry|
+      instance = NoirTaggers.build(entry.key, options)
+      next "#{entry.key}: not constructible" if instance.nil?
+      "#{entry.key}: name=#{instance.name}" unless instance.name == entry.key
+    end
+    fail "taggers whose runtime name differs from their registry key: #{mismatched}" unless mismatched.empty?
+  end
+
+  it "points every framework tagger at real catalog techs" do
+    unknown = NoirTaggers.framework_taggers.flat_map do |entry|
+      NoirTaggers.target_techs(entry.key).reject { |tech| catalog.includes?(tech) }
+    end.uniq!
+    fail "framework taggers target techs with no catalog entry: #{sorted(unknown)}" unless unknown.empty?
   end
 end

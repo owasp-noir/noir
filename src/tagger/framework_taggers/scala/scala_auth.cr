@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "scala_auth", name: "Scala Auth Tagger", desc: "Identifies Play/Akka/Scalatra authentication patterns", order: 230)]
 class ScalaAuthTagger < FrameworkTagger
   # Play Framework auth patterns
   PLAY_AUTH_PATTERNS = [

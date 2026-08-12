@@ -163,14 +163,16 @@ module Noir::CLI::ListCommand
 
   private def self.print_taggers_text(io : IO)
     io.puts "Available taggers:"
-    NoirTaggers.taggers.each do |tagger, info|
-      io.puts " #{tagger.to_s.colorize(:green)}"
-      info.each { |k, v| io.puts "   #{k.to_s.colorize(:blue)}: #{v}" unless k == :runner }
-    end
+    print_tagger_entries(NoirTaggers.taggers, io)
     io.puts "\nFramework-specific taggers:"
-    NoirTaggers.framework_taggers.each do |tagger, info|
-      io.puts " #{tagger.to_s.colorize(:green)}"
-      info.each { |k, v| io.puts "   #{k.to_s.colorize(:blue)}: #{v}" unless k == :runner }
+    print_tagger_entries(NoirTaggers.framework_taggers, io)
+  end
+
+  private def self.print_tagger_entries(entries : Array(NoirTaggers::Entry), io : IO)
+    entries.each do |entry|
+      io.puts " #{entry.key.colorize(:green)}"
+      io.puts "   #{"name".colorize(:blue)}: #{entry.name}"
+      io.puts "   #{"desc".colorize(:blue)}: #{entry.desc}"
     end
   end
 
@@ -202,9 +204,9 @@ module Noir::CLI::ListCommand
     doc
   end
 
-  # Structured taggers catalog. The `:runner` class reference isn't
-  # serializable (and is an internal detail), so it's dropped — matching the
-  # text view, which also hides it.
+  # Structured taggers catalog. The class that runs each tagger is an
+  # internal detail and is not part of the document — the registry `Entry`
+  # carries only what both views print.
   private def self.taggers_document
     {
       "taggers"           => serialize_taggers(NoirTaggers.taggers),
@@ -212,17 +214,10 @@ module Noir::CLI::ListCommand
     }
   end
 
-  private def self.serialize_taggers(source) : Array(Hash(String, String))
-    entries = [] of Hash(String, String)
-    source.each do |name, info|
-      entry = {"id" => name.to_s}
-      info.each do |k, v|
-        next if k == :runner
-        entry[k.to_s] = v.to_s
-      end
-      entries << entry
+  private def self.serialize_taggers(source : Array(NoirTaggers::Entry)) : Array(Hash(String, String))
+    source.map do |entry|
+      {"id" => entry.key, "name" => entry.name, "desc" => entry.desc}
     end
-    entries
   end
 
   private def self.print_context_support(tech : String, io : IO)

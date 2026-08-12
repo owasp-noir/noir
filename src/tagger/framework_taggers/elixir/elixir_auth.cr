@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "elixir_auth", name: "Elixir Auth Tagger", desc: "Identifies Phoenix/Plug authentication patterns (plugs, Guardian, Pow)", order: 190)]
 class ElixirAuthTagger < FrameworkTagger
   # Phoenix pipeline auth plugs
   PLUG_AUTH_PATTERNS = [

@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "cors", name: "CORS Tagger", desc: "Identifies CORS endpoints", order: 30)]
 class CorsTagger < Tagger
   def initialize(options : Hash(String, YAML::Any))
     super

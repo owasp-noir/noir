@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "php_auth", name: "PHP Auth Tagger", desc: "Identifies PHP authentication patterns (Laravel, Symfony, CakePHP)", order: 140)]
 class PhpAuthTagger < FrameworkTagger
   # Laravel middleware patterns
   LARAVEL_ROUTE_MIDDLEWARE = [

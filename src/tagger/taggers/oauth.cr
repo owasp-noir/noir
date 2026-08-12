@@ -1,6 +1,7 @@
 require "../../models/tagger"
 require "../../models/endpoint"
 
+@[Noir::TaggerFor(key: "oauth", name: "OAuth Tagger", desc: "Identifies OAuth endpoints", order: 20)]
 class OAuthTagger < Tagger
   WORDS = Set{
     "grant_type", "code", "redirect_uri", "redirect_url", "client_id", "client_secret",

@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "java_misc_auth", name: "Java Misc Auth Tagger", desc: "Identifies Vert.x/Armeria/JSP authentication patterns", order: 210)]
 class JavaMiscAuthTagger < FrameworkTagger
   # Vert.x auth patterns
   VERTX_AUTH_PATTERNS = [

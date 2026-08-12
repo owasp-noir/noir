@@ -1,6 +1,7 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
 
+@[Noir::TaggerFor(key: "ktor_auth", name: "Ktor Auth Tagger", desc: "Identifies Ktor authentication patterns (authenticate blocks, principals)", order: 200)]
 class KtorAuthTagger < FrameworkTagger
   # Ktor authenticate block patterns
   AUTHENTICATE_BLOCK_PATTERNS = [

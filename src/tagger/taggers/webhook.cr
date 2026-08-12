@@ -6,6 +6,7 @@ require "../../models/endpoint"
 # VCS hosts, CI, messaging platforms). They warrant scrutiny for
 # signature verification, replay protection, and source-IP trust, and
 # the handlers often make outbound requests (SSRF surface).
+@[Noir::TaggerFor(key: "webhook", name: "Webhook Tagger", desc: "Identifies inbound webhook and callback endpoints", order: 130)]
 class WebhookTagger < Tagger
   # Unambiguous webhook path segments — one is enough.
   STRONG_PATH_PARTS = Set{"webhook", "webhooks", "ipn"}

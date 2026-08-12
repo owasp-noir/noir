@@ -38,6 +38,7 @@ require "../../../models/endpoint"
 # Scope mapping errs toward false *negatives* (a too-narrow prefix tags
 # fewer endpoints) rather than false positives, in keeping with the
 # rest of Noir's tagging.
+@[Noir::TaggerFor(key: "rust_security", name: "Rust Security Tagger", desc: "Identifies Rust framework security protections (CORS, rate limiting, security headers, body-size limits)", order: 80)]
 class RustSecurityTagger < FrameworkTagger
   # A single detected protection: the tag to emit, its human description,
   # the URL prefix it guards, and whether it is a risk (risk variants win

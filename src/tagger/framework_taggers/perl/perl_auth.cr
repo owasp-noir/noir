@@ -14,6 +14,7 @@ require "../../../models/endpoint"
 # (`$c->user_exists`, `$c->assert_user_roles`, `$c->require_login`,
 # `$self->is_user_authenticated`). This tagger surfaces all of them as a
 # single `auth` tag so reviewers can spot the unprotected routes.
+@[Noir::TaggerFor(key: "perl_auth", name: "Perl Auth Tagger", desc: "Identifies Perl authentication patterns (Dancer2 Auth::Extensible, Mojolicious, Catalyst)", order: 260)]
 class PerlAuthTagger < FrameworkTagger
   # Inline route wrappers from Dancer2::Plugin::Auth::Extensible. These
   # sit between the path and the `sub { ... }` on the route declaration.

@@ -22,6 +22,7 @@ require "./group_scope"
 # tag is worse for a security review than a miss, so only middleware named
 # directly at the registration site is tagged. Cross-file middleware
 # factories are likewise out of scope by design.
+@[Noir::TaggerFor(key: "go_security", name: "Go Security Tagger", desc: "Identifies Go security middleware (CSRF, security headers, rate limiting, body-size limits)", order: 60)]
 class GoSecurityTagger < FrameworkTagger
   include GoRouteGroupScope
 

@@ -6,6 +6,7 @@ require "../../models/endpoint"
 # targets for data exposure, broken object-level authorization, and
 # sensitive-data logging — knowing *which* routes touch PII lets a
 # reviewer (or an AI consumer) prioritize accordingly.
+@[Noir::TaggerFor(key: "pii", name: "PII Tagger", desc: "Identifies endpoints handling personally identifiable information", order: 100)]
 class PiiTagger < Tagger
   # Unambiguous, high-signal identifiers. A single one is enough to flag
   # the endpoint because these names rarely appear outside a PII context.
