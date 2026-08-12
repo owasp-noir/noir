@@ -30,7 +30,7 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Gotham's framework repo parks route registrations inside
       # `#[cfg(test)] mod tests { ... build_router(|route| { route.get(...) }) }`

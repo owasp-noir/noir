@@ -27,7 +27,7 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # `#[cfg(test)] mod tests { Route::new().at("/x", get(h)); }` blocks
       # would otherwise leak test-only routes; gate like the other Rust

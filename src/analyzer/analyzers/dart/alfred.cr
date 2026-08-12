@@ -43,7 +43,7 @@ module Analyzer::Dart
     ALL_VERBS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       result = [] of Endpoint
       mutex = Mutex.new
 

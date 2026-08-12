@@ -10,7 +10,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       parallel_file_scan(EXTENSIONS) do |path|
         # Focus on server/api and server/routes directories for Nuxt 3

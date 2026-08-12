@@ -118,7 +118,7 @@ module Analyzer::Rust
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       # `crates/core/src/routing.rs`-style `#[cfg(test)] mod tests
       # { Router::with_path(...).get(...) }` blocks would otherwise
       # leak into the endpoint set. See `RustEngine.collect_cfg_test_regions`

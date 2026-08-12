@@ -31,7 +31,7 @@ module Analyzer::Cpp
     MACRO_EVIDENCE_RE   = Regex.union("ENDPOINT(", "ENDPOINT_ASYNC(")
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       begin
         locator = CodeLocator.instance

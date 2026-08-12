@@ -18,7 +18,7 @@ module Analyzer::Haskell
 
     def analyze
       type_aliases = TypeAliasIndex.new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
       server_bindings = include_callee ? build_server_bindings : ServerBindings.new
 

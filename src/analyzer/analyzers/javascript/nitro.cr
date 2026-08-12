@@ -7,7 +7,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       # `routes/` on its own is not a Nitro signal — it is the conventional
       # name for a router directory in Koa, Express, Fastify and most other JS
       # frameworks. Treating every `*/routes/*.ts` in the scan as a Nitro

@@ -483,14 +483,6 @@ module Analyzer::Python
       resolve_python_callee_definitions(callees, base_path, path, source)
     end
 
-    # Callees feed both `--include-callee` (direct output) and `--ai-context`
-    # (aggregated review context). Skip the tree-sitter walk and import-graph
-    # resolution when neither flag is set so default Python scans avoid the
-    # per-handler callee build.
-    private def callees_needed? : Bool
-      any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-    end
-
     # Convenience wrapper around `build_callees_from`: parse + push in
     # one call when one body maps to exactly one endpoint.
     # `Endpoint#push_callee` enforces dedup and the per-endpoint cap.

@@ -54,7 +54,7 @@ module Analyzer::Cpp
     @function_body_regex_cache = Hash(String, Regex).new
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       begin
         locator = CodeLocator.instance

@@ -64,7 +64,7 @@ module Analyzer::Javascript
     protected def analyze_with_extensions(extensions : Array(String)) : Array(Endpoint)
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       global_prefix_holder = [] of GlobalPrefixConfig
       global_prefix_mutex = Mutex.new
 

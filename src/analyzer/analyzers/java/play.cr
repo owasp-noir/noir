@@ -77,7 +77,7 @@ module Analyzer::Java
     # Parse Java controller files to extract header, cookie, and body parameters
     private def parse_controller_files(java_files : Array(String)) : Hash(ScopedKey, ControllerMethod)
       controller_methods = Hash(ScopedKey, ControllerMethod).new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       java_files.each do |path|
         content = read_file_content(path)

@@ -58,7 +58,7 @@ module Analyzer::Dart
     CALL_REGEX = /(?<![\w$.])([A-Za-z_]\w*)\s*\.\s*([a-zA-Z]+)\s*\(/
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       result = [] of Endpoint
       mutex = Mutex.new
 

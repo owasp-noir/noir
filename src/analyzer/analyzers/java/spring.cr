@@ -139,7 +139,7 @@ module Analyzer::Java
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
 
       # `.java` from the extension index, tests dropped once. Previous

@@ -39,7 +39,7 @@ module Analyzer::Cpp
     EVIDENCE_RE = Regex.union("CROW_ROUTE", "CROW_BP_ROUTE", "CROW_WEBSOCKET_ROUTE", "route_dynamic")
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       begin
         locator = CodeLocator.instance

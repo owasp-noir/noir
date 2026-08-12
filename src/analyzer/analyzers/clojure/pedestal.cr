@@ -43,7 +43,7 @@ module Analyzer::Clojure
     PEDESTAL_SOURCE_RE = Regex.union("io.pedestal", "pedestal.service", "pedestal.route", "defroutes", "table-routes")
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       all_files.each do |path|
         next unless clojure_file?(path)
 
