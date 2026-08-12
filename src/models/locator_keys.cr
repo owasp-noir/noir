@@ -112,4 +112,28 @@ module Noir::LocatorKeys
     "analyzer/javascript/express")
 
   NAMESPACES = [EXPRESS_ROUTER_PREFIX]
+
+  # Drop everything `phase` owns.
+  #
+  # Called at the top of the phase, before it writes anything, so a second
+  # scan in the same process cannot read the first one's registrations. This
+  # replaces a hand-written list at the top of `detect_techs` that named six
+  # of the 64 keys — the other 58 were never cleared at all, which is why
+  # `SpecificationEngine#each_spec_file` needed a `File.exists?` guard to
+  # avoid reading a previous scan's paths.
+  #
+  # The phases are separate on purpose. Detector-written keys are *drained
+  # during analysis*, so clearing them at analysis start would destroy the
+  # scan; the Express keys are written and read inside one analysis pass and
+  # must not survive into the next.
+  def self.reset(phase : ::Noir::LocatorKey::Lifecycle) : Nil
+    locator = CodeLocator.instance
+    ARRAY_KEYS.each { |key| locator.clear(key) if key.lifecycle == phase }
+    SINGLE_KEYS.each { |key| locator.clear(key) if key.lifecycle == phase }
+    NAMESPACES.each { |ns| locator.clear_namespace(ns) if ns.lifecycle == phase }
+
+    # The file registry is not a key (see `CodeLocator#reset_files`), so it
+    # is named here rather than declared in the table above.
+    locator.reset_files if phase.detect_scoped?
+  end
 end

@@ -340,15 +340,11 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   locator = CodeLocator.instance
   wg = WaitGroup.new
 
-  # Clear detector-populated locator keys before starting. These arrays
-  # are side effects of idempotent? == false mobile/spec detectors, so
-  # they should represent the current detection run only.
-  locator.reset_files
-  locator.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
-  locator.clear(Noir::LocatorKeys::ANDROID_ASSETLINKS)
-  locator.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
-  locator.clear(Noir::LocatorKeys::IOS_ENTITLEMENTS)
-  locator.clear(Noir::LocatorKeys::IOS_AASA)
+  # Detector-written keys accumulate as side effects of `idempotent? == false`
+  # detectors, so they must represent the current run only. This used to name
+  # six keys by hand and miss the other 58 — every specification key survived
+  # into the next scan in the same process.
+  Noir::LocatorKeys.reset(Noir::LocatorKey::Lifecycle::DetectScoped)
 
   android_source_scope_active = detector_list.any? { |detector| detector_mobile_detector?(detector.name) }
   android_source_prefixes = [] of String
