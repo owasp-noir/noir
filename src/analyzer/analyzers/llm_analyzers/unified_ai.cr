@@ -209,9 +209,7 @@ module Analyzer::AI
       # (see LLM::ACPClient#request); extra workers would only queue.
       return 1 if LLM::ACPClient.acp_provider?(@provider)
 
-      limit = @options["concurrency"]?.try(&.to_s.to_i?) || 1
-      limit = 1 if limit < 1
-      limit = MAX_BUNDLE_WORKERS if limit > MAX_BUNDLE_WORKERS
+      limit = worker_count.clamp(1, MAX_BUNDLE_WORKERS)
       total < limit ? total : limit
     end
 

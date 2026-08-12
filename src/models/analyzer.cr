@@ -121,6 +121,32 @@ class Analyzer
     any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
   end
 
+  # Worker-fiber count for this analyzer's file walk.
+  #
+  # Nil-safe and floored at 1, matching the shape `src/models/deliver.cr`
+  # already used. The 21 call sites this replaces all spelled it
+  # `@options["concurrency"].to_s.to_i`, which raises `KeyError` on a
+  # missing key and `ArgumentError` on a non-numeric one — reachable only
+  # by a library embedder building the options hash by hand, since
+  # `ConfigInitializer#default_options` always sets it and
+  # `validate_concurrency!` rejects anything below 1. A value of `0` used
+  # to spawn zero workers, so the analyzer silently produced nothing.
+  protected def worker_count : Int32
+    n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
+    n > 0 ? n : 1
+  end
+
+  # `worker_count` capped at `MAX_ANALYZER_WORKERS`.
+  #
+  # Deliberately not applied to the per-analyzer walks: those spawn
+  # `--concurrency` fibers uncapped today, and folding them in here would
+  # silently drop a `--concurrency 100` run to 64. Whether the cap should
+  # extend to them is a real question, but it is a behaviour change and
+  # belongs in its own commit.
+  protected def bounded_worker_count : Int32
+    worker_count.clamp(1, MAX_ANALYZER_WORKERS)
+  end
+
   # Resolves the longest configured base that owns `path`. Cross-file
   # indexes key their roots off this, which scopes them per base. Note the
   # designed limitation: nested/overlapping base paths (e.g. `-b /repo
@@ -174,10 +200,7 @@ class Analyzer
         channel.close
       end
 
-      worker_count = @options["concurrency"].to_s.to_i
-      worker_count = MAX_ANALYZER_WORKERS if worker_count > MAX_ANALYZER_WORKERS
-      worker_count = 1 if worker_count < 1
-      worker_count.times do
+      bounded_worker_count.times do
         wg.spawn do
           loop do
             begin
@@ -369,7 +392,7 @@ class FileAnalyzer < Analyzer
         channel.close
       end
 
-      @options["concurrency"].to_s.to_i.times do
+      worker_count.times do
         wg.spawn do
           loop do
             begin

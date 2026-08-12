@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/models/analyzer"
 
 # `Analyzer#callees_needed?` (src/models/analyzer.cr) has existed, with a doc
 # comment telling analyzers to use it, for as long as the callee flags have.
@@ -51,11 +52,73 @@ describe "analyzer options boundary" do
       MSG
   end
 
+  it "reads the worker count only through the base accessors" do
+    offenders = offending_lines(/@options\[\s*"concurrency"\s*\]/)
+
+    fail <<-MSG unless offenders.empty?
+      analyzers must call `worker_count` / `bounded_worker_count` instead of
+      reading `concurrency` out of the options hash. Offending lines:
+        #{offenders.join("\n  ")}
+      MSG
+  end
+
   # Guards the guard: a typo in the globs above would make both examples pass
   # vacuously, which is the failure mode that makes source-scanning specs
   # worthless.
   it "scans a non-trivial number of analyzer sources" do
     analyzer_sources.size.should be > 200
     analyzer_sources.count { |f| File.read(f).includes?("callees_needed?") }.should be > 50
+  end
+end
+
+# `concurrency` was the last option key the analyzer layer read directly, at
+# 21 sites all spelling it `@options["concurrency"].to_s.to_i`.
+#
+# `worker_count` / `bounded_worker_count` are protected, so reach them the
+# way a subclass would.
+private class WorkerCountProbe < Analyzer
+  def visible_worker_count : Int32
+    worker_count
+  end
+
+  def visible_bounded_worker_count : Int32
+    bounded_worker_count
+  end
+end
+
+private def worker_probe(value : String?) : WorkerCountProbe
+  options = create_test_options
+  if value
+    options["concurrency"] = YAML::Any.new(value)
+  else
+    options.delete("concurrency")
+  end
+  WorkerCountProbe.new(options)
+end
+
+describe "Analyzer worker count" do
+  it "reads a configured worker count" do
+    worker_probe("8").visible_worker_count.should eq 8
+  end
+
+  # Each of these used to raise or spawn zero workers. `0` was the worst:
+  # the analyzer ran, spawned nothing, and reported no endpoints.
+  it "floors at one worker instead of raising or spawning none" do
+    worker_probe("0").visible_worker_count.should eq 1
+    worker_probe("-4").visible_worker_count.should eq 1
+    worker_probe("abc").visible_worker_count.should eq 1
+    worker_probe(nil).visible_worker_count.should eq 1
+  end
+
+  it "caps the shared file walk at MAX_ANALYZER_WORKERS" do
+    worker_probe("1000").visible_bounded_worker_count.should eq Analyzer::MAX_ANALYZER_WORKERS
+    worker_probe("8").visible_bounded_worker_count.should eq 8
+  end
+
+  # The per-analyzer walks deliberately stay uncapped — see the comment on
+  # `bounded_worker_count`. Folding them in would silently drop a
+  # `--concurrency 100` run to 64.
+  it "leaves the uncapped accessor uncapped" do
+    worker_probe("1000").visible_worker_count.should eq 1000
   end
 end
