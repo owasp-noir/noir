@@ -53,11 +53,27 @@ describe "analyzer options boundary" do
   end
 
   it "reads the worker count only through the base accessors" do
-    offenders = offending_lines(/@options\[\s*"concurrency"\s*\]/)
+    offenders = offending_lines(/@(?:raw_)?options\[\s*"concurrency"\s*\]/)
 
     fail <<-MSG unless offenders.empty?
       analyzers must call `worker_count` / `bounded_worker_count` instead of
       reading `concurrency` out of the options hash. Offending lines:
+        #{offenders.join("\n  ")}
+      MSG
+  end
+
+  # The general rule the three specific ones above are instances of. The
+  # ivar was renamed `@raw_options` in the base so every pre-existing
+  # reach-through became a compile error — this keeps new ones from
+  # appearing under either spelling.
+  it "does not index the options hash anywhere under src/analyzer" do
+    offenders = offending_lines(/@(?:raw_)?options\[/)
+
+    fail <<-MSG unless offenders.empty?
+      analyzers read options through accessors on `Analyzer`
+      (`callees_needed?`, `worker_count`, `option_flag?`), never by
+      indexing the hash. Add an accessor rather than a fourth spelling.
+      Offending lines:
         #{offenders.join("\n  ")}
       MSG
   end

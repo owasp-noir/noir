@@ -107,7 +107,7 @@ module Analyzer::Cfml
     end
 
     private def components_only? : Bool
-      any_to_bool(@options[COMPONENTS_ONLY_OPTION]?)
+      option_flag?(COMPONENTS_ONLY_OPTION)
     end
 
     # `.cfc` — only `access="remote"` methods are reachable over HTTP.
