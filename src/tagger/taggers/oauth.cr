@@ -37,11 +37,6 @@ class OAuthTagger < Tagger
   # param-corroborated checks below miss them.
   OAUTH_FLOW_VERB_SEGMENTS = Set{"callback", "authorize", "authorization", "redirect"}
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "oauth"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set

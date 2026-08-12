@@ -34,11 +34,6 @@ class ScalaAuthTagger < FrameworkTagger
     {/userOption/, "Scalatra userOption check"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "scala_auth"
-  end
-
   def self.target_techs : Array(String)
     ["scala_play", "scala_akka", "scala_scalatra", "java_play"]
   end

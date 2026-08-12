@@ -6,11 +6,6 @@ class McpTagger < Tagger
   LEGACY_SSE_SEGMENT      = "sse"
   LEGACY_MESSAGE_SEGMENTS = ["message", "messages"]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "mcp"
-  end
-
   def perform(endpoints : Array(Endpoint))
     legacy_prefixes = legacy_mcp_prefixes(endpoints)
 

@@ -41,7 +41,6 @@ class ElixirAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "elixir_auth"
     @auth_scopes = [] of {prefix: String, description: String}
   end
 

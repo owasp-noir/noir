@@ -10,11 +10,6 @@ class FastEndpointsAuthTagger < FrameworkTagger
   POLICY_PATTERN          = /\bPolicy\s*\(/
   CLAIMS_PATTERN          = /\bClaims\s*\(/
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "fastendpoints_auth"
-  end
-
   def self.target_techs : Array(String)
     ["cs_fastendpoints"]
   end

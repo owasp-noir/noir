@@ -42,11 +42,6 @@ class HuntParamTagger < Tagger
     },
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "hunt"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       # HUNT word lists model HTTP parameter vulnerabilities (SSRF via a

@@ -50,11 +50,6 @@ class AccountRecoveryTagger < Tagger
     "account", "recover", "recovery",
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "account_recovery"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set

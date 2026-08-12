@@ -72,7 +72,6 @@ class GoSecurityTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "go_security"
     @middleware_scopes = [] of NamedTuple(prefix: String, tag: String, description: String)
   end
 

@@ -29,11 +29,6 @@ class WebsocketTagger < Tagger
   # ordinary HTTP endpoints.
   URL_MARKERS = ["socket.io", "sockjs"]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "websocket"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       if websocket?(endpoint)

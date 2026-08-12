@@ -26,11 +26,6 @@ class DjangoAuthTagger < FrameworkTagger
     /permission_classes\s*=\s*\(.*DjangoModelPermissions/,
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "django_auth"
-  end
-
   def self.target_techs : Array(String)
     ["python_django"]
   end

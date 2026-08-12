@@ -33,11 +33,6 @@ class JavaMiscAuthTagger < FrameworkTagger
     {/<auth-constraint>/, "web.xml auth-constraint"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "java_misc_auth"
-  end
-
   def self.target_techs : Array(String)
     ["java_vertx", "java_armeria", "java_jsp"]
   end

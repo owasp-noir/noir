@@ -47,11 +47,6 @@ class PaymentTagger < Tagger
     "subtotal", "balance", "total_amount", "amount_due", "grand_total",
   }
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "payment"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       param_names = endpoint.params.map { |param| normalize_param_name(param.name) }.to_set

@@ -48,7 +48,6 @@ class GoAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "go_auth"
     @middleware_scopes = [] of {prefix: String, middleware: String, description: String, root_group: Bool}
   end
 

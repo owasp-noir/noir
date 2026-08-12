@@ -75,11 +75,6 @@ class PhpAuthTagger < FrameworkTagger
     {/\bauthFilter\b/i, "CodeIgniter authFilter"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "php_auth"
-  end
-
   def self.target_techs : Array(String)
     [
       "php_laravel", "php_symfony", "php_cakephp", "php_pure",

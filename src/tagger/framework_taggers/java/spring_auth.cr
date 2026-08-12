@@ -28,7 +28,6 @@ class SpringAuthTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "spring_auth"
     @security_rules = [] of NamedTuple(pattern: String, method: String?, description: String, protected_rule: Bool)
   end
 

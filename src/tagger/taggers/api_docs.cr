@@ -33,11 +33,6 @@ class ApiDocsTagger < Tagger
   # source used `-`, `_`, or no separator at all.
   DOC_SEGMENTS_NORMALIZED = DOC_SEGMENTS.map(&.gsub(/[-_]/, "")).to_set
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "api_docs"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       segments = doc_segments(endpoint.url)

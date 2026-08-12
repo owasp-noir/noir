@@ -24,11 +24,6 @@ class FlaskAuthTagger < FrameworkTagger
     {/\@authenticated/, "authenticated"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "flask_auth"
-  end
-
   def self.target_techs : Array(String)
     ["python_flask"]
   end

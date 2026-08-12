@@ -35,11 +35,6 @@ class SwiftAuthTagger < FrameworkTagger
     {/HBAuthenticator/, "Hummingbird HBAuthenticator"},
   ]
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "swift_auth"
-  end
-
   def self.target_techs : Array(String)
     ["swift_vapor", "swift_kitura", "swift_hummingbird"]
   end

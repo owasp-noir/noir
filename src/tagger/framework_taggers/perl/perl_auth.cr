@@ -44,11 +44,6 @@ class PerlAuthTagger < FrameworkTagger
 
   GLOBAL_GUARD_BLOCK_START = /\bhook\s+before\b|\bbefore\s*=>\s*sub\b|\bsub\s+auto\b|\bsub\s+begin\b/
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "perl_auth"
-  end
-
   def self.target_techs : Array(String)
     ["perl_dancer2", "perl_mojolicious", "perl_catalyst"]
   end

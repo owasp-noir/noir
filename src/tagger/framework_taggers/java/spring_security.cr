@@ -75,7 +75,6 @@ class SpringSecurityTagger < FrameworkTagger
 
   def initialize(options : Hash(String, YAML::Any))
     super
-    @name = "spring_security"
     @csrf_disable_scopes = [] of String
     @csrf_ignored_scopes = [] of String
     @header_weak_scopes = [] of NamedTuple(pattern: String, kind: Symbol)

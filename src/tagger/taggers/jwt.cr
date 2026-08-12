@@ -31,11 +31,6 @@ class JwtTagger < Tagger
 
   AUTH_PATH_PARTS = Set{"auth", "authenticate", "authentication", "login", "signin", "sign_in", "token", "refresh", "jwt"}
 
-  def initialize(options : Hash(String, YAML::Any))
-    super
-    @name = "jwt"
-  end
-
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       signals = endpoint.params.count { |param| jwt_signal?(param) }
