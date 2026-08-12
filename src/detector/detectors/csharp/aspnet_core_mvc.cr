@@ -2,12 +2,8 @@ require "../../../models/detector"
 
 module Detector::CSharp
   class AspNetCoreMvc < Detector
-    # Side effect: registers `Program.cs` / similar paths in
-    # `CodeLocator` for the analyzer. Must keep running after first
-    # match.
     detector_for "cs_aspnet_core_mvc",
-      extensions: %w[.cs .csproj .vbproj .sln .config],
-      idempotent: false
+      extensions: %w[.cs .csproj .vbproj .sln .config]
 
     def detect(filename : String, file_contents : String) : Bool
       is_csproj = filename.ends_with?(".csproj")
@@ -25,19 +21,16 @@ module Detector::CSharp
                       file_contents.includes?("MapDefaultControllerRoute") ||
                       file_contents.includes?("MapControllers")
 
-      detected = false
-      locator = CodeLocator.instance
-
-      if is_csproj && (uses_aspnetcore || uses_web_sdk)
-        detected = true
-      elsif is_program_file && (uses_aspnetcore || has_mvc_setup)
-        detected = true
-        locator.push("cs-aspnet-core-mvc-entrypoints", filename)
-      elsif is_controller && uses_aspnetcore
-        detected = true
-      end
-
-      detected
+      # A pure predicate. It used to push `Program.cs` paths into
+      # `CodeLocator` under `cs-aspnet-core-mvc-entrypoints`, which nothing
+      # in the tree ever read — the analyzer resolves its entry points
+      # through `get_files_by_extension` instead. That write was the only
+      # reason this detector declared `idempotent: false`, so the flag goes
+      # with it and the detect pass can stop calling this detector once the
+      # tech is known.
+      (is_csproj && (uses_aspnetcore || uses_web_sdk)) ||
+        (is_program_file && (uses_aspnetcore || has_mvc_setup)) ||
+        (is_controller && uses_aspnetcore)
     end
   end
 end
