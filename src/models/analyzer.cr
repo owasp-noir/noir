@@ -37,7 +37,7 @@ class Analyzer
   @is_verbose : Bool
   @is_color : Bool
   @is_log : Bool
-  @options : Hash(String, YAML::Any)
+  @raw_options : Hash(String, YAML::Any)
   # path => longest-matching configured base. Populated lazily by
   # `configured_base_for`; only used on multi-base (monorepo) scans.
   @configured_base_cache = {} of String => String
@@ -54,7 +54,7 @@ class Analyzer
     @is_verbose = any_to_bool(options["verbose"])
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
-    @options = options
+    @raw_options = options
 
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
   end
@@ -118,21 +118,32 @@ class Analyzer
   # running their callee extractor so the work is skipped on default
   # scans where neither flag is set.
   def callees_needed? : Bool
-    any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+    option_flag?("include_callee") || option_flag?("ai_context")
+  end
+
+  # Reads a boolean option the orchestrator sets on this analyzer's behalf.
+  #
+  # The one remaining caller is the CFML components-only flag, which
+  # `analysis_endpoints` injects. Analyzers have no other business reaching
+  # into the options hash — `callees_needed?` and `worker_count` cover
+  # everything else the layer needs, and
+  # `spec/unit_test/analyzer/options_boundary_spec.cr` keeps it that way.
+  protected def option_flag?(key : String) : Bool
+    any_to_bool(@raw_options[key]?)
   end
 
   # Worker-fiber count for this analyzer's file walk.
   #
   # Nil-safe and floored at 1, matching the shape `src/models/deliver.cr`
   # already used. The 21 call sites this replaces all spelled it
-  # `@options["concurrency"].to_s.to_i`, which raises `KeyError` on a
+  # `@options["concurrency"].to_s.to_i`, which raised `KeyError` on a
   # missing key and `ArgumentError` on a non-numeric one — reachable only
   # by a library embedder building the options hash by hand, since
   # `ConfigInitializer#default_options` always sets it and
   # `validate_concurrency!` rejects anything below 1. A value of `0` used
   # to spawn zero workers, so the analyzer silently produced nothing.
   protected def worker_count : Int32
-    n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
+    n = @raw_options["concurrency"]?.try(&.to_s.to_i?) || 0
     n > 0 ? n : 1
   end
 
