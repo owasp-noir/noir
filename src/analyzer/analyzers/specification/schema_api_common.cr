@@ -50,7 +50,7 @@ module Analyzer::Specification
 
     # Joins a mount prefix to a route path without doubling or dropping
     # the separator.
-    def join_path(prefix : String, path : String) : String
+    def api_mount_join(prefix : String, path : String) : String
       normalized_prefix = prefix.rstrip('/')
       return normalized_prefix.empty? ? "/" : normalized_prefix if path.empty? || path == "/"
 

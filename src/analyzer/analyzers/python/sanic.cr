@@ -416,7 +416,7 @@ module Analyzer::Python
 
           registration_prefixes.each do |registration_prefix|
             full_prefix = compose_sanic_prefix(router_name, registration_prefix, prefix, blueprint_group_prefixes, blueprint_versions)
-            endpoint_path = static_route_path(Helper.join_paths(full_prefix, static_path))
+            endpoint_path = static_route_path(Helper.normalized_join(full_prefix, static_path))
             result << Endpoint.new(endpoint_path, "GET", Details.new(PathInfo.new(path, line_index + 1)))
           end
         end
@@ -818,9 +818,9 @@ module Analyzer::Python
                                      group_prefixes : Hash(::String, ::String),
                                      versions : Hash(::String, ::String),
                                      route_version : ::String? = nil) : ::String
-      base = Helper.join_paths(group_prefixes[router_name]? || "", Helper.join_paths(registration_prefix, prefix))
+      base = Helper.normalized_join(group_prefixes[router_name]? || "", Helper.normalized_join(registration_prefix, prefix))
       version = route_version || versions[router_name]?
-      version && !version.empty? ? Helper.join_paths("/v#{version}", base) : base
+      version && !version.empty? ? Helper.normalized_join("/v#{version}", base) : base
     end
 
     private def fetch_file_content(path : ::String) : ::String
@@ -907,7 +907,7 @@ module Analyzer::Python
       # Create endpoints for each method
       methods.each do |http_method|
         # Create endpoint with the prefix
-        full_path = normalize_sanic_path_params(Helper.join_paths(prefix, route_path))
+        full_path = normalize_sanic_path_params(Helper.normalized_join(prefix, route_path))
         filtered_params = get_filtered_params(http_method, params.dup)
         endpoint = Endpoint.new(full_path, http_method, filtered_params)
         endpoint.protocol = "ws" if route_attr == "websocket"

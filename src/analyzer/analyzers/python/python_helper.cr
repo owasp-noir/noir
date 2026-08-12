@@ -12,7 +12,7 @@ module Analyzer::Python
       normalized
     end
 
-    def join_paths(prefix : ::String, path : ::String) : ::String
+    def normalized_join(prefix : ::String, path : ::String) : ::String
       return normalize_path(path) if prefix.empty?
       return normalize_path(prefix) if path.empty?
 

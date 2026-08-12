@@ -131,7 +131,7 @@ module Noir
              elsif prefix.empty?
                sub_path
              else
-               join_paths(prefix, sub_path)
+               group_join(prefix, sub_path)
              end
       full = "/#{full}" unless full.starts_with?("/")
       RestfulRoute.new(v, full, handler, line, params)

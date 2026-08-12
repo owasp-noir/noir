@@ -890,7 +890,7 @@ module Noir
               if new_parent && Noir::TreeSitter.node_type(new_parent) == "identifier"
                 parent_name = Noir::TreeSitter.node_text(new_parent, source)
                 if parent_prefix = groups[parent_name]?
-                  prefix = join_paths(parent_prefix, prefix)
+                  prefix = group_join(parent_prefix, prefix)
                 end
               end
               groups[Noir::TreeSitter.node_text(var_name_node, source)] = prefix
@@ -916,7 +916,7 @@ module Noir
       if Noir::TreeSitter.node_type(parent_node) == "identifier"
         parent_name = Noir::TreeSitter.node_text(parent_node, source)
         if parent_prefix = groups[parent_name]?
-          prefix = join_paths(parent_prefix, prefix)
+          prefix = group_join(parent_prefix, prefix)
         end
       end
 
@@ -996,8 +996,8 @@ module Noir
       # enclosing closure body whose param matches.
       base_prefix = closure_prefix_for(closure_groups, LibTreeSitter.ts_node_start_byte(call), router_name) ||
                     groups[router_name]? || ""
-      base_prefix = join_paths(base_prefix, chain_prefix) unless chain_prefix.empty?
-      resolved = base_prefix.empty? ? (raw_path.empty? ? "/" : raw_path) : join_paths(base_prefix, raw_path)
+      base_prefix = group_join(base_prefix, chain_prefix) unless chain_prefix.empty?
+      resolved = base_prefix.empty? ? (raw_path.empty? ? "/" : raw_path) : group_join(base_prefix, raw_path)
 
       # Fiber's `app.All(...)` is the same "match any method" intent
       # as Gin's `r.Any(...)` and Echo's `e.Any(...)`. Normalize so
@@ -1070,7 +1070,7 @@ module Noir
       parent_info = router_operand_info(parent, source, groups, group_method, group_aliases, string_values)
       return unless parent_info
       router_name, parent_prefix = parent_info
-      chain_prefix = prefix.empty? ? parent_prefix : join_paths(parent_prefix, prefix)
+      chain_prefix = prefix.empty? ? parent_prefix : group_join(parent_prefix, prefix)
       {router_name, chain_prefix}
     end
 
@@ -1124,7 +1124,7 @@ module Noir
       router_name = Noir::TreeSitter.node_text(operand, source)
       return if NON_ROUTER_OPERANDS.includes?(router_name)
       resolved = if prefix = groups[router_name]?
-                   join_paths(prefix, path_lit)
+                   group_join(prefix, path_lit)
                  else
                    path_lit
                  end
@@ -1189,7 +1189,7 @@ module Noir
       router_name = Noir::TreeSitter.node_text(operand, source)
       return empty if NON_ROUTER_OPERANDS.includes?(router_name)
       resolved = if prefix = groups[router_name]?
-                   join_paths(prefix, path_lit)
+                   group_join(prefix, path_lit)
                  else
                    path_lit
                  end
@@ -1264,7 +1264,7 @@ module Noir
                         closure_prefix_for(result, LibTreeSitter.ts_node_start_byte(node), rname) || ""
         end
 
-        full = recv_prefix.empty? ? ps : join_paths(recv_prefix, ps)
+        full = recv_prefix.empty? ? ps : group_join(recv_prefix, ps)
         result << ClosureGroup.new(
           LibTreeSitter.ts_node_start_byte(body),
           LibTreeSitter.ts_node_end_byte(body),
@@ -1422,7 +1422,7 @@ module Noir
 
       return [] of Route if NON_ROUTER_OPERANDS.includes?(router_name)
       resolved = if prefix = groups[router_name]?
-                   join_paths(prefix, raw_path)
+                   group_join(prefix, raw_path)
                  else
                    raw_path
                  end
@@ -1513,7 +1513,7 @@ module Noir
     # Join a group prefix and a route path with exactly one `/` separator,
     # mirroring `GoRouteExtractor#extract_route_path`. Gin accepts paths
     # without a leading `/` under a group, so this also handles that case.
-    private def join_paths(prefix : String, path : String) : String
+    private def group_join(prefix : String, path : String) : String
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
   end

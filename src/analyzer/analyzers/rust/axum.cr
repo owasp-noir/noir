@@ -130,7 +130,7 @@ module Analyzer::Rust
           next unless route
 
           path_str, handlers = route
-          path_str = join_paths(prefix, path_str) unless prefix.empty?
+          path_str = nest_join(prefix, path_str) unless prefix.empty?
           handlers.each do |raw_verb, handler_name|
             # `axum::routing::any(handler)` and service mounts emit
             # the verb "ANY" — fan out into the canonical seven so
@@ -179,7 +179,7 @@ module Analyzer::Rust
             next unless route
 
             path_str, handlers = route
-            path_str = join_paths(active_prefix, path_str) unless active_prefix.empty?
+            path_str = nest_join(active_prefix, path_str) unless active_prefix.empty?
             handlers.each do |raw_verb, handler_name|
               RustEngine.fan_out_verbs(raw_verb).each do |verb|
                 details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
@@ -311,7 +311,7 @@ module Analyzer::Rust
           nest_prefix, nested_router = nest
           resolved_router = resolve_router_argument(nested_router, source, let_router_builders)
           walk_receiver_chain(node, source, prefix, test_regions, mounted_router_names, let_router_builders, skip_ranges, &block)
-          walk_router_builders(resolved_router, source, join_paths(prefix, nest_prefix), test_regions, mounted_router_names, let_router_builders, &block)
+          walk_router_builders(resolved_router, source, nest_join(prefix, nest_prefix), test_regions, mounted_router_names, let_router_builders, &block)
           return
         end
 
@@ -438,7 +438,7 @@ module Analyzer::Rust
 
         if nest = extract_nest_call(node, source)
           nest_prefix, nested_router = nest
-          mounted_prefix = join_paths(active_prefix, nest_prefix)
+          mounted_prefix = nest_join(active_prefix, nest_prefix)
           resolved_router = resolve_router_argument(nested_router, source, let_router_builders)
 
           if router_name = local_router_function_call_name(resolved_router, source)
@@ -574,7 +574,7 @@ module Analyzer::Rust
         return if named.size < 1
         prefix = string_literal_text(named[0], source)
         return unless prefix
-        {join_paths(prefix, "/*"), [{SERVICE_METHOD, nil.as(String?)}]}
+        {nest_join(prefix, "/*"), [{SERVICE_METHOD, nil.as(String?)}]}
       when "fallback", "fallback_service"
         args = Noir::TreeSitter.field(call, "arguments")
         return unless args
@@ -700,7 +700,7 @@ module Analyzer::Rust
       named
     end
 
-    private def join_paths(prefix : String, path : String) : String
+    private def nest_join(prefix : String, path : String) : String
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
 
@@ -1100,7 +1100,7 @@ module Analyzer::Rust
           elsif root_path
             p # `path = "/"` registers at the nest root, no trailing slash
           else
-            join_paths(p, attr_path)
+            nest_join(p, attr_path)
           end
         end
         attr_row = Noir::TreeSitter.node_start_row(attr_item) + 1
@@ -1289,7 +1289,7 @@ module Analyzer::Rust
       stack.add(parent)
       if children = edges[parent]?
         children.each do |child, child_prefix|
-          composed = child_prefix.empty? ? prefix : join_paths(prefix, child_prefix)
+          composed = child_prefix.empty? ? prefix : nest_join(prefix, child_prefix)
           add_cross_prefix(index, child, composed)
           propagate_cross_prefix(child, composed, edges, index, stack)
         end

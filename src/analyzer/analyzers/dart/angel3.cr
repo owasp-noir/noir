@@ -209,7 +209,7 @@ module Analyzer::Dart
         break unless visited.add?(current[:call])
         parent = enclosing_group(current, raw)
         break unless parent
-        prefix = join_path(parent[:own], prefix)
+        prefix = mount_join(parent[:own], prefix)
         current = parent
       end
       prefix
@@ -260,7 +260,7 @@ module Analyzer::Dart
       literal = Helper.extract_string_literal(args[0])
       return unless literal
 
-      url = join_path(prefix, normalize_path(literal))
+      url = mount_join(prefix, normalize_path(literal))
       line = line_number_for_index(content, open_paren)
 
       callees = [] of Noir::DartCalleeExtractor::Entry
@@ -307,7 +307,7 @@ module Analyzer::Dart
       base.gsub(/:([A-Za-z_]\w*)\??/) { "{#{$~[1]}}" }
     end
 
-    private def join_path(prefix : String, sub : String) : String
+    private def mount_join(prefix : String, sub : String) : String
       return sub if prefix.empty?
       left = prefix.rchop('/')
       right = sub.starts_with?('/') ? sub : "/#{sub}"

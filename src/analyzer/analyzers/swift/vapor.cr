@@ -66,7 +66,7 @@ module Analyzer::Swift
 
         begin
           receiver, method, route_args = route
-          route_path = join_paths(prefix_for_receiver(receiver, prefix_by_receiver), parse_route_path(route_args))
+          route_path = normalized_route_join(prefix_for_receiver(receiver, prefix_by_receiver), parse_route_path(route_args))
 
           details = Details.new(PathInfo.new(path, index + 1))
           endpoint = Endpoint.new(route_path, method, details)
@@ -299,7 +299,7 @@ module Analyzer::Swift
       return unless args
 
       prefix = parse_route_path(args[0])
-      prefix_by_receiver[variable] = join_paths(base_prefix, prefix)
+      prefix_by_receiver[variable] = normalized_route_join(base_prefix, prefix)
     end
 
     private def register_group_closure(line : String,
@@ -318,7 +318,7 @@ module Analyzer::Swift
       return unless closure_match
 
       variable = closure_match[1]
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
+      prefix_by_receiver[variable] = normalized_route_join(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
       group_prefix_stack << {variable, brace_depth + 1}
     end
 

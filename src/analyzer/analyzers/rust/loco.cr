@@ -127,7 +127,7 @@ module Analyzer::Rust
         next if verb_handlers.empty?
 
         prefix = find_chain_prefix(node, source)
-        full_path = join_paths(prefix, route_path)
+        full_path = absolute_scope_join(prefix, route_path)
         row = Noir::TreeSitter.node_start_row(node) + 1
 
         verb_handlers.each do |verb, handler_name|
@@ -193,7 +193,7 @@ module Analyzer::Rust
       nil
     end
 
-    private def join_paths(prefix : String?, route_path : String) : String
+    private def absolute_scope_join(prefix : String?, route_path : String) : String
       p = (prefix || "").strip
       return ensure_leading_slash(route_path) if p.empty?
       combined = "/#{p.strip('/')}/#{route_path.lstrip('/')}"
