@@ -27,7 +27,7 @@ module Analyzer::Go
             channel.close
           end
 
-          @options["concurrency"].to_s.to_i.times do
+          worker_count.times do
             wg.spawn do
               loop do
                 begin
