@@ -41,7 +41,7 @@ describe "detect_techs file walker" do
 
       detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
       techs = detected[0]
-      files = locator.all("file_map")
+      files = locator.all_files
 
       techs.should contain("ios")
       files.should contain(info_plist)
@@ -69,7 +69,7 @@ describe "detect_techs file walker" do
 
       detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
       techs = detected[0]
-      files = locator.all("file_map")
+      files = locator.all_files
 
       techs.should contain("vercel")
       files.should contain(vercel_json)
@@ -103,7 +103,7 @@ describe "detect_techs file walker" do
 
       detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
       techs = detected[0]
-      files = locator.all("file_map")
+      files = locator.all_files
 
       techs.should contain("postman")
       files.should contain(postman_json)
@@ -207,7 +207,7 @@ describe "detect_techs file walker" do
         detected = detect_techs([temp_dir], options, [] of PassiveScan, logger)
 
         detected[0].should contain("postman")
-        locator.all("file_map").should contain(postman_json)
+        locator.all_files.should contain(postman_json)
       ensure
         FileUtils.rm_rf(temp_dir) if temp_dir
         CodeLocator.instance.clear_all

@@ -40,7 +40,7 @@ private def seed_file_map(fixture_base : String)
   locator.clear_all
   Dir.glob("#{fixture_base}/**/*").each do |file|
     next if File.directory?(file)
-    locator.push("file_map", file)
+    locator.register_path(file)
   end
 end
 

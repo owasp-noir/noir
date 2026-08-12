@@ -25,7 +25,7 @@ describe "ExpressAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 16))
@@ -48,7 +48,7 @@ describe "ExpressAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 21))
@@ -70,7 +70,7 @@ describe "ExpressAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 26))
@@ -137,7 +137,7 @@ describe "ExpressAuthTagger" do
     [base1, base2].each do |b|
       Dir.glob("#{b}/**/*").each do |file|
         next if File.directory?(file)
-        locator.push("file_map", file)
+        locator.register_path(file)
       end
     end
 
@@ -161,7 +161,7 @@ describe "ExpressAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(app_path, 31))
@@ -181,7 +181,7 @@ describe "ExpressAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     # This endpoint has no auth on its own route definition,

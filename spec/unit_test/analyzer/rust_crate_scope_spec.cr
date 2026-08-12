@@ -15,7 +15,7 @@ private def scan_tree(root : String, techs : String? = nil) : Array(Endpoint)
   runner.analyze
   runner.endpoints
 ensure
-  CodeLocator.instance.clear("file_map")
+  CodeLocator.instance.reset_files
 end
 
 private def tech_sources(endpoints : Array(Endpoint), technology : String) : Array(String)

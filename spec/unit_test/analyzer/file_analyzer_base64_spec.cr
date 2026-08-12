@@ -21,7 +21,7 @@ describe "Base64 FileAnalyzer hook" do
 
     begin
       locator = CodeLocator.instance
-      locator.push("file_map", file_path)
+      locator.register_path(file_path)
 
       options = create_test_options
       options["base"] = YAML::Any.new([YAML::Any.new(tmp_dir)])
@@ -34,7 +34,7 @@ describe "Base64 FileAnalyzer hook" do
       result[0].url.should eq("/api/secret")
       result[0].method.should eq("GET")
     ensure
-      locator.try &.clear("file_map")
+      locator.try &.reset_files
       FileUtils.rm_rf(tmp_dir)
     end
   end
@@ -47,7 +47,7 @@ describe "Base64 FileAnalyzer hook" do
 
     begin
       locator = CodeLocator.instance
-      locator.push("file_map", file_path)
+      locator.register_path(file_path)
 
       options = create_test_options
       options["base"] = YAML::Any.new([YAML::Any.new(tmp_dir)])
@@ -58,7 +58,7 @@ describe "Base64 FileAnalyzer hook" do
 
       result.size.should eq(0)
     ensure
-      locator.try &.clear("file_map")
+      locator.try &.reset_files
       FileUtils.rm_rf(tmp_dir)
     end
   end
@@ -72,7 +72,7 @@ describe "Base64 FileAnalyzer hook" do
 
     begin
       locator = CodeLocator.instance
-      locator.push("file_map", file_path)
+      locator.register_path(file_path)
 
       options = create_test_options
       options["base"] = YAML::Any.new([YAML::Any.new(tmp_dir)])
@@ -83,7 +83,7 @@ describe "Base64 FileAnalyzer hook" do
 
       result.size.should eq(0)
     ensure
-      locator.try &.clear("file_map")
+      locator.try &.reset_files
       FileUtils.rm_rf(tmp_dir)
     end
   end
@@ -96,7 +96,7 @@ describe "Base64 FileAnalyzer hook" do
 
     begin
       locator = CodeLocator.instance
-      locator.push("file_map", file_path)
+      locator.register_path(file_path)
 
       options = create_test_options
       options["base"] = YAML::Any.new([YAML::Any.new(tmp_dir)])
@@ -107,7 +107,7 @@ describe "Base64 FileAnalyzer hook" do
 
       result.size.should eq(0)
     ensure
-      locator.try &.clear("file_map")
+      locator.try &.reset_files
       FileUtils.rm_rf(tmp_dir)
     end
   end

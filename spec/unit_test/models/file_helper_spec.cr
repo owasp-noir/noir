@@ -20,8 +20,8 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/test/file1.cr")
-      locator.push("file_map", "/test/file2.cr")
+      locator.register_path("/test/file1.cr")
+      locator.register_path("/test/file2.cr")
 
       files = helper.all_files
       files.should contain("/test/file1.cr")
@@ -34,9 +34,9 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/test/file1.cr")
-      locator.push("file_map", "/test/file2.rb")
-      locator.push("file_map", "/test/file3.cr")
+      locator.register_path("/test/file1.cr")
+      locator.register_path("/test/file2.rb")
+      locator.register_path("/test/file3.cr")
 
       cr_files = helper.get_files_by_extension(".cr")
       cr_files.size.should eq(2)
@@ -48,7 +48,7 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/test/file1.cr")
+      locator.register_path("/test/file1.cr")
 
       rb_files = helper.get_files_by_extension(".rb")
       rb_files.should be_empty
@@ -60,9 +60,9 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/src/file1.cr")
-      locator.push("file_map", "/app/test/file2.cr")
-      locator.push("file_map", "/lib/file3.cr")
+      locator.register_path("/app/src/file1.cr")
+      locator.register_path("/app/test/file2.cr")
+      locator.register_path("/lib/file3.cr")
 
       app_files = helper.get_files_by_prefix("/app")
       app_files.size.should eq(2)
@@ -74,8 +74,8 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/src/file1.cr")
-      locator.push("file_map", "/app2/src/file2.cr")
+      locator.register_path("/app/src/file1.cr")
+      locator.register_path("/app2/src/file2.cr")
 
       helper.get_files_by_prefix("/app").should eq(["/app/src/file1.cr"])
     end
@@ -84,7 +84,7 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/src/file1.cr")
+      locator.register_path("/app/src/file1.cr")
 
       helper.get_files_by_prefix(File::SEPARATOR.to_s).should eq(["/app/src/file1.cr"])
     end
@@ -95,9 +95,9 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/file1.cr")
-      locator.push("file_map", "/app/file2.rb")
-      locator.push("file_map", "/lib/file3.cr")
+      locator.register_path("/app/file1.cr")
+      locator.register_path("/app/file2.rb")
+      locator.register_path("/lib/file3.cr")
 
       files = helper.get_files_by_prefix_and_extension("/app", ".cr")
       files.size.should eq(1)
@@ -108,8 +108,8 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/file1.cr")
-      locator.push("file_map", "/app2/file2.cr")
+      locator.register_path("/app/file1.cr")
+      locator.register_path("/app2/file2.cr")
 
       helper.get_files_by_prefix_and_extension("/app", ".cr").should eq(["/app/file1.cr"])
     end
@@ -120,10 +120,10 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/shard.yml")
-      locator.push("file_map", "/app/public/style.css")
-      locator.push("file_map", "/app/public/script.js")
-      locator.push("file_map", "/app/src/file.cr")
+      locator.register_path("/app/shard.yml")
+      locator.register_path("/app/public/style.css")
+      locator.register_path("/app/public/script.js")
+      locator.register_path("/app/src/file.cr")
 
       public_files = helper.get_public_files("/app")
       public_files.size.should eq(2)
@@ -135,10 +135,10 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/shard.yml")
-      locator.push("file_map", "/app/modules/admin/shard.yml")
-      locator.push("file_map", "/app/modules/admin/public/admin.css")
-      locator.push("file_map", "/app/public/main.css")
+      locator.register_path("/app/shard.yml")
+      locator.register_path("/app/modules/admin/shard.yml")
+      locator.register_path("/app/modules/admin/public/admin.css")
+      locator.register_path("/app/public/main.css")
 
       public_files = helper.get_public_files("/app")
       public_files.size.should eq(2)
@@ -152,11 +152,11 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/shard.yml")
-      locator.push("file_map", "/app/public/legitimate.css")  # under app/shard.yml — included
-      locator.push("file_map", "/app/docs/public/index.html") # no shard.yml in docs/ — skipped
-      locator.push("file_map", "/app/docs/public/sitemap.xml")
-      locator.push("file_map", "/app/docs/public/robots.txt")
+      locator.register_path("/app/shard.yml")
+      locator.register_path("/app/public/legitimate.css")  # under app/shard.yml — included
+      locator.register_path("/app/docs/public/index.html") # no shard.yml in docs/ — skipped
+      locator.register_path("/app/docs/public/sitemap.xml")
+      locator.register_path("/app/docs/public/robots.txt")
 
       public_files = helper.get_public_files("/app")
       public_files.should eq(["/app/public/legitimate.css"])
@@ -166,10 +166,10 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/shard.yml")
-      locator.push("file_map", "/app/public/app.css")
-      locator.push("file_map", "/app2/shard.yml")
-      locator.push("file_map", "/app2/public/app2.css")
+      locator.register_path("/app/shard.yml")
+      locator.register_path("/app/public/app.css")
+      locator.register_path("/app2/shard.yml")
+      locator.register_path("/app2/public/app2.css")
 
       helper.get_public_files("/app").should eq(["/app/public/app.css"])
     end
@@ -178,8 +178,8 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/shard.yml")
-      locator.push("file_map", "/app/src/file.cr")
+      locator.register_path("/app/shard.yml")
+      locator.register_path("/app/src/file.cr")
 
       public_files = helper.get_public_files("/app")
       public_files.should be_empty
@@ -191,9 +191,9 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/assets/style.css")
-      locator.push("file_map", "/app/assets/script.js")
-      locator.push("file_map", "/app/src/file.cr")
+      locator.register_path("/app/assets/style.css")
+      locator.register_path("/app/assets/script.js")
+      locator.register_path("/app/src/file.cr")
 
       asset_files = helper.get_public_dir_files("/app", "assets")
       asset_files.size.should eq(2)
@@ -205,7 +205,7 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/static/images/logo.webp")
+      locator.register_path("/app/static/images/logo.webp")
 
       files = helper.get_public_dir_files("/app", "static/images")
       files.size.should eq(1)
@@ -216,7 +216,7 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/var/www/assets/style.css")
+      locator.register_path("/var/www/assets/style.css")
 
       files = helper.get_public_dir_files("/var/www", "/var/www/assets")
       files.size.should eq(1)
@@ -227,8 +227,8 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/modules/assets/file1.css")
-      locator.push("file_map", "/lib/assets/file2.css")
+      locator.register_path("/app/modules/assets/file1.css")
+      locator.register_path("/lib/assets/file2.css")
 
       files = helper.get_public_dir_files("/app", "assets")
       files.should eq(["/app/modules/assets/file1.css"])
@@ -238,8 +238,8 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/app/assets/file1.css")
-      locator.push("file_map", "/app2/assets/file2.css")
+      locator.register_path("/app/assets/file1.css")
+      locator.register_path("/app2/assets/file2.css")
 
       helper.get_public_dir_files("/app", "assets").should eq(["/app/assets/file1.css"])
     end
@@ -250,10 +250,10 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/a/go.mod")
-      locator.push("file_map", "/b/nested/go.mod")
-      locator.push("file_map", "/c/go.sum")
-      locator.push("file_map", "/d/mygo.mod")
+      locator.register_path("/a/go.mod")
+      locator.register_path("/b/nested/go.mod")
+      locator.register_path("/c/go.sum")
+      locator.register_path("/d/mygo.mod")
 
       helper.get_files_by_basename("go.mod").should eq(["/a/go.mod", "/b/nested/go.mod"])
     end
@@ -271,16 +271,16 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/repo/svc/myproj/urls.py")
-      locator.push("file_map", "/repo/other/urls.py")
-      locator.push("file_map", "/repo/svc/myproj/views.py")
+      locator.register_path("/repo/svc/myproj/urls.py")
+      locator.register_path("/repo/other/urls.py")
+      locator.register_path("/repo/svc/myproj/views.py")
 
       helper.get_files_by_relative_path("myproj/urls.py").should eq(["/repo/svc/myproj/urls.py"])
     end
 
     it "matches when the suffix sits directly under the root" do
       helper = TestHelper.new
-      CodeLocator.instance.push("file_map", "/repo/myproj/urls.py")
+      CodeLocator.instance.register_path("/repo/myproj/urls.py")
 
       helper.get_files_by_relative_path("myproj/urls.py", "/repo").should eq(["/repo/myproj/urls.py"])
     end
@@ -289,8 +289,8 @@ describe "FileHelper" do
       helper = TestHelper.new
       locator = CodeLocator.instance
 
-      locator.push("file_map", "/repo/a/myproj/urls.py")
-      locator.push("file_map", "/repo/b/myproj/urls.py")
+      locator.register_path("/repo/a/myproj/urls.py")
+      locator.register_path("/repo/b/myproj/urls.py")
 
       helper.get_files_by_relative_path("myproj/urls.py", "/repo/a").should eq(["/repo/a/myproj/urls.py"])
     end
@@ -299,7 +299,7 @@ describe "FileHelper" do
       helper = TestHelper.new
       # `Dir.glob` would not treat `notmyproj` as `myproj`; a bare
       # `ends_with?` without the separator would.
-      CodeLocator.instance.push("file_map", "/repo/notmyproj/urls.py")
+      CodeLocator.instance.register_path("/repo/notmyproj/urls.py")
 
       helper.get_files_by_relative_path("myproj/urls.py").should be_empty
     end

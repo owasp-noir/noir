@@ -110,7 +110,7 @@ describe "scanning a UTF-16 project" do
       runner.detect
       runner.analyze
       runner.endpoints.map(&.url).should contain("/api/Users/GetAll")
-      CodeLocator.instance.clear("file_map")
+      CodeLocator.instance.reset_files
     ensure
       FileUtils.rm_rf(root) if Dir.exists?(root)
     end

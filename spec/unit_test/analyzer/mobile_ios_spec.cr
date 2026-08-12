@@ -11,7 +11,7 @@ describe "Analyzer::Mobile::Ios" do
   # No .swift/.m/.mm fixtures belong to this spec — clear file_map so a
   # leftover registration from another spec run earlier in the same
   # process can't feed the code-level route harvesting pass below.
-  CodeLocator.instance.clear("file_map")
+  CodeLocator.instance.reset_files
   CodeLocator.instance.push("ios-info-plist", File.join(base, "Info.plist"))
   CodeLocator.instance.push("ios-entitlements", File.join(base, "App.entitlements"))
   endpoints = Analyzer::Mobile::Ios.new(options).analyze

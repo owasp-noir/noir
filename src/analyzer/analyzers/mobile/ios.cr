@@ -182,7 +182,7 @@ module Analyzer::Mobile
       #
       # The glob stays as the fallback for when `file_map` is empty,
       # which means the analyzer is running without a detector pass in
-      # front of it (specs drive it that way, and `clear("file_map")` is
+      # front of it (specs drive it that way, and `reset_files` is
       # explicit about it). That is "no scan context", not "scanned and
       # found nothing" — the latter must not re-walk the tree, or the
       # expensive case would be exactly the one the index was added for.

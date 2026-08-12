@@ -31,7 +31,7 @@ private def load_fixture(base : String) : Hash(String, YAML::Any)
   locator = CodeLocator.instance
   Dir.glob("#{base}/**/*").each do |file|
     next if File.directory?(file)
-    locator.push("file_map", file)
+    locator.register_path(file)
   end
   options
 end

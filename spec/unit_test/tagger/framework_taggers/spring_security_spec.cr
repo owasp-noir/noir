@@ -31,7 +31,7 @@ private def load_fixture_files(fixture_base : String)
   locator = CodeLocator.instance
   Dir.glob("#{fixture_base}/**/*").each do |file|
     next if File.directory?(file)
-    locator.push("file_map", file)
+    locator.register_path(file)
   end
 end
 
@@ -165,7 +165,7 @@ describe "SpringSecurityTagger" do
       path = File.join(Dir.tempdir, "ValidatedController-#{Process.pid}-#{Time.utc.to_unix_ms}.java")
       begin
         File.write(path, source)
-        CodeLocator.instance.push("file_map", path)
+        CodeLocator.instance.register_path(path)
         endpoint = build_endpoint(path, 9, "/health", "GET")
 
         SpringSecurityTagger.new(global_options).perform([endpoint])
@@ -197,7 +197,7 @@ describe "SpringSecurityTagger" do
       path = File.join(Dir.tempdir, "ValidatedController-#{Process.pid}-#{Time.utc.to_unix_ms}.java")
       begin
         File.write(path, source)
-        CodeLocator.instance.push("file_map", path)
+        CodeLocator.instance.register_path(path)
         endpoint = build_endpoint(path, 10, "/search", "GET")
         endpoint.push_param(Param.new("q", "", "query"))
 
@@ -233,7 +233,7 @@ describe "SpringSecurityTagger" do
       path = File.join(Dir.tempdir, "ArticleController-#{Process.pid}-#{Time.utc.to_unix_ms}.kt")
       begin
         File.write(path, source)
-        CodeLocator.instance.push("file_map", path)
+        CodeLocator.instance.register_path(path)
         list_endpoint = build_endpoint(path, 10, "/articles", "GET")
         create_endpoint = build_endpoint(path, 14, "/articles", "POST")
 
@@ -359,7 +359,7 @@ describe "SpringSecurityTagger" do
       begin
         Dir.mkdir_p(dir)
         File.write(path, source)
-        CodeLocator.instance.push("file_map", path)
+        CodeLocator.instance.register_path(path)
 
         options = create_test_options
         options["base"] = YAML::Any.new(dir)

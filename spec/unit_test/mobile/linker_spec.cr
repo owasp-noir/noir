@@ -17,7 +17,7 @@ describe "NoirMobileLinker" do
 
   # Seed the file_map so ClassIndex#build can find the .kt via files_by_extension.
   locator = CodeLocator.instance
-  locator.clear("file_map")
+  locator.reset_files
   locator.register_file(kt, File.read(kt))
   locator.register_file(alias_kt, File.read(alias_kt))
   locator.register_file(router_java, File.read(router_java))
@@ -105,7 +105,7 @@ describe "NoirMobileLinker" do
       path = File.join(source_dir, "ManyExtrasActivity.java")
       File.write(path, source)
 
-      locator.clear("file_map")
+      locator.reset_files
       locator.register_file(path, source)
 
       endpoint = Endpoint.new("myapp://many", "GET")
@@ -118,7 +118,7 @@ describe "NoirMobileLinker" do
       linked_many.params.map(&.name).should contain("extra11")
     ensure
       FileUtils.rm_rf(root) if Dir.exists?(root)
-      locator.clear("file_map")
+      locator.reset_files
     end
   end
 end
@@ -135,7 +135,7 @@ describe "NoirMobileLinker iOS handlers" do
 
   logger = NoirLogger.new(false, false, false, true)
   locator = CodeLocator.instance
-  locator.clear("file_map")
+  locator.reset_files
   files.each { |path| locator.register_file(path, File.read(path)) }
 
   scheme = Endpoint.new("myapp://", "GET")
@@ -220,7 +220,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
         SWIFT
 
       locator = CodeLocator.instance
-      locator.clear("file_map")
+      locator.reset_files
       locator.register_file(delegate, File.read(delegate))
 
       endpoint = Endpoint.new("generated://", "GET", Details.new(PathInfo.new(plist)))
@@ -233,7 +233,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
       linked[0].callees.map(&.name).should contain("GeneratedProjectRouter.route")
     ensure
       FileUtils.rm_rf(root) if root
-      CodeLocator.instance.clear("file_map")
+      CodeLocator.instance.reset_files
     end
   end
 
@@ -296,7 +296,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
         SWIFT
 
       locator = CodeLocator.instance
-      locator.clear("file_map")
+      locator.reset_files
       [delegate, state_machine, unrelated].each { |path| locator.register_file(path, File.read(path)) }
 
       endpoint = Endpoint.new("forwarded://", "GET", Details.new(PathInfo.new(plist)))
@@ -313,7 +313,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
       names.should_not contain("UnrelatedRouter.route")
     ensure
       FileUtils.rm_rf(root) if root
-      CodeLocator.instance.clear("file_map")
+      CodeLocator.instance.reset_files
     end
   end
 
@@ -351,7 +351,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
         SWIFT
 
       locator = CodeLocator.instance
-      locator.clear("file_map")
+      locator.reset_files
       locator.register_file(app_a_delegate, File.read(app_a_delegate))
       locator.register_file(app_b_delegate, File.read(app_b_delegate))
 
@@ -377,7 +377,7 @@ describe "NoirMobileLinker iOS multi-app scoping" do
       app_b_callees.should_not contain("AppADeepLinkRouter.route")
     ensure
       FileUtils.rm_rf(root) if root
-      CodeLocator.instance.clear("file_map")
+      CodeLocator.instance.reset_files
     end
   end
 end

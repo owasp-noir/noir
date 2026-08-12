@@ -10,7 +10,7 @@ def run_spring_class_level(source : String, line : Int32, ext : String = "java")
   Dir.mkdir_p(tmpdir)
   file = File.join(tmpdir, "AdminController.#{ext}")
   File.write(file, source)
-  CodeLocator.instance.push("file_map", file)
+  CodeLocator.instance.register_path(file)
 
   noir_options = create_test_options
   noir_options["base"] = YAML::Any.new(tmpdir)
@@ -57,7 +57,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 14))
@@ -79,7 +79,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 14))
@@ -102,7 +102,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 20))
@@ -124,7 +124,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(controller_path, 26))
@@ -146,7 +146,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     details = Details.new(PathInfo.new(open_controller_path, 9))
@@ -166,7 +166,7 @@ describe "SpringAuthTagger" do
     locator = CodeLocator.instance
     Dir.glob("#{fixture_base}/**/*").each do |file|
       next if File.directory?(file)
-      locator.push("file_map", file)
+      locator.register_path(file)
     end
 
     endpoint = Endpoint.new("/api/other", "GET")
@@ -207,7 +207,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       endpoint = Endpoint.new("/web/dashboard", "GET")
 
@@ -250,7 +250,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       public_endpoint = Endpoint.new("/public/health", "GET")
       protected_endpoint = Endpoint.new("/secure/data", "GET")
@@ -292,7 +292,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       public_get = Endpoint.new("/public/status", "GET")
       protected_post = Endpoint.new("/public/status", "POST")
@@ -331,7 +331,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       public_endpoint = Endpoint.new("/user/register", "POST")
       protected_endpoint = Endpoint.new("/user/profile", "GET")
@@ -369,7 +369,7 @@ describe "SpringAuthTagger" do
 
       noir_options = create_test_options
       noir_options["base"] = YAML::Any.new(temp_dir)
-      CodeLocator.instance.push("file_map", config_path)
+      CodeLocator.instance.register_path(config_path)
 
       endpoint = Endpoint.new("/api/v1/teams/{nation}", "GET")
 
