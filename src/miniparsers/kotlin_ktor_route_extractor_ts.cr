@@ -224,7 +224,7 @@ module Noir
       end
 
       visiting.delete(r.lexical_name)
-      parent_path.empty? ? r.own_path : join_paths(parent_path, r.own_path)
+      parent_path.empty? ? r.own_path : route_scope_join(parent_path, r.own_path)
     end
 
     private def collect_resource_classes(node : LibTreeSitter::TSNode,
@@ -520,7 +520,7 @@ module Noir
             # its @Resource-composed path; if it can't be resolved, skip
             # rather than emit the bare routing prefix (a misleading "/").
             if rp = resolve_resource_path(type_name, resource_paths)
-              emit_resource_route(node, source, HTTP_VERB_NAMES[name], join_paths(prefix, rp), routes, include_callees)
+              emit_resource_route(node, source, HTTP_VERB_NAMES[name], route_scope_join(prefix, rp), routes, include_callees)
             end
             return
           end
@@ -538,7 +538,7 @@ module Noir
           # (which inherits the enclosing prefix) flow through to the
           # method-route handling below.
           return if path_arg.nil? && call_has_value_arguments?(node) && call_http_method_argument(node, source).nil?
-          new_prefix = path_arg ? join_paths(prefix, path_arg) : prefix
+          new_prefix = path_arg ? route_scope_join(prefix, path_arg) : prefix
           if body = call_lambda_body(node)
             if method = call_http_method_argument(node, source)
               emit_method_route(node, body, source, method, new_prefix, routes, include_callees) if has_handle_call?(body, source)
@@ -557,7 +557,7 @@ module Noir
           type_name = call_type_argument_name(node, source)
           if type_name && (rp = resolve_resource_path(type_name, resource_paths))
             if body = call_lambda_body(node)
-              walk(body, source, join_paths(prefix, rp), routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
+              walk(body, source, route_scope_join(prefix, rp), routes, string_constants, local_string_constants, depth + 1, include_callees, true, resource_paths)
             end
             return
           end
@@ -577,7 +577,7 @@ module Noir
           # as a GET route (the served files aren't enumerable from
           # source). The remote path is the first string argument.
           if path = static_mount_path(node, source)
-            routes << Route.new("GET", join_paths(prefix, path), Noir::TreeSitter.node_start_row(node), nil, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
+            routes << Route.new("GET", route_scope_join(prefix, path), Noir::TreeSitter.node_start_row(node), nil, false, [] of String, [] of String, [] of String, [] of Tuple(String, Int32))
           end
           return
         when name == "install"
@@ -618,7 +618,7 @@ module Noir
       return unless path_arg || call_has_lambda?(node)
 
       verb = HTTP_VERB_NAMES[name]
-      full_path = join_paths(prefix, path_arg || "")
+      full_path = route_scope_join(prefix, path_arg || "")
       line = Noir::TreeSitter.node_start_row(node)
 
       # A `post<Body>("/x")` typed-body verb names the request body in its
@@ -1265,7 +1265,7 @@ module Noir
       end
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
+    private def route_scope_join(prefix : String, suffix : String) : String
       return "/" if prefix.empty? && suffix.empty?
       return suffix if prefix.empty?
       return prefix.rstrip('/') if suffix.empty?

@@ -43,7 +43,7 @@ module Analyzer::Swift
     # analyzers (which carried byte-identical copies): prefix and path
     # join with exactly one `/`, a bare or root side yields the other
     # side normalized, and repeated slashes collapse.
-    protected def join_paths(prefix : String, path : String) : String
+    protected def normalized_route_join(prefix : String, path : String) : String
       return normalize_path(path) if prefix.empty? || prefix == "/"
       return normalize_path(prefix) if path.empty? || path == "/"
 

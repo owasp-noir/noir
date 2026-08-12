@@ -74,7 +74,7 @@ module Analyzer::Python
               path,
               lines,
               line_index: deco.decorator_line,
-              route_path: Helper.join_paths(prefix, deco.path),
+              route_path: Helper.normalized_join(prefix, deco.path),
               extra_params: extra_params,
               definition_base_path: current_base_path,
               source: file_content
@@ -171,7 +171,7 @@ module Analyzer::Python
           path,
           lines,
           line_index,
-          Helper.join_paths(prefix, route_path),
+          Helper.normalized_join(prefix, route_path),
           route_match[2],
           callback_name,
           definition_base_path: definition_base_path,
@@ -217,7 +217,7 @@ module Analyzer::Python
 
           prefixes[child_router] ||= [] of ::String
           parent_prefixes.each do |parent_prefix|
-            composed_prefix = Helper.join_paths(parent_prefix, mount_prefix)
+            composed_prefix = Helper.normalized_join(parent_prefix, mount_prefix)
             next if prefixes[child_router].includes?(composed_prefix)
 
             prefixes[child_router] << composed_prefix

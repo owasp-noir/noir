@@ -344,7 +344,7 @@ module Analyzer::Swift
           # closure and no path argument registers a root-relative route.
           if method_match[2] == "{"
             if verb = route_verb(method)
-              hits << RouteHit.new(verb, join_paths(prefix, "/"), index, nil)
+              hits << RouteHit.new(verb, normalized_route_join(prefix, "/"), index, nil)
             end
             i += (method_match.end(0) || 1) - 1
             next
@@ -383,9 +383,9 @@ module Analyzer::Swift
                                     hits : Array(RouteHit)) : String
       case method
       when "group"
-        join_paths(prefix, parse_route_path(args_str))
+        normalized_route_join(prefix, parse_route_path(args_str))
       when "on"
-        path = join_paths(prefix, parse_route_path(args_str))
+        path = normalized_route_join(prefix, parse_route_path(args_str))
         handler = handler_from_args(args_str)
         on_methods(args_str).each do |http_method|
           hits << RouteHit.new(http_method, path, index, handler)
@@ -393,7 +393,7 @@ module Analyzer::Swift
         prefix
       else
         if verb = route_verb(method)
-          path = join_paths(prefix, parse_route_path(args_str))
+          path = normalized_route_join(prefix, parse_route_path(args_str))
           hits << RouteHit.new(verb, path, index, handler_from_args(args_str))
         end
         prefix
@@ -553,7 +553,7 @@ module Analyzer::Swift
         args = call_arguments(original, m.paren_col + 1)
         args_str = args ? args[0] : ""
         if dsl_emitting?(stack)
-          path = join_paths(current_dsl_prefix(stack), parse_route_path(args_str))
+          path = normalized_route_join(current_dsl_prefix(stack), parse_route_path(args_str))
           hits << RouteHit.new(m.verb.upcase, path, index, handler_from_args(args_str))
         end
         # A trailing closure on this verb is its handler body, not a group.
@@ -561,7 +561,7 @@ module Analyzer::Swift
       when :group
         args = call_arguments(original, m.paren_col + 1)
         args_str = args ? args[0] : ""
-        prefix = join_paths(current_dsl_prefix(stack), parse_route_path(args_str))
+        prefix = normalized_route_join(current_dsl_prefix(stack), parse_route_path(args_str))
         {DslScope.new(:group, prefix), args ? args[1] + 1 : m.end_col}
       else
         # :builder / :body — a route-emitting root rooted at "".
@@ -653,7 +653,7 @@ module Analyzer::Swift
       args = call_arguments(original, match.end(0) || 0)
       return unless args
 
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
+      prefix_by_receiver[variable] = normalized_route_join(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
     end
 
     private def register_group_closure(line : String,
@@ -675,7 +675,7 @@ module Analyzer::Swift
       return unless closure_match
 
       variable = closure_match[1]
-      prefix_by_receiver[variable] = join_paths(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
+      prefix_by_receiver[variable] = normalized_route_join(prefix_for_receiver(base, prefix_by_receiver), parse_route_path(args[0]))
       group_prefix_stack << {variable, brace_depth + 1}
     end
 
@@ -860,7 +860,7 @@ module Analyzer::Swift
     private def chain_group_prefix(expr : String) : String
       prefix = ""
       expr.scan(/\bgroup\s*\(\s*["']([^"']*)["']/) do |m|
-        prefix = join_paths(prefix, parse_route_path("\"#{m[1]}\""))
+        prefix = normalized_route_join(prefix, parse_route_path("\"#{m[1]}\""))
       end
       prefix
     end

@@ -198,7 +198,7 @@ module Analyzer::Specification
           next unless method.is_a?(String) && path.is_a?(String)
           next if path.empty?
 
-          url = join_path(API_PREFIX, normalize_colon_path(path))
+          url = api_mount_join(API_PREFIX, normalize_colon_path(path))
           details = Details.new(PathInfo.new(source, config.line))
           handler = entry["handler"]?
           label = handler.is_a?(String) ? handler : path

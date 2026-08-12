@@ -299,7 +299,7 @@ module Noir
       return if handler_text.empty?
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
-      resolved = base_prefix.empty? ? path : join_paths(base_prefix, path)
+      resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
       Route.new(router_name, m.upcase, resolved, path, handler_text, Noir::TreeSitter.node_start_row(call))
     end
 
@@ -336,7 +336,7 @@ module Noir
       return if handler_text.empty?
 
       base_prefix = local_groups[router_name]? || prefix_stack.join
-      resolved = base_prefix.empty? ? path : join_paths(base_prefix, path)
+      resolved = base_prefix.empty? ? path : group_join(base_prefix, path)
       Route.new(router_name, "ANY", resolved, path, handler_text, Noir::TreeSitter.node_start_row(call))
     end
 

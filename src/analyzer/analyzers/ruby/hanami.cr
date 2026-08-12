@@ -145,7 +145,7 @@ module Analyzer::Ruby
       return unless call = route_call(line, ["mount"])
       return unless m = call.match(/\bat:\s*['"]([^'"]+)['"]/)
 
-      Endpoint.new(join_paths(current_path_prefix(stack), m[1]), "GET", details)
+      Endpoint.new(absolute_segment_join(current_path_prefix(stack), m[1]), "GET", details)
     end
 
     def scan_action_file(endpoint : Endpoint, action_path : String, include_callee : Bool = false)
@@ -168,7 +168,7 @@ module Analyzer::Ruby
     private def root_endpoint(line : String, stack : Array(RouteFrame), details : Details) : RouteEndpoint?
       return unless line.match(/^root(?:\s|\(|\{|$)/)
 
-      endpoint = Endpoint.new(join_paths(current_path_prefix(stack), "/"), "GET", details)
+      endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), "/"), "GET", details)
       RouteEndpoint.new(endpoint, extract_action_target(line))
     end
 
@@ -178,7 +178,7 @@ module Analyzer::Ruby
         next if line.size > verb.size && (line[verb.size].alphanumeric? || line[verb.size] == '_')
 
         if m = line.match(verb_pattern)
-          endpoint = Endpoint.new(join_paths(current_path_prefix(stack), normalize_route_path(m[1])), verb.upcase, details)
+          endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), normalize_route_path(m[1])), verb.upcase, details)
           return RouteEndpoint.new(endpoint, extract_action_target(m[2]))
         end
       end
@@ -251,12 +251,12 @@ module Analyzer::Ruby
       resource_routes(resource[:kind], resource_name, singular).each do |action, method, path_suffix|
         next unless actions.includes?(action)
 
-        endpoint = Endpoint.new(join_paths(current_path_prefix(stack), path_suffix), method, details.dup)
+        endpoint = Endpoint.new(absolute_segment_join(current_path_prefix(stack), path_suffix), method, details.dup)
         routes << RouteEndpoint.new(endpoint, join_action_parts(action_prefix, action))
       end
 
       nested_path = if resource[:kind] == "resources"
-                      join_paths(resource_name, ":#{singular}_id")
+                      absolute_segment_join(resource_name, ":#{singular}_id")
                     else
                       resource_name
                     end
@@ -350,7 +350,7 @@ module Analyzer::Ruby
 
     private def current_path_prefix(stack : Array(RouteFrame)) : String
       parts = stack.map(&.path).reject(&.empty?)
-      join_paths(parts)
+      absolute_segment_join(parts)
     end
 
     private def current_slice(stack : Array(RouteFrame)) : String?
@@ -366,13 +366,13 @@ module Analyzer::Ruby
       join_action_parts(parts)
     end
 
-    private def join_paths(parts : Array(String)) : String
+    private def absolute_segment_join(parts : Array(String)) : String
       normalized = parts.flat_map(&.split('/')).reject(&.empty?)
       normalized.empty? ? "/" : "/#{normalized.join("/")}"
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
-      join_paths([prefix, suffix])
+    private def absolute_segment_join(prefix : String, suffix : String) : String
+      absolute_segment_join([prefix, suffix])
     end
 
     private def normalize_route_path(path : String) : String

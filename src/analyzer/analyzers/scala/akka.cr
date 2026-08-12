@@ -64,7 +64,7 @@ module Analyzer::Scala
           route_path = akka_path_from_args(path_args, path_param_names(stripped_line))
 
           # Build full path with prefix
-          full_path = join_paths(prefix_stack, route_path)
+          full_path = pathmatcher_stack_join(prefix_stack, route_path)
 
           # Find HTTP methods in the following lines within the same block
           block = extract_block_from_index(lines, index)
@@ -468,7 +468,7 @@ module Analyzer::Scala
       line.matches?(PATH_DIRECTIVE_RE)
     end
 
-    private def join_paths(prefix_stack : Array(String), route_path : String) : String
+    private def pathmatcher_stack_join(prefix_stack : Array(String), route_path : String) : String
       parts = prefix_stack + [route_path]
       normalized = parts.join("").gsub(%r{/+}, "/")
       normalized = "/#{normalized}" unless normalized.starts_with?("/")

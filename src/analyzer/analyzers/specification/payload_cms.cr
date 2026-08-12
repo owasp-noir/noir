@@ -91,7 +91,7 @@ module Analyzer::Specification
 
         details = Details.new(PathInfo.new(source, config.line))
         body_params = field_params(config.array("fields"))
-        base = join_path(api_prefix, slug)
+        base = api_mount_join(api_prefix, slug)
 
         emit_collection(base, slug, body_params, config, details)
         emit_auth_routes(base, slug, details) if config.truthy?("auth")
@@ -153,7 +153,7 @@ module Analyzer::Specification
         method = entry["method"]?
         next unless path.is_a?(String) && method.is_a?(String)
 
-        url = join_path(base, normalize_colon_path(path))
+        url = api_mount_join(base, normalize_colon_path(path))
         emit(@result, url, method.upcase, [] of Param, details, "payload", "custom-endpoint:#{slug}", TAG_SOURCE)
       end
     end
@@ -165,7 +165,7 @@ module Analyzer::Specification
 
         details = Details.new(PathInfo.new(source, config.line))
         body_params = field_params(config.array("fields"))
-        url = join_path(join_path(api_prefix, "globals"), slug)
+        url = api_mount_join(api_mount_join(api_prefix, "globals"), slug)
 
         emit(@result, url, "GET", global_query_params, details, "payload", "global-read:#{slug}", TAG_SOURCE)
         # Globals are updated with POST, not PATCH.

@@ -200,7 +200,7 @@ module Analyzer::Java
       packages.each_value do |package_config|
         namespace = package_namespace(package_config, packages, Set(String).new)
         package_config.actions.each do |action|
-          add_route(join_paths(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
+          add_route(namespace_join(namespace, normalize_action_pattern(action.name)), "ANY", path, action.line,
             callees: xml_action_callees(action, path))
         end
       end
@@ -366,7 +366,7 @@ module Analyzer::Java
 
         namespaces.each do |class_namespace|
           class_actions.each do |action_path|
-            resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
+            resolved = action_path.empty? ? namespace_join(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
             # A class-level @Action defaults to the `execute` handler.
             add_route(resolved, "ANY", path, klass.line, callees: callees_for(root, content, path, klass.name, "execute"))
           end
@@ -376,7 +376,7 @@ module Analyzer::Java
             next if action_paths.empty?
 
             action_paths.each do |action_path|
-              resolved = action_path.empty? ? join_paths(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
+              resolved = action_path.empty? ? namespace_join(class_namespace, class_action_base) : resolve_action_path(action_path, class_namespace)
               add_route(resolved, "ANY", path, method.line, callees: callees_for(root, content, path, klass.name, method.name))
             end
           end
@@ -384,7 +384,7 @@ module Analyzer::Java
           next if class_has_action_annotation || methods.any? { |method| !action_paths_from_annotations(method.annotations).empty? }
           next unless convention_action_class?(klass, config, package_annotations_for_class)
 
-          base_path = join_paths(class_namespace, class_action_base)
+          base_path = namespace_join(class_namespace, class_action_base)
           if rest_controller?(klass, config)
             add_rest_routes(path, base_path, methods, root, content, klass.name)
           else
@@ -600,7 +600,7 @@ module Analyzer::Java
 
         verb, suffix = route
         params = suffix.includes?(":id") ? [Param.new("id", "", "path")] : [] of Param
-        add_route(join_paths(base_path, suffix), verb, path, method.line, params,
+        add_route(namespace_join(base_path, suffix), verb, path, method.line, params,
           callees: callees_for(root, content, path, class_name, method.name))
       end
     end
@@ -641,7 +641,7 @@ module Analyzer::Java
     end
 
     private def resolve_action_path(action_path : String, namespace : String) : String
-      return join_paths(namespace, action_path) unless action_path.starts_with?("/")
+      return namespace_join(namespace, action_path) unless action_path.starts_with?("/")
       normalize_path(action_path)
     end
 
@@ -693,7 +693,7 @@ module Analyzer::Java
       cleaned.gsub(%r{/+}, "/").rstrip('/')
     end
 
-    private def join_paths(prefix : String, suffix : String) : String
+    private def namespace_join(prefix : String, suffix : String) : String
       return normalize_path(prefix) if suffix.empty? || suffix == "/"
       return normalize_path(suffix) if prefix.empty? || prefix == "/"
       normalize_path("#{prefix.rstrip('/')}/#{suffix.lstrip('/')}")

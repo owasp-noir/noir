@@ -103,7 +103,7 @@ module Analyzer::Rust
             base_url = endpoint.url
             prefixes.each do |pfx|
               ep = endpoint
-              ep.url = join_paths(pfx, base_url)
+              ep.url = filter_chain_join(pfx, base_url)
               endpoints << ep
             end
           end
@@ -249,7 +249,7 @@ module Analyzer::Rust
       parts.empty? ? "" : "/" + parts.join("/")
     end
 
-    private def join_paths(prefix : String, route : String) : String
+    private def filter_chain_join(prefix : String, route : String) : String
       return route if prefix.empty?
       return prefix if route.empty? || route == "/"
       "#{prefix.rstrip('/')}/#{route.lstrip('/')}"

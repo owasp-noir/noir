@@ -211,7 +211,7 @@ module Analyzer::Dart
 
         owner = enclosing_class(classes, match_begin)
         prefix = owner ? prefixes[owner]? : nil
-        route_path = normalize_path(prefix ? join_path(prefix, normalize_path(literal)) : literal)
+        route_path = normalize_path(prefix ? mount_join(prefix, normalize_path(literal)) : literal)
 
         line = line_number_for_index(content, match_begin)
         callees = include_callee ? annotation_callees(content, close_paren, path) : [] of Noir::DartCalleeExtractor::Entry
@@ -540,18 +540,18 @@ module Analyzer::Dart
       info = routers[key]?
       if info
         info[:routes].each do |route|
-          full_path = join_path(prefix, route[:path])
+          full_path = mount_join(prefix, route[:path])
           endpoints << build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
         end
         info[:mounts].each do |mnt|
-          child_prefix = join_path(prefix, mnt[:prefix])
+          child_prefix = mount_join(prefix, mnt[:prefix])
           emit_router(router_key(key[0], mnt[:child]), child_prefix, routers, endpoints, visited)
         end
       end
       visited.delete(key)
     end
 
-    private def join_path(prefix : String, sub : String) : String
+    private def mount_join(prefix : String, sub : String) : String
       left = prefix.rchop('/')
       right = sub.starts_with?('/') ? sub : "/#{sub}"
       result = "#{left}#{right}"

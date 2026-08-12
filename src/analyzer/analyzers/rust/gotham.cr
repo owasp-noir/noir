@@ -64,7 +64,7 @@ module Analyzer::Rust
       if Noir::TreeSitter.node_type(node) == "call_expression" && !RustEngine.inside_test_region?(node, test_regions)
         if scope = decode_scope(node, source)
           seg, block = scope
-          walk_with_prefix(block, source, join_paths(prefix, seg), path, function_index, include_callee, endpoints, test_regions)
+          walk_with_prefix(block, source, absolute_scope_join(prefix, seg), path, function_index, include_callee, endpoints, test_regions)
           return
         end
         if block = decode_pipeline_closure(node, source)
@@ -73,13 +73,13 @@ module Analyzer::Rust
         end
         if assoc = decode_associate(node, source)
           assoc_path, closure_body = assoc
-          process_associate(closure_body, source, join_paths(prefix, assoc_path), path, function_index, include_callee, endpoints)
+          process_associate(closure_body, source, absolute_scope_join(prefix, assoc_path), path, function_index, include_callee, endpoints)
           # fall through to the generic child walk so any nested
           # scope/route inside the closure is still visited.
         end
         if route = decode_to_call(node, source)
           route_path, methods, handler_name = route
-          full_path = join_paths(prefix, route_path)
+          full_path = absolute_scope_join(prefix, route_path)
 
           methods.each do |method|
             details = Details.new(PathInfo.new(path, Noir::TreeSitter.node_start_row(node) + 1))
@@ -145,7 +145,7 @@ module Analyzer::Rust
       nil
     end
 
-    private def join_paths(prefix : String, route_path : String) : String
+    private def absolute_scope_join(prefix : String, route_path : String) : String
       return ensure_leading_slash(route_path) if prefix.empty?
       combined = "/#{prefix.strip('/')}/#{route_path.lstrip('/')}".rstrip('/')
       combined.empty? ? "/" : combined

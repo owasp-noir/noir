@@ -186,7 +186,7 @@ module Analyzer::Specification
 
         name = node[YAML::Any.new("name")]?.try(&.as_s?) || url
         details = Details.new(PathInfo.new(source))
-        full_url = join_path(REST_PREFIX, normalize_colon_path(url))
+        full_url = api_mount_join(REST_PREFIX, normalize_colon_path(url))
 
         methods.each do |method|
           verb = method.as_s?
