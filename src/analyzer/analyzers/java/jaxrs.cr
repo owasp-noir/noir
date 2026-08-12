@@ -20,7 +20,7 @@ module Analyzer::Java
     )
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new

@@ -84,7 +84,7 @@ module Analyzer::Rust
       # `#[cfg(test)] mod tests { ... }` blocks, which a path filter
       # alone can't tell apart.
       source = read_file_content(path)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # `#[cfg(test)] mod tests { ... let app = Router::new().route(...); }`
       # is the canonical place doctests-as-unit-tests register routes in

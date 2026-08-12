@@ -16,7 +16,7 @@ module Analyzer::Haskell
 
     def analyze
       processed_route_files = Set(String).new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
 
       all_files.each do |path|

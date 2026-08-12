@@ -1595,13 +1595,6 @@ module Analyzer::Ruby
       end
     end
 
-    # Callees feed both `--include-callee` (direct output) and `--ai-context`
-    # (aggregated review context). Extraction is skipped when neither flag is
-    # set so default scans avoid the controller-body walk per action.
-    private def callees_needed? : Bool
-      any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
-    end
-
     private def parent_resources_frame(stack : Array(Frame)) : Frame?
       stack.reverse_each do |f|
         return f if f.kind == :resources

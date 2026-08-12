@@ -34,7 +34,7 @@ module Analyzer::Swift
     def analyze_file(path : String) : Array(Endpoint)
       endpoints = [] of Endpoint
       lines = read_file_content(path).lines
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       handler_bodies = named_handler_bodies(lines)
       router_receivers = collect_router_receivers(lines)
 

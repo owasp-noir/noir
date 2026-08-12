@@ -51,7 +51,7 @@ module Analyzer::Dart
       line: Int32)
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       const_map = {} of String => String
       raw_pages = [] of RawPage
       mutex = Mutex.new

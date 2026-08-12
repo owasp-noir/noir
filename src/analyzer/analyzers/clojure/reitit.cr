@@ -42,7 +42,7 @@ module Analyzer::Clojure
     REITIT_SOURCE_RE = Regex.union("reitit.", "metosin/reitit")
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       all_files.each do |path|
         next unless clojure_file?(path)
 

@@ -27,7 +27,7 @@ module Analyzer::Ruby
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       # Real Grape apps almost always share config/helpers through a custom
       # base class (`class Base < Grape::API`, then `class Users < API::Base`)

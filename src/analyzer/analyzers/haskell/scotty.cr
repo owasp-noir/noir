@@ -29,7 +29,7 @@ module Analyzer::Haskell
     alias HandlerBodies = Hash(HandlerKey, Array(HandlerBody))
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
 
       all_files.each do |path|

@@ -57,7 +57,7 @@ module Analyzer::Lua
       route_vars : Set(String)
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       files = collect_files
       return @result if files.empty?

@@ -36,7 +36,7 @@ module Analyzer::Rust
       # controllers under `src/controllers/` *and* import `loco_rs`,
       # so the content check alone is sufficient.
       return endpoints unless source.includes?("use loco_rs")
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       # `#[cfg(test)] mod tests { Routes::new().add("/x", get(h)); }` and
       # path-normalization test fixtures live right in the framework's
       # `src/app_routes.rs` etc.; gate them like the other Rust analyzers.

@@ -45,7 +45,7 @@ module Analyzer::Java
     )
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       file_list = all_files()
       file_list.each do |path|
         next if JavaEngine.test_path?(base_relative_path(path))

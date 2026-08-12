@@ -43,7 +43,7 @@ module Analyzer::Javascript
     def analyze
       result = [] of Endpoint
       mutex = Mutex.new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       project_roots = discover_js_project_roots(
         ["@sveltejs/kit", "\"svelte-kit\""],
         ["svelte.config.js", "svelte.config.ts", "svelte.config.mjs", "svelte.config.cjs"]

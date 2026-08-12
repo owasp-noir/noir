@@ -53,7 +53,7 @@ module Analyzer::Java
 
     def analyze
       # Source Analysis
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
       begin

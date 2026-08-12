@@ -165,7 +165,7 @@ module Analyzer::Kotlin
       end
       local_string_constants = Hash(String, Hash(String, String)).new
       dto_builder = Noir::TreeSitterKotlinDtoIndex.new
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       functional_router_seen = false
 
       all_file_list = all_files()
@@ -844,7 +844,7 @@ module Analyzer::Kotlin
                                     method_index : SpringMethodIndex,
                                     stomp_application_prefixes : Array(String),
                                     graphql_path : String)
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       content = read_file_content(path)
       return unless kotlin_spring_route_candidate_file?(content)
 

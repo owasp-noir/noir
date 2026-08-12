@@ -36,7 +36,7 @@ module Analyzer::Dart
     alias Registration = NamedTuple(base_path: String, class_name: String, path: String)
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       route_classes = {} of RouteClassKey => RouteClass
       registrations = [] of Registration
 

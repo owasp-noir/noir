@@ -28,7 +28,7 @@ module Analyzer::CSharp
     @param_name_strip_regexes = Hash(String, Regex).new
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       project_roots = Common.project_roots(get_files_by_extension(".csproj"))
       route_patterns_by_scope = load_route_patterns_by_scope(project_roots)
       analyze_controllers(route_patterns_by_scope, project_roots, include_callee)

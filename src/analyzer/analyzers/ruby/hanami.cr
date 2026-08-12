@@ -23,7 +23,7 @@ module Analyzer::Ruby
     record RouteEndpoint, endpoint : Endpoint, target : String?
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       framework_roots = discover_framework_roots("config/routes.rb")
       framework_roots = base_paths if framework_roots.empty?
 

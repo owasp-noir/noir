@@ -10,7 +10,7 @@ module Analyzer::Kotlin
     HTTP4K_MARKER    = "org.http4k"
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       file_list = all_files()
       kotlin_files = file_list.select do |path|
         File.exists?(path) &&

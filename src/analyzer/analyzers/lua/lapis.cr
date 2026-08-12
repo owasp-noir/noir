@@ -44,7 +44,7 @@ module Analyzer::Lua
     MOON_ACTION_MARKER_RE = Regex.union("=>", "respond_to")
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
 
       all_files.each do |path|
         next if File.directory?(path)

@@ -78,7 +78,7 @@ module Analyzer::Fsharp
     }
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       all_files.each do |path|
         next if File.directory?(path)
         next unless path.ends_with?(".fs") || path.ends_with?(".fsx")

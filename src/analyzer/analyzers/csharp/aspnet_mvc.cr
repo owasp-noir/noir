@@ -15,7 +15,7 @@ module Analyzer::CSharp
     end
 
     def analyze
-      include_callee = any_to_bool(@options["include_callee"]?) || any_to_bool(@options["ai_context"]?)
+      include_callee = callees_needed?
       # Static Analysis
       locator = CodeLocator.instance
       route_config_file = locator.get("cs-apinet-mvc-routeconfig")
