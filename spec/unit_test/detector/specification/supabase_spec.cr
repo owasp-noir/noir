@@ -87,8 +87,8 @@ describe "Detect Supabase" do
 
   it "registers migration paths in the code locator" do
     locator = CodeLocator.instance
-    locator.clear "supabase-migration"
+    locator.clear Noir::LocatorKeys::SUPABASE_MIGRATION
     instance.detect("supabase/migrations/20240101000000_init.sql", schema)
-    locator.all("supabase-migration").should eq(["supabase/migrations/20240101000000_init.sql"])
+    locator.all(Noir::LocatorKeys::SUPABASE_MIGRATION).should eq(["supabase/migrations/20240101000000_init.sql"])
   end
 end

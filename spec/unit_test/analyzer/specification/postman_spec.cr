@@ -6,15 +6,15 @@ private def analyze_postman(content : String)
   path = File.tempname("postman", ".json")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "postman-json"
-  locator.push "postman-json", path
+  locator.clear Noir::LocatorKeys::POSTMAN_JSON
+  locator.push Noir::LocatorKeys::POSTMAN_JSON, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Postman.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "postman-json"
+  locator.clear Noir::LocatorKeys::POSTMAN_JSON
   File.delete(path) if path && File.exists?(path)
 end
 

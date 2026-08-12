@@ -7,7 +7,7 @@ module Analyzer::Specification
     METHOD_ANY = "ANY"
 
     def analyze
-      each_spec_file_with_details("serverless-framework-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC) do |path, details|
         content = read_file_content(path)
         if path.ends_with?(".json")
           process_doc(JSON.parse(content), details)

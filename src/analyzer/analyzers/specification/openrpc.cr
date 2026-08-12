@@ -27,7 +27,7 @@ module Analyzer::Specification
     DEFAULT_RPC_PATH = "/"
 
     def analyze
-      each_spec_file_with_details("openrpc-json") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::OPENRPC_JSON) do |path, details|
         content = read_file_content(path)
         process_document(JSON.parse(content), details)
       end

@@ -6,7 +6,7 @@ module Analyzer::Specification
     analyzer_for "zap_sites_tree"
 
     def analyze
-      each_spec_file_with_details("zap-sites-tree") do |sites_tree, details|
+      each_spec_file_with_details(Noir::LocatorKeys::ZAP_SITES_TREE) do |sites_tree, details|
         content = read_file_content(sites_tree)
         yaml_obj = YAML.parse(content)
 

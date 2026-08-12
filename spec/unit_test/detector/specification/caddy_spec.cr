@@ -16,10 +16,10 @@ describe "Detect Caddy config" do
 
   it "detects Caddyfile by name" do
     locator = CodeLocator.instance
-    locator.clear "caddy-spec"
+    locator.clear Noir::LocatorKeys::CADDY_SPEC
 
     instance.detect("Caddyfile", caddyfile).should be_true
-    locator.all("caddy-spec").should eq ["Caddyfile"]
+    locator.all(Noir::LocatorKeys::CADDY_SPEC).should eq ["Caddyfile"]
   end
 
   it "detects caddy.json with apps.http shape" do

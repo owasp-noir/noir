@@ -9,10 +9,10 @@ describe "Detect Cloudflare wrangler config" do
   it "detects wrangler.toml with compatibility_date" do
     src = "name = \"api\"\ncompatibility_date = \"2024-01-01\"\n"
     locator = CodeLocator.instance
-    locator.clear "cloudflare-wrangler-spec"
+    locator.clear Noir::LocatorKeys::CLOUDFLARE_WRANGLER_SPEC
 
     instance.detect("wrangler.toml", src).should be_true
-    locator.all("cloudflare-wrangler-spec").should eq ["wrangler.toml"]
+    locator.all(Noir::LocatorKeys::CLOUDFLARE_WRANGLER_SPEC).should eq ["wrangler.toml"]
   end
 
   it "detects wrangler.toml with [[routes]]" do

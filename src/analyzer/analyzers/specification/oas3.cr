@@ -385,7 +385,7 @@ module Analyzer::Specification
     end
 
     def analyze
-      each_spec_file_with_details("oas3-json") do |oas3_json, details|
+      each_spec_file_with_details(Noir::LocatorKeys::OAS3_JSON) do |oas3_json, details|
         content = read_file_content(oas3_json)
         json_obj = JSON.parse(content)
 
@@ -400,7 +400,7 @@ module Analyzer::Specification
         process_paths_json(json_obj, base_path, details, oas3_json)
       end
 
-      each_spec_file_with_details("oas3-yaml") do |oas3_yaml, details|
+      each_spec_file_with_details(Noir::LocatorKeys::OAS3_YAML) do |oas3_yaml, details|
         content = read_file_content(oas3_yaml)
         yaml_obj = parse_yaml(content)
 

@@ -344,11 +344,11 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # are side effects of idempotent? == false mobile/spec detectors, so
   # they should represent the current detection run only.
   locator.reset_files
-  locator.clear("android-manifest")
-  locator.clear("android-assetlinks")
-  locator.clear("ios-info-plist")
-  locator.clear("ios-entitlements")
-  locator.clear("ios-aasa")
+  locator.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  locator.clear(Noir::LocatorKeys::ANDROID_ASSETLINKS)
+  locator.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  locator.clear(Noir::LocatorKeys::IOS_ENTITLEMENTS)
+  locator.clear(Noir::LocatorKeys::IOS_AASA)
 
   android_source_scope_active = detector_list.any? { |detector| detector_mobile_detector?(detector.name) }
   android_source_prefixes = [] of String

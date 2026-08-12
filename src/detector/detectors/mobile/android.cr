@@ -9,7 +9,7 @@ module Detector::Mobile
     def detect(filename : String, file_contents : String) : Bool
       if File.basename(filename) == "AndroidManifest.xml" && file_contents.includes?("<manifest")
         locator = CodeLocator.instance
-        locator.push("android-manifest", filename)
+        locator.push(Noir::LocatorKeys::ANDROID_MANIFEST, filename)
         return true
       end
 

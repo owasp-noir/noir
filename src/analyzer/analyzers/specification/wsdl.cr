@@ -17,7 +17,7 @@ module Analyzer::Specification
     alias PartRef = NamedTuple(name: String, ref: String, is_element: Bool)
 
     def analyze
-      each_spec_file("wsdl-spec") do |path|
+      each_spec_file(Noir::LocatorKeys::WSDL_SPEC) do |path|
         content = read_file_content(path)
         parse_wsdl(content, path)
       end

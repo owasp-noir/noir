@@ -1,12 +1,9 @@
 require "../../../models/analyzer"
+require "../../../models/locator_keys"
 
 module Analyzer::Javascript
   # Constants for Express router prefix tracking in CodeLocator
   module ExpressConstants
-    # Base key prefix for router prefixes stored in CodeLocator
-    # Format: "express_router_prefix:<file_path>" or "express_router_prefix:<file_path>:<function_name>"
-    ROUTER_PREFIX_KEY = "express_router_prefix"
-
     # Common identifiers to skip when scanning for router variables
     SKIP_IDENTIFIERS = ["req", "res", "next", "err", "error", "true", "false", "null", "undefined"]
 
@@ -19,14 +16,17 @@ module Analyzer::Javascript
     # JavaScript/TypeScript file extensions
     JS_EXTENSIONS = [".js", ".ts", ".jsx", ".tsx"]
 
-    # Build a file-level key for CodeLocator
-    def self.file_key(file_path : String) : String
-      "#{ROUTER_PREFIX_KEY}:#{file_path}"
+    # File- and function-level keys for the router prefixes this analyzer
+    # stashes in `CodeLocator`. The names are minted from the scanned path,
+    # so they cannot be constants — they come from the declared
+    # `EXPRESS_ROUTER_PREFIX` namespace instead, which is what puts them
+    # under the same lifecycle and enforcement as every other slot.
+    def self.file_key(file_path : String) : Noir::LocatorKey(Array(String))
+      Noir::LocatorKeys::EXPRESS_ROUTER_PREFIX.key(file_path)
     end
 
-    # Build a function-level key for CodeLocator
-    def self.function_key(file_path : String, function_name : String) : String
-      "#{ROUTER_PREFIX_KEY}:#{file_path}:#{function_name}"
+    def self.function_key(file_path : String, function_name : String) : Noir::LocatorKey(Array(String))
+      Noir::LocatorKeys::EXPRESS_ROUTER_PREFIX.key(file_path, function_name)
     end
   end
 end

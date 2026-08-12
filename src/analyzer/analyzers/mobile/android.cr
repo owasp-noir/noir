@@ -30,7 +30,7 @@ module Analyzer::Mobile
 
     def analyze
       locator = CodeLocator.instance
-      manifests = locator.all("android-manifest")
+      manifests = locator.all(Noir::LocatorKeys::ANDROID_MANIFEST)
       return @result unless manifests.is_a?(Array(String))
 
       manifests.each do |path|

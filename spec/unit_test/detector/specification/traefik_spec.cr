@@ -39,9 +39,9 @@ describe "Detect Traefik dynamic config" do
 
   it "code_locator" do
     locator = CodeLocator.instance
-    locator.clear "traefik-spec"
+    locator.clear Noir::LocatorKeys::TRAEFIK_SPEC
     instance.detect("traefik.yaml", "http:\n  routers:\n    api:\n      rule: \"Path(`/v1`)\"")
-    locator.all("traefik-spec").should eq(["traefik.yaml"])
+    locator.all(Noir::LocatorKeys::TRAEFIK_SPEC).should eq(["traefik.yaml"])
   end
 
   it "rejects unrelated yaml" do

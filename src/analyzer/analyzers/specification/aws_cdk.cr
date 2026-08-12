@@ -23,7 +23,7 @@ module Analyzer::Specification
     PY_METHODS_RE  = /methods\s*=\s*\[([^\]]*)\]/
 
     def analyze
-      each_spec_file_with_details("aws-cdk-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::AWS_CDK_SPEC) do |path, details|
         content = read_file_content(path)
         if path.ends_with?(".py")
           process_python(content, details)

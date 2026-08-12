@@ -36,7 +36,7 @@ module Detector::Specification
         begin
           data = JSON.parse(file_contents)
           if data["openapi"].as_s.includes? "3."
-            CodeLocator.instance.push("oas3-json", filename)
+            CodeLocator.instance.push(Noir::LocatorKeys::OAS3_JSON, filename)
             return true
           end
         rescue e
@@ -44,7 +44,7 @@ module Detector::Specification
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         if content_matches?(file_contents, OPENAPI3_YAML_MARKER)
-          CodeLocator.instance.push("oas3-yaml", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::OAS3_YAML, filename)
           return true
         end
       end

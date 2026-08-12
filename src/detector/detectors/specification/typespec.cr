@@ -20,7 +20,7 @@ module Detector::Specification
            file_contents.includes?("@delete")
       return false unless ok
 
-      CodeLocator.instance.push("typespec-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::TYPESPEC_SPEC, filename)
       true
     end
   end

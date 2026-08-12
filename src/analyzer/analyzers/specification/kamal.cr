@@ -14,7 +14,7 @@ module Analyzer::Specification
     HEALTHCHECK_METHOD       = "GET"
 
     def analyze
-      each_spec_file_with_details("kamal-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::KAMAL_SPEC) do |path, details|
         content = read_file_content(path)
         process_config(YAML.parse(content), details)
       end

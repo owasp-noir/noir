@@ -34,12 +34,12 @@ module Analyzer::Specification
     ROUTE_KEY         = YAML::Any.new("route")
 
     def analyze
-      each_spec_file_with_details("envoy-yaml") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::ENVOY_YAML) do |path, details|
         content = read_file_content(path)
         process_yaml(YAML.parse(content), details)
       end
 
-      each_spec_file_with_details("envoy-json") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::ENVOY_JSON) do |path, details|
         content = read_file_content(path)
         process_json(JSON.parse(content), details)
       end

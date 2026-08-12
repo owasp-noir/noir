@@ -9,8 +9,8 @@ describe "Analyzer::Mobile::Android" do
   manifest = File.expand_path(
     File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "android", "AndroidManifest.xml"))
 
-  CodeLocator.instance.clear("android-manifest")
-  CodeLocator.instance.push("android-manifest", manifest)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
   endpoints = Analyzer::Mobile::Android.new(options).analyze
 
   find = ->(url : String) { endpoints.find { |e| e.url == url } }
@@ -258,8 +258,8 @@ describe "Analyzer::Mobile::Android (gradle kts / package fallback)" do
     File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "android_kts",
       "app", "src", "main", "AndroidManifest.xml"))
 
-  CodeLocator.instance.clear("android-manifest")
-  CodeLocator.instance.push("android-manifest", manifest)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
   endpoints = Analyzer::Mobile::Android.new(options).analyze
 
   find = ->(url : String) { endpoints.find { |e| e.url == url } }
@@ -295,8 +295,8 @@ describe "Analyzer::Mobile::Android (gradle constant reference)" do
     File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "android_gradle_const",
       "app", "src", "main", "AndroidManifest.xml"))
 
-  CodeLocator.instance.clear("android-manifest")
-  CodeLocator.instance.push("android-manifest", manifest)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
   endpoints = Analyzer::Mobile::Android.new(options).analyze
 
   find = ->(url : String) { endpoints.find { |e| e.url == url } }
@@ -321,8 +321,8 @@ describe "Analyzer::Mobile::Android (gradle GString applicationId)" do
     File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "android_gradle_gstring",
       "AndroidManifest.xml"))
 
-  CodeLocator.instance.clear("android-manifest")
-  CodeLocator.instance.push("android-manifest", manifest)
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_MANIFEST, manifest)
   endpoints = Analyzer::Mobile::Android.new(options).analyze
 
   find = ->(url : String) { endpoints.find { |e| e.url == url } }

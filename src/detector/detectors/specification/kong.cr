@@ -21,7 +21,7 @@ module Detector::Specification
 
       begin
         if kong_doc?(data)
-          CodeLocator.instance.push("kong-spec", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::KONG_SPEC, filename)
           return true
         end
       rescue e

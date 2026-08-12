@@ -40,9 +40,9 @@ describe "Detect Caido Export" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "caido-json"
+    locator.clear Noir::LocatorKeys::CAIDO_JSON
     instance.detect("test_caido.json", content)
-    locator.all("caido-json").should eq(["test_caido.json"])
+    locator.all(Noir::LocatorKeys::CAIDO_JSON).should eq(["test_caido.json"])
   end
 
   it "rejects HAR files" do

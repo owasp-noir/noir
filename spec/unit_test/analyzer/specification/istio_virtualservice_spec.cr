@@ -6,8 +6,8 @@ private def analyze_vs(content : String)
   path = File.tempname("virtualservice", ".yaml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "istio-virtualservice-spec"
-  locator.push "istio-virtualservice-spec", path
+  locator.clear Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC
+  locator.push Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::IstioVirtualservice.new options

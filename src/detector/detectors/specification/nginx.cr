@@ -24,7 +24,7 @@ module Detector::Specification
       return false unless applicable?(filename)
       return false unless nginx_shape?(file_contents)
 
-      CodeLocator.instance.push("nginx-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::NGINX_SPEC, filename)
       true
     end
 

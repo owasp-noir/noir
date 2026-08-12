@@ -26,9 +26,9 @@ describe "Detect Burp Sitemap" do
 
   it "code_locator" do
     locator = CodeLocator.instance
-    locator.clear "burp-sitemap"
+    locator.clear Noir::LocatorKeys::BURP_SITEMAP
     sample = %(<?xml version="1.0"?><items burpVersion="2024.6"></items>)
     instance.detect("sitemap.xml", sample)
-    locator.all("burp-sitemap").should eq(["sitemap.xml"])
+    locator.all(Noir::LocatorKeys::BURP_SITEMAP).should eq(["sitemap.xml"])
   end
 end

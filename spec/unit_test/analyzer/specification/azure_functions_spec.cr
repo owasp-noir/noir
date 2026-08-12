@@ -10,8 +10,8 @@ private def analyze_azure(content : String, function_dir = "MyFunc", host_json :
   host_path = File.join(dir, "host.json")
   File.write(host_path, host_json) if host_json
   locator = CodeLocator.instance
-  locator.clear "azure-functions-spec"
-  locator.push "azure-functions-spec", path
+  locator.clear Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC
+  locator.push Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::AzureFunctions.new options

@@ -23,12 +23,12 @@ module Detector::Mobile
       locator = CodeLocator.instance
 
       if basename == "assetlinks.json" && file_contents.includes?("delegate_permission")
-        locator.push("android-assetlinks", filename)
+        locator.push(Noir::LocatorKeys::ANDROID_ASSETLINKS, filename)
         return true
       end
 
       if aasa_basename?(basename) && file_contents.includes?("applinks")
-        locator.push("ios-aasa", filename)
+        locator.push(Noir::LocatorKeys::IOS_AASA, filename)
         return true
       end
 

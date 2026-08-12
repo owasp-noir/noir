@@ -13,7 +13,7 @@ module Analyzer::Specification
     HTTP_VERB_DECORATORS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
     def analyze
-      each_spec_file_with_details("typespec-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::TYPESPEC_SPEC) do |path, details|
         content = read_file_content(path)
         process_file(content, details, path)
       end

@@ -7,7 +7,7 @@ module Analyzer::Specification
     HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
     def analyze
-      each_spec_file("bruno-bru") do |bruno_file|
+      each_spec_file(Noir::LocatorKeys::BRUNO_BRU) do |bruno_file|
         content = read_file_content(bruno_file)
         details = Details.new(PathInfo.new(bruno_file))
         process_bru(content, details)

@@ -36,7 +36,7 @@ module Analyzer::Specification
     }
 
     def analyze
-      each_spec_file("har-path") do |har_file|
+      each_spec_file(Noir::LocatorKeys::HAR_PATH) do |har_file|
         data = HAR.from_file(har_file)
         logger.debug "Open #{har_file} file"
         data.entries.each do |entry|

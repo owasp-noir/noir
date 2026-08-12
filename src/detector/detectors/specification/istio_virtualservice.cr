@@ -24,7 +24,7 @@ module Detector::Specification
       return false unless virtual_service_present?(file_contents)
       return false unless valid_yaml_documents?(file_contents)
 
-      CodeLocator.instance.push("istio-virtualservice-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC, filename)
       true
     end
 

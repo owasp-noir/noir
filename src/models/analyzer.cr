@@ -381,7 +381,7 @@ class FileAnalyzer < Analyzer
     # Hoisted out of the worker loop: this used to re-read the locator's
     # `har-path` array and scan it linearly for every file, i.e.
     # O(files × har_paths) with a fresh Array allocation per file.
-    har_paths = CodeLocator.instance.all("har-path").to_set
+    har_paths = CodeLocator.instance.all(Noir::LocatorKeys::HAR_PATH).to_set
 
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 

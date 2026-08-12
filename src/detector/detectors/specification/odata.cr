@@ -19,7 +19,7 @@ module Detector::Specification
                           file_contents.includes?("schemas.microsoft.com/ado/")
 
       locator = CodeLocator.instance
-      locator.push("odata-spec", filename)
+      locator.push(Noir::LocatorKeys::ODATA_SPEC, filename)
       true
     end
 

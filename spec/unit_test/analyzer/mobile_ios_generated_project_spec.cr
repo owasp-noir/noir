@@ -12,14 +12,14 @@ describe "Analyzer::Mobile::Ios (generated project, no .xcodeproj)" do
   base = File.expand_path(File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "ios_generated_project"))
   options["base"] = YAML::Any.new([YAML::Any.new(base)])
 
-  CodeLocator.instance.clear("ios-info-plist")
-  CodeLocator.instance.clear("ios-entitlements")
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_ENTITLEMENTS)
   # No .swift/.m/.mm fixtures belong to this spec — clear file_map so a
   # leftover registration from another spec run earlier in the same
   # process can't feed the code-level route harvesting pass below.
   CodeLocator.instance.reset_files
-  CodeLocator.instance.push("ios-info-plist", File.join(base, "App", "Info.plist"))
-  CodeLocator.instance.push("ios-entitlements", File.join(base, "App", "App.entitlements"))
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_INFO_PLIST, File.join(base, "App", "Info.plist"))
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_ENTITLEMENTS, File.join(base, "App", "App.entitlements"))
   endpoints = Analyzer::Mobile::Ios.new(options).analyze
 
   find = ->(url : String) { endpoints.find { |e| e.url == url } }

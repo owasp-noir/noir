@@ -26,7 +26,7 @@ module Detector::Specification
       return false unless sdl_document?(file_contents)
 
       locator = CodeLocator.instance
-      locator.push("graphql-sdl", filename)
+      locator.push(Noir::LocatorKeys::GRAPHQL_SDL, filename)
       true
     end
 

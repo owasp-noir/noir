@@ -47,8 +47,8 @@ describe "Detect AsyncAPI Docs" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "asyncapi-json"
+    locator.clear Noir::LocatorKeys::ASYNCAPI_JSON
     instance.detect("doc.json", content)
-    locator.all("asyncapi-json").should eq(["doc.json"])
+    locator.all(Noir::LocatorKeys::ASYNCAPI_JSON).should eq(["doc.json"])
   end
 end

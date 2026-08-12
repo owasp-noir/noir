@@ -48,8 +48,8 @@ describe "Detect Bruno Collection" do
       BRU
 
     locator = CodeLocator.instance
-    locator.clear "bruno-bru"
+    locator.clear Noir::LocatorKeys::BRUNO_BRU
     instance.detect("health.bru", content)
-    locator.all("bruno-bru").should eq(["health.bru"])
+    locator.all(Noir::LocatorKeys::BRUNO_BRU).should eq(["health.bru"])
   end
 end

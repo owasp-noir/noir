@@ -34,13 +34,13 @@ module Detector::Specification
       if filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         if (data = yaml_any?(file_contents)) && find_virtual_hosts_yaml(data)
           locator = CodeLocator.instance
-          locator.push("envoy-yaml", filename)
+          locator.push(Noir::LocatorKeys::ENVOY_YAML, filename)
           return true
         end
       elsif filename.ends_with?(".json")
         if (data = json_any?(file_contents)) && find_virtual_hosts_json(data)
           locator = CodeLocator.instance
-          locator.push("envoy-json", filename)
+          locator.push(Noir::LocatorKeys::ENVOY_JSON, filename)
           return true
         end
       end

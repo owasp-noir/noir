@@ -35,8 +35,8 @@ describe "Detect OAS 3.0 Docs" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "oas3-json"
+    locator.clear Noir::LocatorKeys::OAS3_JSON
     instance.detect("docs.json", content)
-    locator.all("oas3-json").should eq(["docs.json"])
+    locator.all(Noir::LocatorKeys::OAS3_JSON).should eq(["docs.json"])
   end
 end

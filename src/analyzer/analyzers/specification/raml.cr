@@ -14,7 +14,7 @@ module Analyzer::Specification
     @libraries = {} of String => ResolvedNode
 
     def analyze
-      each_spec_file("raml-spec") do |raml_spec|
+      each_spec_file(Noir::LocatorKeys::RAML_SPEC) do |raml_spec|
         content = read_file_content(raml_spec)
 
         # Only root API documents (`#%RAML 1.0` / `#%RAML 0.8`) describe

@@ -16,7 +16,7 @@ module Detector::Specification
                           file_contents.includes?("http://www.w3.org/ns/wsdl")
 
       locator = CodeLocator.instance
-      locator.push("wsdl-spec", filename)
+      locator.push(Noir::LocatorKeys::WSDL_SPEC, filename)
       true
     end
   end

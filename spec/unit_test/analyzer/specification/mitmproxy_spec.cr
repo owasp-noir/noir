@@ -36,8 +36,8 @@ private def analyze_flows(flows : Array(Hash(String, Tnetstring::Value)), url : 
   path = File.tempname("mitmproxy", ".mitm")
   write_flows(path, flows)
   locator = CodeLocator.instance
-  locator.clear "mitmproxy-path"
-  locator.push "mitmproxy-path", path
+  locator.clear Noir::LocatorKeys::MITMPROXY_PATH
+  locator.push Noir::LocatorKeys::MITMPROXY_PATH, path
 
   options = create_test_options
   options["url"] = YAML::Any.new(url)
@@ -214,8 +214,8 @@ describe "Mitmproxy Analyzer" do
 
     begin
       locator = CodeLocator.instance
-      locator.clear "mitmproxy-path"
-      locator.push "mitmproxy-path", path
+      locator.clear Noir::LocatorKeys::MITMPROXY_PATH
+      locator.push Noir::LocatorKeys::MITMPROXY_PATH, path
 
       options = create_test_options
       options["url"] = YAML::Any.new("https://example.com")

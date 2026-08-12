@@ -10,18 +10,18 @@ private def analyze_netlify(redirects_content : String?, toml_content : String?)
   Dir.mkdir_p(temp_dir)
 
   locator = CodeLocator.instance
-  locator.clear "netlify-redirects"
-  locator.clear "netlify-toml"
+  locator.clear Noir::LocatorKeys::NETLIFY_REDIRECTS
+  locator.clear Noir::LocatorKeys::NETLIFY_TOML
 
   begin
     if redirects_content
       File.write(redirects_path, redirects_content)
-      locator.push "netlify-redirects", redirects_path
+      locator.push Noir::LocatorKeys::NETLIFY_REDIRECTS, redirects_path
     end
 
     if toml_content
       File.write(toml_path, toml_content)
-      locator.push "netlify-toml", toml_path
+      locator.push Noir::LocatorKeys::NETLIFY_TOML, toml_path
     end
 
     options = create_test_options

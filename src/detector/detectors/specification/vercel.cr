@@ -14,7 +14,7 @@ module Detector::Specification
       return false unless applicable?(filename)
       return false unless valid_json?(file_contents)
 
-      CodeLocator.instance.push("vercel-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::VERCEL_SPEC, filename)
       true
     end
 

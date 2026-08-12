@@ -16,9 +16,9 @@ describe "Detect WSDL" do
 
   it "code_locator" do
     locator = CodeLocator.instance
-    locator.clear "wsdl-spec"
+    locator.clear Noir::LocatorKeys::WSDL_SPEC
     sample = %(<?xml version="1.0"?><wsdl:definitions xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/"></wsdl:definitions>)
     instance.detect("service.wsdl", sample)
-    locator.all("wsdl-spec").should eq(["service.wsdl"])
+    locator.all(Noir::LocatorKeys::WSDL_SPEC).should eq(["service.wsdl"])
   end
 end

@@ -9,7 +9,7 @@ module Analyzer::Specification
     METHOD_ANY         = "ANY"
 
     def analyze
-      each_spec_file_with_details("vercel-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::VERCEL_SPEC) do |path, details|
         content = read_file_content(path)
         process_config(JSON.parse(content), details)
       end

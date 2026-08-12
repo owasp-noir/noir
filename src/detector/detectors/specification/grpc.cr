@@ -16,7 +16,7 @@ module Detector::Specification
 
     def detect(filename : String, file_contents : String) : Bool
       if filename.ends_with?(".proto") && content_matches?(file_contents, SERVICE_BLOCK)
-        CodeLocator.instance.push("grpc-proto", filename)
+        CodeLocator.instance.push(Noir::LocatorKeys::GRPC_PROTO, filename)
         return true
       end
 

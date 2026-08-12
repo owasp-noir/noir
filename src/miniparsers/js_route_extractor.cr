@@ -11,9 +11,6 @@ require "../utils/text_file"
 module Noir
   # JSRouteExtractor provides a unified interface for extracting routes from JavaScript files
   class JSRouteExtractor
-    # Import constants for key generation
-    ROUTER_PREFIX_KEY = Analyzer::Javascript::ExpressConstants::ROUTER_PREFIX_KEY
-
     def self.extract_routes(file_path : String,
                             content : String? = nil,
                             debug : Bool = false,
@@ -192,16 +189,12 @@ module Noir
         prefixes_by_function = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
         function_names.each do |func_name|
           func_key = Analyzer::Javascript::ExpressConstants.function_key(absolute_file_path, func_name)
-          values = locator.all(func_key)
-          if values.size > 0
-            values.each do |prefix|
-              prefixes_by_function[func_name] << prefix unless prefix.empty?
-            end
-          else
-            value = locator.get(func_key)
-            if value.is_a?(String) && !value.empty?
-              prefixes_by_function[func_name] << value
-            end
+          # The `else` branch this replaces called `get(func_key)` — reading
+          # the single-value map for a key only ever `push`ed to. It could
+          # never return anything, and `get`'s old `rescue → ""` hid that.
+          # Under typed keys it does not compile.
+          locator.all(func_key).each do |prefix|
+            prefixes_by_function[func_name] << prefix unless prefix.empty?
           end
         end
 

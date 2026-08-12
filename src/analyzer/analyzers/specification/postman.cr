@@ -6,7 +6,7 @@ module Analyzer::Specification
     analyzer_for "postman"
 
     def analyze
-      each_spec_file("postman-json") do |postman_file|
+      each_spec_file(Noir::LocatorKeys::POSTMAN_JSON) do |postman_file|
         content = read_file_content(postman_file)
         json_obj = JSON.parse(content)
 

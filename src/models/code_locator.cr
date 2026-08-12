@@ -1,6 +1,7 @@
 require "../utils/path_scope"
 require "../utils/utils"
 require "./logger"
+require "./locator_key"
 
 class CodeLocator
   @@instance : CodeLocator? = nil
@@ -108,24 +109,21 @@ class CodeLocator
     @@instance ||= new
   end
 
-  def set(key : String, value : String)
-    @s_map[key] = value
+  def set(key : Noir::LocatorKey(String), value : String)
+    @s_map[key.name] = value
   end
 
-  def get(key : String) : (String | Array(String))
-    @s_map[key]
-  rescue
-    ""
+  # `String?` rather than the old `(String | Array(String))`: the union only
+  # existed because a bare string key carried no type, so `get` could not
+  # promise which map it was reading. Its one caller worked around it by
+  # interpolating the result.
+  def get(key : Noir::LocatorKey(String)) : String?
+    @s_map[key.name]?
   end
 
-  def push(key : String, value : String)
-    # Compat shim: `file_map` is no longer a key. Removed in the PR that
-    # tightens these signatures; until then, a caller reaching for the old
-    # spelling must still get the derived-view invalidation.
-    return register_path(value) if key == FILE_MAP
-
-    @a_map[key] ||= Array(String).new
-    @a_map[key] << value
+  def push(key : Noir::LocatorKey(Array(String)), value : String)
+    @a_map[key.name] ||= Array(String).new
+    @a_map[key.name] << value
   end
 
   # The scanned-file registry.
@@ -208,8 +206,8 @@ class CodeLocator
     {bytes: @content_cache_used, files: @file_contents.size, skipped: @content_cache_skipped, budget: @content_cache_budget}
   end
 
-  def all(key : String) : Array(String)
-    result = @a_map[key]?
+  def all(key : Noir::LocatorKey(Array(String))) : Array(String)
+    result = @a_map[key.name]?
     return result if result
     Array(String).new
   end
@@ -322,12 +320,17 @@ class CodeLocator
     @basename_index[basename]? || Array(String).new
   end
 
-  def clear(key : String)
-    # Compat shim, as in `push`.
-    return reset_files if key == FILE_MAP
+  def clear(key : Noir::LocatorKey)
+    @s_map.delete(key.name)
+    @a_map.delete(key.name)
+  end
 
-    @s_map.delete(key)
-    @a_map.delete(key)
+  # Drops every runtime-minted key under `ns`. Runs at a phase boundary with
+  # no fibers in flight, so a plain reject is enough — no minted-key
+  # bookkeeping to maintain.
+  def clear_namespace(ns : Noir::LocatorKeyNamespace)
+    @a_map.reject! { |name, _| ns.matches?(name) }
+    @s_map.reject! { |name, _| ns.matches?(name) }
   end
 
   def clear_all

@@ -5,11 +5,11 @@ module Analyzer::Specification
     analyzer_for "apisix"
 
     def analyze
-      each_spec_file("apisix-json") do |path|
+      each_spec_file(Noir::LocatorKeys::APISIX_JSON) do |path|
         process_json(path)
       end
 
-      each_spec_file("apisix-yaml") do |path|
+      each_spec_file(Noir::LocatorKeys::APISIX_YAML) do |path|
         process_yaml(path)
       end
 

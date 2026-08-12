@@ -17,10 +17,10 @@ describe "Detect Apache httpd config" do
 
   it "detects .conf with Apache directives" do
     locator = CodeLocator.instance
-    locator.clear "apache-httpd-spec"
+    locator.clear Noir::LocatorKeys::APACHE_HTTPD_SPEC
 
     instance.detect("sites-enabled/api.conf", src).should be_true
-    locator.all("apache-httpd-spec").should eq ["sites-enabled/api.conf"]
+    locator.all(Noir::LocatorKeys::APACHE_HTTPD_SPEC).should eq ["sites-enabled/api.conf"]
   end
 
   it "detects .htaccess files" do
@@ -30,10 +30,10 @@ describe "Detect Apache httpd config" do
 
   it "detects Apache config templates case-insensitively" do
     locator = CodeLocator.instance
-    locator.clear "apache-httpd-spec"
+    locator.clear Noir::LocatorKeys::APACHE_HTTPD_SPEC
 
     instance.detect("conf/extra.conf.in", "  proxypass /api http://backend\n").should be_true
-    locator.all("apache-httpd-spec").should eq ["conf/extra.conf.in"]
+    locator.all(Noir::LocatorKeys::APACHE_HTTPD_SPEC).should eq ["conf/extra.conf.in"]
   end
 
   it "ignores directives that only appear in comments" do

@@ -6,10 +6,10 @@ describe "Analyzer::Mobile::WellKnown" do
   options = create_test_options
   base = File.expand_path(File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "well_known", ".well-known"))
 
-  CodeLocator.instance.clear("android-assetlinks")
-  CodeLocator.instance.clear("ios-aasa")
-  CodeLocator.instance.push("android-assetlinks", File.join(base, "assetlinks.json"))
-  CodeLocator.instance.push("ios-aasa", File.join(base, "apple-app-site-association"))
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_ASSETLINKS)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_AASA)
+  CodeLocator.instance.push(Noir::LocatorKeys::ANDROID_ASSETLINKS, File.join(base, "assetlinks.json"))
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_AASA, File.join(base, "apple-app-site-association"))
   endpoints = Analyzer::Mobile::WellKnown.new(options).analyze
 
   find = ->(url : String) { endpoints.find { |e| e.url == url } }

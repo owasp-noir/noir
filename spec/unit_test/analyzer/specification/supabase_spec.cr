@@ -5,30 +5,30 @@ require "../../../../src/analyzer/analyzers/specification/supabase"
 private def analyze_supabase(*migrations : String, config : String? = nil)
   paths = [] of String
   locator = CodeLocator.instance
-  locator.clear "supabase-migration"
-  locator.clear "supabase-config"
+  locator.clear Noir::LocatorKeys::SUPABASE_MIGRATION
+  locator.clear Noir::LocatorKeys::SUPABASE_CONFIG
 
   migrations.each_with_index do |sql, index|
     # Lexical order is chronological for Supabase migration filenames.
     path = File.tempname("#{index}_migration", ".sql")
     File.write(path, sql)
     paths << path
-    locator.push "supabase-migration", path
+    locator.push Noir::LocatorKeys::SUPABASE_MIGRATION, path
   end
 
   if config
     path = File.tempname("config", ".toml")
     File.write(path, config)
     paths << path
-    locator.push "supabase-config", path
+    locator.push Noir::LocatorKeys::SUPABASE_CONFIG, path
   end
 
   options = create_test_options
   Analyzer::Specification::Supabase.new(options).analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "supabase-migration"
-  locator.clear "supabase-config"
+  locator.clear Noir::LocatorKeys::SUPABASE_MIGRATION
+  locator.clear Noir::LocatorKeys::SUPABASE_CONFIG
   paths.try &.each { |p| File.delete(p) if File.exists?(p) }
 end
 

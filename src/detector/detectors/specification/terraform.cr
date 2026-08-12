@@ -23,7 +23,7 @@ module Detector::Specification
       return false unless applicable?(filename)
       return false unless MARKERS.any? { |marker| file_contents.includes?(marker) }
 
-      CodeLocator.instance.push("terraform-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::TERRAFORM_SPEC, filename)
       true
     end
   end

@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "../../../src/models/locator_keys"
 require "../../../src/utils/utils.cr"
 require "../../../src/models/logger.cr"
 require "../../../src/models/code_locator.cr"
@@ -7,15 +8,25 @@ require "../../../src/options.cr"
 describe "Initialize" do
   locator = CodeLocator.new
 
+  # A library caller declaring its own slot — the escape hatch that replaces
+  # "pass any string and hope". Declaring it is also what gives it a
+  # lifecycle: `Process` means noir's per-phase resets leave it alone.
+  single_key = Noir::LocatorKey(String).new("unittest-single", Noir::LocatorKey::Lifecycle::Process, "spec")
+  array_key = Noir::LocatorKey(Array(String)).new("unittest-array", Noir::LocatorKey::Lifecycle::Process, "spec")
+
   it "getter/setter - string" do
-    locator.set "unittest", "abcd"
-    locator.get("unittest").should eq("abcd")
+    locator.set single_key, "abcd"
+    locator.get(single_key).should eq("abcd")
+  end
+
+  it "returns nil for a single-value key that was never set" do
+    CodeLocator.new.get(single_key).should be_nil
   end
 
   it "all/push - array" do
-    locator.push "unittest", "abcd"
-    locator.push "unittest", "bbbb"
-    locator.all("unittest").should eq(["abcd", "bbbb"])
+    locator.push array_key, "abcd"
+    locator.push array_key, "bbbb"
+    locator.all(array_key).should eq(["abcd", "bbbb"])
   end
 end
 
@@ -80,13 +91,13 @@ describe "content cache" do
   # at the top of every scan, and the spec-format keys are drained later.
   it "reset_files leaves unrelated keys alone" do
     locator = CodeLocator.new
-    locator.push("oas3-json", "/spec/openapi.json")
+    locator.push(Noir::LocatorKeys::OAS3_JSON, "/spec/openapi.json")
     locator.register_path("/a.rb")
 
     locator.reset_files
 
     locator.all_files.should be_empty
-    locator.all("oas3-json").should eq(["/spec/openapi.json"])
+    locator.all(Noir::LocatorKeys::OAS3_JSON).should eq(["/spec/openapi.json"])
   end
 
   it "stops caching once the total budget is exhausted" do

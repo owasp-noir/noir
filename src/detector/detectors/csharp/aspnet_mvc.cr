@@ -22,7 +22,7 @@ module Detector::CSharp
 
       if file_contents.includes?(".MapRoute")
         locator = CodeLocator.instance
-        locator.set("cs-apinet-mvc-routeconfig", filename)
+        locator.set(Noir::LocatorKeys::CS_APINET_MVC_ROUTECONFIG, filename)
       end
     end
   end

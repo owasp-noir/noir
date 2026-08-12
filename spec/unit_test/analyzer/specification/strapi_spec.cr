@@ -10,16 +10,16 @@ private def analyze_strapi_schema(content : String, name = "article")
   File.write(file, content)
 
   locator = CodeLocator.instance
-  locator.clear "strapi-schema"
-  locator.clear "strapi-routes"
-  locator.push "strapi-schema", file
+  locator.clear Noir::LocatorKeys::STRAPI_SCHEMA
+  locator.clear Noir::LocatorKeys::STRAPI_ROUTES
+  locator.push Noir::LocatorKeys::STRAPI_SCHEMA, file
 
   options = create_test_options
   Analyzer::Specification::Strapi.new(options).analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "strapi-schema"
-  locator.clear "strapi-routes"
+  locator.clear Noir::LocatorKeys::STRAPI_SCHEMA
+  locator.clear Noir::LocatorKeys::STRAPI_ROUTES
   FileUtils.rm_rf(dir) if dir && Dir.exists?(dir)
 end
 
@@ -28,16 +28,16 @@ private def analyze_strapi_routes(content : String)
   File.write(path, content)
 
   locator = CodeLocator.instance
-  locator.clear "strapi-schema"
-  locator.clear "strapi-routes"
-  locator.push "strapi-routes", path
+  locator.clear Noir::LocatorKeys::STRAPI_SCHEMA
+  locator.clear Noir::LocatorKeys::STRAPI_ROUTES
+  locator.push Noir::LocatorKeys::STRAPI_ROUTES, path
 
   options = create_test_options
   Analyzer::Specification::Strapi.new(options).analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "strapi-schema"
-  locator.clear "strapi-routes"
+  locator.clear Noir::LocatorKeys::STRAPI_SCHEMA
+  locator.clear Noir::LocatorKeys::STRAPI_ROUTES
   File.delete(path) if path && File.exists?(path)
 end
 

@@ -89,8 +89,8 @@ describe "Detect Directus snapshot" do
 
   it "registers the path in the code locator" do
     locator = CodeLocator.instance
-    locator.clear "directus-snapshot"
+    locator.clear Noir::LocatorKeys::DIRECTUS_SNAPSHOT
     instance.detect("snapshot.yaml", snapshot)
-    locator.all("directus-snapshot").should eq(["snapshot.yaml"])
+    locator.all(Noir::LocatorKeys::DIRECTUS_SNAPSHOT).should eq(["snapshot.yaml"])
   end
 end

@@ -47,13 +47,13 @@ module Analyzer::Specification
     TAG_SOURCE         = "payload_cms_analyzer"
 
     def analyze
-      api_prefix = resolve_api_prefix(CodeLocator.instance.all("payload-config"))
+      api_prefix = resolve_api_prefix(CodeLocator.instance.all(Noir::LocatorKeys::PAYLOAD_CONFIG))
 
-      each_spec_file("payload-collection") do |path|
+      each_spec_file(Noir::LocatorKeys::PAYLOAD_COLLECTION) do |path|
         parse_collections(read_file_content(path), path, api_prefix)
       end
 
-      each_spec_file("payload-global") do |path|
+      each_spec_file(Noir::LocatorKeys::PAYLOAD_GLOBAL) do |path|
         parse_globals(read_file_content(path), path, api_prefix)
       end
 

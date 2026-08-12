@@ -25,22 +25,22 @@ describe "Detect AWS SAM / CloudFormation templates" do
 
   it "detects SAM template by Transform" do
     locator = CodeLocator.instance
-    locator.clear "aws-cloudformation-spec"
+    locator.clear Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC
 
     instance.detect("template.yaml", sam_yaml).should be_true
-    locator.all("aws-cloudformation-spec").should eq ["template.yaml"]
+    locator.all(Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC).should eq ["template.yaml"]
   end
 
   it "detects plain CloudFormation template by AWSTemplateFormatVersion" do
     locator = CodeLocator.instance
-    locator.clear "aws-cloudformation-spec"
+    locator.clear Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC
 
     instance.detect("template.yml", cfn_yaml).should be_true
   end
 
   it "detects JSON-formatted CloudFormation template" do
     locator = CodeLocator.instance
-    locator.clear "aws-cloudformation-spec"
+    locator.clear Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC
 
     json = %({"AWSTemplateFormatVersion":"2010-09-09","Resources":{}})
     instance.detect("template.json", json).should be_true

@@ -45,18 +45,18 @@ module Detector::Specification
 
       if content_matches?(file_contents, COLLECTION_MARKER) &&
          content_matches?(file_contents, SLUG_MARKER) && content_matches?(file_contents, FIELDS_MARKER)
-        CodeLocator.instance.push("payload-collection", filename)
+        CodeLocator.instance.push(Noir::LocatorKeys::PAYLOAD_COLLECTION, filename)
         detected = true
       end
 
       if content_matches?(file_contents, GLOBAL_MARKER) &&
          content_matches?(file_contents, SLUG_MARKER) && content_matches?(file_contents, FIELDS_MARKER)
-        CodeLocator.instance.push("payload-global", filename)
+        CodeLocator.instance.push(Noir::LocatorKeys::PAYLOAD_GLOBAL, filename)
         detected = true
       end
 
       if content_matches?(file_contents, BUILD_CONFIG)
-        CodeLocator.instance.push("payload-config", filename)
+        CodeLocator.instance.push(Noir::LocatorKeys::PAYLOAD_CONFIG, filename)
         detected = true
       end
 

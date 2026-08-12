@@ -22,12 +22,12 @@ module Analyzer::Specification
     OPERATIONS_2X = {"publish", "subscribe"}
 
     def analyze
-      each_spec_file_with_details("asyncapi-json") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::ASYNCAPI_JSON) do |path, details|
         content = read_file_content(path)
         process_json(JSON.parse(content), details, path)
       end
 
-      each_spec_file_with_details("asyncapi-yaml") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::ASYNCAPI_YAML) do |path, details|
         content = read_file_content(path)
         process_yaml(YAML.parse(content), details, path)
       end

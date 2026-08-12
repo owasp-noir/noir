@@ -48,9 +48,9 @@ describe "Detect Insomnia Export" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "insomnia-json"
+    locator.clear Noir::LocatorKeys::INSOMNIA_JSON
     instance.detect("test.json", content)
-    locator.all("insomnia-json").should eq(["test.json"])
+    locator.all(Noir::LocatorKeys::INSOMNIA_JSON).should eq(["test.json"])
   end
 
   it "code_locator (yaml)" do
@@ -61,9 +61,9 @@ describe "Detect Insomnia Export" do
       YAML
 
     locator = CodeLocator.instance
-    locator.clear "insomnia-yaml"
+    locator.clear Noir::LocatorKeys::INSOMNIA_YAML
     instance.detect("test.yaml", content)
-    locator.all("insomnia-yaml").should eq(["test.yaml"])
+    locator.all(Noir::LocatorKeys::INSOMNIA_YAML).should eq(["test.yaml"])
   end
 
   it "invalid JSON is ignored" do

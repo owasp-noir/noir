@@ -23,7 +23,7 @@ module Detector::Specification
           if version.starts_with?("2.") || version.starts_with?("3.")
             check = true
             locator = CodeLocator.instance
-            locator.push("asyncapi-json", filename)
+            locator.push(Noir::LocatorKeys::ASYNCAPI_JSON, filename)
           end
         rescue e
           logger.debug "AsyncAPI JSON detection failed for #{filename}: #{e}"
@@ -35,7 +35,7 @@ module Detector::Specification
           if version.starts_with?("2.") || version.starts_with?("3.")
             check = true
             locator = CodeLocator.instance
-            locator.push("asyncapi-yaml", filename)
+            locator.push(Noir::LocatorKeys::ASYNCAPI_YAML, filename)
           end
         rescue e
           logger.debug "AsyncAPI YAML detection failed for #{filename}: #{e}"

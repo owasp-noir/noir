@@ -10,11 +10,11 @@ private def analyze_terraform(files : Hash(String, String))
   dir = File.tempname("tf_module")
   Dir.mkdir_p(dir)
   locator = CodeLocator.instance
-  locator.clear "terraform-spec"
+  locator.clear Noir::LocatorKeys::TERRAFORM_SPEC
   files.each do |name, content|
     path = File.join(dir, name)
     File.write(path, content)
-    locator.push "terraform-spec", path
+    locator.push Noir::LocatorKeys::TERRAFORM_SPEC, path
   end
 
   options = create_test_options

@@ -6,8 +6,8 @@ private def analyze_nginx(content : String)
   path = File.tempname("nginx", ".conf")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "nginx-spec"
-  locator.push "nginx-spec", path
+  locator.clear Noir::LocatorKeys::NGINX_SPEC
+  locator.push Noir::LocatorKeys::NGINX_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Nginx.new options

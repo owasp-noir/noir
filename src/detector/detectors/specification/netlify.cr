@@ -15,10 +15,10 @@ module Detector::Specification
 
       case base
       when REDIRECTS_FILE
-        locator.push("netlify-redirects", filename)
+        locator.push(Noir::LocatorKeys::NETLIFY_REDIRECTS, filename)
         true
       when TOML_FILE
-        locator.push("netlify-toml", filename)
+        locator.push(Noir::LocatorKeys::NETLIFY_TOML, filename)
         true
       else
         false

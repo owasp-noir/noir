@@ -73,8 +73,8 @@ describe "Detect Appwrite config" do
     content = %({"projectId": "demo", "collections": []})
 
     locator = CodeLocator.instance
-    locator.clear "appwrite-config"
+    locator.clear Noir::LocatorKeys::APPWRITE_CONFIG
     instance.detect("appwrite.json", content)
-    locator.all("appwrite-config").should eq(["appwrite.json"])
+    locator.all(Noir::LocatorKeys::APPWRITE_CONFIG).should eq(["appwrite.json"])
   end
 end

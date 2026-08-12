@@ -14,7 +14,7 @@ module Detector::Specification
 
         data = JSON.parse(file_contents)
         if apisix_routes_json?(data)
-          CodeLocator.instance.push("apisix-json", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::APISIX_JSON, filename)
           return true
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
@@ -22,7 +22,7 @@ module Detector::Specification
 
         data = YAML.parse(file_contents)
         if apisix_routes_yaml?(data)
-          CodeLocator.instance.push("apisix-yaml", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::APISIX_YAML, filename)
           return true
         end
       end

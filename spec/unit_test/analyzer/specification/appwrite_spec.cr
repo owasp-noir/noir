@@ -6,15 +6,15 @@ private def analyze_appwrite(content : String)
   path = File.tempname("appwrite", ".json")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "appwrite-config"
-  locator.push "appwrite-config", path
+  locator.clear Noir::LocatorKeys::APPWRITE_CONFIG
+  locator.push Noir::LocatorKeys::APPWRITE_CONFIG, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Appwrite.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "appwrite-config"
+  locator.clear Noir::LocatorKeys::APPWRITE_CONFIG
   File.delete(path) if path && File.exists?(path)
 end
 

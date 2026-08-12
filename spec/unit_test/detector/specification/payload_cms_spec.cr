@@ -126,15 +126,15 @@ describe "Detect Payload CMS" do
 
   it "registers collections, globals and configs under separate keys" do
     locator = CodeLocator.instance
-    locator.clear "payload-collection"
-    locator.clear "payload-global"
-    locator.clear "payload-config"
+    locator.clear Noir::LocatorKeys::PAYLOAD_COLLECTION
+    locator.clear Noir::LocatorKeys::PAYLOAD_GLOBAL
+    locator.clear Noir::LocatorKeys::PAYLOAD_CONFIG
 
     instance.detect("src/collections/Posts.ts", collection)
     instance.detect("src/payload.config.ts", "import { buildConfig } from 'payload'\nexport default buildConfig({})")
 
-    locator.all("payload-collection").should eq(["src/collections/Posts.ts"])
-    locator.all("payload-config").should eq(["src/payload.config.ts"])
-    locator.all("payload-global").should eq([] of String)
+    locator.all(Noir::LocatorKeys::PAYLOAD_COLLECTION).should eq(["src/collections/Posts.ts"])
+    locator.all(Noir::LocatorKeys::PAYLOAD_CONFIG).should eq(["src/payload.config.ts"])
+    locator.all(Noir::LocatorKeys::PAYLOAD_GLOBAL).should eq([] of String)
   end
 end

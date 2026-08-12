@@ -108,8 +108,8 @@ describe "Detect Hasura metadata" do
 
   it "registers table and REST paths under separate locator keys" do
     locator = CodeLocator.instance
-    locator.clear "hasura-tables"
-    locator.clear "hasura-rest-endpoints"
+    locator.clear Noir::LocatorKeys::HASURA_TABLES
+    locator.clear Noir::LocatorKeys::HASURA_REST_ENDPOINTS
 
     instance.detect("metadata/databases/default/tables/public_movies.yaml", per_table)
     instance.detect("metadata/rest_endpoints.yaml", <<-YAML)
@@ -119,7 +119,7 @@ describe "Detect Hasura metadata" do
           - GET
       YAML
 
-    locator.all("hasura-tables").should eq(["metadata/databases/default/tables/public_movies.yaml"])
-    locator.all("hasura-rest-endpoints").should eq(["metadata/rest_endpoints.yaml"])
+    locator.all(Noir::LocatorKeys::HASURA_TABLES).should eq(["metadata/databases/default/tables/public_movies.yaml"])
+    locator.all(Noir::LocatorKeys::HASURA_REST_ENDPOINTS).should eq(["metadata/rest_endpoints.yaml"])
   end
 end

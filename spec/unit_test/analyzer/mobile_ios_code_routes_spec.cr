@@ -13,10 +13,10 @@ describe "Analyzer::Mobile::Ios (code-level route harvesting)" do
   options = create_test_options
   base = File.expand_path(File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "ios_code_routes"))
 
-  CodeLocator.instance.clear("ios-info-plist")
-  CodeLocator.instance.clear("ios-entitlements")
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_ENTITLEMENTS)
   CodeLocator.instance.reset_files
-  CodeLocator.instance.push("ios-info-plist", File.join(base, "Info.plist"))
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_INFO_PLIST, File.join(base, "Info.plist"))
   swift_path = File.join(base, "Routing.swift")
   CodeLocator.instance.register_file(swift_path, File.read(swift_path))
 

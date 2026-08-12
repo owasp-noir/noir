@@ -18,10 +18,9 @@ module Analyzer::CSharp
       include_callee = callees_needed?
       # Static Analysis
       locator = CodeLocator.instance
-      route_config_file = locator.get("cs-apinet-mvc-routeconfig")
-
-      # Analyze RouteConfig.cs for route definitions
-      route_config_path = "#{route_config_file}"
+      # `get` returns `String?` now; the interpolation below used to be the
+      # workaround for its `(String | Array(String))` union.
+      route_config_path = locator.get(Noir::LocatorKeys::CS_APINET_MVC_ROUTECONFIG) || ""
       if File.exists?(route_config_path)
         maproute_check = false
         maproute_buffer = ""
@@ -40,7 +39,7 @@ module Analyzer::CSharp
               buffer.split(",").each do |item|
                 if item.includes? "url:"
                   url = item.gsub(/url:/, "").gsub(/"/, "")
-                  details = Details.new(PathInfo.new(route_config_file, index + 1))
+                  details = Details.new(PathInfo.new(route_config_path, index + 1))
                   @result << Endpoint.new("/#{url}", "GET", details)
                 end
               end

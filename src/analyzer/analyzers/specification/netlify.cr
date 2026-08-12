@@ -13,11 +13,11 @@ module Analyzer::Specification
     ABSOLUTE_SOURCE_RE = /\A[a-z][a-z0-9+.-]*:\/\/([^\/]+)(\/.*)?\z/i
 
     def analyze
-      each_spec_file("netlify-redirects") do |path|
+      each_spec_file(Noir::LocatorKeys::NETLIFY_REDIRECTS) do |path|
         parse_redirects_file(path)
       end
 
-      each_spec_file("netlify-toml") do |path|
+      each_spec_file(Noir::LocatorKeys::NETLIFY_TOML) do |path|
         parse_toml_file(path)
       end
 

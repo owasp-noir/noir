@@ -21,22 +21,22 @@ describe "Detect Terraform API Gateway config" do
 
   it "detects a .tf file declaring aws_apigatewayv2_route" do
     locator = CodeLocator.instance
-    locator.clear "terraform-spec"
+    locator.clear Noir::LocatorKeys::TERRAFORM_SPEC
 
     instance.detect("main.tf", v2_tf).should be_true
-    locator.all("terraform-spec").should eq ["main.tf"]
+    locator.all(Noir::LocatorKeys::TERRAFORM_SPEC).should eq ["main.tf"]
   end
 
   it "detects a .tf file declaring aws_api_gateway_method" do
     locator = CodeLocator.instance
-    locator.clear "terraform-spec"
+    locator.clear Noir::LocatorKeys::TERRAFORM_SPEC
 
     instance.detect("api.tf", rest_tf).should be_true
   end
 
   it "detects a .tf.json file" do
     locator = CodeLocator.instance
-    locator.clear "terraform-spec"
+    locator.clear Noir::LocatorKeys::TERRAFORM_SPEC
 
     json = %({"resource":{"aws_apigatewayv2_route":{"a":{"route_key":"GET /x"}}}})
     instance.detect("main.tf.json", json).should be_true

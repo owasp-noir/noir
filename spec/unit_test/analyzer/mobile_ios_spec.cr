@@ -6,14 +6,14 @@ describe "Analyzer::Mobile::Ios" do
   options = create_test_options
   base = File.expand_path(File.join(__DIR__, "..", "..", "functional_test", "fixtures", "mobile", "ios"))
 
-  CodeLocator.instance.clear("ios-info-plist")
-  CodeLocator.instance.clear("ios-entitlements")
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_INFO_PLIST)
+  CodeLocator.instance.clear(Noir::LocatorKeys::IOS_ENTITLEMENTS)
   # No .swift/.m/.mm fixtures belong to this spec — clear file_map so a
   # leftover registration from another spec run earlier in the same
   # process can't feed the code-level route harvesting pass below.
   CodeLocator.instance.reset_files
-  CodeLocator.instance.push("ios-info-plist", File.join(base, "Info.plist"))
-  CodeLocator.instance.push("ios-entitlements", File.join(base, "App.entitlements"))
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_INFO_PLIST, File.join(base, "Info.plist"))
+  CodeLocator.instance.push(Noir::LocatorKeys::IOS_ENTITLEMENTS, File.join(base, "App.entitlements"))
   endpoints = Analyzer::Mobile::Ios.new(options).analyze
 
   find = ->(url : String) { endpoints.find { |e| e.url == url } }

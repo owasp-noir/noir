@@ -13,7 +13,7 @@ module Analyzer::Specification
     METHOD_BLOCK_RE = /^if\s*\(\s*\$request_method\s*=\s*([A-Z]+)\s*\)/
 
     def analyze
-      each_spec_file_with_details("nginx-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::NGINX_SPEC) do |path, details|
         content = read_file_content(path)
         process_content(content, details)
       end

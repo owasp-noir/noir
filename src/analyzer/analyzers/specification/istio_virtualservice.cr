@@ -7,7 +7,7 @@ module Analyzer::Specification
     METHOD_ANY = "ANY"
 
     def analyze
-      each_spec_file_with_details("istio-virtualservice-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC) do |path, details|
         content = read_file_content(path)
         YAML.parse_all(content).each { |doc| process_doc(doc, details) }
       end

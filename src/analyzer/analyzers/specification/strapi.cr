@@ -44,11 +44,11 @@ module Analyzer::Specification
     TAG_SOURCE = "strapi_analyzer"
 
     def analyze
-      each_spec_file("strapi-schema") do |path|
+      each_spec_file(Noir::LocatorKeys::STRAPI_SCHEMA) do |path|
         parse_schema(read_file_content(path), path)
       end
 
-      each_spec_file("strapi-routes") do |path|
+      each_spec_file(Noir::LocatorKeys::STRAPI_ROUTES) do |path|
         parse_routes(read_file_content(path), path)
       end
 

@@ -29,7 +29,7 @@ module Detector::Specification
           if data[0]["node"].as_s.includes? "Sites"
             check = true
             locator = CodeLocator.instance
-            locator.push("zap-sites-tree", filename)
+            locator.push(Noir::LocatorKeys::ZAP_SITES_TREE, filename)
           end
         rescue e
           logger.debug "ZAP sites-tree detection failed for #{filename}: #{e}"

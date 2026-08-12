@@ -5,29 +5,29 @@ require "../../../../src/analyzer/analyzers/specification/hasura"
 private def analyze_hasura(tables : String? = nil, rest : String? = nil)
   paths = [] of String
   locator = CodeLocator.instance
-  locator.clear "hasura-tables"
-  locator.clear "hasura-rest-endpoints"
+  locator.clear Noir::LocatorKeys::HASURA_TABLES
+  locator.clear Noir::LocatorKeys::HASURA_REST_ENDPOINTS
 
   if tables
     path = File.tempname("hasura_tables", ".yaml")
     File.write(path, tables)
     paths << path
-    locator.push "hasura-tables", path
+    locator.push Noir::LocatorKeys::HASURA_TABLES, path
   end
 
   if rest
     path = File.tempname("hasura_rest", ".yaml")
     File.write(path, rest)
     paths << path
-    locator.push "hasura-rest-endpoints", path
+    locator.push Noir::LocatorKeys::HASURA_REST_ENDPOINTS, path
   end
 
   options = create_test_options
   Analyzer::Specification::Hasura.new(options).analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "hasura-tables"
-  locator.clear "hasura-rest-endpoints"
+  locator.clear Noir::LocatorKeys::HASURA_TABLES
+  locator.clear Noir::LocatorKeys::HASURA_REST_ENDPOINTS
   paths.try &.each { |p| File.delete(p) if File.exists?(p) }
 end
 

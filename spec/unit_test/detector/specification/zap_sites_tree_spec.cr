@@ -23,9 +23,9 @@ describe "Detect ZAP Sites Tree" do
       YAML
 
     locator = CodeLocator.instance
-    locator.clear "zap-sites-tree"
+    locator.clear Noir::LocatorKeys::ZAP_SITES_TREE
     instance.detect("sites.yaml", content)
-    locator.all("zap-sites-tree").should eq(["sites.yaml"])
+    locator.all(Noir::LocatorKeys::ZAP_SITES_TREE).should eq(["sites.yaml"])
   end
 
   it "rejects yaml without the Sites marker" do

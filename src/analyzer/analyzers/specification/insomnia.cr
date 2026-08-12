@@ -9,12 +9,12 @@ module Analyzer::Specification
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     def analyze
-      each_spec_file("insomnia-json") do |path|
+      each_spec_file(Noir::LocatorKeys::INSOMNIA_JSON) do |path|
         content = read_file_content(path)
         process_v4(JSON.parse(content), path)
       end
 
-      each_spec_file("insomnia-yaml") do |path|
+      each_spec_file(Noir::LocatorKeys::INSOMNIA_YAML) do |path|
         content = read_file_content(path)
         process_v5(YAML.parse(content), path)
       end

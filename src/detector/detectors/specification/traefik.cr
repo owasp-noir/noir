@@ -35,7 +35,7 @@ module Detector::Specification
 
       if check
         locator = CodeLocator.instance
-        locator.push("traefik-spec", filename)
+        locator.push(Noir::LocatorKeys::TRAEFIK_SPEC, filename)
       end
 
       check

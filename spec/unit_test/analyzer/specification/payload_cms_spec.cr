@@ -5,38 +5,38 @@ require "../../../../src/analyzer/analyzers/specification/payload_cms"
 private def analyze_payload(collection : String? = nil, global : String? = nil, config : String? = nil)
   paths = [] of String
   locator = CodeLocator.instance
-  locator.clear "payload-collection"
-  locator.clear "payload-global"
-  locator.clear "payload-config"
+  locator.clear Noir::LocatorKeys::PAYLOAD_COLLECTION
+  locator.clear Noir::LocatorKeys::PAYLOAD_GLOBAL
+  locator.clear Noir::LocatorKeys::PAYLOAD_CONFIG
 
   if collection
     path = File.tempname("payload_collection", ".ts")
     File.write(path, collection)
     paths << path
-    locator.push "payload-collection", path
+    locator.push Noir::LocatorKeys::PAYLOAD_COLLECTION, path
   end
 
   if global
     path = File.tempname("payload_global", ".ts")
     File.write(path, global)
     paths << path
-    locator.push "payload-global", path
+    locator.push Noir::LocatorKeys::PAYLOAD_GLOBAL, path
   end
 
   if config
     path = File.tempname("payload_config", ".ts")
     File.write(path, config)
     paths << path
-    locator.push "payload-config", path
+    locator.push Noir::LocatorKeys::PAYLOAD_CONFIG, path
   end
 
   options = create_test_options
   Analyzer::Specification::PayloadCms.new(options).analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "payload-collection"
-  locator.clear "payload-global"
-  locator.clear "payload-config"
+  locator.clear Noir::LocatorKeys::PAYLOAD_COLLECTION
+  locator.clear Noir::LocatorKeys::PAYLOAD_GLOBAL
+  locator.clear Noir::LocatorKeys::PAYLOAD_CONFIG
   paths.try &.each { |p| File.delete(p) if File.exists?(p) }
 end
 

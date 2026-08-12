@@ -116,5 +116,5 @@ end
 private def cleanup_scope(root : String)
   FileUtils.rm_rf(root) if Dir.exists?(root)
   CodeLocator.instance.reset_files
-  CodeLocator.instance.clear("android-manifest")
+  CodeLocator.instance.clear(Noir::LocatorKeys::ANDROID_MANIFEST)
 end

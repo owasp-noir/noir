@@ -8,18 +8,18 @@ describe "Detect Netlify routing files" do
 
   it "detects _redirects file and registers its path" do
     locator = CodeLocator.instance
-    locator.clear "netlify-redirects"
+    locator.clear Noir::LocatorKeys::NETLIFY_REDIRECTS
 
     instance.detect("site/_redirects", "/old /new 301").should be_true
-    locator.all("netlify-redirects").should eq ["site/_redirects"]
+    locator.all(Noir::LocatorKeys::NETLIFY_REDIRECTS).should eq ["site/_redirects"]
   end
 
   it "detects netlify.toml file and registers its path" do
     locator = CodeLocator.instance
-    locator.clear "netlify-toml"
+    locator.clear Noir::LocatorKeys::NETLIFY_TOML
 
     instance.detect("site/netlify.toml", "[[redirects]]").should be_true
-    locator.all("netlify-toml").should eq ["site/netlify.toml"]
+    locator.all(Noir::LocatorKeys::NETLIFY_TOML).should eq ["site/netlify.toml"]
   end
 
   it "ignores unrelated filenames" do

@@ -48,7 +48,7 @@ module Analyzer::Specification
       structures = {} of String => Array(InputMember)
       operations = [] of NamedTuple(name: String, file: String, line: Int32, binding: HttpBinding, input: String?)
 
-      each_spec_file("smithy-spec") do |file|
+      each_spec_file(Noir::LocatorKeys::SMITHY_SPEC) do |file|
         parse_file(read_file_content(file), file, structures, operations)
       end
 
