@@ -31,15 +31,6 @@ def get_relative_path(base_path : String, path : String) : String
   remove_start_slash(relative_path)
 end
 
-def join_path(*segments : String) : String
-  path = segments
-    .reject(&.empty?)
-    .map(&.chomp("/").lstrip("/"))
-    .join("/")
-
-  path.starts_with?("/") ? path : "/#{path}"
-end
-
 def any_to_bool(any) : Bool
   case any.to_s.downcase
   when "false", "no"

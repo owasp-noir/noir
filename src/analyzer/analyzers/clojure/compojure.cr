@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/clojure_callee_extractor"
 require "../../../utils/utils"
 require "./clojure_helper"
+require "../../../utils/url_path"
 
 module Analyzer::Clojure
   class Compojure < Analyzer
@@ -88,7 +89,7 @@ module Analyzer::Clojure
           when "context"
             context_path, _ = route_path_literal(source, after_symbol, form_end)
             context_path = normalize_route_path(context_path) if context_path
-            next_prefix = context_path ? join_path(prefix, context_path) : prefix
+            next_prefix = context_path ? Noir::URLPath.absolute_join(prefix, context_path) : prefix
             scan_forms(source, after_symbol, form_end, next_prefix, path, include_callee)
           when "defroutes", "routes"
             scan_forms(source, after_symbol, form_end, prefix, path, include_callee)
@@ -121,7 +122,7 @@ module Analyzer::Clojure
       return unless raw_route_path
       route_path = normalize_route_path(raw_route_path)
 
-      full_path = join_path(prefix, route_path)
+      full_path = Noir::URLPath.absolute_join(prefix, route_path)
       endpoint = Endpoint.new(full_path, method, Details.new(PathInfo.new(path, Helper.line_number_for(source, form_start))))
 
       path_param_names = extract_path_param_names(route_path)

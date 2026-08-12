@@ -150,3 +150,33 @@ describe "Noir::URLPath.join_rooted" do
     Noir::URLPath.join_rooted("", "").should eq "/"
   end
 end
+
+# Relocated verbatim from `spec/unit_test/utils/utils_spec.cr`, where they
+# covered the top-level `join_path`. Only the receiver changed — the
+# assertions standing unaltered is the evidence the move preserved
+# behaviour.
+describe "Noir::URLPath.absolute_join" do
+  it "joins two segments" do
+    Noir::URLPath.absolute_join("/api", "users").should eq("/api/users")
+  end
+
+  it "collapses a double slash at the boundary" do
+    Noir::URLPath.absolute_join("/api", "/users").should eq("/api/users")
+  end
+
+  it "strips trailing slashes from segments" do
+    Noir::URLPath.absolute_join("api/", "/v1/").should eq("/api/v1")
+  end
+
+  it "skips empty segments" do
+    Noir::URLPath.absolute_join("", "users").should eq("/users")
+  end
+
+  it "joins three segments (variadic)" do
+    Noir::URLPath.absolute_join("a", "b", "c").should eq("/a/b/c")
+  end
+
+  it "always prepends a leading slash" do
+    Noir::URLPath.absolute_join("noslash").should eq("/noslash")
+  end
+end
