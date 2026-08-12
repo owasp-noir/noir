@@ -3,6 +3,7 @@ require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 require "yaml"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   # Dropwizard ships Jersey under the hood, so JAX-RS resource
@@ -35,7 +36,7 @@ module Analyzer::Java
       end
 
       def base_path : String
-        Dropwizard.join_paths(@application_context_path, @root_path)
+        Noir::URLPath.join_trimmed(@application_context_path, @root_path)
       end
     end
 
@@ -84,7 +85,7 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
             line = route.line + 1
             details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint = Endpoint.new(Dropwizard.join_paths(base_path, route.path), route.verb, route.params, details)
+            endpoint = Endpoint.new(Noir::URLPath.join_trimmed(base_path, route.path), route.verb, route.params, details)
             endpoint.protocol = route.protocol
             route.callees.each do |name, callee_line|
               endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
@@ -96,12 +97,6 @@ module Analyzer::Java
 
       Fiber.yield
       @result
-    end
-
-    def self.join_paths(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
     end
 
     private def path_configs_for(file_list : Array(String)) : Hash(String, DropwizardPathConfig)
@@ -287,7 +282,7 @@ module Analyzer::Java
     end
 
     private def asset_bundle_endpoint_path(application_context_path : String, uri_path : String) : String
-      base = Dropwizard.join_paths(application_context_path, uri_path)
+      base = Noir::URLPath.join_trimmed(application_context_path, uri_path)
       base = "/" if base.empty?
       base == "/" ? "/*" : "#{base.rstrip('/')}/*"
     end

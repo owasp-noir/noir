@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/jvm_lambda_dsl_extractor_ts"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   # Javalin runs on the lambda-DSL routing style:
@@ -63,7 +64,7 @@ module Analyzer::Java
         constants = string_constants_for(content)
         collect_static_file_endpoints(content, constants).each do |entry|
           endpoint_path, line = entry
-          @result << Endpoint.new(Helper.join_paths(context_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
+          @result << Endpoint.new(Noir::URLPath.join_trimmed(context_path, endpoint_path), "GET", Details.new(PathInfo.new(path, line)))
         end
       end
 
@@ -84,7 +85,7 @@ module Analyzer::Java
       end
 
       details = Details.new(PathInfo.new(path, route.line + 1))
-      endpoint = Endpoint.new(Helper.join_paths(context_path, route.path), route.verb, params, details)
+      endpoint = Endpoint.new(Noir::URLPath.join_trimmed(context_path, route.path), route.verb, params, details)
       endpoint.protocol = route.protocol
 
       # 1-hop callees out of the handler lambda body. The Route
@@ -160,7 +161,7 @@ module Analyzer::Java
 
     private def static_mount_path(hosted_path : String) : String
       normalized = normalize_optional_path(hosted_path)
-      normalized.empty? ? "/**" : Helper.join_paths(normalized, "**")
+      normalized.empty? ? "/**" : Noir::URLPath.join_trimmed(normalized, "**")
     end
 
     private def context_path_for(content : String) : String

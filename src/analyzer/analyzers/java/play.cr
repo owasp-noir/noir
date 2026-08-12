@@ -1,6 +1,7 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_route_extractor_ts"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   class Play < Analyzer
@@ -341,7 +342,7 @@ module Analyzer::Java
           include_prefix = include_match[1]
           include_target = include_match[2]
           if included_path = resolve_included_routes_file(include_target, routes_by_key, path)
-            process_routes_file(included_path, controller_methods, routes_by_key, Helper.join_paths(prefix, include_prefix), seen)
+            process_routes_file(included_path, controller_methods, routes_by_key, Noir::URLPath.join_trimmed(prefix, include_prefix), seen)
           end
           next
         end
@@ -350,7 +351,7 @@ module Analyzer::Java
         # Example: GET /users/:id controllers.Users.show(id: Long)
         if route_match = stripped_line.match(/^(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+([^\s]+)\s+(.+)/)
           method = route_match[1]
-          route_path = Helper.join_paths(prefix, route_match[2])
+          route_path = Noir::URLPath.join_trimmed(prefix, route_match[2])
           action = route_match[3]
 
           endpoint = create_endpoint(route_path, method, path, index + 1)

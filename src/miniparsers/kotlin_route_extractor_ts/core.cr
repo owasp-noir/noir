@@ -261,7 +261,7 @@ module Noir
       return if class_name.empty?
 
       class_prefix = class_mapping_prefix(node, source, pending, string_constants, local_string_constants)
-      {class_name, join_paths(outer_prefix, class_prefix)}
+      {class_name, Noir::URLPath.join_absorbing(outer_prefix, class_prefix)}
     end
 
     private def abstract_type?(decl : LibTreeSitter::TSNode, source : String) : Bool
@@ -288,7 +288,7 @@ module Noir
 
       class_prefix = split_constructor_prefix(node, source, string_constants, local_string_constants)
       collect_recovered_function_routes(
-        node, source, match[1], join_paths(outer_prefix, class_prefix), routes, string_constants, local_string_constants
+        node, source, match[1], Noir::URLPath.join_absorbing(outer_prefix, class_prefix), routes, string_constants, local_string_constants
       )
       true
     end
@@ -328,7 +328,7 @@ module Noir
       return if feign_client?(node, source)
 
       class_prefix = class_mapping_prefix(node, source, pending, string_constants, local_string_constants)
-      prefix = join_paths(outer_prefix, class_prefix)
+      prefix = Noir::URLPath.join_absorbing(outer_prefix, class_prefix)
 
       if body = class_body(node)
         Noir::TreeSitter.each_named_child(body) do |member|
@@ -627,7 +627,7 @@ module Noir
           end
 
         paths.each do |path|
-          full = join_paths(class_prefix, path)
+          full = Noir::URLPath.join_absorbing(class_prefix, path)
           verbs.each do |verb|
             routes << Route.new(verb, full, class_name, method_name, ann_line)
           end

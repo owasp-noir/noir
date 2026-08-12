@@ -626,13 +626,5 @@ module Noir
       end
       buf
     end
-
-    # Empty-path semantics mirror the Java extractor: a bare method
-    # mapping collapses onto the class prefix, so `@RequestMapping("/api")`
-    # + `@GetMapping` (no path) maps to `/api`, not `/api/` (see the
-    # empty-path branch below).
-    private def join_paths(prefix : String, path : String) : String
-      Noir::URLPath.join_absorbing(prefix, path)
-    end
   end
 end

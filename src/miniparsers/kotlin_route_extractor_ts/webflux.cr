@@ -100,8 +100,8 @@ module Noir
     end
 
     private def join_functional_paths(prefixes : Array(String), path : String) : String
-      prefix = prefixes.reduce("") { |memo, item| join_paths(memo, item) }
-      join_paths(prefix, path)
+      prefix = prefixes.reduce("") { |memo, item| Noir::URLPath.join_absorbing(memo, item) }
+      Noir::URLPath.join_absorbing(prefix, path)
     end
   end
 end
