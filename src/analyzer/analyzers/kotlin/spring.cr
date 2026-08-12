@@ -341,7 +341,7 @@ module Analyzer::Kotlin
             Dir.glob("#{escape_glob_path(full_resource_path)}/**/*") do |file|
               next if File.directory?(file)
               relative_path = file.sub(full_resource_path, "")
-              full_url = join_path(webflux_base_path, relative_path)
+              full_url = Noir::URLPath.absolute_join(webflux_base_path, relative_path)
               @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
             end
           end
@@ -351,7 +351,7 @@ module Analyzer::Kotlin
             Dir.glob("#{escape_glob_path(file_path)}/**/*") do |file|
               next if File.directory?(file)
               relative_path = file.sub(file_path, "")
-              full_url = join_path(webflux_base_path, relative_path)
+              full_url = Noir::URLPath.absolute_join(webflux_base_path, relative_path)
               @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
             end
           end

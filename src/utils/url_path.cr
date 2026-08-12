@@ -111,5 +111,26 @@ module Noir
       return "/" if joined.empty?
       joined.starts_with?('/') ? joined : "/#{joined}"
     end
+
+    # Variadic absolute join: drop empty segments, trim one trailing and
+    # every leading slash from each, and guarantee a rooted result.
+    #
+    # Lived in `src/utils/utils.cr` as a top-level `join_path` — a URL
+    # routine in the generic utils file, one `grep join_path` away from
+    # being mistaken for any of the methods above. It is not expressible
+    # as a fold of them: `absolute_join("api/", "/v1/")` is `"/api/v1"`
+    # where folding `join_rooted` gives `"/api/v1/"`, because the trailing
+    # slash is trimmed per segment rather than at the seam.
+    #
+    # Used by the Clojure analyzers, whose route DSLs compose bare
+    # segments, and by Kotlin Spring's WebFlux path assembly.
+    def self.absolute_join(*segments : String) : String
+      path = segments
+        .reject(&.empty?)
+        .map(&.chomp("/").lstrip("/"))
+        .join("/")
+
+      path.starts_with?("/") ? path : "/#{path}"
+    end
   end
 end

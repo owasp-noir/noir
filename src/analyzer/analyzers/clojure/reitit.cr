@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/clojure_callee_extractor"
 require "../../../utils/utils"
 require "./clojure_helper"
+require "../../../utils/url_path"
 
 module Analyzer::Clojure
   # Reitit is data-driven: routes are a vector tree
@@ -185,7 +186,7 @@ module Analyzer::Clojure
       return if str_end <= i
 
       route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
-      new_prefix = join_path(prefix, route_path)
+      new_prefix = Noir::URLPath.absolute_join(prefix, route_path)
 
       # `["/path" handler]` — a bare handler (symbol / `#'var` / inline
       # `(fn …)`) in the data position is reitit shorthand for

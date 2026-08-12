@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/clojure_callee_extractor"
 require "../../../utils/utils"
 require "./clojure_helper"
+require "../../../utils/url_path"
 
 module Analyzer::Clojure
   class Pedestal < Analyzer
@@ -130,7 +131,7 @@ module Analyzer::Clojure
         # a phantom endpoint (`join_path` would otherwise force a leading `/`).
         if route_path && route_path.starts_with?("/")
           handler_range = helper_handler_range(source, route_literal_end + 1, list_end)
-          emit_endpoint(source, list_start, join_path(prefix, route_path), method, path, seen, include_callee, function_callees, handler_range)
+          emit_endpoint(source, list_start, Noir::URLPath.absolute_join(prefix, route_path), method, path, seen, include_callee, function_callees, handler_range)
           true
         else
           false
@@ -163,7 +164,7 @@ module Analyzer::Clojure
       if i < limit && source.byte_at(i).unsafe_chr == '{'
         map_end = Helper.find_matching_delimiter(source, i, '{', '}', limit)
         if map_end > i
-          current_prefix = join_path(prefix, extract_context(source, i + 1, map_end) || "")
+          current_prefix = Noir::URLPath.absolute_join(prefix, extract_context(source, i + 1, map_end) || "")
           i = map_end + 1
         end
       end
@@ -208,7 +209,7 @@ module Analyzer::Clojure
           map_end = Helper.find_matching_delimiter(source, i, '{', '}', limit)
           break if map_end <= i
           if context = extract_context(source, i + 1, map_end)
-            current_prefix = join_path(prefix, context)
+            current_prefix = Noir::URLPath.absolute_join(prefix, context)
           else
             process_route_map(source, i, map_end, current_prefix, path, seen, include_callee, function_callees)
           end
@@ -241,7 +242,7 @@ module Analyzer::Clojure
       route_path = decode_string_literal(source.byte_slice(i, str_end - i + 1))
       return false unless route_path.starts_with?("/")
 
-      full_path = join_path(prefix, route_path)
+      full_path = Noir::URLPath.absolute_join(prefix, route_path)
       body_start = skip_ws_and_comments(source, str_end + 1, vec_end)
       return true if body_start >= vec_end
 
@@ -300,7 +301,7 @@ module Analyzer::Clojure
                                   seen : Set(String),
                                   include_callee : Bool,
                                   function_callees : Hash(String, Array(Noir::ClojureCalleeExtractor::Entry))) : Bool
-      context_prefix = join_path(prefix, extract_context(source, map_start + 1, map_end) || "")
+      context_prefix = Noir::URLPath.absolute_join(prefix, extract_context(source, map_start + 1, map_end) || "")
       verbose = process_verbose_map(source, map_start + 1, map_end, context_prefix, path, seen, include_callee, function_callees)
       path_keyed = process_path_keyed_map(source, map_start + 1, map_end, context_prefix, path, seen, include_callee, function_callees)
       verbose || path_keyed
@@ -341,7 +342,7 @@ module Analyzer::Clojure
       route_path_value = route_path
       return false unless route_path_value
 
-      full_path = join_path(prefix, route_path_value)
+      full_path = Noir::URLPath.absolute_join(prefix, route_path_value)
       if range = verbs_range
         v_start, v_end = range
         if v_start < v_end && source.byte_at(v_start).unsafe_chr == '{'
@@ -372,7 +373,7 @@ module Analyzer::Clojure
         next unless route_path.starts_with?("/")
         handled = true
 
-        full_path = join_path(prefix, route_path)
+        full_path = Noir::URLPath.absolute_join(prefix, route_path)
         if value_start < value_end
           case source.byte_at(value_start).unsafe_chr
           when '{'
