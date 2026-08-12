@@ -47,6 +47,23 @@ CFML_FRAMEWORK_TECHS = Set{
   "cfml_fw1",
 }
 
+# Whether the generic CFML analyzer should narrow to components-only mode.
+#
+# This is a *narrowing*, not a supersede, which is why it stays here rather
+# than moving to the catalog's `:supersedes` alongside the four
+# framework-shadows-framework rules. A CFML framework owns the `.cfm` page
+# surface, so dropping `cfml_pure` outright would lose the half no framework
+# analyzer covers — the `access="remote"` methods on a ColdBox app's proxy
+# components, which are HTTP-callable whatever framework fronts them.
+# Narrowing keeps those and still leaves the page surface to its owner.
+#
+# Extracted from `analysis_endpoints` so it can be tested at all: in place
+# it sat inside the function that runs every analyzer.
+def cfml_components_only?(selected_techs : Array(String)) : Bool
+  selected_techs.includes?("cfml_pure") &&
+    selected_techs.any? { |tech| CFML_FRAMEWORK_TECHS.includes?(tech) }
+end
+
 # Drops techs that another detected tech supersedes. The rules live on the
 # superseding tech's catalog entry as `:supersedes`; see the doc on
 # `NoirTechs::SUPERSEDES` for what belongs there and — more importantly —
@@ -93,10 +110,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # Run tech analyzers concurrently to avoid long stalls from a single analyzer
   selected_techs = filter_redundant_generic_techs(techs).select { |t| analyzer.has_key?(t) }
 
-  # A CFML framework owns the `.cfm` page surface, so the generic analyzer
-  # narrows to the half no framework analyzer covers: `access="remote"`
-  # methods on `.cfc` components.
-  if selected_techs.includes?("cfml_pure") && selected_techs.any? { |tech| CFML_FRAMEWORK_TECHS.includes?(tech) }
+  if cfml_components_only?(selected_techs)
     options[Analyzer::Cfml::Pure::COMPONENTS_ONLY_OPTION] = YAML::Any.new(true)
   end
 
