@@ -208,7 +208,7 @@ module Noir::CLI::ConfigCommand
 
   def self.config_path(override : String? = nil) : String
     return File.expand_path(override) if override && !override.empty?
-    File.expand_path(File.join(get_home, "config.yaml"))
+    File.expand_path(File.join(Noir::Home.path, "config.yaml"))
   end
 
   # Resolution order: $VISUAL, $EDITOR, then a platform default.

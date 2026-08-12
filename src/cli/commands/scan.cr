@@ -75,7 +75,7 @@ module Noir::CLI::ScanCommand
     validate_options!(noir_options)
 
     if noir_options["nolog"] == false
-      banner()
+      Noir::Banner.print
     end
 
     run_scan(noir_options)

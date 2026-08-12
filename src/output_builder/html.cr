@@ -16,7 +16,7 @@ class OutputBuilderHtml < OutputBuilder
   end
 
   private def build_html(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult)) : String
-    template_path = File.join(get_home, "report-template.html")
+    template_path = File.join(Noir::Home.path, "report-template.html")
 
     if File.exists?(template_path)
       apply_template(template_path, endpoints, passive_results)

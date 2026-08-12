@@ -77,7 +77,7 @@ class ConfigInitializer
   # post-CLI merge inside NoirRunner that re-overwrote everything
   # the CLI had just set.
   def initialize(override_path : String? = nil)
-    @config_dir = get_home
+    @config_dir = Noir::Home.path
 
     if override_path && !override_path.empty?
       @config_file = override_path
