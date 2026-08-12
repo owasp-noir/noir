@@ -6,15 +6,15 @@ private def analyze_http_file(content : String, ext = ".http")
   path = File.tempname("http_file", ext)
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "http-file"
-  locator.push "http-file", path
+  locator.clear Noir::LocatorKeys::HTTP_FILE
+  locator.push Noir::LocatorKeys::HTTP_FILE, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::HttpFile.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "http-file"
+  locator.clear Noir::LocatorKeys::HTTP_FILE
   File.delete(path) if path && File.exists?(path)
 end
 

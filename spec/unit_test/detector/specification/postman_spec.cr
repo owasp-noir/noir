@@ -47,9 +47,9 @@ describe "Detect Postman Collection" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "postman-json"
+    locator.clear Noir::LocatorKeys::POSTMAN_JSON
     instance.detect("test.json", content)
-    locator.all("postman-json").should eq(["test.json"])
+    locator.all(Noir::LocatorKeys::POSTMAN_JSON).should eq(["test.json"])
   end
 
   it "invalid format" do

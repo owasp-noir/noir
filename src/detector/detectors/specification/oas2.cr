@@ -23,7 +23,7 @@ module Detector::Specification
         begin
           data = JSON.parse(file_contents)
           if data["swagger"].as_s.includes? "2."
-            CodeLocator.instance.push("swagger-json", filename)
+            CodeLocator.instance.push(Noir::LocatorKeys::SWAGGER_JSON, filename)
             return true
           end
         rescue e
@@ -31,7 +31,7 @@ module Detector::Specification
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         if content_matches?(file_contents, SWAGGER2_YAML_MARKER)
-          CodeLocator.instance.push("swagger-yaml", filename)
+          CodeLocator.instance.push(Noir::LocatorKeys::SWAGGER_YAML, filename)
           return true
         end
       end

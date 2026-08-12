@@ -17,7 +17,7 @@ module Analyzer::Specification
     SITE_BLOCK_RE    = /^([A-Za-z0-9_.:\/@*?-]+(?:\s*,\s*[A-Za-z0-9_.:\/@*?-]+)*)\s*\{$/
 
     def analyze
-      each_spec_file_with_details("caddy-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::CADDY_SPEC) do |path, details|
         content = read_file_content(path)
         if path.ends_with?(".json")
           process_json(content, details)

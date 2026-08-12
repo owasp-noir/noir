@@ -19,12 +19,12 @@ module Detector::Specification
 
       base = File.basename(filename)
       if CADDYFILE_NAMES.includes?(base)
-        CodeLocator.instance.push("caddy-spec", filename)
+        CodeLocator.instance.push(Noir::LocatorKeys::CADDY_SPEC, filename)
         true
       elsif filename.ends_with?(".json")
         return false unless caddy_json?(file_contents)
         JSON.parse(file_contents)
-        CodeLocator.instance.push("caddy-spec", filename)
+        CodeLocator.instance.push(Noir::LocatorKeys::CADDY_SPEC, filename)
         true
       else
         false

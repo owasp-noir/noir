@@ -19,7 +19,7 @@ module Analyzer::Specification
     HTTP_METHODS = ALLOWED_HTTP_METHODS
 
     def analyze
-      each_spec_file("http-file") do |http_file|
+      each_spec_file(Noir::LocatorKeys::HTTP_FILE) do |http_file|
         content = read_file_content(http_file)
         process_file(content, http_file)
       end

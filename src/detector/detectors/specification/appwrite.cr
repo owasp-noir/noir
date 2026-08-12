@@ -34,7 +34,7 @@ module Detector::Specification
       return false unless root["projectId"]?.try(&.as_s?)
       return false unless RESOURCE_KEYS.any? { |key| root.has_key?(key) }
 
-      CodeLocator.instance.push("appwrite-config", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::APPWRITE_CONFIG, filename)
       true
     end
 

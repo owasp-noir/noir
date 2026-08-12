@@ -1,6 +1,7 @@
 require "../../models/analyzer"
 require "../../models/code_locator"
 require "uri"
+require "../../models/locator_keys"
 
 module Analyzer::Specification
   # Base for the specification-format analyzers (OpenAPI, Postman, HAR,
@@ -12,7 +13,7 @@ module Analyzer::Specification
   # analyzers each open-coded the same drain:
   #
   #     locator = CodeLocator.instance
-  #     files = locator.all("some-key")
+  #     files = locator.all(Noir::LocatorKeys::OAS3_JSON)
   #     return @result unless files.is_a?(Array(String))
   #     files.each do |path|
   #       next unless File.exists?(path)
@@ -53,7 +54,7 @@ module Analyzer::Specification
     # are applied in sequence. Registration order is otherwise whatever the
     # concurrent detector walk produced, so relying on it silently would be a
     # bug.
-    protected def each_spec_file(key : String, sorted : Bool = false, &block : String -> Nil) : Nil
+    protected def each_spec_file(key : Noir::LocatorKey(Array(String)), sorted : Bool = false, &block : String -> Nil) : Nil
       # No `is_a?(Array(String))` guard: `CodeLocator#all` is typed to return
       # `Array(String)`, so the copies of that check in the old analyzers were
       # always true and only read as though `all` might hand back something
@@ -75,7 +76,7 @@ module Analyzer::Specification
 
     # `each_spec_file` plus the `Details` almost every caller builds from
     # the path as its first statement.
-    protected def each_spec_file_with_details(key : String, &block : String, Details -> Nil) : Nil
+    protected def each_spec_file_with_details(key : Noir::LocatorKey(Array(String)), &block : String, Details -> Nil) : Nil
       each_spec_file(key) do |path|
         block.call(path, Details.new(PathInfo.new(path)))
       end

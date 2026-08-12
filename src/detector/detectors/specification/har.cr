@@ -21,7 +21,7 @@ module Detector::Specification
             data = HAR.from_string(file_contents)
             if data.version.to_s.includes? "1."
               locator = CodeLocator.instance
-              locator.push("har-path", filename)
+              locator.push(Noir::LocatorKeys::HAR_PATH, filename)
               return true
             end
           rescue e

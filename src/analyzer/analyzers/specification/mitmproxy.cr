@@ -14,7 +14,7 @@ module Analyzer::Specification
     LEGACY_LIST_MIN_MAJOR = 3_i64
 
     def analyze
-      each_spec_file("mitmproxy-path") do |path|
+      each_spec_file(Noir::LocatorKeys::MITMPROXY_PATH) do |path|
         bytes = read_binary(path)
         process_file(path, bytes)
       end

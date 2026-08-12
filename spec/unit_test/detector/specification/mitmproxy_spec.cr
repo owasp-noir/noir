@@ -38,9 +38,9 @@ describe "Detect mitmproxy flow" do
 
   it "registers the path in CodeLocator on a match" do
     locator = CodeLocator.instance
-    locator.clear "mitmproxy-path"
+    locator.clear Noir::LocatorKeys::MITMPROXY_PATH
     content = String.new(build_flow_bytes)
     instance.detect("flows/recon.flow", content)
-    locator.all("mitmproxy-path").should eq ["flows/recon.flow"]
+    locator.all(Noir::LocatorKeys::MITMPROXY_PATH).should eq ["flows/recon.flow"]
   end
 end

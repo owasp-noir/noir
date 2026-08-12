@@ -16,10 +16,10 @@ describe "Detect Nginx config" do
 
   it "detects nginx.conf with server/location blocks" do
     locator = CodeLocator.instance
-    locator.clear "nginx-spec"
+    locator.clear Noir::LocatorKeys::NGINX_SPEC
 
     instance.detect("nginx.conf", src).should be_true
-    locator.all("nginx-spec").should eq ["nginx.conf"]
+    locator.all(Noir::LocatorKeys::NGINX_SPEC).should eq ["nginx.conf"]
   end
 
   it "detects .conf fragments" do

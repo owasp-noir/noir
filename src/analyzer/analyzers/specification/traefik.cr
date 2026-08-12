@@ -12,7 +12,7 @@ module Analyzer::Specification
       # (a TOML and a YAML dynamic-config pair) is emitted once.
       seen = Set(String).new
 
-      each_spec_file_with_details("traefik-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::TRAEFIK_SPEC) do |path, details|
         content = read_file_content(path)
         if path.ends_with?(".toml")
           process_toml(content, details, seen)

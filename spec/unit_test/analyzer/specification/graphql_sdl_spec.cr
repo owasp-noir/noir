@@ -6,14 +6,14 @@ private def analyze_sdl(content : String, path : String? = nil)
   sdl_path = path || File.tempname("noir_graphql_sdl_", ".graphql")
   File.write(sdl_path, content)
   locator = CodeLocator.instance
-  locator.clear "graphql-sdl"
-  locator.push "graphql-sdl", sdl_path
+  locator.clear Noir::LocatorKeys::GRAPHQL_SDL
+  locator.push Noir::LocatorKeys::GRAPHQL_SDL, sdl_path
 
   options = create_test_options
   analyzer = Analyzer::Specification::GraphqlSdl.new options
   analyzer.analyze
 ensure
-  CodeLocator.instance.clear "graphql-sdl"
+  CodeLocator.instance.clear Noir::LocatorKeys::GRAPHQL_SDL
   File.delete(sdl_path) if sdl_path && File.exists?(sdl_path)
 end
 

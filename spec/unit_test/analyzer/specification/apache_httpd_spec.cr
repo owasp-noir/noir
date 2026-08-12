@@ -6,8 +6,8 @@ private def analyze_apache(content : String, ext = ".conf")
   path = File.tempname("apache", ext)
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "apache-httpd-spec"
-  locator.push "apache-httpd-spec", path
+  locator.clear Noir::LocatorKeys::APACHE_HTTPD_SPEC
+  locator.push Noir::LocatorKeys::APACHE_HTTPD_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::ApacheHttpd.new options

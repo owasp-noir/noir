@@ -12,7 +12,7 @@ module Detector::Specification
       return false unless file_contents.includes?("$version")
 
       locator = CodeLocator.instance
-      locator.push("smithy-spec", filename)
+      locator.push(Noir::LocatorKeys::SMITHY_SPEC, filename)
       true
     end
   end

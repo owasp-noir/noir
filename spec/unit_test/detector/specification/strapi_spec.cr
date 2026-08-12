@@ -135,13 +135,13 @@ describe "Detect Strapi" do
 
   it "registers schema and route paths under separate locator keys" do
     locator = CodeLocator.instance
-    locator.clear "strapi-schema"
-    locator.clear "strapi-routes"
+    locator.clear Noir::LocatorKeys::STRAPI_SCHEMA
+    locator.clear Noir::LocatorKeys::STRAPI_ROUTES
 
     instance.detect("src/api/article/content-types/article/schema.json", schema)
     instance.detect("src/api/article/routes/custom-article.ts", routes)
 
-    locator.all("strapi-schema").should eq(["src/api/article/content-types/article/schema.json"])
-    locator.all("strapi-routes").should eq(["src/api/article/routes/custom-article.ts"])
+    locator.all(Noir::LocatorKeys::STRAPI_SCHEMA).should eq(["src/api/article/content-types/article/schema.json"])
+    locator.all(Noir::LocatorKeys::STRAPI_ROUTES).should eq(["src/api/article/routes/custom-article.ts"])
   end
 end

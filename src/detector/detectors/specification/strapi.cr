@@ -68,7 +68,7 @@ module Detector::Specification
       return false unless info
       return false unless info["singularName"]?.try(&.as_s?) || info["pluralName"]?.try(&.as_s?)
 
-      CodeLocator.instance.push("strapi-schema", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::STRAPI_SCHEMA, filename)
       true
     end
 
@@ -77,7 +77,7 @@ module Detector::Specification
       custom = content_matches?(file_contents, ROUTE_MARKER) && content_matches?(file_contents, ROUTE_HANDLER)
       return false unless core_router || custom
 
-      CodeLocator.instance.push("strapi-routes", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::STRAPI_ROUTES, filename)
       true
     end
 

@@ -21,7 +21,7 @@ module Analyzer::Specification
     TOML_STRING_RE       = /"([^"]+)"/
 
     def analyze
-      each_spec_file_with_details("cloudflare-wrangler-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::CLOUDFLARE_WRANGLER_SPEC) do |path, details|
         content = read_file_content(path)
         if path.ends_with?(".toml")
           process_toml(content, details)

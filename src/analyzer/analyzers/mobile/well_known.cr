@@ -28,10 +28,10 @@ module Analyzer::Mobile
     def analyze
       locator = CodeLocator.instance
 
-      assetlinks = locator.all("android-assetlinks")
+      assetlinks = locator.all(Noir::LocatorKeys::ANDROID_ASSETLINKS)
       assetlinks.each { |path| parse_safely(path) { |json| parse_assetlinks(json, path) } }
 
-      aasa = locator.all("ios-aasa")
+      aasa = locator.all(Noir::LocatorKeys::IOS_AASA)
       aasa.each { |path| parse_safely(path) { |json| parse_aasa(json, path) } }
 
       @result

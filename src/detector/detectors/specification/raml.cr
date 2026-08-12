@@ -20,7 +20,7 @@ module Detector::Specification
           if valid_yaml?(file_contents)
             check = true
             locator = CodeLocator.instance
-            locator.push("raml-spec", filename)
+            locator.push(Noir::LocatorKeys::RAML_SPEC, filename)
           end
         end
       end

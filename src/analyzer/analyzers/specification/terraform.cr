@@ -44,7 +44,7 @@ module Analyzer::Specification
       # Group files by module directory. A REST resource and the method that
       # references it routinely live in different files of the same module.
       by_dir = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
-      each_spec_file("terraform-spec") do |path|
+      each_spec_file(Noir::LocatorKeys::TERRAFORM_SPEC) do |path|
         by_dir[File.dirname(path)] << path
       end
 

@@ -14,7 +14,7 @@ module Analyzer::Specification
     HOST_LINE          = /^[ \t-]*host:\s*(.*)$/
 
     def analyze
-      each_spec_file_with_details("k8s-ingress-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::K8S_INGRESS_SPEC) do |path, details|
         content = read_file_content(path)
         begin
           YAML.parse_all(content).each { |doc| process_doc(doc, details) }

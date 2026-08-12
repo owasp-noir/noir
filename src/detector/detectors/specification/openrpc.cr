@@ -19,7 +19,7 @@ module Detector::Specification
         if version.starts_with?("1.")
           check = true
           locator = CodeLocator.instance
-          locator.push("openrpc-json", filename)
+          locator.push(Noir::LocatorKeys::OPENRPC_JSON, filename)
         end
       rescue e
         logger.debug "OpenRPC JSON detection failed for #{filename}: #{e}"

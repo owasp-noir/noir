@@ -17,7 +17,7 @@ module Detector::Specification
       return false unless file_contents.includes?("<items") && file_contents.includes?("burpVersion=")
 
       locator = CodeLocator.instance
-      locator.push("burp-sitemap", filename)
+      locator.push(Noir::LocatorKeys::BURP_SITEMAP, filename)
       true
     end
   end

@@ -35,7 +35,7 @@ module Analyzer::Specification
     alias Operation = NamedTuple(parameters: Array(NamedTuple(name: String, type: String)), kind: String)
 
     def analyze
-      each_spec_file("odata-spec") do |path|
+      each_spec_file(Noir::LocatorKeys::ODATA_SPEC) do |path|
         content = read_file_content(path)
         parse_metadata(content, path)
       end

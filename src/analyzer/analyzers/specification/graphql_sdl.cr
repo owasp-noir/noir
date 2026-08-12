@@ -14,7 +14,7 @@ module Analyzer::Specification
     analyzer_for "graphql_sdl"
 
     def analyze
-      each_spec_file("graphql-sdl") do |sdl_file|
+      each_spec_file(Noir::LocatorKeys::GRAPHQL_SDL) do |sdl_file|
         content = read_file_content(sdl_file)
         GraphqlSdlParser.parse(content, sdl_file).each { |ep| @result << ep }
       end

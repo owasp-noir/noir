@@ -45,7 +45,7 @@ module Analyzer::Specification
     TAG_SOURCE = "directus_analyzer"
 
     def analyze
-      each_spec_file("directus-snapshot") do |path|
+      each_spec_file(Noir::LocatorKeys::DIRECTUS_SNAPSHOT) do |path|
         content = read_file_content(path)
         parse_snapshot(content, path)
       end

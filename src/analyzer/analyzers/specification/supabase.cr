@@ -38,15 +38,15 @@ module Analyzer::Specification
 
     def analyze
       # Nothing to apply the DDL to, so skip reading `config.toml` as well.
-      return @result if CodeLocator.instance.all("supabase-migration").empty?
+      return @result if CodeLocator.instance.all(Noir::LocatorKeys::SUPABASE_MIGRATION).empty?
 
-      exposed = exposed_schemas(CodeLocator.instance.all("supabase-config"))
+      exposed = exposed_schemas(CodeLocator.instance.all(Noir::LocatorKeys::SUPABASE_CONFIG))
 
       # Migration filenames are `<timestamp>_<name>.sql`, so lexical order
       # is chronological. Applying them in order is what makes a column
       # added in one file and dropped in another come out right.
       state = Noir::PostgresDdlParser::State.new
-      each_spec_file("supabase-migration", sorted: true) do |path|
+      each_spec_file(Noir::LocatorKeys::SUPABASE_MIGRATION, sorted: true) do |path|
         Noir::PostgresDdlParser.apply(read_file_content(path), path, state)
       end
 

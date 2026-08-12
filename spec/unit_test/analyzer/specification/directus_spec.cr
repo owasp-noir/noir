@@ -6,15 +6,15 @@ private def analyze_directus(content : String)
   path = File.tempname("snapshot", ".yaml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "directus-snapshot"
-  locator.push "directus-snapshot", path
+  locator.clear Noir::LocatorKeys::DIRECTUS_SNAPSHOT
+  locator.push Noir::LocatorKeys::DIRECTUS_SNAPSHOT, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Directus.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "directus-snapshot"
+  locator.clear Noir::LocatorKeys::DIRECTUS_SNAPSHOT
   File.delete(path) if path && File.exists?(path)
 end
 

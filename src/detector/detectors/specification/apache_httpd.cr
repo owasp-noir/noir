@@ -29,7 +29,7 @@ module Detector::Specification
       return false unless applicable?(filename)
       return false unless apache_shape?(file_contents)
 
-      CodeLocator.instance.push("apache-httpd-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::APACHE_HTTPD_SPEC, filename)
       true
     end
 

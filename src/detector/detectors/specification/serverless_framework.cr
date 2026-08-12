@@ -21,7 +21,7 @@ module Detector::Specification
         return false unless serverless_doc?(data)
       end
 
-      CodeLocator.instance.push("serverless-framework-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC, filename)
       true
     end
 

@@ -22,7 +22,7 @@ module Detector::Specification
       # CDK utility files that contain imports but no endpoint declarations.
       return false unless cdk_api_construct?(file_contents)
 
-      CodeLocator.instance.push("aws-cdk-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::AWS_CDK_SPEC, filename)
       true
     end
 

@@ -22,7 +22,7 @@ module Detector::Specification
       return false unless TYPE_MARKERS.any? { |m| file_contents.includes?(m) }
 
       locator = CodeLocator.instance
-      locator.push("mitmproxy-path", filename)
+      locator.push(Noir::LocatorKeys::MITMPROXY_PATH, filename)
       true
     end
   end

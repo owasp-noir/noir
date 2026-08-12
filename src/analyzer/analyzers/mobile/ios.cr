@@ -50,12 +50,12 @@ module Analyzer::Mobile
     def analyze
       locator = CodeLocator.instance
 
-      plists = locator.all("ios-info-plist")
+      plists = locator.all(Noir::LocatorKeys::IOS_INFO_PLIST)
       if plists.is_a?(Array(String))
         plists.each { |path| parse_safely(path) { |doc| parse_info_plist(doc, path) } }
       end
 
-      entitlements = locator.all("ios-entitlements")
+      entitlements = locator.all(Noir::LocatorKeys::IOS_ENTITLEMENTS)
       if entitlements.is_a?(Array(String))
         entitlements.each { |path| parse_safely(path) { |doc| parse_entitlements(doc, path) } }
       end

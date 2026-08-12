@@ -18,7 +18,7 @@ module Detector::Specification
       return false unless content_matches?(file_contents, REQUEST_LINE)
 
       locator = CodeLocator.instance
-      locator.push("http-file", filename)
+      locator.push(Noir::LocatorKeys::HTTP_FILE, filename)
       true
     end
   end

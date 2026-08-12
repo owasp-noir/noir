@@ -35,11 +35,11 @@ module Analyzer::Specification
     GRAPHQL_IDENTIFIER = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
     def analyze
-      each_spec_file("hasura-tables") do |path|
+      each_spec_file(Noir::LocatorKeys::HASURA_TABLES) do |path|
         parse_tables(read_file_content(path), path)
       end
 
-      each_spec_file("hasura-rest-endpoints") do |path|
+      each_spec_file(Noir::LocatorKeys::HASURA_REST_ENDPOINTS) do |path|
         parse_rest_endpoints(read_file_content(path), path)
       end
 

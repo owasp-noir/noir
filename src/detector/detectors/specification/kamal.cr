@@ -11,7 +11,7 @@ module Detector::Specification
       return false unless kamal_markers?(file_contents)
       return false unless kamal_config?(file_contents)
 
-      CodeLocator.instance.push("kamal-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::KAMAL_SPEC, filename)
       true
     end
 

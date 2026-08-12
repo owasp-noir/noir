@@ -38,9 +38,9 @@ describe "Detect Kong declarative config" do
       YAML
 
     locator = CodeLocator.instance
-    locator.clear "kong-spec"
+    locator.clear Noir::LocatorKeys::KONG_SPEC
     instance.detect("kong.yml", content)
-    locator.all("kong-spec").should eq(["kong.yml"])
+    locator.all(Noir::LocatorKeys::KONG_SPEC).should eq(["kong.yml"])
   end
 
   it "rejects unrelated yaml without kong markers" do

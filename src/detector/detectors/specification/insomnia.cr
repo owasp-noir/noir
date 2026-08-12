@@ -26,7 +26,7 @@ module Detector::Specification
           if type_field == "export" && data["__export_format"]?
             check = true
             locator = CodeLocator.instance
-            locator.push("insomnia-json", filename)
+            locator.push(Noir::LocatorKeys::INSOMNIA_JSON, filename)
           end
         rescue e
           logger.debug "Insomnia JSON detection failed for #{filename}: #{e}"
@@ -45,7 +45,7 @@ module Detector::Specification
              (type_field.starts_with?("collection.") || type_field.starts_with?("spec."))
             check = true
             locator = CodeLocator.instance
-            locator.push("insomnia-yaml", filename)
+            locator.push(Noir::LocatorKeys::INSOMNIA_YAML, filename)
           end
         rescue e
           logger.debug "Insomnia YAML detection failed for #{filename}: #{e}"

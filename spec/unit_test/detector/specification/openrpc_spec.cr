@@ -49,8 +49,8 @@ describe "Detect OpenRPC Docs" do
       JSON
 
     locator = CodeLocator.instance
-    locator.clear "openrpc-json"
+    locator.clear Noir::LocatorKeys::OPENRPC_JSON
     instance.detect("openrpc.json", content)
-    locator.all("openrpc-json").should eq(["openrpc.json"])
+    locator.all(Noir::LocatorKeys::OPENRPC_JSON).should eq(["openrpc.json"])
   end
 end

@@ -17,7 +17,7 @@ module Detector::Specification
       return false unless ingress_markers_present?(file_contents)
       return false unless ingress_document_present?(file_contents)
 
-      CodeLocator.instance.push("k8s-ingress-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::K8S_INGRESS_SPEC, filename)
       true
     end
 

@@ -35,7 +35,7 @@ module Detector::Specification
       return false unless root[YAML::Any.new("directus")]?
       return false unless collections_present?(root)
 
-      CodeLocator.instance.push("directus-snapshot", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::DIRECTUS_SNAPSHOT, filename)
       true
     end
 

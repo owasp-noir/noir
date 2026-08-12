@@ -6,8 +6,8 @@ private def analyze_vercel_config(content : String)
   path = File.tempname("vercel", ".json")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "vercel-spec"
-  locator.push "vercel-spec", path
+  locator.clear Noir::LocatorKeys::VERCEL_SPEC
+  locator.push Noir::LocatorKeys::VERCEL_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Vercel.new options

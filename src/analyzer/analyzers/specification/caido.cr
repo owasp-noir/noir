@@ -7,7 +7,7 @@ module Analyzer::Specification
     analyzer_for "caido"
 
     def analyze
-      each_spec_file_with_details("caido-json") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::CAIDO_JSON) do |path, details|
         content = read_file_content(path)
 
         data = JSON.parse(content)

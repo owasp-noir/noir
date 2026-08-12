@@ -13,7 +13,7 @@ module Analyzer::Specification
     record ApigwResource, name : String, path_part : String, parent : String?
 
     def analyze
-      each_spec_file_with_details("aws-cloudformation-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC) do |path, details|
         content = read_file_content(path)
         resources = parse_resources(path, content)
         next if resources.empty?

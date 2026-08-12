@@ -663,7 +663,7 @@ module Analyzer::Javascript
     end
 
     # Push prefix to CodeLocator with deduplication
-    private def push_prefix_to_locator(locator : CodeLocator, key : String, prefix : String, debug_msg : String)
+    private def push_prefix_to_locator(locator : CodeLocator, key : Noir::LocatorKey(Array(String)), prefix : String, debug_msg : String)
       unless locator.all(key).includes?(prefix)
         locator.push(key, prefix)
         @logger.debug debug_msg

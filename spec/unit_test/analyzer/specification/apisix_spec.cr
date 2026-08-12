@@ -4,8 +4,8 @@ require "../../../../src/analyzer/analyzers/specification/apisix"
 
 private def analyze_apisix(yaml_content : String? = nil, json_content : String? = nil) : Array(Endpoint)
   locator = CodeLocator.instance
-  locator.clear "apisix-yaml"
-  locator.clear "apisix-json"
+  locator.clear Noir::LocatorKeys::APISIX_YAML
+  locator.clear Noir::LocatorKeys::APISIX_JSON
 
   yaml_path = nil
   json_path = nil
@@ -13,13 +13,13 @@ private def analyze_apisix(yaml_content : String? = nil, json_content : String? 
   if yaml_content
     yaml_path = File.tempname("apisix", ".yaml")
     File.write(yaml_path, yaml_content)
-    locator.push "apisix-yaml", yaml_path
+    locator.push Noir::LocatorKeys::APISIX_YAML, yaml_path
   end
 
   if json_content
     json_path = File.tempname("apisix", ".json")
     File.write(json_path, json_content)
-    locator.push "apisix-json", json_path
+    locator.push Noir::LocatorKeys::APISIX_JSON, json_path
   end
 
   analyzer = Analyzer::Specification::Apisix.new(create_test_options)

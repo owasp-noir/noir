@@ -42,7 +42,7 @@ module Detector::Specification
                             (first.has_key?("is_tls") || first.has_key?("port"))
 
         locator = CodeLocator.instance
-        locator.push("caido-json", filename)
+        locator.push(Noir::LocatorKeys::CAIDO_JSON, filename)
         true
       rescue
         false

@@ -5,7 +5,7 @@ module Analyzer::Specification
     analyzer_for "kong"
 
     def analyze
-      each_spec_file_with_details("kong-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::KONG_SPEC) do |path, details|
         content = read_file_content(path)
         process_doc(YAML.parse(content), details)
       end

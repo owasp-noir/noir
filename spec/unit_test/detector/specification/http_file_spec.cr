@@ -54,8 +54,8 @@ describe "Detect HTTP/REST Client Files" do
     content = "POST https://api.example.com/orders\n"
 
     locator = CodeLocator.instance
-    locator.clear "http-file"
+    locator.clear Noir::LocatorKeys::HTTP_FILE
     instance.detect("orders.http", content)
-    locator.all("http-file").should eq(["orders.http"])
+    locator.all(Noir::LocatorKeys::HTTP_FILE).should eq(["orders.http"])
   end
 end

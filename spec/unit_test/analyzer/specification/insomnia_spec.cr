@@ -6,17 +6,17 @@ private def analyze_insomnia_json(content : String)
   path = File.tempname("insomnia", ".json")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
-  locator.push "insomnia-json", path
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
+  locator.push Noir::LocatorKeys::INSOMNIA_JSON, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Insomnia.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
   File.delete(path) if path && File.exists?(path)
 end
 
@@ -24,17 +24,17 @@ private def analyze_insomnia_yaml(content : String)
   path = File.tempname("insomnia", ".yaml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
-  locator.push "insomnia-yaml", path
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
+  locator.push Noir::LocatorKeys::INSOMNIA_YAML, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Insomnia.new options
   analyzer.analyze
 ensure
   locator = CodeLocator.instance
-  locator.clear "insomnia-json"
-  locator.clear "insomnia-yaml"
+  locator.clear Noir::LocatorKeys::INSOMNIA_JSON
+  locator.clear Noir::LocatorKeys::INSOMNIA_YAML
   File.delete(path) if path && File.exists?(path)
 end
 

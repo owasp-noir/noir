@@ -19,7 +19,7 @@ module Analyzer::Specification
       # Resolve it once per app root instead of per function.
       prefixes = {} of String => String
 
-      each_spec_file_with_details("azure-functions-spec") do |path, details|
+      each_spec_file_with_details(Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC) do |path, details|
         content = read_file_content(path)
         app_root = File.dirname(File.dirname(path))
         prefix = prefixes[app_root] ||= route_prefix_for(app_root)

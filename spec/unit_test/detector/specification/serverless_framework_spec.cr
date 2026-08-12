@@ -22,22 +22,22 @@ describe "Detect Serverless Framework config" do
 
   it "detects serverless.yml with service + provider + functions" do
     locator = CodeLocator.instance
-    locator.clear "serverless-framework-spec"
+    locator.clear Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC
 
     instance.detect("serverless.yml", yaml).should be_true
-    locator.all("serverless-framework-spec").should eq ["serverless.yml"]
+    locator.all(Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC).should eq ["serverless.yml"]
   end
 
   it "detects serverless.yaml" do
     locator = CodeLocator.instance
-    locator.clear "serverless-framework-spec"
+    locator.clear Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC
 
     instance.detect("serverless.yaml", yaml).should be_true
   end
 
   it "detects serverless.json shape" do
     locator = CodeLocator.instance
-    locator.clear "serverless-framework-spec"
+    locator.clear Noir::LocatorKeys::SERVERLESS_FRAMEWORK_SPEC
 
     json = %({"service":"my-api","provider":{"name":"aws"},"functions":{"a":{"handler":"x"}}})
     instance.detect("serverless.json", json).should be_true

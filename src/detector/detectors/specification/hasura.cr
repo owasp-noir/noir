@@ -73,7 +73,7 @@ module Detector::Specification
       end
       return false unless valid
 
-      CodeLocator.instance.push("hasura-rest-endpoints", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::HASURA_REST_ENDPOINTS, filename)
       true
     end
 
@@ -85,7 +85,7 @@ module Detector::Specification
       return false unless data
       return false unless table_document?(data)
 
-      CodeLocator.instance.push("hasura-tables", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::HASURA_TABLES, filename)
       true
     end
 

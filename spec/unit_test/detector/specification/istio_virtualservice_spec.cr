@@ -23,10 +23,10 @@ describe "Detect Istio VirtualService manifest" do
 
   it "detects VirtualService manifest" do
     locator = CodeLocator.instance
-    locator.clear "istio-virtualservice-spec"
+    locator.clear Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC
 
     instance.detect("mesh/api.yaml", vs).should be_true
-    locator.all("istio-virtualservice-spec").should eq ["mesh/api.yaml"]
+    locator.all(Noir::LocatorKeys::ISTIO_VIRTUALSERVICE_SPEC).should eq ["mesh/api.yaml"]
   end
 
   it "detects a VirtualService manifest with a quoted kind" do

@@ -10,7 +10,7 @@ module Analyzer::Specification
     STATIC_EXTENSIONS = Set{".css", ".js", ".gz", ".br", ".ico", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".woff", ".woff2", ".ttf", ".eot", ".map"}
 
     def analyze
-      each_spec_file("apache-httpd-spec") do |path|
+      each_spec_file(Noir::LocatorKeys::APACHE_HTTPD_SPEC) do |path|
         content = read_file_content(path)
         process_content(content, path)
       end

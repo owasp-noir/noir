@@ -16,7 +16,7 @@ module Detector::Specification
       return false unless file_contents.includes?("httpTrigger")
       return false unless valid_json?(file_contents)
 
-      CodeLocator.instance.push("azure-functions-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC, filename)
       true
     end
 

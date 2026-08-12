@@ -6,8 +6,8 @@ private def analyze_gateway_api(content : String)
   path = File.tempname("httproute", ".yaml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "k8s-gateway-api-spec"
-  locator.push "k8s-gateway-api-spec", path
+  locator.clear Noir::LocatorKeys::K8S_GATEWAY_API_SPEC
+  locator.push Noir::LocatorKeys::K8S_GATEWAY_API_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::K8sGatewayApi.new options

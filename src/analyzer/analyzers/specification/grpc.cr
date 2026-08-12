@@ -11,7 +11,7 @@ module Analyzer::Specification
       # `build_message_registry` reads and parses every `.proto` in the
       # codebase, so bail out before it when the detector registered no
       # service definitions to resolve against.
-      return @result if CodeLocator.instance.all("grpc-proto").empty?
+      return @result if CodeLocator.instance.all(Noir::LocatorKeys::GRPC_PROTO).empty?
 
       # Request/response messages are frequently defined in a separate
       # (imported) `.proto`, so resolving params from the service file alone
@@ -19,7 +19,7 @@ module Analyzer::Specification
       # both simple and package-qualified name, and resolve against it.
       registry = build_message_registry
 
-      each_spec_file("grpc-proto") do |proto_file|
+      each_spec_file(Noir::LocatorKeys::GRPC_PROTO) do |proto_file|
         content = read_file_content(proto_file)
         parse_proto(content, proto_file, registry)
       end

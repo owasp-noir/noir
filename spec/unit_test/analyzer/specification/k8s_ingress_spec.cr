@@ -6,8 +6,8 @@ private def analyze_ingress(content : String)
   path = File.tempname("ingress", ".yaml")
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "k8s-ingress-spec"
-  locator.push "k8s-ingress-spec", path
+  locator.clear Noir::LocatorKeys::K8S_INGRESS_SPEC
+  locator.push Noir::LocatorKeys::K8S_INGRESS_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::K8sIngress.new options

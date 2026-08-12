@@ -19,24 +19,24 @@ describe "Detect Envoy route config" do
 
   it "detects envoy yaml route config" do
     locator = CodeLocator.instance
-    locator.clear "envoy-yaml"
+    locator.clear Noir::LocatorKeys::ENVOY_YAML
 
     instance.detect("envoy.yaml", yaml).should be_true
-    locator.all("envoy-yaml").should eq ["envoy.yaml"]
+    locator.all(Noir::LocatorKeys::ENVOY_YAML).should eq ["envoy.yaml"]
   end
 
   it "detects envoy json route config" do
     locator = CodeLocator.instance
-    locator.clear "envoy-json"
+    locator.clear Noir::LocatorKeys::ENVOY_JSON
 
     json = %({"virtual_hosts":[{"name":"backend","domains":["*"]}]})
     instance.detect("envoy.json", json).should be_true
-    locator.all("envoy-json").should eq ["envoy.json"]
+    locator.all(Noir::LocatorKeys::ENVOY_JSON).should eq ["envoy.json"]
   end
 
   it "detects a bootstrap config that nests route_config under a listener filter" do
     locator = CodeLocator.instance
-    locator.clear "envoy-yaml"
+    locator.clear Noir::LocatorKeys::ENVOY_YAML
 
     bootstrap = <<-YAML
       static_resources:
@@ -56,7 +56,7 @@ describe "Detect Envoy route config" do
       YAML
 
     instance.detect("envoy.yaml", bootstrap).should be_true
-    locator.all("envoy-yaml").should eq ["envoy.yaml"]
+    locator.all(Noir::LocatorKeys::ENVOY_YAML).should eq ["envoy.yaml"]
   end
 
   it "rejects yaml without virtual_hosts/domains markers" do

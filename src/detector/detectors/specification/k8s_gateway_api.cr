@@ -24,7 +24,7 @@ module Detector::Specification
       return false unless route_present?(file_contents)
       return false unless valid_yaml_documents?(file_contents)
 
-      CodeLocator.instance.push("k8s-gateway-api-spec", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::K8S_GATEWAY_API_SPEC, filename)
       true
     end
 

@@ -314,11 +314,11 @@ module Analyzer::Specification
     end
 
     def analyze
-      each_spec_file("swagger-json") do |path|
+      each_spec_file(Noir::LocatorKeys::SWAGGER_JSON) do |path|
         process_json(path)
       end
 
-      each_spec_file("swagger-yaml") do |path|
+      each_spec_file(Noir::LocatorKeys::SWAGGER_YAML) do |path|
         process_yaml(path)
       end
 

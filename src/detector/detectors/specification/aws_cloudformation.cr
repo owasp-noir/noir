@@ -23,7 +23,7 @@ module Detector::Specification
                    detect_yaml(file_contents)
                  end
 
-      CodeLocator.instance.push("aws-cloudformation-spec", filename) if detected
+      CodeLocator.instance.push(Noir::LocatorKeys::AWS_CLOUDFORMATION_SPEC, filename) if detected
       detected
     end
 

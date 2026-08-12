@@ -9,10 +9,10 @@ describe "Detect Azure Functions function.json" do
   it "detects function.json with httpTrigger binding" do
     src = %({"bindings":[{"type":"httpTrigger","direction":"in","methods":["get"]}]})
     locator = CodeLocator.instance
-    locator.clear "azure-functions-spec"
+    locator.clear Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC
 
     instance.detect("MyFunc/function.json", src).should be_true
-    locator.all("azure-functions-spec").should eq ["MyFunc/function.json"]
+    locator.all(Noir::LocatorKeys::AZURE_FUNCTIONS_SPEC).should eq ["MyFunc/function.json"]
   end
 
   it "rejects function.json without httpTrigger" do

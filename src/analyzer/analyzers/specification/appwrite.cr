@@ -31,7 +31,7 @@ module Analyzer::Specification
     TAG_SOURCE = "appwrite_analyzer"
 
     def analyze
-      each_spec_file("appwrite-config") do |path|
+      each_spec_file(Noir::LocatorKeys::APPWRITE_CONFIG) do |path|
         content = read_file_content(path)
         parse_config(content, path)
       end

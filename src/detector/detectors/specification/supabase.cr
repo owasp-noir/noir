@@ -38,7 +38,7 @@ module Detector::Specification
       path = normalize(filename)
 
       if File.basename(path) == "config.toml"
-        CodeLocator.instance.push("supabase-config", filename)
+        CodeLocator.instance.push(Noir::LocatorKeys::SUPABASE_CONFIG, filename)
         return true
       end
 
@@ -48,7 +48,7 @@ module Detector::Specification
         return false unless content_matches?(file_contents, SUPABASE_FINGERPRINT)
       end
 
-      CodeLocator.instance.push("supabase-migration", filename)
+      CodeLocator.instance.push(Noir::LocatorKeys::SUPABASE_MIGRATION, filename)
       true
     end
 

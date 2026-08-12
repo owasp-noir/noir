@@ -13,7 +13,7 @@ module Detector::Specification
       return false unless content_matches?(file_contents, BLOCK_HEADER)
 
       locator = CodeLocator.instance
-      locator.push("bruno-bru", filename)
+      locator.push(Noir::LocatorKeys::BRUNO_BRU, filename)
       true
     end
   end

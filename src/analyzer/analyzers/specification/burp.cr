@@ -12,7 +12,7 @@ module Analyzer::Specification
     analyzer_for "burp"
 
     def analyze
-      each_spec_file("burp-sitemap") do |path|
+      each_spec_file(Noir::LocatorKeys::BURP_SITEMAP) do |path|
         content = read_file_content(path)
         process_file(content, path)
       end

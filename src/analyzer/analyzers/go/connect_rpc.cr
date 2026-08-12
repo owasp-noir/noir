@@ -38,7 +38,7 @@ module Analyzer::Go
 
     def analyze
       locator = CodeLocator.instance
-      proto_files = locator.all("grpc-proto")
+      proto_files = locator.all(Noir::LocatorKeys::GRPC_PROTO)
 
       unless proto_files.empty?
         service_mounts = discover_service_mounts

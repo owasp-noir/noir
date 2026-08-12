@@ -6,8 +6,8 @@ private def analyze_wrangler(content : String, ext = ".toml")
   path = File.tempname("wrangler", ext)
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "cloudflare-wrangler-spec"
-  locator.push "cloudflare-wrangler-spec", path
+  locator.clear Noir::LocatorKeys::CLOUDFLARE_WRANGLER_SPEC
+  locator.push Noir::LocatorKeys::CLOUDFLARE_WRANGLER_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::CloudflareWrangler.new options

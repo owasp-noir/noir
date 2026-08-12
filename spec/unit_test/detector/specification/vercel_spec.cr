@@ -36,9 +36,9 @@ describe "Detect Vercel config" do
 
   it "registers path in code_locator" do
     locator = CodeLocator.instance
-    locator.clear "vercel-spec"
+    locator.clear Noir::LocatorKeys::VERCEL_SPEC
 
     instance.detect("vercel.json", %({"redirects":[{"source":"/old","destination":"/new"}]}))
-    locator.all("vercel-spec").should eq(["vercel.json"])
+    locator.all(Noir::LocatorKeys::VERCEL_SPEC).should eq(["vercel.json"])
   end
 end

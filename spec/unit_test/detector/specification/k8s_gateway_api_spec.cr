@@ -21,10 +21,10 @@ describe "Detect Kubernetes Gateway API manifests" do
 
   it "detects HTTPRoute manifest" do
     locator = CodeLocator.instance
-    locator.clear "k8s-gateway-api-spec"
+    locator.clear Noir::LocatorKeys::K8S_GATEWAY_API_SPEC
 
     instance.detect("routes/api.yaml", httproute).should be_true
-    locator.all("k8s-gateway-api-spec").should eq ["routes/api.yaml"]
+    locator.all(Noir::LocatorKeys::K8S_GATEWAY_API_SPEC).should eq ["routes/api.yaml"]
   end
 
   it "detects an HTTPRoute manifest with a quoted kind" do

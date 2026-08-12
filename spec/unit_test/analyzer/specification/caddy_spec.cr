@@ -8,8 +8,8 @@ private def analyze_caddy(content : String, ext = "")
   path = name
   File.write(path, content)
   locator = CodeLocator.instance
-  locator.clear "caddy-spec"
-  locator.push "caddy-spec", path
+  locator.clear Noir::LocatorKeys::CADDY_SPEC
+  locator.push Noir::LocatorKeys::CADDY_SPEC, path
 
   options = create_test_options
   analyzer = Analyzer::Specification::Caddy.new options

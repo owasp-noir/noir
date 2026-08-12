@@ -24,7 +24,7 @@ module Detector::Specification
                    false
                  end
 
-      CodeLocator.instance.push("cloudflare-wrangler-spec", filename) if detected
+      CodeLocator.instance.push(Noir::LocatorKeys::CLOUDFLARE_WRANGLER_SPEC, filename) if detected
       detected
     end
 

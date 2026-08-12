@@ -62,8 +62,8 @@ describe "Detect gRPC" do
   it "registers the path in code_locator" do
     content = "service S { rpc M(A) returns (B); }"
     locator = CodeLocator.instance
-    locator.clear "grpc-proto"
+    locator.clear Noir::LocatorKeys::GRPC_PROTO
     instance.detect("svc.proto", content)
-    locator.all("grpc-proto").should eq(["svc.proto"])
+    locator.all(Noir::LocatorKeys::GRPC_PROTO).should eq(["svc.proto"])
   end
 end
