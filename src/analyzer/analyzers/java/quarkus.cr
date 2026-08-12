@@ -4,6 +4,7 @@ require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 require "yaml"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   # Quarkus is JAX-RS-flavoured, so this analyzer just drives the
@@ -78,7 +79,7 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
             line = route.line + 1
             details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint = Endpoint.new(Helper.join_paths(configured_base_path, route.path), route.verb, route.params, details)
+            endpoint = Endpoint.new(Noir::URLPath.join_trimmed(configured_base_path, route.path), route.verb, route.params, details)
             endpoint.protocol = route.protocol
             route.callees.each do |name, callee_line|
               endpoint.push_callee(Callee.new(name, path: route.file_path || path, line: callee_line))
@@ -249,7 +250,7 @@ module Analyzer::Java
                                          application_base_path : String) : String
       config = configs[project_root_for(path)]? || QuarkusPathConfig.new
       rest_base = application_base_path.empty? ? config.rest_path : application_base_path
-      Helper.join_paths(config.http_root_path, rest_base)
+      Noir::URLPath.join_trimmed(config.http_root_path, rest_base)
     end
 
     private def project_root_for(path : String) : String
@@ -282,13 +283,13 @@ module Analyzer::Java
         next if relative_path.empty?
 
         details = Details.new(PathInfo.new(file))
-        endpoint_path = Helper.join_paths(config.http_root_path, "/#{relative_path}")
+        endpoint_path = Noir::URLPath.join_trimmed(config.http_root_path, "/#{relative_path}")
         endpoints << Endpoint.new(endpoint_path, "GET", details)
 
         if File.basename(relative_path) == config.static_index_page
           directory = File.dirname(relative_path)
           directory_path = directory == "." ? "/" : "/#{directory}/"
-          index_endpoint_path = Helper.join_paths(config.http_root_path, directory_path)
+          index_endpoint_path = Noir::URLPath.join_trimmed(config.http_root_path, directory_path)
           next if endpoints.any? { |endpoint| endpoint.url == index_endpoint_path && endpoint.method == "GET" }
 
           endpoints << Endpoint.new(index_endpoint_path, "GET", details)
@@ -337,7 +338,7 @@ module Analyzer::Java
         next if route_path.nil?
 
         base_path = route_bases.find { |base| offset >= base.start_offset && offset <= base.end_offset }.try(&.path) || ""
-        endpoint_path = Helper.join_paths(http_root_path, Helper.join_paths(base_path, route_path))
+        endpoint_path = Noir::URLPath.join_trimmed(http_root_path, Noir::URLPath.join_trimmed(base_path, route_path))
         line = content[0...offset].count('\n') + 1
         details = Details.new(PathInfo.new(path, line))
         params = reactive_route_params(content, end_offset, endpoint_path)

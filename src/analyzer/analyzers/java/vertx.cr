@@ -3,6 +3,7 @@ require "../../engines/java_engine"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_route_extractor_ts"
 require "wait_group"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   class Vertx < Analyzer
@@ -110,7 +111,7 @@ module Analyzer::Java
                       next unless child_routes
 
                       child_routes.each do |child|
-                        endpoint = Helper.join_paths(mount.endpoint, child.endpoint)
+                        endpoint = Noir::URLPath.join_trimmed(mount.endpoint, child.endpoint)
                         found = build_endpoint(endpoint, child.method, details)
                         attach_query_params(found, query_params_by_route, child.method, child.endpoint)
                         attach_callees(found, callees_by_route, child.method, child.endpoint)

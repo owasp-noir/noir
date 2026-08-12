@@ -3,6 +3,7 @@ require "../../engines/java_engine"
 require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 require "xml"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   class JaxRs < Analyzer
@@ -61,7 +62,7 @@ module Analyzer::Java
           Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
             line = route.line + 1
             details = Details.new(PathInfo.new(route.file_path || path, line))
-            endpoint_path = route.protocol == "ws" ? route.path : Helper.join_paths(application_base_path, route.path)
+            endpoint_path = route.protocol == "ws" ? route.path : Noir::URLPath.join_trimmed(application_base_path, route.path)
             endpoint = Endpoint.new(endpoint_path, route.verb, route.params, details)
             endpoint.protocol = route.protocol
             route.callees.each do |name, callee_line|

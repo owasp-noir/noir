@@ -241,7 +241,7 @@ module Noir
         prefixes = [] of String
         outer_prefixes.each do |outer_prefix|
           class_prefixes.each do |class_prefix|
-            prefixes << join_paths(outer_prefix, class_prefix)
+            prefixes << Noir::URLPath.join_absorbing(outer_prefix, class_prefix)
           end
         end
         verbs = (outer_verbs + mapping.verbs).uniq
@@ -558,7 +558,7 @@ module Noir
         # four routes.
         paths.each do |path|
           class_prefixes.each do |class_prefix|
-            full = join_paths(class_prefix, path)
+            full = Noir::URLPath.join_absorbing(class_prefix, path)
             verbs.each do |verb|
               routes << Route.new(verb, full, class_name, method_name, ann_line, route_params)
             end
@@ -1290,12 +1290,6 @@ module Noir
       end
 
       nil
-    end
-
-    # Join a class prefix and a method path under Spring's
-    # mapping-composition rule — see `Noir::URLPath.join_absorbing`.
-    private def join_paths(prefix : String, path : String) : String
-      Noir::URLPath.join_absorbing(prefix, path)
     end
   end
 end

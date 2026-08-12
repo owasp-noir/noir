@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/micronaut_extractor_ts"
 require "yaml"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   class Micronaut < Analyzer
@@ -61,7 +62,7 @@ module Analyzer::Java
 
       path_configs.each do |_project_root, config|
         config.static_resource_mappings.each do |mapping|
-          @result << Endpoint.new(Helper.join_paths(config.context_path, mapping), "GET")
+          @result << Endpoint.new(Noir::URLPath.join_trimmed(config.context_path, mapping), "GET")
         end
       end
 
@@ -83,7 +84,7 @@ module Analyzer::Java
         Noir::TreeSitterMicronautExtractor.extract_routes(content, dto_index, include_callees: include_callee).each do |route|
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
-          endpoint = Endpoint.new(Helper.join_paths(base_path, route.path), route.verb, route.params, details)
+          endpoint = Endpoint.new(Noir::URLPath.join_trimmed(base_path, route.path), route.verb, route.params, details)
           endpoint.protocol = route.protocol
           route.callees.each do |(name, callee_line)|
             endpoint.push_callee(Callee.new(name, path: path, line: callee_line))
@@ -96,9 +97,9 @@ module Analyzer::Java
             visible_interface_routes(interface_route_index, path, package_name, imports, interface_name).each do |entry|
               entry_route = entry.route
               implementation.paths.each do |implementation_path|
-                inherited_path = Helper.join_paths(implementation_path, entry_route.path)
+                inherited_path = Noir::URLPath.join_trimmed(implementation_path, entry_route.path)
                 details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
-                endpoint = Endpoint.new(Helper.join_paths(base_path, inherited_path), entry_route.verb, entry_route.params, details)
+                endpoint = Endpoint.new(Noir::URLPath.join_trimmed(base_path, inherited_path), entry_route.verb, entry_route.params, details)
                 endpoint.protocol = entry_route.protocol
                 entry_route.callees.each do |name, callee_line|
                   endpoint.push_callee(Callee.new(name, path: entry.path, line: callee_line))

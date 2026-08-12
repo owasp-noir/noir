@@ -4,6 +4,7 @@ require "../../../ext/tree_sitter/tree_sitter"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_route_extractor_ts"
+require "../../../utils/url_path"
 
 module Analyzer::Java
   class Armeria < Analyzer
@@ -327,7 +328,7 @@ module Analyzer::Java
         if !service_routes.empty? && (method_name == "service" || method_name == "serviceUnder")
           base_path = method_name == "serviceUnder" ? endpoint : ""
           service_routes.each do |entry|
-            emit_builder_route(entry[0], Helper.join_paths(base_path, entry[1]), details, emitted)
+            emit_builder_route(entry[0], Noir::URLPath.join_trimmed(base_path, entry[1]), details, emitted)
           end
           next
         end
@@ -848,7 +849,7 @@ module Analyzer::Java
       prefixes = [] of String
       registration_prefixes.each do |registration_prefix|
         class_prefixes.each do |class_prefix|
-          prefixes << Helper.join_paths(registration_prefix, class_prefix)
+          prefixes << Noir::URLPath.join_trimmed(registration_prefix, class_prefix)
         end
       end
       prefixes.uniq
@@ -906,7 +907,7 @@ module Analyzer::Java
 
         prefixes.each do |prefix|
           route_paths.each do |route_path|
-            url_path = Helper.join_paths(prefix, route_path)
+            url_path = Noir::URLPath.join_trimmed(prefix, route_path)
             parameters = collect_method_params(method, content, url_path, constants, current_class, dto_index)
             endpoint = Endpoint.new(url_path, http_method, parameters, details)
             collect_method_callees(method, content, path).each do |(name, callee_path, callee_line)|

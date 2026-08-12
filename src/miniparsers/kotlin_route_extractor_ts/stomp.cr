@@ -60,7 +60,7 @@ module Noir
         prefixes = [] of String
         outer_prefixes.each do |outer_prefix|
           class_paths.each do |class_path|
-            prefixes << join_paths(outer_prefix, class_path)
+            prefixes << Noir::URLPath.join_absorbing(outer_prefix, class_path)
           end
         end
 
@@ -135,7 +135,7 @@ module Noir
           class_prefixes.each do |class_prefix|
             paths.each do |path|
               routes << Route.new(
-                verb, join_paths(application_prefix, join_paths(class_prefix, path)), class_name, method_name, ann_line,
+                verb, Noir::URLPath.join_absorbing(application_prefix, Noir::URLPath.join_absorbing(class_prefix, path)), class_name, method_name, ann_line,
                 messaging_destinations: destinations
               )
             end
