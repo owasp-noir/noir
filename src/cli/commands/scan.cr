@@ -406,6 +406,12 @@ module Noir::CLI::ScanCommand
       app.report
     else
       app.logger.info "Diffing base and diff codebases."
+      # Kept even though `LocatorKeys.reset` now runs at the top of each
+      # phase: this is a real codebase boundary, and `clear_all` is the only
+      # thing that also drops `Process`-lifetime slots a library caller
+      # declared. It does not reset `scan_base_paths` — `NoirRunner#detect`
+      # re-publishes those before anything walks a file, which is why the
+      # first codebase's roots have never been observable here.
       locator = CodeLocator.instance
       locator.clear_all
       app_diff.detect

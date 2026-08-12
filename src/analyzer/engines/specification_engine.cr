@@ -34,14 +34,19 @@ module Analyzer::Specification
     # Yield every registered path for `key`, skipping paths that no longer
     # resolve and containing per-file failures.
     #
-    # The `File.exists?` check is load-bearing, not a leftover. Unlike the
-    # language engines — whose paths come from the extension index rebuilt
-    # per scan — these keys are never cleared at the start of a scan
-    # (`detect_techs` clears only `file_map` and the mobile keys, and
-    # `clear_all` runs only between the two halves of a `--diff` run). A
-    # second scan in the same process therefore still sees the first
-    # scan's registrations, and dropping the check would turn stale
-    # entries into read errors.
+    # The `File.exists?` check is load-bearing, not a leftover — but not for
+    # the reason it used to be. It once compensated for these keys never
+    # being cleared: a second scan in the same process saw the first scan's
+    # registrations, and this guard was all that stopped them being read.
+    # `LocatorKeys.reset` now drops them at the top of every detect pass, so
+    # that is no longer what it is for.
+    #
+    # What remains: the detect→analyze window is real wall-clock time on a
+    # large tree, and a file can be deleted or a build directory swept
+    # inside it. Library callers driving `analysis_endpoints` directly, with
+    # their own `Process`-lifetime keys, get no automatic reset by design.
+    # And it is the containment boundary that keeps one vanished file from
+    # becoming a logged read error in each of the 45 spec analyzers.
     #
     # Failures are contained per file: a malformed document is logged and
     # skipped so the remaining files for that analyzer still produce

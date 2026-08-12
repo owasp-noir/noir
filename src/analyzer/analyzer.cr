@@ -1,6 +1,7 @@
 require "./analyzers/**"
 require "./analyzers/file_analyzers/*"
 require "../miniparsers/extraction_result_cache"
+require "../models/locator_keys"
 require "../techs/techs"
 
 def initialize_analyzers(logger : NoirLogger)
@@ -87,6 +88,11 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # Drop process-wide extraction memos from any previous scan (diff mode
   # / repeated library use) so fingerprints cannot serve stale tables.
   Noir::ExtractionResultCache.clear_all
+
+  # Same reasoning, for the locator slots written and read inside one
+  # analysis pass (the Express router prefixes). Detector-written keys are
+  # deliberately NOT cleared here — this pass is what drains them.
+  Noir::LocatorKeys.reset(Noir::LocatorKey::Lifecycle::AnalyzeScoped)
 
   analyzer = initialize_analyzers logger
 
