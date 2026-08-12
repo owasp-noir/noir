@@ -84,136 +84,13 @@ private def process_override_flag(
   end
 end
 
-def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
-  args = ARGV.dup
-  filtered = [] of String
-  i = 0
-  override_flags = {
-    "--override-analyze-prompt"        => "override_analyze_prompt",
-    "--override-llm-optimize-prompt"   => "override_llm_optimize_prompt",
-    "--override-bundle-analyze-prompt" => "override_bundle_analyze_prompt",
-    "--override-filter-prompt"         => "override_filter_prompt",
-  }
-
-  while i < args.size
-    arg = args[i]
-    if override_flags.has_key?(arg)
-      i = process_override_flag(arg, override_flags[arg], noir_options, args, i)
-    else
-      filtered << arg
-      i += 1
-    end
-  end
-  filtered = normalize_ai_context_flag(filtered)
-  filtered = extract_legacy_aliases(filtered, noir_options)
-  filtered
-end
-
-# Silently translate v0 flag spellings to their v1 storage. Keeping the
-# work here (instead of `parser.on "--include-path"`) means the legacy
-# names no longer clutter `noir scan -h`, while every v0 script keeps
-# working untouched in v1.x.
-LEGACY_PVALUE_TARGETS = {
-  "--set-pvalue"        => "set_pvalue",
-  "--set-pvalue-header" => "set_pvalue_header",
-  "--set-pvalue-cookie" => "set_pvalue_cookie",
-  "--set-pvalue-query"  => "set_pvalue_query",
-  "--set-pvalue-form"   => "set_pvalue_form",
-  "--set-pvalue-json"   => "set_pvalue_json",
-  "--set-pvalue-path"   => "set_pvalue_path",
-}
-
-LEGACY_INCLUDE_TARGETS = {
-  "--include-path"   => "include_path",
-  "--include-techs"  => "include_techs",
-  "--include-callee" => "include_callee",
-}
-
-def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAML::Any)) : Array(String)
-  result = [] of String
-  i = 0
-  while i < args.size
-    arg = args[i]
-    if key = LEGACY_INCLUDE_TARGETS[arg]?
-      noir_options[key] = YAML::Any.new(true)
-      i += 1
-    elsif pvalue_key = LEGACY_PVALUE_TARGETS[arg]?
-      if i + 1 >= args.size
-        STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:red)
-        exit(1)
-      end
-      append_to_yaml_array(noir_options, pvalue_key, args[i + 1])
-      i += 2
-    else
-      result << arg
-      i += 1
-    end
-  end
-  result
-end
-
-# `--ai-context` accepts an optional comma-separated feature list. Crystal's
-# OptionParser cannot express "optional positional value", so we rewrite
-# the few well-defined ambiguous forms upfront:
-#
-#   --ai-context                 → --ai-context=         (bare, all features)
-#   --ai-context=guards,sinks    → unchanged             (explicit value)
-#   --ai-context guards,sinks    → --ai-context=guards,sinks (heuristic)
-#   --ai-context ./app           → --ai-context=         (next token is a path)
-#
-# The heuristic for "is the next token a feature list?": lowercase words
-# joined by commas, where either (a) there's more than one comma-separated
-# word, or (b) the single word matches the fixed vocabulary below exactly.
-# A real filesystem path essentially never contains a literal comma, so
-# any multi-word comma list — typo'd feature names included — is routed
-# to `--ai-context=...` and left for the vocabulary check in
-# `apply_ai_context` to reject with a precise "unknown feature" error,
-# rather than silently falling through to "Base path does not exist:
-# <the typo>". A single bare word still has to match a known feature
-# exactly, since that shape is genuinely ambiguous with a real one-word
-# directory name (`noir scan --ai-context myapp` must keep scanning `myapp`).
-# Both this and the flag's own validator used to spell the vocabulary out
-# by hand, and both omitted `sources`.
-AI_CONTEXT_FEATURES = NoirAIContext::ACCEPTED_FEATURES
-
-def normalize_ai_context_flag(args : Array(String)) : Array(String)
-  result = [] of String
-  i = 0
-  while i < args.size
-    arg = args[i]
-    if arg == "--ai-context"
-      if i + 1 < args.size && ai_context_feature_list?(args[i + 1])
-        # Greedily absorb space-separated continuations of a comma list:
-        # `--ai-context guards, sinks` shell-splits into "guards," + "sinks",
-        # and without this the trailing "sinks" was mistaken for a positional
-        # scan path ("Base path does not exist: sinks").
-        features = [args[i + 1]]
-        j = i + 2
-        while features.last.ends_with?(",") && j < args.size && ai_context_feature_list?(args[j])
-          features << args[j]
-          j += 1
-        end
-        result << "--ai-context=#{features.join.rstrip(",")}"
-        i = j
-      else
-        result << "--ai-context="
-        i += 1
-      end
-    else
-      result << arg
-      i += 1
-    end
-  end
-  result
-end
-
 private def ai_context_feature_list?(token : String) : Bool
   return false if token.starts_with?("-")
   return false unless token.matches?(/\A[a-z,]+\z/)
   tokens = token.split(',').reject(&.empty?)
   return false if tokens.empty?
   return true if tokens.size > 1
-  AI_CONTEXT_FEATURES.includes?(tokens.first)
+  Noir::OptionsParsing::AI_CONTEXT_FEATURES.includes?(tokens.first)
 end
 
 private def base_help : String
@@ -242,6 +119,229 @@ private def base_help : String
     HELP
 end
 
+# CLI option parsing: the legacy-alias rewrites, the `--set-pvalue` /
+# `--include` / `--ai-context` target tables, and the helpers that apply
+# them to the options hash.
+#
+# These were eight top-level `def`s and five SCREAMING constants leaking
+# into every compilation unit — `INCLUDE_TARGETS` and `AI_CONTEXT_FEATURES`
+# under names generic enough to collide. `run_options_parser` stays
+# top-level: it is the CLI's entry point, same as `detect_techs` and
+# `analysis_endpoints` on the scan side.
+module Noir::OptionsParsing
+  extend self
+
+  def extract_hidden_prompt_flags(noir_options : Hash(String, YAML::Any)) : Array(String)
+    args = ARGV.dup
+    filtered = [] of String
+    i = 0
+    override_flags = {
+      "--override-analyze-prompt"        => "override_analyze_prompt",
+      "--override-llm-optimize-prompt"   => "override_llm_optimize_prompt",
+      "--override-bundle-analyze-prompt" => "override_bundle_analyze_prompt",
+      "--override-filter-prompt"         => "override_filter_prompt",
+    }
+
+    while i < args.size
+      arg = args[i]
+      if override_flags.has_key?(arg)
+        i = process_override_flag(arg, override_flags[arg], noir_options, args, i)
+      else
+        filtered << arg
+        i += 1
+      end
+    end
+    filtered = normalize_ai_context_flag(filtered)
+    filtered = extract_legacy_aliases(filtered, noir_options)
+    filtered
+  end
+
+  # Silently translate v0 flag spellings to their v1 storage. Keeping the
+  # work here (instead of `parser.on "--include-path"`) means the legacy
+  # names no longer clutter `noir scan -h`, while every v0 script keeps
+  # working untouched in v1.x.
+  LEGACY_PVALUE_TARGETS = {
+    "--set-pvalue"        => "set_pvalue",
+    "--set-pvalue-header" => "set_pvalue_header",
+    "--set-pvalue-cookie" => "set_pvalue_cookie",
+    "--set-pvalue-query"  => "set_pvalue_query",
+    "--set-pvalue-form"   => "set_pvalue_form",
+    "--set-pvalue-json"   => "set_pvalue_json",
+    "--set-pvalue-path"   => "set_pvalue_path",
+  }
+
+  LEGACY_INCLUDE_TARGETS = {
+    "--include-path"   => "include_path",
+    "--include-techs"  => "include_techs",
+    "--include-callee" => "include_callee",
+  }
+
+  def extract_legacy_aliases(args : Array(String), noir_options : Hash(String, YAML::Any)) : Array(String)
+    result = [] of String
+    i = 0
+    while i < args.size
+      arg = args[i]
+      if key = LEGACY_INCLUDE_TARGETS[arg]?
+        noir_options[key] = YAML::Any.new(true)
+        i += 1
+      elsif pvalue_key = LEGACY_PVALUE_TARGETS[arg]?
+        if i + 1 >= args.size
+          STDERR.puts "ERROR: #{arg} requires an argument.".colorize(:red)
+          exit(1)
+        end
+        append_to_yaml_array(noir_options, pvalue_key, args[i + 1])
+        i += 2
+      else
+        result << arg
+        i += 1
+      end
+    end
+    result
+  end
+
+  # `--ai-context` accepts an optional comma-separated feature list. Crystal's
+  # OptionParser cannot express "optional positional value", so we rewrite
+  # the few well-defined ambiguous forms upfront:
+  #
+  #   --ai-context                 → --ai-context=         (bare, all features)
+  #   --ai-context=guards,sinks    → unchanged             (explicit value)
+  #   --ai-context guards,sinks    → --ai-context=guards,sinks (heuristic)
+  #   --ai-context ./app           → --ai-context=         (next token is a path)
+  #
+  # The heuristic for "is the next token a feature list?": lowercase words
+  # joined by commas, where either (a) there's more than one comma-separated
+  # word, or (b) the single word matches the fixed vocabulary below exactly.
+  # A real filesystem path essentially never contains a literal comma, so
+  # any multi-word comma list — typo'd feature names included — is routed
+  # to `--ai-context=...` and left for the vocabulary check in
+  # `apply_ai_context` to reject with a precise "unknown feature" error,
+  # rather than silently falling through to "Base path does not exist:
+  # <the typo>". A single bare word still has to match a known feature
+  # exactly, since that shape is genuinely ambiguous with a real one-word
+  # directory name (`noir scan --ai-context myapp` must keep scanning `myapp`).
+  # Both this and the flag's own validator used to spell the vocabulary out
+  # by hand, and both omitted `sources`.
+  AI_CONTEXT_FEATURES = NoirAIContext::ACCEPTED_FEATURES
+
+  def normalize_ai_context_flag(args : Array(String)) : Array(String)
+    result = [] of String
+    i = 0
+    while i < args.size
+      arg = args[i]
+      if arg == "--ai-context"
+        if i + 1 < args.size && ai_context_feature_list?(args[i + 1])
+          # Greedily absorb space-separated continuations of a comma list:
+          # `--ai-context guards, sinks` shell-splits into "guards," + "sinks",
+          # and without this the trailing "sinks" was mistaken for a positional
+          # scan path ("Base path does not exist: sinks").
+          features = [args[i + 1]]
+          j = i + 2
+          while features.last.ends_with?(",") && j < args.size && ai_context_feature_list?(args[j])
+            features << args[j]
+            j += 1
+          end
+          result << "--ai-context=#{features.join.rstrip(",")}"
+          i = j
+        else
+          result << "--ai-context="
+          i += 1
+        end
+      else
+        result << arg
+        i += 1
+      end
+    end
+    result
+  end
+
+  # Split `TYPE=VAL` (or bare `VAL` → all-types) and route it into the
+  # right slot in noir_options. `--pvalue` may be repeated to set multiple
+  # values across different types.
+  PVALUE_TYPE_KEYS = {
+    "any"    => "set_pvalue",
+    "all"    => "set_pvalue",
+    "header" => "set_pvalue_header",
+    "cookie" => "set_pvalue_cookie",
+    "query"  => "set_pvalue_query",
+    "form"   => "set_pvalue_form",
+    "json"   => "set_pvalue_json",
+    "path"   => "set_pvalue_path",
+  }
+
+  def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
+    type, value = if idx = spec.index('=')
+                    {spec[0...idx], spec[(idx + 1)..]}
+                  else
+                    # `--pvalue query` (no '=') sets the literal value "query"
+                    # for all types. Since `query` is itself a type name, this
+                    # is almost always a forgotten '=' (meant `query=<value>`).
+                    # Warn but honor the literal so scripted usage still works.
+                    if PVALUE_TYPE_KEYS.has_key?(spec)
+                      STDERR.puts "WARNING: --pvalue #{spec.inspect} has no '=', so #{spec.inspect} is used as a literal value for all param types. Did you mean --pvalue #{spec}=<value>?".colorize(:yellow)
+                    end
+                    {"any", spec}
+                  end
+
+    key = PVALUE_TYPE_KEYS[type]?
+    if key.nil?
+      STDERR.puts "ERROR: --pvalue: unknown type '#{type}'. Valid: #{PVALUE_TYPE_KEYS.keys.join(", ")}.".colorize(:red)
+      exit(1)
+    end
+
+    append_to_yaml_array(noir_options, key, value)
+  end
+
+  INCLUDE_TARGETS = {
+    "path"   => "include_path",
+    "techs"  => "include_techs",
+    "callee" => "include_callee",
+  }
+
+  def apply_include_list(noir_options : Hash(String, YAML::Any), spec : String)
+    spec.split(',').reject(&.empty?).each do |raw|
+      target = raw.strip.downcase
+      key = INCLUDE_TARGETS[target]?
+      if key.nil?
+        STDERR.puts "ERROR: --include: unknown target '#{raw.strip}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:red)
+        exit(1)
+      end
+      noir_options[key] = YAML::Any.new(true)
+    end
+  end
+
+  # `--ai-context[=LIST]` always enables AI context output. An empty LIST
+  # means "every category"; a non-empty LIST narrows the output to the
+  # named categories.
+  def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
+    noir_options["ai_context"] = YAML::Any.new(true)
+    validate_ai_context_features(spec, "--ai-context")
+
+    list = spec.split(',').map(&.strip.downcase).reject(&.empty?)
+    # An empty list, or one naming `all`, means every bucket. Write that out
+    # as the empty value instead of returning early: the config file is read
+    # before OptionParser runs, so an early return left a config-file
+    # `ai_context_features: "guards"` in place and `--ai-context=all` (and the
+    # bare flag) — the two spellings that mean "everything" — were the only
+    # ones that could not override it.
+    list.clear if list.includes?(NoirAIContext::FEATURE_ALL)
+
+    noir_options["ai_context_features"] = YAML::Any.new(list.join(","))
+  end
+
+  # Rejects AI-context bucket names outside the accepted vocabulary. `origin`
+  # names the source in the error so a config-file typo doesn't read as a
+  # command-line one.
+  def validate_ai_context_features(spec : String, origin : String)
+    unknown = NoirAIContext.unknown_features(spec)
+    return if unknown.empty?
+
+    # Echo the user's original spelling (not the lowercased form) so a typo
+    # like `Sinkz` reads as it was written.
+    STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::FEATURES.join(", ")}.".colorize(:red)
+    exit(1)
+  end
+end
+
 def run_options_parser
   # Resolve `--config-file PATH` (if present in ARGV) before
   # ConfigInitializer reads the file, so the user-supplied path
@@ -253,7 +353,7 @@ def run_options_parser
   noir_options = config_init.read_config
   noir_options["config_file"] = YAML::Any.new(override_config_path) if override_config_path
 
-  extracted_args = extract_hidden_prompt_flags(noir_options)
+  extracted_args = Noir::OptionsParsing.extract_hidden_prompt_flags(noir_options)
 
   # Tracks CSV flags whose first CLI occurrence must override (not append to)
   # a config-file value. See append_to_csv_option.
@@ -284,7 +384,7 @@ def run_options_parser
     end
 
     parser.on "--pvalue TYPE=VAL", "Set parameter value (TYPE: any|header|cookie|query|form|json|path; repeatable)" do |v|
-      handle_pvalue(noir_options, v)
+      Noir::OptionsParsing.handle_pvalue(noir_options, v)
     end
 
     parser.on "--status-codes", "Display HTTP status codes" do
@@ -305,7 +405,7 @@ def run_options_parser
       append_to_csv_option(noir_options, "exclude_path", v)
     end
     parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
-      apply_include_list(noir_options, v)
+      Noir::OptionsParsing.apply_include_list(noir_options, v)
     end
     # Category names come from the one vocabulary so the help can no longer
     # drift from what the validator accepts. It had: it omitted `sources`
@@ -318,7 +418,7 @@ def run_options_parser
         --ai-context guards,sinks
         --ai-context=callee
       DESC
-      apply_ai_context(noir_options, v)
+      Noir::OptionsParsing.apply_ai_context(noir_options, v)
     end
     parser.on "--no-color", "Disable color output" do
       noir_options["color"] = YAML::Any.new(false)
@@ -571,97 +671,10 @@ def run_options_parser
   # run emitted `ai_context: null` for every endpoint with no diagnostic.
   # A CLI flag has already normalized its own value by this point, so this
   # only ever fires on a config-file value that survived unchanged.
-  validate_ai_context_features(
+  Noir::OptionsParsing.validate_ai_context_features(
     noir_options["ai_context_features"]?.try(&.to_s) || "",
     "config ai_context_features"
   )
 
   noir_options
-end
-
-# Split `TYPE=VAL` (or bare `VAL` → all-types) and route it into the
-# right slot in noir_options. `--pvalue` may be repeated to set multiple
-# values across different types.
-PVALUE_TYPE_KEYS = {
-  "any"    => "set_pvalue",
-  "all"    => "set_pvalue",
-  "header" => "set_pvalue_header",
-  "cookie" => "set_pvalue_cookie",
-  "query"  => "set_pvalue_query",
-  "form"   => "set_pvalue_form",
-  "json"   => "set_pvalue_json",
-  "path"   => "set_pvalue_path",
-}
-
-def handle_pvalue(noir_options : Hash(String, YAML::Any), spec : String)
-  type, value = if idx = spec.index('=')
-                  {spec[0...idx], spec[(idx + 1)..]}
-                else
-                  # `--pvalue query` (no '=') sets the literal value "query"
-                  # for all types. Since `query` is itself a type name, this
-                  # is almost always a forgotten '=' (meant `query=<value>`).
-                  # Warn but honor the literal so scripted usage still works.
-                  if PVALUE_TYPE_KEYS.has_key?(spec)
-                    STDERR.puts "WARNING: --pvalue #{spec.inspect} has no '=', so #{spec.inspect} is used as a literal value for all param types. Did you mean --pvalue #{spec}=<value>?".colorize(:yellow)
-                  end
-                  {"any", spec}
-                end
-
-  key = PVALUE_TYPE_KEYS[type]?
-  if key.nil?
-    STDERR.puts "ERROR: --pvalue: unknown type '#{type}'. Valid: #{PVALUE_TYPE_KEYS.keys.join(", ")}.".colorize(:red)
-    exit(1)
-  end
-
-  append_to_yaml_array(noir_options, key, value)
-end
-
-INCLUDE_TARGETS = {
-  "path"   => "include_path",
-  "techs"  => "include_techs",
-  "callee" => "include_callee",
-}
-
-def apply_include_list(noir_options : Hash(String, YAML::Any), spec : String)
-  spec.split(',').reject(&.empty?).each do |raw|
-    target = raw.strip.downcase
-    key = INCLUDE_TARGETS[target]?
-    if key.nil?
-      STDERR.puts "ERROR: --include: unknown target '#{raw.strip}'. Valid: #{INCLUDE_TARGETS.keys.join(", ")}.".colorize(:red)
-      exit(1)
-    end
-    noir_options[key] = YAML::Any.new(true)
-  end
-end
-
-# `--ai-context[=LIST]` always enables AI context output. An empty LIST
-# means "every category"; a non-empty LIST narrows the output to the
-# named categories.
-def apply_ai_context(noir_options : Hash(String, YAML::Any), spec : String)
-  noir_options["ai_context"] = YAML::Any.new(true)
-  validate_ai_context_features(spec, "--ai-context")
-
-  list = spec.split(',').map(&.strip.downcase).reject(&.empty?)
-  # An empty list, or one naming `all`, means every bucket. Write that out
-  # as the empty value instead of returning early: the config file is read
-  # before OptionParser runs, so an early return left a config-file
-  # `ai_context_features: "guards"` in place and `--ai-context=all` (and the
-  # bare flag) — the two spellings that mean "everything" — were the only
-  # ones that could not override it.
-  list.clear if list.includes?(NoirAIContext::FEATURE_ALL)
-
-  noir_options["ai_context_features"] = YAML::Any.new(list.join(","))
-end
-
-# Rejects AI-context bucket names outside the accepted vocabulary. `origin`
-# names the source in the error so a config-file typo doesn't read as a
-# command-line one.
-def validate_ai_context_features(spec : String, origin : String)
-  unknown = NoirAIContext.unknown_features(spec)
-  return if unknown.empty?
-
-  # Echo the user's original spelling (not the lowercased form) so a typo
-  # like `Sinkz` reads as it was written.
-  STDERR.puts "ERROR: #{origin}: unknown feature '#{unknown.first}'. Valid: #{NoirAIContext::FEATURES.join(", ")}.".colorize(:red)
-  exit(1)
 end

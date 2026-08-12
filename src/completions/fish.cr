@@ -107,7 +107,3 @@ module Noir::Completions::Fish
     flag.takes_value? && !flag.arg.optional_choice?
   end
 end
-
-def generate_fish_completion_script
-  Noir::Completions::Fish.script
-end

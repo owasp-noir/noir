@@ -52,10 +52,10 @@ describe Noir::OutputFormats do
 
   it "offers every format in every shell completion" do
     scripts = {
-      "zsh"    => generate_zsh_completion_script,
-      "bash"   => generate_bash_completion_script,
-      "fish"   => generate_fish_completion_script,
-      "elvish" => generate_elvish_completion_script,
+      "zsh"    => Noir::Completions::Zsh.script,
+      "bash"   => Noir::Completions::Bash.script,
+      "fish"   => Noir::Completions::Fish.script,
+      "elvish" => Noir::Completions::Elvish.script,
     }
     # Elvish completes `-f` by file, not by an enum list, so only the three
     # shells whose scripts carry the value list are asserted here.

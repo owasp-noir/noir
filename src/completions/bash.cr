@@ -101,7 +101,3 @@ module Noir::Completions::Bash
     end.join("\n")
   end
 end
-
-def generate_bash_completion_script
-  Noir::Completions::Bash.script
-end

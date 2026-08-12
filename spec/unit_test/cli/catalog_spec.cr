@@ -34,10 +34,10 @@ describe Noir::CLI::Catalog do
 
   it "offers every command in every shell completion" do
     scripts = [
-      generate_zsh_completion_script,
-      generate_bash_completion_script,
-      generate_fish_completion_script,
-      generate_elvish_completion_script,
+      Noir::Completions::Zsh.script,
+      Noir::Completions::Bash.script,
+      Noir::Completions::Fish.script,
+      Noir::Completions::Elvish.script,
     ]
     Noir::CLI::Catalog::COMMANDS.each do |command|
       scripts.each(&.should(contain(command.name)))
@@ -46,10 +46,10 @@ describe Noir::CLI::Catalog do
 
   it "offers every sub-action in every shell completion" do
     scripts = [
-      generate_zsh_completion_script,
-      generate_bash_completion_script,
-      generate_fish_completion_script,
-      generate_elvish_completion_script,
+      Noir::Completions::Zsh.script,
+      Noir::Completions::Bash.script,
+      Noir::Completions::Fish.script,
+      Noir::Completions::Elvish.script,
     ]
     Noir::CLI::Catalog.completable.each do |(name, values)|
       next if values.empty?
@@ -87,12 +87,12 @@ describe Noir::CLI::ScanFlags do
 
   it "completes every flag in every shell" do
     long_form_scripts = [
-      generate_zsh_completion_script,
-      generate_bash_completion_script,
-      generate_elvish_completion_script,
+      Noir::Completions::Zsh.script,
+      Noir::Completions::Bash.script,
+      Noir::Completions::Elvish.script,
     ]
     # Fish registers long flags as `-l name`, without the leading dashes.
-    fish = generate_fish_completion_script
+    fish = Noir::Completions::Fish.script
 
     Noir::CLI::ScanFlags::FLAGS.each do |flag|
       long_form_scripts.each(&.should(contain(flag.long)))

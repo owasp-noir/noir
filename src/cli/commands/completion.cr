@@ -36,10 +36,10 @@ module Noir::CLI::CompletionCommand
     end
 
     case parsed.shell
-    when "zsh"    then puts generate_zsh_completion_script
-    when "bash"   then puts generate_bash_completion_script
-    when "fish"   then puts generate_fish_completion_script
-    when "elvish" then puts generate_elvish_completion_script
+    when "zsh"    then puts Noir::Completions::Zsh.script
+    when "bash"   then puts Noir::Completions::Bash.script
+    when "fish"   then puts Noir::Completions::Fish.script
+    when "elvish" then puts Noir::Completions::Elvish.script
     else
       Noir::CLI.die("Unsupported shell: #{parsed.shell}. Valid: #{SHELLS.join(", ")}.")
     end

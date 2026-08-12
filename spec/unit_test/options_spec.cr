@@ -360,15 +360,15 @@ describe "run_options_parser" do
     # apply_ai_context's own vocabulary check to reject with a precise
     # "unknown feature" error, instead of silently being scanned as a bogus
     # base path ("Base path does not exist: bogus,guards").
-    normalize_ai_context_flag(["--ai-context", "bogus,guards"]).should eq(["--ai-context=bogus,guards"])
-    normalize_ai_context_flag(["--ai-context", "guards,sink"]).should eq(["--ai-context=guards,sink"])
+    Noir::OptionsParsing.normalize_ai_context_flag(["--ai-context", "bogus,guards"]).should eq(["--ai-context=bogus,guards"])
+    Noir::OptionsParsing.normalize_ai_context_flag(["--ai-context", "guards,sink"]).should eq(["--ai-context=guards,sink"])
   end
 
   it "normalize_ai_context_flag still treats a single unrecognized word as a positional path" do
     # A bare single word is genuinely ambiguous with a real one-word
     # directory name (`noir scan --ai-context myapp`), so it's left alone
     # rather than folded in as a feature-list value.
-    normalize_ai_context_flag(["--ai-context", "myapp"]).should eq(["--ai-context=", "myapp"])
+    Noir::OptionsParsing.normalize_ai_context_flag(["--ai-context", "myapp"]).should eq(["--ai-context=", "myapp"])
   end
 
   it "legacy --set-pvalue-query alias still appends to set_pvalue_query" do
@@ -420,7 +420,7 @@ describe "extract_legacy_aliases" do
     legacy_to_key.each do |flag, key|
       opts = create_test_options
       args = [flag, "LEGACY_VALUE"]
-      remaining = extract_legacy_aliases(args, opts)
+      remaining = Noir::OptionsParsing.extract_legacy_aliases(args, opts)
       remaining.should be_empty
       opts[key].as_a.map(&.to_s).should eq(["LEGACY_VALUE"])
     end
@@ -435,7 +435,7 @@ describe "extract_legacy_aliases" do
 
     legacy_to_key.each do |flag, key|
       opts = create_test_options
-      remaining = extract_legacy_aliases([flag], opts)
+      remaining = Noir::OptionsParsing.extract_legacy_aliases([flag], opts)
       remaining.should be_empty
       opts[key].should be_true
     end
@@ -443,13 +443,13 @@ describe "extract_legacy_aliases" do
 
   it "leaves unrelated tokens in place for OptionParser" do
     opts = create_test_options
-    remaining = extract_legacy_aliases(["-b", "./app", "--passive", "--include", "path"], opts)
+    remaining = Noir::OptionsParsing.extract_legacy_aliases(["-b", "./app", "--passive", "--include", "path"], opts)
     remaining.should eq(["-b", "./app", "--passive", "--include", "path"])
   end
 
   it "supports repeating the same legacy flag (each occurrence appends)" do
     opts = create_test_options
-    remaining = extract_legacy_aliases(
+    remaining = Noir::OptionsParsing.extract_legacy_aliases(
       ["--set-pvalue-query", "A", "--set-pvalue-query", "B"],
       opts,
     )
@@ -459,7 +459,7 @@ describe "extract_legacy_aliases" do
 
   it "mixes legacy and v1-native tokens cleanly" do
     opts = create_test_options
-    remaining = extract_legacy_aliases(
+    remaining = Noir::OptionsParsing.extract_legacy_aliases(
       ["--include-callee", "-b", "./app", "--set-pvalue-header", "X=1"],
       opts,
     )
