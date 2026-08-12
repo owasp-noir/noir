@@ -19,8 +19,28 @@ describe "Detect WordPress" do
     instance.detect("wp-load.php", "<?php require dirname(__FILE__) . '/wp-config.php';").should be_true
   end
 
+  # The `wp-content` branch matches on the *scan-base-relative* path, so it
+  # needs a scan base registered to produce one. Passing a bare relative path
+  # made this example depend on whatever `CodeLocator.scan_base_paths` some
+  # earlier spec happened to leave behind: run this file on its own and it
+  # failed, because with no base registered `base_relative` returns the path
+  # untouched and `"wp-content/..."` has no leading slash to match.
   it "detects WordPress from wp-content path" do
-    instance.detect("wp-content/plugins/foo/foo.php", "<?php // plugin code").should be_true
+    locator = CodeLocator.instance
+    previous_bases = locator.scan_base_paths
+
+    begin
+      locator.scan_base_paths = ["/srv/site"]
+      instance.detect("/srv/site/wp-content/plugins/foo/foo.php", "<?php // plugin code").should be_true
+
+      # And the reason it matches the relative path rather than the absolute
+      # one: a checkout that merely *lives under* a directory called
+      # wp-content must not make every PHP file in it look like WordPress.
+      locator.scan_base_paths = ["/wp-content/mysite"]
+      instance.detect("/wp-content/mysite/app.php", "<?php // plain php").should be_false
+    ensure
+      locator.scan_base_paths = previous_bases
+    end
   end
 
   it "detects WordPress from a plugin header" do

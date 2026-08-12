@@ -126,8 +126,9 @@ describe "LLMEndpointOptimizer" do
 
   describe "full workflow without LLM" do
     it "works as standard optimizer when no LLM config" do
-      options["url"] = YAML::Any.new("https://test.com")
-      optimizer = LLMEndpointOptimizer.new(logger, options)
+      example_options = create_test_options
+      example_options["url"] = YAML::Any.new("https://test.com")
+      optimizer = LLMEndpointOptimizer.new(logger, example_options)
 
       endpoints = [
         Endpoint.new("/users/{id}", "GET"),
@@ -150,8 +151,9 @@ describe "LLMEndpointOptimizer" do
 
   describe "handles non-standard patterns without LLM" do
     it "processes wildcard patterns safely" do
-      options["url"] = YAML::Any.new("") # No base URL for this test
-      optimizer = LLMEndpointOptimizer.new(logger, options)
+      example_options = create_test_options
+      example_options["url"] = YAML::Any.new("") # No base URL for this test
+      optimizer = LLMEndpointOptimizer.new(logger, example_options)
       endpoints = [
         Endpoint.new("/api/*/data", "GET"),
         Endpoint.new("/api/users_data__special", "GET"),
@@ -166,16 +168,18 @@ describe "LLMEndpointOptimizer" do
 
   describe "inherits all base functionality" do
     it "applies pvalue configurations" do
-      options["set_pvalue"] = YAML::Any.new([YAML::Any.new("id=TEST_ID")])
-      optimizer = LLMEndpointOptimizer.new(logger, options)
+      example_options = create_test_options
+      example_options["set_pvalue"] = YAML::Any.new([YAML::Any.new("id=TEST_ID")])
+      optimizer = LLMEndpointOptimizer.new(logger, example_options)
 
       result = optimizer.apply_pvalue("path", "id", "original")
       result.should eq("TEST_ID")
     end
 
     it "combines URLs correctly" do
-      options["url"] = YAML::Any.new("https://api.test.com")
-      optimizer = LLMEndpointOptimizer.new(logger, options)
+      example_options = create_test_options
+      example_options["url"] = YAML::Any.new("https://api.test.com")
+      optimizer = LLMEndpointOptimizer.new(logger, example_options)
       endpoints = [Endpoint.new("/users", "GET")]
 
       result = optimizer.combine_url_and_endpoints(endpoints)
@@ -279,9 +283,10 @@ describe "LLMEndpointOptimizer" do
 
   describe "handles complex optimization scenarios" do
     it "processes mixed parameter patterns" do
-      options["url"] = YAML::Any.new("https://api.example.com")
-      options["set_pvalue"] = YAML::Any.new([YAML::Any.new("user_id=123"), YAML::Any.new("post_id=456")])
-      optimizer = LLMEndpointOptimizer.new(logger, options)
+      example_options = create_test_options
+      example_options["url"] = YAML::Any.new("https://api.example.com")
+      example_options["set_pvalue"] = YAML::Any.new([YAML::Any.new("user_id=123"), YAML::Any.new("post_id=456")])
+      optimizer = LLMEndpointOptimizer.new(logger, example_options)
 
       endpoints = [
         Endpoint.new("/users/{user_id}", "GET"),

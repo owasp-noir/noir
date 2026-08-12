@@ -73,10 +73,10 @@ describe "Initialize" do
     File.write(output_file, "old\n")
 
     begin
-      options = create_test_options
-      options["output"] = YAML::Any.new(output_file)
+      file_options = create_test_options
+      file_options["output"] = YAML::Any.new(output_file)
 
-      object = OutputBuilder.new options
+      object = OutputBuilder.new file_options
       object.io = IO::Memory.new
       object.ob_puts "new"
       object.ob_puts "next"
@@ -98,14 +98,14 @@ describe "Initialize" do
     output_file = File.tempname("noir-output-builder-shared")
 
     begin
-      options = create_test_options
-      options["output"] = YAML::Any.new(output_file)
+      file_options = create_test_options
+      file_options["output"] = YAML::Any.new(output_file)
 
-      header = OutputBuilderDiff.new options
+      header = OutputBuilderDiff.new file_options
       header.io = IO::Memory.new
       header.ob_puts "section-header"
 
-      body = OutputBuilderCommon.new options
+      body = OutputBuilderCommon.new file_options
       body.io = IO::Memory.new
       body.ob_puts "endpoint-line"
 
@@ -123,10 +123,10 @@ describe "Initialize" do
     output_file = File.tempname("noir-output-builder-ansi")
 
     begin
-      options = create_test_options
-      options["output"] = YAML::Any.new(output_file)
+      file_options = create_test_options
+      file_options["output"] = YAML::Any.new(output_file)
 
-      object = OutputBuilder.new options
+      object = OutputBuilder.new file_options
       io = IO::Memory.new
       object.io = io
       object.ob_puts "\e[93m/sign\e[39m"
@@ -147,10 +147,10 @@ describe "Initialize" do
     output_file = File.tempname("noir-output-builder-escapes")
 
     begin
-      options = create_test_options
-      options["output"] = YAML::Any.new(output_file)
+      file_options = create_test_options
+      file_options["output"] = YAML::Any.new(output_file)
 
-      object = OutputBuilder.new options
+      object = OutputBuilder.new file_options
       object.io = IO::Memory.new
       object.ob_puts "\e[2J/clear"             # CSI, non-SGR final byte
       object.ob_puts "\e[?1049h/altscreen"     # CSI with a private parameter byte

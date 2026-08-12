@@ -130,6 +130,14 @@ jobs:
         run: crystal spec spec/unit_test
       - name: Run functional tests
         run: crystal spec spec/functional_test
+      # Spec files load in directory order, which differs between macOS and
+      # Linux — so an example that depends on state another example left
+      # behind passes locally and fails here, on an unrelated PR. Four such
+      # couplings had accumulated. Randomizing on purpose turns "flaky CI"
+      # into a named failure: crystal prints the seed, and
+      # `crystal spec spec/unit_test --order <seed>` reproduces it exactly.
+      - name: Run unit tests in randomized order
+        run: crystal spec spec/unit_test --order random
   build-snapcraft:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
