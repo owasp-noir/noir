@@ -23,8 +23,8 @@ private def every_detector(options) : Array(Detector)
   detectors
 end
 
-# `detector_build_applicable_lookup` memoizes `applicable?` by basename
-# for every detector that `detector_path_sensitive?` does not flag. That
+# `Noir::Detection.build_applicable_lookup` memoizes `applicable?` by basename
+# for every detector that `Noir::Detection.path_sensitive?` does not flag. That
 # classifier is probe-based, and a probe whose *basename* independently
 # satisfies `applicable?` masks a directory gate behind it — which is how
 # the Hasura `metadata/**` gate was lost (46/46 → 16 failures) without any
@@ -36,7 +36,7 @@ end
 private def memo_misses(paths : Array(String)) : Array(String)
   options = create_test_options
   detectors = every_detector(options)
-  lookup = detector_build_applicable_lookup(detectors)
+  lookup = Noir::Detection.build_applicable_lookup(detectors)
 
   missed = [] of String
   paths.each do |path|

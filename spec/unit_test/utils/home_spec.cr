@@ -1,9 +1,9 @@
 require "../../../src/utils/home"
 
-describe "get_home test" do
+describe "Noir::Home.path test" do
   it "returns NOIR_HOME environment variable if set" do
     ENV["NOIR_HOME"] = "/custom/noir/home"
-    get_home.should eq("/custom/noir/home")
+    Noir::Home.path.should eq("/custom/noir/home")
     ENV.delete("NOIR_HOME")
   end
 
@@ -15,9 +15,9 @@ describe "get_home test" do
     ENV["NOIR_HOME"] = ""
     begin
       {% unless flag?(:windows) %}
-        get_home.should eq("#{ENV["HOME"]}/.config/noir")
+        Noir::Home.path.should eq("#{ENV["HOME"]}/.config/noir")
       {% end %}
-      get_home.should_not eq("")
+      Noir::Home.path.should_not eq("")
     ensure
       if prev
         ENV["NOIR_HOME"] = prev
@@ -30,14 +30,14 @@ describe "get_home test" do
   it "returns default config directory on Windows" do
     {% if flag?(:windows) %}
       ENV.delete("NOIR_HOME")
-      get_home.should eq("#{ENV["APPDATA"]}\\noir")
+      Noir::Home.path.should eq("#{ENV["APPDATA"]}\\noir")
     {% end %}
   end
 
   it "returns default config directory on non-Windows" do
     {% unless flag?(:windows) %}
       ENV.delete("NOIR_HOME")
-      get_home.should eq("#{ENV["HOME"]}/.config/noir")
+      Noir::Home.path.should eq("#{ENV["HOME"]}/.config/noir")
     {% end %}
   end
 
@@ -48,7 +48,7 @@ describe "get_home test" do
     saved = ENV["NOIR_HOME"]?
     ENV["NOIR_HOME"] = "~/some-noir-home"
     begin
-      result = get_home
+      result = Noir::Home.path
       result.starts_with?('~').should be_false
       {% unless flag?(:windows) %}
         result.should eq("#{ENV["HOME"]}/some-noir-home")

@@ -81,7 +81,7 @@ class Detector
   #
   # A separator-free term (`"go.mod"`) is a plain substring test on the whole
   # path and deliberately does *not* imply sensitivity, because
-  # `detector_path_sensitive?` does not flag those today: the probe compares
+  # `Noir::Detection.path_sensitive?` does not flag those today: the probe compares
   # `applicable?("a/b/c/go.mod")` with `applicable?("go.mod")`, which agree.
   # Declaring them sensitive would drop those detectors out of the basename
   # memo and slow the hot loop for no correctness gain here.
@@ -159,7 +159,7 @@ class Detector
   # that consults the path but does not declare it here has its path
   # gate silently deleted: `applicable?` is only ever asked about the
   # bare filename. That is a false-negative, not a crash, so nothing
-  # fails loudly. `detector_path_sensitive?` also probes for this, but
+  # fails loudly. `Noir::Detection.path_sensitive?` also probes for this, but
   # the probe is fail-open — a probe whose basename independently
   # matches masks the directory gate behind it (this is exactly how the
   # Hasura `metadata/**` gate was lost). Declare it explicitly.

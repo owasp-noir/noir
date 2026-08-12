@@ -59,7 +59,7 @@ module LLM
     end
 
     def self.cache_dir : String
-      File.join(get_home, "cache", "ai")
+      File.join(Noir::Home.path, "cache", "ai")
     end
 
     # Build a deterministic cache key from inputs

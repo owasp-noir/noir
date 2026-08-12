@@ -65,7 +65,7 @@ module Noir::CLI::HelpCommand
   end
 
   def self.print_top_level(io : IO = STDOUT, banner_io : IO = STDERR)
-    banner(banner_io)
+    Noir::Banner.print(banner_io)
 
     cyan = ->(s : String) { Noir::CLI.name(s) }
     green = ->(s : String) { Noir::CLI.section(s) }

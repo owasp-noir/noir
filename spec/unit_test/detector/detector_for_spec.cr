@@ -84,7 +84,7 @@ describe "detector_for" do
   end
 
   # A separator-free term is a plain substring test over the whole path, and
-  # `detector_path_sensitive?`'s probe does not flag those: it compares
+  # `Noir::Detection.path_sensitive?`'s probe does not flag those: it compares
   # `applicable?("a/b/c/zz.mod")` with `applicable?("zz.mod")`, which agree.
   # Declaring them sensitive would drop the detector out of the basename memo
   # for no correctness gain.

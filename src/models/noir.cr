@@ -38,7 +38,7 @@ class NoirRunner
   def initialize(options)
     @options = options
     @config_file = @options["config_file"].to_s
-    @noir_home = get_home
+    @noir_home = Noir::Home.path
     @passive_scans = [] of PassiveScan
     @passive_results = [] of PassiveScanResult
 

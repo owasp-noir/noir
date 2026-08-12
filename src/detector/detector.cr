@@ -7,6 +7,7 @@ require "wait_group"
 require "../utils/media_filter"
 require "../utils/text_file"
 require "yaml"
+require "../models/locator_keys"
 
 # Reference-typed atomic Boolean. Wrapping `Atomic(Int8)` in a
 # class keeps the underlying byte addressable through an Array
@@ -25,242 +26,260 @@ class AtomicFlag
   end
 end
 
-DETECTOR_IGNORED_DIR_NAMES = Set{
-  # Source control / IDE / agent state
-  ".git", ".idea", ".vscode", ".claude",
-  # Language-specific dependency / build caches
-  "node_modules", "vendor", "__pycache__", ".venv", "venv",
-  ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
-  ".cargo", ".terraform",
-  # Zig build outputs / fetched-dependency cache. Vendored deps under
-  # `.zig-cache` carry their own `@import("httpz")` etc. and would
-  # otherwise make every Zig project look like it uses every framework.
-  ".zig-cache", "zig-cache", ".zig-out", "zig-out",
-  # Common build / dist / cache outputs
-  "dist", "build", "target", "out", "tmp", ".cache",
-  ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
-  ".serverless", ".expo",
-  # Test coverage / reports
-  "coverage", ".coverage",
-  # iOS / macOS noise
-  "Pods", "__MACOSX",
-}
+# Detection-pass internals: the ignore lists, the Android source-set
+# resolver, and the `applicable?` memo that keeps the per-file walk off the
+# O(detectors) path.
+#
+# These were seven top-level `def`s and seven SCREAMING constants, each
+# hand-prefixed `detector_` / `DETECTOR_` — a namespace spelled out by
+# convention because there was no module to put them in. `ANDROID_SOURCE_SUBDIRS`
+# and `ANDROID_EMBEDDED_SERVER_MARKER` did not even get the prefix, and were
+# sitting in the global namespace under names generic enough to collide.
+#
+# The two phase entry points (`build_detector_list`, `detect_techs`) stay
+# top-level: they are the detection pass's public surface, called from
+# `NoirRunner` and the specs.
+module Noir::Detection
+  extend self
 
-DETECTOR_IGNORED_DIR_SUFFIXES = Set{
-  # Xcode asset catalogs. They contain images plus many Contents.json
-  # metadata files; none are source/spec files for route detection, and
-  # large iOS apps can carry hundreds of them.
-  ".xcassets",
-}
+  IGNORED_DIR_NAMES = Set{
+    # Source control / IDE / agent state
+    ".git", ".idea", ".vscode", ".claude",
+    # Language-specific dependency / build caches
+    "node_modules", "vendor", "__pycache__", ".venv", "venv",
+    ".pytest_cache", ".tox", ".gradle", ".bundle", ".dart_tool",
+    ".cargo", ".terraform",
+    # Zig build outputs / fetched-dependency cache. Vendored deps under
+    # `.zig-cache` carry their own `@import("httpz")` etc. and would
+    # otherwise make every Zig project look like it uses every framework.
+    ".zig-cache", "zig-cache", ".zig-out", "zig-out",
+    # Common build / dist / cache outputs
+    "dist", "build", "target", "out", "tmp", ".cache",
+    ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache",
+    ".serverless", ".expo",
+    # Test coverage / reports
+    "coverage", ".coverage",
+    # iOS / macOS noise
+    "Pods", "__MACOSX",
+  }
 
-ANDROID_SOURCE_SUBDIRS = Set{
-  "aidl",
-  "assets",
-  "cpp",
-  "java",
-  "jni",
-  "kotlin",
-  "res",
-}
+  IGNORED_DIR_SUFFIXES = Set{
+    # Xcode asset catalogs. They contain images plus many Contents.json
+    # metadata files; none are source/spec files for route detection, and
+    # large iOS apps can carry hundreds of them.
+    ".xcassets",
+  }
 
-MOBILE_DETECTOR_NAMES = Set{
-  "android",
-  "ios",
-  "well_known_applinks",
-}
+  ANDROID_SOURCE_SUBDIRS = Set{
+    "aidl",
+    "assets",
+    "cpp",
+    "java",
+    "jni",
+    "kotlin",
+    "res",
+  }
 
-# Strong server-routing constructs. A `.kt` / `.java` file that sits
-# inside an Android app's source set is normally scoped to mobile
-# detectors only (an incidental `import ...SpringApplication` must not
-# flag the project as a server). But an Android app can legitimately
-# *embed* an on-device HTTP server — e.g. plain-app runs a local Ktor
-# web server whose routes live under `app/src/main/java/...`. When a
-# file carries one of these markers it is a real server, so the
-# Ktor / http4k / Spring detectors are allowed to run on it. Kept as a
-# single precompiled constant — recompiling it per file would recreate
-# the PCRE2 program on every read.
-ANDROID_EMBEDDED_SERVER_MARKER = /io\.ktor\.server\.|embeddedServer|\brouting\s*\{|\bfun\s+Route\.|org\.http4k\.routing|@RestController|@RequestMapping|@(?:Get|Post|Put|Delete|Patch)Mapping|\bRouterFunction\b/
+  MOBILE_DETECTOR_NAMES = Set{
+    "android",
+    "ios",
+    "well_known_applinks",
+  }
 
-def detector_android_source_prefixes_for_manifest(manifest_path : String) : Array(String)
-  prefixes = [] of String
-  manifest_dir = File.dirname(manifest_path)
-  manifest_dir_parts = manifest_dir.split(File::SEPARATOR)
-  src_index = manifest_dir_parts.rindex("src")
+  # Strong server-routing constructs. A `.kt` / `.java` file that sits
+  # inside an Android app's source set is normally scoped to mobile
+  # detectors only (an incidental `import ...SpringApplication` must not
+  # flag the project as a server). But an Android app can legitimately
+  # *embed* an on-device HTTP server — e.g. plain-app runs a local Ktor
+  # web server whose routes live under `app/src/main/java/...`. When a
+  # file carries one of these markers it is a real server, so the
+  # Ktor / http4k / Spring detectors are allowed to run on it. Kept as a
+  # single precompiled constant — recompiling it per file would recreate
+  # the PCRE2 program on every read.
+  ANDROID_EMBEDDED_SERVER_MARKER = /io\.ktor\.server\.|embeddedServer|\brouting\s*\{|\bfun\s+Route\.|org\.http4k\.routing|@RestController|@RequestMapping|@(?:Get|Post|Put|Delete|Patch)Mapping|\bRouterFunction\b/
 
-  source_set_root = if src_index && src_index == manifest_dir_parts.size - 2
-                      manifest_dir
-                    end
+  def android_source_prefixes_for_manifest(manifest_path : String) : Array(String)
+    prefixes = [] of String
+    manifest_dir = File.dirname(manifest_path)
+    manifest_dir_parts = manifest_dir.split(File::SEPARATOR)
+    src_index = manifest_dir_parts.rindex("src")
 
-  if source_set_root
-    ANDROID_SOURCE_SUBDIRS.each do |subdir|
-      prefixes << File.join(source_set_root, subdir) + File::SEPARATOR
-    end
-  else
-    ANDROID_SOURCE_SUBDIRS.each do |subdir|
-      prefixes << File.join(manifest_dir, subdir) + File::SEPARATOR
-      prefixes << File.join(manifest_dir, "src", subdir) + File::SEPARATOR
-      prefixes << File.join(manifest_dir, "src", "main", subdir) + File::SEPARATOR
-    end
-  end
+    source_set_root = if src_index && src_index == manifest_dir_parts.size - 2
+                        manifest_dir
+                      end
 
-  prefixes
-end
-
-def detector_add_android_source_prefixes_from_dir(dir : String, prefixes : Array(String))
-  manifest_path = File.join(dir, "AndroidManifest.xml")
-  return unless File.exists?(manifest_path)
-
-  begin
-    content = Noir::TextFile.read(manifest_path)
-    return unless content.includes?("<manifest")
-  rescue File::NotFoundError | File::AccessDeniedError
-    return
-  end
-
-  detector_android_source_prefixes_for_manifest(manifest_path).each do |prefix|
-    prefixes << prefix unless prefixes.includes?(prefix)
-  end
-end
-
-def detector_android_source_file?(path : String, prefixes : Array(String)) : Bool
-  prefixes.any? { |prefix| path.starts_with?(prefix) }
-end
-
-def detector_mobile_detector?(name : String) : Bool
-  MOBILE_DETECTOR_NAMES.includes?(name)
-end
-
-# Filenames that detectors match by exact basename (often with path
-# constraints like "must sit at the project root"). These must not share
-# an extension-only cache bucket — e.g. `vercel.json` is not "any .json".
-DETECTOR_SPECIAL_BASENAMES = Set{
-  "package.json", "tsconfig.json", "composer.json", "composer.lock",
-  "vercel.json", "now.json", "netlify.toml", "wrangler.toml",
-  "Gemfile", "Gemfile.lock", "Package.swift", "Cargo.toml", "go.mod",
-  "mix.exs", "pubspec.yaml", "pubspec.lock", "shard.yml", "shard.lock",
-  "build.sbt", "pom.xml", "AndroidManifest.xml", "config.toml",
-  "rebar.config", "erlang.mk", "project.clj", "deps.edn", "stack.yaml",
-  "package.yaml", "gleam.toml", "manifest.toml", "paket.dependencies",
-  "Caddyfile", "Dockerfile", "Makefile", "Rakefile", "serverless.yml",
-  "serverless.yaml", "app.yaml", "openapi.yaml", "openapi.json",
-  "swagger.json", "swagger.yaml",
-}
-
-# Paths that embed directory segments real detectors gate on
-# (`/grails-app/`, `/migrations/`, `/server/api/`, …). Used only to
-# classify path-sensitive detectors — not as production file samples.
-DETECTOR_PATH_SEGMENT_PROBES = [
-  # Extension-free path under grails-app: only matches via the directory
-  # gate (a bare `Foo.groovy` basename is true for other reasons).
-  "proj/grails-app/conf/application",
-  "proj/supabase/migrations/001.sql",
-  "proj/migrations/001.sql",
-  "proj/supabase/config.toml",
-  "proj/server/api/hello.js",
-  "proj/server/routes/hello.js",
-  "proj/pages/api/hello.js",
-  "proj/app/api/hello/route.ts",
-  "proj/routes/+server.ts",
-  "proj/routes/index.dart",
-  "proj/directus/snapshots/snap.json",
-  "proj/wp-content/plugins/x.php",
-  "proj/metadata/databases/tables.yaml",
-  "proj/Magento/module.xml",
-]
-
-# Whether `applicable?` depends on more than the basename (root
-# placement, directory segments, multi-hop path layout). Those
-# detectors must always see the real path in the hot loop.
-def detector_path_sensitive?(detector : Detector) : Bool
-  # Explicit declaration wins. The probe sweep below is a safety net,
-  # not the contract: it is fail-open by construction, so a detector
-  # whose directory gate happens to agree with its basename gate on
-  # every probe would otherwise be memoized as basename-only and lose
-  # the path check entirely.
-  return true if detector.path_sensitive?
-
-  sample_suffixes = [
-    ".java", ".js", ".ts", ".tsx", ".rb", ".py", ".go", ".json", ".yml",
-    ".yaml", ".xml", ".cs", ".kt", ".php", ".cr", ".rs", ".ex", ".swift",
-    ".scala", ".dart", ".groovy", ".pl", ".clj", ".hs", ".lua", ".sql",
-    ".toml", ".bru", ".http", ".sbt", ".gradle", ".aspx", ".fs",
-  ]
-  # Bare names: catch "must sit at project root" checks (Vercel,
-  # Package.swift, …) where `name` is true but `a/b/c/name` is false.
-  basenames = DETECTOR_SPECIAL_BASENAMES.to_a + sample_suffixes.map { |ext| "file#{ext}" }
-  basenames.any? do |name|
-    detector.applicable?("a/b/c/#{name}") != detector.applicable?(name)
-  end || DETECTOR_PATH_SEGMENT_PROBES.any? do |probe|
-    # Directory-segment gates: same basename, different path → different
-    # answer (Supabase `/migrations/`, Grails `/grails-app/`, …).
-    detector.applicable?(probe) != detector.applicable?(File.basename(probe))
-  end
-end
-
-# Build a lookup that turns a path into the list of detector indices
-# whose `applicable?` returns true — without re-walking every detector
-# on every file. Most detectors only inspect extension / basename, so
-# their answers are memoized by basename. Detectors that look at path
-# segments or root placement are classified as path-sensitive and
-# always evaluated against the real path.
-def detector_build_applicable_lookup(detectors : Array(Detector)) : Proc(String, Array(Int32))
-  path_sensitive = [] of Int32
-  detectors.each_with_index do |detector, idx|
-    path_sensitive << idx if detector_path_sensitive?(detector)
-  end
-
-  path_sensitive_set = Set(Int32).new(path_sensitive)
-  # Key by basename, not bare extension: many detectors gate on
-  # basename substrings (`*deploy*.yml`, `*sites*.yaml`) or exact
-  # names (`package.json`). An extension-only key would probe
-  # `file.yml` and drop every basename-qualified match.
-  cache = {} of String => Array(Int32)
-
-  ->(path : String) do
-    base = File.basename(path)
-
-    cached = cache[base]?
-    unless cached
-      idxs = [] of Int32
-      detectors.each_with_index do |detector, idx|
-        next if path_sensitive_set.includes?(idx)
-        idxs << idx if detector.applicable?(base)
+    if source_set_root
+      ANDROID_SOURCE_SUBDIRS.each do |subdir|
+        prefixes << File.join(source_set_root, subdir) + File::SEPARATOR
       end
-      cache[base] = idxs
-      cached = idxs
+    else
+      ANDROID_SOURCE_SUBDIRS.each do |subdir|
+        prefixes << File.join(manifest_dir, subdir) + File::SEPARATOR
+        prefixes << File.join(manifest_dir, "src", subdir) + File::SEPARATOR
+        prefixes << File.join(manifest_dir, "src", "main", subdir) + File::SEPARATOR
+      end
     end
 
-    # Always dup: callers `reject!` android-scope / JSON-spec candidates
-    # in place and must not corrupt the memoized array.
-    result = cached.dup
-    path_sensitive.each do |idx|
-      result << idx if detectors[idx].applicable?(path)
-    end
-    result
+    prefixes
   end
+
+  def add_android_source_prefixes_from_dir(dir : String, prefixes : Array(String))
+    manifest_path = File.join(dir, "AndroidManifest.xml")
+    return unless File.exists?(manifest_path)
+
+    begin
+      content = Noir::TextFile.read(manifest_path)
+      return unless content.includes?("<manifest")
+    rescue File::NotFoundError | File::AccessDeniedError
+      return
+    end
+
+    android_source_prefixes_for_manifest(manifest_path).each do |prefix|
+      prefixes << prefix unless prefixes.includes?(prefix)
+    end
+  end
+
+  def android_source_file?(path : String, prefixes : Array(String)) : Bool
+    prefixes.any? { |prefix| path.starts_with?(prefix) }
+  end
+
+  def mobile_detector?(name : String) : Bool
+    MOBILE_DETECTOR_NAMES.includes?(name)
+  end
+
+  # Filenames that detectors match by exact basename (often with path
+  # constraints like "must sit at the project root"). These must not share
+  # an extension-only cache bucket — e.g. `vercel.json` is not "any .json".
+  SPECIAL_BASENAMES = Set{
+    "package.json", "tsconfig.json", "composer.json", "composer.lock",
+    "vercel.json", "now.json", "netlify.toml", "wrangler.toml",
+    "Gemfile", "Gemfile.lock", "Package.swift", "Cargo.toml", "go.mod",
+    "mix.exs", "pubspec.yaml", "pubspec.lock", "shard.yml", "shard.lock",
+    "build.sbt", "pom.xml", "AndroidManifest.xml", "config.toml",
+    "rebar.config", "erlang.mk", "project.clj", "deps.edn", "stack.yaml",
+    "package.yaml", "gleam.toml", "manifest.toml", "paket.dependencies",
+    "Caddyfile", "Dockerfile", "Makefile", "Rakefile", "serverless.yml",
+    "serverless.yaml", "app.yaml", "openapi.yaml", "openapi.json",
+    "swagger.json", "swagger.yaml",
+  }
+
+  # Paths that embed directory segments real detectors gate on
+  # (`/grails-app/`, `/migrations/`, `/server/api/`, …). Used only to
+  # classify path-sensitive detectors — not as production file samples.
+  PATH_SEGMENT_PROBES = [
+    # Extension-free path under grails-app: only matches via the directory
+    # gate (a bare `Foo.groovy` basename is true for other reasons).
+    "proj/grails-app/conf/application",
+    "proj/supabase/migrations/001.sql",
+    "proj/migrations/001.sql",
+    "proj/supabase/config.toml",
+    "proj/server/api/hello.js",
+    "proj/server/routes/hello.js",
+    "proj/pages/api/hello.js",
+    "proj/app/api/hello/route.ts",
+    "proj/routes/+server.ts",
+    "proj/routes/index.dart",
+    "proj/directus/snapshots/snap.json",
+    "proj/wp-content/plugins/x.php",
+    "proj/metadata/databases/tables.yaml",
+    "proj/Magento/module.xml",
+  ]
+
+  # Whether `applicable?` depends on more than the basename (root
+  # placement, directory segments, multi-hop path layout). Those
+  # detectors must always see the real path in the hot loop.
+  def path_sensitive?(detector : Detector) : Bool
+    # Explicit declaration wins. The probe sweep below is a safety net,
+    # not the contract: it is fail-open by construction, so a detector
+    # whose directory gate happens to agree with its basename gate on
+    # every probe would otherwise be memoized as basename-only and lose
+    # the path check entirely.
+    return true if detector.path_sensitive?
+
+    sample_suffixes = [
+      ".java", ".js", ".ts", ".tsx", ".rb", ".py", ".go", ".json", ".yml",
+      ".yaml", ".xml", ".cs", ".kt", ".php", ".cr", ".rs", ".ex", ".swift",
+      ".scala", ".dart", ".groovy", ".pl", ".clj", ".hs", ".lua", ".sql",
+      ".toml", ".bru", ".http", ".sbt", ".gradle", ".aspx", ".fs",
+    ]
+    # Bare names: catch "must sit at project root" checks (Vercel,
+    # Package.swift, …) where `name` is true but `a/b/c/name` is false.
+    basenames = SPECIAL_BASENAMES.to_a + sample_suffixes.map { |ext| "file#{ext}" }
+    basenames.any? do |name|
+      detector.applicable?("a/b/c/#{name}") != detector.applicable?(name)
+    end || PATH_SEGMENT_PROBES.any? do |probe|
+      # Directory-segment gates: same basename, different path → different
+      # answer (Supabase `/migrations/`, Grails `/grails-app/`, …).
+      detector.applicable?(probe) != detector.applicable?(File.basename(probe))
+    end
+  end
+
+  # Build a lookup that turns a path into the list of detector indices
+  # whose `applicable?` returns true — without re-walking every detector
+  # on every file. Most detectors only inspect extension / basename, so
+  # their answers are memoized by basename. Detectors that look at path
+  # segments or root placement are classified as path-sensitive and
+  # always evaluated against the real path.
+  def build_applicable_lookup(detectors : Array(Detector)) : Proc(String, Array(Int32))
+    path_sensitive = [] of Int32
+    detectors.each_with_index do |detector, idx|
+      path_sensitive << idx if path_sensitive?(detector)
+    end
+
+    path_sensitive_set = Set(Int32).new(path_sensitive)
+    # Key by basename, not bare extension: many detectors gate on
+    # basename substrings (`*deploy*.yml`, `*sites*.yaml`) or exact
+    # names (`package.json`). An extension-only key would probe
+    # `file.yml` and drop every basename-qualified match.
+    cache = {} of String => Array(Int32)
+
+    ->(path : String) do
+      base = File.basename(path)
+
+      cached = cache[base]?
+      unless cached
+        idxs = [] of Int32
+        detectors.each_with_index do |detector, idx|
+          next if path_sensitive_set.includes?(idx)
+          idxs << idx if detector.applicable?(base)
+        end
+        cache[base] = idxs
+        cached = idxs
+      end
+
+      # Always dup: callers `reject!` android-scope / JSON-spec candidates
+      # in place and must not corrupt the memoized array.
+      result = cached.dup
+      path_sensitive.each do |idx|
+        result << idx if detectors[idx].applicable?(path)
+      end
+      result
+    end
+  end
+
+  # The complete detector registry.
+  #
+  # Derived from the classes themselves rather than a hand-maintained list.
+  # Every detector under the `Detector::` namespace is registered by existing;
+  # there is no second place to add it to and therefore no way to write a
+  # detector that silently never runs. That was a real failure mode — it is
+  # how `zap_sites_tree` ended up detectable but unnameable (see
+  # `spec/unit_test/techs/registry_integrity_spec.cr`, which still checks the
+  # remaining hand-maintained lists it cannot yet be derived from).
+  #
+  # The `Detector::` filter is the production contract. `crystal spec`
+  # compiles the suite into one binary, so `all_subclasses` also sees the
+  # throwaway subclasses `spec/unit_test/detector/detector_for_spec.cr`
+  # defines to exercise the base class; those must never join a real scan.
+  #
+  # Sorted by class name so the order is a property of the source, not of
+  # whatever sequence `require "./detectors/**"` happened to produce. Order is
+  # not load-bearing — `techs` is accumulated concurrently across worker
+  # fibers and the optimizer sorts endpoints before output — but a stable
+  # order keeps debug logs and `detector_list` indices comparable between
+  # runs.
 end
 
-# The complete detector registry.
-#
-# Derived from the classes themselves rather than a hand-maintained list.
-# Every detector under the `Detector::` namespace is registered by existing;
-# there is no second place to add it to and therefore no way to write a
-# detector that silently never runs. That was a real failure mode — it is
-# how `zap_sites_tree` ended up detectable but unnameable (see
-# `spec/unit_test/techs/registry_integrity_spec.cr`, which still checks the
-# remaining hand-maintained lists it cannot yet be derived from).
-#
-# The `Detector::` filter is the production contract. `crystal spec`
-# compiles the suite into one binary, so `all_subclasses` also sees the
-# throwaway subclasses `spec/unit_test/detector/detector_for_spec.cr`
-# defines to exercise the base class; those must never join a real scan.
-#
-# Sorted by class name so the order is a property of the source, not of
-# whatever sequence `require "./detectors/**"` happened to produce. Order is
-# not load-bearing — `techs` is accumulated concurrently across worker
-# fibers and the optimizer sorts endpoints before output — but a stable
-# order keeps debug logs and `detector_list` indices comparable between
-# runs.
 def build_detector_list(options : Hash(String, YAML::Any)) : Array(Detector)
   detector_list = [] of Detector
 
@@ -346,12 +365,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # into the next scan in the same process.
   Noir::LocatorKeys.reset(Noir::LocatorKey::Lifecycle::DetectScoped)
 
-  android_source_scope_active = detector_list.any? { |detector| detector_mobile_detector?(detector.name) }
+  android_source_scope_active = detector_list.any? { |detector| Noir::Detection.mobile_detector?(detector.name) }
   android_source_prefixes = [] of String
   # Built once before the reader starts. Replaces the per-file
   # O(detectors) `applicable?` walk with an extension/basename memo
-  # plus a short path-sensitive tail (see detector_build_applicable_lookup).
-  applicable_lookup = detector_build_applicable_lookup(detector_list)
+  # plus a short path-sensitive tail (see Noir::Detection.build_applicable_lookup).
+  applicable_lookup = Noir::Detection.build_applicable_lookup(detector_list)
 
   # A malformed `--exclude-path` glob makes `File.match?` raise
   # `File::BadPatternError`. In practice that means an unterminated `[`
@@ -418,7 +437,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           # only when a sibling `shard.yml` is present.
           dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
           if android_source_scope_active
-            detector_add_android_source_prefixes_from_dir(dir, android_source_prefixes)
+            Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
           end
           begin
             Dir.each_child(dir) do |entry|
@@ -429,7 +448,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               if info.directory?
                 # Subtree prune happens here. Entry name (not full path)
                 # so the base-as-node_modules case from #912 is safe.
-                if DETECTOR_IGNORED_DIR_NAMES.includes?(entry) || DETECTOR_IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
+                if Noir::Detection::IGNORED_DIR_NAMES.includes?(entry) || Noir::Detection::IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
                   skipped_ignored_dirs += 1
                   next
                 end
@@ -488,13 +507,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               candidate_detector_indices = applicable_lookup.call(full_path)
 
               # An Android source-set file is normally narrowed to the
-              # mobile detectors only (see ANDROID_EMBEDDED_SERVER_MARKER /
+              # mobile detectors only (see Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER /
               # the Android-source scope spec). The exception — a genuine
               # embedded on-device server — can only be told apart from an
               # incidental framework import by reading the file, so defer
               # the narrowing until after the content read below.
-              android_source_file = detector_android_source_file?(full_path, android_source_prefixes)
-              if android_source_file && candidate_detector_indices.all? { |idx| detector_mobile_detector?(detector_list[idx].name) }
+              android_source_file = Noir::Detection.android_source_file?(full_path, android_source_prefixes)
+              if android_source_file && candidate_detector_indices.all? { |idx| Noir::Detection.mobile_detector?(detector_list[idx].name) }
                 # No server detector is even applicable here, so the
                 # marker check cannot change the outcome — keep the
                 # content-free fast path.
@@ -522,9 +541,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               # available: drop the server-framework detectors unless the
               # file carries a real server-routing construct (an embedded
               # on-device server).
-              if android_source_file && !content.matches?(ANDROID_EMBEDDED_SERVER_MARKER)
+              if android_source_file && !content.matches?(Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER)
                 candidate_detector_indices.reject! do |idx|
-                  !detector_mobile_detector?(detector_list[idx].name)
+                  !Noir::Detection.mobile_detector?(detector_list[idx].name)
                 end
                 if candidate_detector_indices.empty? && active_passive_scans.empty?
                   # Nothing left to detect and no passive scan to run.

@@ -48,7 +48,7 @@ module PassiveRulesUpdater
   # location an end-user owns. Kept out of `effective_rules_path` so
   # the CLI rules subcommand has a stable single answer.
   def self.user_rules_path : String
-    File.join(get_home, "passive_rules")
+    File.join(Noir::Home.path, "passive_rules")
   end
 
   # Where `noir scan -P` should actually read rules from. Preference
