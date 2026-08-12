@@ -5,6 +5,7 @@ require "../../../miniparsers/kotlin_callee_extractor"
 require "../../engines/kotlin_engine"
 require "../../../utils/utils.cr"
 require "../../../utils/path_scope"
+require "../../../utils/url_path"
 
 module Analyzer::Kotlin
   class Spring < Analyzer
@@ -725,7 +726,7 @@ module Analyzer::Kotlin
       roots.each do |root|
         graphql_path = graphql_path_from_resources(root) || "/graphql"
         path_config = path_configs[root]? || SpringPathConfig.new
-        paths[root] = join_paths(path_config.web_base_path, graphql_path)
+        paths[root] = Noir::URLPath.join_rooted(path_config.web_base_path, graphql_path)
       end
 
       paths
@@ -891,7 +892,7 @@ module Analyzer::Kotlin
         method_nodes = Noir::TreeSitterKotlinParameterExtractor.index_functions_from(root, content)
 
         stomp_routes.each do |route|
-          route_path = route.verb == "GET" ? join_paths(webflux_base_path, route.path) : route.path
+          route_path = route.verb == "GET" ? Noir::URLPath.join_rooted(webflux_base_path, route.path) : route.path
           line = route.line + 1
           key = "#{route.class_name}##{route.method_name}"
           method = method_nodes[key]?
@@ -1001,17 +1002,11 @@ module Analyzer::Kotlin
             )
           end
 
-          # Drop the trailing `/` on webflux_base_path when the route
-          # path already starts with one, so the join doesn't produce
-          # `//`.
           base_path = webflux_base_path
-          if base_path.ends_with?("/") && route.path.starts_with?("/")
-            base_path = base_path[..-2]
-          end
 
           line = route.line + 1
           details = Details.new(PathInfo.new(path, line))
-          endpoint = Endpoint.new(join_paths(base_path, route.path), route.verb, parameters, details)
+          endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, route.path), route.verb, parameters, details)
           attach_method_security_tags(endpoint, method, content)
 
           # Functional router method references can point at a handler
@@ -1075,7 +1070,7 @@ module Analyzer::Kotlin
 
             pairs.each do |implementation, entry|
               entry_route = entry.route
-              inherited_path = join_paths(implementation.path, entry_route.path)
+              inherited_path = Noir::URLPath.join_rooted(implementation.path, entry_route.path)
 
               parameter_format = Noir::TreeSitterKotlinParameterExtractor.extract_consumes_from(
                 interface_root, interface_source, entry_route.class_name, entry_route.method_name
@@ -1093,7 +1088,7 @@ module Analyzer::Kotlin
 
               details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
               details.add_path(PathInfo.new(path, implementation.line + 1))
-              endpoint = Endpoint.new(join_paths(base_path, inherited_path), entry_route.verb, parameters, details)
+              endpoint = Endpoint.new(Noir::URLPath.join_rooted(base_path, inherited_path), entry_route.verb, parameters, details)
               attach_method_security_tags(endpoint, method_nodes["#{implementation.class_name}##{entry_route.method_name}"]?, content)
 
               if include_callee && !(implementation.class_name.empty? || entry_route.method_name.empty?)

@@ -80,5 +80,36 @@ module Noir
       end
       "#{prefix.rstrip('/')}/#{path.lstrip('/')}"
     end
+
+    # `join_absorbing` plus the guarantee that the result is a rooted URL
+    # path: never empty, always leading-`/`.
+    #
+    # This is the rule Spring's servlet container applies when it composes
+    # `server.servlet.context-path` with a controller's resolved mapping.
+    # Both sides can legitimately be empty — the Java and Kotlin route
+    # extractors default an unmapped class or a bare `@GetMapping` to `""`
+    # (see `paths = [""] if paths.empty?`) — and the container serves that
+    # as `/`, not as the empty string.
+    #
+    # Spring used to reach `File.join` for this, via a top-level
+    # `join_paths` that unqualified calls fell through to. `File.join`
+    # gets the empty cases right but three others wrong, which is what
+    # this method exists to fix:
+    #
+    #   ("", "")          File.join "/"        join_rooted "/"
+    #   ("/", "")         File.join "/"        join_rooted "/"
+    #   ("", "users")     File.join "users"    join_rooted "/users"
+    #   ("/api", "")      File.join "/api/"    join_rooted "/api"
+    #   ("/api//", "/u")  File.join "/api//u"  join_rooted "/api/u"
+    #
+    # `join_trimmed` and `join_absorbing` are NOT substitutes: both return
+    # `""` for `("", "")`, which would emit an endpoint with an empty URL.
+    # `File.join` is also platform-dependent (`Path` uses the native
+    # separator), so on Windows it composed `"/api\users"`.
+    def self.join_rooted(prefix : String, path : String) : String
+      joined = join_absorbing(prefix, path)
+      return "/" if joined.empty?
+      joined.starts_with?('/') ? joined : "/#{joined}"
+    end
   end
 end

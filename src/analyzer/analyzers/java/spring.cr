@@ -5,6 +5,7 @@ require "../../../miniparsers/java_callee_extractor"
 require "../../../utils/spring_property_path"
 require "../../engines/java_engine"
 require "../../../utils/path_scope"
+require "../../../utils/url_path"
 require "yaml"
 
 module Analyzer::Java
@@ -219,19 +220,13 @@ module Analyzer::Java
               )
               merge_route_condition_params(parameters, route.params)
 
-              # Drop the trailing `/` on webflux_base_path when the
-              # route path already starts with one, so the join
-              # doesn't produce `//`.
               base_path = is_internal_client ? "" : configured_base_path
-              if base_path.ends_with?("/") && route.path.starts_with?("/")
-                base_path = base_path[..-2]
-              end
 
               line = route.line + 1
               details = Details.new(PathInfo.new(path, line))
 
               endpoint = Endpoint.new(
-                resolve_endpoint_path(join_paths(base_path, route.path), spring_properties),
+                resolve_endpoint_path(Noir::URLPath.join_rooted(base_path, route.path), spring_properties),
                 route.verb, parameters, details, is_internal_client
               )
 
@@ -261,7 +256,7 @@ module Analyzer::Java
                   # scan already emitted that route — skip the duplicate.
                   next if implementation.annotated_method_names.includes?(entry_route.method_name)
                   implementation.paths.each do |implementation_path|
-                    inherited_path = join_paths(implementation_path, entry_route.path)
+                    inherited_path = Noir::URLPath.join_rooted(implementation_path, entry_route.path)
                     parameter_format = nil
                     parameters = [] of Param
 
@@ -282,7 +277,7 @@ module Analyzer::Java
 
                     details = Details.new(PathInfo.new(entry.path, entry_route.line + 1))
                     endpoint = Endpoint.new(
-                      resolve_endpoint_path(join_paths(configured_base_path, inherited_path), spring_properties),
+                      resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, inherited_path), spring_properties),
                       entry_route.verb, parameters, details
                     )
 
@@ -313,7 +308,7 @@ module Analyzer::Java
               collect_stomp_endpoints(content, constants).each do |entry|
                 endpoint_path, line = entry
                 endpoint = Endpoint.new(
-                  resolve_endpoint_path(join_paths(configured_base_path, endpoint_path), spring_properties),
+                  resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, endpoint_path), spring_properties),
                   "GET", Details.new(PathInfo.new(path, line))
                 )
                 endpoint.protocol = "ws"
@@ -339,7 +334,7 @@ module Analyzer::Java
               collect_resource_handler_endpoints(content, constants).each do |entry|
                 endpoint_path, line = entry
                 @result << Endpoint.new(
-                  resolve_endpoint_path(join_paths(configured_base_path, endpoint_path), spring_properties),
+                  resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, endpoint_path), spring_properties),
                   "GET", Details.new(PathInfo.new(path, line))
                 )
               end
@@ -387,13 +382,13 @@ module Analyzer::Java
               nest_prefix = ""
               nest_prefixes.each do |start_b, end_b, prefix|
                 if pos >= start_b && pos < end_b
-                  nest_prefix = join_paths(nest_prefix, prefix)
+                  nest_prefix = Noir::URLPath.join_rooted(nest_prefix, prefix)
                 end
               end
-              composed = nest_prefix.empty? ? endpoint : join_paths(nest_prefix, endpoint)
+              composed = nest_prefix.empty? ? endpoint : Noir::URLPath.join_rooted(nest_prefix, endpoint)
               details = Details.new(PathInfo.new(path))
               reactive_endpoint = Endpoint.new(
-                resolve_endpoint_path(join_paths(configured_base_path, composed), spring_properties),
+                resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, composed), spring_properties),
                 method, details
               )
 
@@ -665,7 +660,7 @@ module Analyzer::Java
         prefixes = [] of String
         outer_prefixes.each do |outer_prefix|
           class_paths.each do |class_path|
-            prefixes << join_paths(outer_prefix, class_path)
+            prefixes << Noir::URLPath.join_rooted(outer_prefix, class_path)
           end
         end
 
@@ -707,7 +702,7 @@ module Analyzer::Java
         application_prefixes.each do |application_prefix|
           class_prefixes.each do |class_prefix|
             paths.each do |path|
-              endpoints << {verb, join_paths(application_prefix, join_paths(class_prefix, path)), line + 1}
+              endpoints << {verb, Noir::URLPath.join_rooted(application_prefix, Noir::URLPath.join_rooted(class_prefix, path)), line + 1}
             end
           end
         end
