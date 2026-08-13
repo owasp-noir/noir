@@ -501,12 +501,6 @@ module Analyzer::Php
       {content[body_start...body_end], body_end, body_start_line}
     end
 
-    private def newline_count_before(content : String, pos : Int32) : Int32
-      return 0 if pos <= 0
-
-      content[0...pos].count('\n')
-    end
-
     # True when `pos` falls inside any skip range (PHP comment, string
     # literal or heredoc/nowdoc body — see `PhpLexer#skip_ranges`). Cheap on
     # the ~few-hundred-range count seen in real Laravel routes files.

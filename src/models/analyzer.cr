@@ -327,8 +327,9 @@ class Analyzer
   # is correct because `\n` is ASCII and never appears inside a UTF-8
   # multi-byte sequence.
   #
-  # `PhpEngine#php_line_number_for_index` predates this and is identical;
-  # it should fold into this helper when PHP is next touched.
+  # Takes a CHAR offset. Feeding it a byte offset silently reports a line
+  # that is too low on non-ASCII input — the defect four JS analyzers
+  # carried until they were folded in here.
   def line_number_for_index(content : String, char_index : Int32) : Int32
     return 1 if char_index <= 0
 

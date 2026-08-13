@@ -246,11 +246,6 @@ module Analyzer::Php
       pos
     end
 
-    private def newline_count_before(content : String, pos : Int32) : Int32
-      return 0 if pos <= 0
-      content[0...pos].count('\n')
-    end
-
     private def normalize_route(route : String) : String
       normalized = route.gsub(/\[:(\w+)\]/) { ":#{$1}" }
       normalized = normalized.gsub(/:(\w+)/) { "{#{$1}}" }
@@ -648,19 +643,6 @@ module Analyzer::Php
       attach_php_callees(endpoint, callees)
     end
 
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
-    end
-
     private def analyze_annotation_routes(path : String, content : String, include_callee : Bool) : Array(Endpoint)
       endpoints = [] of Endpoint
 
@@ -674,7 +656,7 @@ module Analyzer::Php
 
         pattern = route_match[1]
         normalized_path = normalize_route(pattern)
-        route_line = php_line_number_for_index(content, route_match.begin(0))
+        route_line = line_number_for_index(content, route_match.begin(0))
 
         methods = ["GET"]
         if method_str = route_match[2]?

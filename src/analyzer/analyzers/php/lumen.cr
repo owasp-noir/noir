@@ -263,12 +263,6 @@ module Analyzer::Php
       attach_php_callees(endpoint, callees)
     end
 
-    private def newline_count_before(content : String, pos : Int32) : Int32
-      return 0 if pos <= 0
-
-      content[0...pos].count('\n')
-    end
-
     private def extract_methods_from_array(methods_str : String) : Array(String)
       methods = [] of String
       methods_str.scan(/['"]([^'"]+)['"]/).each do |match|
@@ -296,19 +290,6 @@ module Analyzer::Php
         end
       end
       params
-    end
-
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
     end
   end
 end

@@ -125,25 +125,38 @@ module Analyzer::Php
       return unless method_end
       return if method_end <= brace_start + 1
 
-      body_start_line = php_line_number_for_index(content, brace_start)
+      body_start_line = line_number_for_index(content, brace_start)
       {content[(brace_start + 1)...method_end], body_start_line}
     end
 
-    protected def php_line_number_for_index(content : String, index : Int32) : Int32
-      return 1 if index <= 0
+    # Newlines strictly before `pos`, a CHAR offset — i.e. the 0-based line
+    # index where `line_number_for_index` gives the 1-based number.
+    #
+    # Four analyzers (laravel, lumen, slim, thinkphp) each carried a
+    # byte-identical `content[0...pos].count('\n')` copy of this. That form
+    # allocates a prefix substring per call; routing through the inherited
+    # helper drops the allocation and keeps one definition of "which line is
+    # this offset on" for the whole engine.
+    protected def newline_count_before(content : String, pos : Int32) : Int32
+      line_number_for_index(content, pos) - 1
+    end
 
-      # Count newlines without allocating `content[0...index]` (O(n)
-      # copy per call). Byte scan is correct because `\n` is ASCII and
-      # never appears inside a UTF-8 multi-byte sequence.
-      bytes = content.to_slice
-      byte_end = content.char_index_to_byte_index(index) || bytes.size
-      count = 1
-      i = 0
-      while i < byte_end
-        count += 1 if bytes[i] == BYTE_NEWLINE
-        i += 1
+    # Drop repeat `(param_type, name)` pairs, keeping the first.
+    #
+    # Was five byte-identical private copies (hyperf, laminas, lumen, slim,
+    # thinkphp). The NUL separator matters: it cannot occur in either field,
+    # so `("query", "a\0b")` and `("query\0a", "b")` cannot collide.
+    protected def dedup_params(params : Array(Param)) : Array(Param)
+      seen = Set(String).new
+      params.select do |param|
+        key = "#{param.param_type}\0#{param.name}"
+        if seen.includes?(key)
+          false
+        else
+          seen.add(key)
+          true
+        end
       end
-      count
     end
 
     # ASCII byte values for the structural delimiters scanned below.
