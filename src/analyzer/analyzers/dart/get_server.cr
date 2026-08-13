@@ -186,7 +186,7 @@ module Analyzer::Dart
 
         verbs.each do |verb|
           next unless seen.add?({verb, url, page[:file]})
-          result << build_endpoint(url, verb, page[:file], page[:line], callees)
+          result << Helper.build_endpoint(url, verb, page[:file], page[:line], callees)
         end
       end
 
@@ -236,26 +236,12 @@ module Analyzer::Dart
       base.gsub(/:([A-Za-z_]\w*)/) { "{#{$~[1]}}" }
     end
 
-    private def build_endpoint(url : String,
-                               verb : String,
-                               path : String,
-                               line : Int32,
-                               callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
-      endpoint
-    end
-
     # ---------- source-string utilities ----------
 
     # Split a call's argument list into a `name: value` map at top level.
     private def named_args(text : String) : Hash(String, String)
       result = {} of String => String
-      split_top_level_args(text).each do |raw|
+      Helper.split_top_level_args(text).each do |raw|
         arg = raw.strip
         next if arg.empty?
         colon = top_level_colon(arg)
@@ -305,64 +291,6 @@ module Analyzer::Dart
         i += 1
       end
       nil
-    end
-
-    private def split_top_level_args(text : String) : Array(String)
-      result = [] of String
-      chars = text.chars
-      depth_paren = 0
-      depth_brace = 0
-      depth_bracket = 0
-      depth_angle = 0
-      start = 0
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth_paren += 1
-        when ')'
-          depth_paren -= 1 if depth_paren > 0
-        when '{'
-          depth_brace += 1
-        when '}'
-          depth_brace -= 1 if depth_brace > 0
-        when '['
-          depth_bracket += 1
-        when ']'
-          depth_bracket -= 1 if depth_bracket > 0
-        when '<'
-          depth_angle += 1
-        when '>'
-          depth_angle -= 1 if depth_angle > 0
-        when ','
-          if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << chars[start...i].join
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      result << chars[start..].join if start <= chars.size
-      result
     end
   end
 end

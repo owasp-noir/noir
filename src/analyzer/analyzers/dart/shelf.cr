@@ -200,13 +200,13 @@ module Analyzer::Dart
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
 
-        args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        args = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
         next if args.empty?
 
         verbs, path_arg = annotation_verbs_and_path(m[1]?, args)
         next if verbs.empty? || path_arg.nil?
 
-        literal = extract_string_literal(path_arg)
+        literal = Helper.extract_string_literal(path_arg)
         next unless literal
 
         owner = enclosing_class(classes, match_begin)
@@ -236,9 +236,9 @@ module Analyzer::Dart
         next unless match_begin && open_paren
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
-        args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        args = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
         next if args.empty?
-        literal = extract_string_literal(args[0])
+        literal = Helper.extract_string_literal(args[0])
         next unless literal
         # `@RoutePrefix` sits *above* the `class` keyword, so it isn't
         # bracketed by any class body — attribute it to the class whose
@@ -275,7 +275,7 @@ module Analyzer::Dart
 
       # `@Route('GET', '/path')` — verb is the first string argument.
       return {[] of String, nil} if args.size < 2
-      verb_lit = extract_string_literal(args[0])
+      verb_lit = Helper.extract_string_literal(args[0])
       return {[] of String, nil} unless verb_lit
       verb = verb_lit.downcase
       return {ALL_VERBS.dup, args[1]} if verb == "all"
@@ -415,10 +415,10 @@ module Analyzer::Dart
                             mounts : Array(Mount))
       return if open_paren >= close_paren
       args_text = source[(open_paren + 1)...close_paren]
-      args = split_top_level_args(args_text)
+      args = Helper.split_top_level_args(args_text)
       return if args.empty?
 
-      literal = extract_string_literal(args[0])
+      literal = Helper.extract_string_literal(args[0])
       return unless literal
 
       line = line_number_for_index(file_content, open_paren)
@@ -442,10 +442,6 @@ module Analyzer::Dart
       end
     end
 
-    # Matches a bare handler reference (`getNotes`, `_echo`,
-    # `health_check.handler`) passed as the second argument to a route.
-    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
-
     # Best-effort callee extraction for the route handler. Inline lambdas
     # have their body scanned for callees; a plain function reference
     # (Dart can't resolve these cross-file yet) is itself recorded as the
@@ -458,7 +454,7 @@ module Analyzer::Dart
       stripped = handler_arg.strip
 
       unless stripped.starts_with?('(')
-        return [] of Noir::DartCalleeExtractor::Entry unless stripped.matches?(HANDLER_REFERENCE_REGEX)
+        return [] of Noir::DartCalleeExtractor::Entry unless stripped.matches?(Helper::HANDLER_REFERENCE_REGEX)
         return [{stripped, path, line}] of Noir::DartCalleeExtractor::Entry
       end
 
@@ -481,24 +477,6 @@ module Analyzer::Dart
       return if cleaned.empty?
       return unless cleaned.matches?(/\A[A-Za-z_]\w*\z/)
       cleaned
-    end
-
-    private def extract_string_literal(text : String) : String?
-      stripped = text.strip
-      return if stripped.empty?
-      first = stripped[0]
-      return unless first == '"' || first == '\''
-      i = 1
-      while i < stripped.size
-        c = stripped[i]
-        if c == '\\' && i + 1 < stripped.size
-          i += 2
-          next
-        end
-        return stripped[1...i] if c == first
-        i += 1
-      end
-      nil
     end
 
     # `<id>` → `{id}` ; `<id|[0-9]+>` → `{id}` ; keep slashes.
@@ -541,7 +519,7 @@ module Analyzer::Dart
       if info
         info[:routes].each do |route|
           full_path = mount_join(prefix, route[:path])
-          endpoints << build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
+          endpoints << Helper.build_endpoint(full_path, route[:verb], route[:file], route[:line], route[:callees])
         end
         info[:mounts].each do |mnt|
           child_prefix = mount_join(prefix, mnt[:prefix])
@@ -556,20 +534,6 @@ module Analyzer::Dart
       right = sub.starts_with?('/') ? sub : "/#{sub}"
       result = "#{left}#{right}"
       result.empty? ? "/" : result
-    end
-
-    private def build_endpoint(url : String,
-                               verb : String,
-                               path : String,
-                               line : Int32,
-                               callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
-      endpoint
     end
 
     # ---------- Source-string utilities ----------
@@ -621,64 +585,6 @@ module Analyzer::Dart
         i += 1
       end
       chars.size
-    end
-
-    private def split_top_level_args(text : String) : Array(String)
-      result = [] of String
-      chars = text.chars
-      depth_paren = 0
-      depth_brace = 0
-      depth_bracket = 0
-      depth_angle = 0
-      start = 0
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth_paren += 1
-        when ')'
-          depth_paren -= 1 if depth_paren > 0
-        when '{'
-          depth_brace += 1
-        when '}'
-          depth_brace -= 1 if depth_brace > 0
-        when '['
-          depth_bracket += 1
-        when ']'
-          depth_bracket -= 1 if depth_bracket > 0
-        when '<'
-          depth_angle += 1
-        when '>'
-          depth_angle -= 1 if depth_angle > 0
-        when ','
-          if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << chars[start...i].join
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      result << chars[start..].join if start <= chars.size
-      result
     end
 
     private def strip_dart_comments(text : String) : String
