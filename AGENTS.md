@@ -137,8 +137,9 @@ When adding a new framework in a language that already has an extractor, extend 
 
 ### Taggers
 1. Create `src/tagger/taggers/{tagger_name}.cr`
-2. Add unit test: `spec/unit_test/tagger/{tagger_name}_spec.cr`
-3. Register in `HasTaggers` in `src/tagger/tagger.cr`
+2. Annotate the class: `@[Noir::TaggerFor(key: "{tagger_name}", name: "{Name} Tagger", desc: "…", order: 180)]`. This is the whole registration — `src/tagger/tagger.cr` derives the registry, the `-T` key, the `noir list taggers` entry and the run dispatch from the annotation. Unlike `analyzer_for`, omitting it is *not* a compile error; `spec/unit_test/techs/registry_integrity_spec.cr` fails and names the class.
+3. `key` is also the tagger's runtime `name` — `Tagger#initialize` reads it back off the annotation, so do not assign `@name` yourself. `order` fixes the sequence plain taggers run in, which is user-visible: they run sequentially, `Endpoint#add_tag` appends, and nothing sorts tags before output. Values are spaced by 10, so append rather than renumber.
+4. Add unit test: `spec/unit_test/tagger/{tagger_name}_spec.cr`
 
 ### Framework Taggers (Auth Taggers)
 Framework taggers detect framework-specific patterns (e.g., auth decorators, middleware, guards) and tag endpoints accordingly. They extend `FrameworkTagger < Tagger` which provides file caching and `read_source_context()`.
@@ -148,9 +149,9 @@ Framework taggers detect framework-specific patterns (e.g., auth decorators, mid
    - Override `self.target_techs` to return matching technology strings (e.g., `["python_django"]`)
    - Override `perform(endpoints)` to check and tag endpoints
    - Use `read_file(path)` (cached) and `read_source_context(endpoint)` helpers
-2. Add unit test: `spec/unit_test/tagger/framework_taggers/{tagger_name}_spec.cr`
-3. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}_auth/`
-4. Register in `HasFrameworkTaggers` in `src/tagger/tagger.cr`
+2. Annotate the class: `@[Noir::TaggerFor(key: "{tagger_name}", name: "{Framework} Auth Tagger", desc: "…", order: 270)]` — same annotation and same rules as plain taggers above. Framework taggers run under a `WaitGroup`, so for them `order` only sequences `noir list taggers`.
+3. Add unit test: `spec/unit_test/tagger/framework_taggers/{tagger_name}_spec.cr`
+4. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}_auth/`
 
 Key design notes:
 - `FrameworkTagger` inherits from `Tagger` — shares `@logger`, `@options`, `@name`, `perform()` interface
