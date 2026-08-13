@@ -14,13 +14,6 @@ class FastEndpointsAuthTagger < FrameworkTagger
     ["cs_fastendpoints"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
       content = read_file(path_info.path)

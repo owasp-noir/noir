@@ -38,13 +38,6 @@ class ScalaAuthTagger < FrameworkTagger
     ["scala_play", "scala_akka", "scala_scalatra", "java_play"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)

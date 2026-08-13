@@ -214,4 +214,29 @@ class FrameworkTagger < Tagger
     return true if STATIC_PUBLIC_FILES.includes?(last)
     STATIC_ASSET_EXTENSIONS.any? { |ext| last.ends_with?(ext) }
   end
+
+  # The per-endpoint shape: look at each endpoint, tag in place, hand the
+  # array back. Fifteen framework taggers carried a byte-identical copy of
+  # this; they now declare only `check_endpoint`.
+  #
+  # Not every framework tagger fits it — eleven still override `perform`
+  # because they need a pre-scan over the project (config files, middleware
+  # registration) before the per-endpoint pass, or they group endpoints
+  # first. Those keep their own.
+  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
+    endpoints.each do |endpoint|
+      check_endpoint(endpoint)
+    end
+    endpoints
+  end
+
+  # Per-endpoint hook for taggers using the inherited `perform`.
+  #
+  # A no-op rather than `abstract`: `FrameworkTagger` is instantiated
+  # directly by its own spec and by the tagger-registry specs, so the class
+  # cannot be abstract. A tagger that inherits `perform` without defining
+  # this tags nothing — `spec/unit_test/tagger/framework_taggers/` covers
+  # each one, so that shows up as a failing tagger spec rather than silence.
+  protected def check_endpoint(endpoint : Endpoint)
+  end
 end
