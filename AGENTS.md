@@ -92,7 +92,17 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 
 `spec/unit_test/analyzer/layering_boundary_spec.cr` enforces the file-walking half of that rule: `Dir.glob` / `Dir.children` / `Dir.each_child` under `src/analyzer/analyzers/**` fails the suite. Get your file set from the engine (`scan_target_files`, `parallel_file_scan`) or from a detector-built index (`get_files_by_extension`, `CodeLocator#files_by_basename`) — walking a directory yourself bypasses subtree pruning, `--exclude-path`, the media filter and the content cache. The spec carries an allowlist of the six adapters that still walk; it is a ratchet, so entries may be removed but never added. It also forbids shadowing `Analyzer#read_file_content` or hand-rolling its `content_for(path) || TextFile.read(path)` body.
 
-**Reference implementation**: `src/analyzer/analyzers/javascript/hono.cr` on top of `src/miniparsers/js_route_extractor.cr`. It stays thin because it follows this split; contrast with analyzers that inline all three responsibilities.
+**Reference implementations — no single analyzer is the whole model yet.** Cite each for the layer it actually demonstrates:
+
+- **Getting your file set (L0)**: `src/analyzer/analyzers/javascript/hono.cr` — inherits `JavascriptEngine` and drives the walk with `parallel_file_scan`, so it gets the worker pool, the content cache and the language's test/vendor filters for free. `src/analyzer/engines/file_scan_engine.cr` (39 lines) is the exemplary shared layer itself.
+- **Delegating the parse and staying thin (L1→L2)**: `src/analyzer/analyzers/javascript/hapi.cr` — 54 lines, 3 methods, no tokenizing at all. It calls `Noir::TreeSitterHapiExtractor.extract_routes` and does nothing but map the result onto `Param`s. Same shape: `javascript/elysia.cr` (54), `javascript/adonisjs.cr` (62), `kotlin/http4k.cr` (91), `java/spark.cr` (129).
+
+Each is also a counter-example on the other axis, and knowing which way is what keeps you from copying the wrong half:
+
+- `hono.cr` is right on L0 and **wrong on L2**. Only ~40 of its 385 lines are extractor delegation; the rest is layers 2 and 3 fused — a char-by-char `split_top_level_args` (one of 28 copies in the tree), `skip_whitespace`, `line_for_pos`, a second independent regex line-walk for `app.on(...)`, full inline route/param regex tables, and the HTTP verb list declared twice in one file (L75 and L333). Its own comment admits it: *"this auxiliary pass has its own regex walk, so it has to repeat the same gates"*.
+- `hapi.cr` and the other thin adapters are right on L2 and **wrong on L0**: they extend `Analyzer` directly and re-walk `all_files()` themselves with a `File.exists?` guard that is redundant on detector-registered paths. They should ride their language engine.
+
+So: take the walk from `hono.cr`, take the body from `hapi.cr`, and write the analyzer neither of them is yet.
 
 **Current coverage**:
 - Language engines (`src/analyzer/engines/`, subclass count in parentheses): `SpecificationEngine` (45), `JavascriptEngine` (18), `GoEngine` (16), `PythonEngine` (16), `PhpEngine` (15), `RustEngine` (10), `RubyEngine` (8), `CrystalEngine` (6), `CfmlEngine` (5), `ScalaEngine` (5), `SwiftEngine` (3), `PerlEngine` (3), `ElixirEngine` (2). `java_engine.cr` and `kotlin_engine.cr` are **not** engines — they are modules exposing a shared `self.test_path?` and nothing inherits from them.
