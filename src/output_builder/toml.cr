@@ -2,7 +2,7 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "./toml_serializer"
 
-@[Noir::OutputFormat(name: "toml", description: "TOML", order: 50)]
+@[Noir::OutputFormat(name: "toml", description: "TOML", order: 50, structured: true)]
 class OutputBuilderToml < OutputBuilder
   include OutputBuilderTomlSerializer
 

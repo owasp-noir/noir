@@ -4,7 +4,7 @@ require "../utils/http_symbols"
 require "uri"
 require "json"
 
-@[Noir::OutputFormat(name: "postman", description: "Postman collection", order: 160)]
+@[Noir::OutputFormat(name: "postman", description: "Postman collection", order: 160, structured: true)]
 class OutputBuilderPostman < OutputBuilder
   def print(endpoints : Array(Endpoint))
     items = [] of Hash(String, JSON::Any)

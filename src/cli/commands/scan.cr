@@ -25,24 +25,6 @@ module Noir::CLI::ScanCommand
   # rather than a bare magic number.
   WARNING_COLOR = Colorize::Color256.new(208)
 
-  # Output formats whose downstream consumers (jq, SARIF parsers, Swagger/
-  # Postman importers, CI report uploaders/archivers) treat empty or missing
-  # output as a hard error. When a scan finds no endpoints, we still emit a
-  # valid empty document for these formats — `{"endpoints":[],"passive_
-  # results":[]}` for json, a `"paths": {}` OAS document, a header-only
-  # Markdown table, an empty-mindmap Mermaid diagram, a full HTML shell,
-  # etc. Every format below already produces a well-formed document for
-  # zero endpoints (verified), so this is purely about not skipping the
-  # builder call entirely.
-  #
-  # Command-list / line-list formats (curl, httpie, powershell, adb, simctl,
-  # only-*) and `plain` are deliberately excluded: they have no envelope, so
-  # "nothing to render" is the correct empty output for them.
-  STRUCTURED_OUTPUT_FORMATS = Set{
-    "json", "yaml", "jsonl", "toml", "sarif",
-    "oas2", "oas3", "postman", "html", "mermaid", "markdown-table",
-  }
-
   def self.run(argv : Array(String))
     # Stage ARGV through OptionParser (positional path discovery happens
     # inside `run_options_parser`). Dup `argv` upfront because callers
@@ -369,9 +351,11 @@ module Noir::CLI::ScanCommand
         app.report
         exit(0)
       else
-        # See STRUCTURED_OUTPUT_FORMATS above for which formats still get
-        # a report call (and why) when no endpoints were discovered.
-        if STRUCTURED_OUTPUT_FORMATS.includes?(app.options["format"].to_s)
+        # Structured formats still get a report call on an empty scan, so
+        # downstream consumers receive a valid empty document rather than
+        # nothing. Which formats those are is declared on the builder
+        # (`structured: true`) — see `Noir::OutputFormats::STRUCTURED_NAMES`.
+        if Noir::OutputFormats.structured?(app.options["format"].to_s)
           app.report
         end
         exit(0)
