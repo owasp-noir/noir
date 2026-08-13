@@ -7,15 +7,23 @@ require "../../../src/models/locator_keys"
 #
 # `detect_techs` used to clear six of the 64 locator keys by hand — the file
 # registry and the five mobile ones. Every specification key survived into
-# the next scan, so a long-lived process (diff mode, or noir used as a
-# library) drained the *previous* codebase's spec files. The only thing
-# masking it was the `File.exists?` guard in
+# the next scan, so a process that runs two detect passes without a
+# `clear_all` between them drained the *previous* codebase's spec files. The
+# only thing masking it was the `File.exists?` guard in
 # `SpecificationEngine#each_spec_file`, which passes whenever the first
 # tree's files are still on disk — i.e. always, in the case that matters.
 #
+# That case is a library caller driving `detect_techs` / `analysis_endpoints`
+# directly. The CLI never reached it: `--diff-path` is the only way to get
+# two detect passes out of one `noir` process, and `src/cli/commands/scan.cr`
+# has called `CodeLocator#clear_all` between the two halves since the flag
+# was added. #2503's message and this comment both named diff mode anyway,
+# which overstated the blast radius.
+#
 # A single-scan fixture sweep cannot see this by construction, which is why
 # it survived long enough to have a comment written about it rather than a
-# fix. This spec is the oracle; it fails on main.
+# fix. This spec is the oracle: it fails with the hand-written clear list
+# put back in place of `LocatorKeys.reset`.
 describe "locator scan lifecycle" do
   it "does not carry a previous scan's spec registrations into the next" do
     logger = NoirLogger.new(false, false, false, true)
