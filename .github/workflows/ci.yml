@@ -133,6 +133,37 @@ jobs:
           cache-to: type=gha,mode=max,scope=action-ci
       - name: Run entrypoint end-to-end
         run: bash github-action/test-entrypoint.sh noir-action:ci
+  docs-generated:
+    # The supported-technology tables and the headline framework/language
+    # counts are derived from the techs catalog and committed, so they can go
+    # stale the moment a technology is added and nobody runs the generator.
+    # Nothing used to notice.
+    #
+    # Deliberately its own job with no `shards install`: the generator requires
+    # only stdlib and `src/techs/**`, which is exactly why the catalog metadata
+    # is kept independent of the analyzer tree. Keeping this job dependency-free
+    # is what preserves that property — if it ever needs `shards install`,
+    # something has pulled the analyzers into the techs module.
+    name: Generated docs are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: 1.21.0
+      - name: Regenerate supported docs and counts
+        run: crystal run scripts/generate_supported_docs.cr -- -q
+      - name: Fail if the committed output is stale
+        # Scoped to what the generator writes, so an unrelated dirty file
+        # cannot masquerade as stale docs.
+        run: |
+          if ! git diff --quiet -- README.md docs/; then
+            echo "::error::Generated docs are out of date. Run 'just docs-supported' and commit the result."
+            git --no-pager diff --stat -- README.md docs/
+            git --no-pager diff -- README.md docs/
+            exit 1
+          fi
+          echo "Generated docs match the catalog."
   lint:
     runs-on: ubuntu-latest
     steps:
