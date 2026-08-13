@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "./clojure_helper"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Clojure
   # Surfaces the command-line attack surface of Clojure programs as `cli://`
@@ -8,6 +9,8 @@ module Analyzer::Clojure
   # *command-line-args* / (System/getenv). Line-scan, merged by URL.
   class Cli < Analyzer
     analyzer_for "clojure_cli"
+
+    include CliEndpointSupport
 
     TOOLS_CLI_LONG = /"--([A-Za-z0-9][\w-]*)/
     TOOLS_CLI_SPEC = /\[\s*(?:(?:"-[A-Za-z0-9]"|nil)\s+)?"--/
@@ -108,15 +111,6 @@ module Analyzer::Clojure
       # scan base is not this project's test tree.
       lower = base_relative_path(path).downcase
       lower.includes?("/test/") || lower.includes?("_test.")
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
 
     # Finds every babashka.cli dispatch-table entry (`{:cmds [...] :spec {...}}`)

@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Dart
   # Surfaces the command-line attack surface of Dart programs as `cli://`
@@ -6,6 +7,8 @@ module Analyzer::Dart
   # main(List<String>) argv and Platform.environment. Line-scan, merged by URL.
   class Cli < Analyzer
     analyzer_for "dart_cli"
+
+    include CliEndpointSupport
 
     ARGPARSER_VAR  = /(\w+)\s*=\s*ArgParser\s*\(/
     SUBCOMMAND_VAR = /(\w+)\s*=\s*\w+\s*\.\s*addCommand\s*\(\s*['"]([^'"]+)['"]/
@@ -99,15 +102,6 @@ module Analyzer::Dart
       # scan base is not this project's test tree.
       lower = base_relative_path(path).downcase
       lower.matches?(TEST_PATH_RE)
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

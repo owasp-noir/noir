@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Cpp
   # Surfaces the command-line attack surface of C++ programs as `cli://`
@@ -12,6 +13,8 @@ module Analyzer::Cpp
   # URL. There is no C++ engine, so it subclasses Analyzer directly.
   class Cli < Analyzer
     analyzer_for "cpp_cli"
+
+    include CliEndpointSupport
 
     EXTS = [".cpp", ".cc", ".cxx", ".c++", ".hpp", ".hh", ".hxx"]
 
@@ -353,15 +356,6 @@ module Analyzer::Cpp
       spec.each_char do |ch|
         next if ch == ':' || ch == '+' || ch == '-'
         endpoint.push_param(Param.new(ch.to_s, "", "flag"))
-      end
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
       end
     end
   end

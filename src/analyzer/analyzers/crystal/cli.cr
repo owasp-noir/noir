@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Crystal
   # Surfaces the command-line attack surface of Crystal programs as `cli://`
@@ -7,6 +8,8 @@ module Analyzer::Crystal
   # merged by URL. Line-scan; subclasses Analyzer directly.
   class Cli < Analyzer
     analyzer_for "crystal_cli"
+
+    include CliEndpointSupport
 
     OPTION_PARSER = /\bOptionParser\.(?:parse|new)\b/
     OPT_LONG      = /\.on\s*\(?[^)]*?["'](-{2}[A-Za-z0-9][\w-]*)/
@@ -102,15 +105,6 @@ module Analyzer::Crystal
       # scan base is not this project's test tree.
       lower = base_relative_path(path).downcase
       lower.includes?("_spec.") || lower.includes?("/test/")
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

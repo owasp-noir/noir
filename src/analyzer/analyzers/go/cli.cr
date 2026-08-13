@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/go_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Go
   # Surfaces the command-line attack surface of Go programs as `cli://`
@@ -15,6 +16,8 @@ module Analyzer::Go
   # collects them all under a single `cli://<binary>` entry.
   class Cli < GoEngine
     analyzer_for "go_cli"
+
+    include CliEndpointSupport
 
     # Any of these in a file means it participates in the CLI surface.
     FRAMEWORK_IMPORTS = [
@@ -702,17 +705,6 @@ module Analyzer::Go
           ep = fetch_endpoint(endpoints, url, path, line_no)
           ep.push_param(Param.new(env_match[1], "", "env"))
         end
-      end
-    end
-
-    # Fetches (or lazily creates) the endpoint for a URL, so flags scattered
-    # across files/blocks merge onto one command.
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
       end
     end
   end

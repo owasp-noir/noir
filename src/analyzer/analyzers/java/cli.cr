@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/java_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Java
   # Surfaces the command-line attack surface of Java programs as `cli://`
@@ -13,6 +14,8 @@ module Analyzer::Java
   # JavaEngine.test_path? to skip tests.
   class Cli < Analyzer
     analyzer_for "java_cli"
+
+    include CliEndpointSupport
 
     COMMAND_ATTR    = /@Command\s*\([^)]*\bname\s*=\s*"([^"]+)"/
     COMMAND_OPEN    = /@Command\b/
@@ -304,15 +307,6 @@ module Analyzer::Java
       end
 
       result.to_s
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

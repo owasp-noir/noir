@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/ruby_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Ruby
   # Surfaces the command-line attack surface of Ruby programs as `cli://`
@@ -13,6 +14,8 @@ module Analyzer::Ruby
   # merging endpoints by URL across files.
   class Cli < RubyEngine
     analyzer_for "ruby_cli"
+
+    include CliEndpointSupport
 
     # OptionParser: `opts.on("-p", "--port PORT")` — prefer the long name.
     OPTPARSE_LONG  = /\.on\s*\(?[^)]*?["'](-{2}[A-Za-z0-9][\w-]*)/
@@ -313,15 +316,6 @@ module Analyzer::Ruby
             fetch_endpoint(endpoints, root_url, path, line_no).push_param(Param.new(env_match[1], "", "env"))
           end
         end
-      end
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
       end
     end
   end

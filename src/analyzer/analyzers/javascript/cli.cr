@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/javascript_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Javascript
   # Surfaces the command-line attack surface of JavaScript/TypeScript programs
@@ -11,6 +12,8 @@ module Analyzer::Javascript
   # extension so a `.ts` CLI isn't double-counted.
   class Cli < JavascriptEngine
     analyzer_for "js_cli"
+
+    include CliEndpointSupport
 
     SOURCE_EXTS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"]
 
@@ -590,15 +593,6 @@ module Analyzer::Javascript
         return name if expanded == dir || expanded.starts_with?("#{dir}/")
       end
       File.basename(path, File.extname(path))
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end
