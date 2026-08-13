@@ -66,7 +66,7 @@ describe MediaFilter do
 
     it "should check file size against default limit" do
       # Create a temporary small file
-      temp_file = "/tmp/small_test_file.txt"
+      temp_file = File.tempname("noir_media_small", ".txt")
       File.write(temp_file, "small content")
 
       MediaFilter.file_too_large?(temp_file).should be_false
@@ -76,7 +76,7 @@ describe MediaFilter do
 
     it "should check file size against custom limit" do
       # Create a temporary file
-      temp_file = "/tmp/custom_test_file.txt"
+      temp_file = File.tempname("noir_media_custom", ".txt")
       File.write(temp_file, "test content")
 
       # Should be under 1KB limit
@@ -104,7 +104,7 @@ describe MediaFilter do
 
     it "should handle combination of extension and size checks" do
       # Create a temporary source file that's large
-      temp_file = "/tmp/large_source_file.cr"
+      temp_file = File.tempname("noir_media_large", ".cr")
       File.write(temp_file, "# " + "x" * 1000) # Make it large enough
 
       # Should skip due to size even though it's a source file
@@ -131,7 +131,7 @@ describe MediaFilter do
     end
 
     it "should return file size reason for large files" do
-      temp_file = "/tmp/size_test_file.txt"
+      temp_file = File.tempname("noir_media_size", ".txt")
       File.write(temp_file, "x" * 100)
 
       reason = MediaFilter.skip_reason(temp_file, 50)
