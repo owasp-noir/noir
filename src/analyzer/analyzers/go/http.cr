@@ -39,120 +39,94 @@ module Analyzer::Go
       end
       request_function_bodies = Noir::GoRequestParamExtractor.package_function_bodies_for_dirs(file_contents, route_dirs)
       request_method_bodies = Noir::GoRequestParamExtractor.package_method_bodies_for_dirs(file_contents, route_dirs)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
-          end
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
+        content = file_contents[path]? || read_file_content(path)
+        dir = File.dirname(path)
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
 
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(base_relative_path(path))
-                  if File.exists?(path)
-                    content = file_contents[path]? || read_file_content(path)
-                    dir = File.dirname(path)
-                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(content)
+        # With no route in the file the line loop below is a
+        # no-op by construction: it only ever appends to
+        # `last_endpoint`, and `add_param_to_endpoint` (plus
+        # the body-param branch) require a non-empty URL,
+        # which the seed endpoint never has. Bail before
+        # splitting the file into lines.
+        next if ts_routes.empty?
 
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(content)
-                    # With no route in the file the line loop below is a
-                    # no-op by construction: it only ever appends to
-                    # `last_endpoint`, and `add_param_to_endpoint` (plus
-                    # the body-param branch) require a non-empty URL,
-                    # which the seed endpoint never has. Bail before
-                    # splitting the file into lines.
-                    next if ts_routes.empty?
+        lines = content.lines
+        last_endpoint = Endpoint.new("", "")
 
-                    lines = content.lines
-                    last_endpoint = Endpoint.new("", "")
+        routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+        ts_routes.each do |r|
+          routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+          routes_by_line[r.line] << r
+        end
 
-                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
-                    ts_routes.each do |r|
-                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                      routes_by_line[r.line] << r
-                    end
+        # Resolve 1-hop callees for every route (see Gin/Mux).
+        route_rows = Set(Int32).new
+        route_methods_by_row = Hash(Int32, String).new
+        routes_by_line.each do |row, routes|
+          route_rows << row
+          route_methods_by_row[row] = routes.first.verb
+        end
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
+        external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+        request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_function_bodies, dir)
+        request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_method_bodies, dir)
+        params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods)
 
-                    # Resolve 1-hop callees for every route (see Gin/Mux).
-                    route_rows = Set(Int32).new
-                    route_methods_by_row = Hash(Int32, String).new
-                    routes_by_line.each do |row, routes|
-                      route_rows << row
-                      route_methods_by_row[row] = routes.first.verb
-                    end
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
-                    external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
-                    request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_function_bodies, dir)
-                    request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_method_bodies, dir)
-                    params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods)
+        lines.each_with_index do |line, index|
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                    lines.each_with_index do |line, index|
-                      details = Details.new(PathInfo.new(path, index + 1))
-
-                      if ts_hits = routes_by_line[index]?
-                        ts_hits.each do |route|
-                          verbs = if route.verb.upcase == "ANY" || route.verb.upcase == "ALL"
-                                    Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)
-                                  else
-                                    [route.verb]
-                                  end
-                          verbs.each do |verb|
-                            new_endpoint = Endpoint.new(route.path, verb, details)
-                            if entries = callees_by_route[route.line]?
-                              entries.each do |entry|
-                                name, callee_path, callee_line = entry
-                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                              end
-                            end
-                            if params = params_by_route[route.line]?
-                              params.each { |param| add_param_to_endpoint(param, new_endpoint) }
-                            end
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
-                        end
+          if ts_hits = routes_by_line[index]?
+            ts_hits.each do |route|
+              verbs = if route.verb.upcase == "ANY" || route.verb.upcase == "ALL"
+                        Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb)
+                      else
+                        [route.verb]
                       end
-
-                      # Handle parameter extraction patterns in Go (identical to mux / stdlib Request usage).
-                      # Order: more specific first.
-                      if line.includes?("Query().Get(")
-                        add_param_to_endpoint(get_param(line, "Query"), last_endpoint)
-                      elsif line.includes?("PostFormValue(")
-                        add_param_to_endpoint(get_param(line, "PostFormValue", last_endpoint), last_endpoint)
-                      elsif line.includes?("FormValue(")
-                        add_param_to_endpoint(get_param(line, "FormValue", last_endpoint), last_endpoint)
-                      elsif line.includes?("Header.Get(")
-                        add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
-                      elsif line.includes?("Cookie(")
-                        add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
-                      end
-
-                      # Stdlib-style body reads (json or raw) — same heuristic used by mux analyzer.
-                      if !last_endpoint.url.empty? &&
-                         (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
-                         line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
-                        body_param = Param.new("body", "", "json")
-                        last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
-                      end
-                    end
+              verbs.each do |verb|
+                new_endpoint = Endpoint.new(route.path, verb, details)
+                if entries = callees_by_route[route.line]?
+                  entries.each do |entry|
+                    name, callee_path, callee_line = entry
+                    new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
-                rescue
-                  # Skip problematic files
-                  next
                 end
+                if params = params_by_route[route.line]?
+                  params.each { |param| add_param_to_endpoint(param, new_endpoint) }
+                end
+                result << new_endpoint
+                last_endpoint = new_endpoint
               end
             end
           end
+
+          # Handle parameter extraction patterns in Go (identical to mux / stdlib Request usage).
+          # Order: more specific first.
+          if line.includes?("Query().Get(")
+            add_param_to_endpoint(get_param(line, "Query"), last_endpoint)
+          elsif line.includes?("PostFormValue(")
+            add_param_to_endpoint(get_param(line, "PostFormValue", last_endpoint), last_endpoint)
+          elsif line.includes?("FormValue(")
+            add_param_to_endpoint(get_param(line, "FormValue", last_endpoint), last_endpoint)
+          elsif line.includes?("Header.Get(")
+            add_param_to_endpoint(get_param(line, "Header"), last_endpoint)
+          elsif line.includes?("Cookie(")
+            add_param_to_endpoint(get_param(line, "Cookie"), last_endpoint)
+          end
+
+          # Stdlib-style body reads (json or raw) — same heuristic used by mux analyzer.
+          if !last_endpoint.url.empty? &&
+             (line.matches?(/json\.NewDecoder\([^)]*\.Body\)\s*\.\s*Decode/) ||
+             line.matches?(/(?:io|ioutil)\.ReadAll\([^)]*\.Body\)/))
+            body_param = Param.new("body", "", "json")
+            last_endpoint.params << body_param unless last_endpoint.params.includes?(body_param)
+          end
         end
-      rescue e
-        logger.debug e
       end
 
       result

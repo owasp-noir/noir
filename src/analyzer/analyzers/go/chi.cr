@@ -119,158 +119,135 @@ module Analyzer::Go
         package_string_values[dir] = merged unless merged.empty?
       end
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
+        content = file_contents_cache[path]? || read_file_content(path)
+        next unless content_matches?(content, IMPORT_MARKER_RE)
+        lines = file_lines_cache[path]? || content.lines
+
+        dir = File.dirname(path)
+        mounted_functions = package_mounted_functions.fetch(dir, Set(String).new)
+
+        # Tree-sitter pre-pass: every `r.Get(...)` / `r.Route(...)`
+        # / `r.Group(...)` resolved with the correct prefix, skipping
+        # bodies of functions that are expanded via Mount (those
+        # are handled below to get their `/admin` prefix).
+        ts_routes = Noir::TreeSitterGoRouteExtractor
+          .extract_chi_routes(content, mounted_functions,
+            package_string_values[dir]? || Hash(String, String).new)
+        routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+        ts_routes.each do |r|
+          routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+          routes_by_line[r.line] << r
+        end
+
+        # Resolve 1-hop callees for every route in this file.
+        # Inline-closure handlers (the common Chi shape inside
+        # `r.Route("/x", func(r chi.Router){ r.Get(...) })`)
+        # walk in place; bare identifier handlers fall through
+        # to sibling-file function bodies via the per-directory map.
+        route_rows = Set(Int32).new
+        routes_by_line.each_key { |row| route_rows << row }
+        external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, dir)
+        external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, dir)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
+
+        state = ChiRouteState.new
+        last_endpoint = Endpoint.new("", "")
+        in_mounted_func = false
+        mounted_func_brace_count = 0
+
+        lines.each_with_index do |line, index|
+          # Skip bodies of mounted router functions so parameter
+          # extraction only attributes them to the Mount-expanded
+          # endpoints, not the free-floating verb calls we now
+          # skip in the TS pass.
+          if in_mounted_func
+            mounted_func_brace_count += line.count("{")
+            mounted_func_brace_count -= line.count("}")
+            if mounted_func_brace_count <= 0
+              in_mounted_func = false
+            end
+            next
           end
-
-          worker_count.times do
-            wg.spawn do
-              loop do
-                path = channel.receive?
-                break if path.nil?
-                next if File.directory?(path)
-                next if GoEngine.go_test_file?(base_relative_path(path))
-                if File.exists?(path)
-                  content = file_contents_cache[path]? || read_file_content(path)
-                  next unless content_matches?(content, IMPORT_MARKER_RE)
-                  lines = file_lines_cache[path]? || content.lines
-
-                  dir = File.dirname(path)
-                  mounted_functions = package_mounted_functions.fetch(dir, Set(String).new)
-
-                  # Tree-sitter pre-pass: every `r.Get(...)` / `r.Route(...)`
-                  # / `r.Group(...)` resolved with the correct prefix, skipping
-                  # bodies of functions that are expanded via Mount (those
-                  # are handled below to get their `/admin` prefix).
-                  ts_routes = Noir::TreeSitterGoRouteExtractor
-                    .extract_chi_routes(content, mounted_functions,
-                      package_string_values[dir]? || Hash(String, String).new)
-                  routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
-                  ts_routes.each do |r|
-                    routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                    routes_by_line[r.line] << r
-                  end
-
-                  # Resolve 1-hop callees for every route in this file.
-                  # Inline-closure handlers (the common Chi shape inside
-                  # `r.Route("/x", func(r chi.Router){ r.Get(...) })`)
-                  # walk in place; bare identifier handlers fall through
-                  # to sibling-file function bodies via the per-directory map.
-                  route_rows = Set(Int32).new
-                  routes_by_line.each_key { |row| route_rows << row }
-                  external_fns = Noir::GoCalleeExtractor.function_bodies_for_directory(package_function_bodies, dir)
-                  external_methods = Noir::GoCalleeExtractor.method_bodies_for_directory(package_method_bodies, dir)
-                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
-
-                  state = ChiRouteState.new
-                  last_endpoint = Endpoint.new("", "")
-                  in_mounted_func = false
-                  mounted_func_brace_count = 0
-
-                  lines.each_with_index do |line, index|
-                    # Skip bodies of mounted router functions so parameter
-                    # extraction only attributes them to the Mount-expanded
-                    # endpoints, not the free-floating verb calls we now
-                    # skip in the TS pass.
-                    if in_mounted_func
-                      mounted_func_brace_count += line.count("{")
-                      mounted_func_brace_count -= line.count("}")
-                      if mounted_func_brace_count <= 0
-                        in_mounted_func = false
-                      end
-                      next
-                    end
-                    if !mounted_functions.empty? && line.strip.starts_with?("func ")
-                      # Match both plain functions (`func adminRouter(`) and
-                      # methods (`func (rs todosResource) Routes(`); either
-                      # can be a mount target whose body must be skipped so
-                      # its routes are attributed only to the Mount-expanded
-                      # (prefixed) endpoints, never the free-floating pass.
-                      # Methods are keyed by `Receiver.Method` so an
-                      # unmounted same-named method (e.g. a top-level
-                      # `func (s server) Routes()` used directly) keeps its
-                      # routes — and the `.Mount(...)` calls inside it.
-                      decl_name = nil
-                      if func_match = line.match(/func\s+\(\s*\w+\s+\*?([\w.]+)\)\s+([a-zA-Z_]\w*)\s*\(/)
-                        decl_name = "#{func_match[1].split('.').last}.#{func_match[2]}"
-                      elsif func_match = line.match(/func\s+([a-zA-Z_]\w*)\s*\(/)
-                        decl_name = func_match[1]
-                      end
-                      if decl_name && mounted_functions.includes?(decl_name)
-                        in_mounted_func = true
-                        mounted_func_brace_count = line.count("{") - line.count("}")
-                        if mounted_func_brace_count <= 0
-                          in_mounted_func = false
-                        end
-                        next
-                      end
-                    end
-
-                    details = Details.new(PathInfo.new(path, index + 1))
-
-                    if line.includes?(".Mount(")
-                      if target = parse_mount_target(line)
-                        endpoints = analyze_router_function(path, target[:func_name], package_files, file_contents_cache, file_lines_cache, target[:recv_type])
-                        endpoints.each do |ep|
-                          ep.url = target[:prefix] + ep.url
-                          result << ep
-                        end
-                      end
-                      next
-                    end
-
-                    # Emit any route whose declaration begins on this line,
-                    # and seed inline-handler tracking so the param extractor
-                    # below only attributes params to the enclosing route.
-                    if ts_hits = routes_by_line[index]?
-                      ts_hits.each do |route|
-                        Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                          endpoint = Endpoint.new(route.path, verb, details)
-                          if entries = callees_by_route[route.line]?
-                            entries.each do |entry|
-                              name, callee_path, callee_line = entry
-                              endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                            end
-                          end
-                          result << endpoint
-                          last_endpoint = endpoint
-                        end
-                      end
-                      if line.includes?("func(")
-                        state.in_inline_handler = true
-                        state.handler_brace_count = line.count("{") - line.count("}")
-                        if state.handler_brace_count <= 0
-                          state.in_inline_handler = false
-                          state.handler_brace_count = 0
-                        end
-                      end
-                    elsif state.in_inline_handler?
-                      # Normal line inside an inline handler — tally braces
-                      # so we know when it closes.
-                      state.handler_brace_count += line.count("{")
-                      state.handler_brace_count -= line.count("}")
-                      if state.handler_brace_count <= 0
-                        state.in_inline_handler = false
-                        state.handler_brace_count = 0
-                      end
-                    end
-
-                    extract_params(line, state, last_endpoint)
-                  end
-                end
-              rescue e : IO::Error
-                logger.debug "Skipping #{path}: #{e.message}"
+          if !mounted_functions.empty? && line.strip.starts_with?("func ")
+            # Match both plain functions (`func adminRouter(`) and
+            # methods (`func (rs todosResource) Routes(`); either
+            # can be a mount target whose body must be skipped so
+            # its routes are attributed only to the Mount-expanded
+            # (prefixed) endpoints, never the free-floating pass.
+            # Methods are keyed by `Receiver.Method` so an
+            # unmounted same-named method (e.g. a top-level
+            # `func (s server) Routes()` used directly) keeps its
+            # routes — and the `.Mount(...)` calls inside it.
+            decl_name = nil
+            if func_match = line.match(/func\s+\(\s*\w+\s+\*?([\w.]+)\)\s+([a-zA-Z_]\w*)\s*\(/)
+              decl_name = "#{func_match[1].split('.').last}.#{func_match[2]}"
+            elsif func_match = line.match(/func\s+([a-zA-Z_]\w*)\s*\(/)
+              decl_name = func_match[1]
+            end
+            if decl_name && mounted_functions.includes?(decl_name)
+              in_mounted_func = true
+              mounted_func_brace_count = line.count("{") - line.count("}")
+              if mounted_func_brace_count <= 0
+                in_mounted_func = false
               end
+              next
             end
           end
+
+          details = Details.new(PathInfo.new(path, index + 1))
+
+          if line.includes?(".Mount(")
+            if target = parse_mount_target(line)
+              endpoints = analyze_router_function(path, target[:func_name], package_files, file_contents_cache, file_lines_cache, target[:recv_type])
+              endpoints.each do |ep|
+                ep.url = target[:prefix] + ep.url
+                result << ep
+              end
+            end
+            next
+          end
+
+          # Emit any route whose declaration begins on this line,
+          # and seed inline-handler tracking so the param extractor
+          # below only attributes params to the enclosing route.
+          if ts_hits = routes_by_line[index]?
+            ts_hits.each do |route|
+              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                endpoint = Endpoint.new(route.path, verb, details)
+                if entries = callees_by_route[route.line]?
+                  entries.each do |entry|
+                    name, callee_path, callee_line = entry
+                    endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                  end
+                end
+                result << endpoint
+                last_endpoint = endpoint
+              end
+            end
+            if line.includes?("func(")
+              state.in_inline_handler = true
+              state.handler_brace_count = line.count("{") - line.count("}")
+              if state.handler_brace_count <= 0
+                state.in_inline_handler = false
+                state.handler_brace_count = 0
+              end
+            end
+          elsif state.in_inline_handler?
+            # Normal line inside an inline handler — tally braces
+            # so we know when it closes.
+            state.handler_brace_count += line.count("{")
+            state.handler_brace_count -= line.count("}")
+            if state.handler_brace_count <= 0
+              state.in_inline_handler = false
+              state.handler_brace_count = 0
+            end
+          end
+
+          extract_params(line, state, last_endpoint)
         end
-      rescue e
-        logger.debug e
       end
       result
     end

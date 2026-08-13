@@ -30,64 +30,39 @@ module Analyzer::Go
     def analyze
       file_contents = read_package_file_contents
       package_function_bodies = collect_package_function_bodies(file_contents)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
+        content = file_contents[path]? || read_file_content(path)
+        next unless content_matches?(content, IMPORT_MARKER_RE)
+
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_go_restful_routes(content)
+        next if ts_routes.empty?
+
+        route_rows = Set(Int32).new
+        ts_routes.each { |r| route_rows << r.line }
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
+
+        ts_routes.each do |route|
+          details = Details.new(PathInfo.new(path, route.line + 1))
+          endpoint = Endpoint.new(normalize_restful_path(route.path), route.verb, details)
+
+          route.params.each do |name, param_in|
+            param = Param.new(name, "", param_in)
+            endpoint.params << param unless endpoint.params.includes?(param)
           end
 
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(base_relative_path(path))
-                  next unless File.exists?(path)
-
-                  content = file_contents[path]? || read_file_content(path)
-                  next unless content_matches?(content, IMPORT_MARKER_RE)
-
-                  ts_routes = Noir::TreeSitterGoRouteExtractor.extract_go_restful_routes(content)
-                  next if ts_routes.empty?
-
-                  route_rows = Set(Int32).new
-                  ts_routes.each { |r| route_rows << r.line }
-                  external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                  callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
-
-                  ts_routes.each do |route|
-                    details = Details.new(PathInfo.new(path, route.line + 1))
-                    endpoint = Endpoint.new(normalize_restful_path(route.path), route.verb, details)
-
-                    route.params.each do |name, param_in|
-                      param = Param.new(name, "", param_in)
-                      endpoint.params << param unless endpoint.params.includes?(param)
-                    end
-
-                    if entries = callees_by_route[route.line]?
-                      entries.each do |entry|
-                        callee_name, callee_path, callee_line = entry
-                        endpoint.push_callee(Callee.new(callee_name, path: callee_path, line: callee_line))
-                      end
-                    end
-
-                    result << endpoint
-                  end
-                rescue e : IO::Error
-                  logger.debug "Skipping #{path}: #{e.message}"
-                end
-              end
+          if entries = callees_by_route[route.line]?
+            entries.each do |entry|
+              callee_name, callee_path, callee_line = entry
+              endpoint.push_callee(Callee.new(callee_name, path: callee_path, line: callee_line))
             end
           end
+
+          result << endpoint
         end
-      rescue e
-        logger.debug e
       end
 
       result

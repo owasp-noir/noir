@@ -28,188 +28,163 @@ module Analyzer::Go
       # must be grafted onto the helper's routes.
       builder_prefixes_by_dir = resolve_router_builder_prefixes(file_contents, package_groups)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
+        content = file_contents[path]? || read_file_content(path)
+        dir = File.dirname(path)
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "Static"])
+        lines = content.lines
+        last_endpoint = Endpoint.new("", "")
+
+        # Tree-sitter pre-pass: harvest every verb route with its
+        # group-resolved path in one go. Indexed by line so the
+        # line loop below can attribute body params (Query/PostForm
+        # /GetHeader/Cookie) to the most recently declared route —
+        # matching the legacy `last_endpoint` semantics.
+        cross_file_groups = ts_groups_for_directory(package_groups, dir)
+
+        # Router-builder expansion: graft call-site prefixes onto
+        # the routes of `func addXRoutes(rg *gin.RouterGroup)`
+        # helpers DEFINED in this file. Only "case b" helpers are
+        # expanded — those whose group parameter name is NOT
+        # already a key in the package group map. ("Case a" helpers
+        # whose parameter name happens to match a caller's group
+        # variable, e.g. both named `v1`, are already resolved by
+        # the whole-file pass below, so they're left untouched to
+        # keep their params/callees.) Expanded helpers' bodies are
+        # suppressed in the whole-file pass to avoid emitting the
+        # prefix-less variant alongside the corrected one.
+        dir_builder_prefixes = builder_prefixes_by_dir[dir]? || EMPTY_BUILDER_PREFIXES
+        expand_builders = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
+        suppress_ranges = [] of Range(Int32, Int32)
+        if content.includes?("*gin.RouterGroup")
+          Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content).each do |fn, rb|
+            pset = dir_builder_prefixes[fn]?
+            next if pset.nil? || pset.empty?
+            next if cross_file_groups.has_key?(rb.param)
+            suppress_ranges << (rb.start_row..rb.end_row)
+            expand_builders << {fn, rb, pset}
           end
+        end
 
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(base_relative_path(path))
-                  if File.exists?(path)
-                    content = file_contents[path]? || read_file_content(path)
-                    dir = File.dirname(path)
-                    next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "Static"])
-                    lines = content.lines
-                    last_endpoint = Endpoint.new("", "")
+        # Gin also accepts `r.Handle(method, path, handler)`
+        # alongside the verb shortcuts (`r.GET`, etc.),
+        # so opt into the method-first decoder so those
+        # registrations surface as endpoints too.
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
+        routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+        ts_routes.each do |r|
+          routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+          routes_by_line[r.line] << r
+        end
 
-                    # Tree-sitter pre-pass: harvest every verb route with its
-                    # group-resolved path in one go. Indexed by line so the
-                    # line loop below can attribute body params (Query/PostForm
-                    # /GetHeader/Cookie) to the most recently declared route —
-                    # matching the legacy `last_endpoint` semantics.
-                    cross_file_groups = ts_groups_for_directory(package_groups, dir)
+        # Resolve 1-hop callees for every route in this file.
+        # Inline-closure handlers walk in place; bare
+        # identifier handlers fall through to sibling-file
+        # function bodies via the per-directory map.
+        route_rows = Set(Int32).new
+        routes_by_line.each_key { |row| route_rows << row }
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
+          callees_needed?,
+          content,
+          path,
+          route_rows,
+          external_fns,
+          imported_functions: import_path_function_bodies
+        )
 
-                    # Router-builder expansion: graft call-site prefixes onto
-                    # the routes of `func addXRoutes(rg *gin.RouterGroup)`
-                    # helpers DEFINED in this file. Only "case b" helpers are
-                    # expanded — those whose group parameter name is NOT
-                    # already a key in the package group map. ("Case a" helpers
-                    # whose parameter name happens to match a caller's group
-                    # variable, e.g. both named `v1`, are already resolved by
-                    # the whole-file pass below, so they're left untouched to
-                    # keep their params/callees.) Expanded helpers' bodies are
-                    # suppressed in the whole-file pass to avoid emitting the
-                    # prefix-less variant alongside the corrected one.
-                    dir_builder_prefixes = builder_prefixes_by_dir[dir]? || EMPTY_BUILDER_PREFIXES
-                    expand_builders = [] of Tuple(String, Noir::TreeSitterGoRouteExtractor::RouterBuilder, Set(String))
-                    suppress_ranges = [] of Range(Int32, Int32)
-                    if content.includes?("*gin.RouterGroup")
-                      Noir::TreeSitterGoRouteExtractor.collect_router_group_builders(content).each do |fn, rb|
-                        pset = dir_builder_prefixes[fn]?
-                        next if pset.nil? || pset.empty?
-                        next if cross_file_groups.has_key?(rb.param)
-                        suppress_ranges << (rb.start_row..rb.end_row)
-                        expand_builders << {fn, rb, pset}
-                      end
-                    end
+        # Gin uses `r.Static("/url", "./dir")`. Pick these up
+        # in a single tree-sitter pass up front; downstream
+        # `resolve_public_dirs` still expects the legacy hash
+        # shape, so we convert here.
+        Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
+          public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
+        end
 
-                    # Gin also accepts `r.Handle(method, path, handler)`
-                    # alongside the verb shortcuts (`r.GET`, etc.),
-                    # so opt into the method-first decoder so those
-                    # registrations surface as endpoints too.
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
-                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
-                    ts_routes.each do |r|
-                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                      routes_by_line[r.line] << r
-                    end
+        # StaticFile / StaticFileFS register a single file URL —
+        # emit the route directly. Do not feed them through
+        # resolve_public_dirs (directory glob), which drops "/"
+        # prefixes and skips common media extensions like .ico.
+        ["StaticFile", "StaticFileFS"].each do |mn|
+          Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content, method_name: mn).each do |sp|
+            sf_details = Details.new(PathInfo.new(path, sp.line + 1))
+            result << Endpoint.new(sp.url_prefix, "GET", sf_details)
+          end
+        end
 
-                    # Resolve 1-hop callees for every route in this file.
-                    # Inline-closure handlers walk in place; bare
-                    # identifier handlers fall through to sibling-file
-                    # function bodies via the per-directory map.
-                    route_rows = Set(Int32).new
-                    routes_by_line.each_key { |row| route_rows << row }
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(
-                      callees_needed?,
-                      content,
-                      path,
-                      route_rows,
-                      external_fns,
-                      imported_functions: import_path_function_bodies
-                    )
+        lines.each_with_index do |line, index|
+          # Skip lines inside an expanded router-builder body — its
+          # routes (and any params) are emitted, with the call-site
+          # prefix applied, by the expansion pass below.
+          next if suppress_ranges.any?(&.includes?(index))
 
-                    # Gin uses `r.Static("/url", "./dir")`. Pick these up
-                    # in a single tree-sitter pass up front; downstream
-                    # `resolve_public_dirs` still expects the legacy hash
-                    # shape, so we convert here.
-                    Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content).each do |sp|
-                      public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
-                    end
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                    # StaticFile / StaticFileFS register a single file URL —
-                    # emit the route directly. Do not feed them through
-                    # resolve_public_dirs (directory glob), which drops "/"
-                    # prefixes and skips common media extensions like .ico.
-                    ["StaticFile", "StaticFileFS"].each do |mn|
-                      Noir::TreeSitterGoRouteExtractor.extract_simple_statics(content, method_name: mn).each do |sp|
-                        sf_details = Details.new(PathInfo.new(path, sp.line + 1))
-                        result << Endpoint.new(sp.url_prefix, "GET", sf_details)
-                      end
-                    end
-
-                    lines.each_with_index do |line, index|
-                      # Skip lines inside an expanded router-builder body — its
-                      # routes (and any params) are emitted, with the call-site
-                      # prefix applied, by the expansion pass below.
-                      next if suppress_ranges.any?(&.includes?(index))
-
-                      details = Details.new(PathInfo.new(path, index + 1))
-
-                      # Emit endpoints for any verb route that begins on this
-                      # line. Gin allows the same verb method name upper/lower
-                      # (`r.GET` vs `r.Get`); both are covered by the TS
-                      # extractor's HTTP_VERB_METHODS set.
-                      if ts_hits = routes_by_line[index]?
-                        ts_hits.each do |route|
-                          # `r.Any(...)` / `r.All(...)` register one route under
-                          # every HTTP method. Fan out so downstream formats
-                          # (SARIF / Postman / openapi) get a usable verb per
-                          # endpoint instead of a non-HTTP "ANY" string they
-                          # can't ingest.
-                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                            new_endpoint = Endpoint.new(route.path, verb, details)
-                            if entries = callees_by_route[route.line]?
-                              entries.each do |entry|
-                                name, callee_path, callee_line = entry
-                                new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                              end
-                            end
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
-                        end
-                      end
-
-                      add_gin_param_patterns(line, last_endpoint)
-                    end
-
-                    # Expansion pass: emit each suppressed router-builder's
-                    # routes once per resolved call-site prefix, with the
-                    # group parameter bound to that prefix. (A helper called
-                    # from two versioned groups — `addPingRoutes(v1)` and
-                    # `addPingRoutes(v2)` — yields both `/v1/ping` and
-                    # `/v2/ping`.)
-                    expand_builders.each do |fn, rb, pset|
-                      builder_emitted = [] of Endpoint
-                      pset.each do |prefix|
-                        Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
-                          content, fn, {rb.param => prefix}, handle_method: "Handle"
-                        ).each do |route|
-                          rdetails = Details.new(PathInfo.new(path, route.line + 1))
-                          Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
-                            ep = Endpoint.new(route.path, verb, rdetails)
-                            if entries = callees_by_route[route.line]?
-                              entries.each do |entry|
-                                name, callee_path, callee_line = entry
-                                ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                              end
-                            end
-                            result << ep
-                            builder_emitted << ep
-                          end
-                        end
-                      end
-                      # Attach any Gin params (Query/Bind/Cookie/Param) and callees
-                      # from the builder function body to the expanded endpoints.
-                      # Mirrors chi's attach_router_function_params for Mount-expanded
-                      # routes (callees were attached in the emit above using the
-                      # precomputed callees_by_route; params via the dedicated attach).
-                      if !builder_emitted.empty?
-                        attach_gin_builder_params(builder_emitted, content, rb.start_row, rb.end_row)
-                      end
-                    end
+          # Emit endpoints for any verb route that begins on this
+          # line. Gin allows the same verb method name upper/lower
+          # (`r.GET` vs `r.Get`); both are covered by the TS
+          # extractor's HTTP_VERB_METHODS set.
+          if ts_hits = routes_by_line[index]?
+            ts_hits.each do |route|
+              # `r.Any(...)` / `r.All(...)` register one route under
+              # every HTTP method. Fan out so downstream formats
+              # (SARIF / Postman / openapi) get a usable verb per
+              # endpoint instead of a non-HTTP "ANY" string they
+              # can't ingest.
+              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                new_endpoint = Endpoint.new(route.path, verb, details)
+                if entries = callees_by_route[route.line]?
+                  entries.each do |entry|
+                    name, callee_path, callee_line = entry
+                    new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                   end
-                rescue e : IO::Error
-                  logger.debug "Skipping #{path}: #{e.message}"
                 end
+                result << new_endpoint
+                last_endpoint = new_endpoint
               end
             end
           end
+
+          add_gin_param_patterns(line, last_endpoint)
         end
-      rescue e
-        logger.debug e
+
+        # Expansion pass: emit each suppressed router-builder's
+        # routes once per resolved call-site prefix, with the
+        # group parameter bound to that prefix. (A helper called
+        # from two versioned groups — `addPingRoutes(v1)` and
+        # `addPingRoutes(v2)` — yields both `/v1/ping` and
+        # `/v2/ping`.)
+        expand_builders.each do |fn, rb, pset|
+          builder_emitted = [] of Endpoint
+          pset.each do |prefix|
+            Noir::TreeSitterGoRouteExtractor.extract_routes_from_function(
+              content, fn, {rb.param => prefix}, handle_method: "Handle"
+            ).each do |route|
+              rdetails = Details.new(PathInfo.new(path, route.line + 1))
+              Noir::TreeSitterGoRouteExtractor.fan_out_verbs(route.verb).each do |verb|
+                ep = Endpoint.new(route.path, verb, rdetails)
+                if entries = callees_by_route[route.line]?
+                  entries.each do |entry|
+                    name, callee_path, callee_line = entry
+                    ep.push_callee(Callee.new(name, path: callee_path, line: callee_line))
+                  end
+                end
+                result << ep
+                builder_emitted << ep
+              end
+            end
+          end
+          # Attach any Gin params (Query/Bind/Cookie/Param) and callees
+          # from the builder function body to the expanded endpoints.
+          # Mirrors chi's attach_router_function_params for Mount-expanded
+          # routes (callees were attached in the emit above using the
+          # precomputed callees_by_route; params via the dedicated attach).
+          if !builder_emitted.empty?
+            attach_gin_builder_params(builder_emitted, content, rb.start_row, rb.end_row)
+          end
+        end
       end
 
       resolve_public_dirs(public_dirs)
