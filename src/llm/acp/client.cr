@@ -2,6 +2,7 @@ require "acp"
 require "json"
 require "log"
 require "../response_cleanup"
+require "./targets"
 
 module LLM
   # ACP-backed client wrapper for communicating with local AI agents.
@@ -26,12 +27,10 @@ module LLM
     GEMINI_ARGS = ["--experimental-acp"]
     CLAUDE_ARGS = ["@zed-industries/claude-agent-acp"]
 
-    # ACP targets Noir knows how to launch. Anything outside this set would
-    # be executed as an arbitrary local process (`--ai-provider "acp:rm -rf /"`
-    # → command "rm", args ["-rf", "/"]), which is a code-execution hole when
-    # the provider string comes from an untrusted config file. Custom targets
-    # are refused unless the operator explicitly opts in.
-    KNOWN_TARGETS = %w[codex gemini claude claude-code]
+    # See `LLM::ACPTargets` for the list and why it is shared rather than
+    # duplicated. Kept as an alias so existing references still read naturally
+    # at the exec sink.
+    KNOWN_TARGETS = ACPTargets::KNOWN
 
     class UnsupportedACPTargetError < Exception; end
 

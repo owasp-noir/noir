@@ -2,7 +2,7 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "../models/passive_scan"
 
-@[Noir::OutputFormat(name: "jsonl", description: "JSON Lines", order: 40)]
+@[Noir::OutputFormat(name: "jsonl", description: "JSON Lines", order: 40, structured: true)]
 class OutputBuilderJsonl < OutputBuilder
   # Passive findings were dropped from JSONL entirely (only the JSON builder
   # mapped them). Emit each finding on its own line after the endpoints so a

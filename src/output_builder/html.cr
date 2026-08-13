@@ -8,7 +8,7 @@ require "./html_assets/js"
 require "./html_assets/logo"
 require "html"
 
-@[Noir::OutputFormat(name: "html", description: "HTML report", order: 80)]
+@[Noir::OutputFormat(name: "html", description: "HTML report", order: 80, structured: true)]
 class OutputBuilderHtml < OutputBuilder
   def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
     html = build_html(endpoints, passive_results)

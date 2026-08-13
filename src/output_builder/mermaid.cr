@@ -2,7 +2,7 @@ require "../models/output_builder"
 require "../models/endpoint"
 require "../models/passive_scan"
 
-@[Noir::OutputFormat(name: "mermaid", description: "Mermaid diagram", order: 220)]
+@[Noir::OutputFormat(name: "mermaid", description: "Mermaid diagram", order: 220, structured: true)]
 class OutputBuilderMermaid < OutputBuilder
   # CLI inputs get a plural label; the bucket key is the singular param type.
   CLI_PARAM_LABELS = {"flag" => "flags", "argument" => "arguments", "env" => "env"}

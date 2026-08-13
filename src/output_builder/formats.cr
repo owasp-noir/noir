@@ -1,26 +1,19 @@
 require "../models/output_builder"
-require "./adb"
-require "./common"
-require "./curl"
-require "./html"
-require "./httpie"
-require "./json"
-require "./jsonl"
-require "./markdown_table"
-require "./mermaid"
-require "./oas2"
-require "./oas3"
-require "./only-cookie"
-require "./only-header"
-require "./only-param"
-require "./only-tag"
-require "./only-url"
-require "./postman"
-require "./powershell"
-require "./sarif"
-require "./simctl"
-require "./toml"
-require "./yaml"
+# Glob rather than a per-format line. This was the last explicit require list
+# in the repo that grew with every contribution — one guaranteed one-line
+# merge conflict per new output format, in a file whose whole purpose is that
+# a format registers itself.
+#
+# Requiring this file from inside the directory it globs is fine: Crystal
+# tracks what it has already required, so the self-reference is a no-op.
+#
+# The glob also picks up the five non-format files here (`diff`,
+# `mobile_launch`, `passive_scan`, `oas_common`, `toml_serializer`). They carry
+# no `Noir::OutputFormat` annotation, so they cannot reach `ENTRIES`, and
+# `src/models/noir.cr` already loads all of them via `require
+# "../output_builder/*"` — the explicit list only ever existed so this file
+# could also be required standalone (from `src/options.cr`).
+require "./*"
 
 # The catalog of `-f/--format` values, derived from the `Noir::OutputFormat`
 # annotation each builder carries.
@@ -31,7 +24,7 @@ require "./yaml"
 # of them by annotating its builder class — the annotation is the only place
 # its name, description and renderer are written down.
 module Noir::OutputFormats
-  record Entry, name : String, description : String
+  record Entry, name : String, description : String, structured : Bool
 
   # Ordered by the annotation's `order:`, so help output and `noir list
   # formats` group related formats (structured → command → spec → only-* →
@@ -43,13 +36,35 @@ module Noir::OutputFormats
                             .select(&.annotation(Noir::OutputFormat))
                             .sort_by { |sub| sub.annotation(Noir::OutputFormat)[:order] } %}
           {% format = builder.annotation(Noir::OutputFormat) %}
-          Entry.new({{ format[:name] }}, {{ format[:description] }}),
+          Entry.new({{ format[:name] }}, {{ format[:description] }}, {{ !!format[:structured] }}),
         {% end %}
       ] of Entry
     {% end %}
   end
 
   NAMES = ENTRIES.map(&.name)
+
+  # Formats whose output is a document with an envelope, so "no endpoints" must
+  # still render — `{"endpoints":[],"passive_results":[]}`, a `"paths": {}` OAS
+  # document, a header-only Markdown table, a full HTML shell. Downstream
+  # consumers (jq pipelines, Postman importers, CI report uploaders) treat empty
+  # or missing output as a hard error.
+  #
+  # Command-list and line-list formats (curl, httpie, powershell, adb, simctl,
+  # only-*) and `plain` are deliberately *not* structured: they have no
+  # envelope, so emitting nothing is their correct empty output.
+  #
+  # Declared on the builder as `structured: true`. This used to be a
+  # hand-maintained `Set` in `src/cli/commands/scan.cr` — a subset of a derived
+  # list, which is the shape that silently rots: a new structured format that
+  # nobody remembered to add there emitted *nothing at all* on a zero-endpoint
+  # scan, with no error and no failing spec.
+  STRUCTURED_NAMES = ENTRIES.select(&.structured).map(&.name).to_set
+
+  # Whether `name` must still be rendered when a scan found no endpoints.
+  def self.structured?(name : String) : Bool
+    STRUCTURED_NAMES.includes?(name)
+  end
 
   # The format used when `-f` is absent, and the fallback for a value that
   # reached the runner without passing validation (library callers construct

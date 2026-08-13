@@ -3,7 +3,7 @@ require "../models/endpoint"
 require "./oas_common"
 require "json"
 
-@[Noir::OutputFormat(name: "oas2", description: "OpenAPI 2.0 (Swagger)", order: 140)]
+@[Noir::OutputFormat(name: "oas2", description: "OpenAPI 2.0 (Swagger)", order: 140, structured: true)]
 class OutputBuilderOas2 < OutputBuilder
   include OutputBuilderOasCommon
 

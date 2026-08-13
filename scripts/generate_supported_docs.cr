@@ -9,6 +9,9 @@
 #   - docs/content/usage/supported/specification/*.md
 #   - docs/content/usage/supported/callee_coverage/*.md
 #
+# Also rewrites the headline framework / language counts quoted in prose on
+# README.md, docs/content/_index.md and the CLI page (both locales).
+#
 # Usage:
 #   crystal run scripts/generate_supported_docs.cr -- [options]
 #   just docs-supported
@@ -296,6 +299,86 @@ def inject_autogen(dir : String, content : String, dry_run : Bool) : Array(Strin
 end
 
 # --------------------
+# Headline counts
+# --------------------
+
+# The framework / language totals quoted in prose on the README and the landing
+# page. They were hand-maintained across nine sites in five files and two
+# locales, with no generator and no test — correct only for as long as whoever
+# added a framework remembered all nine.
+#
+# Each is exactly derivable, so they are rewritten here alongside the tables:
+#
+#   frameworks     techs carrying a `:language` (i.e. everything but the
+#                  specification formats and the mobile manifests)
+#   languages      distinct `:language` values
+#   cli_languages  distinct `:language` among the `*_cli` techs; a different
+#                  denominator, which is why the CLI page quotes its own number
+#
+# Patterns are anchored on the surrounding prose and split into
+# prefix / number / suffix so only the digits are replaced. Each must match
+# exactly once: a reworded sentence makes this script fail loudly rather than
+# silently leave a stale number behind, which is the failure mode it exists to
+# remove.
+COUNT_PATTERNS = [
+  {"README.md", :frameworks, /(across \[)(\d+)( frameworks\])/},
+  {"docs/content/_index.md", :languages, /(across )(\d+)( languages and )/},
+  {"docs/content/_index.md", :frameworks, /( languages and )(\d+)( frameworks)/},
+  {"docs/content/_index.md", :languages, /(<span class="stat-val">)(\d+)(<\/span><span class="stat-key">Languages<\/span>)/},
+  {"docs/content/_index.md", :frameworks, /(<span class="stat-val">)(\d+)(<\/span><span class="stat-key">Frameworks<\/span>)/},
+  {"docs/content/_index.ko.md", :languages, /()(\d+)(개 언어와 )/},
+  {"docs/content/_index.ko.md", :frameworks, /(개 언어와 )(\d+)(개 프레임워크)/},
+  {"docs/content/_index.ko.md", :languages, /(<span class="stat-val">)(\d+)(<\/span><span class="stat-key">언어<\/span>)/},
+  {"docs/content/_index.ko.md", :frameworks, /(<span class="stat-val">)(\d+)(<\/span><span class="stat-key">프레임워크<\/span>)/},
+  {"docs/content/usage/supported/cli/index.md", :cli_languages, /(across )(\d+)( languages\.)/},
+  {"docs/content/usage/supported/cli/index.ko.md", :cli_languages, /()(\d+)(개 언어에 걸쳐)/},
+]
+
+def headline_counts : Hash(Symbol, Int32)
+  with_language = NoirTechs::TECHS.select { |_, info| info.has_key?(:language) }
+  cli = with_language.select { |tech, _| tech.to_s.ends_with?("_cli") }
+
+  {
+    :frameworks    => with_language.size,
+    :languages     => with_language.compact_map { |_, info| info[:language]?.try(&.to_s) }.uniq!.size,
+    :cli_languages => cli.compact_map { |_, info| info[:language]?.try(&.to_s) }.uniq!.size,
+  }
+end
+
+# Rewrites every count site. Returns the paths whose content actually changed,
+# so an unchanged run stays quiet instead of reporting nine no-ops.
+def update_counts(root : String, dry_run : Bool) : Array(String)
+  counts = headline_counts
+  changed = [] of String
+
+  COUNT_PATTERNS.group_by { |site| site[0] }.each do |relative, sites|
+    path = File.join(root, relative)
+    unless File.exists?(path)
+      raise "count site #{relative} does not exist; update COUNT_PATTERNS in #{__FILE__}"
+    end
+
+    original = File.read(path)
+    content = original
+
+    sites.each do |(_, count_key, pattern)|
+      matches = content.scan(pattern).size
+      unless matches == 1
+        raise "#{relative}: expected exactly one match for #{pattern.source.inspect}, found #{matches}. " \
+              "The prose it anchors on was reworded — update COUNT_PATTERNS in #{__FILE__}."
+      end
+      value = counts[count_key]
+      content = content.sub(pattern) { "#{$1}#{value}#{$3}" }
+    end
+
+    next if content == original
+    File.write(path, content) unless dry_run
+    changed << path
+  end
+
+  changed
+end
+
+# --------------------
 # CLI and entry point
 # --------------------
 
@@ -330,6 +413,8 @@ if show_help
   puts "  - docs/content/usage/supported/language_and_frameworks/*.md"
   puts "  - docs/content/usage/supported/specification/*.md"
   puts "  - docs/content/usage/supported/callee_coverage/*.md"
+  puts "  - the framework / language counts in README.md, docs/content/_index.md"
+  puts "    and docs/content/usage/supported/cli/index.md (both locales)"
   puts
   puts "Examples:"
   puts "  crystal run scripts/generate_supported_docs.cr"
@@ -365,4 +450,18 @@ updated = inject_autogen(File.join(docs_dir, "callee_coverage"), callee_table, d
 unless quiet
   prefix = dry_run ? "Would update" : "Updated"
   updated.each { |p| puts "#{prefix}: #{p}" }
+end
+
+# Rewrite the headline framework / language counts quoted in prose.
+updated = update_counts(root, dry_run)
+unless quiet
+  counts = headline_counts
+  puts "Counts: #{counts[:frameworks]} frameworks, #{counts[:languages]} languages, " \
+       "#{counts[:cli_languages]} CLI languages"
+  if updated.empty?
+    puts "Counts already current in all #{COUNT_PATTERNS.map(&.[](0)).uniq!.size} files"
+  else
+    prefix = dry_run ? "Would update" : "Updated"
+    updated.each { |p| puts "#{prefix}: #{p}" }
+  end
 end
