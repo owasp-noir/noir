@@ -1405,37 +1405,6 @@ module Analyzer::Python
       pieces.join(' ')
     end
 
-    # Net `(` − `)` paren count for `line`, ignoring parens inside
-    # single- or double-quoted strings. Sufficient for FastAPI
-    # decorator headers, which don't carry triple-quoted strings or
-    # raw f-strings on the call line itself.
-    private def python_paren_delta(line : ::String) : Int32
-      depth = 0
-      in_quote = nil
-      escaped = false
-      line.each_char do |ch|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-        case ch
-        when '\'', '"'
-          in_quote = ch
-        when '('
-          depth += 1
-        when ')'
-          depth -= 1
-        end
-      end
-      depth
-    end
-
     # Whether `line`'s paren count is balanced (delta == 0). Used to
     # short-circuit the multi-line join when the call already closes
     # on the same line.

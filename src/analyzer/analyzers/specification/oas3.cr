@@ -33,37 +33,6 @@ module Analyzer::Specification
       end
     end
 
-    # Resolves `#/components/schemas/Name` etc. against the spec root.
-    private def resolve_ref_json(root : JSON::Any, ref : String) : JSON::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[decoded]?
-        node = next_node
-      end
-      node
-    end
-
-    private def resolve_ref_yaml(root : YAML::Any, ref : String) : YAML::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[YAML::Any.new(decoded)]?
-        node = next_node
-      end
-      node
-    end
-
-    private def add_param(params : Array(Param), name : String, param_type : String)
-      return if name.empty?
-      param = Param.new(name, "", param_type)
-      params << param unless params.includes?(param)
-    end
-
     private def server_url_json(server_obj : JSON::Any) : String
       url = server_obj["url"]?.try(&.as_s?) || ""
       if variables = server_obj["variables"]?.try(&.as_h?)
