@@ -1,3 +1,5 @@
+require "./masked_lexer"
+
 module Noir
   # A single token produced by `PhpLexer#tokens`. `start`/`end` are
   # character indices into the original source (`end` exclusive); `line`
@@ -33,21 +35,16 @@ module Noir
   #
   # The lexer masks every non-code region (strings, comments, heredoc/nowdoc
   # bodies) into spaces in `@masked` while preserving newlines and overall
-  # length, so the structural helpers below are plain depth counters over
-  # `@masked` with no string-state bookkeeping of their own.
+  # length, so the structural helpers in `Noir::MaskedLexer` are plain depth
+  # counters over `@masked` with no string-state bookkeeping of their own.
   class PhpLexer
-    # Code with strings/comments/heredoc bodies blanked to spaces. Same
-    # character length as the source; newlines preserved so line/offset math
-    # against the original content stays valid.
-    getter masked : Array(Char)
+    # Supplies `@masked`/`@size`/`@spans`/`@skip_ranges` plus the shared
+    # `matching_delimiter`, `statement_end`, `skip_ranges`, `in_code?` and
+    # identifier predicates.
+    include MaskedLexer
 
     @chars : Array(Char)
-    @size : Int32
-    # Recorded non-code regions as {kind, start, end_exclusive}. Used for
-    # `skip_ranges` and to splice string/comment tokens into `tokens`.
-    @spans : Array(Tuple(Symbol, Int32, Int32))
     @tokens : Array(PhpToken)?
-    @skip_ranges : Array(Range(Int32, Int32))?
 
     def initialize(source : String)
       @chars = source.chars
@@ -57,14 +54,6 @@ module Noir
       @tokens = nil
       @skip_ranges = nil
       scan
-    end
-
-    private def ident_char?(c : Char) : Bool
-      c == '_' || c.ascii_alphanumeric? || c.ord >= 0x80
-    end
-
-    private def ident_start?(c : Char) : Bool
-      c == '_' || c.ascii_letter? || c.ord >= 0x80
     end
 
     # Single masking pass. Walks the character array once, copying code
@@ -255,56 +244,9 @@ module Noir
     end
 
     # ---- structural helpers (character indices) ----------------------------
-
-    # Index of the delimiter that closes the `(`/`[`/`{` at `open_pos`, or nil.
-    # Counts only the matching pair type, which is correct for balanced code
-    # and mirrors the engine's `find_matching_php_close_brace`.
-    def matching_delimiter(open_pos : Int32) : Int32?
-      return unless 0 <= open_pos && open_pos < @size
-      open = @masked[open_pos]
-      close = case open
-              when '(' then ')'
-              when '[' then ']'
-              when '{' then '}'
-              else          return
-              end
-      depth = 0
-      i = open_pos
-      while i < @size
-        c = @masked[i]
-        if c == open
-          depth += 1
-        elsif c == close
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-      nil
-    end
-
-    # Index just after the top-level `;` at or after `start_pos`, or the source
-    # size when none is found. Mirrors `find_php_statement_end`.
-    def statement_end(start_pos : Int32) : Int32
-      paren = 0
-      bracket = 0
-      brace = 0
-      i = start_pos < 0 ? 0 : start_pos
-      while i < @size
-        case @masked[i]
-        when '(' then paren += 1
-        when ')' then paren -= 1 if paren > 0
-        when '[' then bracket += 1
-        when ']' then bracket -= 1 if bracket > 0
-        when '{' then brace += 1
-        when '}' then brace -= 1 if brace > 0
-        when ';'
-          return i + 1 if paren == 0 && bracket == 0 && brace == 0
-        end
-        i += 1
-      end
-      @size
-    end
+    #
+    # `matching_delimiter`, `statement_end`, `skip_ranges` and `in_code?` come
+    # from `Noir::MaskedLexer`. Only the PHP-specific one lives here.
 
     # Index of the first top-level expression terminator (`,` `;` or a closing
     # `) ] }` that would pop above the starting level) at or after `start_pos`.
@@ -337,16 +279,6 @@ module Noir
         i += 1
       end
       @size
-    end
-
-    # Character ranges occupied by strings, comments and heredoc/nowdoc bodies.
-    def skip_ranges : Array(Range(Int32, Int32))
-      @skip_ranges ||= @spans.map { |(_, s, e)| (s..e - 1) }
-    end
-
-    def in_code?(pos : Int32) : Bool
-      return false unless 0 <= pos && pos < @size
-      @spans.none? { |(_, s, e)| s <= pos && pos < e }
     end
 
     # ---- token stream ------------------------------------------------------

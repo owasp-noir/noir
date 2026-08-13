@@ -213,7 +213,7 @@ module Analyzer::Java
           break unless build_idx
           open_idx = code.index('(', build_idx)
           break unless open_idx
-          close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+          close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
           if close_idx
             expressions << code[found..close_idx]
             offset = close_idx + 1
@@ -239,7 +239,7 @@ module Analyzer::Java
         else
           open_idx = code.index('(', found)
           break unless open_idx
-          close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+          close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
           if close_idx
             expressions << code[(open_idx + 1)...close_idx]
             offset = close_idx + 1
@@ -304,7 +304,7 @@ module Analyzer::Java
 
         open_idx = server_codeblock.index('(', found)
         next unless open_idx
-        close_idx = find_matching_delimiter(server_codeblock, open_idx, '(', ')')
+        close_idx = JavaEngine.find_matching_delimiter(server_codeblock, open_idx, '(', ')')
         next unless close_idx
 
         args = split_top_level_args(server_codeblock[(open_idx + 1)...close_idx])
@@ -446,7 +446,7 @@ module Analyzer::Java
     private def strip_wrapping_parentheses(expr : String) : String
       result = expr
       while result.starts_with?('(') && result.ends_with?(')')
-        close_idx = find_matching_delimiter(result, 0, '(', ')')
+        close_idx = JavaEngine.find_matching_delimiter(result, 0, '(', ')')
         break unless close_idx == result.size - 1
         result = result[1...-1].strip
       end
@@ -557,7 +557,7 @@ module Analyzer::Java
         break unless build_idx
         open_idx = code.index('(', build_idx)
         break unless open_idx
-        close_idx = find_matching_delimiter(code, open_idx, '(', ')')
+        close_idx = JavaEngine.find_matching_delimiter(code, open_idx, '(', ')')
         if close_idx
           expressions << code[found..close_idx]
           offset = close_idx + 1
@@ -770,44 +770,6 @@ module Analyzer::Java
         i += 1
       end
       mask
-    end
-
-    private def find_matching_delimiter(code : String,
-                                        open_idx : Int32,
-                                        open_char : Char,
-                                        close_char : Char) : Int32?
-      # Scan by CHARACTER (not byte): open_idx is a char index from String#index
-      # and callers char-slice with the returned index. A byte scan corrupts both
-      # on multi-byte UTF-8. ASCII-identical to the previous byte loop.
-      depth = 1
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      code.each_char_with_index do |ch, i|
-        next if i <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif ch == '\\'
-            escape = true
-          elsif ch == quote
-            in_string = false
-          end
-        else
-          if ch == '"' || ch == '\''
-            in_string = true
-            quote = ch
-          elsif ch == open_char
-            depth += 1
-          elsif ch == close_char
-            depth -= 1
-          end
-        end
-        return i if depth == 0
-      end
-
-      nil
     end
 
     # ---- annotation-based service routes ------------------------------

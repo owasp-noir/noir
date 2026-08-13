@@ -31,5 +31,48 @@ module Analyzer::Java
       return true if relative_path.includes?("/src/it/")
       false
     end
+
+    # Index of the delimiter closing the `open_char` at `open_idx`, or nil when
+    # the source runs out first. String and char literals are skipped, so a
+    # `)`/`}` inside `"…"` or `'…'` cannot close the block early.
+    #
+    # Scan by CHARACTER (not byte): `open_idx` is a char index from
+    # `String#index` and callers char-slice with — or range-compare — the
+    # returned index. A byte scan corrupts both on multi-byte UTF-8.
+    # ASCII-identical to the previous byte loop.
+    def self.find_matching_delimiter(code : String,
+                                     open_idx : Int32,
+                                     open_char : Char,
+                                     close_char : Char) : Int32?
+      depth = 1
+      in_string = false
+      quote = '\0'
+      escape = false
+
+      code.each_char_with_index do |ch, i|
+        next if i <= open_idx
+        if in_string
+          if escape
+            escape = false
+          elsif ch == '\\'
+            escape = true
+          elsif ch == quote
+            in_string = false
+          end
+        else
+          if ch == '"' || ch == '\''
+            in_string = true
+            quote = ch
+          elsif ch == open_char
+            depth += 1
+          elsif ch == close_char
+            depth -= 1
+          end
+        end
+        return i if depth == 0
+      end
+
+      nil
+    end
   end
 end
