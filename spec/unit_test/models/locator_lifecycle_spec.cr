@@ -21,10 +21,13 @@ require "../../../src/models/noir"
 # was added. #2503's message and this comment both named diff mode anyway,
 # which overstated the blast radius.
 #
-# A single-scan fixture sweep cannot see this by construction, which is why
-# it survived long enough to have a comment written about it rather than a
-# fix. This spec is the oracle: it fails with the hand-written clear list
-# put back in place of `LocatorKeys.reset`.
+# The fixture sweep cannot see this — not because it runs a single scan (it
+# does not; see the note on the end-to-end describe below) but because
+# `func_spec.cr`'s `ensure_scanned` calls `clear_all` before every tester's
+# scan, which wipes the carry-over before it can be observed. That is why it
+# survived long enough to have a comment written about it rather than a fix.
+# This spec is the oracle: it fails with the hand-written clear list put back
+# in place of `LocatorKeys.reset`.
 describe "locator scan lifecycle" do
   it "does not carry a previous scan's spec registrations into the next" do
     logger = NoirLogger.new(false, false, false, true)
@@ -106,7 +109,13 @@ end
 #
 # Nothing else in the suite covers this. `--diff-path` cannot reach it —
 # `src/cli/commands/scan.cr` calls `clear_all` between its two halves — and
-# the fixture sweep runs one scan per process.
+# neither can the fixture sweep, though not for the reason this comment used
+# to give. The sweep does NOT run one scan per process: 554 tester files
+# compile into a single binary and `func_spec.cr`'s `ensure_scanned` runs a
+# full detect+analyze per tester against the one `CodeLocator.instance`. What
+# hides the carry-over is the unconditional `clear_all` that `ensure_scanned`
+# does first. The distinction is load-bearing — narrow that clear for speed
+# and the functional suite silently becomes a 554-scan carry-over test.
 describe "locator scan lifecycle, end to end" do
   it "does not carry a previous scan's endpoints into the next" do
     locator = CodeLocator.instance
