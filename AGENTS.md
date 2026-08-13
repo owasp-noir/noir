@@ -59,7 +59,7 @@ src/
 ├── minilexers/             # Custom lexers
 ├── miniparsers/            # Custom parsers
 ├── passive_scan/           # Passive security scanning
-├── techs/catalog/          # Technology metadata, one file per language group
+├── techs/catalog/{lang}/   # Technology metadata, one file per technology
 ├── utils/                  # Utility functions
 ├── noir.cr                 # Main entry point
 ├── options.cr              # CLI options parser
@@ -134,13 +134,13 @@ When adding a new framework in a language that already has an extractor, extend 
 2. Declare the tech inside the class: `analyzer_for "{language}_{framework}"`. This is the whole registration (`src/models/analyzer.cr`); `initialize_analyzers` reads it off `Analyzer.all_subclasses`. Omitting it is a compile error.
 3. Add functional test: `spec/functional_test/testers/{language}/{framework}_spec.cr`
 4. Add fixtures: `spec/functional_test/fixtures/{language}/{framework}/`
-5. Add technology metadata to `src/techs/catalog/{language}.cr`
+5. Add technology metadata: create `src/techs/catalog/{language}/{framework}.cr` (mirrors the analyzer's path)
 
 ### Detectors
 1. Create `src/detector/detectors/{language}/{framework}.cr`
 2. Declare the tech and its file gate inside the class: `detector_for "go_hertz", extensions: %w[.go], path_segments: %w[go.mod]` (`src/models/detector.cr`). The gate keys are `extensions:`, `basenames:` and `path_segments:`; pass `idempotent: false` only if `detect` has side effects, such as registering paths in `CodeLocator`.
 3. Add unit test: `spec/unit_test/detector/{language}/{framework}_spec.cr` — required; `spec/unit_test/techs/detector_coverage_spec.cr` fails without it
-4. Add technology metadata to `src/techs/catalog/{language}.cr`
+4. Add technology metadata: create `src/techs/catalog/{language}/{framework}.cr` (mirrors the detector's path)
 
 ### Output Formats
 1. Create `src/output_builder/{format}.cr` (no `_builder` suffix)

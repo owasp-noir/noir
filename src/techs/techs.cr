@@ -1,38 +1,92 @@
 require "json"
-require "./catalog/*"
+require "./catalog/**"
 
 module NoirTechs
-  TECHS = Catalog::ASP
-    .merge(Catalog::ASPNET)
-    .merge(Catalog::CFML)
-    .merge(Catalog::CLOJURE)
-    .merge(Catalog::CPP)
-    .merge(Catalog::CRYSTAL)
-    .merge(Catalog::CSHARP)
-    .merge(Catalog::DART)
-    .merge(Catalog::ELIXIR)
-    .merge(Catalog::ERLANG)
-    .merge(Catalog::FSHARP)
-    .merge(Catalog::GLEAM)
-    .merge(Catalog::GO)
-    .merge(Catalog::GROOVY)
-    .merge(Catalog::HASKELL)
-    .merge(Catalog::JAVA)
-    .merge(Catalog::JAVASCRIPT)
-    .merge(Catalog::KOTLIN)
-    .merge(Catalog::LUA)
-    .merge(Catalog::MOBILE)
-    .merge(Catalog::PERL)
-    .merge(Catalog::PHP)
-    .merge(Catalog::PYTHON)
-    .merge(Catalog::R)
-    .merge(Catalog::RUBY)
-    .merge(Catalog::RUST)
-    .merge(Catalog::SCALA)
-    .merge(Catalog::SPECIFICATION)
-    .merge(Catalog::SWIFT)
-    .merge(Catalog::TYPESCRIPT)
-    .merge(Catalog::ZIG)
+  # The whole technology catalog, derived from whatever sits under
+  # `NoirTechs::Catalog` rather than from a hand-maintained list.
+  #
+  # This used to be a 31-line `.merge` chain naming each per-language bundle.
+  # `src/techs/techs.cr` has been touched by 164 of the last 1730 commits
+  # because of it: every new language meant editing this file, and — worse —
+  # two contributors could claim the same tech key in different language files
+  # and the chain would silently keep the last one.
+  #
+  # ## Two accepted shapes
+  #
+  # A constant under `Catalog` may be either:
+  #
+  #   * a **language module** holding one constant per technology —
+  #     `module NoirTechs::Catalog::Kotlin; SPRING = {:kotlin_spring => {...}}`
+  #     in `catalog/kotlin/spring.cr`. This is the target shape: adding a
+  #     technology is a new file and never an edit to a shared list.
+  #   * a **flat bundle** of many entries — `Catalog::KOTLIN = {...}` in
+  #     `catalog/kotlin.cr`, the pre-split shape.
+  #
+  # Both are accepted so the tree can sit half-migrated indefinitely: the
+  # per-language split lands as independent PRs in any order, and a framework
+  # PR opened against the old layout still applies. The bundle branch is
+  # transitional and goes away with the last `catalog/{lang}.cr`.
+  #
+  # ## Why the entries are spliced rather than merged
+  #
+  # The macro reads each constant's *literal* and emits one hash literal, so
+  # the compiler sees the same source shape a single hand-written catalog
+  # would produce. Generating a `.merge` chain instead would infer a different
+  # (and much wider) value union, and `typeof(TECHS)` is what every consumer
+  # of `NoirTechs.techs` is typed against. Verified identical before and after
+  # the derivation — treat the splice as load-bearing, not stylistic.
+  #
+  # ## Order
+  #
+  # Both levels are sorted, so iteration order is a property of the names
+  # rather than of `require` mechanics — it cannot silently drift the way it
+  # did when the monolithic catalog was first split (see
+  # `AMBIGUOUS_ALIAS_WINNERS`, which exists to clean up after exactly that).
+  # Nothing may depend on this order: alias resolution is pinned, and
+  # `spec/unit_test/techs/alias_resolution_spec.cr` keeps it that way.
+  {% begin %}
+    {% entries = {} of Object => Object %}
+    {% owners = {} of Object => Object %}
+
+    {% for const_name in Catalog.constants.sort %}
+      {% node = Catalog.constant(const_name) %}
+      {% if node.is_a?(HashLiteral) %}
+        # Transitional: a pre-split per-language bundle.
+        {% bundles = [{"NoirTechs::Catalog::#{const_name}", node}] %}
+      {% elsif node.is_a?(TypeNode) %}
+        {% bundles = [] of Object %}
+        {% for tech_const in node.constants.sort %}
+          {% bundles << {"NoirTechs::Catalog::#{const_name}::#{tech_const}", node.constant(tech_const)} %}
+        {% end %}
+      {% else %}
+        {% raise "NoirTechs::Catalog::#{const_name} must be a language module or a Hash literal of catalog " \
+                 "entries. Put a technology's metadata in `module NoirTechs::Catalog::<Language>` inside " \
+                 "src/techs/catalog/<language>/<framework>.cr." %}
+      {% end %}
+
+      {% for bundle in bundles %}
+        {% origin = bundle[0] %}
+        {% literal = bundle[1] %}
+        {% unless literal.is_a?(HashLiteral) %}
+          {% raise "#{origin} must be a Hash literal of catalog entries, keyed by tech symbol." %}
+        {% end %}
+        {% for tech in literal.keys %}
+          {% if owners[tech] %}
+            {% raise "duplicate tech key #{tech}: declared by both #{owners[tech]} and #{origin}. " \
+                     "A tech name may be claimed once." %}
+          {% end %}
+          {% owners[tech] = origin %}
+          {% entries[tech] = literal[tech] %}
+        {% end %}
+      {% end %}
+    {% end %}
+
+    TECHS = {
+      {% for tech in entries.keys %}
+        {{ tech }} => {{ entries[tech] }},
+      {% end %}
+    }
+  {% end %}
 
   # Derived from the per-tech :context flags in the catalog files, so a
   # capability can only be declared on an entry that exists — the drift
@@ -105,14 +159,55 @@ module NoirTechs
     TECHS
   end
 
-  # A handful of aliases are claimed by more than one tech (genuine
-  # cross-language library-name ambiguity) and used to resolve by the
-  # catalog literal's insertion order. The split into per-language catalog
-  # files reordered insertion, so the aliases whose winner that would have
-  # silently changed are pinned here instead of implicitly. Keys must be
-  # lowercase (the lookup downcases its input).
+  # Aliases claimed by more than one tech — genuine cross-language
+  # library-name ambiguity (`argparse` is C++, Lua *and* Python; `spring` is
+  # Java and Kotlin). Without a pin, `similar_to_tech`'s fallback scan hands
+  # the name to whichever tech `TECHS` happens to reach first, i.e. the
+  # catalog's insertion order decides a user-visible answer.
+  #
+  # That is not a theoretical hazard: the split into per-language catalog
+  # files reordered insertion, and the three aliases whose winner it would
+  # have silently changed had to be pinned after the fact.
+  #
+  # **Every ambiguous alias belongs here.** The table is consulted before the
+  # order-dependent scan, so a pinned alias resolves the same way whatever
+  # order `TECHS` is built in — which is what makes the catalog's ordering a
+  # free implementation detail rather than a behavioural contract. Thirteen
+  # aliases were still resolving by luck; they are pinned below to the tech
+  # they already resolved to, so this is not a behaviour change.
+  # `spec/unit_test/techs/alias_resolution_spec.cr` fails if a new ambiguous
+  # alias appears without a pin, which turns "somebody has to notice" into
+  # "somebody has to decide".
+  #
+  # An alias that is *also* a tech key (`kong`) needs no pin: the exact-key
+  # pass runs first and only one key can match it.
+  #
+  # Keys must be lowercase (the lookup downcases its input).
   AMBIGUOUS_ALIAS_WINNERS = {
-    "clap"           => "zig_cli",
+    # C++ / Lua / Python / PHP CLI argument parsers.
+    "abseil"   => "cpp_cli",
+    "argparse" => "cpp_cli",
+    "getopt"   => "cpp_cli",
+    # Crystal / Elixir / Ruby.
+    "optionparser" => "crystal_cli",
+    # JS / Rust.
+    "getopts" => "js_cli",
+    # Crystal / Go stdlib HTTP servers.
+    "http"     => "crystal_http",
+    "std/http" => "crystal_http",
+    # Dart / Python stdlib HTTP servers.
+    "httpserver" => "dart_http",
+    # JVM CLI parsers, claimed by the Groovy, Java and Kotlin CLI analyzers.
+    "commons-cli" => "groovy_cli",
+    "jcommander"  => "groovy_cli",
+    "picocli"     => "groovy_cli",
+    # Java / Kotlin. Worth revisiting on its own merits — a Kotlin Spring
+    # project asking for `-t spring` gets the Java analyzer — but that is a
+    # behaviour question, not this table's job to change silently.
+    "spring" => "java_spring",
+    # Rust / Zig.
+    "clap" => "zig_cli",
+    # Java / Scala.
     "play"           => "scala_play",
     "play-framework" => "scala_play",
   }
