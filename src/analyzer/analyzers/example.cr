@@ -84,5 +84,12 @@ class AnalyzerExample < FileScanEngine
   #   end
   #
   # `src/analyzer/analyzers/javascript/hono.cr` is the reference for this
-  # shape; `src/analyzer/engines/php_engine.cr` is the reference for Shape A.
+  # shape's `analyze` skeleton — but copy only the skeleton. The rest of that
+  # file is layers 2 and 3 fused (its own arg splitter, whitespace skipper,
+  # offset→line helper and inline regex route tables), which is exactly what
+  # the rule above tells you not to write. For the *body* of a thin adapter,
+  # copy `src/analyzer/analyzers/javascript/hapi.cr`: 54 lines that call an
+  # extractor and map the result onto `Param`s, and nothing else.
+  #
+  # `src/analyzer/engines/php_engine.cr` is the reference for Shape A.
 end
