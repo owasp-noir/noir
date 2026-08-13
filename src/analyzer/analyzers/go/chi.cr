@@ -73,7 +73,7 @@ module Analyzer::Go
               package_mounted_functions[dir] << mount_skip_key(target)
             end
           end
-        rescue File::NotFoundError
+        rescue IO::Error
           # skip
         end
       end
@@ -263,8 +263,8 @@ module Analyzer::Go
                     extract_params(line, state, last_endpoint)
                   end
                 end
-              rescue File::NotFoundError
-                logger.debug "File not found: #{path}"
+              rescue e : IO::Error
+                logger.debug "Skipping #{path}: #{e.message}"
               end
             end
           end
@@ -431,7 +431,7 @@ module Analyzer::Go
           (file_contents_cache.try &.[search_path]?) ||
             begin
               read_file_content(search_path)
-            rescue File::NotFoundError
+            rescue IO::Error
               next
             end
 

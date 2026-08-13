@@ -1389,7 +1389,7 @@ module Noir
         @@shared_super_cache[file] ||= supertypes
         {@@shared_cache[file], @@shared_super_cache[file]}
       end
-    rescue File::NotFoundError
+    rescue IO::Error
       {Index.new, Hash(String, String).new}
     end
 
@@ -1492,7 +1492,7 @@ module Noir
         imports = TreeSitterKotlinParameterExtractor.extract_imports_from(root, body)
       end
       {package_name, imports}
-    rescue File::NotFoundError
+    rescue IO::Error
       {"", [] of Noir::ImportGraph::ImportRef}
     end
 

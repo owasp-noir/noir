@@ -147,7 +147,7 @@ module Analyzer::Go
         paths.each do |path|
           begin
             file_contents[path] = read_file_content(path)
-          rescue File::NotFoundError
+          rescue IO::Error
             # skip
           end
         end
@@ -431,7 +431,7 @@ module Analyzer::Go
         next if GoEngine.go_test_file?(base_relative_path(path))
         begin
           file_contents[path] = read_file_content(path)
-        rescue File::NotFoundError
+        rescue IO::Error
           # skip
         end
       end
@@ -562,7 +562,7 @@ module Analyzer::Go
 
         begin
           content = read_file_content(path)
-        rescue File::NotFoundError
+        rescue IO::Error
           next
         end
 

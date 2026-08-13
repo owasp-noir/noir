@@ -74,7 +74,7 @@ module Analyzer::Go
           package_files[dir] ||= [] of String
           package_files[dir] << scan_path
           file_contents_cache[scan_path] = read_file_content(scan_path)
-        rescue File::NotFoundError
+        rescue IO::Error
           # skip
         end
       end
@@ -121,8 +121,8 @@ module Analyzer::Go
                   mutex.synchronize do
                     endpoints.each { |ep| result << ep }
                   end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                rescue e : IO::Error
+                  logger.debug "Skipping #{path}: #{e.message}"
                 end
               end
             end

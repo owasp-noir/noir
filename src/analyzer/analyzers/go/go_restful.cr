@@ -79,8 +79,8 @@ module Analyzer::Go
 
                     result << endpoint
                   end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                rescue e : IO::Error
+                  logger.debug "Skipping #{path}: #{e.message}"
                 end
               end
             end

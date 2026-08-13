@@ -35,7 +35,7 @@ module Analyzer::Specification
       CodeLocator.instance.files_by_extension(".proto").each do |proto_file|
         begin
           content = read_file_content(proto_file)
-        rescue File::NotFoundError
+        rescue IO::Error
           next
         end
         clean = strip_comments(content)

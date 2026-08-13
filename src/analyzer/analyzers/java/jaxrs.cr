@@ -366,7 +366,7 @@ module Analyzer::Java
             body = file == path ? content : read_file_content(file)
             Noir::TreeSitterJaxRsExtractor.extract_bean_fields(body)
           end
-        rescue File::NotFoundError
+        rescue IO::Error
           {} of String => Array(Param)
         end
 
@@ -388,7 +388,7 @@ module Analyzer::Java
       Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
         body = cache[file] ||= begin
           file == path ? content : read_file_content(file)
-        rescue File::NotFoundError
+        rescue IO::Error
           ""
         end
         next if body.empty?
