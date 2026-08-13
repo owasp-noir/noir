@@ -344,8 +344,14 @@ module Analyzer::Javascript
       path.ends_with?(".ts") || path.ends_with?(".tsx")
     end
 
+    # Both call sites pass a CHAR index (`MatchData#begin` at :218,
+    # `String#index` at :332); the inherited helper converts to a byte
+    # offset before counting newlines. The previous body sliced
+    # `content.to_slice[0, index]` with the char index directly, so any
+    # source with non-ASCII before the match reported a line number that
+    # was too low.
     private def line_for_index(content : String, index : Int32) : Int32
-      content.to_slice[0, index].count('\n'.ord.to_u8) + 1
+      line_number_for_index(content, index)
     end
 
     private def detect_pages_router_methods(content : String) : Array(String)
