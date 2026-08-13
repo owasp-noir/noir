@@ -1,6 +1,8 @@
 require "../../models/analyzer"
 require "./file_scan_engine"
 require "../../miniparsers/rust_callee_extractor"
+require "../../miniparsers/rust_callee_extractor_ts"
+require "../../ext/tree_sitter/tree_sitter"
 
 module Analyzer::Rust
   abstract class RustEngine < FileScanEngine
@@ -370,6 +372,121 @@ module Analyzer::Rust
       return unless found_opening_brace
 
       {body_lines.join("\n"), body_start_line, lines.size - 1}
+    end
+
+    # ---- Shared tree-sitter walking helpers -----------------------------
+    #
+    # These were 47 byte-identical private copies across the ten Rust
+    # framework adapters. They are `protected`, so an adapter that needs
+    # different behaviour still overrides — and three do, deliberately:
+    #
+    #   * `warp#call_function_text` returns text only for a
+    #     `scoped_identifier`, nil otherwise.
+    #   * `axum#build_function_index` is an overload pair that tracks
+    #     module scope while descending.
+    #   * `actix_web#find_paired_function` differs from the shape below.
+    #
+    # Those three keep their own versions; Crystal dispatches to the
+    # subclass, so the helpers here that call them (`each_routing_pair` →
+    # `find_paired_function`, `build_function_index` → `walk`) still get
+    # the adapter's behaviour.
+
+    # Yield `node` and every named descendant, depth-first.
+    protected def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
+      block.call(node)
+      Noir::TreeSitter.each_named_child(node) do |child|
+        walk(child, &block)
+      end
+    end
+
+    # The first named child of `node` whose type is `type`.
+    protected def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
+      Noir::TreeSitter.each_named_child(node) do |child|
+        return child if Noir::TreeSitter.node_type(child) == type
+      end
+      nil
+    end
+
+    # `function_name => function_item` over the whole tree, first
+    # definition winning.
+    protected def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
+      index = {} of String => LibTreeSitter::TSNode
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "function_item"
+        name_node = Noir::TreeSitter.field(node, "name")
+        next unless name_node
+        name = Noir::TreeSitter.node_text(name_node, source)
+        index[name] = node unless index.has_key?(name)
+      end
+      index
+    end
+
+    # The callee text of a `call_expression` (`foo`, `Bar::baz`, …).
+    protected def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
+      fn_node = Noir::TreeSitter.field(call, "function")
+      return unless fn_node
+      Noir::TreeSitter.node_text(fn_node, source)
+    end
+
+    # Walk `node`'s children at every depth and yield `(attribute_item,
+    # function_item)` pairs where the attribute immediately precedes
+    # the function (skipping intermediate attribute_items and doc
+    # comments). This matches how `#[get(...)] async fn handler` is
+    # laid out in the AST — both are top-level siblings, not parent /
+    # child.
+    protected def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
+      named = [] of LibTreeSitter::TSNode
+      Noir::TreeSitter.each_named_child(node) { |c| named << c }
+      named.each_with_index do |child, idx|
+        if Noir::TreeSitter.node_type(child) == "attribute_item"
+          pair_function = find_paired_function(named, idx + 1)
+          block.call(child, pair_function) if pair_function
+        end
+        each_routing_pair(child, &block)
+      end
+    end
+
+    # The `function_item` that `named[start...]` leads to, skipping further
+    # attributes and comments. Anything else means the attribute does not
+    # decorate a function, so there is no pair.
+    protected def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
+      (start...named.size).each do |i|
+        next_node = named[i]
+        case Noir::TreeSitter.node_type(next_node)
+        when "function_item"
+          return next_node
+        when "attribute_item", "line_comment", "block_comment"
+          next
+        else
+          return
+        end
+      end
+      nil
+    end
+
+    # The first `string_content` child of a `string_literal`.
+    #
+    # NOTE: tree-sitter-rust splits a literal at each escape, so this
+    # truncates a path carrying one (`"/page-{id:\d+}"` → `/page-{id:`).
+    # `actix_web#string_content_of` concatenates the `escape_sequence`
+    # children and is the correct form; folding these together is a
+    # behaviour change and belongs in its own commit.
+    protected def string_content(string_literal : LibTreeSitter::TSNode, source : String) : String?
+      Noir::TreeSitter.each_named_child(string_literal) do |grand|
+        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
+      end
+      nil
+    end
+
+    # Attach the 1-hop callees of `function`'s body to `endpoint`.
+    protected def attach_handler_callees(function : LibTreeSitter::TSNode,
+                                         source : String,
+                                         path : String,
+                                         endpoint : Endpoint)
+      body = Noir::TreeSitter.field(function, "body")
+      return unless body
+      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
+      attach_rust_callees(endpoint, entries)
     end
   end
 end

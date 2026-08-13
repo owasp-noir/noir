@@ -324,22 +324,6 @@ module Analyzer::Rust
       end
     end
 
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
-    end
-
-    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
-      fn_node = Noir::TreeSitter.field(call, "function")
-      return unless fn_node
-      Noir::TreeSitter.node_text(fn_node, source)
-    end
-
     private def first_named_argument(call : LibTreeSitter::TSNode) : LibTreeSitter::TSNode?
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -347,18 +331,6 @@ module Analyzer::Rust
         return child
       end
       nil
-    end
-
-    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name_node = Noir::TreeSitter.field(node, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        index[name] = node unless index.has_key?(name)
-      end
-      index
     end
 
     private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
@@ -376,13 +348,6 @@ module Analyzer::Rust
         end
       end
       result
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
     end
   end
 end
