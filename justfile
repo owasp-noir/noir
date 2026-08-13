@@ -41,7 +41,7 @@ clean:
 docs-serve:
     hwaro serve -i docs --base-url="http://localhost:3000"
 
-# Generate supported technology docs from techs.cr.
+# Generate supported technology docs and headline counts from the techs catalog.
 [group('documents')]
 docs-supported:
     crystal run scripts/generate_supported_docs.cr
