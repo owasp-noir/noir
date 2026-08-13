@@ -227,9 +227,13 @@ module Analyzer::Javascript
       end
     end
 
+    # `MatchData#begin` is a CHAR index; the inherited helper is the one
+    # that converts it to a byte offset before counting newlines. This used
+    # to slice `content.to_slice[0, start]` with the char index directly,
+    # which undercounts on any source with non-ASCII before the match — the
+    # sibling `express.cr#line_for_pos` carries the same warning.
     private def line_for_match(content : String, match : Regex::MatchData) : Int32
-      start = match.begin(0) || 0
-      content.to_slice[0, start].count('\n'.ord.to_u8) + 1
+      line_number_for_index(content, match.begin(0) || 0)
     end
 
     private def attach_callees(endpoint : Endpoint, path : String, content : String, verb : String)
