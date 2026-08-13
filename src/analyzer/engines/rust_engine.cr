@@ -464,18 +464,55 @@ module Analyzer::Rust
       nil
     end
 
-    # The first `string_content` child of a `string_literal`.
+    # The full text of a `string_literal`, concatenating every
+    # `string_content` and `escape_sequence` child.
     #
-    # NOTE: tree-sitter-rust splits a literal at each escape, so this
-    # truncates a path carrying one (`"/page-{id:\d+}"` → `/page-{id:`).
-    # `actix_web#string_content_of` concatenates the `escape_sequence`
-    # children and is the correct form; folding these together is a
-    # behaviour change and belongs in its own commit.
+    # tree-sitter-rust splits a literal at each escape — `"/page-{id:\d+}"`
+    # parses as string_content `/page-{id:`, escape_sequence `\d`,
+    # string_content `+}` — so reading only the first `string_content`
+    # truncates any path carrying one. That is what this method used to do,
+    # and it is why a route registered as `.at("/page-{id:\d+}")` was
+    # reported as `/page-{id:`.
+    #
+    # Returns nil for a literal with no content children (a genuinely empty
+    # `""`), which is what every caller's `|| ""` fallback expects.
     protected def string_content(string_literal : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(string_literal) do |grand|
-        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
+      parts = [] of String
+      Noir::TreeSitter.each_named_child(string_literal) do |child|
+        case Noir::TreeSitter.node_type(child)
+        when "string_content", "escape_sequence"
+          parts << Noir::TreeSitter.node_text(child, source)
+        end
       end
-      nil
+      parts.empty? ? nil : parts.join
+    end
+
+    # `string_content` with a type guard, for callers that hand over an
+    # arbitrary argument node and want nil when it is not a literal (an
+    # identifier, a macro call, a method chain). Keeping this separate
+    # preserves the guard that `axum#string_literal_text` carried — its
+    # callers pass `args[0]` / `named[0]` straight from a call expression.
+    protected def string_literal_content(node : LibTreeSitter::TSNode, source : String) : String?
+      return unless Noir::TreeSitter.node_type(node) == "string_literal"
+      string_content(node, source)
+    end
+
+    # The first string literal anywhere under `node`, depth-first.
+    #
+    # Ten adapters carried their own copy of this walk. Eight read only the
+    # first `string_content` child and truncated at escapes; actix_web and
+    # axum had each independently found that bug and written their own
+    # escape-aware reader, complete with a comment explaining it — the
+    # knowledge existed twice in the tree and never reached the other eight.
+    protected def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
+      return unless node
+      result : String? = nil
+      walk(node) do |child|
+        next if result
+        next unless Noir::TreeSitter.node_type(child) == "string_literal"
+        result = string_content(child, source)
+      end
+      result
     end
 
     # Attach the 1-hop callees of `function`'s body to `endpoint`.

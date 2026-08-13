@@ -845,21 +845,5 @@ module Analyzer::Rust
         @str_consts.try { |consts| consts[{base, Noir::TreeSitter.node_text(node, source).split("::").last}]? }
       end
     end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        case Noir::TreeSitter.node_type(child)
-        when "string_literal", "raw_string_literal"
-          # Salvo regex-constrained params live in raw strings:
-          # `Router::with_path(r"delete/{id|[0-9a-fA-F]{8}}")`. Those are
-          # `raw_string_literal` nodes, not `string_literal`.
-          result = string_content(child, source)
-        end
-      end
-      result
-    end
   end
 end

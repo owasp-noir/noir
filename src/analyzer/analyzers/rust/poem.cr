@@ -439,17 +439,5 @@ module Analyzer::Rust
       suffix = path.lstrip("/")
       suffix.empty? ? pfx : "#{pfx}/#{suffix}"
     end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          result = string_content(child, source)
-        end
-      end
-      result
-    end
   end
 end

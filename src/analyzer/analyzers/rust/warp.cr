@@ -423,7 +423,7 @@ module Analyzer::Rust
       Noir::TreeSitter.each_named_child(token_tree) do |child|
         case Noir::TreeSitter.node_type(child)
         when "string_literal"
-          seg = string_content_text(child, source)
+          seg = string_content(child, source)
           if seg && !seg.empty?
             path_parts << seg
             count += 1
@@ -443,13 +443,6 @@ module Analyzer::Rust
         end
       end
       count
-    end
-
-    private def string_content_text(string_literal : LibTreeSitter::TSNode, source : String) : String?
-      Noir::TreeSitter.each_named_child(string_literal) do |grand|
-        return Noir::TreeSitter.node_text(grand, source) if Noir::TreeSitter.node_type(grand) == "string_content"
-      end
-      nil
     end
 
     # `.map(handler)` / `.and_then(handler)` / `.then(handler)` — pull
@@ -625,23 +618,6 @@ module Analyzer::Rust
           result = Noir::TreeSitter.node_text(child, source)
         when "scoped_type_identifier"
           result = Noir::TreeSitter.node_text(child, source).split("::").last
-        end
-      end
-      result
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          Noir::TreeSitter.each_named_child(child) do |grand|
-            if Noir::TreeSitter.node_type(grand) == "string_content"
-              result = Noir::TreeSitter.node_text(grand, source)
-              break
-            end
-          end
         end
       end
       result
