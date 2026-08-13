@@ -51,10 +51,10 @@ module Analyzer::Python
           next unless path_under_root?(path, current_base_path)
           @logger.debug "Analyzing #{path}"
 
-          # Goes through this analyzer's own memoized read_file_content
-          # (see below), which itself prefers the detector-cached content
-          # over a fresh disk read.
-          lines = read_file_content(path).lines
+          # Goes through this analyzer's own `memoized_file_content` (see
+          # below), which delegates to the base `read_file_content` and so
+          # prefers the detector-cached content over a fresh disk read.
+          lines = memoized_file_content(path).lines
           next unless lines.any?(&.includes?("tornado"))
           api_instances = Hash(::String, ::String).new
           path_api_instances[path] = api_instances
@@ -542,7 +542,7 @@ module Analyzer::Python
               line_index,
               file_path,
               definition_base_path: base_path_for(file_path),
-              source: read_file_content(file_path),
+              source: memoized_file_content(file_path),
             )
           end
 
@@ -572,7 +572,7 @@ module Analyzer::Python
                 line_index,
                 file_path,
                 definition_base_path: base_path_for(file_path),
-                source: read_file_content(file_path),
+                source: memoized_file_content(file_path),
               )
             end
 
@@ -642,7 +642,7 @@ module Analyzer::Python
 
     private def resolve_imports(file_path : ::String) : Hash(::String, Tuple(::String, Int32))
       @import_modules_cache[file_path] ||= begin
-        content = read_file_content(file_path)
+        content = memoized_file_content(file_path)
         find_imported_modules(base_path_for(file_path), file_path, content)
       end
     end
@@ -654,14 +654,30 @@ module Analyzer::Python
     end
 
     private def read_file_lines(file_path : ::String) : Array(::String)
-      content = read_file_content(file_path)
+      content = memoized_file_content(file_path)
       content.split("\n")
     end
 
-    private def read_file_content(file_path : ::String) : ::String
+    # Per-analyzer memo over `Analyzer#read_file_content`.
+    #
+    # This used to be named `read_file_content`, which *shadowed* the base
+    # method of that name — a private override with a different signature,
+    # an added memo and an added `IO::Error` rescue. Nothing failed, because
+    # the base never calls it internally; the cost was a silent fork of the
+    # read semantics that only grep could find. It also hand-rolled the base
+    # method's body (`content_for(path) || TextFile.read(path)`), so a change
+    # to the cache-miss path would have missed this copy.
+    #
+    # The memo is still worth keeping: this analyzer resolves imported
+    # modules and re-reads the same handler files across several passes,
+    # and the locator's content cache can miss (budget exhausted), which
+    # would otherwise be a repeated disk read.
+    #
+    # Guarded by `spec/unit_test/analyzer/layering_boundary_spec.cr`.
+    private def memoized_file_content(file_path : ::String) : ::String
       return @file_content_cache[file_path] if @file_content_cache.has_key?(file_path)
       content = begin
-        CodeLocator.instance.content_for(file_path) || Noir::TextFile.read(file_path)
+        read_file_content(file_path)
       rescue e : IO::Error
         @logger.debug "Failed to read file: #{file_path} (#{e.message})"
         ""

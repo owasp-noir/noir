@@ -90,6 +90,8 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 
 **Rule**: the framework adapter receives routes; it does not walk the filesystem or parse tokens itself.
 
+`spec/unit_test/analyzer/layering_boundary_spec.cr` enforces the file-walking half of that rule: `Dir.glob` / `Dir.children` / `Dir.each_child` under `src/analyzer/analyzers/**` fails the suite. Get your file set from the engine (`scan_target_files`, `parallel_file_scan`) or from a detector-built index (`get_files_by_extension`, `CodeLocator#files_by_basename`) — walking a directory yourself bypasses subtree pruning, `--exclude-path`, the media filter and the content cache. The spec carries an allowlist of the six adapters that still walk; it is a ratchet, so entries may be removed but never added. It also forbids shadowing `Analyzer#read_file_content` or hand-rolling its `content_for(path) || TextFile.read(path)` body.
+
 **Reference implementation**: `src/analyzer/analyzers/javascript/hono.cr` on top of `src/miniparsers/js_route_extractor.cr`. It stays thin because it follows this split; contrast with analyzers that inline all three responsibilities.
 
 **Current coverage**:
