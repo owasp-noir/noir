@@ -72,13 +72,33 @@ Two things worth knowing before you try to make that faster:
   The number of spec files barely matters — 55 python testers compile in about
   the same time as all 576. So narrowing the target below one file, or
   sharding the suite across jobs, buys nothing.
-- **`--example` does not skip work.** `FunctionalTester` runs `detect` and
-  `analyze` in the method body — at spec *collection* time — and the `it`
-  blocks only assert over the already-computed result. So a filter cannot
-  avoid scanning all 576 fixtures:
-  `--example zzz_no_such_example` reports `0 examples` and still costs
-  **~6.8s**, and `--dry-run` (which executes no example bodies) costs ~6.9s.
-  Pass a **path**, not a filter.
+- **`--example` works too, and is cheap.** `FunctionalTester` scans lazily: the
+  first example to run triggers its tester's scan, so a filter only pays for the
+  testers it selects. `--example hono` costs ~0.2s of run time against ~6.9s
+  before the scans moved out of collection time. It still pays the ~8.5s
+  compile, so a path and a filter cost about the same — use whichever names what
+  you want.
+
+### Assertions go inside the example
+
+`FunctionalTester` scans on first use from *inside* an example. So when you
+reach past `perform_tests` for a one-off assertion, do the lookup in the `it`
+block:
+
+```crystal
+it "keeps a single path param" do
+  endpoint = tester.endpoints.find { |ep| ep.url == "/users/:id" }   # scans here
+  ...
+end
+```
+
+Not in the `describe` body, which runs at collection time. Crystal installs its
+spec runner with `at_exit` and skips it entirely when the process is already
+exiting on an error, so anything that raises during collection takes the whole
+run down and reports `0 examples` — no failure, no name, nothing to grep. That
+is what moving the scan into the examples fixed; putting it back reintroduces
+it. `tester.url = ...` is the one pre-scan setter, and it raises if the scan has
+already run.
 
 ## How to Add a Functional Test
 
