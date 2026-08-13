@@ -31,13 +31,6 @@ class AspnetAuthTagger < FrameworkTagger
     ["cs_aspnet_mvc", "cs_aspnet_core_mvc", "cs_aspnet_core_minimal_api", "cs_carter"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)

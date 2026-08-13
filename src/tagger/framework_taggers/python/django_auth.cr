@@ -30,14 +30,6 @@ class DjangoAuthTagger < FrameworkTagger
     ["python_django"]
   end
 
-  def perform(endpoints : Array(Endpoint)) : Array(Endpoint)
-    endpoints.each do |endpoint|
-      check_endpoint(endpoint)
-    end
-
-    endpoints
-  end
-
   private def check_endpoint(endpoint : Endpoint)
     contexts = read_source_context(endpoint)
     return if contexts.empty?
