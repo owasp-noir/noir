@@ -53,6 +53,33 @@ just test-func         # Run functional tests only
 just test-uncovered    # Run uncovered tests only (not in CI)
 ```
 
+### While working on one analyzer
+
+Don't run the whole suite on every edit. Target the one tester:
+
+```bash
+just test-func-one javascript/hono    # crystal spec spec/functional_test/testers/javascript/hono_spec.cr
+just test-func-lang python            # every tester under testers/python/
+```
+
+Measured on this repo: one tester **~8.5s**, one language directory ~10.5s,
+the whole functional suite ~16.5s.
+
+Two things worth knowing before you try to make that faster:
+
+- **Compiling `src/` is essentially the whole cost.** The single-tester run
+  above executes its 78 examples in ~0.06s; the other ~8.5s is the compiler.
+  The number of spec files barely matters — 55 python testers compile in about
+  the same time as all 576. So narrowing the target below one file, or
+  sharding the suite across jobs, buys nothing.
+- **`--example` does not skip work.** `FunctionalTester` runs `detect` and
+  `analyze` in the method body — at spec *collection* time — and the `it`
+  blocks only assert over the already-computed result. So a filter cannot
+  avoid scanning all 576 fixtures:
+  `--example zzz_no_such_example` reports `0 examples` and still costs
+  **~6.8s**, and `--dry-run` (which executes no example bodies) costs ~6.9s.
+  Pass a **path**, not a filter.
+
 ## How to Add a Functional Test
 
 ### 1. Add Fixture Code

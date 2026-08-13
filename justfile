@@ -93,6 +93,21 @@ test-func:
 test-uncovered:
     crystal spec spec/uncovered_test
 
+# The fastest feedback loop while working on a single analyzer — ~8.5s
+# against ~16.5s for the whole suite. Almost all of that is compiling src/,
+# not running the test (the run itself is ~0.06s), so narrowing further
+# buys nothing.
+#
+# Run one functional tester, e.g. `just test-func-one javascript/hono`.
+[group('development')]
+test-func-one TESTER:
+    crystal spec spec/functional_test/testers/{{TESTER}}_spec.cr
+
+# Run every functional tester for one language: `just test-func-lang python`.
+[group('development')]
+test-func-lang LANG:
+    crystal spec spec/functional_test/testers/{{LANG}}
+
 # Check version consistency across all files.
 [group('development')]
 version-check:
