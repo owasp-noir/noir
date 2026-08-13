@@ -75,8 +75,8 @@ module Analyzer::Java
                       result << endpoint
                     end
                   end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                rescue e : IO::Error
+                  logger.debug "Skipping #{path}: #{e.message}"
                 end
               end
             end
@@ -125,8 +125,8 @@ module Analyzer::Java
             servlet_methods[{base_path, "#{package_name}.#{class_name}"}] = methods
           end
         end
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
 
       servlet_methods
@@ -316,8 +316,8 @@ module Analyzer::Java
           add_endpoint(endpoints, "/", "GET", params, details)
           matched = true
           break
-        rescue File::NotFoundError
-          logger.debug "File not found: #{jsp_path}"
+        rescue e : IO::Error
+          logger.debug "Skipping #{jsp_path}: #{e.message}"
         end
 
         break if matched
@@ -344,8 +344,8 @@ module Analyzer::Java
         content = read_file_content(path)
         methods = extract_servlet_http_methods(content)
         return methods unless methods.empty?
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
     end
 

@@ -97,7 +97,7 @@ module Analyzer::Javascript
         elsif base == "package.json"
           begin
             content = read_file_content(file)
-          rescue File::NotFoundError
+          rescue IO::Error
             next
           end
           add_project_root(roots, File.dirname(file)) if package_markers.any? { |marker| content.includes?(marker) }

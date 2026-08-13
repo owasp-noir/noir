@@ -33,7 +33,7 @@ module Analyzer::Go
           next if GoEngine.go_test_file?(base_relative_path(fp))
           begin
             file_contents[fp] = read_file_content(fp)
-          rescue File::NotFoundError
+          rescue IO::Error
             # skip
           end
         end

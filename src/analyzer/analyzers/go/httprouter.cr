@@ -34,7 +34,7 @@ module Analyzer::Go
         next if File.directory?(fp)
         begin
           file_contents[fp] = read_file_content(fp)
-        rescue File::NotFoundError
+        rescue IO::Error
           # skip
         end
       end
@@ -125,8 +125,8 @@ module Analyzer::Go
                       end
                     end
                   end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                rescue e : IO::Error
+                  logger.debug "Skipping #{path}: #{e.message}"
                 end
               end
             end

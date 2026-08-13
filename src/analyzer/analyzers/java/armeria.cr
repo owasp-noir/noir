@@ -98,8 +98,8 @@ module Analyzer::Java
                       collect_builder_routes(server_codeblock, resolved_constants, details, mask, start)
                     end
                   end
-                rescue File::NotFoundError
-                  logger.debug "File not found: #{path}"
+                rescue e : IO::Error
+                  logger.debug "Skipping #{path}: #{e.message}"
                 end
               end
             end
@@ -475,8 +475,8 @@ module Analyzer::Java
 
           registrations[{base, service_class}] << prefix
         end
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
 
       registrations.each_value(&.uniq!)
@@ -505,8 +505,8 @@ module Analyzer::Java
             index[{base, class_name}] = routes unless routes.empty?
           end
         end
-      rescue File::NotFoundError
-        logger.debug "File not found: #{path}"
+      rescue e : IO::Error
+        logger.debug "Skipping #{path}: #{e.message}"
       end
 
       index

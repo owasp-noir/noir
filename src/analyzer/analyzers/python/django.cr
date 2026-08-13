@@ -231,8 +231,8 @@ module Analyzer::Python
                     end
                   end
                 end
-              rescue File::NotFoundError
-                logger.debug "File not found: #{file}"
+              rescue e : IO::Error
+                logger.debug "Skipping #{file}: #{e.message}"
               end
             end
           end
