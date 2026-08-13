@@ -28,6 +28,24 @@ module Analyzer::Php
       end
     end
 
+    # Everything the route scans need that is fixed for the body being
+    # analyzed — one route file, or one `Route::…->group(...)` body during the
+    # recursive pass. Bundled so the shared scan helpers below take the body
+    # once instead of threading eight arguments through every call.
+    private struct RouteScanContext
+      getter content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges
+
+      def initialize(@content : String,
+                     @file_path : String,
+                     @include_callee : Bool,
+                     @base_line : Int32,
+                     @lexer : Noir::PhpLexer,
+                     @imports : Hash(String, String),
+                     @route_groups : Array(RouteGroup),
+                     @skip_ranges : Array(Range(Int32, Int32)))
+      end
+    end
+
     alias ControllerActionBody = Tuple(String, String, Int32)
     alias ControllerActionMap = Hash(String, ControllerActionBody)
     EMPTY_RESOURCE_PARAMS = {} of String => String
@@ -127,6 +145,30 @@ module Analyzer::Php
       endpoints
     end
 
+    # `Route::get('/x', …)` and friends: the verb is capture 1, the path
+    # capture 2.
+    VERB_REGEX = /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+    # The same, behind a fluent prelude — `Route::middleware('auth')->prefix('v1')->get('/x', …)`.
+    # Capture 1 is the whole prelude (a `->`-separated chain of calls; the
+    # inner `[^;]*?` keeps each call's argument list inside one statement),
+    # capture 2 the verb, capture 3 the path.
+    CHAINED_VERB_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+    # `Route::match(['get', 'post'], '/x', …)`: capture 1 is the verb array
+    # literal, capture 2 the path.
+    MATCH_REGEX = /Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]\s*,/mi
+    # `Route::any('/x', …)`: capture 1 is the path; the verbs are implied.
+    ANY_REGEX = /Route::any\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+    # `Route::view` / `redirect` / `permanentRedirect`: capture 1 is the verb
+    # alternation, matched but never read — Laravel serves all three over GET
+    # only — and capture 2 is the path.
+    STATIC_ROUTE_REGEX = /Route::(view|redirect|permanentRedirect)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+    # The static routes behind a fluent prelude. Capture 1 is the prelude,
+    # capture 2 the (unread) static verb, capture 3 the path.
+    CHAINED_STATIC_ROUTE_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(view|redirect|permanentRedirect)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+
+    # Methods a single `Route::any` registration stands for.
+    ANY_ROUTE_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+
     private def analyze_routes_content(content : String,
                                        prefix : String,
                                        file_path : String,
@@ -143,143 +185,54 @@ module Analyzer::Php
       resource_controller_cache = {} of String => ControllerActionMap?
       # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
       # string literals (`'...'`, `"..."`) or heredoc/nowdoc bodies. The
-      # per-loop verb scans below check each match against this set so a
-      # route-shaped pattern that lives in a docstring, a `// Route::get(...)`
-      # comment, a `"Try Route::get(...)"` string, or a `<<<SQL … SQL`
-      # heredoc doesn't surface as a real endpoint.
+      # verb scans below check each match against this set so a route-shaped
+      # pattern that lives in a docstring, a `// Route::get(...)` comment, a
+      # `"Try Route::get(...)"` string, or a `<<<SQL … SQL` heredoc doesn't
+      # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
+      ctx = RouteScanContext.new(content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges)
 
-      # 1. Simple routes: Route::get, Route::post, etc.
-      verb_regex = /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
-      pos = 0
-      while route_match = content.match(verb_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
-           inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
-        else
-          methods = [route_match[1].upcase]
-          route_path = route_match[2]
-          full_path = build_full_path(prefix, route_path)
-          route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
-          params = extract_brace_path_params(full_path)
+      # 1. Verb routes. Every scan below walks the body the same way, with the
+      # same guards — `each_laravel_route` holds that walk once. What differs
+      # is the pattern and what its numbered captures mean, so each scan names
+      # its captures on entry rather than leaving bare indices at the use site.
+      # The scans run in the order written and append in match order: dedup
+      # downstream is first-wins, so both are observable.
 
-          methods.each do |http_method|
-            details = Details.new(PathInfo.new(file_path, route_line))
-            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
-            endpoints << endpoint
-          end
-          pos = next_pos
-        end
+      # Simple routes: Route::get, Route::post, etc.
+      each_laravel_route(ctx, VERB_REGEX) do |route_match|
+        verb, route_path = route_match[1], route_match[2]
+        emit_handler_route(endpoints, ctx, route_match, [verb.upcase], build_full_path(prefix, route_path))
       end
 
-      chained_verb_regex = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
-      pos = 0
-      while route_match = content.match(chained_verb_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
-           inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
-        else
-          route_prefix = extract_group_prefix("Route::#{route_match[1]}")
-          methods = [route_match[2].upcase]
-          route_path = route_match[3]
-          full_path = build_full_path(build_full_path(prefix, route_prefix), route_path)
-          route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
-          params = extract_brace_path_params(full_path)
-
-          methods.each do |http_method|
-            details = Details.new(PathInfo.new(file_path, route_line))
-            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
-            endpoints << endpoint
-          end
-          pos = next_pos
-        end
+      # The same verbs behind a fluent chain, which may carry a `->prefix(...)`.
+      each_laravel_route(ctx, CHAINED_VERB_REGEX) do |route_match|
+        chain, verb, route_path = route_match[1], route_match[2], route_match[3]
+        emit_handler_route(endpoints, ctx, route_match, [verb.upcase], chained_full_path(prefix, chain, route_path))
       end
 
-      match_regex = /Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]\s*,/mi
-      pos = 0
-      while route_match = content.match(match_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
-           inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
-        else
-          methods = extract_methods_from_array(route_match[1])
-          route_path = route_match[2]
-          full_path = build_full_path(prefix, route_path)
-          route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
-          params = extract_brace_path_params(full_path)
-
-          methods.each do |http_method|
-            details = Details.new(PathInfo.new(file_path, route_line))
-            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
-            endpoints << endpoint
-          end
-          pos = next_pos
-        end
+      # Route::match(['get', 'post'], ...) — the verbs come from the array literal.
+      each_laravel_route(ctx, MATCH_REGEX) do |route_match|
+        verb_array, route_path = route_match[1], route_match[2]
+        emit_handler_route(endpoints, ctx, route_match, extract_methods_from_array(verb_array), build_full_path(prefix, route_path))
       end
 
-      any_regex = /Route::any\s*\(\s*['"]([^'"]+)['"]\s*,/mi
-      pos = 0
-      while route_match = content.match(any_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
-           inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
-        else
-          methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
-          route_path = route_match[1]
-          full_path = build_full_path(prefix, route_path)
-          route_line = base_line + newline_count_before(content, route_match.begin(0))
-          handler_body, next_pos, body_start_line = extract_inline_closure_body(content, route_match.end(0), base_line, lexer)
-          params = extract_brace_path_params(full_path)
-
-          methods.each do |http_method|
-            details = Details.new(PathInfo.new(file_path, route_line))
-            endpoint = Endpoint.new(full_path, http_method, params, details.dup)
-            attach_route_callees(endpoint, handler_body, body_start_line, content, route_match.end(0), file_path, imports) if include_callee
-            endpoints << endpoint
-          end
-          pos = next_pos
-        end
+      # Route::any(...) — one registration standing for every verb.
+      each_laravel_route(ctx, ANY_REGEX) do |route_match|
+        route_path = route_match[1]
+        emit_handler_route(endpoints, ctx, route_match, ANY_ROUTE_METHODS, build_full_path(prefix, route_path))
       end
 
-      static_route_regex = /Route::(view|redirect|permanentRedirect)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
-      pos = 0
-      while route_match = content.match(static_route_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
-           inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
-        else
-          route_path = route_match[2]
-          full_path = build_full_path(prefix, route_path)
-          route_line = base_line + newline_count_before(content, route_match.begin(0))
-          params = extract_brace_path_params(full_path)
-          details = Details.new(PathInfo.new(file_path, route_line))
-          endpoints << Endpoint.new(full_path, "GET", params, details.dup)
-          pos = route_match.end(0)
-        end
+      # Static routes: no handler to walk into, GET only.
+      each_laravel_route(ctx, STATIC_ROUTE_REGEX) do |route_match|
+        route_path = route_match[2]
+        emit_static_route(endpoints, ctx, route_match, build_full_path(prefix, route_path))
       end
 
-      chained_static_route_regex = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(view|redirect|permanentRedirect)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
-      pos = 0
-      while route_match = content.match(chained_static_route_regex, pos)
-        if inside_laravel_group_body?(route_match.begin(0), route_groups) ||
-           inside_php_skip_range?(route_match.begin(0), skip_ranges)
-          pos = route_match.end(0)
-        else
-          route_prefix = extract_group_prefix("Route::#{route_match[1]}")
-          route_path = route_match[3]
-          full_path = build_full_path(build_full_path(prefix, route_prefix), route_path)
-          route_line = base_line + newline_count_before(content, route_match.begin(0))
-          params = extract_brace_path_params(full_path)
-          details = Details.new(PathInfo.new(file_path, route_line))
-          endpoints << Endpoint.new(full_path, "GET", params, details.dup)
-          pos = route_match.end(0)
-        end
+      # Static routes behind a fluent chain.
+      each_laravel_route(ctx, CHAINED_STATIC_ROUTE_REGEX) do |route_match|
+        chain, route_path = route_match[1], route_match[3]
+        emit_static_route(endpoints, ctx, route_match, chained_full_path(prefix, chain, route_path))
       end
 
       # 2. Resource routes
@@ -316,6 +269,82 @@ module Analyzer::Php
       end
 
       endpoints
+    end
+
+    # Walk `regex` over the body and yield every match that is a real
+    # top-level route registration, skipping two kinds of match:
+    #
+    #   * inside a `Route::…->group(...)` body — the recursive group pass at
+    #     the end of `analyze_routes_content` re-scans those bodies with the
+    #     group prefix applied, so emitting here too would also emit them
+    #     unprefixed;
+    #   * inside a PHP comment, string literal or heredoc/nowdoc body — those
+    #     are not code (see `skip_ranges`).
+    #
+    # The block emits the endpoints for one match and returns the position to
+    # resume scanning from, which is how far a match consumes: past an inline
+    # closure body for handler routes, past the match itself otherwise.
+    private def each_laravel_route(ctx : RouteScanContext, regex : Regex, &) : Nil
+      content = ctx.content
+      pos = 0
+
+      while route_match = content.match(regex, pos)
+        pos = if inside_laravel_group_body?(route_match.begin(0), ctx.route_groups) ||
+                 inside_php_skip_range?(route_match.begin(0), ctx.skip_ranges)
+                route_match.end(0)
+              else
+                yield route_match
+              end
+      end
+    end
+
+    # Append one endpoint per HTTP method for a route that has a handler — an
+    # inline closure or a controller action. Returns the position to resume
+    # scanning from: past an inline closure body, so a `Route::…` call nested
+    # inside a handler is not registered as a route of its own.
+    private def emit_handler_route(endpoints : Array(Endpoint),
+                                   ctx : RouteScanContext,
+                                   route_match : Regex::MatchData,
+                                   methods : Array(String),
+                                   full_path : String) : Int32
+      content = ctx.content
+      action_pos = route_match.end(0)
+      route_line = ctx.base_line + newline_count_before(content, route_match.begin(0))
+      handler_body, next_pos, body_start_line = extract_inline_closure_body(content, action_pos, ctx.base_line, ctx.lexer)
+      params = extract_brace_path_params(full_path)
+
+      methods.each do |http_method|
+        details = Details.new(PathInfo.new(ctx.file_path, route_line))
+        endpoint = Endpoint.new(full_path, http_method, params, details.dup)
+        attach_route_callees(endpoint, handler_body, body_start_line, content, action_pos, ctx.file_path, ctx.imports) if ctx.include_callee
+        endpoints << endpoint
+      end
+
+      next_pos
+    end
+
+    # Append the single GET endpoint a `Route::view` / `redirect` /
+    # `permanentRedirect` registers. These take a view name or a target URL
+    # rather than a handler, so there is no closure body to skip and no callee
+    # to resolve. Returns the position to resume scanning from.
+    private def emit_static_route(endpoints : Array(Endpoint),
+                                  ctx : RouteScanContext,
+                                  route_match : Regex::MatchData,
+                                  full_path : String) : Int32
+      route_line = ctx.base_line + newline_count_before(ctx.content, route_match.begin(0))
+      params = extract_brace_path_params(full_path)
+      details = Details.new(PathInfo.new(ctx.file_path, route_line))
+      endpoints << Endpoint.new(full_path, "GET", params, details.dup)
+      route_match.end(0)
+    end
+
+    # Path for a route registered behind a fluent chain. The chain is fed back
+    # to `extract_group_prefix` as the `Route::…` text it would have seen ahead
+    # of a `group(`, so `Route::prefix('v1')->get('/x')` picks its prefix up
+    # exactly like a `Route::prefix('v1')->group(...)` body does.
+    private def chained_full_path(prefix : String, chain : String, route_path : String) : String
+      chain_prefix = extract_group_prefix("Route::#{chain}")
+      build_full_path(build_full_path(prefix, chain_prefix), route_path)
     end
 
     # Attach callees for a route handler. Inline `function`/`fn` closures
