@@ -162,18 +162,6 @@ module Analyzer::Specification
       end
     end
 
-    private def resolve_ref_json(root : JSON::Any, ref : String) : JSON::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[decoded]?
-        node = next_node
-      end
-      node
-    end
-
     # --- YAML path ------------------------------------------------------
 
     private def process_yaml(root : YAML::Any, details : Details, source : String)
@@ -321,18 +309,6 @@ module Analyzer::Specification
           all_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
         end
       end
-    end
-
-    private def resolve_ref_yaml(root : YAML::Any, ref : String) : YAML::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[YAML::Any.new(decoded)]?
-        node = next_node
-      end
-      node
     end
 
     # --- shared ---------------------------------------------------------

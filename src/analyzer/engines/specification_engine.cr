@@ -1,6 +1,8 @@
 require "../../models/analyzer"
 require "../../models/code_locator"
 require "uri"
+require "json"
+require "yaml"
 require "../../models/locator_keys"
 
 module Analyzer::Specification
@@ -164,6 +166,62 @@ module Analyzer::Specification
       else
         @url + path
       end
+    end
+
+    # Follows a local JSON Pointer — OAS2's `#/definitions/Name`, OAS3's
+    # `#/components/schemas/Name`, AsyncAPI's `#/components/messages/Name`
+    # — against the document root.
+    #
+    # Only same-document refs are resolved: a ref that does not start with
+    # `#/` points at another file (or an external URL) that the analyzer
+    # never loaded, so it returns nil rather than guessing.
+    #
+    # `~1` and `~0` are unescaped per RFC 6901, in that order — `~0` must be
+    # decoded last or a literal `~1` in a key would be corrupted by the `~`
+    # produced from `~0`.
+    #
+    # Returns nil at the first segment that is not a mapping or is absent,
+    # which is what lets callers treat a dangling ref as "no schema" instead
+    # of raising mid-walk.
+    protected def resolve_ref_json(root : JSON::Any, ref : String) : JSON::Any?
+      return unless ref.starts_with?("#/")
+      node = root
+      ref[2..].split('/').each do |segment|
+        decoded = segment.gsub("~1", "/").gsub("~0", "~")
+        return unless hash = node.as_h?
+        return unless next_node = hash[decoded]?
+        node = next_node
+      end
+      node
+    end
+
+    # `resolve_ref_json` for the YAML parse of the same formats. Kept
+    # separate rather than generic because the two `Any` types are
+    # unrelated and their hashes are keyed differently — YAML mappings are
+    # keyed by `YAML::Any`, not by `String`.
+    protected def resolve_ref_yaml(root : YAML::Any, ref : String) : YAML::Any?
+      return unless ref.starts_with?("#/")
+      node = root
+      ref[2..].split('/').each do |segment|
+        decoded = segment.gsub("~1", "/").gsub("~0", "~")
+        return unless hash = node.as_h?
+        return unless next_node = hash[YAML::Any.new(decoded)]?
+        node = next_node
+      end
+      node
+    end
+
+    # Appends a valueless `Param` unless an equal one is already present.
+    #
+    # Schema walks reach the same property twice whenever a document
+    # composes schemas (`allOf`, a `$ref` pulled in from two places), so the
+    # dedupe is load-bearing, not defensive. Equality is full `Param`
+    # equality; the value is always `""` here, so it reduces to name +
+    # param_type.
+    protected def add_param(params : Array(Param), name : String, param_type : String)
+      return if name.empty?
+      param = Param.new(name, "", param_type)
+      params << param unless params.includes?(param)
     end
   end
 end

@@ -663,19 +663,28 @@ module Analyzer::Python
       end
     end
 
-    # Net `(` − `)` count on a single Python source line, ignoring
-    # parens that fall inside single- or double-quoted strings on the
-    # same line. Sufficient for decorator / function-call headers,
-    # which never carry triple-quoted strings on the call line.
+    # Net `open_char` − `close_char` count on a single Python source
+    # line, ignoring delimiters that fall inside single- or
+    # double-quoted strings on the same line — a `"("` inside a route
+    # pattern or a `"["` inside a regex must not move the depth.
+    # Backslash escapes are tracked inside a quoted run so that `\'`
+    # / `\"` do not close it early.
     #
-    # Used by analyzers that walk source line-by-line and need to
-    # join continuation lines into one logical call (e.g. multi-line
-    # decorators in FastAPI / Litestar / Sanic / Bottle, multi-line
-    # `Route(...)` entries in Starlette).
-    def python_paren_delta(line : ::String) : Int32
+    # Only same-line quoting is modelled: `in_quote` resets on every
+    # call, so a triple-quoted string spanning lines is not tracked.
+    # That is sufficient for the shapes the callers care about —
+    # decorator / call headers and collection literals never open a
+    # triple-quoted string on the line being counted.
+    #
+    # Unbalanced input is reported as-is (negative when the line
+    # closes more than it opens); callers decide what to do with it.
+    private def python_delimiter_delta(line : ::String,
+                                       open_char : Char,
+                                       close_char : Char) : Int32
       depth = 0
-      in_quote = nil
+      in_quote : Char? = nil
       escaped = false
+
       line.each_char do |ch|
         if in_quote
           if escaped
@@ -687,16 +696,39 @@ module Analyzer::Python
           end
           next
         end
+
         case ch
         when '\'', '"'
           in_quote = ch
-        when '('
+        when open_char
           depth += 1
-        when ')'
+        when close_char
           depth -= 1
         end
       end
+
       depth
+    end
+
+    # Net `(` − `)` count on a single Python source line.
+    #
+    # Used by analyzers that walk source line-by-line and need to
+    # join continuation lines into one logical call (e.g. multi-line
+    # decorators in FastAPI / Litestar / Sanic / Bottle, multi-line
+    # `Route(...)` entries in Starlette).
+    def python_paren_delta(line : ::String) : Int32
+      python_delimiter_delta(line, '(', ')')
+    end
+
+    # Net `[` − `]` count on a single Python source line.
+    #
+    # Used where the construct being followed is a collection literal
+    # rather than a call: Django's `urlpatterns = [...]` / inline
+    # `include([...])`, aiohttp's route-table lists, and the
+    # Flask / Quart collection assignments that add both deltas
+    # together to follow a mixed `[... (...) ...]` continuation.
+    def python_bracket_delta(line : ::String) : Int32
+      python_delimiter_delta(line, '[', ']')
     end
 
     # Given a 0-based `index` into `lines` whose content `line` is

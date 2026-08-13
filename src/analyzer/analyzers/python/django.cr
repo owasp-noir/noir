@@ -751,36 +751,6 @@ module Analyzer::Python
       nil
     end
 
-    private def python_bracket_delta(line : ::String) : Int32
-      depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      line.each_char do |ch|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-        when '['
-          depth += 1
-        when ']'
-          depth -= 1
-        end
-      end
-
-      depth
-    end
-
     private def extract_route_mappings(content : ::String) : Array(Tuple(::String, ::String))
       mappings = [] of Tuple(::String, ::String)
       lines = content.split("\n")

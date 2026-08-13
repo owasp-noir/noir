@@ -615,36 +615,6 @@ module Analyzer::Python
       pieces.join(" ")
     end
 
-    private def python_bracket_delta(line : ::String) : Int32
-      depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      line.each_char do |ch|
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-        when '['
-          depth += 1
-        when ']'
-          depth -= 1
-        end
-      end
-
-      depth
-    end
-
     private def find_method_def(lines : Array(::String), class_def_index : Int32, class_indent : Int32, method_name : ::String) : Int32
       # Compile once per call; an interpolated literal inside the loop
       # would be recompiled on every line.

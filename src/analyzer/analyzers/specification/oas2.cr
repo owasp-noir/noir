@@ -7,38 +7,6 @@ module Analyzer::Specification
 
     HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
 
-    # Resolves a `#/definitions/Name` pointer against the spec root.
-    # Returns the referenced node, or nil when the ref cannot be followed.
-    private def resolve_ref_json(root : JSON::Any, ref : String) : JSON::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[decoded]?
-        node = next_node
-      end
-      node
-    end
-
-    private def resolve_ref_yaml(root : YAML::Any, ref : String) : YAML::Any?
-      return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[YAML::Any.new(decoded)]?
-        node = next_node
-      end
-      node
-    end
-
-    private def add_param(params : Array(Param), name : String, param_type : String)
-      return if name.empty?
-      param = Param.new(name, "", param_type)
-      params << param unless params.includes?(param)
-    end
-
     # Walks a body schema and emits a Param per top-level property.
     private def collect_body_props_json(root : JSON::Any, schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
       if ref = schema["$ref"]?.try(&.as_s?)
