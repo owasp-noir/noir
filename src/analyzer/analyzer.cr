@@ -65,6 +65,30 @@ def cfml_components_only?(selected_techs : Array(String)) : Bool
     selected_techs.any? { |tech| CFML_FRAMEWORK_TECHS.includes?(tech) }
 end
 
+# Publishes the narrowing decision into the options hash, which is how
+# `Analyzer::Cfml::Pure` receives it.
+#
+# **Assigns on every pass, never only when true.** The key is written into the
+# *caller's* options hash and nothing clears it — `CodeLocator`'s lifecycle
+# resets cannot reach it, because it is not a locator key. Written
+# conditionally (the previous `if cfml_components_only? ... = true` shape), a
+# `true` from one scan survived into the next `analysis_endpoints` call on the
+# same hash: a library embedder that scanned a ColdBox app and then a
+# plain-CFML app got the second scan silently narrowed to components-only and
+# lost its entire `.cfm` page surface. Same shape as the scan-lifecycle leak
+# #2503 fixed, in the one remaining channel that carries state between passes.
+#
+# The CLI never hit it — `cli/commands/scan.cr` dups the hash before the diff
+# scan — so only embedders reusing one hash were affected.
+#
+# Extracted from `analysis_endpoints` for the same reason
+# `cfml_components_only?` was: in place, the only way to exercise it was to
+# run every analyzer.
+def apply_cfml_components_only!(options : Hash(String, YAML::Any), selected_techs : Array(String)) : Nil
+  options[Analyzer::Cfml::Pure::COMPONENTS_ONLY_OPTION] =
+    YAML::Any.new(cfml_components_only?(selected_techs))
+end
+
 # Drops techs that another detected tech supersedes. The rules live on the
 # superseding tech's catalog entry as `:supersedes`; see the doc on
 # `NoirTechs::SUPERSEDES` for what belongs there and — more importantly —
@@ -116,9 +140,7 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # Run tech analyzers concurrently to avoid long stalls from a single analyzer
   selected_techs = filter_redundant_generic_techs(techs).select { |t| analyzer.has_key?(t) }
 
-  if cfml_components_only?(selected_techs)
-    options[Analyzer::Cfml::Pure::COMPONENTS_ONLY_OPTION] = YAML::Any.new(true)
-  end
+  apply_cfml_components_only!(options, selected_techs)
 
   mutex = Mutex.new
 

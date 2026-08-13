@@ -104,12 +104,26 @@ module Noir::LocatorKeys
   {% end %}
 
   # Runtime-minted key family: `express_router_prefix:<file>[:<function>]`.
-  # Written during analysis by the Express router-mount scanner and by Koa,
-  # read by the shared JS route extractor.
+  #
+  # The prose above this declaration always said "written by the Express
+  # router-mount scanner **and by Koa**", but the `owner` field said
+  # `analyzer/javascript/express` — which covers `express.cr` and
+  # `express/router_mount_scanner.cr` and excludes `koa.cr`. The comment and the
+  # metadata disagreed, and nothing checked the metadata beyond it being
+  # non-blank, so the field that exists to answer "who writes this slot" was the
+  # one place in the typed-key registry that was wrong.
+  #
+  # The owner is the JavaScript analyzer family, which is what both writers
+  # actually are. They mint through `ExpressConstants.file_key` /
+  # `.function_key`, and `Noir::JSRouteExtractor` reads it — two analyzers and a
+  # shared extractor, none of which is "express" specifically.
+  #
+  # `spec/unit_test/models/locator_ownership_spec.cr` now verifies this against
+  # the source rather than trusting it.
   EXPRESS_ROUTER_PREFIX = ::Noir::LocatorKeyNamespace.new(
     "express_router_prefix",
     ::Noir::LocatorKey::Lifecycle::AnalyzeScoped,
-    "analyzer/javascript/express")
+    "analyzer/javascript")
 
   NAMESPACES = [EXPRESS_ROUTER_PREFIX]
 
