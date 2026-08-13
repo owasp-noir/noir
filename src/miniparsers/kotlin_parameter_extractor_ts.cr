@@ -1,6 +1,7 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "../models/code_locator"
+require "./extraction_result_cache"
 require "./import_graph"
 require "../utils/text_file"
 
@@ -1304,6 +1305,11 @@ module Noir
     # cross-file inheritance merge below (mirrors TreeSitterJavaDtoIndex).
     @@shared_super_cache = Hash(String, Hash(String, String)).new
     @@shared_cache_mutex = Mutex.new
+
+    # Path-keyed, so it must not survive into a second scan in the same
+    # process. See the twin registration in `TreeSitterJavaDtoIndex` for the
+    # failure this prevents.
+    Noir::ExtractionResultCache.register_clearer { clear_cache! }
 
     # Backstop against pathological supertype graphs — far above any real
     # DTO hierarchy depth/fan-out.
