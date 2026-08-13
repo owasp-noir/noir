@@ -218,6 +218,15 @@ jobs:
       # `crystal spec spec/unit_test --order <seed>` reproduces it exactly.
       - name: Run unit tests in randomized order
         run: crystal spec spec/unit_test --order random
+      # The functional suite passes randomized today, which is worth fencing
+      # even though the property is currently cheap to hold: `FunctionalTester`
+      # runs each scan at *collection* time and the examples only assert over
+      # already-materialized structs, so shuffling examples shuffles no work.
+      # The fence matters for what comes next — moving those scans inside the
+      # examples is what makes ordering load-bearing, and this step is what
+      # will catch it if that change introduces an order dependency.
+      - name: Run functional tests in randomized order
+        run: crystal spec spec/functional_test --order random
   build-snapcraft:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
