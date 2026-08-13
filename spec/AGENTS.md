@@ -53,6 +53,53 @@ just test-func         # Run functional tests only
 just test-uncovered    # Run uncovered tests only (not in CI)
 ```
 
+### While working on one analyzer
+
+Don't run the whole suite on every edit. Target the one tester:
+
+```bash
+just test-func-one javascript/hono    # crystal spec spec/functional_test/testers/javascript/hono_spec.cr
+just test-func-lang python            # every tester under testers/python/
+```
+
+Measured on this repo: one tester **~8.5s**, one language directory ~10.5s,
+the whole functional suite ~16.5s.
+
+Two things worth knowing before you try to make that faster:
+
+- **Compiling `src/` is essentially the whole cost.** The single-tester run
+  above executes its 78 examples in ~0.06s; the other ~8.5s is the compiler.
+  The number of spec files barely matters — 55 python testers compile in about
+  the same time as all 576. So narrowing the target below one file, or
+  sharding the suite across jobs, buys nothing.
+- **`--example` works too, and is cheap.** `FunctionalTester` scans lazily: the
+  first example to run triggers its tester's scan, so a filter only pays for the
+  testers it selects. `--example hono` costs ~0.2s of run time against ~6.9s
+  before the scans moved out of collection time. It still pays the ~8.5s
+  compile, so a path and a filter cost about the same — use whichever names what
+  you want.
+
+### Assertions go inside the example
+
+`FunctionalTester` scans on first use from *inside* an example. So when you
+reach past `perform_tests` for a one-off assertion, do the lookup in the `it`
+block:
+
+```crystal
+it "keeps a single path param" do
+  endpoint = tester.endpoints.find { |ep| ep.url == "/users/:id" }   # scans here
+  ...
+end
+```
+
+Not in the `describe` body, which runs at collection time. Crystal installs its
+spec runner with `at_exit` and skips it entirely when the process is already
+exiting on an error, so anything that raises during collection takes the whole
+run down and reports `0 examples` — no failure, no name, nothing to grep. That
+is what moving the scan into the examples fixed; putting it back reintroduces
+it. `tester.url = ...` is the one pre-scan setter, and it raises if the scan has
+already run.
+
 ## How to Add a Functional Test
 
 ### 1. Add Fixture Code

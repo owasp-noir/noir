@@ -124,14 +124,8 @@ describe "command-line-args scoping keeps unrelated fields out" do
     :techs => 1,
   }, [] of Endpoint)
 
-  locator = CodeLocator.instance
-  locator.clear_all
-  tester.app.detect
-  tester.app.analyze
-
-  endpoint = tester.app.endpoints.find { |ep| ep.url == "cli://cladfpdemo" }
-
   it "does not leak the unrelated 'email'/'age' field-schema keys as flags" do
+    endpoint = tester.endpoints.find { |ep| ep.url == "cli://cladfpdemo" }
     endpoint.should_not be_nil
     if endpoint
       bogus = endpoint.params.select { |p| {"email", "age"}.includes?(p.name) }
@@ -178,14 +172,8 @@ describe "bare 'getopts' substring does not grant CLI evidence" do
     :techs => 1,
   }, [] of Endpoint)
 
-  locator = CodeLocator.instance
-  locator.clear_all
-  tester.app.detect
-  tester.app.analyze
-
-  endpoint = tester.app.endpoints.find { |ep| ep.url == "cli://getoptsfpdemo" }
-
   it "does not attach API_TOKEN from the getopts-comment-only file" do
+    endpoint = tester.endpoints.find { |ep| ep.url == "cli://getoptsfpdemo" }
     endpoint.should_not be_nil
     if endpoint
       bogus = endpoint.params.select { |p| p.name == "API_TOKEN" }

@@ -33,6 +33,42 @@ jobs:
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal-version }}
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache tree-sitter objects
+        id: ts-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/ext/tree_sitter/runtime/lib.o
+            src/ext/tree_sitter/grammars/*/*.o
+          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
+      - name: Refresh restored object mtimes
+        if: steps.ts-cache.outputs.cache-hit == 'true'
+        # `build.sh` decides staleness by mtime (`[ "$SRC" -nt "$OBJ" ]`), and
+        # `actions/checkout` stamps every source with the checkout time while
+        # the cache restores objects with their original, older mtime. Without
+        # this the objects always look stale and the cache buys nothing.
+        # Touching them is correct by construction: the cache key hashes every
+        # tree-sitter source plus build.sh, so a hit means the sources are
+        # byte-identical to when these objects were compiled.
+        run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
+      - name: Cache Crystal compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/crystal
+          # Crystal fingerprints its own cache entries by content, so a
+          # partially-stale restore is safe — it only ever means some entries
+          # get recompiled. Hence the loose restore-keys ladder.
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
+          restore-keys: |
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
       - name: Build
@@ -104,6 +140,22 @@ jobs:
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: 1.21.0
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache Crystal compiler cache
+        uses: actions/cache@v4
+        with:
+          # This job compiles Ameba, not noir, so it needs no tree-sitter
+          # objects — and its cache entries are disjoint from the other jobs'.
+          path: ~/.cache/crystal
+          key: crystal-${{ runner.os }}-1.21.0-lint-${{ hashFiles('shard.lock') }}
+          restore-keys: |
+            crystal-${{ runner.os }}-1.21.0-lint-
       - name: Install dependencies
         run: shards install
       - name: Run Ameba linter
@@ -124,6 +176,34 @@ jobs:
       - uses: crystal-lang/install-crystal@v1
         with:
           crystal: ${{ matrix.crystal-version }}
+      - name: Cache shards
+        uses: actions/cache@v4
+        with:
+          path: |
+            lib
+            .shards.info
+          key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
+      - name: Cache tree-sitter objects
+        id: ts-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/ext/tree_sitter/runtime/lib.o
+            src/ext/tree_sitter/grammars/*/*.o
+          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
+      - name: Refresh restored object mtimes
+        if: steps.ts-cache.outputs.cache-hit == 'true'
+        # See the identical step in build-crystal for why this is needed and
+        # why it is safe.
+        run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
+      - name: Cache Crystal compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/crystal
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr', 'spec/**/*.cr') }}
+          restore-keys: |
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
       - name: Run unit tests
@@ -138,6 +218,15 @@ jobs:
       # `crystal spec spec/unit_test --order <seed>` reproduces it exactly.
       - name: Run unit tests in randomized order
         run: crystal spec spec/unit_test --order random
+      # The functional suite passes randomized today, which is worth fencing
+      # even though the property is currently cheap to hold: `FunctionalTester`
+      # runs each scan at *collection* time and the examples only assert over
+      # already-materialized structs, so shuffling examples shuffles no work.
+      # The fence matters for what comes next — moving those scans inside the
+      # examples is what makes ordering load-bearing, and this step is what
+      # will catch it if that change introduces an order dependency.
+      - name: Run functional tests in randomized order
+        run: crystal spec spec/functional_test --order random
   build-snapcraft:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest

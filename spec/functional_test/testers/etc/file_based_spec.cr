@@ -69,7 +69,10 @@ tester = FunctionalTester.new("fixtures/etc/file_based/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints)
 
-tester.app.options["url"] = YAML::Any.new("https://www.hahwul.com")
+# Pre-scan configuration, so it must not go through `tester.app` — reading that
+# runs the scan. `url=` writes the option and guards against being called after
+# the scan already happened.
+tester.url = "https://www.hahwul.com"
 
 # The url-matching FileAnalyzer hooks only run with `-u`, which is set on the
 # runner above — so the assertions have to be kicked off after it, not by the
