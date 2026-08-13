@@ -1091,13 +1091,18 @@ module Analyzer::Ruby
 
       existing_controller_path = candidates.find { |c| known_file?(c) }
       candidates.each do |ctrl_path|
-        @result += controller_to_endpoint(
+        # `concat`, not `+=`. `controller_to_endpoint` used to build its
+        # return value in `@result` — reassigning it to a fresh array on
+        # entry — so this line only worked because Crystal evaluates the
+        # `+` receiver before the argument. It now uses a local, which is
+        # what makes `concat` safe here.
+        @result.concat(controller_to_endpoint(
           ctrl_path, @url, url_segment,
           path_prefix: path_prefix,
           only: only_list,
           except: except_list,
           singular: singular,
-        )
+        ))
       end
 
       existing_controller_path
@@ -1285,9 +1290,9 @@ module Analyzer::Ruby
       except : Array(String) = [] of String,
       singular : Bool = false,
     )
-      @result = [] of Endpoint
+      endpoints = [] of Endpoint
 
-      return @result unless known_file?(path)
+      return endpoints unless known_file?(path)
 
       data = extract_controller_data(path)
       defined_actions = data.defined_actions
@@ -1321,35 +1326,35 @@ module Analyzer::Ruby
           details = Details.new(PathInfo.new(path, data.action_lines["index"]?))
           endpoint = Endpoint.new(index_url, "GET", last_params, details)
           attach_callees_for_action(endpoint, data, "index")
-          @result << endpoint
+          endpoints << endpoint
         when "GET/SHOW"
           last_params = promote_identifier_to_path(action_params(data, "show", "GET"))
           details = Details.new(PathInfo.new(path, data.action_lines["show"]?))
           endpoint = Endpoint.new(member_url, "GET", last_params, details)
           attach_callees_for_action(endpoint, data, "show")
-          @result << endpoint
+          endpoints << endpoint
         when "POST"
           last_params = action_params(data, "create", method)
           details = Details.new(PathInfo.new(path, data.action_lines["create"]?))
           endpoint = Endpoint.new(index_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "create")
-          @result << endpoint
+          endpoints << endpoint
         when "DELETE"
           last_params = promote_identifier_to_path(action_params(data, "destroy", method))
           details = Details.new(PathInfo.new(path, data.action_lines["destroy"]?))
           endpoint = Endpoint.new(member_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "destroy")
-          @result << endpoint
+          endpoints << endpoint
         else
           last_params = promote_identifier_to_path(action_params(data, "update", method))
           details = Details.new(PathInfo.new(path, data.action_lines["update"]?))
           endpoint = Endpoint.new(member_url, method, last_params, details)
           attach_callees_for_action(endpoint, data, "update")
-          @result << endpoint
+          endpoints << endpoint
         end
       end
 
-      @result
+      endpoints
     end
 
     # Scans a controller file once, collecting per-method params (headers/cookies)
