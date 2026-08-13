@@ -34,7 +34,7 @@ sudo apt install -y just
 ./bin/noir -b . -f json                                 # JSON output (see -h for all formats)
 ./bin/noir -b . --verbose                               # Detailed analysis
 ./bin/noir -b . -P                                      # Passive security scan
-./bin/noir -b . --send-proxy http://127.0.0.1:8080     # Forward to proxy (Burp/ZAP)
+./bin/noir -b . --probe-via http://127.0.0.1:8080      # Forward to proxy (Burp/ZAP)
 ./bin/noir -b . --ai-provider openai --ai-model gpt-4  # AI-powered analysis
 ```
 
@@ -90,40 +90,42 @@ An analyzer is composed of three layers. Keep them separate — a framework adap
 
 **Rule**: the framework adapter receives routes; it does not walk the filesystem or parse tokens itself.
 
-`spec/unit_test/analyzer/layering_boundary_spec.cr` enforces the file-walking half of that rule: `Dir.glob` / `Dir.children` / `Dir.each_child` under `src/analyzer/analyzers/**` fails the suite. Get your file set from the engine (`scan_target_files`, `parallel_file_scan`) or from a detector-built index (`get_files_by_extension`, `CodeLocator#files_by_basename`) — walking a directory yourself bypasses subtree pruning, `--exclude-path`, the media filter and the content cache. The spec carries an allowlist of the six adapters that still walk; it is a ratchet, so entries may be removed but never added. It also forbids shadowing `Analyzer#read_file_content` or hand-rolling its `content_for(path) || TextFile.read(path)` body.
+`spec/unit_test/analyzer/layering_boundary_spec.cr` enforces the file-walking half of that rule: `Dir.glob` / `Dir.children` / `Dir.each_child` under `src/analyzer/analyzers/**` fails the suite. Get your file set from your language's engine (whichever walk helper it exposes — see **Engine walk vocabularies** below; they are not uniform) or from a detector-built index (`get_files_by_extension`, `CodeLocator#files_by_basename`) — walking a directory yourself bypasses subtree pruning, `--exclude-path`, the media filter and the content cache. The spec carries an allowlist of the six adapters that still walk; it is a ratchet, so entries may be removed but never added. It also forbids shadowing `Analyzer#read_file_content` or hand-rolling its `content_for(path) || TextFile.read(path)` body.
 
 **Reference implementations — no single analyzer is the whole model yet.** Cite each for the layer it actually demonstrates:
 
-- **Getting your file set (L0)**: `src/analyzer/analyzers/javascript/hono.cr` — inherits `JavascriptEngine` and drives the walk with `parallel_file_scan`, so it gets the worker pool, the content cache and the language's test/vendor filters for free. `src/analyzer/engines/file_scan_engine.cr` (39 lines) is the exemplary shared layer itself.
+- **Getting your file set (L0)**: `src/analyzer/analyzers/javascript/hono.cr` — inherits `JavascriptEngine` and drives the walk with `parallel_file_scan`, so it gets the worker pool, the content cache and the language's test/vendor filters for free. `src/analyzer/engines/file_scan_engine.cr` (34 lines) is the exemplary shared layer itself.
 - **Delegating the parse and staying thin (L1→L2)**: `src/analyzer/analyzers/javascript/hapi.cr` — 54 lines, 3 methods, no tokenizing at all. It calls `Noir::TreeSitterHapiExtractor.extract_routes` and does nothing but map the result onto `Param`s. Same shape: `javascript/elysia.cr` (54), `javascript/adonisjs.cr` (62), `kotlin/http4k.cr` (91), `java/spark.cr` (129).
 
 Each is also a counter-example on the other axis, and knowing which way is what keeps you from copying the wrong half:
 
-- `hono.cr` is right on L0 and **wrong on L2**. Only ~40 of its 385 lines are extractor delegation; the rest is layers 2 and 3 fused — a char-by-char `split_top_level_args` (one of 28 copies in the tree), `skip_whitespace`, `line_for_pos`, a second independent regex line-walk for `app.on(...)`, full inline route/param regex tables, and the HTTP verb list declared twice in one file (L75 and L333). Its own comment admits it: *"this auxiliary pass has its own regex walk, so it has to repeat the same gates"*.
+- `hono.cr` is right on L0 and **wrong on L2**. Only ~40 of its 385 lines are extractor delegation; the rest is layers 2 and 3 fused — a char-by-char `split_top_level_args` (one of many private re-implementations: `grep -rn 'def \(self\.\)\?split_top_level_args' src/` lists them all, and every hit outside the canonical `src/miniparsers/js_http_route_extractor.cr` is a framework adapter carrying its own copy), `skip_whitespace`, `line_for_pos`, a second independent regex line-walk for `app.on(...)`, full inline route/param regex tables, and the HTTP verb list declared twice in one file (L75 and L333). Its own comment admits it: *"this auxiliary pass has its own regex walk, so it has to repeat the same gates"*.
 - `hapi.cr` and the other thin adapters are right on L2 and **wrong on L0**: they extend `Analyzer` directly and re-walk `all_files()` themselves with a `File.exists?` guard that is redundant on detector-registered paths. They should ride their language engine.
 
 So: take the walk from `hono.cr`, take the body from `hapi.cr`, and write the analyzer neither of them is yet.
 
 **Current coverage**:
-- Language engines (`src/analyzer/engines/`, subclass count in parentheses): `SpecificationEngine` (45), `JavascriptEngine` (18), `GoEngine` (16), `PythonEngine` (16), `PhpEngine` (15), `RustEngine` (10), `RubyEngine` (8), `CrystalEngine` (6), `CfmlEngine` (5), `ScalaEngine` (5), `SwiftEngine` (3), `PerlEngine` (3), `ElixirEngine` (2). `java_engine.cr` and `kotlin_engine.cr` are **not** engines — they are modules exposing a shared `self.test_path?` and nothing inherits from them.
+- Language engines (`src/analyzer/engines/`, **direct** subclass count in parentheses — re-derive any of them with `grep -rc "< {Engine}" src/`; transitive inheritors are deliberately *not* counted, so `Bandit < Plug < ElixirEngine` contributes only `Plug` to `ElixirEngine`'s 2): `SpecificationEngine` (45), `JavascriptEngine` (18), `GoEngine` (16), `PythonEngine` (16), `PhpEngine` (15), `RustEngine` (10), `RubyEngine` (8), `CrystalEngine` (6), `CfmlEngine` (5), `ScalaEngine` (5), `SwiftEngine` (3), `PerlEngine` (3), `ElixirEngine` (2). `java_engine.cr` and `kotlin_engine.cr` are **not** engines — they are modules exposing a shared `self.test_path?` and nothing inherits from them.
 - `FileScanEngine` (`src/analyzer/engines/file_scan_engine.cr`) is the shared base *under* seven of those engines (Crystal, Elixir, Perl, Php, Rust, Scala, Swift). It owns the `analyze` + `parallel_file_scan` skeleton those engines used to each carry a copy of.
 - Languages with no engine — including CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua and Groovy — extend the `Analyzer` base directly: their flows orchestrate multiple phases or carry self-contained extraction that doesn't share with other analyzers.
 - Route extractors:
-  - JavaScript/TypeScript: `js_route_extractor.cr` (used by Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS, Elysia, Hapi, etc.)
+  - JavaScript/TypeScript: `js_route_extractor.cr`. Express, Fastify, Hono, Koa and Restify drive their routes through `JSRouteExtractor.extract_routes`; NestJS, Next.js, Nuxt, Fresh, Apollo, tRPC and TanStack Router pull only its helpers (`find_matching_paren`, `strip_js_comments`, `test_stub_only?`, …). AdonisJS, Elysia and Hapi do **not** get routes from it — they have their own AST extractors (see below); AdonisJS borrows just the `test_stub_only?` gate.
   - High-fidelity Tree-sitter-based extractors (`*_route_extractor_ts.cr` and `*_parameter_extractor_ts.cr`) utilising vendored libtree-sitter bindings. The Go and Kotlin ones are **directories** of part files behind an umbrella `require`, not single files:
     - Go: `go_route_extractor_ts.cr` + `go_route_extractor_ts/`
     - Java: `java_route_extractor_ts.cr`, `java_parameter_extractor_ts.cr` (used by Spring, JAX-RS, Micronaut, etc.)
     - Kotlin: `kotlin_route_extractor_ts.cr` + `kotlin_route_extractor_ts/`, `kotlin_ktor_route_extractor_ts.cr`, `kotlin_parameter_extractor_ts.cr` (used by Spring, Ktor, etc.)
-    - Python: `python_route_extractor_ts.cr` (used by FastAPI, Flask, Django, etc.)
+    - Python: `python_route_extractor_ts.cr` (`Noir::TreeSitterPythonRouteExtractor`, used by aiohttp, Bottle, Flask, Quart, Robyn and Sanic — those six also require the line-level `python_route_extractor.cr` alongside it). FastAPI and Django use **neither** miniparser: both are self-contained `PythonEngine` subclasses that do their own decorator/URLconf walk.
     - Framework-specific AST extractors: `adonisjs_extractor_ts.cr`, `elysia_extractor_ts.cr`, `hapi_extractor_ts.cr`, `http4k_extractor_ts.cr`, `jaxrs_extractor_ts.cr`, `micronaut_extractor_ts.cr`, `jvm_lambda_dsl_extractor_ts.cr`
   - Traditional / Callee Extractors: Used as a fallback or framework-specific extraction across languages (e.g., `cpp_callee_extractor.cr`, `crystal_callee_extractor.cr`, `go_callee_extractor.cr`, `js_callee_extractor.cr`, `ruby_callee_extractor.cr`, etc.).
 
 When adding a new framework in a language that already has an extractor, extend the extractor rather than re-parsing inline.
 
-**Two engine shapes** — every engine exposes `parallel_file_scan(&block)` as a protected helper. Subclasses pick one of:
+**Engine walk vocabularies** — there is no single walk API shared by all engines. `parallel_file_scan(&block)` is defined in exactly three files (`grep -rln "def parallel_file_scan" src/analyzer/engines/`): `file_scan_engine.cr`, `javascript_engine.cr` and `ruby_engine.cr`. Before writing an adapter, check which vocabulary *your* language's engine offers:
 
-- **Simple per-file**: override `abstract def analyze_file(path) : Array(Endpoint)`. `FileScanEngine#analyze` drives the walk and concats the returned endpoints; the engine supplies the candidate list via `scan_target_files` and an optional per-path veto via `scan_accepts?`. Used by Php/Rust/Swift/Crystal/Elixir/Scala analyzers.
-- **Custom `analyze`**: override `analyze` directly and call `parallel_file_scan` when you need closure state, a pre-phase (e.g., Express's `scan_for_router_mounts`), or post-processing (e.g., Hono's `process_static_dirs`, Amber/Kemal's public-dir pass). Used by Ruby/JavaScript/TypeScript analyzers and by the handful of Crystal/Elixir analyzers that override.
+- **`FileScanEngine` shape** (`ElixirEngine`, `CrystalEngine`, `PerlEngine`, `PhpEngine`, `RustEngine`, `ScalaEngine`, `SwiftEngine`): the engine supplies the candidate list via `scan_target_files` and an optional per-path veto via `scan_accepts?`; the adapter overrides `abstract def analyze_file(path) : Array(Endpoint)` and `FileScanEngine#analyze` drives the walk and concats the results. Adapters that need closure state, a pre-phase or post-processing (Amber/Kemal's public-dir pass) override `analyze` and call the inherited `parallel_file_scan` directly.
+- **Own `parallel_file_scan`** (`JavascriptEngine`, `RubyEngine`): same helper name, but these engines define it themselves and have no `scan_target_files`. Adapters override `analyze` and call `parallel_file_scan`, which is what lets Express run `scan_for_router_mounts` first and Hono run `process_static_dirs` after.
+- **Language-specific iterators**: `PythonEngine` offers `python_source_files` / `each_python_source` / `parallel_python_sources`; `SpecificationEngine` offers `each_spec_file` / `each_spec_file_with_details`, driven by `CodeLocator` spec-path keys rather than a directory walk; `CfmlEngine` offers `cfml_components` / `cfml_pages`; `GoEngine` hands the adapter whole-package content via `read_package_file_contents` plus the `collect_*` helpers. None of these four define `parallel_file_scan` or `scan_target_files`.
+- **No engine at all** (CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy): the adapter extends `Analyzer` and uses `scan_files(files, &block)` — the shared skeleton on the base that every one of the above ultimately funnels into.
 
 ## Adding New Components
 
