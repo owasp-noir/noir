@@ -713,7 +713,7 @@ module Analyzer::AI
             File.open(file_path, "r", encoding: "utf-8", invalid: :skip) do |file|
               file.each_line do |line|
                 line_number += 1
-                next unless regex_matches_with_timeout?(regex, line)
+                next unless regex_matches_bounded?(regex, line)
 
                 snippet = line.strip
                 snippet = snippet[0, AGENT_GREP_SNIPPET_MAX_CHARS] if snippet.size > AGENT_GREP_SNIPPET_MAX_CHARS
