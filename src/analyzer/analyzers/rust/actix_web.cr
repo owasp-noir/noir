@@ -891,18 +891,6 @@ module Analyzer::Rust
       LibTreeSitter.ts_node_start_byte(node).to_i
     end
 
-    private def build_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
-      index = {} of String => LibTreeSitter::TSNode
-      walk(root) do |node|
-        next unless Noir::TreeSitter.node_type(node) == "function_item"
-        name_node = Noir::TreeSitter.field(node, "name")
-        next unless name_node
-        name = Noir::TreeSitter.node_text(name_node, source)
-        index[name] = node unless index.has_key?(name)
-      end
-      index
-    end
-
     private def attach_builder_handler_context(endpoint : Endpoint,
                                                handler_name : String,
                                                function_index : Hash(String, LibTreeSitter::TSNode),
@@ -1257,40 +1245,6 @@ module Analyzer::Rust
       end
     end
 
-    private def attach_handler_callees(function : LibTreeSitter::TSNode,
-                                       source : String,
-                                       path : String,
-                                       endpoint : Endpoint)
-      body = Noir::TreeSitter.field(function, "body")
-      return unless body
-      entries = Noir::RustCalleeExtractorTS.callees_in_body(body, source, path)
-      attach_rust_callees(endpoint, entries)
-    end
-
-    private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
-      fn_node = Noir::TreeSitter.field(call, "function")
-      return unless fn_node
-      Noir::TreeSitter.node_text(fn_node, source)
-    end
-
-    # Walk `node`'s children at every depth and yield `(attribute_item,
-    # function_item)` pairs where the attribute immediately precedes
-    # the function (skipping intermediate attribute_items and doc
-    # comments). This matches how `#[get(...)] async fn handler` is
-    # laid out in the AST — both are top-level siblings, not parent /
-    # child.
-    private def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
-      named = [] of LibTreeSitter::TSNode
-      Noir::TreeSitter.each_named_child(node) { |c| named << c }
-      named.each_with_index do |child, idx|
-        if Noir::TreeSitter.node_type(child) == "attribute_item"
-          pair_function = find_paired_function(named, idx + 1)
-          block.call(child, pair_function) if pair_function
-        end
-        each_routing_pair(child, &block)
-      end
-    end
-
     private def find_paired_function(named : Array(LibTreeSitter::TSNode), start : Int32) : LibTreeSitter::TSNode?
       (start...named.size).each do |i|
         next_node = named[i]
@@ -1315,20 +1269,6 @@ module Analyzer::Rust
         result = string_content_of(child, source)
       end
       result
-    end
-
-    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(node) do |child|
-        return child if Noir::TreeSitter.node_type(child) == type
-      end
-      nil
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
     end
   end
 end

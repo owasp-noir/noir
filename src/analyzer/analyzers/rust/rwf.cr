@@ -456,12 +456,5 @@ module Analyzer::Rust
       end
       result
     end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
-      end
-    end
   end
 end

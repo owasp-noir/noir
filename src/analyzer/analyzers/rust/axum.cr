@@ -1594,13 +1594,6 @@ module Analyzer::Rust
       end
     end
 
-    private def find_named_child(node : LibTreeSitter::TSNode, type : String) : LibTreeSitter::TSNode?
-      Noir::TreeSitter.each_named_child(node) do |child|
-        return child if Noir::TreeSitter.node_type(child) == type
-      end
-      nil
-    end
-
     # Walk `node`'s children pairing each `attribute_item` with the
     # `function_item` it decorates (skipping doc comments / other attrs).
     private def each_attribute_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
@@ -1622,13 +1615,6 @@ module Analyzer::Rust
           end
         end
         each_attribute_pair(child, &block)
-      end
-    end
-
-    private def walk(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode ->)
-      block.call(node)
-      Noir::TreeSitter.each_named_child(node) do |child|
-        walk(child, &block)
       end
     end
   end
