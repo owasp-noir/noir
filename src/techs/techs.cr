@@ -105,14 +105,55 @@ module NoirTechs
     TECHS
   end
 
-  # A handful of aliases are claimed by more than one tech (genuine
-  # cross-language library-name ambiguity) and used to resolve by the
-  # catalog literal's insertion order. The split into per-language catalog
-  # files reordered insertion, so the aliases whose winner that would have
-  # silently changed are pinned here instead of implicitly. Keys must be
-  # lowercase (the lookup downcases its input).
+  # Aliases claimed by more than one tech — genuine cross-language
+  # library-name ambiguity (`argparse` is C++, Lua *and* Python; `spring` is
+  # Java and Kotlin). Without a pin, `similar_to_tech`'s fallback scan hands
+  # the name to whichever tech `TECHS` happens to reach first, i.e. the
+  # catalog's insertion order decides a user-visible answer.
+  #
+  # That is not a theoretical hazard: the split into per-language catalog
+  # files reordered insertion, and the three aliases whose winner it would
+  # have silently changed had to be pinned after the fact.
+  #
+  # **Every ambiguous alias belongs here.** The table is consulted before the
+  # order-dependent scan, so a pinned alias resolves the same way whatever
+  # order `TECHS` is built in — which is what makes the catalog's ordering a
+  # free implementation detail rather than a behavioural contract. Thirteen
+  # aliases were still resolving by luck; they are pinned below to the tech
+  # they already resolved to, so this is not a behaviour change.
+  # `spec/unit_test/techs/alias_resolution_spec.cr` fails if a new ambiguous
+  # alias appears without a pin, which turns "somebody has to notice" into
+  # "somebody has to decide".
+  #
+  # An alias that is *also* a tech key (`kong`) needs no pin: the exact-key
+  # pass runs first and only one key can match it.
+  #
+  # Keys must be lowercase (the lookup downcases its input).
   AMBIGUOUS_ALIAS_WINNERS = {
-    "clap"           => "zig_cli",
+    # C++ / Lua / Python / PHP CLI argument parsers.
+    "abseil"   => "cpp_cli",
+    "argparse" => "cpp_cli",
+    "getopt"   => "cpp_cli",
+    # Crystal / Elixir / Ruby.
+    "optionparser" => "crystal_cli",
+    # JS / Rust.
+    "getopts" => "js_cli",
+    # Crystal / Go stdlib HTTP servers.
+    "http"     => "crystal_http",
+    "std/http" => "crystal_http",
+    # Dart / Python stdlib HTTP servers.
+    "httpserver" => "dart_http",
+    # JVM CLI parsers, claimed by the Groovy, Java and Kotlin CLI analyzers.
+    "commons-cli" => "groovy_cli",
+    "jcommander"  => "groovy_cli",
+    "picocli"     => "groovy_cli",
+    # Java / Kotlin. Worth revisiting on its own merits — a Kotlin Spring
+    # project asking for `-t spring` gets the Java analyzer — but that is a
+    # behaviour question, not this table's job to change silently.
+    "spring" => "java_spring",
+    # Rust / Zig.
+    "clap" => "zig_cli",
+    # Java / Scala.
     "play"           => "scala_play",
     "play-framework" => "scala_play",
   }
