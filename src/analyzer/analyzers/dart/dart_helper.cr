@@ -1,4 +1,5 @@
 require "../../../utils/path_scope"
+require "../../../miniparsers/dart_callee_extractor"
 
 module Analyzer::Dart
   # Shared helpers for the Dart framework analyzers (Dart Frog, Shelf,
@@ -160,6 +161,175 @@ module Analyzer::Dart
       end
 
       nil
+    end
+
+    # Char index of the first comma at paren/brace/bracket depth zero
+    # between `start` and `limit`, or nil when the call has a single
+    # argument.
+    def first_top_level_comma(text : String, start : Int32, limit : Int32) : Int32?
+      chars = text.chars
+      depth = 0
+      i = start
+      in_string = false
+      string_quote = '\0'
+
+      while i < limit
+        c = chars[i]
+        if in_string
+          if c == '\\' && i + 1 < chars.size
+            i += 2
+            next
+          end
+          in_string = false if c == string_quote
+          i += 1
+          next
+        end
+
+        case c
+        when '"', '\''
+          in_string = true
+          string_quote = c
+        when '(', '{', '['
+          depth += 1
+        when ')', '}', ']'
+          depth -= 1 if depth > 0
+        when ','
+          return i if depth == 0
+        else
+          # ignore
+        end
+        i += 1
+      end
+
+      nil
+    end
+
+    # Split a call's argument list on top-level commas. Each bracket kind
+    # (`()`, `{}`, `[]`, `<>`) gets its own counter so a generic argument
+    # (`Map<String, int>`) and a collection literal (`[a, b]`) both keep
+    # their inner commas, and string literals are skipped so a comma inside
+    # `'a,b'` never splits. The trailing segment is always emitted, so a
+    # single-argument call yields a one-element array.
+    #
+    # Note: `Serverpod#split_top_level_commas` is deliberately NOT this
+    # method — it tracks only `<`/`(` on one shared counter and is not
+    # string-aware, matching the narrower shapes it parses.
+    def split_top_level_args(text : String) : Array(String)
+      result = [] of String
+      chars = text.chars
+      depth_paren = 0
+      depth_brace = 0
+      depth_bracket = 0
+      depth_angle = 0
+      start = 0
+      i = 0
+      in_string = false
+      string_quote = '\0'
+
+      while i < chars.size
+        c = chars[i]
+        if in_string
+          if c == '\\' && i + 1 < chars.size
+            i += 2
+            next
+          end
+          in_string = false if c == string_quote
+          i += 1
+          next
+        end
+
+        case c
+        when '"', '\''
+          in_string = true
+          string_quote = c
+        when '('
+          depth_paren += 1
+        when ')'
+          depth_paren -= 1 if depth_paren > 0
+        when '{'
+          depth_brace += 1
+        when '}'
+          depth_brace -= 1 if depth_brace > 0
+        when '['
+          depth_bracket += 1
+        when ']'
+          depth_bracket -= 1 if depth_bracket > 0
+        when '<'
+          depth_angle += 1
+        when '>'
+          depth_angle -= 1 if depth_angle > 0
+        when ','
+          if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
+            result << chars[start...i].join
+            start = i + 1
+          end
+        else
+          # ignore
+        end
+        i += 1
+      end
+      result << chars[start..].join if start <= chars.size
+      result
+    end
+
+    # Matches a bare handler reference (`_createUser`, `auth.handler`)
+    # passed as a route's handler argument.
+    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
+
+    # Callees for a route's handler argument, where `handler_start` is the
+    # CHAR index at which the handler expression begins (typically the
+    # char just past the first top-level comma).
+    #
+    # A plain function reference (`_createUser`, `auth.handler`) can't be
+    # resolved cross-file yet, so the reference itself is recorded as the
+    # callee.
+    #
+    # `extract_body_after` scans by BYTE offset, hence the char-to-byte
+    # conversion. It skips past the leading `(req, res)` lambda params to
+    # the `=>`/`{` body, so a trailing `middleware:` argument after the
+    # body is naturally excluded.
+    #
+    # Shelf keeps its own variant: it derives the handler start from the
+    # call's closing paren instead of a comma index, so the two are not
+    # interchangeable.
+    def handler_callees(handler_arg : String,
+                        content : String,
+                        handler_start : Int32,
+                        path : String,
+                        line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
+      stripped = handler_arg.strip
+
+      unless stripped.starts_with?('(')
+        return [] of Noir::DartCalleeExtractor::Entry unless stripped.matches?(HANDLER_REFERENCE_REGEX)
+        return [{stripped, path, line}] of Noir::DartCalleeExtractor::Entry
+      end
+
+      start_b = content.char_index_to_byte_index(handler_start)
+      return [] of Noir::DartCalleeExtractor::Entry unless start_b
+      body_info = Noir::DartCalleeExtractor.extract_body_after(content, start_b)
+      return [] of Noir::DartCalleeExtractor::Entry unless body_info
+
+      body, body_start, _ = body_info
+      start_line = Noir::DartCalleeExtractor.line_number_for(content, body_start)
+      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
+    end
+
+    # Build an endpoint from an already-normalized URL, promoting every
+    # `{name}` capture in it to a path param and attaching the callees.
+    # Analyzers whose endpoints carry extra state (Dart Frog's websocket
+    # flag, `dart:io` HttpServer's inherited params) keep their own.
+    def build_endpoint(url : String,
+                       verb : String,
+                       path : String,
+                       line : Int32,
+                       callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
+      endpoint = Endpoint.new(url, verb)
+      endpoint.details = Details.new(PathInfo.new(path, line))
+      url.scan(/\{(\w+)\}/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "path"))
+      end
+      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
+      endpoint
     end
 
     private def relative_for_match(path : String, base_path : String?) : String

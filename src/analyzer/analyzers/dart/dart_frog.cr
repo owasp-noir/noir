@@ -162,11 +162,9 @@ module Analyzer::Dart
       [] of Noir::DartCalleeExtractor::Entry
     end
 
-    # A bare (possibly dotted) handler reference assigned to `onRequest`.
-    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
-
     private def assignment_callees(rhs : String, path : String, line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
-      return [{rhs, path, line}] of Noir::DartCalleeExtractor::Entry if rhs.matches?(HANDLER_REFERENCE_REGEX)
+      # A bare (possibly dotted) handler reference assigned to `onRequest`.
+      return [{rhs, path, line}] of Noir::DartCalleeExtractor::Entry if rhs.matches?(Helper::HANDLER_REFERENCE_REGEX)
       Noir::DartCalleeExtractor.callees_for_body(rhs, path, line)
     end
 

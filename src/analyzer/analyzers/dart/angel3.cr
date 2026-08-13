@@ -181,7 +181,7 @@ module Analyzer::Dart
         next unless call
         close_paren = Helper.find_matching_paren(cleaned, open_paren)
         next unless close_paren
-        args = split_top_level_args(cleaned[(open_paren + 1)...close_paren])
+        args = Helper.split_top_level_args(cleaned[(open_paren + 1)...close_paren])
         next if args.size < 2
 
         literal = Helper.extract_string_literal(args[0])
@@ -189,7 +189,7 @@ module Analyzer::Dart
         param = closure_param(args[1])
         next unless param
 
-        comma = first_top_level_comma(cleaned, open_paren + 1, close_paren)
+        comma = Helper.first_top_level_comma(cleaned, open_paren + 1, close_paren)
         next unless comma
         raw << {own: normalize_path(literal), param: param, range_start: comma + 1, range_end: close_paren, call: call}
       end
@@ -254,7 +254,7 @@ module Analyzer::Dart
                             endpoints : Array(Endpoint),
                             seen : Set({String, String}))
       return if open_paren >= close_paren
-      args = split_top_level_args(source[(open_paren + 1)...close_paren])
+      args = Helper.split_top_level_args(source[(open_paren + 1)...close_paren])
       return if args.size < 2
 
       literal = Helper.extract_string_literal(args[0])
@@ -265,39 +265,15 @@ module Analyzer::Dart
 
       callees = [] of Noir::DartCalleeExtractor::Entry
       if include_callee
-        comma = first_top_level_comma(source, open_paren + 1, close_paren)
-        callees = handler_callees(args[1], content, comma + 1, path, line) if comma
+        comma = Helper.first_top_level_comma(source, open_paren + 1, close_paren)
+        callees = Helper.handler_callees(args[1], content, comma + 1, path, line) if comma
       end
 
       verbs = method == "all" ? ALL_VERBS : [HTTP_METHOD_MAP[method]]
       verbs.each do |verb|
         next unless seen.add?({verb, url})
-        endpoints << build_endpoint(url, verb, path, line, callees)
+        endpoints << Helper.build_endpoint(url, verb, path, line, callees)
       end
-    end
-
-    HANDLER_REFERENCE_REGEX = /\A[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\z/
-
-    private def handler_callees(handler_arg : String,
-                                content : String,
-                                handler_start : Int32,
-                                path : String,
-                                line : Int32) : Array(Noir::DartCalleeExtractor::Entry)
-      stripped = handler_arg.strip
-
-      unless stripped.starts_with?('(')
-        return [] of Noir::DartCalleeExtractor::Entry unless stripped.matches?(HANDLER_REFERENCE_REGEX)
-        return [{stripped, path, line}] of Noir::DartCalleeExtractor::Entry
-      end
-
-      start_b = content.char_index_to_byte_index(handler_start)
-      return [] of Noir::DartCalleeExtractor::Entry unless start_b
-      body_info = Noir::DartCalleeExtractor.extract_body_after(content, start_b)
-      return [] of Noir::DartCalleeExtractor::Entry unless body_info
-
-      body, body_start, _ = body_info
-      start_line = Noir::DartCalleeExtractor.line_number_for(content, body_start)
-      Noir::DartCalleeExtractor.callees_for_body(body, path, start_line)
     end
 
     # Ensure a leading slash and translate Express-style `:id` captures
@@ -313,118 +289,6 @@ module Analyzer::Dart
       right = sub.starts_with?('/') ? sub : "/#{sub}"
       result = "#{left}#{right}"
       result.empty? ? "/" : result
-    end
-
-    private def build_endpoint(url : String,
-                               verb : String,
-                               path : String,
-                               line : Int32,
-                               callees : Array(Noir::DartCalleeExtractor::Entry)) : Endpoint
-      endpoint = Endpoint.new(url, verb)
-      endpoint.details = Details.new(PathInfo.new(path, line))
-      url.scan(/\{(\w+)\}/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "path"))
-      end
-      Noir::DartCalleeExtractor.attach_to(endpoint, callees)
-      endpoint
-    end
-
-    # ---------- source-string utilities ----------
-
-    private def first_top_level_comma(text : String, start : Int32, limit : Int32) : Int32?
-      chars = text.chars
-      depth = 0
-      i = start
-      in_string = false
-      string_quote = '\0'
-
-      while i < limit
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '(', '{', '['
-          depth += 1
-        when ')', '}', ']'
-          depth -= 1 if depth > 0
-        when ','
-          return i if depth == 0
-        else
-          # ignore
-        end
-        i += 1
-      end
-
-      nil
-    end
-
-    private def split_top_level_args(text : String) : Array(String)
-      result = [] of String
-      chars = text.chars
-      depth_paren = 0
-      depth_brace = 0
-      depth_bracket = 0
-      depth_angle = 0
-      start = 0
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth_paren += 1
-        when ')'
-          depth_paren -= 1 if depth_paren > 0
-        when '{'
-          depth_brace += 1
-        when '}'
-          depth_brace -= 1 if depth_brace > 0
-        when '['
-          depth_bracket += 1
-        when ']'
-          depth_bracket -= 1 if depth_bracket > 0
-        when '<'
-          depth_angle += 1
-        when '>'
-          depth_angle -= 1 if depth_angle > 0
-        when ','
-          if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << chars[start...i].join
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      result << chars[start..].join if start <= chars.size
-      result
     end
   end
 end
