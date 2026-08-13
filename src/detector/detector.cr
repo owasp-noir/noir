@@ -396,6 +396,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       skipped_content_reads = 0
       total_files = 0
       skipped_ignored_dirs = 0
+      unreadable_files = 0
 
       # User-supplied --exclude-path patterns (comma-separated globs).
       # Patterns containing "/" are matched against the relative path;
@@ -530,7 +531,30 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 next
               end
 
-              content = Noir::TextFile.read(full_path)
+              # Per-file read isolation.
+              #
+              # This read used to sit bare inside `Dir.each_child`, and the
+              # nearest rescue is the *directory*-level one below. So one
+              # unreadable file aborted the whole directory listing and every
+              # remaining sibling went unregistered — no detection, no
+              # analysis, no message, exit 0. Measured on a flat 501-file Gin
+              # project: `chmod 000` on a single `.go` file took the scan from
+              # 501 endpoints to 277. Files deleted mid-walk take the same
+              # path (`File::NotFoundError`), which a live repo hits without
+              # anyone doing anything unusual.
+              #
+              # A file we cannot read must cost only itself.
+              # `IO::Error`, not `File::Error`: it is the supertype
+              # (`File::Error < IO::Error`), so it also covers a read that
+              # fails for a reason the file layer does not name. The point
+              # here is that *nothing* about one file may end the walk.
+              content = begin
+                Noir::TextFile.read(full_path)
+              rescue e : IO::Error
+                logger.debug "Skipping #{full_path}: #{e.message}"
+                unreadable_files += 1
+                next
+              end
               if content.to_slice.includes?(0_u8)
                 logger.debug "Skipping #{full_path}: binary content (file is text-extension but bytes look binary)"
                 skipped_files += 1
@@ -566,14 +590,25 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               locator.register_file(full_path, content)
             end
           rescue File::NotFoundError | File::AccessDeniedError
-            # Directory vanished or we can't read it — treat the subtree
-            # as empty and move on.
+            # `Dir.each_child` itself failed: the directory vanished between
+            # being pushed on the stack and being popped, or it is not
+            # listable. Treat the subtree as empty and move on.
+            #
+            # Scope note: this is the *directory* handler. Per-file failures
+            # are caught at the read above, so they no longer land here and
+            # take the rest of the listing with them.
           end
         end
       end
 
       if skipped_files > 0
         logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
+      end
+      # Warning, not info: a media/large skip is the filter working as
+      # intended, but an unreadable file is a hole in the scan the user did
+      # not ask for. It was previously invisible at every verbosity.
+      if unreadable_files > 0
+        logger.warning "Skipped #{unreadable_files} unreadable file#{"s" if unreadable_files != 1} (permissions, or removed during the scan)"
       end
       if skipped_ignored_dirs > 0
         logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"

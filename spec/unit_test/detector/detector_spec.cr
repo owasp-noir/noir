@@ -214,4 +214,63 @@ describe "detect_techs file walker" do
       end
     end
   end
+
+  # An unreadable file used to take the rest of its directory with it: the
+  # per-file `TextFile.read` sat bare inside `Dir.each_child`, whose only
+  # rescue is the directory-level one, so the raise unwound the whole
+  # listing and every remaining sibling went unregistered — silently, exit 0.
+  # Measured before the fix on a flat 501-file Gin tree: one `chmod 000`
+  # file cut the scan from 501 endpoints to 277.
+  #
+  # Two unreadable files, deliberately: readdir order is not alphabetical
+  # (and is hash-ordered on both APFS and ext4), so a single one could land
+  # last by luck and the regression would not fire.
+  it "loses only the unreadable files, not the rest of their directory" do
+    temp_dir = File.tempname("noir_detector_unreadable")
+    Dir.mkdir_p(temp_dir)
+    # Resolved before the `begin` so `ensure` can restore the modes even if
+    # creating them is what failed.
+    unreadable = ["locked_a.go", "locked_b.go"].map { |name| File.join(temp_dir, name) }
+
+    begin
+      readable = (0...50).map do |i|
+        path = File.join(temp_dir, "handler_#{i}.go")
+        File.write(path, "package main\n\nfunc Handler#{i}() {}\n")
+        path
+      end
+
+      unreadable.each do |path|
+        File.write(path, "package main\n")
+        File.chmod(path, 0o000)
+      end
+
+      # Mode bits do not apply to root, and a spec that cannot establish the
+      # condition it tests must say so rather than pass. Probe by actually
+      # reading: `File::Info#readable?` reports the mode bits, which for root
+      # says "no" about a file root can in fact read.
+      still_readable = unreadable.any? do |path|
+        File.read(path)
+        true
+      rescue File::Error
+        false
+      end
+      pending! "requires a non-root user: mode 000 is not enforced here" if still_readable
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      locator = CodeLocator.instance
+      locator.clear_all
+
+      detect_techs([temp_dir], options, [] of PassiveScan, logger)
+      files = locator.all_files
+
+      readable.each { |path| files.should contain(path) }
+      unreadable.each { |path| files.should_not contain(path) }
+    ensure
+      unreadable.each { |path| File.chmod(path, 0o644) if File.exists?(path) }
+      FileUtils.rm_rf(temp_dir) if temp_dir
+      CodeLocator.instance.clear_all
+    end
+  end
 end
