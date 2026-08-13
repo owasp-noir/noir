@@ -1,3 +1,5 @@
+require "./masked_lexer"
+
 module Noir
   # A single token produced by `ScalaLexer#tokens`. `start`/`end` are
   # character indices into the original source (`end` exclusive); `line` is
@@ -37,14 +39,15 @@ module Noir
   # raw strings spanning lines, regular strings with `\` escapes, and `'x'` /
   # `'\n'` char literals (left as code when it is actually a `'sym` symbol).
   class ScalaLexer
-    getter masked : Array(Char)
+    # Supplies `@masked`/`@size`/`@spans`/`@skip_ranges` plus the shared
+    # `matching_delimiter`, `statement_end`, `skip_ranges`, `in_code?` and
+    # identifier predicates.
+    include MaskedLexer
+
     getter code : Array(Char)
 
     @chars : Array(Char)
-    @size : Int32
-    @spans : Array(Tuple(Symbol, Int32, Int32))
     @tokens : Array(ScalaToken)?
-    @skip_ranges : Array(Range(Int32, Int32))?
     @masked_lines : Array(String)?
     @code_lines : Array(String)?
 
@@ -59,14 +62,6 @@ module Noir
       @masked_lines = nil
       @code_lines = nil
       scan
-    end
-
-    private def ident_char?(c : Char) : Bool
-      c == '_' || c.ascii_alphanumeric? || c.ord >= 0x80
-    end
-
-    private def ident_start?(c : Char) : Bool
-      c == '_' || c.ascii_letter? || c.ord >= 0x80
     end
 
     # Emit one source character to both views.
@@ -205,60 +200,9 @@ module Noir
     end
 
     # ---- structural helpers (character indices, over the structural view) ---
-
-    def matching_delimiter(open_pos : Int32) : Int32?
-      return unless 0 <= open_pos && open_pos < @size
-      open = @masked[open_pos]
-      close = case open
-              when '(' then ')'
-              when '[' then ']'
-              when '{' then '}'
-              else          return
-              end
-      depth = 0
-      i = open_pos
-      while i < @size
-        c = @masked[i]
-        if c == open
-          depth += 1
-        elsif c == close
-          depth -= 1
-          return i if depth == 0
-        end
-        i += 1
-      end
-      nil
-    end
-
-    def statement_end(start_pos : Int32) : Int32
-      paren = 0
-      bracket = 0
-      brace = 0
-      i = start_pos < 0 ? 0 : start_pos
-      while i < @size
-        case @masked[i]
-        when '(' then paren += 1
-        when ')' then paren -= 1 if paren > 0
-        when '[' then bracket += 1
-        when ']' then bracket -= 1 if bracket > 0
-        when '{' then brace += 1
-        when '}' then brace -= 1 if brace > 0
-        when ';'
-          return i + 1 if paren == 0 && bracket == 0 && brace == 0
-        end
-        i += 1
-      end
-      @size
-    end
-
-    def skip_ranges : Array(Range(Int32, Int32))
-      @skip_ranges ||= @spans.map { |(_, s, e)| (s..e - 1) }
-    end
-
-    def in_code?(pos : Int32) : Bool
-      return false unless 0 <= pos && pos < @size
-      @spans.none? { |(_, s, e)| s <= pos && pos < e }
-    end
+    #
+    # `matching_delimiter`, `statement_end`, `skip_ranges` and `in_code?` come
+    # from `Noir::MaskedLexer`. Only the Scala-specific views live here.
 
     # Structural masked source split into lines (1:1 with `String#lines`).
     def masked_lines : Array(String)

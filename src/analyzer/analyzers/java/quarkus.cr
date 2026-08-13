@@ -375,7 +375,7 @@ module Analyzer::Java
           end
 
           if cursor < content.size && content[cursor] == '('
-            if close_idx = find_matching_delimiter(content, cursor, '(', ')')
+            if close_idx = JavaEngine.find_matching_delimiter(content, cursor, '(', ')')
               end_offset = close_idx + 1
               yield idx, end_offset, content[(cursor + 1)...close_idx]
               offset = end_offset
@@ -444,7 +444,7 @@ module Analyzer::Java
         class_offset = match.end(0) || start_offset
         open_idx = content.index('{', class_offset)
         next unless open_idx
-        close_idx = find_matching_delimiter(content, open_idx, '{', '}') || open_idx
+        close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '{', '}') || open_idx
         base_path = reactive_annotation_path(match[1]? || "") || ""
         bases << ReactiveRouteBase.new(start_offset, close_idx, normalize_route_path(base_path))
       end
@@ -562,7 +562,7 @@ module Analyzer::Java
     private def route_method_signature_after(content : String, offset : Int32) : String
       open_idx = content.index('(', offset)
       return "" unless open_idx
-      close_idx = find_matching_delimiter(content, open_idx, '(', ')')
+      close_idx = JavaEngine.find_matching_delimiter(content, open_idx, '(', ')')
       return "" unless close_idx
 
       content[(open_idx + 1)...close_idx]
@@ -654,44 +654,6 @@ module Analyzer::Java
     end
 
     HTTP_METHOD_NAMES = Set{"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"}
-
-    private def find_matching_delimiter(code : String,
-                                        open_idx : Int32,
-                                        open_char : Char,
-                                        close_char : Char) : Int32?
-      # Scan by CHARACTER (not byte): open_idx is a char index from String#index
-      # and callers char-slice with / range-compare the returned index. A byte
-      # scan corrupts both on multi-byte UTF-8. ASCII-identical.
-      depth = 1
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      code.each_char_with_index do |ch, i|
-        next if i <= open_idx
-        if in_string
-          if escape
-            escape = false
-          elsif ch == '\\'
-            escape = true
-          elsif ch == quote
-            in_string = false
-          end
-        else
-          if ch == '"' || ch == '\''
-            in_string = true
-            quote = ch
-          elsif ch == open_char
-            depth += 1
-          elsif ch == close_char
-            depth -= 1
-          end
-        end
-        return i if depth == 0
-      end
-
-      nil
-    end
 
     private def bean_index_for(path : String,
                                content : String,
