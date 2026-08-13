@@ -2,6 +2,7 @@ require "colorize"
 require "yaml"
 require "./tagger/tagger"
 require "./techs/techs"
+require "./llm/acp/targets"
 require "./llm/native_tool_calling"
 require "./output_builder/formats"
 
@@ -88,19 +89,17 @@ module Noir::CliValidation
     raise Error.new("--ai-provider '#{provider}' needs a companion --ai-model. Pass it with --ai-model, e.g. `noir scan ./app --ai-provider #{provider} --ai-model gpt-4 --ai-key …`. (ACP providers like `acp:claude` or `acp:codex` are the exception and don't need --ai-model.)")
   end
 
-  # ACP targets Noir knows how to launch. Kept in sync with
-  # `LLM::ACPClient::KNOWN_TARGETS` (the actual exec sink). Anything else
-  # would be run as an arbitrary local process, so a `--ai-provider "acp:<cmd>"`
-  # from an untrusted config file is refused here — a clean pre-flight error
-  # instead of the sink's mid-scan raise. See issue: acp arbitrary exec.
-  ACP_KNOWN_TARGETS = %w[codex gemini claude claude-code]
-
+  # Pre-flight rejection of an ACP target Noir will not exec, so an untrusted
+  # `--ai-provider "acp:<cmd>"` fails cleanly before a scan starts rather than
+  # raising from the exec sink partway through one. The list itself lives in
+  # `LLM::ACPTargets` and is shared with that sink — it used to be a second
+  # byte-identical literal here, kept in sync by a comment.
   def self.validate_acp_target!(provider : String)
     target = (provider.split(":", 2)[1]?.try(&.strip.downcase)) || ""
-    return if ACP_KNOWN_TARGETS.includes?(target)
+    return if LLM::ACPTargets.known?(target)
     return if ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"]? == "1"
 
-    raise Error.new("--ai-provider '#{provider}': unsupported ACP target. Allowed acp: targets are #{ACP_KNOWN_TARGETS.join(", ")}. Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config).")
+    raise Error.new("--ai-provider '#{provider}': unsupported ACP target. Allowed acp: targets are #{LLM::ACPTargets.join}. Running an arbitrary command as an ACP agent is disabled; set NOIR_ACP_ALLOW_CUSTOM_COMMAND=1 to override (only with trusted config).")
   end
 
   # `--passive-scan-path PATH` accepts multiple entries (repeatable),
