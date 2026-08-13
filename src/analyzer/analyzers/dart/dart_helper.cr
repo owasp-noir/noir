@@ -75,7 +75,14 @@ module Analyzer::Dart
         if c == '/' && i + 1 < chars.size && chars[i + 1] == '*'
           result << "  "
           i += 2
-          while i + 1 < chars.size && !(chars[i] == '*' && chars[i + 1] == '/')
+          # `i < chars.size`, not `i + 1 < chars.size`. The latter stopped one
+          # char early on an unterminated `/*`, so the file's final character
+          # was never blanked — it fell through to the verbatim `result << c`
+          # below and leaked out of the comment. Harmless for a letter, not
+          # harmless for the two that matter here: `/* x '` emitted a bare
+          # quote that opens a string state for everything after it, and
+          # `/* x }` emitted a brace that the brace counters read as real.
+          while i < chars.size && !(i + 1 < chars.size && chars[i] == '*' && chars[i + 1] == '/')
             result << (chars[i] == '\n' ? '\n' : ' ')
             i += 1
           end
