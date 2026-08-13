@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Haskell
   # Surfaces the command-line attack surface of Haskell programs as `cli://`
@@ -7,6 +8,8 @@ module Analyzer::Haskell
   # reads. Line-scan, merged by URL.
   class Cli < Analyzer
     analyzer_for "haskell_cli"
+
+    include CliEndpointSupport
 
     LONG     = /(?<![A-Za-z0-9_'])long\s+"([A-Za-z0-9][\w-]*)"/
     ARGUMENT = /(?<![A-Za-z0-9_'])argument\b.*?\bmetavar\s+"([A-Za-z0-9][\w-]*)"/
@@ -152,15 +155,6 @@ module Analyzer::Haskell
       # Scan-base-relative, never absolute: a `test/` directory ABOVE the
       # scan base is not this project's test tree.
       base_relative_path(path).downcase.matches?(TEST_PATH_RE)
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

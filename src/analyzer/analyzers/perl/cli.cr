@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Perl
   # Surfaces the command-line attack surface of Perl programs as `cli://`
@@ -8,6 +9,8 @@ module Analyzer::Perl
   # are flat), merged by URL.
   class Cli < Analyzer
     analyzer_for "perl_cli"
+
+    include CliEndpointSupport
 
     # GetOptions("port=i" => \$port) — the spec string bound to a reference.
     GETOPT_KEY = /["']([a-zA-Z][\w-]*)[^"']*["']\s*=>\s*\\/
@@ -119,15 +122,6 @@ module Analyzer::Perl
       # Scan-base-relative, never absolute: a `t/` or `test/` directory
       # ABOVE the scan base is not this project's test tree.
       base_relative_path(path).downcase.matches?(CLI_TEST_PATH_RE)
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

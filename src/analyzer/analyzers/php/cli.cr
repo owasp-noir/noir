@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/php_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Php
   # Surfaces the command-line attack surface of PHP programs as `cli://`
@@ -14,6 +15,8 @@ module Analyzer::Php
   # PhpEngine.test_path? to skip tests.
   class Cli < Analyzer
     analyzer_for "php_cli"
+
+    include CliEndpointSupport
 
     SET_NAME     = /\$this->setName\s*\(\s*['"]([^'"]+)['"]/
     DEFAULT_NAME = /protected\s+(?:static\s+)?\$defaultName\s*=\s*['"]([^'"]+)['"]/
@@ -330,15 +333,6 @@ module Analyzer::Php
       spec.each_char do |ch|
         next if ch == ':'
         endpoint.push_param(Param.new(ch.to_s, "", "flag"))
-      end
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
       end
     end
   end

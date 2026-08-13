@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/kotlin_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Kotlin
   # Surfaces the command-line attack surface of Kotlin programs as `cli://`
@@ -13,6 +14,8 @@ module Analyzer::Kotlin
   # KotlinEngine.test_path? to skip tests.
   class Cli < Analyzer
     analyzer_for "kotlin_cli"
+
+    include CliEndpointSupport
 
     # clikt: `class Serve : CliktCommand(name = "serve")` (name optional →
     # class name lower-cased).
@@ -245,15 +248,6 @@ module Analyzer::Kotlin
         result << ch.downcase
       end
       result.to_s
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

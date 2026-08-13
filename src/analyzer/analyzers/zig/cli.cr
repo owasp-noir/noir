@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Zig
   # Surfaces the command-line attack surface of Zig programs as `cli://`
@@ -7,6 +8,8 @@ module Analyzer::Zig
   # Line-scan, merged by URL.
   class Cli < Analyzer
     analyzer_for "zig_cli"
+
+    include CliEndpointSupport
 
     # zig-clap multiline param string lines (each begins with `\\`).
     CLAP_FLAG = /\\\\\s*(?:-[A-Za-z0-9]\s*,\s*)?--([A-Za-z0-9][\w-]*)/
@@ -236,15 +239,6 @@ module Analyzer::Zig
       # scan base is not this project's test tree.
       relative = base_relative_path(path)
       relative.downcase.includes?("/test") || relative.includes?("_test.")
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "./common"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::CSharp
   # Surfaces the command-line attack surface of C# programs as `cli://`
@@ -17,6 +18,7 @@ module Analyzer::CSharp
     analyzer_for "cs_cli"
 
     include Common
+    include CliEndpointSupport
 
     # System.CommandLine (builder). Variable-mapped: a command/option binds to
     # its receiver variable, so root options declared after a subcommand
@@ -293,15 +295,6 @@ module Analyzer::CSharp
       end
       out.sort_by! { |(_n, dir)| -dir.size }
       out
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

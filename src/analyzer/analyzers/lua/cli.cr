@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Lua
   # Surfaces the command-line attack surface of Lua programs as `cli://`
@@ -8,6 +9,8 @@ module Analyzer::Lua
   # `arg` indexing and os.getenv. Line-scan, merged by URL.
   class Cli < Analyzer
     analyzer_for "lua_cli"
+
+    include CliEndpointSupport
 
     ARGPARSE_CTOR = /(?:local\s+)?([A-Za-z_]\w*)\s*=\s*argparse\s*\(\s*(?:['"]([^'"]*)['"])?/
     SUBCOMMAND    = /(?:local\s+)?(?:([A-Za-z_]\w*)\s*=\s*)?([A-Za-z_]\w*)\s*:\s*command\s*\(\s*['"]([^'"]+)['"]/
@@ -147,15 +150,6 @@ module Analyzer::Lua
       # Scan-base-relative, never absolute: a `test/` directory ABOVE the
       # scan base is not this project's test tree.
       base_relative_path(path).downcase.matches?(TEST_PATH_RE)
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../engines/rust_engine"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Rust
   # Surfaces the command-line attack surface of Rust programs as `cli://`
@@ -23,6 +24,8 @@ module Analyzer::Rust
   # abstract) and reuses RustEngine.test_path? as a class method.
   class Cli < Analyzer
     analyzer_for "rust_cli"
+
+    include CliEndpointSupport
 
     DERIVE_RE = /#\[\s*derive\s*\(([^)]*)\)/
     ITEM_RE   = /\b(?:struct|enum)\s+\w+/
@@ -263,15 +266,6 @@ module Analyzer::Rust
       end
       out.sort_by! { |(_n, dir)| -dir.size }
       out
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end

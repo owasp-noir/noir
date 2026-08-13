@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../engines/cli_endpoint_support"
 
 module Analyzer::Elixir
   # Surfaces the command-line attack surface of Elixir programs as `cli://`
@@ -7,6 +8,8 @@ module Analyzer::Elixir
   # subcommands), params flag/argument/env, merged by URL.
   class Cli < Analyzer
     analyzer_for "elixir_cli"
+
+    include CliEndpointSupport
 
     SWITCHES   = /switches:\s*\[([^\]]*)\]/
     SWITCH_KEY = /([a-z_]\w*):/
@@ -74,15 +77,6 @@ module Analyzer::Elixir
       # scan base is not this project's test tree.
       lower = base_relative_path(path).downcase
       lower.includes?("/test/") || lower.includes?("_test.")
-    end
-
-    private def fetch_endpoint(endpoints : Hash(String, Endpoint), url : String,
-                               path : String, line_no : Int32) : Endpoint
-      endpoints[url] ||= begin
-        ep = Endpoint.new(url, "CLI", Details.new(PathInfo.new(path, line_no)))
-        ep.protocol = "cli"
-        ep
-      end
     end
   end
 end
