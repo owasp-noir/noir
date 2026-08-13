@@ -166,26 +166,35 @@ Key points:
 
 There is **no registration list to edit**. The analyzer and detector registries are derived from the classes themselves: `initialize_analyzers` (`src/analyzer/analyzer.cr`) and `build_detector_list` (`src/detector/detector.cr`) each sweep `all_subclasses` and read the name off `analyzer_for` / `detector_for`. Both lists used to be hand-maintained, and forgetting an entry produced no error and no failing spec — just a component that silently never ran.
 
-So the only thing left to add is the catalog entry, in the per-language file under `src/techs/catalog/`:
+So the only thing left to add is the catalog entry — a new file, at the same relative path as the analyzer and the detector:
 
 ```crystal
-# src/techs/catalog/go.cr
-:go_hertz => {
-  :framework => "Hertz",
-  :language  => "Go",
-  :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
-  :supported => {
-    :endpoint => true,
-    :method   => true,
-    :params   => { :query => true, :path => true, :body => true, :header => true, :cookie => true },
-    :static_path => false,
-    :websocket   => false,
-  },
-  # Optional. Declares which AI-context capabilities this tech supports;
-  # CALLEE_SUPPORTED_TECHS and AI_CONTEXT_GUARD_SUPPORTED_TECHS are derived
-  # from these flags rather than hand-listed.
-  :context => { :callee => true },
-},
+# src/techs/catalog/go/hertz.cr
+#
+# The directory is the language, the filename matches the analyzer's, and the
+# constant is that filename upcased. `NoirTechs::TECHS` is macro-derived from
+# every constant under `NoirTechs::Catalog`, so there is no list to append to
+# and two people adding frameworks never touch the same file.
+module NoirTechs::Catalog::Go
+  HERTZ = {
+    :go_hertz => {
+      :framework => "Hertz",
+      :language  => "Go",
+      :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => { :query => true, :path => true, :body => true, :header => true, :cookie => true },
+        :static_path => false,
+        :websocket   => false,
+      },
+      # Optional. Declares which AI-context capabilities this tech supports;
+      # CALLEE_SUPPORTED_TECHS and AI_CONTEXT_GUARD_SUPPORTED_TECHS are derived
+      # from these flags rather than hand-listed.
+      :context => { :callee => true },
+    },
+  }
+end
 ```
 
 `spec/unit_test/techs/registry_integrity_spec.cr` asserts the three-way linkage in both directions: every analyzer and detector has a catalog entry, and every catalog entry is backed by both. A missing catalog entry fails there rather than at runtime.

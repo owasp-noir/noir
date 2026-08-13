@@ -166,26 +166,35 @@ end
 
 **수정해야 할 등록 목록은 없습니다.** 분석기와 detector 레지스트리는 클래스 자체에서 파생됩니다. `initialize_analyzers`(`src/analyzer/analyzer.cr`) 와 `build_detector_list`(`src/detector/detector.cr`) 가 각각 `all_subclasses` 를 훑어 `analyzer_for` / `detector_for` 에서 이름을 읽습니다. 두 목록 모두 예전에는 손으로 관리했고, 항목을 빠뜨리면 에러도 실패하는 스펙도 없이 그저 실행되지 않는 컴포넌트가 생겼습니다.
 
-따라서 추가할 것은 카탈로그 항목 하나뿐이며, `src/techs/catalog/` 아래 언어별 파일에 넣습니다.
+따라서 추가할 것은 카탈로그 항목 하나뿐이며, 분석기·디텍터와 같은 상대 경로에 새 파일로 만듭니다.
 
 ```crystal
-# src/techs/catalog/go.cr
-:go_hertz => {
-  :framework => "Hertz",
-  :language  => "Go",
-  :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
-  :supported => {
-    :endpoint => true,
-    :method   => true,
-    :params   => { :query => true, :path => true, :body => true, :header => true, :cookie => true },
-    :static_path => false,
-    :websocket   => false,
-  },
-  # 선택 사항. 이 tech 가 지원하는 AI 컨텍스트 기능을 선언합니다.
-  # CALLEE_SUPPORTED_TECHS 와 AI_CONTEXT_GUARD_SUPPORTED_TECHS 는
-  # 손으로 나열하는 대신 이 플래그에서 파생됩니다.
-  :context => { :callee => true },
-},
+# src/techs/catalog/go/hertz.cr
+#
+# 디렉터리는 언어, 파일명은 분석기 파일명과 동일하고, 상수는 그 파일명을
+# 대문자화한 것입니다. `NoirTechs::TECHS` 는 `NoirTechs::Catalog` 아래 모든
+# 상수에서 매크로로 파생되므로 append 할 목록이 없고, 두 사람이 프레임워크를
+# 추가해도 같은 파일을 건드리지 않습니다.
+module NoirTechs::Catalog::Go
+  HERTZ = {
+    :go_hertz => {
+      :framework => "Hertz",
+      :language  => "Go",
+      :similar   => ["hertz", "go-hertz", "go_hertz", "cloudwego"],
+      :supported => {
+        :endpoint => true,
+        :method   => true,
+        :params   => { :query => true, :path => true, :body => true, :header => true, :cookie => true },
+        :static_path => false,
+        :websocket   => false,
+      },
+      # 선택 사항. 이 tech 가 지원하는 AI 컨텍스트 기능을 선언합니다.
+      # CALLEE_SUPPORTED_TECHS 와 AI_CONTEXT_GUARD_SUPPORTED_TECHS 는
+      # 손으로 나열하는 대신 이 플래그에서 파생됩니다.
+      :context => { :callee => true },
+    },
+  }
+end
 ```
 
 `spec/unit_test/techs/registry_integrity_spec.cr` 이 세 축의 연결을 양방향으로 단언합니다. 모든 분석기와 detector 에 카탈로그 항목이 있어야 하고, 모든 카탈로그 항목은 분석기와 detector 양쪽으로 뒷받침되어야 합니다. 카탈로그 항목이 빠지면 런타임이 아니라 이 스펙에서 실패합니다.
