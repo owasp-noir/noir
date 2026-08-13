@@ -1,6 +1,7 @@
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "../models/code_locator"
+require "./extraction_result_cache"
 require "./import_graph"
 require "./java_route_extractor_ts"
 require "../utils/text_file"
@@ -1189,18 +1190,30 @@ module Noir
     # Promoting the cache to class scope means the Nth analyzer
     # picks up the previously-extracted fields for free.
     #
-    # File contents don't change during a noir run, so this is
-    # safe in production. Tests inside the same Crystal process
-    # use unique fixture paths per scenario, so cross-test
-    # contamination doesn't occur in practice; `clear_cache!` is
-    # exposed anyway for any test setup that wants explicit
-    # determinism.
+    # File contents don't change *during* a run, which is what makes the
+    # sharing safe. They do change *between* runs, and the key is a path,
+    # so the entry from the previous scan of that path is what a second
+    # scan reads. That is a scan-lifetime cache wearing a process-lifetime
+    # coat, and it is why the registration below exists.
     @@shared_cache = Hash(String, Index).new
     # Per-file `class -> superclass simple name` map, cached alongside
     # the field index so a file is parsed once for both. Drives the
     # cross-file inheritance merge below.
     @@shared_super_cache = Hash(String, Hash(String, String)).new
     @@shared_cache_mutex = Mutex.new
+
+    # Filesystem-derived memos must not survive into a second scan in the
+    # same process (library use, watch mode, a CI daemon scanning one
+    # checkout across a `git pull`). Same reasoning, same mechanism as
+    # `ImportGraph`'s registration — this cache was simply never wired up,
+    # so `ExtractionResultCache.clear_all` at the top of `analysis_endpoints`
+    # did not reach it.
+    #
+    # The observable failure: scan a Spring app whose `PersonDto` has
+    # `{name, email}`, change it to `{name, phone}`, scan the same path
+    # again in the same process, and every endpoint taking that DTO as a
+    # body still reports the deleted `email` and omits the added `phone`.
+    Noir::ExtractionResultCache.register_clearer { clear_cache! }
 
     def self.clear_cache!
       @@shared_cache_mutex.synchronize do
