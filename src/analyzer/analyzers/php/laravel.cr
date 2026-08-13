@@ -33,7 +33,7 @@ module Analyzer::Php
     # recursive pass. Bundled so the shared scan helpers below take the body
     # once instead of threading eight arguments through every call.
     private struct RouteScanContext
-      getter content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges
+      getter content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, handler_bodies
 
       def initialize(@content : String,
                      @file_path : String,
@@ -42,7 +42,8 @@ module Analyzer::Php
                      @lexer : Noir::PhpLexer,
                      @imports : Hash(String, String),
                      @route_groups : Array(RouteGroup),
-                     @skip_ranges : Array(Range(Int32, Int32)))
+                     @skip_ranges : Array(Range(Int32, Int32)),
+                     @handler_bodies : Array(Range(Int32, Int32)))
       end
     end
 
@@ -166,6 +167,11 @@ module Analyzer::Php
     # capture 2 the (unread) static verb, capture 3 the path.
     CHAINED_STATIC_ROUTE_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(view|redirect|permanentRedirect)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
 
+    # Any `Route::…('path', …` registration, whatever verb or chain precedes
+    # it. Used only to locate handler-closure bodies up front; the six scans
+    # above are what actually decide which registrations become endpoints.
+    ROUTE_REGISTRATION_RE = /Route::(?:\w+\s*\([^;]*?\)\s*->\s*)*\w+\s*\(\s*(?:\[[^\]]*\]\s*,\s*)?['"][^'"]*['"]\s*,/mi
+
     # Methods a single `Route::any` registration stands for.
     ANY_ROUTE_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
@@ -190,7 +196,7 @@ module Analyzer::Php
       # `"Try Route::get(...)"` string, or a `<<<SQL … SQL` heredoc doesn't
       # surface as a real endpoint.
       skip_ranges = lexer.skip_ranges
-      ctx = RouteScanContext.new(content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges)
+      ctx = RouteScanContext.new(content, file_path, include_callee, base_line, lexer, imports, route_groups, skip_ranges, collect_handler_bodies(content, base_line, lexer))
 
       # 1. Verb routes. Every scan below walks the body the same way, with the
       # same guards — `each_laravel_route` holds that walk once. What differs
@@ -290,12 +296,59 @@ module Analyzer::Php
 
       while route_match = content.match(regex, pos)
         pos = if inside_laravel_group_body?(route_match.begin(0), ctx.route_groups) ||
-                 inside_php_skip_range?(route_match.begin(0), ctx.skip_ranges)
+                 inside_php_skip_range?(route_match.begin(0), ctx.skip_ranges) ||
+                 inside_handler_body?(route_match.begin(0), ctx.handler_bodies)
                 route_match.end(0)
               else
                 yield route_match
               end
       end
+    end
+
+    # Whether `offset` falls inside some route handler's closure body.
+    private def inside_handler_body?(offset : Int32, bodies : Array(Range(Int32, Int32))) : Bool
+      bodies.any?(&.includes?(offset))
+    end
+
+    # Byte ranges of every inline route-handler closure body in `content`.
+    #
+    # A `Route::…` call inside a handler body is not a route registration:
+    # the closure runs when a request hits the outer route, not at boot, so
+    # nothing it registers is part of the attack surface.
+    #
+    # The scan that *owns* the outer route already skipped its body —
+    # `emit_handler_route` returns a position past it. But each of the six
+    # scans starts at 0 and knew nothing about the others' skips, so whether a
+    # nested call leaked out depended on which scan shape happened to find it:
+    #
+    #   Route::get('/a', function () { Route::get('/nested', …); });
+    #     -> suppressed (both found by the same verb scan)
+    #
+    #   Route::any('/a', function () { Route::get('/nested', …); });
+    #   Route::middleware('x')->prefix('p')->post('/a', function () { Route::get('/nested', …); });
+    #     -> `/nested` emitted, at top level and WITHOUT the enclosing prefix,
+    #        because the verb scan reached it before/independently of the scan
+    #        that owns the outer route
+    #
+    # Collecting the ranges once, up front, makes the skip a property of the
+    # content rather than of scan ordering — the same shape `skip_ranges`
+    # already uses for strings, comments and heredocs.
+    private def collect_handler_bodies(content : String, base_line : Int32, lexer : Noir::PhpLexer) : Array(Range(Int32, Int32))
+      bodies = [] of Range(Int32, Int32)
+      pos = 0
+
+      while route_match = content.match(ROUTE_REGISTRATION_RE, pos)
+        action_pos = route_match.end(0)
+        if lexer.in_code?(route_match.begin(0))
+          _body, next_pos, _line = extract_inline_closure_body(content, action_pos, base_line, lexer)
+          bodies << (action_pos...next_pos) if next_pos > action_pos
+          pos = action_pos
+        else
+          pos = route_match.end(0)
+        end
+      end
+
+      bodies
     end
 
     # Append one endpoint per HTTP method for a route that has a handler — an
