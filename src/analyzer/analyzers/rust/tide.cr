@@ -332,22 +332,5 @@ module Analyzer::Rust
       end
       nil
     end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        if Noir::TreeSitter.node_type(child) == "string_literal"
-          Noir::TreeSitter.each_named_child(child) do |grand|
-            if Noir::TreeSitter.node_type(grand) == "string_content"
-              result = Noir::TreeSitter.node_text(grand, source)
-              break
-            end
-          end
-        end
-      end
-      result
-    end
   end
 end

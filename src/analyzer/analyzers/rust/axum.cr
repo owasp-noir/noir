@@ -352,7 +352,7 @@ module Analyzer::Rust
       return unless name && NEST_NAMES.includes?(name)
       args = named_arguments(call)
       return unless args.size >= 2
-      prefix = string_literal_text(args[0], source)
+      prefix = string_literal_content(args[0], source)
       return unless prefix
       {prefix, args[1]}
     end
@@ -556,7 +556,7 @@ module Analyzer::Rust
         return unless args
         named = named_children(args)
         return if named.size < 2
-        path = string_literal_text(named[0], source)
+        path = string_literal_content(named[0], source)
         return unless path
         {path, decode_handler(named[1], source)}
       when "route_service"
@@ -564,7 +564,7 @@ module Analyzer::Rust
         return unless args
         named = named_children(args)
         return if named.size < 1
-        path = string_literal_text(named[0], source)
+        path = string_literal_content(named[0], source)
         return unless path
         {path, [{SERVICE_METHOD, nil.as(String?)}]}
       when "nest_service"
@@ -572,7 +572,7 @@ module Analyzer::Rust
         return unless args
         named = named_children(args)
         return if named.size < 1
-        prefix = string_literal_text(named[0], source)
+        prefix = string_literal_content(named[0], source)
         return unless prefix
         {nest_join(prefix, "/*"), [{SERVICE_METHOD, nil.as(String?)}]}
       when "fallback", "fallback_service"
@@ -598,7 +598,7 @@ module Analyzer::Rust
       named = named_arguments(call)
       return if named.size < 2
 
-      path = string_literal_text(named[0], source)
+      path = string_literal_content(named[0], source)
       return unless path
 
       handler = callable_text(named[1], source)
@@ -814,33 +814,6 @@ module Analyzer::Rust
     private def call_function_text(call : LibTreeSitter::TSNode, source : String) : String?
       function = Noir::TreeSitter.field(call, "function")
       function ? Noir::TreeSitter.node_text(function, source) : nil
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      return string_literal_text(node, source) if Noir::TreeSitter.node_type(node) == "string_literal"
-
-      Noir::TreeSitter.each_named_child(node) do |child|
-        if text = first_string_literal_text(child, source)
-          return text
-        end
-      end
-      nil
-    end
-
-    private def string_literal_text(node : LibTreeSitter::TSNode, source : String) : String?
-      return unless Noir::TreeSitter.node_type(node) == "string_literal"
-      # tree-sitter-rust splits a literal with escapes into multiple children
-      # ("/a\tb" -> string_content "/a", escape_sequence "\t", string_content "b").
-      # Concatenate every segment instead of keeping only the last one.
-      parts = [] of String
-      Noir::TreeSitter.each_named_child(node) do |child|
-        case Noir::TreeSitter.node_type(child)
-        when "string_content", "escape_sequence"
-          parts << Noir::TreeSitter.node_text(child, source)
-        end
-      end
-      parts.empty? ? nil : parts.join
     end
 
     private def build_router_function_index(root : LibTreeSitter::TSNode, source : String) : Hash(String, LibTreeSitter::TSNode)
@@ -1195,7 +1168,7 @@ module Analyzer::Rust
               next unless name && NEST_NAMES.includes?(name)
               args = named_arguments(node)
               next unless args.size >= 2
-              prefix = string_literal_text(args[0], src)
+              prefix = string_literal_content(args[0], src)
               next unless prefix
               call = resolve_router_call(args[1], src, let_calls)
               next unless call
@@ -1255,7 +1228,7 @@ module Analyzer::Rust
             next unless NEST_NAMES.includes?(field)
             args = named_arguments(call)
             next unless args.size >= 2
-            prefix = string_literal_text(args[0], source)
+            prefix = string_literal_content(args[0], source)
             next unless prefix
             child = resolve_router_call(args[1], source, let_calls)
             next unless child
@@ -1498,7 +1471,7 @@ module Analyzer::Rust
             named = [] of LibTreeSitter::TSNode
             Noir::TreeSitter.each_named_child(args) { |a| named << a }
             next if named.size < 2
-            prefix = string_literal_text(named[0], source)
+            prefix = string_literal_content(named[0], source)
             next unless prefix
             child_key = nest_child_key(named[1], source, base, file_mod)
             next unless child_key

@@ -1127,7 +1127,7 @@ module Analyzer::Rust
           saw_method = Noir::TreeSitter.node_text(child, source) == "method"
         when "string_literal"
           if saw_method
-            if v = string_content_of(child, source)
+            if v = string_content(child, source)
               methods << v.upcase
             end
             saw_method = false
@@ -1137,31 +1137,13 @@ module Analyzer::Rust
       methods.uniq
     end
 
-    # Full text of a string literal, concatenating every
-    # `string_content` and `escape_sequence` child. tree-sitter-rust
-    # splits a literal at each escape (`"/page-{id:\d+}"` → content
-    # `/page-{id:`, escape `\d`, content `+}`), so reading only the
-    # first `string_content` truncates paths that carry an escape (e.g.
-    # a regex-constrained param). Returns nil for a literal with no
-    # content children (genuinely empty `""`).
-    private def string_content_of(string_literal : LibTreeSitter::TSNode, source : String) : String?
-      parts = [] of String
-      Noir::TreeSitter.each_named_child(string_literal) do |grand|
-        case Noir::TreeSitter.node_type(grand)
-        when "string_content", "escape_sequence"
-          parts << Noir::TreeSitter.node_text(grand, source)
-        end
-      end
-      parts.empty? ? nil : parts.join
-    end
-
     # The route-path argument of a `.route(path, ...)` call. A bare
     # string literal yields its content, an empty literal `""` yields
     # "" (actix's "register at the scope root" form), and anything that
     # isn't a string literal yields nil so the route is skipped.
     private def path_arg_text(node : LibTreeSitter::TSNode, source : String) : String?
       return unless Noir::TreeSitter.node_type(node) == "string_literal"
-      string_content_of(node, source) || ""
+      string_content(node, source) || ""
     end
 
     # Walk every node (named children, any depth) and yield each.
@@ -1258,17 +1240,6 @@ module Analyzer::Rust
         end
       end
       nil
-    end
-
-    private def first_string_literal_text(node : LibTreeSitter::TSNode?, source : String) : String?
-      return unless node
-      result : String? = nil
-      walk(node) do |child|
-        next if result
-        next unless Noir::TreeSitter.node_type(child) == "string_literal"
-        result = string_content_of(child, source)
-      end
-      result
     end
   end
 end
