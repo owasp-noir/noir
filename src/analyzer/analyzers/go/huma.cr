@@ -89,47 +89,23 @@ module Analyzer::Go
         end
       end
 
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
-      begin
-        mutex = Mutex.new
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
-          end
+      mutex = Mutex.new
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
 
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(base_relative_path(path))
-                  next unless File.exists?(path)
+        content = file_contents_cache[path]? || read_file_content(path)
+        next unless content_matches?(content, IMPORT_MARKER_RE)
 
-                  content = file_contents_cache[path]? || read_file_content(path)
-                  next unless content_matches?(content, IMPORT_MARKER_RE)
+        dir = File.dirname(path)
+        structs = package_structs[dir]? || Hash(String, Array(StructField)).new
 
-                  dir = File.dirname(path)
-                  structs = package_structs[dir]? || Hash(String, Array(StructField)).new
+        endpoints = extract_huma_endpoints(content, path, structs)
+        next if endpoints.empty?
 
-                  endpoints = extract_huma_endpoints(content, path, structs)
-                  next if endpoints.empty?
-
-                  mutex.synchronize do
-                    endpoints.each { |ep| result << ep }
-                  end
-                rescue e : IO::Error
-                  logger.debug "Skipping #{path}: #{e.message}"
-                end
-              end
-            end
-          end
+        mutex.synchronize do
+          endpoints.each { |ep| result << ep }
         end
-      rescue e
-        logger.debug e
       end
 
       result

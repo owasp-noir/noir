@@ -20,107 +20,80 @@ module Analyzer::Go
       package_groups, file_contents = collect_package_groups_ts("Party")
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
       package_function_bodies = collect_package_function_bodies(file_contents)
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        next if GoEngine.go_test_file?(base_relative_path(path))
+        next unless File.exists?(path)
+        content = file_contents[path]? || read_file_content(path)
+        next unless content_matches?(content, IMPORT_MARKER_RE)
+        lines = content.lines
+        last_endpoint = Endpoint.new("", "")
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            get_files_by_extension(".go").each { |file| channel.send(file) }
-            channel.close
-          end
+        cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+          content, cross_file_groups, group_method: "Party",
+          # `app.Handle("GET", "/x", h)` is Iris's method-first
+          # registration; `app.HandleMany("GET POST", "/x", h)`
+          # lists several verbs at once. `PartyFunc("/x",
+          # func(p){...})` (and the closure form of `Party`) is
+          # Iris's idiomatic closure-scoped group.
+          handle_method: "Handle",
+          handle_many_method: "HandleMany",
+          closure_group_methods: ["Party", "PartyFunc"]
+        )
+        routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
+        ts_routes.each do |r|
+          routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
+          routes_by_line[r.line] << r
+        end
 
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if File.directory?(path)
-                  next if GoEngine.go_test_file?(base_relative_path(path))
-                  if File.exists?(path)
-                    content = file_contents[path]? || read_file_content(path)
-                    next unless content_matches?(content, IMPORT_MARKER_RE)
-                    lines = content.lines
-                    last_endpoint = Endpoint.new("", "")
+        # Resolve 1-hop callees for every route (see Gin).
+        route_rows = Set(Int32).new
+        routes_by_line.each_key { |row| route_rows << row }
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
+        callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
 
-                    cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
-                    ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
-                      content, cross_file_groups, group_method: "Party",
-                      # `app.Handle("GET", "/x", h)` is Iris's method-first
-                      # registration; `app.HandleMany("GET POST", "/x", h)`
-                      # lists several verbs at once. `PartyFunc("/x",
-                      # func(p){...})` (and the closure form of `Party`) is
-                      # Iris's idiomatic closure-scoped group.
-                      handle_method: "Handle",
-                      handle_many_method: "HandleMany",
-                      closure_group_methods: ["Party", "PartyFunc"]
-                    )
-                    routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
-                    ts_routes.each do |r|
-                      routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
-                      routes_by_line[r.line] << r
-                    end
+        lines.each_with_index do |line, index|
+          details = Details.new(PathInfo.new(path, index + 1))
 
-                    # Resolve 1-hop callees for every route (see Gin).
-                    route_rows = Set(Int32).new
-                    routes_by_line.each_key { |row| route_rows << row }
-                    external_fns = ts_function_bodies_for_directory(package_function_bodies, File.dirname(path))
-                    callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns)
-
-                    lines.each_with_index do |line, index|
-                      details = Details.new(PathInfo.new(path, index + 1))
-
-                      if ts_hits = routes_by_line[index]?
-                        ts_hits.each do |route|
-                          # `app.Party("admin.")` is an Iris *subdomain*,
-                          # not a path segment — peel it so the path is
-                          # clean (`/settings`, not `/admin./settings`) and
-                          # preserve the host on a `subdomain` tag.
-                          subdomain, clean = split_iris_subdomain(route.path)
-                          normalized = normalize_iris_path(clean)
-                          callee_entries = callees_by_route[route.line]?
-                          verbs = route.verb == "ANY" ? HTTP_METHODS : [route.verb]
-                          verbs.each do |m|
-                            new_endpoint = Endpoint.new(normalized, m, details)
-                            callee_entries.try &.each do |entry|
-                              name, callee_path, callee_line = entry
-                              new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
-                            end
-                            new_endpoint.add_tag(Tag.new("subdomain", subdomain, "iris_analyzer")) if subdomain
-                            result << new_endpoint
-                            last_endpoint = new_endpoint
-                          end
-                        end
-                      end
-
-                      ["URLParam", "URLParamDefault", "URLParamTrim",
-                       "PostValue", "FormValue",
-                       "GetHeader", "GetCookie"].each do |pattern|
-                        if line.includes?("#{pattern}(")
-                          add_param_to_endpoint(get_param(line, pattern), last_endpoint)
-                        end
-                      end
-
-                      # Iris exposes a family of body readers — JSON is
-                      # most common, but the framework also accepts XML,
-                      # YAML, MsgPack, Protobuf, plain Body, and Form
-                      # readers. All consume the request body.
-                      if line.matches?(/\.Read(?:JSON|XML|YAML|MsgPack|Protobuf|Body|Form)\s*\(/)
-                        add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
-                      end
-                    end
-                  end
-                rescue e : IO::Error
-                  logger.debug "Skipping #{path}: #{e.message}"
+          if ts_hits = routes_by_line[index]?
+            ts_hits.each do |route|
+              # `app.Party("admin.")` is an Iris *subdomain*,
+              # not a path segment — peel it so the path is
+              # clean (`/settings`, not `/admin./settings`) and
+              # preserve the host on a `subdomain` tag.
+              subdomain, clean = split_iris_subdomain(route.path)
+              normalized = normalize_iris_path(clean)
+              callee_entries = callees_by_route[route.line]?
+              verbs = route.verb == "ANY" ? HTTP_METHODS : [route.verb]
+              verbs.each do |m|
+                new_endpoint = Endpoint.new(normalized, m, details)
+                callee_entries.try &.each do |entry|
+                  name, callee_path, callee_line = entry
+                  new_endpoint.push_callee(Callee.new(name, path: callee_path, line: callee_line))
                 end
+                new_endpoint.add_tag(Tag.new("subdomain", subdomain, "iris_analyzer")) if subdomain
+                result << new_endpoint
+                last_endpoint = new_endpoint
               end
             end
           end
+
+          ["URLParam", "URLParamDefault", "URLParamTrim",
+           "PostValue", "FormValue",
+           "GetHeader", "GetCookie"].each do |pattern|
+            if line.includes?("#{pattern}(")
+              add_param_to_endpoint(get_param(line, pattern), last_endpoint)
+            end
+          end
+
+          # Iris exposes a family of body readers — JSON is
+          # most common, but the framework also accepts XML,
+          # YAML, MsgPack, Protobuf, plain Body, and Form
+          # readers. All consume the request body.
+          if line.matches?(/\.Read(?:JSON|XML|YAML|MsgPack|Protobuf|Body|Form)\s*\(/)
+            add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
+          end
         end
-      rescue e
-        logger.error "Iris analyzer failed: #{e.message}"
-        logger.debug e
       end
 
       result

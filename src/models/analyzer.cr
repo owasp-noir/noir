@@ -149,11 +149,17 @@ class Analyzer
 
   # `worker_count` capped at `MAX_ANALYZER_WORKERS`.
   #
-  # Deliberately not applied to the per-analyzer walks: those spawn
-  # `--concurrency` fibers uncapped today, and folding them in here would
-  # silently drop a `--concurrency 100` run to 64. Whether the cap should
-  # extend to them is a real question, but it is a behaviour change and
-  # belongs in its own commit.
+  # Applies to everything routed through `parallel_analyze` — which now
+  # includes the Go analyzers, whose hand-inlined walks used to spawn
+  # `--concurrency` fibers uncapped. A `--concurrency 100` run therefore
+  # gives them 64 worker fibers, not 100; the default is
+  # `System.cpu_count.clamp(4, 32)`, so no default scan changes.
+  #
+  # Still uncapped: the walks `java/{armeria,jsp,vertx}.cr`,
+  # `python/django.cr`, `llm_analyzers/unified_ai.cr` and
+  # `FileAnalyzer#analyze` inline for themselves. Those send a different
+  # file set than `parallel_analyze` would iterate, so folding them in is
+  # its own change.
   protected def bounded_worker_count : Int32
     worker_count.clamp(1, MAX_ANALYZER_WORKERS)
   end
