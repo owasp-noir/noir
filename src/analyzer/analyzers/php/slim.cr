@@ -174,19 +174,6 @@ module Analyzer::Php
       attach_php_callees(endpoint, callees)
     end
 
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
-    end
-
     # Locate the first `$var->group("/prefix", function(...) { ... })` call
     # in the given content and return its span + extracted prefix.
     private def find_group_call(content : String) : Tuple(Int32, Int32, Int32, Int32, String)?
@@ -241,12 +228,6 @@ module Analyzer::Php
 
       body_start_line = base_line + newline_count_before(content, brace_pos)
       {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
-    end
-
-    private def newline_count_before(content : String, pos : Int32) : Int32
-      return 0 if pos <= 0
-
-      content[0...pos].count('\n')
     end
 
     # Byte-level scan for O(1) positional access instead of the previous

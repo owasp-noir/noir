@@ -374,18 +374,5 @@ module Analyzer::Php
 
       params
     end
-
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
-    end
   end
 end

@@ -285,7 +285,7 @@ module Analyzer::Php
       body_end = find_matching_delimiter(content, brace_pos)
       return {nil, pos, nil} unless body_end
 
-      body_start_line = php_line_number_for_index(content, brace_pos)
+      body_start_line = line_number_for_index(content, brace_pos)
       {content[(brace_pos + 1)...body_end], body_end + 1, body_start_line}
     end
 
@@ -771,19 +771,6 @@ module Analyzer::Php
 
     private def array_entry(entries : Array(PhpArrayEntry), key : String) : String?
       entries.find { |entry| entry.key == key }.try(&.array_body)
-    end
-
-    private def dedup_params(params : Array(Param)) : Array(Param)
-      seen = Set(String).new
-      params.select do |param|
-        key = "#{param.param_type}\0#{param.name}"
-        if seen.includes?(key)
-          false
-        else
-          seen.add(key)
-          true
-        end
-      end
     end
 
     private def dedup_endpoints(endpoints : Array(Endpoint)) : Array(Endpoint)
