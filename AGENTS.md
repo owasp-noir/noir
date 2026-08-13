@@ -139,7 +139,7 @@ When adding a new framework in a language that already has an extractor, extend 
 ### Detectors
 1. Create `src/detector/detectors/{language}/{framework}.cr`
 2. Declare the tech and its file gate inside the class: `detector_for "go_hertz", extensions: %w[.go], path_segments: %w[go.mod]` (`src/models/detector.cr`). The gate keys are `extensions:`, `basenames:` and `path_segments:`; pass `idempotent: false` only if `detect` has side effects, such as registering paths in `CodeLocator`.
-3. Add unit test: `spec/unit_test/detector/{language}/{framework}_detector_spec.cr`
+3. Add unit test: `spec/unit_test/detector/{language}/{framework}_spec.cr` — required; `spec/unit_test/techs/detector_coverage_spec.cr` fails without it
 4. Add technology metadata to `src/techs/catalog/{language}.cr`
 
 ### Output Formats
