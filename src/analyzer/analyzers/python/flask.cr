@@ -124,12 +124,18 @@ module Analyzer::Python
         /#{blueprint_name}\s*,\s*routes\s*=\s*(.*)\)/
     end
 
-    def analyze
-      flask_instances = Hash(ScopedNameKey, ::String).new
-      blueprint_prefixes = Hash(ScopedNameKey, ::String).new
-      path_api_instances = Hash(::String, Hash(::String, ::String)).new
-      register_blueprint = Hash(::String, Hash(::String, ::String)).new
-      blueprint_mounts = Hash(::String, Array(Tuple(::String, ::String, ::String))).new
+    # The cross-file state the phases of `analyze` share. Flask's maps
+    # accumulate across files (the file walk is deliberately sequential for
+    # that reason), so the phases are threaded with one value instead of a
+    # six-parameter list. The fields are only ever mutated in place, never
+    # reassigned, so the Hash instances behave exactly like the locals they
+    # replaced.
+    private record ScanState,
+      flask_instances : Hash(ScopedNameKey, ::String),
+      blueprint_prefixes : Hash(ScopedNameKey, ::String),
+      path_api_instances : Hash(::String, Hash(::String, ::String)),
+      register_blueprint : Hash(::String, Hash(::String, ::String)),
+      blueprint_mounts : Hash(::String, Array(Tuple(::String, ::String, ::String))),
       # flask-restx namespaces are module-level singletons: the Api host
       # file (`api/__init__.py`) wires `api.add_namespace(ns, "/x")` with
       # the blueprint's `url_prefix` (`/api/v1`), but each namespace's
@@ -137,528 +143,673 @@ module Analyzer::Python
       # is per-file, so the route file never saw the host-computed prefix
       # and every `@ns.route` surfaced without `/api/v1`. This GLOBAL map
       # (namespace var name -> fully-resolved prefix) bridges the two files.
-      namespace_prefixes = Hash(ScopedNameKey, ::String).new
+      namespace_prefixes : Hash(ScopedNameKey, ::String) do
+      def self.empty : ScanState
+        new(
+          flask_instances: Hash(ScopedNameKey, ::String).new,
+          blueprint_prefixes: Hash(ScopedNameKey, ::String).new,
+          path_api_instances: Hash(::String, Hash(::String, ::String)).new,
+          register_blueprint: Hash(::String, Hash(::String, ::String)).new,
+          blueprint_mounts: Hash(::String, Array(Tuple(::String, ::String, ::String))).new,
+          namespace_prefixes: Hash(ScopedNameKey, ::String).new,
+        )
+      end
+    end
+
+    def analyze
+      state = ScanState.empty
 
       # Sequential: blueprint/namespace maps accumulate across files.
       # Pre-filter .py sources once (no site-packages/tests) instead of
       # O(bases × files) path_under_root checks.
       python_files = python_source_files
       base_paths.each do |current_base_path|
-        flask_instances[{current_base_path, "app"}] ||= "" # Common flask instance name
+        state.flask_instances[{current_base_path, "app"}] ||= "" # Common flask instance name
         python_files.each do |path|
           next unless path_under_root?(path, current_base_path)
           @logger.debug "Analyzing #{path}"
 
           file_content = fetch_file_content(path)
-          lines = file_content.lines
-          if flask_relevant_source?(file_content)
-            extract_flask_appbuilder_exposed_endpoints(path, file_content).each do |endpoint|
-              result << endpoint
-            end
-            next if flask_appbuilder_only_source?(file_content)
+          next unless flask_relevant_source?(file_content)
+          analyze_flask_source(path, current_base_path, file_content, state)
+        end
+      end
 
-            api_instances = Hash(::String, ::String).new
-            path_api_instances[path] = api_instances
-            view_assignments = Hash(::String, ::String).new # Maps view_var -> ClassName (per-file scope)
-            import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
+      resolve_blueprint_prefixes(state)
+      emit_route_endpoints(state)
+      emit_class_view_endpoints(state)
 
-            # add_resource registrars: the standard `add_resource` plus any
-            # Api-subclass wrapper methods defined in this file. Alias-free
-            # files (the overwhelming majority) reuse the hoisted constants
-            # so nothing is recompiled or allocated per file.
-            registrar_aliases = collect_resource_registrar_aliases(file_content)
-            if registrar_aliases.nil?
-              add_resource_re = ADD_RESOURCE_RE
-              registrar_substrings = ADD_RESOURCE_SUBSTRINGS
-            else
-              alt = (["add_resource"] + registrar_aliases).map { |r| Regex.escape(r) }.join("|")
-              add_resource_re = /(#{PYTHON_VAR_NAME_REGEX})\s*\.\s*(?:#{alt})\s*\((.+)\)/m
-              registrar_substrings = (["add_resource"] + registrar_aliases).map { |r| ".#{r}(" }
-            end
+      Fiber.yield
+      result
+    end
 
-            # Tree-sitter pre-pass: one parse yields every
-            # `@<router>.route(...)`/`@<router>.<method>(...)` decorator and
-            # every `<name> = (flask.)?Blueprint(url_prefix=...)` declaration.
-            # Previously each table re-parsed the file; multi-line decorators
-            # still need the AST (regex can't see them).
-            ts_decorations, ts_blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(
-              file_content, ["flask"]
-            )
-            decorations_by_line = Hash(Int32, Array(Noir::TreeSitterPythonRouteExtractor::Decoration)).new
-            ts_decorations.each do |d|
-              decorations_by_line[d.decorator_line] ||= [] of Noir::TreeSitterPythonRouteExtractor::Decoration
-              decorations_by_line[d.decorator_line] << d
-            end
-            ts_blueprints.each do |bp|
-              blueprint_prefixes[{current_base_path, bp.name}] ||= bp.prefix
-              api_instances[bp.name] ||= bp.prefix
-            end
+    # Everything the per-line construct handlers share while scanning one
+    # source file. A class rather than a record because `import_map_cache`
+    # is memoised lazily by two of the handlers and the memo has to survive
+    # across handler calls.
+    private class SourceScan
+      getter path : ::String
+      getter base_path : ::String
+      getter source : ::String
+      getter lines : Array(::String)
+      # Flask / Blueprint / Api instance name -> URL prefix, for this file.
+      getter api_instances : Hash(::String, ::String)
+      getter decorations_by_line : Hash(Int32, Array(Noir::TreeSitterPythonRouteExtractor::Decoration))
+      getter add_resource_re : Regex
+      getter registrar_substrings : Array(::String)
+      # Maps view_var -> ClassName (per-file scope)
+      getter view_assignments = Hash(::String, ::String).new
+      property import_map_cache : Hash(::String, Tuple(::String, Int32))? = nil
 
-            lines.each_with_index do |original_line, line_index|
-              next if original_line.lstrip.starts_with?("#")
+      def initialize(@path, @base_path, @source, @lines, @api_instances,
+                     @decorations_by_line, @add_resource_re, @registrar_substrings)
+      end
+    end
 
-              line = original_line.gsub(" ", "") # remove spaces for easier regex matching
+    # Scan one Flask-relevant source file: record the instances,
+    # blueprints, namespaces and view registrations it declares into
+    # `state`, and emit the endpoints this file alone already resolves.
+    # Mutates the shared maps, which is why the caller walks the files
+    # sequentially.
+    private def analyze_flask_source(path : ::String, current_base_path : ::String,
+                                     file_content : ::String, state : ScanState) : Nil
+      lines = file_content.lines
+      extract_flask_appbuilder_exposed_endpoints(path, file_content).each do |endpoint|
+        result << endpoint
+      end
+      return if flask_appbuilder_only_source?(file_content)
 
-              # Identify Flask instance assignments
-              flask_match = line.includes?("Flask(") ? line.match(FLASK_INSTANCE_RE) : nil
-              if flask_match
-                flask_instance_name = flask_match[1]
-                api_instances[flask_instance_name] ||= ""
-                flask_instances[{current_base_path, flask_instance_name}] ||= ""
+      api_instances = Hash(::String, ::String).new
+      state.path_api_instances[path] = api_instances
 
-                effective_constructor = if python_paren_delta(original_line) > 0
-                                          join_until_python_call_closes(lines, line_index, original_line)
-                                        else
-                                          original_line
-                                        end
-                if static_url_path = extract_flask_static_url_path(effective_constructor)
-                  result << Endpoint.new(static_route_path(static_url_path), "GET", Details.new(PathInfo.new(path, line_index + 1)))
-                end
-              end
-              # (Blueprint discovery moved to the tree-sitter pre-pass above.)
+      # add_resource registrars: the standard `add_resource` plus any
+      # Api-subclass wrapper methods defined in this file. Alias-free
+      # files (the overwhelming majority) reuse the hoisted constants
+      # so nothing is recompiled or allocated per file.
+      registrar_aliases = collect_resource_registrar_aliases(file_content)
+      if registrar_aliases.nil?
+        add_resource_re = ADD_RESOURCE_RE
+        registrar_substrings = ADD_RESOURCE_SUBSTRINGS
+      else
+        alt = (["add_resource"] + registrar_aliases).map { |r| Regex.escape(r) }.join("|")
+        add_resource_re = /(#{PYTHON_VAR_NAME_REGEX})\s*\.\s*(?:#{alt})\s*\((.+)\)/m
+        registrar_substrings = (["add_resource"] + registrar_aliases).map { |r| ".#{r}(" }
+      end
 
-              # Identify Api instance assignments
-              init_app_match = line.includes?(".init_app(") ? line.match(INIT_APP_RE) : nil
-              if init_app_match
-                api_instance_name = init_app_match[1]
-                parser = get_parser(path)
-                if parser.@global_variables.has_key?(api_instance_name)
-                  gv = parser.@global_variables[api_instance_name]
-                  api_instances[api_instance_name] ||= ""
-                end
-              end
+      # Tree-sitter pre-pass: one parse yields every
+      # `@<router>.route(...)`/`@<router>.<method>(...)` decorator and
+      # every `<name> = (flask.)?Blueprint(url_prefix=...)` declaration.
+      # Previously each table re-parsed the file; multi-line decorators
+      # still need the AST (regex can't see them).
+      ts_decorations, ts_blueprints = Noir::TreeSitterPythonRouteExtractor.extract_decorations_and_blueprints(
+        file_content, ["flask"]
+      )
+      decorations_by_line = Hash(Int32, Array(Noir::TreeSitterPythonRouteExtractor::Decoration)).new
+      ts_decorations.each do |d|
+        decorations_by_line[d.decorator_line] ||= [] of Noir::TreeSitterPythonRouteExtractor::Decoration
+        decorations_by_line[d.decorator_line] << d
+      end
+      ts_blueprints.each do |bp|
+        state.blueprint_prefixes[{current_base_path, bp.name}] ||= bp.prefix
+        api_instances[bp.name] ||= bp.prefix
+      end
 
-              # `Api(...)` and `add_namespace(...)` calls routinely wrap
-              # across lines (`X = Api(\n  blueprint,\n  ...\n)`), which
-              # hid the blueprint/app argument from the single-line regex
-              # and broke the whole `blueprint url_prefix -> Api -> namespace`
-              # chain. Coalesce continuation lines when the call is
-              # unbalanced so the argument is visible.
-              api_line = if line.includes?("Api(") && python_paren_delta(original_line) > 0
-                           join_until_python_call_closes(lines, line_index, original_line).gsub(" ", "")
-                         else
-                           line
-                         end
+      fs = SourceScan.new(path, current_base_path, file_content, lines, api_instances,
+        decorations_by_line, add_resource_re, registrar_substrings)
 
-              # `Api(...)` registration matchers interpolate the discovered
-              # instance name, so they can't be hoisted to a constant.
-              # Most lines never mention `Api(`; skip the per-instance
-              # regex builds entirely unless the call is present (the
-              # match itself requires the literal `Api(`).
-              if api_line.includes?("Api(")
-                # flask_restful / flask-restx `Api(app, prefix="/api/v1")`
-                # prepends the prefix to every resource. The kwarg sits on
-                # the same (coalesced) Api(...) call; anchor on `(`/`,` so
-                # Blueprint's `url_prefix=` can't be mistaken for it.
-                api_kwarg_prefix = api_line.match(/[,(]prefix=[rf]?['"]([^'"]*)['"]/).try(&.[1]) || ""
+      lines.each_with_index do |original_line, line_index|
+        next if original_line.lstrip.starts_with?("#")
 
-                # Api from flask instance
-                flask_instances.each do |key, _prefix|
-                  next unless key[0] == current_base_path
-                  _flask_instance_name = key[1]
-                  api_match = api_line.match api_from_instance_regex(_flask_instance_name)
-                  if api_match
-                    api_instance_name = api_match[1]
-                    api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
-                  end
-                end
+        line = original_line.gsub(" ", "") # remove spaces for easier regex matching
 
-                # Api from blueprint instance
-                blueprint_prefixes.each do |key, _prefix|
-                  next unless key[0] == current_base_path
-                  _blueprint_instance_name = key[1]
-                  api_match = api_line.match api_from_instance_regex(_blueprint_instance_name)
-                  if api_match
-                    api_instance_name = api_match[1]
-                    api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
-                  end
-                end
-              end
+        record_flask_instance(fs, state, line_index, original_line, line)
+        # (Blueprint discovery moved to the tree-sitter pre-pass above.)
+        record_init_app_instance(fs, line)
+        record_api_instances(fs, state, line_index, original_line, line)
+        record_api_namespaces(fs, state, line_index, original_line, line)
+        emit_view_registration_routes(fs, state, line_index, original_line, line)
+        record_blueprint_registration(fs, state, original_line, line)
+        record_decorated_routes(fs, line_index)
+        record_view_assignment(fs, line)
+        scan_add_url_rule_registrations(fs, state, line_index, original_line, line)
+        record_resource_registrations(fs, line_index, original_line, line)
+      end
+    end
 
-              # Api Namespace
-              ns_line = if line.includes?(".add_namespace(") && python_paren_delta(original_line) > 0
-                          join_until_python_call_closes(lines, line_index, original_line).gsub(" ", "")
-                        else
-                          line
-                        end
-              # `add_namespace` matchers interpolate the instance name and
-              # can't be hoisted; skip the per-instance regex builds unless
-              # the call is present on this line (the match requires it).
-              if ns_line.includes?(".add_namespace(")
-                api_instances.each do |_api_instance_name, _prefix|
-                  add_namespace_match = ns_line.match add_namespace_call_regex(_api_instance_name)
-                  if add_namespace_match
-                    parser = get_parser(path)
-                    if parser.@global_variables.has_key?(add_namespace_match[2])
-                      gv = parser.@global_variables[add_namespace_match[2]]
-                      if gv.type == "Namespace"
-                        # Prefer the explicit mount path on
-                        # `add_namespace(ns, "/x")` (authoritative); fall
-                        # back to the Namespace(...) definition's own
-                        # path=/name when no positional path is given.
-                        resolved = if mount_path = extract_add_namespace_path(ns_line, _api_instance_name, add_namespace_match[2])
-                                     joined = File.join(_prefix, mount_path)
-                                     joined.starts_with?("/") ? joined : "/#{joined}"
-                                   else
-                                     extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
-                                   end
-                        api_instances[gv.name] = resolved
-                        # Bridge to the namespace's route-definition file,
-                        # which has no view onto this host file's prefixes.
-                        namespace_prefixes[{current_base_path, gv.name}] = resolved
-                      end
-                    end
-                  end
-                end
-              end
+    # Identify Flask instance assignments
+    private def record_flask_instance(fs : SourceScan, state : ScanState, line_index : Int32,
+                                      original_line : ::String, line : ::String) : Nil
+      flask_match = line.includes?("Flask(") ? line.match(FLASK_INSTANCE_RE) : nil
+      if flask_match
+        flask_instance_name = flask_match[1]
+        fs.api_instances[flask_instance_name] ||= ""
+        state.flask_instances[{fs.base_path, flask_instance_name}] ||= ""
 
-              # Temporary Addition: register_view
-              # The `blueprint,routes=[...]` matcher interpolates the
-              # blueprint name; skip the per-blueprint regex builds unless
-              # this line actually carries a `routes=` registration.
-              if line.includes?("routes=")
-                blueprint_prefixes.each do |key, blueprint_prefix|
-                  next unless key[0] == current_base_path
-                  blueprint_name = key[1]
-                  view_registration_match = line.match view_registration_regex(blueprint_name)
-                  if view_registration_match
-                    # Re-extract route paths from original line to preserve spaces in paths
-                    original_registration_match = original_line.match view_registration_original_regex(blueprint_name)
-                    route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
-                    route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
-                      if !path_str_match.nil? && path_str_match.size == 2
-                        route_path = path_str_match[1]
-                        # Parse methods from reference views (TODO)
-                        route_url = "#{blueprint_prefix}#{route_path}"
-                        route_url = "/#{route_url}" unless route_url.starts_with?("/")
-                        details = Details.new(PathInfo.new(path, line_index + 1))
-                        result << Endpoint.new(route_url, "GET", details)
-                      end
-                    end
-                  end
-                end
-              end
+        effective_constructor = if python_paren_delta(original_line) > 0
+                                  join_until_python_call_closes(fs.lines, line_index, original_line)
+                                else
+                                  original_line
+                                end
+        if static_url_path = extract_flask_static_url_path(effective_constructor)
+          result << Endpoint.new(static_route_path(static_url_path), "GET", Details.new(PathInfo.new(fs.path, line_index + 1)))
+        end
+      end
+    end
 
-              # Identify Blueprint registration
-              register_blueprint_match = line.includes?(".register_blueprint(") ? line.match(REGISTER_BLUEPRINT_RE) : nil
-              if register_blueprint_match
-                parent_name = register_blueprint_match[1]
-                blueprint_name = register_blueprint_match[2]
-                url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
-                blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : ""
-                blueprint_mounts[path] ||= [] of Tuple(::String, ::String, ::String)
-                blueprint_mounts[path] << {parent_name, blueprint_name, blueprint_mount_prefix}
+    # Identify Api instance assignments
+    private def record_init_app_instance(fs : SourceScan, line : ::String) : Nil
+      init_app_match = line.includes?(".init_app(") ? line.match(INIT_APP_RE) : nil
+      if init_app_match
+        api_instance_name = init_app_match[1]
+        parser = get_parser(fs.path)
+        # Existence in the parser globals is the whole test here: unlike
+        # the Blueprint/Namespace handlers below, this one never looks at
+        # the global's type or path, it just seeds an empty prefix.
+        if parser.@global_variables.has_key?(api_instance_name)
+          fs.api_instances[api_instance_name] ||= ""
+        end
+      end
+    end
 
-                if url_prefix_match
-                  resolved = false
-                  parser = get_parser(path)
-                  if parser.@global_variables.has_key?(blueprint_name)
-                    gv = parser.@global_variables[blueprint_name]
-                    if gv.type == "Blueprint"
-                      register_blueprint[gv.path] ||= Hash(::String, ::String).new
-                      register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
-                      resolved = true
-                    end
-                  end
+    # `Api(app|blueprint, prefix=...)` instantiations: bind the new Api
+    # instance name to the prefix its host app/blueprint contributes.
+    private def record_api_instances(fs : SourceScan, state : ScanState, line_index : Int32,
+                                     original_line : ::String, line : ::String) : Nil
+      # `Api(...)` and `add_namespace(...)` calls routinely wrap
+      # across lines (`X = Api(\n  blueprint,\n  ...\n)`), which
+      # hid the blueprint/app argument from the single-line regex
+      # and broke the whole `blueprint url_prefix -> Api -> namespace`
+      # chain. Coalesce continuation lines when the call is
+      # unbalanced so the argument is visible.
+      api_line = if line.includes?("Api(") && python_paren_delta(original_line) > 0
+                   join_until_python_call_closes(fs.lines, line_index, original_line).gsub(" ", "")
+                 else
+                   line
+                 end
 
-                  # Cross-file resolution: resolve imported blueprint via import map
-                  unless resolved
-                    import_map_cache ||= find_imported_modules(current_base_path, path)
-                    if import_map_cache.has_key?(blueprint_name)
-                      source_file, _package_type = import_map_cache[blueprint_name]
-                      if !source_file.empty? && File.exists?(source_file)
-                        register_blueprint[source_file] ||= Hash(::String, ::String).new
-                        register_blueprint[source_file][blueprint_name] = url_prefix_match[1]
-                      end
-                    end
-                  end
-                end
-              end
+      # `Api(...)` registration matchers interpolate the discovered
+      # instance name, so they can't be hoisted to a constant.
+      # Most lines never mention `Api(`; skip the per-instance
+      # regex builds entirely unless the call is present (the
+      # match itself requires the literal `Api(`).
+      if api_line.includes?("Api(")
+        # flask_restful / flask-restx `Api(app, prefix="/api/v1")`
+        # prepends the prefix to every resource. The kwarg sits on
+        # the same (coalesced) Api(...) call; anchor on `(`/`,` so
+        # Blueprint's `url_prefix=` can't be mistaken for it.
+        api_kwarg_prefix = api_line.match(/[,(]prefix=[rf]?['"]([^'"]*)['"]/).try(&.[1]) || ""
 
-              # Flask route decorators (`@<router>.route(...)`,
-              # `@<router>.<method>(...)`) are discovered in the tree-sitter
-              # pre-pass above. Look up this line in the resulting map;
-              # the downstream consumer still expects an `extra_params`
-              # string of the shape `methods=['GET','POST']`, so we
-              # synthesise it from the structured method list here.
-              if ts_hits = decorations_by_line[line_index]?
-                ts_hits.each do |decoration|
-                  methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
-                  extra_params = "methods=[#{methods_literal}]"
-                  router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, path, decoration.path, extra_params)
-                  @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
-                  @routes[decoration.router_name] << router_info
-                end
-              end
+        # Api from flask instance
+        state.flask_instances.each do |key, _prefix|
+          next unless key[0] == fs.base_path
+          _flask_instance_name = key[1]
+          api_match = api_line.match api_from_instance_regex(_flask_instance_name)
+          if api_match
+            api_instance_name = api_match[1]
+            fs.api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
+          end
+        end
 
-              # Identify view assignments: view_var = ClassName.as_view('name')
-              # Note: spaces are already removed from line at this point
-              view_assign_match = line.includes?(".as_view(") ? line.match(VIEW_ASSIGN_RE) : nil
-              if view_assign_match
-                view_var = view_assign_match[1]
-                class_name = view_assign_match[2]
-                view_assignments[view_var] = class_name
-              end
+        # Api from blueprint instance
+        state.blueprint_prefixes.each do |key, _prefix|
+          next unless key[0] == fs.base_path
+          _blueprint_instance_name = key[1]
+          api_match = api_line.match api_from_instance_regex(_blueprint_instance_name)
+          if api_match
+            api_instance_name = api_match[1]
+            fs.api_instances[api_instance_name] ||= join_flask_paths(_prefix, api_kwarg_prefix)
+          end
+        end
+      end
+    end
 
-              # Identify add_url_rule() registrations for class-based views
-              # Match the call generically, then extract rule/view_func from any argument position
-              has_add_url_rule = line.includes?(".add_url_rule(")
-              effective_add_url_rule = if has_add_url_rule && python_paren_delta(original_line) > 0
-                                         join_until_python_call_closes(lines, line_index, original_line)
-                                       else
-                                         original_line
-                                       end
-              # `line` is already original_line space-stripped, so only
-              # re-strip when we coalesced continuation lines; otherwise
-              # reuse it instead of allocating a new gsub copy per line.
-              effective_add_url_rule_stripped = has_add_url_rule ? effective_add_url_rule.gsub(" ", "") : line
-              effective_add_url_rule_stripped.scan(ADD_URL_RULE_RE) do |_match|
-                next if _match.size.zero?
-                router_name = _match[1]
-                args_str = _match[2]
-
-                # Extract route path from original line to preserve spaces in paths
-                # Try rule= keyword first, then first positional string arg
-                route_path = ""
-                original_args_match = effective_add_url_rule.match /\.add_url_rule\((.+)\)/m
-                original_args = original_args_match ? original_args_match[1] : args_str
-                rule_match = original_args.match /rule\s*=\s*[rf]?['"]([^'"]*)['"]/
-                if rule_match
-                  route_path = rule_match[1]
+    # Api Namespace
+    private def record_api_namespaces(fs : SourceScan, state : ScanState, line_index : Int32,
+                                      original_line : ::String, line : ::String) : Nil
+      ns_line = if line.includes?(".add_namespace(") && python_paren_delta(original_line) > 0
+                  join_until_python_call_closes(fs.lines, line_index, original_line).gsub(" ", "")
                 else
-                  first_str_match = original_args.match /^\s*[rf]?['"]([^'"]*)['"]/
-                  route_path = first_str_match[1] if first_str_match
+                  line
                 end
-                next if route_path.empty?
-
-                class_name = ""
-                view_name = ""
-
-                # Extract view_func: try keyword form, then positional form
-                # Keyword: view_func=ClassName.as_view('name') or view_func=view_var
-                view_func_match = args_str.match VIEW_FUNC_AS_VIEW_RE
-                if view_func_match
-                  class_name = view_func_match[1]
-                  view_name = view_func_match[2]
-                else
-                  view_var_match = args_str.match VIEW_FUNC_VAR_RE
-                  if view_var_match
-                    view_var = view_var_match[1]
-                    if view_assignments.has_key?(view_var)
-                      class_name = view_assignments[view_var]
-                      view_name = view_var
-                    end
-                  end
-                end
-
-                # Positional: add_url_rule('/path', 'endpoint', view_var) or
-                #             add_url_rule('/path', 'endpoint', Class.as_view('name'))
-                # After space-stripping: '/path','endpoint',view_var
-                if class_name.empty?
-                  # Split positional args respecting nested parentheses
-                  positional_parts = [] of ::String
-                  remaining = args_str
-                  while !remaining.empty?
-                    # Match a quoted string argument
-                    str_match = remaining.match /^[rf]?['"][^'"]*['"]/
-                    if str_match
-                      positional_parts << str_match[0]
-                      remaining = remaining[str_match[0].size..]
-                      remaining = remaining.lstrip(',')
-                      next
-                    end
-                    # Stop at keyword arguments
-                    break if remaining.match /^#{PYTHON_VAR_NAME_REGEX}=/
-                    # Match an expression, tracking paren depth to handle nested calls like .as_view('name')
-                    # `String#[]` walks from the start on every call for
-                    # non-ASCII content, so indexing `remaining` directly
-                    # inside this while loop was O(n^2) per segment;
-                    # `chars` gives O(1) random access instead.
-                    paren_depth = 0
-                    end_idx = 0
-                    remaining_chars = remaining.chars
-                    while end_idx < remaining_chars.size
-                      ch = remaining_chars[end_idx]
-                      if ch == '('
-                        paren_depth += 1
-                      elsif ch == ')'
-                        break if paren_depth == 0
-                        paren_depth -= 1
-                      elsif ch == ',' && paren_depth == 0
-                        break
-                      end
-                      end_idx += 1
-                    end
-                    if end_idx > 0
-                      positional_parts << remaining[0...end_idx]
-                      remaining = remaining[end_idx..]
-                      remaining = remaining.lstrip(',')
-                      next
-                    end
-                    break
-                  end
-
-                  # Flask signature: add_url_rule(rule, endpoint=None, view_func=None, ...)
-                  # 2nd or 3rd positional arg can be view_func
-                  view_arg = if positional_parts.size >= 3
-                               positional_parts[2]
-                             elsif positional_parts.size == 2
-                               positional_parts[1]
-                             else
-                               ""
-                             end
-
-                  unless view_arg.empty?
-                    as_view_match = view_arg.match /(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
-                    if as_view_match
-                      class_name = as_view_match[1]
-                      view_name = as_view_match[2]
-                    elsif view_assignments.has_key?(view_arg)
-                      class_name = view_assignments[view_arg]
-                      view_name = view_arg
-                    end
-                  end
-                end
-
-                if class_name.empty?
-                  # Function-view registration:
-                  #   app.add_url_rule("/x", "name", view_func=fn)
-                  #   app.add_url_rule("/x", "name", view_func=fn, methods=["GET", "POST"])
-                  # The class-view branch above only fires for
-                  # `.as_view(...)` shapes; bare function refs fell
-                  # through. Resolve the function body when it is in
-                  # this file so params/callees match decorator routes.
-                  fn_name = extract_add_url_rule_function_name(args_str)
-                  fn_path = path
-                  fn_source = file_content
-                  fn_lines = lines
-                  fn_def_index = fn_name.empty? || fn_name.includes?(".") ? nil : find_function_def(lines, fn_name)
-                  if fn_def_index.nil? && !fn_name.empty?
-                    import_map_cache ||= find_imported_modules(current_base_path, path, file_content)
-                    if resolved = resolve_external_function_view(fn_name, path, import_map_cache)
-                      fn_path, resolved_name = resolved
-                      if File.exists?(fn_path)
-                        fn_source = fetch_file_content(fn_path)
-                        fn_lines = fn_source.lines
-                        fn_def_index = find_function_def(fn_lines, resolved_name)
-                      end
-                    end
-                  end
-
-                  fn_codeblock = fn_def_index.nil? ? nil : parse_code_block(fn_lines[fn_def_index..])
-                  fn_codeblock_lines = fn_codeblock.nil? ? [] of ::String : fn_codeblock.split("\n")
-
-                  fn_methods = [] of ::String
-                  fn_methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
-                  if fn_methods_match
-                    fn_methods_match[1].scan(/['"]([A-Za-z]+)['"]/) do |method_match|
-                      method = method_match[1].upcase
-                      fn_methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
-                    end
-                  end
-                  fn_methods << "GET" if fn_methods.empty?
-
-                  api_instances_for_fn = path_api_instances[path]?
-                  fn_prefix = (api_instances_for_fn && api_instances_for_fn.has_key?(router_name)) ? api_instances_for_fn[router_name] : ""
-                  fn_full_path = "#{fn_prefix}#{route_path}"
-                  fn_full_path = "/#{fn_full_path}" unless fn_full_path.starts_with?("/")
-
-                  fn_methods.each do |m|
-                    fn_details = Details.new(PathInfo.new(path, line_index + 1))
-                    fn_params = fn_codeblock_lines.empty? ? [] of Param : get_filtered_params(m, extract_request_params(fn_codeblock_lines))
-                    endpoint = Endpoint.new(fn_full_path, m, fn_params)
-                    endpoint.details = fn_details
-
-                    unless fn_codeblock.nil? || fn_def_index.nil?
-                      push_callees_from(
-                        endpoint,
-                        fn_codeblock,
-                        fn_def_index,
-                        fn_path,
-                        definition_base_path: base_path_for(fn_path),
-                        source: fn_source,
-                      )
-                    end
-
-                    result << endpoint
-                  end
-                else
-                  # Extract methods list
-                  methods = [] of ::String
-                  methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
-                  if methods_match
-                    methods_str = methods_match[1]
-                    methods_str.scan(/['"]([A-Za-z]+)['"]/) do |method_match|
-                      method = method_match[1].upcase
-                      methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
-                    end
-                  end
-
-                  # Store class view registration
-                  class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
-                    line_index, path, route_path, class_name, view_name, methods
-                  )
-                  @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
-                  @class_views[router_name] << class_view_info
-                end
-              end
-
-              # flask_restful / flask-restx `api.add_resource(Resource,
-              # "/url"[, "/url2"], endpoint=...)` (and Api-subclass wrapper
-              # methods collected above). Register each URL as a class-view
-              # against the api instance; the @class_views consumer below
-              # then resolves the Resource class (cross-file aware) and
-              # infers one endpoint per HTTP-verb method it defines.
-              if registrar_substrings.any? { |s| line.includes?(s) }
-                effective_add_resource = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(lines, line_index, original_line) : original_line
-                if ar_match = effective_add_resource.match(add_resource_re)
-                  router_name = ar_match[1]
-                  arg_parts = split_python_call_args(ar_match[2])
-                  unless arg_parts.empty?
-                    resource_class = arg_parts[0].strip
-                    resource_class = resource_class.split(".").last if resource_class.includes?(".")
-                    if resource_class.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
-                      arg_parts[1..].each do |raw_part|
-                        part = raw_part.strip
-                        break if part.matches?(/\A#{PYTHON_VAR_NAME_REGEX}\s*=/) # keyword args terminate the URL list
-                        url_match = part.match(/\A[rf]?['"]([^'"]*)['"]\z/)
-                        next unless url_match
-                        @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
-                        @class_views[router_name] << Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
-                          line_index, path, url_match[1], resource_class, "", [] of ::String
-                        )
-                      end
-                    end
-                  end
-                end
+      # `add_namespace` matchers interpolate the instance name and
+      # can't be hoisted; skip the per-instance regex builds unless
+      # the call is present on this line (the match requires it).
+      if ns_line.includes?(".add_namespace(")
+        fs.api_instances.each do |_api_instance_name, _prefix|
+          add_namespace_match = ns_line.match add_namespace_call_regex(_api_instance_name)
+          if add_namespace_match
+            parser = get_parser(fs.path)
+            if parser.@global_variables.has_key?(add_namespace_match[2])
+              gv = parser.@global_variables[add_namespace_match[2]]
+              if gv.type == "Namespace"
+                # Prefer the explicit mount path on
+                # `add_namespace(ns, "/x")` (authoritative); fall
+                # back to the Namespace(...) definition's own
+                # path=/name when no positional path is given.
+                resolved = if mount_path = extract_add_namespace_path(ns_line, _api_instance_name, add_namespace_match[2])
+                             joined = File.join(_prefix, mount_path)
+                             joined.starts_with?("/") ? joined : "/#{joined}"
+                           else
+                             extract_namespace_prefix(parser, add_namespace_match[2], _prefix)
+                           end
+                fs.api_instances[gv.name] = resolved
+                # Bridge to the namespace's route-definition file,
+                # which has no view onto this host file's prefixes.
+                state.namespace_prefixes[{fs.base_path, gv.name}] = resolved
               end
             end
           end
         end
       end
+    end
 
+    # Temporary Addition: register_view
+    # The `blueprint,routes=[...]` matcher interpolates the
+    # blueprint name; skip the per-blueprint regex builds unless
+    # this line actually carries a `routes=` registration.
+    private def emit_view_registration_routes(fs : SourceScan, state : ScanState, line_index : Int32,
+                                              original_line : ::String, line : ::String) : Nil
+      if line.includes?("routes=")
+        state.blueprint_prefixes.each do |key, blueprint_prefix|
+          next unless key[0] == fs.base_path
+          blueprint_name = key[1]
+          view_registration_match = line.match view_registration_regex(blueprint_name)
+          if view_registration_match
+            # Re-extract route paths from original line to preserve spaces in paths
+            original_registration_match = original_line.match view_registration_original_regex(blueprint_name)
+            route_paths = original_registration_match ? original_registration_match[1] : view_registration_match[1]
+            route_paths.scan /['"]([^'"]*)['"]/ do |path_str_match|
+              if !path_str_match.nil? && path_str_match.size == 2
+                route_path = path_str_match[1]
+                # Parse methods from reference views (TODO)
+                route_url = "#{blueprint_prefix}#{route_path}"
+                route_url = "/#{route_url}" unless route_url.starts_with?("/")
+                details = Details.new(PathInfo.new(fs.path, line_index + 1))
+                result << Endpoint.new(route_url, "GET", details)
+              end
+            end
+          end
+        end
+      end
+    end
+
+    # Identify Blueprint registration
+    private def record_blueprint_registration(fs : SourceScan, state : ScanState,
+                                              original_line : ::String, line : ::String) : Nil
+      register_blueprint_match = line.includes?(".register_blueprint(") ? line.match(REGISTER_BLUEPRINT_RE) : nil
+      if register_blueprint_match
+        parent_name = register_blueprint_match[1]
+        blueprint_name = register_blueprint_match[2]
+        url_prefix_match = original_line.match /url_prefix\s*=\s*[rf]?['"]([^'"]*)['"]/
+        blueprint_mount_prefix = url_prefix_match ? url_prefix_match[1] : ""
+        state.blueprint_mounts[fs.path] ||= [] of Tuple(::String, ::String, ::String)
+        state.blueprint_mounts[fs.path] << {parent_name, blueprint_name, blueprint_mount_prefix}
+
+        if url_prefix_match
+          resolved = false
+          parser = get_parser(fs.path)
+          if parser.@global_variables.has_key?(blueprint_name)
+            gv = parser.@global_variables[blueprint_name]
+            if gv.type == "Blueprint"
+              state.register_blueprint[gv.path] ||= Hash(::String, ::String).new
+              state.register_blueprint[gv.path][blueprint_name] = url_prefix_match[1]
+              resolved = true
+            end
+          end
+
+          # Cross-file resolution: resolve imported blueprint via import map
+          unless resolved
+            import_map = (fs.import_map_cache ||= find_imported_modules(fs.base_path, fs.path))
+            if import_map.has_key?(blueprint_name)
+              source_file, _package_type = import_map[blueprint_name]
+              if !source_file.empty? && File.exists?(source_file)
+                state.register_blueprint[source_file] ||= Hash(::String, ::String).new
+                state.register_blueprint[source_file][blueprint_name] = url_prefix_match[1]
+              end
+            end
+          end
+        end
+      end
+    end
+
+    # Flask route decorators (`@<router>.route(...)`,
+    # `@<router>.<method>(...)`) are discovered in the tree-sitter
+    # pre-pass above. Look up this line in the resulting map;
+    # the downstream consumer still expects an `extra_params`
+    # string of the shape `methods=['GET','POST']`, so we
+    # synthesise it from the structured method list here.
+    private def record_decorated_routes(fs : SourceScan, line_index : Int32) : Nil
+      if ts_hits = fs.decorations_by_line[line_index]?
+        ts_hits.each do |decoration|
+          methods_literal = decoration.methods.map { |m| "'#{m}'" }.join(",")
+          extra_params = "methods=[#{methods_literal}]"
+          router_info = Tuple(Int32, ::String, ::String, ::String).new(line_index, fs.path, decoration.path, extra_params)
+          @routes[decoration.router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String)
+          @routes[decoration.router_name] << router_info
+        end
+      end
+    end
+
+    # Identify view assignments: view_var = ClassName.as_view('name')
+    # Note: spaces are already removed from line at this point
+    private def record_view_assignment(fs : SourceScan, line : ::String) : Nil
+      view_assign_match = line.includes?(".as_view(") ? line.match(VIEW_ASSIGN_RE) : nil
+      if view_assign_match
+        view_var = view_assign_match[1]
+        class_name = view_assign_match[2]
+        fs.view_assignments[view_var] = class_name
+      end
+    end
+
+    # Identify add_url_rule() registrations for class-based views
+    # Match the call generically, then extract rule/view_func from any argument position
+    private def scan_add_url_rule_registrations(fs : SourceScan, state : ScanState, line_index : Int32,
+                                                original_line : ::String, line : ::String) : Nil
+      has_add_url_rule = line.includes?(".add_url_rule(")
+      effective_add_url_rule = if has_add_url_rule && python_paren_delta(original_line) > 0
+                                 join_until_python_call_closes(fs.lines, line_index, original_line)
+                               else
+                                 original_line
+                               end
+      # `line` is already original_line space-stripped, so only
+      # re-strip when we coalesced continuation lines; otherwise
+      # reuse it instead of allocating a new gsub copy per line.
+      effective_add_url_rule_stripped = has_add_url_rule ? effective_add_url_rule.gsub(" ", "") : line
+      effective_add_url_rule_stripped.scan(ADD_URL_RULE_RE) do |match_data|
+        handle_add_url_rule_match(fs, state, line_index, match_data, effective_add_url_rule)
+      end
+    end
+
+    # One `add_url_rule(...)` call: either a class-based view (recorded for
+    # the `@class_views` pass) or a plain function view (emitted here).
+    private def handle_add_url_rule_match(fs : SourceScan, state : ScanState, line_index : Int32,
+                                          match_data : Regex::MatchData, effective_add_url_rule : ::String) : Nil
+      return if match_data.size.zero?
+      router_name = match_data[1]
+      args_str = match_data[2]
+
+      route_path = extract_add_url_rule_route_path(effective_add_url_rule, args_str)
+      return if route_path.empty?
+
+      class_name, view_name = resolve_add_url_rule_view(fs, args_str)
+      if class_name.empty?
+        emit_add_url_rule_function_view(fs, state, line_index, router_name, route_path, args_str)
+      else
+        record_add_url_rule_class_view(fs, line_index, router_name, route_path, class_name, view_name, args_str)
+      end
+    end
+
+    private def extract_add_url_rule_route_path(effective_add_url_rule : ::String, args_str : ::String) : ::String
+      # Extract route path from original line to preserve spaces in paths
+      # Try rule= keyword first, then first positional string arg
+      route_path = ""
+      original_args_match = effective_add_url_rule.match /\.add_url_rule\((.+)\)/m
+      original_args = original_args_match ? original_args_match[1] : args_str
+      rule_match = original_args.match /rule\s*=\s*[rf]?['"]([^'"]*)['"]/
+      if rule_match
+        route_path = rule_match[1]
+      else
+        first_str_match = original_args.match /^\s*[rf]?['"]([^'"]*)['"]/
+        route_path = first_str_match[1] if first_str_match
+      end
+      route_path
+    end
+
+    # Resolve the view an `add_url_rule(...)` call registers, as
+    # {class_name, view_name}. An empty class name means the call does not
+    # register a class-based view.
+    private def resolve_add_url_rule_view(fs : SourceScan, args_str : ::String) : Tuple(::String, ::String)
+      class_name = ""
+      view_name = ""
+
+      # Extract view_func: try keyword form, then positional form
+      # Keyword: view_func=ClassName.as_view('name') or view_func=view_var
+      view_func_match = args_str.match VIEW_FUNC_AS_VIEW_RE
+      if view_func_match
+        class_name = view_func_match[1]
+        view_name = view_func_match[2]
+      else
+        view_var_match = args_str.match VIEW_FUNC_VAR_RE
+        if view_var_match
+          view_var = view_var_match[1]
+          if fs.view_assignments.has_key?(view_var)
+            class_name = fs.view_assignments[view_var]
+            view_name = view_var
+          end
+        end
+      end
+
+      # Positional: add_url_rule('/path', 'endpoint', view_var) or
+      #             add_url_rule('/path', 'endpoint', Class.as_view('name'))
+      # After space-stripping: '/path','endpoint',view_var
+      if class_name.empty?
+        positional_parts = split_add_url_rule_positional_args(args_str)
+
+        # Flask signature: add_url_rule(rule, endpoint=None, view_func=None, ...)
+        # 2nd or 3rd positional arg can be view_func
+        view_arg = if positional_parts.size >= 3
+                     positional_parts[2]
+                   elsif positional_parts.size == 2
+                     positional_parts[1]
+                   else
+                     ""
+                   end
+
+        unless view_arg.empty?
+          as_view_match = view_arg.match /(#{PYTHON_VAR_NAME_REGEX})\.as_view\([rf]?['"]([^'"]*)['"]\)/
+          if as_view_match
+            class_name = as_view_match[1]
+            view_name = as_view_match[2]
+          elsif fs.view_assignments.has_key?(view_arg)
+            class_name = fs.view_assignments[view_arg]
+            view_name = view_arg
+          end
+        end
+      end
+
+      {class_name, view_name}
+    end
+
+    # Split the positional arguments of an `add_url_rule(...)` call,
+    # stopping at the first keyword argument.
+    private def split_add_url_rule_positional_args(args_str : ::String) : Array(::String)
+      # Split positional args respecting nested parentheses
+      positional_parts = [] of ::String
+      remaining = args_str
+      while !remaining.empty?
+        # Match a quoted string argument
+        str_match = remaining.match /^[rf]?['"][^'"]*['"]/
+        if str_match
+          positional_parts << str_match[0]
+          remaining = remaining[str_match[0].size..]
+          remaining = remaining.lstrip(',')
+          next
+        end
+        # Stop at keyword arguments
+        break if remaining.match /^#{PYTHON_VAR_NAME_REGEX}=/
+        # Match an expression, tracking paren depth to handle nested calls like .as_view('name')
+        # `String#[]` walks from the start on every call for
+        # non-ASCII content, so indexing `remaining` directly
+        # inside this while loop was O(n^2) per segment;
+        # `chars` gives O(1) random access instead.
+        paren_depth = 0
+        end_idx = 0
+        remaining_chars = remaining.chars
+        while end_idx < remaining_chars.size
+          ch = remaining_chars[end_idx]
+          if ch == '('
+            paren_depth += 1
+          elsif ch == ')'
+            break if paren_depth == 0
+            paren_depth -= 1
+          elsif ch == ',' && paren_depth == 0
+            break
+          end
+          end_idx += 1
+        end
+        if end_idx > 0
+          positional_parts << remaining[0...end_idx]
+          remaining = remaining[end_idx..]
+          remaining = remaining.lstrip(',')
+          next
+        end
+        break
+      end
+      positional_parts
+    end
+
+    # Function-view registration:
+    #   app.add_url_rule("/x", "name", view_func=fn)
+    #   app.add_url_rule("/x", "name", view_func=fn, methods=["GET", "POST"])
+    # The class-view branch above only fires for
+    # `.as_view(...)` shapes; bare function refs fell
+    # through. Resolve the function body when it is in
+    # this file so params/callees match decorator routes.
+    private def emit_add_url_rule_function_view(fs : SourceScan, state : ScanState, line_index : Int32,
+                                                router_name : ::String, route_path : ::String,
+                                                args_str : ::String) : Nil
+      fn_name = extract_add_url_rule_function_name(args_str)
+      fn_path = fs.path
+      fn_source = fs.source
+      fn_lines = fs.lines
+      fn_def_index = fn_name.empty? || fn_name.includes?(".") ? nil : find_function_def(fs.lines, fn_name)
+      if fn_def_index.nil? && !fn_name.empty?
+        import_map = (fs.import_map_cache ||= find_imported_modules(fs.base_path, fs.path, fs.source))
+        if resolved = resolve_external_function_view(fn_name, fs.path, import_map)
+          fn_path, resolved_name = resolved
+          if File.exists?(fn_path)
+            fn_source = fetch_file_content(fn_path)
+            fn_lines = fn_source.lines
+            fn_def_index = find_function_def(fn_lines, resolved_name)
+          end
+        end
+      end
+
+      fn_codeblock = fn_def_index.nil? ? nil : parse_code_block(fn_lines[fn_def_index..])
+      fn_codeblock_lines = fn_codeblock.nil? ? [] of ::String : fn_codeblock.split("\n")
+
+      fn_methods = [] of ::String
+      fn_methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
+      if fn_methods_match
+        fn_methods_match[1].scan(/['"]([A-Za-z]+)['"]/) do |method_match|
+          method = method_match[1].upcase
+          fn_methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
+        end
+      end
+      fn_methods << "GET" if fn_methods.empty?
+
+      api_instances_for_fn = state.path_api_instances[fs.path]?
+      fn_prefix = (api_instances_for_fn && api_instances_for_fn.has_key?(router_name)) ? api_instances_for_fn[router_name] : ""
+      fn_full_path = "#{fn_prefix}#{route_path}"
+      fn_full_path = "/#{fn_full_path}" unless fn_full_path.starts_with?("/")
+
+      fn_methods.each do |m|
+        fn_details = Details.new(PathInfo.new(fs.path, line_index + 1))
+        fn_params = fn_codeblock_lines.empty? ? [] of Param : get_filtered_params(m, extract_request_params(fn_codeblock_lines))
+        endpoint = Endpoint.new(fn_full_path, m, fn_params)
+        endpoint.details = fn_details
+
+        unless fn_codeblock.nil? || fn_def_index.nil?
+          push_callees_from(
+            endpoint,
+            fn_codeblock,
+            fn_def_index,
+            fn_path,
+            definition_base_path: base_path_for(fn_path),
+            source: fn_source,
+          )
+        end
+
+        result << endpoint
+      end
+    end
+
+    private def record_add_url_rule_class_view(fs : SourceScan, line_index : Int32, router_name : ::String,
+                                               route_path : ::String, class_name : ::String,
+                                               view_name : ::String, args_str : ::String) : Nil
+      # Extract methods list
+      methods = [] of ::String
+      methods_match = args_str.match /methods=[\[\(](.*?)[\]\)]/m
+      if methods_match
+        methods_str = methods_match[1]
+        methods_str.scan(/['"]([A-Za-z]+)['"]/) do |method_match|
+          method = method_match[1].upcase
+          methods << method if HTTP_METHODS.any? { |hm| hm.upcase == method }
+        end
+      end
+
+      # Store class view registration
+      class_view_info = Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+        line_index, fs.path, route_path, class_name, view_name, methods
+      )
+      @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+      @class_views[router_name] << class_view_info
+    end
+
+    # flask_restful / flask-restx `api.add_resource(Resource,
+    # "/url"[, "/url2"], endpoint=...)` (and Api-subclass wrapper
+    # methods collected above). Register each URL as a class-view
+    # against the api instance; the @class_views consumer below
+    # then resolves the Resource class (cross-file aware) and
+    # infers one endpoint per HTTP-verb method it defines.
+    private def record_resource_registrations(fs : SourceScan, line_index : Int32,
+                                              original_line : ::String, line : ::String) : Nil
+      if fs.registrar_substrings.any? { |s| line.includes?(s) }
+        effective_add_resource = python_paren_delta(original_line) > 0 ? join_until_python_call_closes(fs.lines, line_index, original_line) : original_line
+        if ar_match = effective_add_resource.match(fs.add_resource_re)
+          router_name = ar_match[1]
+          arg_parts = split_python_call_args(ar_match[2])
+          unless arg_parts.empty?
+            resource_class = arg_parts[0].strip
+            resource_class = resource_class.split(".").last if resource_class.includes?(".")
+            if resource_class.matches?(/\A[A-Za-z_][A-Za-z0-9_]*\z/)
+              arg_parts[1..].each do |raw_part|
+                part = raw_part.strip
+                break if part.matches?(/\A#{PYTHON_VAR_NAME_REGEX}\s*=/) # keyword args terminate the URL list
+                url_match = part.match(/\A[rf]?['"]([^'"]*)['"]\z/)
+                next unless url_match
+                @class_views[router_name] ||= [] of Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String))
+                @class_views[router_name] << Tuple(Int32, ::String, ::String, ::String, ::String, Array(::String)).new(
+                  line_index, fs.path, url_match[1], resource_class, "", [] of ::String
+                )
+              end
+            end
+          end
+        end
+      end
+    end
+
+    # Fold each `register_blueprint(bp, url_prefix=...)` mount into the
+    # blueprint's own prefix, then resolve blueprints mounted on other
+    # blueprints. Runs after the whole walk because the registering file
+    # may be scanned before the file that declares the blueprint.
+    private def resolve_blueprint_prefixes(state : ScanState) : Nil
       # Update the API instances with the blueprint prefixes
-      own_api_instances = clone_path_api_instances(path_api_instances)
-      register_blueprint.each do |path, blueprint_info|
+      own_api_instances = clone_path_api_instances(state.path_api_instances)
+      state.register_blueprint.each do |path, blueprint_info|
         blueprint_info.each do |blueprint_name, blueprint_prefix|
-          if path_api_instances.has_key?(path)
-            api_instances = path_api_instances[path]
+          if state.path_api_instances.has_key?(path)
+            api_instances = state.path_api_instances[path]
             own_prefix = api_instances[blueprint_name]? || ""
             api_instances[blueprint_name] = File.join(blueprint_prefix, own_prefix)
           end
         end
       end
-      apply_nested_blueprint_prefixes(path_api_instances, own_api_instances, blueprint_mounts)
+      apply_nested_blueprint_prefixes(state.path_api_instances, own_api_instances, state.blueprint_mounts)
+    end
 
+    # Emit endpoints for the `@<router>.route(...)`-style decorators
+    # collected into `@routes` during the file walk.
+    private def emit_route_endpoints(state : ScanState) : Nil
       # Iterate through the routes and extract endpoints
       @routes.each do |router_name, router_info_list|
         router_info_list.each do |router_info|
           line_index, path, route_path, extra_params = router_info
           lines = fetch_file_content(path).lines
           expect_params, class_def_index = extract_params_from_decorator(path, lines, line_index)
-          api_instances = path_api_instances[path]
+          api_instances = state.path_api_instances[path]
           route_base_path = base_path_for(path)
-          namespace_prefix = namespace_prefixes[{route_base_path, router_name}]?
+          namespace_prefix = state.namespace_prefixes[{route_base_path, router_name}]?
           if api_instances.has_key?(router_name)
             prefix = api_instances[router_name]
           elsif namespace_prefix
@@ -765,7 +916,11 @@ module Analyzer::Python
           end
         end
       end
+    end
 
+    # Emit endpoints for the class-based views registered into
+    # `@class_views` by `add_url_rule(...)` / `add_resource(...)`.
+    private def emit_class_view_endpoints(state : ScanState) : Nil
       # Process class-based views from add_url_rule() / add_resource()
       # registrations. The import-map fallback below resolves the same
       # file repeatedly (e.g. redash registers 60+ resources from one
@@ -775,7 +930,7 @@ module Analyzer::Python
         class_view_list.each do |class_view_info|
           _, path, route_path, class_name, _, methods = class_view_info
 
-          api_instances = path_api_instances[path]
+          api_instances = state.path_api_instances[path]
           prefix = api_instances.has_key?(router_name) ? api_instances[router_name] : ""
 
           # Try to use parser to find class definition, otherwise assume same file
@@ -867,9 +1022,6 @@ module Analyzer::Python
           end
         end
       end
-
-      Fiber.yield
-      result
     end
 
     # Apps routinely wrap `add_resource` in an `Api` subclass method so the
