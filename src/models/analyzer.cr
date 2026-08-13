@@ -205,10 +205,21 @@ class Analyzer
   def parallel_analyze(files : Array(String), &block : String -> Nil)
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
     WaitGroup.wait do |wg|
-      # Producer — tracked by the WaitGroup
+      # Producer — tracked by the WaitGroup.
+      #
+      # `ensure`, not a trailing statement: if the producer ever raises
+      # mid-send, an unclosed channel leaves every worker parked in
+      # `receive?` forever and `WaitGroup.wait` never returns — a silent
+      # hang with no output and no exit code. `detector.cr`'s reader already
+      # closes in an `ensure` for that reason; the analyzer side did not.
+      # Nothing in this body can raise today (pure array iteration), so this
+      # is defence in depth against the next edit, not a live fix.
       wg.spawn do
-        files.each { |file| channel.send(file) }
-        channel.close
+        begin
+          files.each { |file| channel.send(file) }
+        ensure
+          channel.close
+        end
       end
 
       bounded_worker_count.times do
@@ -398,10 +409,14 @@ class FileAnalyzer < Analyzer
     channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
     WaitGroup.wait do |wg|
-      # Producer — tracked by the WaitGroup
+      # Producer — tracked by the WaitGroup. Closes in an `ensure` for the
+      # same reason as the overload above.
       wg.spawn do
-        all_files.each { |file| channel.send(file) }
-        channel.close
+        begin
+          all_files.each { |file| channel.send(file) }
+        ensure
+          channel.close
+        end
       end
 
       worker_count.times do

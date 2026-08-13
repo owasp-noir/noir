@@ -50,7 +50,6 @@ class NoirLogger
     @color_mode = colorize
     @no_log = no_log
     @no_spinner = no_spinner
-    @output_mutex = Mutex.new
     @spinner_active = false
     @stdout_busy = Atomic(Int8).new(0_i8)
   end
