@@ -19,8 +19,8 @@ module Noir
     # objects. Mixed case is allowed because both `r.GET(...)` (Gin) and
     # `r.Get(...)` (fiber, gin alt) appear in the wild.
     HTTP_VERB_METHODS = Set{
-      "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS",
-      "Get", "Post", "Put", "Delete", "Patch", "Head", "Options",
+      "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "QUERY",
+      "Get", "Post", "Put", "Delete", "Patch", "Head", "Options", "Query",
       "ANY", "Any", "All",
     }
 
@@ -1505,6 +1505,32 @@ module Noir
       when "raw_string_literal"
         text = Noir::TreeSitter.node_text(node, source)
         text.starts_with?('`') && text.ends_with?('`') ? text[1..-2] : text
+      else
+        ""
+      end
+    end
+
+    # An HTTP method written as a string literal ("POST"), an
+    # `http.MethodX` selector, or an identifier (`MethodQuery`); collapses
+    # to the bare upper-cased verb. Shared across Go extractors.
+    private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "").upcase
+      when "selector_expression"
+        text = Noir::TreeSitter.node_text(node, source)
+        if idx = text.index("Method")
+          text[(idx + "Method".size)..].upcase
+        else
+          ""
+        end
+      when "identifier"
+        text = Noir::TreeSitter.node_text(node, source)
+        if text.starts_with?("Method")
+          text["Method".size..].upcase
+        else
+          ""
+        end
       else
         ""
       end

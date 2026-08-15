@@ -286,7 +286,7 @@ module Noir::GoRequestParamExtractor
 
   private def form_value_param_type(http_method : String) : String
     case http_method
-    when "GET", "HEAD", ""
+    when "GET", "HEAD", "QUERY", ""
       "query"
     else
       "form"

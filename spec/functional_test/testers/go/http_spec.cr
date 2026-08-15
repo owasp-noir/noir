@@ -14,6 +14,12 @@ expected_endpoints = [
   Endpoint.new("/items", "POST", [
     Param.new("title", "", "form"),
   ]),
+  Endpoint.new("/search", "QUERY", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/query-manual", "QUERY", [
+    Param.new("filter", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/go/http/", {

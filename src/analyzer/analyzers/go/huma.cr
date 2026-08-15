@@ -269,6 +269,7 @@ module Analyzer::Go
       "http.MethodOptions" => "OPTIONS",
       "http.MethodConnect" => "CONNECT",
       "http.MethodTrace"   => "TRACE",
+      "http.MethodQuery"   => "QUERY",
     }
 
     # Pulls the Input struct name out of the handler function literal.
