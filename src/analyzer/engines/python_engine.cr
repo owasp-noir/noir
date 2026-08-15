@@ -5,8 +5,29 @@ require "json"
 
 module Analyzer::Python
   abstract class PythonEngine < Analyzer
-    # HTTP method names commonly used in REST APIs
-    HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace"]
+    # HTTP method names commonly used in REST APIs. `query` (RFC 10008) is
+    # included for frameworks whose class-based-view dispatch is duck-typed
+    # (Flask/Quart/Sanic call `getattr(self, request.method.lower())`, so a
+    # `def query(self):` method genuinely serves QUERY requests).
+    HTTP_METHODS = ["get", "post", "put", "patch", "delete", "head", "options", "trace", "query"]
+
+    # `HTTP_METHODS` minus `query`. Analyzers pattern-match a bare method
+    # name against source text in more than one shape — a `def <verb>(...)`
+    # head inside a confirmed handler class, or a verb token appearing
+    # anywhere in a decorator's raw text — and for two reasons a match on
+    # `query` there is not reliable evidence of QUERY support:
+    #
+    #   * The framework dispatches via an explicit method allowlist rather
+    #     than duck-typing (Django's `http_method_names`, Tornado's
+    #     `SUPPORTED_METHODS`), so a same-named helper method — a common
+    #     name for search/filter logic — is genuinely inert, not a route.
+    #   * The match is a bare-word scan of arbitrary decorator text, where
+    #     `query` routinely appears as an unrelated parameter name (e.g.
+    #     DRF-spectacular's `OpenApiParameter("query", ...)`).
+    #
+    # Shared here so each consuming analyzer doesn't redefine the same
+    # subtraction with its own copy of the justification.
+    HTTP_METHODS_EXCLUDING_QUERY = HTTP_METHODS - ["query"]
     # Indentation size in spaces; different sizes can cause analysis issues
     INDENTATION_SIZE = 4
     # Regex for valid Python variable names

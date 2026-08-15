@@ -19,10 +19,14 @@ module Analyzer::Python
       "headers" => {nil, "header"},
     }
 
+    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
+    # whole purpose, carries its filter criteria in a request body like
+    # POST — so it joins the body-bearing methods for "form"/"json", not
+    # the read-only "query" (query-string) type.
     REQUEST_PARAM_TYPES = {
       "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE"],
+      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
+      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
       "cookie" => nil,
       "header" => nil,
     }
