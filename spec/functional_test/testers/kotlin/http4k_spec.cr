@@ -4,6 +4,9 @@ expected_endpoints = [
   Endpoint.new("/hello", "GET", [
     Param.new("name", "", "query"),
   ]),
+  Endpoint.new("/search", "QUERY", [
+    Param.new("filter", "", "query"),
+  ]),
   Endpoint.new("/users", "POST", [
     Param.new("body", "", "json"),
   ]),
@@ -13,6 +16,9 @@ expected_endpoints = [
     Param.new("body", "", "json"),
   ]),
   Endpoint.new("/api/status", "GET"),
+  Endpoint.new("/api/search", "QUERY", [
+    Param.new("filter", "", "query"),
+  ]),
   Endpoint.new("/api/v1/health", "GET"),
   Endpoint.new("/api/v1/submit", "POST", [
     Param.new("body", "", "json"),
@@ -21,6 +27,9 @@ expected_endpoints = [
   Endpoint.new("/api/v1/items/{itemId}", "GET", [
     Param.new("itemId", "", "path"),
     Param.new("category", "", "query"),
+  ]),
+  Endpoint.new("/api/contract-search", "QUERY", [
+    Param.new("q", "", "query"),
   ]),
   Endpoint.new("/sessions/{id}", "DELETE", [
     Param.new("id", "", "path"),
