@@ -47,7 +47,7 @@ module Noir
 
     private def http_method_name?(value : String) : Bool
       case value.downcase
-      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all"
+      when "get", "post", "put", "delete", "options", "head", "patch", "del", "all", "query"
         true
       else
         false
@@ -513,6 +513,35 @@ module Noir
       nil
     end
 
+    private def skip_matching_paren(lparen_idx : Int32) : Int32?
+      return unless lparen_idx < @tokens.size && @tokens[lparen_idx].type == :lparen
+      idx = lparen_idx + 1
+      paren_depth = 1
+      bracket_depth = 0
+      brace_depth = 0
+
+      while idx < @tokens.size && paren_depth > 0
+        token = @tokens[idx]
+        case token.type
+        when :lparen
+          paren_depth += 1
+        when :rparen
+          paren_depth -= 1
+          return idx if paren_depth == 0
+        when :lbracket
+          bracket_depth += 1
+        when :rbracket
+          bracket_depth -= 1 if bracket_depth > 0
+        when :lbrace
+          brace_depth += 1
+        when :rbrace
+          brace_depth -= 1 if brace_depth > 0
+        end
+        idx += 1
+      end
+      nil
+    end
+
     # Pre-scan tokens to identify router variables
     # Routers are identified by:
     # 1. Assignment from express.Router(): const router = express.Router()
@@ -729,22 +758,27 @@ module Noir
           end
 
           start_pos = @tokens[idx].position
-          each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
-            # Scan ahead for chained HTTP method calls (bounded to avoid O(n^2))
-            j = idx + 5
-            steps = 0
-            max_steps = 1000
-            while j < limit - 1 && steps < max_steps
-              if @tokens[j].type == :dot && http_method?(@tokens[j + 1])
-                results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
-                j += 2
-                steps += 2
-                next
-              elsif @tokens[j].type == :semicolon
-                break
+          route_rparen = skip_matching_paren(idx + 3)
+          if route_rparen
+            each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
+              # Scan ahead for chained HTTP method calls (bounded to avoid O(n^2))
+              j = route_rparen + 1
+              steps = 0
+              max_steps = 1000
+              while j + 2 < limit && steps < max_steps
+                if @tokens[j].type == :dot && http_method?(@tokens[j + 1]) && @tokens[j + 2].type == :lparen
+                  results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
+                  method_rparen = skip_matching_paren(j + 2)
+                  break unless method_rparen
+                  j = method_rparen + 1
+                  steps += 1
+                  next
+                elsif @tokens[j].type == :semicolon
+                  break
+                end
+                j += 1
+                steps += 1
               end
-              j += 1
-              steps += 1
             end
           end
 
@@ -991,10 +1025,10 @@ module Noir
         end
 
         # Now look for the next chained method
-        while method_idx < @tokens.size - 1
+        while method_idx < @tokens.size - 2
           if @tokens[method_idx].type == :dot &&
-             method_idx + 1 < @tokens.size &&
-             http_method?(@tokens[method_idx + 1])
+             http_method?(@tokens[method_idx + 1]) &&
+             @tokens[method_idx + 2].type == :lparen
             method = @tokens[method_idx + 1].value.upcase
 
             # Create routes for all prefixed paths
@@ -1066,10 +1100,10 @@ module Noir
 
         # Look for method chaining after .route('/path')
         method_idx = idx + 6 # Skip past string and closing paren
-        while method_idx < @tokens.size - 1
+        while method_idx < @tokens.size - 2
           if @tokens[method_idx].type == :dot &&
-             method_idx + 1 < @tokens.size &&
-             http_method?(@tokens[method_idx + 1])
+             http_method?(@tokens[method_idx + 1]) &&
+             @tokens[method_idx + 2].type == :lparen
             method = @tokens[method_idx + 1].value.upcase
 
             # Create routes for all prefixed paths
