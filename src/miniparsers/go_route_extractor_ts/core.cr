@@ -986,6 +986,12 @@ module Noir
 
       return unless raw_path
 
+      # `Query` collides with SQL-client APIs — gocql's `session.Query("SELECT …",
+      # id)` and database/sql receivers not listed in NON_ROUTER_OPERANDS pass a
+      # string first arg plus bind args that read as a handler. Route paths always
+      # start with `/`; SQL text never does.
+      return if verb.compare("query", case_insensitive: true) == 0 && !raw_path.starts_with?('/')
+
       # Filter out non-router method calls that masquerade as verb routes:
       #   * `http.Get("http://...")` — net/http client call. Real route
       #     paths are relative to the router and never carry a scheme.
@@ -1505,25 +1511,6 @@ module Noir
       when "parenthesized_expression"
         child = first_named_child(node)
         child ? string_expr_text(child, source, values) : nil
-      end
-    end
-
-    # An HTTP method written as a string literal ("POST") or an
-    # `http.MethodX` / `fiber.MethodX` selector; both collapse to the
-    # bare upper-cased verb.
-    private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
-      case Noir::TreeSitter.node_type(node)
-      when "interpreted_string_literal", "raw_string_literal"
-        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "").upcase
-      when "selector_expression"
-        text = Noir::TreeSitter.node_text(node, source)
-        if idx = text.index("Method")
-          text[(idx + "Method".size)..].upcase
-        else
-          ""
-        end
-      else
-        ""
       end
     end
 

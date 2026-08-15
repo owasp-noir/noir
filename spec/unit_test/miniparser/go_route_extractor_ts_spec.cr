@@ -622,6 +622,21 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "does not treat SQL-client Query calls as routes" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          e.QUERY("/search", handler)
+          session.Query("SELECT * FROM users WHERE id = ?", id)
+          q.Query("UPDATE users SET name = ? WHERE id = ?", name, id)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"QUERY", "/search"}])
+  end
+
   it "does not treat zap.Any logging field constructors as routes" do
     source = <<-GO
       package main
