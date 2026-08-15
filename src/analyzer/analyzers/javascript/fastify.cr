@@ -30,6 +30,13 @@ module Analyzer::Javascript
           parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
             include_callees: include_callee)
           parser_endpoints.each do |endpoint|
+            # The shared JS parser emits `.query(` shorthand for any receiver
+            # and without the addHttpMethod('QUERY') gate or plugin prefixes.
+            # The Fastify-specific pass below owns all QUERY emission (gated
+            # shorthand plus explicit route configs), so shared-parser QUERY
+            # results would only add phantom or unprefixed duplicates.
+            next if endpoint.method == "QUERY"
+
             unless autoload_prefix.empty?
               endpoint.url = Noir::URLPath.join(autoload_prefix, endpoint.url)
             end
