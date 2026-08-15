@@ -41,7 +41,10 @@ class AdminTagger < Tagger
   WEAK_PRIVILEGE_PARAM_NAMES_NORMALIZED =
     WEAK_PRIVILEGE_PARAM_NAMES.map(&.gsub(/[-_]/, "")).to_set
 
-  READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+  # `QUERY` counts as a read (RFC 10008: safe + idempotent), so a weak
+  # privilege param on a QUERY endpoint stays below the tag threshold,
+  # exactly as it does on a GET.
+  READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS", "QUERY"}
 
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|

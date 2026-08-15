@@ -235,8 +235,10 @@ module NoirAIContext
     # endpoint that mutates server state through a callee
     # (`User.create`, `record.destroy`, `db.delete`, …) is a textbook
     # CSRF / side-effect-on-read bug — the verb says "safe / idempotent"
-    # but the code says otherwise.
-    SAFE_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+    # but the code says otherwise. `QUERY` makes the same promise
+    # (RFC 10008 defines it safe + idempotent), so a mutating QUERY
+    # handler earns the same signal.
+    SAFE_METHODS = Set{"GET", "HEAD", "OPTIONS", "QUERY"}
 
     # Each verb may be followed by additional word chars
     # (`destroy_all`, `createMany`, `deleteOne`, `updateUser`), so we
@@ -282,7 +284,7 @@ module NoirAIContext
         "unsafe_method",
         "#{endpoint.method} → #{mutating.name}",
         source: "heuristic",
-        description: "Safe-method (GET/HEAD/OPTIONS) endpoint invokes a state-changing callee; CSRF protections typically don't gate read methods, so a mutation through one is suspect.",
+        description: "Safe-method (GET/HEAD/OPTIONS/QUERY) endpoint invokes a state-changing callee; CSRF protections typically don't gate read methods, so a mutation through one is suspect.",
         path: mutating.path || anchor.try(&.path),
         line: mutating.line || anchor.try(&.line),
         confidence: 56,

@@ -92,7 +92,7 @@ noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --
 noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-skip "GET:/admin"
 ```
 
-지원 메서드: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT.
+지원 메서드: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT, QUERY.
 
 `--probe-match`와 `--probe-skip`은 여러 번 지정 가능합니다.
 

@@ -11,7 +11,10 @@ module Detector::Specification
     # signal shared by the VS Code REST Client and JetBrains HTTP Client
     # dialects, and requiring the URL-ish char keeps `.rest` reStructuredText
     # prose ("Get started with the API", "Delete the file") from matching.
-    REQUEST_LINE = /^[ \t]*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT)[ \t]+\S*[.\/:{]/im
+    # The verb alternation mirrors `ALLOWED_HTTP_METHODS` — the analyzer
+    # parses every verb in that list, so a file whose only request uses one
+    # (e.g. `QUERY`) must still be detected here.
+    REQUEST_LINE = /^[ \t]*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT|QUERY)[ \t]+\S*[.\/:{]/im
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)

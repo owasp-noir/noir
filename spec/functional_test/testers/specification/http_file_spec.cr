@@ -49,3 +49,16 @@ FunctionalTester.new("fixtures/specification/http_file/rest_ext/", {
 }, [
   Endpoint.new("/ping", "GET"),
 ]).perform_tests
+
+# RFC 10008 `QUERY` round-trips: the detector recognizes a file whose only
+# request uses the verb, and the analyzer emits it unchanged with its form
+# body — no GET downgrade anywhere in the pipeline.
+FunctionalTester.new("fixtures/specification/http_file/query_method/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, [
+  Endpoint.new("/products/search", "QUERY", [
+    Param.new("q", "widget", "form"),
+    Param.new("limit", "10", "form"),
+  ]),
+]).perform_tests

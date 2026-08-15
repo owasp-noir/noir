@@ -23,6 +23,18 @@ describe "EndpointOptimizer" do
       result[1].method.should eq("POST")
     end
 
+    it "keeps QUERY endpoints instead of downgrading them to GET" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/api/search", "QUERY"),
+        Endpoint.new("/api/search", "query"), # same endpoint, lowercase verb
+        Endpoint.new("/api/search", "GET"),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.map(&.method).sort!.should eq(["GET", "QUERY"])
+    end
+
     # An analyzer that can tell a param exists but not what it is called
     # (`request.getCookies()` hands back the whole jar) used to stand that
     # in with an empty name, and every builder rendered the hole:

@@ -290,4 +290,18 @@ describe "OutputBuilderPostman URLs" do
       "GET /wp-admin/admin-ajax.php?action=save_settings",
     ])
   end
+
+  it "keeps a QUERY endpoint's verb and body in the collection" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    request = JSON.parse(builder.io.to_s)["item"][0]["request"]
+
+    request["method"].as_s.should eq("QUERY")
+    request["body"]["urlencoded"].as_a.map(&.["key"].as_s).should eq(["q"])
+  end
 end

@@ -117,6 +117,22 @@ describe "Method-based filtering" do
     result.none? { |ep| ep.method == "GET" && ep.url.includes?("/api") }.should be_true
   end
 
+  it "reads --probe-skip QUERY as a method pattern, not a URL substring" do
+    options["probe_match"] = YAML::Any.new([] of YAML::Any)
+    options["probe_skip"] = YAML::Any.new([YAML::Any.new("QUERY")])
+    deliver = Deliver.new options
+
+    endpoints = [
+      Endpoint.new("/products/search", "QUERY"),
+      # URL contains the word "query"; a substring match would drop this too.
+      Endpoint.new("/query-builder", "GET"),
+    ]
+
+    result = deliver.apply_filters(endpoints)
+    result.map(&.method).should eq(["GET"])
+    result[0].url.should eq("/query-builder")
+  end
+
   it "supports multiple matchers with different patterns" do
     options["probe_match"] = YAML::Any.new([YAML::Any.new("GET"), YAML::Any.new("POST:/login")])
     options["probe_skip"] = YAML::Any.new([] of YAML::Any)

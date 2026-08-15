@@ -27,7 +27,9 @@ class WebhookTagger < Tagger
   # signals on "not a read", which — unlike an explicit POST/PUT/PATCH
   # allow-list — also covers wildcard ("ANY"/"*") and blank methods that
   # several analyzers emit for catch-all routes.
-  READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+  # `QUERY` counts as a read: RFC 10008 defines it as safe + idempotent,
+  # so it must not trip the "not a read" write heuristic the way POST does.
+  READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS", "QUERY"}
 
   # OAuth / OIDC / SSO authorization-code callbacks (`/oauth/callback`,
   # `/auth/<provider>/callback`) are browser-redirect handlers, not

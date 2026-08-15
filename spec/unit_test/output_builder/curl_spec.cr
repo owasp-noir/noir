@@ -68,4 +68,26 @@ describe "OutputBuilderCurl" do
     lines.map { |line| line.split("'")[1] }.should eq(WILDCARD_HTTP_METHODS)
     lines.any?(&.includes?("'ANY'")).should be_false
   end
+
+  it "prints a QUERY endpoint with its body intact" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.split("\n").reject(&.empty?)[0]
+
+    line.should start_with("curl -i -X 'QUERY' '/products/search'")
+    line.should contain("--data-raw 'q=widget'")
+    line.should contain("-H 'Content-Type: application/x-www-form-urlencoded'")
+  end
 end

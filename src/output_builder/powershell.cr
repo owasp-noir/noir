@@ -4,13 +4,20 @@ require "../utils/http_symbols"
 
 @[Noir::OutputFormat(name: "powershell", description: "PowerShell Invoke-WebRequest commands", order: 110)]
 class OutputBuilderPowershell < OutputBuilder
+  # The verbs Invoke-WebRequest's `-Method` accepts — it validates against
+  # the WebRequestMethod enum, so a verb outside this set (QUERY, CONNECT)
+  # is rejected before any request is sent and must go through
+  # `-CustomMethod` instead. The two flags are otherwise equivalent.
+  ENUM_METHODS = Set{"GET", "HEAD", "POST", "PUT", "DELETE", "TRACE", "OPTIONS", "MERGE", "PATCH"}
+
   def print(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|
       next if endpoint.non_http? # mobile deep links / CLI commands aren't HTTP requests
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
       expand_synthetic_http_methods(endpoint.method).each do |method|
-        cmd = "Invoke-WebRequest -Method \"#{escape_powershell(method)}\" -Uri \"#{escape_powershell(baked[:url])}\""
+        method_flag = ENUM_METHODS.includes?(method) ? "-Method" : "-CustomMethod"
+        cmd = "Invoke-WebRequest #{method_flag} \"#{escape_powershell(method)}\" -Uri \"#{escape_powershell(baked[:url])}\""
 
         # Build headers hash including cookies
         header_parts = [] of String

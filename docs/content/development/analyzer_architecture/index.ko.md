@@ -161,6 +161,7 @@ end
 - **`analyzer_for` 로 tech 선언**. 이 한 줄이 등록의 전부입니다 — 3단계 참조.
 - **재정의 가능한 메서드 오버라이드**. 프레임워크 파싱이 다르면 `get_static_path`, `get_route_path` 등 재정의 (Mux, GoZero 참조).
 - **`parallel_file_scan` 사용**. 채널 + worker pool 을 재구현하지 말 것.
+- **프레임워크가 실제 라우팅하는 verb만** 메서드 테이블에 나열. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가 — 추측성 항목은 프레임워크가 405로 응답할 엔드포인트를 보고하게 됩니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트는 `QUERY`로 확장되지 않으며, 이 정책은 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)에 코어 전역으로 고정되어 있습니다.
 
 ### 3. tech 메타데이터 선언
 

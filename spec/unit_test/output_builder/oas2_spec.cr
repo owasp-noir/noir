@@ -209,4 +209,28 @@ describe "OutputBuilderOas2" do
     delete_op["parameters"].as_a.any? { |p| p["in"].as_s == "path" }.should be_false
     delete_op["x-noir-unmapped-path-params"].as_a.should eq([JSON::Any.new("id")])
   end
+
+  it "degrades a QUERY endpoint to x-noir-unsupported-methods, not to get" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    path_item = JSON.parse(builder.io.to_s)["paths"]["/products/search"]
+
+    # Swagger 2.0 has no `query` operation key; the verb must survive in the
+    # extension instead of being dropped or rewritten to another method.
+    path_item["x-noir-unsupported-methods"].as_a.should eq([JSON::Any.new("QUERY")])
+    path_item.as_h.keys.should_not contain("query")
+    path_item.as_h.keys.should_not contain("get")
+  end
 end

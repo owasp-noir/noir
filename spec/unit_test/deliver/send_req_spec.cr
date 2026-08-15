@@ -148,6 +148,29 @@ describe SendReq do
     end
   end
 
+  it "sends a QUERY request with its form body on the wire" do
+    server = CapturingServer.new
+    begin
+      # RFC 10008: the whole point of QUERY is a safe request that carries
+      # content, so the probe must put the params in the body, not the URL.
+      ep = Endpoint.new(server.url_for("/products/search"), "QUERY")
+      ep.params << Param.new("q", "widget", "form")
+
+      sender = SendReq.new(base_deliver_options)
+      sender.run([ep])
+
+      server.requests.size.should eq(1)
+      req = server.requests.first
+      req[:method].should eq("QUERY")
+      req[:path].should eq("/products/search")
+      req[:headers]["Content-Type"]?.should_not be_nil
+      req[:headers]["Content-Type"].should contain("application/x-www-form-urlencoded")
+      req[:body].should contain("q=widget")
+    ensure
+      server.close
+    end
+  end
+
   it "sends a POST with JSON body when the endpoint has json params" do
     server = CapturingServer.new
     begin

@@ -79,4 +79,28 @@ describe "OutputBuilderPowershell" do
     lines.map { |line| line.split("\"")[1] }.should eq(WILDCARD_HTTP_METHODS)
     lines.any?(&.includes?("\"ANY\"")).should be_false
   end
+
+  it "routes verbs outside the -Method enum through -CustomMethod" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.split("\n").reject(&.empty?)[0]
+
+    # Invoke-WebRequest validates -Method against its enum, which has no
+    # QUERY — the emitted command must use -CustomMethod to be runnable.
+    line.should start_with("Invoke-WebRequest -CustomMethod \"QUERY\" -Uri \"/products/search\"")
+    line.should contain("-Body \"q=widget\"")
+    line.should contain("application/x-www-form-urlencoded")
+  end
 end

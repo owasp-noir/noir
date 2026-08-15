@@ -24,6 +24,17 @@ describe "Detect HTTP/REST Client Files" do
     instance.detect("ping.rest", content).should be_true
   end
 
+  it "detects a file whose only request uses the QUERY verb" do
+    content = <<-HTTP
+      QUERY https://api.example.com/products/search
+      Content-Type: application/x-www-form-urlencoded
+
+      q=widget
+      HTTP
+
+    instance.detect("search.http", content).should be_true
+  end
+
   it "ignores non-.http/.rest filenames" do
     content = "GET https://api.example.com/users\n"
     instance.detect("requests.txt", content).should be_false
