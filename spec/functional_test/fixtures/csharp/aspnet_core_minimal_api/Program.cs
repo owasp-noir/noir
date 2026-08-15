@@ -29,6 +29,13 @@ app.MapPatch("/users/{id}", async (HttpContext context) =>
 app.Map("/fallback", () => Results.Ok());
 app.MapMethods("/bulk", new[] { HttpMethods.Put, "PATCH" }, () => Results.Ok());
 
+// QUERY (RFC 10008) ships natively on .NET 10: HttpMethods.Query and the
+// bare "QUERY" literal both register through MapMethods, standalone or
+// alongside another verb in the same array.
+app.MapMethods("/search", new[] { HttpMethods.Query }, ([FromBody] SearchFilter filter) => Results.Ok(filter));
+app.MapMethods("/search-legacy", new[] { "QUERY" }, () => Results.Ok());
+app.MapMethods("/lookup", new[] { "GET", "QUERY" }, () => Results.Ok());
+
 var api = app.MapGroup("/api");
 var v1 = api.MapGroup("/v1");
 var nested = app.MapGroup("/nested").MapGroup("/v2");
@@ -46,3 +53,4 @@ app.Run();
 record CreateUserRequest(string Name);
 record UpdateUserRequest(string Name);
 record CreateOrderRequest(string Id);
+record SearchFilter(string Keyword);
