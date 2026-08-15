@@ -144,6 +144,42 @@ describe "kemal namespace routing" do
     Dir.delete(temp_dir)
   end
 
+  it "parses HTTP QUERY routes and excludes before_query/after_query filters" do
+    temp_dir = File.tempname("kemal_test")
+    Dir.mkdir_p(temp_dir)
+    temp_file = File.join(temp_dir, "test.cr")
+
+    File.write(temp_file, <<-CRYSTAL)
+      query "/search" do |env|
+        env.params.json["q"]?
+        env.params.query["mode"]
+        "search results"
+      end
+
+      before_query "/admin/*" do |env|
+        env.response.status_code = 403
+      end
+
+      after_query "/admin/*" do |env|
+        env.response.headers["x-filtered"] = "true"
+      end
+      CRYSTAL
+
+    endpoints = instance.analyze_file(temp_file)
+    endpoints.size.should eq(1)
+    endpoints[0].url.should eq("/search")
+    endpoints[0].method.should eq("QUERY")
+
+    params = endpoints[0].params
+    params.size.should eq(2)
+    params.find { |p| p.name == "q" }.try(&.param_type).should eq("json")
+    params.find { |p| p.name == "mode" }.try(&.param_type).should eq("query")
+
+    # Cleanup
+    File.delete(temp_file)
+    Dir.delete(temp_dir)
+  end
+
   it "handles routes outside namespace normally" do
     temp_dir = File.tempname("kemal_test")
     Dir.mkdir_p(temp_dir)
