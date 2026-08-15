@@ -9,5 +9,7 @@ describe "Detect JS Fastify" do
     instance.detect("server.js", "const fastify = require('fastify')()").should be_true
     instance.detect("server.ts", "import Fastify from 'fastify'").should be_true
     instance.detect("server.js", "fastify.get('/path', (req, reply) => {})").should be_true
+    instance.detect("server.js", "fastify.query('/search', (req, reply) => {})").should be_true
+    instance.detect("server.js", "fastify.route({ method: 'QUERY', url: '/search' })").should be_true
   end
 end
