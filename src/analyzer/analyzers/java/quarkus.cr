@@ -36,6 +36,7 @@ module Analyzer::Java
       dto_builder = Noir::TreeSitterJavaDtoIndex.new
       bean_cache = Hash(String, Hash(String, Array(Param))).new
       source_cache = Hash(String, String).new
+      custom_verb_cache = Hash(String, Hash(String, String)).new
 
       file_list = all_files()
       path_configs = path_configs_for(file_list)
@@ -69,6 +70,8 @@ module Analyzer::Java
             Noir::TreeSitterJaxRsExtractor.extract_bean_fields_from(root, content))
           subresource_sources = subresource_sources_for(path, content, package_name, source_cache, imports,
             Noir::TreeSitterJaxRsExtractor.extract_class_names_from(root, content))
+          custom_verb_annotations = custom_verb_index_for(path, content, package_name, custom_verb_cache, imports,
+            Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations_from(root, content))
           application_base_path = application_base_path_for(path, package_name, application_base_paths)
           configured_base_path = configured_base_path_for(path, path_configs, application_base_path)
 
@@ -76,7 +79,8 @@ module Analyzer::Java
             @result << endpoint
           end
 
-          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources, include_callees: include_callee).each do |route|
+          Noir::TreeSitterJaxRsExtractor.extract_routes_from(root, content, dto_index, bean_index, subresource_sources,
+            custom_verb_annotations: custom_verb_annotations, include_callees: include_callee).each do |route|
             line = route.line + 1
             details = Details.new(PathInfo.new(route.file_path || path, line))
             endpoint = Endpoint.new(Noir::URLPath.join_trimmed(configured_base_path, route.path), route.verb, route.params, details)
@@ -677,6 +681,43 @@ module Analyzer::Java
         end
 
         beans.each { |name, params| result[name] ||= params }
+      end
+
+      result
+    end
+
+    # Build the cross-file `@HttpMethod("VERB")` custom-annotation
+    # index for `path`. Same traversal as `bean_index_for` — the
+    # annotation type is typically declared in its own file, so this
+    # needs the same current file + same-package siblings + imports
+    # walk, gated on the file mentioning JAX-RS so unrelated `.java`
+    # files aren't parsed for annotation declarations.
+    private def custom_verb_index_for(path : String,
+                                      content : String,
+                                      package_name : String,
+                                      cache : Hash(String, Hash(String, String)),
+                                      imports : Array(Noir::ImportGraph::ImportRef)? = nil,
+                                      current_file_verbs : Hash(String, String)? = nil) : Hash(String, String)
+      result = Hash(String, String).new
+      resolved_imports = imports || Noir::TreeSitterJavaParameterExtractor.extract_imports(content)
+
+      Noir::ImportGraph.related_files(path, package_name, resolved_imports, JAVA_EXTENSION) do |file|
+        verbs = cache[file] ||= begin
+          if file == path && current_file_verbs
+            current_file_verbs
+          else
+            body = file == path ? content : read_file_content(file)
+            if body.includes?("jakarta.ws.rs") || body.includes?("javax.ws.rs")
+              Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(body)
+            else
+              Hash(String, String).new
+            end
+          end
+        rescue IO::Error
+          Hash(String, String).new
+        end
+
+        verbs.each { |name, verb| result[name] ||= verb }
       end
 
       result
