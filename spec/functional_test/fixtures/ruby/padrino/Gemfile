@@ -1,0 +1,5 @@
+source 'https://rubygems.org'
+
+gem 'padrino', '0.15.2'
+gem 'sinatra'
+gem 'rack'
