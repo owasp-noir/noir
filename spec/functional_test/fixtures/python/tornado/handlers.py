@@ -14,7 +14,14 @@ class SearchHandler(tornado.web.RequestHandler):
     def get(self):
         tags = self.get_arguments("tags")
         q = self.get_argument("q")
-        self.write({"results": []})
+        self.write({"results": self.query({"q": q})})
+
+    def query(self, filters):
+        # A helper that builds the search filter set, NOT an HTTP handler —
+        # Tornado's RequestHandler.SUPPORTED_METHODS (unlike Flask's
+        # duck-typed dispatch) never includes 'query', so this name
+        # collision must not produce a phantom QUERY endpoint.
+        return [filters]
 
 class NestedDefHandler(tornado.web.RequestHandler):
     def post(self):

@@ -342,6 +342,13 @@ class FeedbackView(View):
         message = request.POST.get('message')
         return HttpResponse(message)
 
+    def query(self, params):
+        # A helper that builds a filtered queryset, NOT an HTTP handler —
+        # Django's View.http_method_names (unlike Flask's duck-typed
+        # dispatch) never includes 'query', so this name collision must
+        # not produce a phantom QUERY endpoint.
+        return Article.objects.filter(**params)
+
 
 class EsSearchView(SearchView):
     def get_context(self):

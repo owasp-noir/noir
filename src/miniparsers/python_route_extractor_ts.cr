@@ -18,7 +18,10 @@ module Noir
   module TreeSitterPythonRouteExtractor
     extend self
 
-    HTTP_METHODS = %w[get post put patch delete head options trace]
+    # `query` (RFC 10008) recognizes `@<var>.query("/path")` shortcut
+    # decorators (Flask/Werkzeug shipped this; other decorator-based
+    # frameworks fall through harmlessly if they never define it).
+    HTTP_METHODS = %w[get post put patch delete head options trace query]
 
     # A `@<router>.route(...)` or `@<router>.<method>(...)` decorator, paired
     # with the `def`/`class` it applies to.
