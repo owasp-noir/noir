@@ -89,4 +89,33 @@ app.on('GET', '/health', (c) => {
   return c.json({ status: 'ok' })
 })
 
+// QUERY route with JSON body (RFC 10008)
+app.query('/search', async (c) => {
+  const { query, filter } = await c.req.json()
+  const apiKey = c.req.header('x-api-key')
+
+  return c.json({ results: [] })
+})
+
+// app.on() with single QUERY method
+app.on('QUERY', '/query-handler', async (c) => {
+  const { keyword } = await c.req.json()
+
+  return c.json({ status: 'ok' })
+})
+
+// app.on() with multi-verb array including QUERY
+app.on(['GET', 'QUERY'], '/items/search', async (c) => {
+  const filter = c.req.query('filter')
+
+  return c.json({ items: [] })
+})
+
+// Sub-app / chained QUERY route
+const subApp = new Hono().query('/nested-search', async (c) => {
+  const { term } = await c.req.json()
+
+  return c.json({ term })
+})
+
 export default app

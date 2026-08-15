@@ -18,6 +18,7 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.normalize_http_method("DELETE").should eq("DELETE")
       Noir::JSRouteExtractor.normalize_http_method("PATCH").should eq("PATCH")
       Noir::JSRouteExtractor.normalize_http_method("HEAD").should eq("HEAD")
+      Noir::JSRouteExtractor.normalize_http_method("QUERY").should eq("QUERY")
     end
 
     it "uppercases methods" do
