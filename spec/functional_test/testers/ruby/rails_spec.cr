@@ -23,6 +23,27 @@ expected_endpoints = [
     Param.new("context", "", "json"),
   ]),
   Endpoint.new("/posts/1", "DELETE"),
+  Endpoint.new("/posts/1/search", "QUERY"),
+  Endpoint.new("/search", "QUERY", [
+    Param.new("user_name", "", "cookie"),
+    Param.new("login", "", "cookie"),
+    Param.new("discount", "", "cookie"),
+  ]),
+  Endpoint.new("/filter", "QUERY", [
+    Param.new("user_name", "", "cookie"),
+    Param.new("login", "", "cookie"),
+    Param.new("discount", "", "cookie"),
+  ]),
+  Endpoint.new("/both", "GET", [
+    Param.new("user_name", "", "cookie"),
+    Param.new("login", "", "cookie"),
+    Param.new("discount", "", "cookie"),
+  ]),
+  Endpoint.new("/both", "QUERY", [
+    Param.new("user_name", "", "cookie"),
+    Param.new("login", "", "cookie"),
+    Param.new("discount", "", "cookie"),
+  ]),
   Endpoint.new("/up", "GET"),
   Endpoint.new("/service-worker", "GET"),
   Endpoint.new("/manifest", "GET"),
