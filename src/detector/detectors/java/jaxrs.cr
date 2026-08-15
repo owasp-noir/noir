@@ -5,9 +5,9 @@ module Detector::Java
     detector_for "java_jaxrs", extensions: %w[.java]
 
     # Frameworks that ride on JAX-RS but ship their own detector.
-    # Quarkus / Dropwizard projects should report as that specific
-    # framework, not as plain JAX-RS.
-    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard"]
+    # Quarkus / Dropwizard / Helidon MP projects should report as that
+    # specific framework, not as plain JAX-RS.
+    DERIVATIVE_MARKERS = ["io.quarkus", "io.dropwizard", "io.helidon.microprofile"]
 
     # `derivative_project?` answers a project-wide question — "does any
     # Java file under this root pull in Quarkus/Dropwizard?" — whose
@@ -40,11 +40,21 @@ module Detector::Java
       end
     end
 
+    # Manifest basenames a derivative framework can *only* show up in.
+    # Helidon MP's own quickstart is the concrete case: its JAX-RS
+    # resource classes carry no `io.helidon` import at all — the
+    # runtime is pulled in solely via `pom.xml`'s
+    # `io.helidon.microprofile.*` dependencies, so a `.java`-only scan
+    # would never see the marker and this detector would double-report
+    # both `java_jaxrs` and `java_helidon_mp` for the same project.
+    DERIVATIVE_MANIFEST_GLOBS = %w[pom.xml build.gradle build.gradle.kts]
+
     private def compute_derivative_project(root : String) : Bool
       java_glob = File.join(root, "src/main/java/**/*.java")
       fallback_glob = File.join(root, "**/*.java")
       candidates = Dir.glob(java_glob)
       candidates = Dir.glob(fallback_glob) if candidates.empty?
+      candidates += DERIVATIVE_MANIFEST_GLOBS.map { |name| File.join(root, name) }
 
       locator = CodeLocator.instance
       candidates.any? do |path|
