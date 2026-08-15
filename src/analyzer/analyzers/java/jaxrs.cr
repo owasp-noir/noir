@@ -124,13 +124,22 @@ module Analyzer::Java
       base_paths
     end
 
+    # Manifest basenames a derivative framework can *only* show up in.
+    # Helidon MP's own quickstart is the concrete case: its JAX-RS
+    # resource classes carry no `io.helidon` import at all — the
+    # runtime is pulled in solely via `pom.xml`'s
+    # `io.helidon.microprofile.*` dependencies, so a `.java`-only scan
+    # would never see the marker and JAX-RS would double-count those
+    # routes under `java_jaxrs` too.
+    DERIVATIVE_MANIFEST_BASENAMES = Set{"pom.xml", "build.gradle", "build.gradle.kts"}
+
     private def derivative_project_roots_for(file_list : Array(String)) : Set(String)
       roots = Set(String).new
 
       file_list.each do |path|
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless path.ends_with?(".#{JAVA_EXTENSION}") || DERIVATIVE_MANIFEST_BASENAMES.includes?(File.basename(path))
 
         content = read_file_content(path)
         roots << project_root_for(path) if claimed_by_derivative?(content)
@@ -171,7 +180,14 @@ module Analyzer::Java
         end
       end
 
-      configured_base_for(path)
+      # A manifest file (`pom.xml`, `build.gradle` — see
+      # `DERIVATIVE_MANIFEST_BASENAMES`) at the module root has no
+      # `/src/...` marker to slice on, so it falls back to the raw
+      # configured base — which, unlike the marker-sliced form above,
+      # may carry a trailing slash depending on how `-b` was passed.
+      # Strip it so this root compares equal to the marker-derived
+      # root for `.java` files in the same module.
+      configured_base_for(path).rstrip('/')
     end
 
     private def web_xml_base_paths_for(file_list : Array(String),
@@ -342,7 +358,9 @@ module Analyzer::Java
     # Frameworks that ride on JAX-RS but ship their own analyzer.
     # Listing them here keeps the JAX-RS analyzer the fallback for
     # vanilla Jersey / RESTEasy resources without double-counting.
-    DERIVATIVE_MARKERS    = ["io.quarkus", "io.dropwizard"]
+    # `io.helidon.microprofile` routes to `Analyzer::Java::HelidonMp`,
+    # which drives this same extractor under the `java_helidon_mp` tech.
+    DERIVATIVE_MARKERS    = ["io.quarkus", "io.dropwizard", "io.helidon.microprofile"]
     DERIVATIVE_MARKERS_RE = Regex.union(DERIVATIVE_MARKERS)
 
     private def claimed_by_derivative?(content : String) : Bool

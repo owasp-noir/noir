@@ -36,7 +36,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | Go | Beego, Chi, Echo, Fiber, Gin, GoFrame, Gorilla Mux, Goyave, Hertz, Huma, Iris, Kratos, PocketBase, fasthttp, go-restful, go-zero, httprouter, net/http |
 | Groovy | Grails |
 | Haskell | Scotty, Servant, Yesod |
-| Java | Apache Struts 2, Apache Wicket, Armeria, Dropwizard, JAX-RS, JDK HttpServer, Javalin, Micronaut, Play Framework, Quarkus, Spark Java, Spring, Vert.x |
+| Java | Apache Struts 2, Apache Wicket, Armeria, Dropwizard, Helidon MP, Helidon SE, JAX-RS, JDK HttpServer, Javalin, Micronaut, Play Framework, Quarkus, Spark Java, Spring, Vert.x |
 | JavaScript | AdonisJS, Apollo Server, Astro, Elysia, Express, Fastify, Fresh, Hapi, Hono, Koa, NestJS, Next.js, Nitro, NuxtJS, Remix, Restify, SvelteKit |
 | Kotlin | Ktor, Spring, http4k |
 | Lua | Lapis, lor |
