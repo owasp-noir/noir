@@ -148,4 +148,54 @@ describe Noir::TreeSitterHttp4kExtractor do
       {"POST", "/api/knock"},
     ])
   end
+
+  it "extracts HTTP QUERY routes from bind, nested routes, and bindContract" do
+    helper = <<-KT
+      import org.http4k.contract.ContractRoute
+      import org.http4k.contract.meta
+      import org.http4k.core.Method.QUERY
+
+      fun SearchContract(): ContractRoute {
+          return "/contract-search" meta {
+              summary = "Search items"
+          } bindContract Method.QUERY to searchHandler
+      }
+      KT
+
+    source = <<-KT
+      import org.http4k.contract.contract
+      import org.http4k.core.Method.QUERY
+      import org.http4k.core.Method.GET
+      import org.http4k.core.Method
+      import org.http4k.routing.bind
+      import org.http4k.routing.routes
+
+      val app = routes(
+          "/search" bind Method.QUERY to { req -> Response(OK) },
+          "/bare-search" bind QUERY to { req -> Response(OK) },
+          "/api" bind routes(
+              "/nested-search" bind Method.QUERY to { req -> Response(OK) },
+              contract {
+                  descriptionPath = "/api-docs"
+                  routes += SearchContract()
+              }
+          ),
+          "/items" bind routes(
+              Method.QUERY to { req -> Response(OK) }
+          )
+      )
+      KT
+
+    contract_routes = Noir::TreeSitterHttp4kExtractor.extract_contract_route_functions(helper)
+    routes = Noir::TreeSitterHttp4kExtractor.extract_routes(source, contract_routes: contract_routes)
+
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"QUERY", "/search"},
+      {"QUERY", "/bare-search"},
+      {"QUERY", "/api/nested-search"},
+      {"GET", "/api/api-docs"},
+      {"QUERY", "/api/contract-search"},
+      {"QUERY", "/items"},
+    ])
+  end
 end
