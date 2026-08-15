@@ -88,7 +88,9 @@ module Noir
     end
 
     def extract_net_http_routes(source : String,
-                                external_string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
+                                external_string_values : Hash(String, String) = Hash(String, String).new,
+                                external_functions : Hash(String, Noir::GoCalleeExtractor::FunctionBody) = Hash(String, Noir::GoCalleeExtractor::FunctionBody).new,
+                                external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)) = Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new) : Array(Route)
       routes = [] of Route
       return routes unless net_http_route_source?(source)
 
@@ -101,9 +103,27 @@ module Noir
 
         serve_mux_vars = collect_serve_mux_vars(root, source, http_aliases)
 
+        local_functions = Hash(String, LibTreeSitter::TSNode).new
+        local_methods = Hash(String, LibTreeSitter::TSNode).new
+        Noir::TreeSitter.each_named_child(root) do |child|
+          case Noir::TreeSitter.node_type(child)
+          when "function_declaration"
+            if name_node = Noir::TreeSitter.field(child, "name")
+              local_functions[Noir::TreeSitter.node_text(name_node, source)] = child
+            end
+          when "method_declaration"
+            if name_node = Noir::TreeSitter.field(child, "name")
+              local_methods[Noir::TreeSitter.node_text(name_node, source)] = child
+            end
+          end
+        end
+
         walk(root) do |node|
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
-          if route = decode_net_http_registration(node, source, http_aliases, serve_mux_vars, string_values)
+          decode_net_http_registration(
+            node, source, http_aliases, serve_mux_vars, string_values,
+            local_functions, local_methods, external_functions, external_methods
+          ) do |route|
             routes << route
           end
         end
@@ -200,7 +220,12 @@ module Noir
                                              source : String,
                                              http_aliases : Set(String),
                                              serve_mux_vars : Set(String),
-                                             string_values : Hash(String, String)) : Route?
+                                             string_values : Hash(String, String),
+                                             local_functions : Hash(String, LibTreeSitter::TSNode),
+                                             local_methods : Hash(String, LibTreeSitter::TSNode),
+                                             external_functions : Hash(String, Noir::GoCalleeExtractor::FunctionBody),
+                                             external_methods : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)),
+                                             & : Route -> Nil)
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -249,6 +274,7 @@ module Noir
 
       raw_path : String? = nil
       handler_text = ""
+      handler_node : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
         if raw_path.nil?
           if s = string_expr_text(arg, source, string_values)
@@ -258,15 +284,18 @@ module Noir
           end
         elsif handler_text.empty?
           handler_text = Noir::TreeSitter.node_text(arg, source)
+          handler_node = arg
         end
       end
 
       return unless raw_path
       return if handler_text.empty?
 
+      row = Noir::TreeSitter.node_start_row(call)
+
       # Support Go 1.22+ "METHOD /path" registration pattern.
-      # When present the verb is known statically; otherwise we emit ANY
-      # (the analyzer fans it out to all methods, matching runtime behaviour).
+      # When present the verb is known statically; otherwise we check
+      # the handler body for method dispatch or emit ANY.
       verb = "ANY"
       path = raw_path
       if m = raw_path.match(/^([A-Z]+)\s+(.*)$/i)
@@ -278,11 +307,199 @@ module Noir
         end
       end
 
-      return unless path.starts_with?("/")
+      return unless path.starts_with?("/") || path.starts_with?("{$}")
       path = "/#{path}" unless path.starts_with?("/")
       path = normalize_net_http_pattern_path(path)
 
-      Route.new(router_name, verb, path, raw_path, handler_text, Noir::TreeSitter.node_start_row(call))
+      if verb != "ANY"
+        yield Route.new(router_name, verb, path, raw_path, handler_text, row)
+        return
+      end
+
+      # For classic (verb == "ANY") registrations, inspect the handler body
+      # to detect manual dispatch on r.Method (if r.Method == "QUERY",
+      # switch r.Method { case http.MethodQuery: ... }, etc.).
+      methods = [] of String
+      if h_node = handler_node
+        if body_node = find_handler_body_node(h_node, source, local_functions, local_methods)
+          methods = extract_methods_from_handler_body(body_node, source)
+        elsif Noir::TreeSitter.node_type(h_node) == "identifier"
+          fn_name = Noir::TreeSitter.node_text(h_node, source)
+          if ext_fn = external_functions[fn_name]?
+            Noir::TreeSitter.parse_go(ext_fn.source) do |fn_root|
+              methods = extract_methods_from_handler_body(fn_root, ext_fn.source)
+            end
+          end
+        elsif Noir::TreeSitter.node_type(h_node) == "selector_expression"
+          if field_node = Noir::TreeSitter.field(h_node, "field")
+            m_name = Noir::TreeSitter.node_text(field_node, source)
+            if ext_methods = external_methods[m_name]?
+              ext_methods.each do |ext_m|
+                Noir::TreeSitter.parse_go(ext_m.source) do |m_root|
+                  methods.concat(extract_methods_from_handler_body(m_root, ext_m.source))
+                end
+              end
+              methods.uniq!
+            end
+          end
+        end
+      end
+
+      # A lone OPTIONS mention is almost always a CORS-preflight early
+      # return (`if r.Method == http.MethodOptions { return }`) guarding an
+      # otherwise method-agnostic handler — keep the ANY fan-out instead of
+      # narrowing the surface to OPTIONS.
+      if methods.empty? || methods == ["OPTIONS"]
+        yield Route.new(router_name, "ANY", path, raw_path, handler_text, row)
+      else
+        methods.each do |discovered_verb|
+          yield Route.new(router_name, discovered_verb, path, raw_path, handler_text, row)
+        end
+      end
+    end
+
+    private def find_handler_body_node(handler_node : LibTreeSitter::TSNode,
+                                       source : String,
+                                       local_functions : Hash(String, LibTreeSitter::TSNode),
+                                       local_methods : Hash(String, LibTreeSitter::TSNode)) : LibTreeSitter::TSNode?
+      actual = handler_node
+
+      # Peel wrapper calls like http.HandlerFunc(...) or middleware(...)
+      while Noir::TreeSitter.node_type(actual) == "call_expression"
+        if args = Noir::TreeSitter.field(actual, "arguments")
+          inner = nil
+          Noir::TreeSitter.each_named_child(args) do |arg|
+            inner = arg
+          end
+          break unless inner
+          actual = inner
+        else
+          break
+        end
+      end
+
+      case Noir::TreeSitter.node_type(actual)
+      when "func_literal"
+        Noir::TreeSitter.field(actual, "body") || actual
+      when "identifier"
+        name = Noir::TreeSitter.node_text(actual, source)
+        if fn_node = local_functions[name]?
+          Noir::TreeSitter.field(fn_node, "body") || fn_node
+        end
+      when "selector_expression"
+        if field = Noir::TreeSitter.field(actual, "field")
+          name = Noir::TreeSitter.node_text(field, source)
+          if m_node = local_methods[name]?
+            Noir::TreeSitter.field(m_node, "body") || m_node
+          end
+        end
+      end
+    end
+
+    private def extract_methods_from_handler_body(body_node : LibTreeSitter::TSNode, source : String) : Array(String)
+      methods = [] of String
+      method_vars = Set(String).new
+
+      # First pass: find any local variables assigned from *.Method (e.g. `m := r.Method` or `method = r.Method`)
+      walk(body_node) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "short_var_declaration", "assignment_statement", "var_spec"
+          left = Noir::TreeSitter.field(node, "left")
+          right = Noir::TreeSitter.field(node, "right")
+          if Noir::TreeSitter.node_type(node) == "var_spec"
+            left = Noir::TreeSitter.field(node, "name")
+            right = Noir::TreeSitter.field(node, "value")
+          end
+          if left && right && request_method_node?(right, source)
+            var_name = Noir::TreeSitter.node_text(left, source)
+            method_vars << var_name unless var_name.empty?
+          end
+        end
+      end
+
+      # Second pass: look for `==`, `!=` comparisons and `switch` statements
+      walk(body_node) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "binary_expression"
+          op = Noir::TreeSitter.field(node, "operator")
+          next unless op
+          op_text = Noir::TreeSitter.node_text(op, source)
+          next unless op_text == "==" || op_text == "!="
+
+          left = Noir::TreeSitter.field(node, "left")
+          right = Noir::TreeSitter.field(node, "right")
+          next unless left && right
+
+          if request_method_node?(left, source, method_vars)
+            if verb = decode_http_method_node(right, source)
+              methods << verb
+            end
+          elsif request_method_node?(right, source, method_vars)
+            if verb = decode_http_method_node(left, source)
+              methods << verb
+            end
+          end
+        when "expression_switch_statement"
+          val = Noir::TreeSitter.field(node, "value")
+          if val && request_method_node?(val, source, method_vars)
+            Noir::TreeSitter.each_named_child(node) do |case_node|
+              case Noir::TreeSitter.node_type(case_node)
+              when "expression_case"
+                if val_list = Noir::TreeSitter.field(case_node, "value")
+                  if Noir::TreeSitter.node_type(val_list) == "expression_list"
+                    Noir::TreeSitter.each_named_child(val_list) do |expr|
+                      if verb = decode_http_method_node(expr, source)
+                        methods << verb
+                      end
+                    end
+                  elsif verb = decode_http_method_node(val_list, source)
+                    methods << verb
+                  end
+                else
+                  Noir::TreeSitter.each_named_child(case_node) do |child|
+                    if Noir::TreeSitter.node_type(child) == "expression_list"
+                      Noir::TreeSitter.each_named_child(child) do |expr|
+                        if verb = decode_http_method_node(expr, source)
+                          methods << verb
+                        end
+                      end
+                    elsif verb = decode_http_method_node(child, source)
+                      methods << verb
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+
+      methods.uniq
+    end
+
+    private def request_method_node?(node : LibTreeSitter::TSNode,
+                                     source : String,
+                                     method_vars : Set(String) = Set(String).new) : Bool
+      case Noir::TreeSitter.node_type(node)
+      when "selector_expression"
+        if field = Noir::TreeSitter.field(node, "field")
+          Noir::TreeSitter.node_text(field, source) == "Method"
+        else
+          false
+        end
+      when "identifier"
+        name = Noir::TreeSitter.node_text(node, source)
+        method_vars.includes?(name) || name == "method" || name == "reqMethod"
+      else
+        false
+      end
+    end
+
+    private def decode_http_method_node(node : LibTreeSitter::TSNode, source : String) : String?
+      verb = decode_method_token(node, source)
+      return verb if !verb.empty? && ALLOWED_HTTP_METHODS.includes?(verb)
+
+      nil
     end
 
     # Go 1.22 ServeMux uses `{$}` as a special end-of-path wildcard.

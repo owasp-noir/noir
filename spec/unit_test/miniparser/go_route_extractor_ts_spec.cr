@@ -1007,6 +1007,130 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/handle"}])
   end
 
+  it "supports Go 1.22+ QUERY method-in-pattern registrations" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("QUERY /search", searchHandler)
+          mux.Handle("QUERY /advanced-search", advancedHandler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"QUERY", "/advanced-search"},
+      {"QUERY", "/search"},
+    ].sort)
+  end
+
+  it "detects HTTP QUERY and other methods from r.Method equality comparisons in handler bodies" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          http.HandleFunc("/query-if", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == "QUERY" {
+                  w.Write([]byte("query response"))
+              }
+          })
+          http.HandleFunc("/query-const", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == http.MethodQuery {
+                  w.Write([]byte("const query"))
+              }
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"QUERY", "/query-const"},
+      {"QUERY", "/query-if"},
+    ].sort)
+  end
+
+  it "detects HTTP QUERY and other methods from switch r.Method statements" do
+    source = <<-GO
+      package main
+      import "net/http"
+      func main() {
+          http.HandleFunc("/multi", func(w http.ResponseWriter, r *http.Request) {
+              switch r.Method {
+              case "GET":
+                  w.Write([]byte("get"))
+              case "QUERY":
+                  w.Write([]byte("query"))
+              case http.MethodPost:
+                  w.Write([]byte("post"))
+              }
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/multi"},
+      {"POST", "/multi"},
+      {"QUERY", "/multi"},
+    ].sort)
+  end
+
+  it "resolves named functions and methods with r.Method checks" do
+    source = <<-GO
+      package main
+      import "net/http"
+
+      func handleSearch(w http.ResponseWriter, r *http.Request) {
+          if r.Method == "QUERY" {
+              w.Write([]byte("query"))
+          }
+      }
+
+      type Server struct{}
+      func (s *Server) handleItems(w http.ResponseWriter, r *http.Request) {
+          switch r.Method {
+          case http.MethodQuery:
+              w.Write([]byte("query"))
+          }
+      }
+
+      func main() {
+          s := &Server{}
+          http.HandleFunc("/search", handleSearch)
+          http.HandleFunc("/items", s.handleItems)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"QUERY", "/items"},
+      {"QUERY", "/search"},
+    ].sort)
+  end
+
+  it "keeps ANY fan-out when a handler only checks OPTIONS (CORS preflight)" do
+    source = <<-GO
+      package main
+
+      import "net/http"
+
+      func main() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("/cors", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == http.MethodOptions {
+                  w.WriteHeader(http.StatusNoContent)
+                  return
+              }
+              w.Write([]byte("ok"))
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/cors"}])
+  end
+
   it "extracts Fiber-style Query routes and Add forms (RFC 10008)" do
     source = <<-GO
       package main

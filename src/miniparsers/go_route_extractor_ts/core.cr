@@ -1539,8 +1539,9 @@ module Noir
     end
 
     # An HTTP method written as a string literal ("POST"), a selector expression
-    # like `http.MethodGet` or `echo.GET`, or an identifier; collapses to the
-    # bare upper-cased verb.
+    # like `http.MethodGet` or `echo.GET`, or an identifier — including a
+    # dot-imported `MethodQuery` constant; collapses to the bare upper-cased
+    # verb. Shared across Go extractors.
     private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
       target = node
       if Noir::TreeSitter.node_type(target) == "literal_element"
@@ -1566,7 +1567,9 @@ module Noir
           end
         end
       when "identifier"
-        id_text = Noir::TreeSitter.node_text(target, source).upcase
+        text = Noir::TreeSitter.node_text(target, source)
+        stripped = text.starts_with?("Method") ? text["Method".size..] : text
+        id_text = stripped.upcase
         if ALLOWED_HTTP_METHODS.includes?(id_text) || HTTP_VERB_METHODS.includes?(id_text)
           id_text
         else

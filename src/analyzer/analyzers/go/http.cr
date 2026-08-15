@@ -46,7 +46,13 @@ module Analyzer::Go
         dir = File.dirname(path)
         next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
 
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(content)
+        external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
+        external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(
+          content,
+          external_functions: external_fns,
+          external_methods: external_methods
+        )
         # With no route in the file the line loop below is a
         # no-op by construction: it only ever appends to
         # `last_endpoint`, and `add_param_to_endpoint` (plus
@@ -71,8 +77,6 @@ module Analyzer::Go
           route_rows << row
           route_methods_by_row[row] = routes.first.verb
         end
-        external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
-        external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
         request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_function_bodies, dir)
         request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_method_bodies, dir)
@@ -171,7 +175,7 @@ module Analyzer::Go
       return "query" unless endpoint
 
       case endpoint.method
-      when "GET", "HEAD", ""
+      when "GET", "HEAD", "QUERY", ""
         "query"
       else
         "form"
