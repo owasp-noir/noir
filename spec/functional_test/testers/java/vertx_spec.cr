@@ -25,6 +25,12 @@ expected_endpoints = [
   Endpoint.new("/api/v1/items", "GET"),
   Endpoint.new("/api/v1/items", "POST"),
   Endpoint.new("/admin/metrics/:metricId", "GET", [Param.new("metricId", "", "path")]),
+  Endpoint.new("/search", "QUERY", [Param.new("q", "", "query")]),
+  Endpoint.new("/search/items", "QUERY", [Param.new("filter", "", "query")]),
+  Endpoint.new("/advanced-search", "QUERY", [Param.new("query", "", "query")]),
+  Endpoint.new("/multi-search", "GET", [Param.new("term", "", "query")]),
+  Endpoint.new("/multi-search", "QUERY", [Param.new("term", "", "query")]),
+  Endpoint.new("/api/v1/search", "QUERY", [Param.new("keyword", "", "query")]),
 ]
 
 FunctionalTester.new("fixtures/java/vertx/", {
