@@ -34,7 +34,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal-version }}
       - name: Cache shards
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             lib
@@ -42,7 +42,7 @@ jobs:
           key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
       - name: Cache tree-sitter objects
         id: ts-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             src/ext/tree_sitter/runtime/lib.o
@@ -59,7 +59,7 @@ jobs:
         # byte-identical to when these objects were compiled.
         run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
       - name: Cache Crystal compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/crystal
           # Crystal fingerprints its own cache entries by content, so a
@@ -172,14 +172,14 @@ jobs:
         with:
           crystal: 1.21.0
       - name: Cache shards
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             lib
             .shards.info
           key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
       - name: Cache Crystal compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           # This job compiles Ameba, not noir, so it needs no tree-sitter
           # objects — and its cache entries are disjoint from the other jobs'.
@@ -208,7 +208,7 @@ jobs:
         with:
           crystal: ${{ matrix.crystal-version }}
       - name: Cache shards
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             lib
@@ -216,7 +216,7 @@ jobs:
           key: shards-${{ runner.os }}-${{ hashFiles('shard.lock') }}
       - name: Cache tree-sitter objects
         id: ts-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             src/ext/tree_sitter/runtime/lib.o
@@ -228,7 +228,7 @@ jobs:
         # why it is safe.
         run: find src/ext/tree_sitter -name '*.o' -exec touch {} +
       - name: Cache Crystal compiler cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/crystal
           key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr', 'spec/**/*.cr') }}
