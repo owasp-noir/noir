@@ -467,7 +467,7 @@ class OutputBuilderHtml < OutputBuilder
   # Hue modifier for pressed filter chips; only known verbs/severities get one.
   private def chip_hue_class(name : String) : String
     case name.downcase
-    when "get", "post", "put", "patch", "delete",
+    when "get", "post", "put", "patch", "delete", "query",
          "critical", "high", "medium", "low"
       " chip-#{name.downcase}"
     else
@@ -482,6 +482,7 @@ class OutputBuilderHtml < OutputBuilder
     when "PUT"    then "method-put"
     when "PATCH"  then "method-patch"
     when "DELETE" then "method-delete"
+    when "QUERY"  then "method-query"
     else               "method-default"
     end
   end
