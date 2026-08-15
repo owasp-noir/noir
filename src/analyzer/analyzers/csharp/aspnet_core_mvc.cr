@@ -313,7 +313,10 @@ module Analyzer::CSharp
     # entirely, so such actions fell back to the conventional GET route.
     ACCEPT_VERBS_RE       = /\[AcceptVerbs\s*\(([^\]]*)\)\s*\]/
     ACCEPT_VERBS_ROUTE_RE = /\bRoute\s*=\s*@?"([^"]+)"/
-    ACCEPT_VERB_TOKENS    = %w[GET POST PUT DELETE PATCH HEAD OPTIONS]
+    # ASP.NET Core routing has always accepted an arbitrary method string
+    # through `[AcceptVerbs(...)]`; QUERY (RFC 10008) ships natively as
+    # `HttpMethods.Query` starting with .NET 10.
+    ACCEPT_VERB_TOKENS = %w[GET POST PUT DELETE PATCH HEAD OPTIONS QUERY]
 
     private def collect_accept_verbs(line : String, route_attr : String) : Tuple(Array(String), String)?
       match = ACCEPT_VERBS_RE.match(line)
@@ -445,7 +448,10 @@ module Analyzer::CSharp
 
     private def default_param_type(http_method : String) : String
       case http_method
-      when "POST", "PUT", "PATCH"
+      when "POST", "PUT", "PATCH", "QUERY"
+        # QUERY (RFC 10008) carries its criteria in the request body, same as
+        # POST — an unattributed complex-type parameter binds from there, not
+        # the URL query string.
         "form"
       else
         "query"

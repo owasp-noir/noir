@@ -21,7 +21,7 @@ module Noir
   #
   # Recognises:
   #
-  #   * Verb DSL calls — `get`/`post`/`put`/`delete`/`patch`/`head`/`options`
+  #   * Verb DSL calls — `get`/`post`/`put`/`delete`/`patch`/`head`/`options`/`query`
   #     with a string-literal path argument and a trailing lambda body.
   #   * `route("/x") { ... }` blocks contributing to the path prefix.
   #   * `authenticate("realm") { ... }` blocks acting as transparent
@@ -50,6 +50,7 @@ module Noir
       "patch"   => "PATCH",
       "head"    => "HEAD",
       "options" => "OPTIONS",
+      "query"   => "QUERY",
       # WebSocket / SSE handlers are registered with the same path +
       # trailing-lambda DSL as the HTTP verbs. The connection opens with
       # a GET (the WebSocket upgrade / SSE stream are both GET requests),

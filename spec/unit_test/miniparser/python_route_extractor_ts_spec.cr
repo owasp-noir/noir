@@ -20,6 +20,8 @@ describe Noir::TreeSitterPythonRouteExtractor do
       {"/delete_record", ["DELETE"], "delete_record"},
       {"/get_ip", ["GET"], "json_sample"},
       {"/login", ["POST"], "login_sample"},
+      {"/lookup", ["GET", "QUERY"], "lookup_record"},
+      {"/search", ["QUERY"], "search_record"},
       {"/sign", ["GET", "POST"], "sign_sample"},
       {"/update_record", ["POST"], "update_record"},
     ])

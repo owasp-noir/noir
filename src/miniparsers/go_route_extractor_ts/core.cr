@@ -977,6 +977,8 @@ module Noir
         elsif handler_text.empty?
           # First non-string positional arg after the path is treated as
           # the handler — matches Gin/Echo/Fiber calling conventions.
+          next if Noir::TreeSitter.node_type(arg) == "interpreted_string_literal" ||
+                  Noir::TreeSitter.node_type(arg) == "raw_string_literal"
           handler_text = Noir::TreeSitter.node_text(arg, source)
         end
         arg_index += 1
@@ -1506,7 +1508,26 @@ module Noir
       end
     end
 
-    # Decode a Go string literal node's text content. Interpreted
+    # An HTTP method written as a string literal ("POST") or an
+    # `http.MethodX` / `fiber.MethodX` selector; both collapse to the
+    # bare upper-cased verb.
+    private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
+      case Noir::TreeSitter.node_type(node)
+      when "interpreted_string_literal", "raw_string_literal"
+        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "").upcase
+      when "selector_expression"
+        text = Noir::TreeSitter.node_text(node, source)
+        if idx = text.index("Method")
+          text[(idx + "Method".size)..].upcase
+        else
+          ""
+        end
+      else
+        ""
+      end
+    end
+
+    # Tree-sitter splits string literals into quote and content nodes. Interpreted
     # literals (`"foo"`) expose an `interpreted_string_literal_content`
     # named child; raw literals (`` `foo` ``) keep their contents as the
     # whole node text minus the backticks. We concatenate content children

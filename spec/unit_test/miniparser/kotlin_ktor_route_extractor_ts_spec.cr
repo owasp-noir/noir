@@ -189,11 +189,43 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
           patch("/e") { }
           head("/f") { }
           options("/g") { }
+          query("/h") { }
       }
       KT
 
     routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
-    routes.map(&.verb).should eq(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
+    routes.map(&.verb).should eq(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "QUERY"])
+  end
+
+  it "extracts HTTP QUERY routes from verb builder, HttpMethod.Query, and nested route prefixes" do
+    source = <<-KT
+      routing {
+          query("/search") {
+              val query = call.receive<SearchRequest>()
+              val filter = call.parameters["filter"]
+          }
+          route("/items", HttpMethod.Query) {
+              handle { call.respondText("items") }
+          }
+          route("/actions") {
+              method(HttpMethod.Query) {
+                  handle { call.respondText("actions") }
+              }
+              query("/lookup") { }
+          }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"QUERY", "/search"},
+      {"QUERY", "/items"},
+      {"QUERY", "/actions"},
+      {"QUERY", "/actions/lookup"},
+    ])
+    routes[0].receive_type.should eq("SearchRequest")
+    routes[0].has_body?.should be_true
+    routes[0].query_params.should eq(["filter"])
   end
 
   describe "handler-body parameter scan" do

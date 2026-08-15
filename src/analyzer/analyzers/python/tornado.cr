@@ -549,8 +549,16 @@ module Analyzer::Python
           endpoints << endpoint
         end
 
-        # Look for HTTP method handlers (both sync and async)
-        HTTP_METHODS.each do |http_method|
+        # Look for HTTP method handlers (both sync and async). Uses
+        # `HTTP_METHODS_EXCLUDING_QUERY` (see `PythonEngine`): Tornado's
+        # `RequestHandler._execute` rejects any verb outside its
+        # `SUPPORTED_METHODS` class attribute before dispatch, and that
+        # tuple does not include `query` upstream — unlike Flask's duck-typed
+        # `getattr(self, request.method.lower())` dispatch, a
+        # `def query(self):` method is genuinely inert unless a handler
+        # manually widens `SUPPORTED_METHODS`, so matching it here would
+        # report a phantom route.
+        HTTP_METHODS_EXCLUDING_QUERY.each do |http_method|
           if stripped.starts_with?("def #{http_method}(") || stripped.starts_with?("async def #{http_method}(")
             params = extract_path_params_from_method_signature(stripped, route_path)
             extract_params_from_method(lines, line_index, file_path).each do |param|

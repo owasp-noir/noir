@@ -589,6 +589,17 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       form_params.map { |p| {p.name, p.param_type} }.should eq([
         {"api", "form"},
       ])
+
+      query_verb_source = <<-KT
+        class C {
+            @RequestMapping("/x", method = [RequestMethod.QUERY], params = ["api=v1"])
+            fun queryMethod(): String = ""
+        }
+        KT
+      query_verb_params = extract(query_verb_source, "C", "queryMethod", "QUERY")
+      query_verb_params.map { |p| {p.name, p.param_type} }.should eq([
+        {"api", "form"},
+      ])
     end
 
     it "appends headers= constraints as header params" do

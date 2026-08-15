@@ -332,7 +332,7 @@ module Analyzer::Ruby
         when "member"     then scan.stack << Frame.new(:member) if opens_block
         when "collection" then scan.stack << Frame.new(:collection) if opens_block
         when "new"        then scan.stack << Frame.new(:new) if opens_block
-        when "get", "post", "put", "patch", "delete", "head", "options"
+        when "get", "post", "put", "patch", "delete", "head", "options", "query"
           handle_verb_route(directive.upcase, args, scan)
         when "match" then handle_match(args, scan)
         else
