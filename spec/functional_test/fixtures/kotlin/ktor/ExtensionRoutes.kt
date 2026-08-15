@@ -15,5 +15,13 @@ fun Route.extensionRoutes() {
                 call.respondText("Method route")
             }
         }
+
+        route("/query-method") {
+            method(HttpMethod.Query) {
+                handle {
+                    call.respondText("Query method route")
+                }
+            }
+        }
     }
 }
