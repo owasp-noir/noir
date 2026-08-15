@@ -44,7 +44,7 @@ This matrix lists frameworks where Noir supports per-endpoint callee extraction.
 | Perl | Catalyst, Dancer2, Mojolicious |
 | Python | Bottle, Django, Django Ninja, Falcon, FastAPI, Flask, Litestar, Masonite, Pyramid, Quart, Robyn, Sanic, Starlette, Tornado, aiohttp, http.server |
 | R | Plumber |
-| Ruby | Grape, Hanami, Rails, Roda, Sinatra, WEBrick |
+| Ruby | Grape, Hanami, Padrino, Rails, Roda, Sinatra, WEBrick |
 | Rust | Actix Web, Axum, Gotham, Loco, Poem, RWF, Rocket, Salvo, Tide, Warp |
 | Scala | Akka HTTP, Play Framework, Scalatra, Tapir, ZIO HTTP, http4s |
 | Swift | Hummingbird, Kitura, Vapor |
