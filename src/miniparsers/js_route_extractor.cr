@@ -841,7 +841,7 @@ module Noir
     # the file, and `fastify` is unambiguous — nothing else calls its app
     # instance that. Consulted only when the file imports no HTTP server.
     FASTIFY_RECEIVER_MARKER =
-      /\bfastify\s*\.\s*(?:get|post|put|patch|delete|head|options|all|route|register)\s*\(/
+      /\bfastify\s*\.\s*(?:get|post|put|patch|delete|head|options|query|all|route|register)\s*\(/
 
     def self.other_shared_extractor_framework?(content : String, framework : Symbol) : Bool
       return false if content_matches?(content, OWN_EXTRACTOR_MARKER[framework])

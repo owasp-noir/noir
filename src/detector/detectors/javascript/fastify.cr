@@ -12,7 +12,7 @@ module Detector::Javascript
       /from ['"]fastify['"]/,
       /fastify\s*\(\s*\{/,
       /fastify\.register\s*\(/,
-      /fastify\.(get|post|put|delete|patch|head|options)\s*\(/,
+      /fastify\.(get|post|put|delete|patch|head|options|query|route)\s*\(/,
     )
 
     def detect(filename : String, file_contents : String) : Bool
