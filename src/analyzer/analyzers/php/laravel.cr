@@ -111,7 +111,7 @@ module Analyzer::Php
 
       # Look for Laravel Route attributes on controller methods
       # e.g., #[Route('/users', methods: ['GET'])]
-      method_matches = content.scan(/#\[Route\s*\(([^]]*)\]\s*public\s+function\s+(\w+)/m)
+      method_matches = content.scan(/#\[Route\s*\((.*?)\)\]\s*(?:public\s+)?function\s+(\w+)/m)
       method_matches.each do |match|
         attribute_content = match[1] # This is the content of the attribute
 
@@ -148,15 +148,18 @@ module Analyzer::Php
 
     # `Route::get('/x', …)` and friends: the verb is capture 1, the path
     # capture 2.
-    VERB_REGEX = /Route::(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+    VERB_REGEX = /Route::(get|post|put|patch|delete|options|head|query)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
     # The same, behind a fluent prelude — `Route::middleware('auth')->prefix('v1')->get('/x', …)`.
     # Capture 1 is the whole prelude (a `->`-separated chain of calls; the
     # inner `[^;]*?` keeps each call's argument list inside one statement),
     # capture 2 the verb, capture 3 the path.
-    CHAINED_VERB_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(get|post|put|patch|delete|options|head)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
-    # `Route::match(['get', 'post'], '/x', …)`: capture 1 is the verb array
-    # literal, capture 2 the path.
-    MATCH_REGEX = /Route::match\s*\(\s*\[([^\]]+)\]\s*,\s*['"]([^'"]+)['"]\s*,/mi
+    CHAINED_VERB_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(get|post|put|patch|delete|options|head|query)\s*\(\s*['"]([^'"]+)['"]\s*,/mi
+    # `Route::match(['get', 'post'], '/x', …)` or `Route::addRoute('QUERY', '/x', …)`:
+    # capture 1 is the verb specification (array literal or string literal), capture 2 the path.
+    MATCH_REGEX = /Route::(?:match|addRoute)\s*\(\s*(\[[^\]]+\]|['"][^'"]+['"])\s*,\s*['"]([^'"]+)['"]\s*,/mi
+    # The match/addRoute routes behind a fluent prelude. Capture 1 is the prelude,
+    # capture 2 the verb specification, capture 3 the path.
+    CHAINED_MATCH_REGEX = /Route::((?:\w+\s*\([^;]*?\)\s*->\s*)+)(?:match|addRoute)\s*\(\s*(\[[^\]]+\]|['"][^'"]+['"])\s*,\s*['"]([^'"]+)['"]\s*,/mi
     # `Route::any('/x', …)`: capture 1 is the path; the verbs are implied.
     ANY_REGEX = /Route::any\s*\(\s*['"]([^'"]+)['"]\s*,/mi
     # `Route::view` / `redirect` / `permanentRedirect`: capture 1 is the verb
@@ -170,7 +173,7 @@ module Analyzer::Php
     # Any `Route::…('path', …` registration, whatever verb or chain precedes
     # it. Used only to locate handler-closure bodies up front; the six scans
     # above are what actually decide which registrations become endpoints.
-    ROUTE_REGISTRATION_RE = /Route::(?:\w+\s*\([^;]*?\)\s*->\s*)*\w+\s*\(\s*(?:\[[^\]]*\]\s*,\s*)?['"][^'"]*['"]\s*,/mi
+    ROUTE_REGISTRATION_RE = /Route::(?:\w+\s*\([^;]*?\)\s*->\s*)*\w+\s*\(\s*(?:(?:\[[^\]]*\]|['"][^'"]*['"])\s*,\s*)?['"][^'"]*['"]\s*,/mi
 
     # Methods a single `Route::any` registration stands for.
     ANY_ROUTE_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
@@ -217,10 +220,16 @@ module Analyzer::Php
         emit_handler_route(endpoints, ctx, route_match, [verb.upcase], chained_full_path(prefix, chain, route_path))
       end
 
-      # Route::match(['get', 'post'], ...) — the verbs come from the array literal.
+      # Route::match(['get', 'post'], ...) / Route::addRoute('QUERY', ...) — the verbs come from the array or string literal.
       each_laravel_route(ctx, MATCH_REGEX) do |route_match|
         verb_array, route_path = route_match[1], route_match[2]
         emit_handler_route(endpoints, ctx, route_match, extract_methods_from_array(verb_array), build_full_path(prefix, route_path))
+      end
+
+      # Chained Route::match / Route::addRoute
+      each_laravel_route(ctx, CHAINED_MATCH_REGEX) do |route_match|
+        chain, verb_array, route_path = route_match[1], route_match[2], route_match[3]
+        emit_handler_route(endpoints, ctx, route_match, extract_methods_from_array(verb_array), chained_full_path(prefix, chain, route_path))
       end
 
       # Route::any(...) — one registration standing for every verb.
