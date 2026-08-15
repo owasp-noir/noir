@@ -1,6 +1,7 @@
 require "./logger"
 require "./endpoint"
 require "./file_helper"
+require "./code_locator"
 require "wait_group"
 require "../utils/media_filter"
 require "../utils/path_scope"

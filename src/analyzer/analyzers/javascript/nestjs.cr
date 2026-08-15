@@ -621,20 +621,21 @@ module Analyzer::Javascript
 
     private def process_http_methods(class_content : String, base_paths : Array(String), controller_versions : Array(String), file_path : String, result : Array(Endpoint), include_callee : Bool, controller_start_line : Int32, literal_values : Hash(String, Array(String)))
       method_map = {
-        "Get"     => ["GET"],
-        "Post"    => ["POST"],
-        "Put"     => ["PUT"],
-        "Delete"  => ["DELETE"],
-        "Patch"   => ["PATCH"],
-        "Options" => ["OPTIONS"],
-        "Head"    => ["HEAD"],
+        "Get"         => ["GET"],
+        "Post"        => ["POST"],
+        "Put"         => ["PUT"],
+        "Delete"      => ["DELETE"],
+        "Patch"       => ["PATCH"],
+        "Options"     => ["OPTIONS"],
+        "Head"        => ["HEAD"],
+        "QueryMethod" => ["QUERY"],
         # `@Sse` opens a Server-Sent Events stream — HTTP GET under
         # the hood, so it counts as a real route.
         "Sse" => ["GET"],
         "All" => ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
       }
 
-      class_content.scan(/@(Get|Post|Put|Delete|Patch|Options|Head|Sse|All)\s*\(/) do |match|
+      class_content.scan(/@(Get|Post|Put|Delete|Patch|Options|Head|QueryMethod|Sse|All)\s*\(/) do |match|
         decorator_start = match.begin(0)
         next unless decorator_start
 

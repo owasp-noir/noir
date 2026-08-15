@@ -961,4 +961,31 @@ describe Noir::TreeSitterGoRouteExtractor do
     routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
     routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/handle"}])
   end
+
+  it "extracts Fiber-style Query routes and Add forms (RFC 10008)" do
+    source = <<-GO
+      package main
+      import (
+          fiber "github.com/gofiber/fiber/v2"
+      )
+      func main() {
+          app := fiber.New()
+          app.Query("/search", searchHandler)
+
+          api := app.Group("/api")
+          api.Query("/items", itemsHandler)
+
+          app.Add(fiber.MethodQuery, "/add-const", constHandler)
+          app.Add("QUERY", "/add-string", stringHandler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handle_method: "Add")
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"QUERY", "/search"},
+      {"QUERY", "/api/items"},
+      {"QUERY", "/add-const"},
+      {"QUERY", "/add-string"},
+    ])
+  end
 end
