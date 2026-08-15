@@ -726,36 +726,56 @@ module Analyzer::Java
       content.scan(/(\w+)\.route\s*\(([^)]*)\)/) do |match|
         router_name = match[1]
         route_arg = match[2].strip
-        start = match.end || 0
+        start = match.byte_end(0)
         statement_end = find_statement_end(content, start)
-        chains << FluentRouteChain.new(router_name, route_arg, content[start...statement_end])
+        chains << FluentRouteChain.new(router_name, route_arg, content.byte_slice(start, statement_end - start))
       end
       chains
     end
 
+    # Byte-wise scan for the `;` that ends a fluent chain's statement.
+    # Every tracked delimiter is ASCII and UTF-8 continuation bytes never
+    # collide with ASCII values, so scanning bytes from `start` is safe for
+    # multibyte content and avoids re-walking the file head per chain.
+    # `start` and the return value are byte offsets.
     private def find_statement_end(content : String, start : Int32) : Int32
+      slice = content.to_slice
       paren_depth = 0
       brace_depth = 0
-      in_string = false
-      quote = '\0'
+      quote = 0_u8
       escape = false
+      idx = start
 
-      content.each_char_with_index do |char, idx|
-        next if idx < start
+      while idx < slice.size
+        byte = slice[idx]
 
-        if in_string
+        if quote != 0_u8
           if escape
             escape = false
-          elsif char == '\\'
+          elsif byte === '\\'
             escape = true
-          elsif char == quote
-            in_string = false
+          elsif byte == quote
+            quote = 0_u8
           end
         else
-          case char
+          case byte.unsafe_chr
           when '"', '\''
-            in_string = true
-            quote = char
+            quote = byte
+          when '/'
+            # Comments may carry unbalanced quotes or braces (`// don't`),
+            # which would otherwise derail the depth tracking.
+            nxt = idx + 1 < slice.size ? slice[idx + 1].unsafe_chr : '\0'
+            if nxt == '/'
+              while idx < slice.size && !(slice[idx] === '\n')
+                idx += 1
+              end
+            elsif nxt == '*'
+              idx += 2
+              until idx + 1 >= slice.size || (slice[idx] === '*' && slice[idx + 1] === '/')
+                idx += 1
+              end
+              idx += 1
+            end
           when '('
             paren_depth += 1
           when ')'
@@ -768,9 +788,11 @@ module Analyzer::Java
             return idx if paren_depth == 0 && brace_depth == 0
           end
         end
+
+        idx += 1
       end
 
-      content.size
+      slice.size
     end
 
     private def fluent_route_paths(chain : String, constants : Hash(String, String)) : Array(String)

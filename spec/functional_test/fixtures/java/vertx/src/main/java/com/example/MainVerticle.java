@@ -196,4 +196,11 @@ public class MainVerticle {
     String keyword = ctx.queryParam("keyword");
     ctx.response().end("API search " + keyword);
   }
+
+  // SQL-client calls share the `query` spelling with Router but must not
+  // surface as QUERY routes.
+  private void loadUsers(SqlClient client, Pool pool) {
+    client.query("SELECT * FROM users").execute();
+    pool.query("UPDATE users SET active = true").execute();
+  }
 }
