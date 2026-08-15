@@ -46,6 +46,14 @@ expected_endpoints = [
   Endpoint.new("/inventory", "POST", [
     Param.new("body", "", "json"),
   ]),
+  # server.go: HTTP QUERY routes (RFC 10008)
+  Endpoint.new("/query-search", "QUERY", [
+    Param.new("body", "", "json"),
+    Param.new("filter", "", "query"),
+  ]),
+  Endpoint.new("/query-method-const", "QUERY"),
+  Endpoint.new("/query-string-verb", "QUERY"),
+  Endpoint.new("/admin/query-group", "QUERY"),
 ]
 
 FunctionalTester.new("fixtures/go/fiber/", {
