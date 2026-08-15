@@ -5,7 +5,7 @@ require "../../spec_helper"
 # The registry is derived from the classes, so a detector joins a scan simply by
 # existing (`build_detector_list`, src/detector/detector.cr). That removed the
 # "forgot to register it" failure mode and replaced it with a quieter one:
-# nothing at all requires a detector to be *tested*. 64 of 244 — including
+# nothing at all requires a detector to be *tested*. 64 of 245 — including
 # `rust/actix_web`, `java/quarkus`, `java/micronaut`, `java/jaxrs`,
 # `javascript/hapi`, `swift/hummingbird`, `typescript/trpc`, every `zig/*` and
 # every language's `cli` — shipped with zero coverage.
@@ -170,6 +170,6 @@ describe "detector spec coverage" do
   # Guards the guard: a broken glob would make every example above pass
   # vacuously.
   it "finds every registered detector" do
-    detector_paths.size.should eq 244
+    detector_paths.size.should eq 245
   end
 end
