@@ -239,7 +239,7 @@ module Analyzer::Go
       package_groups[dir]? || Hash(String, String).new
     end
 
-    GO_HTTP_ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|Get|Post|Put|Delete|Patch|Head|Options|ANY|Any|All)\s*\(/
+    GO_HTTP_ROUTE_CALL_RE = /\.(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|QUERY|Get|Post|Put|Delete|Patch|Head|Options|Query|ANY|Any|All)\s*\(/
 
     # Crystal recompiles an interpolated regex literal on every evaluation
     # (a full PCRE2 JIT compile); the per-framework extra route methods are
