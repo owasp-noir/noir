@@ -51,7 +51,12 @@ module Analyzer::Python
     WEB_METHOD_GUARD_RE = /\bweb\.(?:#{METHODS_ALT})\s*\(/
     WEB_METHOD_RE       = /\bweb\.(#{METHODS_ALT})\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
     WEB_VIEW_RE         = /\bweb\.view\s*\(\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
-    DEF_METHOD_RE       = /^\s*(?:async\s+)?def\s+(#{METHODS_ALT})\s*\(/
+    # Method-first `web.route("METHOD", "/path", handler)` — the only way to
+    # reach a route whose verb has no dedicated `web.<method>()` shorthand
+    # (e.g. `QUERY`, RFC 10008). Same free-form method capture as
+    # ROUTE_DECO_RE/ADD_ROUTE_RE, so any verb works, not just QUERY.
+    WEB_ROUTE_RE  = /\bweb\.route\s*\(\s*[rf]?['"]([A-Za-z*]+)['"]\s*,\s*[rf]?['"]([^'"]*)['"]\s*,\s*(?:handler\s*=\s*)?(#{DOT_NATION})/
+    DEF_METHOD_RE = /^\s*(?:async\s+)?def\s+(#{METHODS_ALT})\s*\(/
 
     # Spaces are stripped before the `add_<method>` match, so the route
     # path is re-extracted from the original (spaced) line. Precompile one
@@ -311,6 +316,26 @@ module Analyzer::Python
                 handler_name = web_match[3]
                 prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
                   handler_routes[path] << {Helper.normalized_join(prefix, route_path), method_name.upcase, line_index, handler_name}
+                end
+              end
+            end
+
+            # Style C (method-first): `web.route("METHOD", "/path", handler)`
+            # entries, resolved through the same list/receiver prefix logic
+            # as the Style C block above. Guarded separately from
+            # WEB_METHOD_GUARD_RE since `route` isn't one of the METHODS_ALT
+            # shorthand names (see WEB_ROUTE_RE for why this shape exists).
+            if stripped.includes?("web.route(")
+              effective_line = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, line_index, line) : line
+              effective_line.scan(WEB_ROUTE_RE) do |web_route_match|
+                next if web_route_match.size < 4
+                route_method = web_route_match[1]
+                route_path = web_route_match[2]
+                handler_name = web_route_match[3]
+                prefixes_for_add_routes_call(effective_line, app_prefixes, route_list_prefixes, line_index).each do |prefix|
+                  expand_aiohttp_methods(route_method).each do |expanded_method|
+                    handler_routes[path] << {Helper.normalized_join(prefix, route_path), expanded_method, line_index, handler_name}
+                  end
                 end
               end
             end

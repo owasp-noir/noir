@@ -64,6 +64,9 @@ expected_endpoints = [
     Param.new("category", "", "path"),
     Param.new("q", "", "query"),
   ]),
+  Endpoint.new("/search/advanced", "QUERY", [
+    Param.new("filters", "", "json"),
+  ]),
   Endpoint.new("/admin/stats", "GET", [
     Param.new("section", "", "query"),
   ]),
@@ -90,6 +93,12 @@ expected_endpoints = [
     Param.new("external_id", "", "path"),
     Param.new("mode", "", "query"),
     Param.new("title", "", "json"),
+  ]),
+  Endpoint.new("/tenant-api/tenants/query", "QUERY", [
+    Param.new("term", "", "json"),
+  ]),
+  Endpoint.new("/lookup", "QUERY", [
+    Param.new("ids", "", "json"),
   ]),
 ]
 
