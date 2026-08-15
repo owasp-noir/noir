@@ -1,0 +1,8 @@
+{
+  "name": "sails-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "sails": "^1.5.4"
+  }
+}
