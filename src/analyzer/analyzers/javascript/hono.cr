@@ -72,7 +72,7 @@ module Analyzer::Javascript
                                   result : Array(Endpoint),
                                   callees_by_route : Hash(String, Array(Noir::JSCalleeExtractor::Entry)),
                                   include_callee : Bool)
-      http_methods = %w[get post put delete patch options head]
+      http_methods = %w[get post put delete patch options head query]
       lines = content.lines
       line_offset = 0
       lines.each_with_index do |line, index|
@@ -330,7 +330,7 @@ module Analyzer::Javascript
       [] of Param
     end
 
-    HTTP_METHODS = %w[get post put delete patch options head]
+    HTTP_METHODS = %w[get post put delete patch options head query]
     # Compiled once — an interpolated regex literal would otherwise be
     # rebuilt (full PCRE2 compile) for every method on every line.
     ROUTE_CALL_RES = HTTP_METHODS.map { |m| {m, /\b(?:app|router|hono)\s*\.\s*#{m}\s*\(\s*['"]([^'"]+)['"]/} }.to_h
@@ -348,7 +348,7 @@ module Analyzer::Javascript
       # app.all('/path', ...) - registers for all HTTP methods
       if line =~ /\b(?:app|router|hono)\s*\.\s*all\s*\(\s*['"]([^'"]+)['"]/
         path = $1
-        return http_methods.map { |m| Endpoint.new(path, m.upcase) }
+        return %w[get post put delete patch options head].map { |m| Endpoint.new(path, m.upcase) }
       end
 
       # app.on('GET', '/path', ...) - single method string

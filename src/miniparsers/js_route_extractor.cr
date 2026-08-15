@@ -886,7 +886,7 @@ module Noir
         return "ALL" # Keep ALL as-is for special handling
       when "OPTIONS"
         return "OPTIONS"
-      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"
+      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "QUERY"
         return method
       end
 

@@ -57,6 +57,7 @@ describe Noir::JSParser do
         app.post('/items', handler);
         app.put('/items/:id', handler);
         app.delete('/items/:id', handler);
+        app.query('/items/search', handler);
         JS
       parser = Noir::JSParser.new(code)
       routes = parser.parse_routes
@@ -65,6 +66,7 @@ describe Noir::JSParser do
       routes.any? { |r| r.method == "POST" && r.path == "/items" }.should be_true
       routes.any? { |r| r.method == "PUT" && r.path == "/items/:id" }.should be_true
       routes.any? { |r| r.method == "DELETE" && r.path == "/items/:id" }.should be_true
+      routes.any? { |r| r.method == "QUERY" && r.path == "/items/search" }.should be_true
     end
 
     it "extracts path parameters" do

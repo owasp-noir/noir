@@ -61,6 +61,27 @@ expected_endpoints = [
   Endpoint.new("/health", "GET", [
     Param.new("format", "", "query"),
   ]),
+  # app.query() route (RFC 10008) with JSON body
+  Endpoint.new("/search", "QUERY", [
+    Param.new("query", "", "json"),
+    Param.new("filter", "", "json"),
+    Param.new("x-api-key", "", "header"),
+  ]),
+  # app.on('QUERY') generic route
+  Endpoint.new("/query-handler", "QUERY", [
+    Param.new("keyword", "", "json"),
+  ]),
+  # app.on(['GET', 'QUERY']) multi-verb array route
+  Endpoint.new("/items/search", "GET", [
+    Param.new("filter", "", "query"),
+  ]),
+  Endpoint.new("/items/search", "QUERY", [
+    Param.new("filter", "", "query"),
+  ]),
+  # Sub-app / chained QUERY route
+  Endpoint.new("/nested-search", "QUERY", [
+    Param.new("term", "", "json"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/javascript/hono/", {

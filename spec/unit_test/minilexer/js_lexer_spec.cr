@@ -72,7 +72,7 @@ describe Noir::JSLexer do
     end
 
     it "tokenizes HTTP methods" do
-      lexer = Noir::JSLexer.new("GET POST PUT DELETE OPTIONS HEAD PATCH")
+      lexer = Noir::JSLexer.new("GET POST PUT DELETE OPTIONS HEAD PATCH QUERY")
       tokens = lexer.tokenize
       tokens.each do |token|
         token.type.should eq(:http_method)
