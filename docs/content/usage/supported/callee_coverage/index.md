@@ -33,7 +33,7 @@ This matrix lists frameworks where Noir supports per-endpoint callee extraction.
 | Dart | Alfred, Angel3, Dart Frog, GetServer, Serverpod, Shelf |
 | Elixir | Bandit, Phoenix, Plug |
 | F# | Giraffe |
-| Go | Beego, Chi, Echo, Fiber, Gin, GoFrame, Gorilla Mux, Goyave, Hertz, Huma, Iris, PocketBase, fasthttp, go-restful, go-zero, httprouter, net/http |
+| Go | Beego, Chi, Echo, Fiber, Gin, GoFrame, Gorilla Mux, Goyave, Hertz, Huma, Iris, Kratos, PocketBase, fasthttp, go-restful, go-zero, httprouter, net/http |
 | Groovy | Grails |
 | Haskell | Scotty, Servant, Yesod |
 | Java | Apache Struts 2, Apache Wicket, Armeria, Dropwizard, JAX-RS, JDK HttpServer, Javalin, Micronaut, Play Framework, Quarkus, Spark Java, Spring, Vert.x |

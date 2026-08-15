@@ -1,6 +1,6 @@
 +++
 title = "OWASP Noir"
-description = "코드 속 모든 엔드포인트를 찾아냅니다. Noir는 29개 언어와 195개 프레임워크의 소스를 정적 분석하여 섀도우 API를 드러내고 공격 표면을 그립니다."
+description = "코드 속 모든 엔드포인트를 찾아냅니다. Noir는 29개 언어와 196개 프레임워크의 소스를 정적 분석하여 섀도우 API를 드러내고 공격 표면을 그립니다."
 template = "landing"
 +++
 
@@ -91,7 +91,7 @@ template = "landing"
         <p>플러그인도, 언어별 설정도 없는 단일 바이너리입니다. 정적 규칙이 놓친 프레임워크는 LLM이 대신 처리합니다.</p>
         <div class="stat-row">
           <span><span class="stat-val">29</span><span class="stat-key">언어</span></span>
-          <span><span class="stat-val">195</span><span class="stat-key">프레임워크</span></span>
+          <span><span class="stat-val">196</span><span class="stat-key">프레임워크</span></span>
         </div>
       </div>
     </article>
