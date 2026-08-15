@@ -22,14 +22,19 @@ module Analyzer::Go
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
-        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Static", "File"])
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Add", "Match", "Static", "File"])
         lines = content.lines
-        last_endpoint = Endpoint.new("", "")
+        last_endpoints = [] of Endpoint
 
         # Tree-sitter pre-pass: every Echo verb route
         # (`e.GET`, `g.POST`, …) with its group prefix applied.
         cross_file_groups = ts_groups_for_directory(package_groups, dir)
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Add")
+        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+          content,
+          cross_file_groups,
+          handle_method: "Add",
+          handle_many_methods: ["Match"]
+        )
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -66,6 +71,7 @@ module Analyzer::Go
           details = Details.new(PathInfo.new(path, index + 1))
 
           if ts_hits = routes_by_line[index]?
+            last_endpoints = [] of Endpoint
             ts_hits.each do |route|
               # Echo's `e.Any` registers a route for every HTTP
               # method — fan out so downstream formats see a real
@@ -79,13 +85,14 @@ module Analyzer::Go
                   end
                 end
                 result << new_endpoint
-                last_endpoint = new_endpoint
+                last_endpoints << new_endpoint
               end
             end
           end
 
           if line.includes?("Param(") || line.includes?("FormValue(")
-            add_param_to_endpoint(get_param(line), last_endpoint)
+            param = get_param(line)
+            last_endpoints.each { |ep| add_param_to_endpoint(param, ep) }
           end
 
           # `c.Bind(&v)` / `c.BindBody(...)` populate the
@@ -96,14 +103,15 @@ module Analyzer::Go
           # resolution we don't have).
           if line.matches?(/\.Bind(?:Body|JSON|XML|YAML|Headers|Query|Path)?\s*\(/) &&
              !line.includes?("// ")
-            add_param_to_endpoint(Param.new("body", "", "json"), last_endpoint)
+            body_param = Param.new("body", "", "json")
+            last_endpoints.each { |ep| add_param_to_endpoint(body_param, ep) }
           end
 
           if line.includes?("Request().Header.Get(")
             match = line.match(/Request\(\)\.Header\.Get\(\"(.*)\"\)/)
             if match
-              header_name = match[1]
-              last_endpoint.params << Param.new(header_name, "", "header")
+              header_param = Param.new(match[1], "", "header")
+              last_endpoints.each { |ep| ep.params << header_param }
             end
           end
 
@@ -112,8 +120,8 @@ module Analyzer::Go
              !line.includes?("Request().Header.Get")
             match = line.match(/Cookie\(\"(.*)\"\)/)
             if match
-              cookie_name = match[1]
-              last_endpoint.params << Param.new(cookie_name, "", "cookie")
+              cookie_param = Param.new(match[1], "", "cookie")
+              last_endpoints.each { |ep| ep.params << cookie_param }
             end
           end
         end
