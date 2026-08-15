@@ -201,6 +201,7 @@ describe "OutputBuilderHtml" do
       Endpoint.new("/test", "PUT"),
       Endpoint.new("/test", "PATCH"),
       Endpoint.new("/test", "DELETE"),
+      Endpoint.new("/test", "QUERY"),
       Endpoint.new("/test", "OPTIONS"),
     ]
 
@@ -213,7 +214,27 @@ describe "OutputBuilderHtml" do
     output.should contain("method-put")
     output.should contain("method-patch")
     output.should contain("method-delete")
+    output.should contain("method-query")
     output.should contain("method-default")
+  end
+
+  it "assigns a dedicated chip class to QUERY endpoints" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("/test", "QUERY")])
+    output = builder.io.to_s
+
+    output.should contain("method-query")
+    output.should_not contain("class=\"method-badge method-default\"")
+    output.should contain("chip-query")
   end
 
   it "handles all parameter types" do

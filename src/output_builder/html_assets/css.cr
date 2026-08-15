@@ -38,6 +38,9 @@ module HtmlReportAssets
       --m-delete: #be123c;
       --m-delete-soft: rgba(190, 18, 60, 0.08);
       --m-delete-line: rgba(190, 18, 60, 0.38);
+      --m-query: #0e7490;
+      --m-query-soft: rgba(14, 116, 144, 0.08);
+      --m-query-line: rgba(14, 116, 144, 0.38);
       /* semantic severity hues */
       --sev-critical-bg: #b91c1c;
       --sev-critical-ink: #fdf2f2;
@@ -80,6 +83,9 @@ module HtmlReportAssets
       --m-delete: #f87171;
       --m-delete-soft: rgba(248, 113, 113, 0.09);
       --m-delete-line: rgba(248, 113, 113, 0.34);
+      --m-query: #22d3ee;
+      --m-query-soft: rgba(34, 211, 238, 0.09);
+      --m-query-line: rgba(34, 211, 238, 0.34);
       --sev-critical-bg: #e05252;
       --sev-critical-ink: #0b0b10;
       --sev-high: #f87171;
@@ -265,6 +271,7 @@ module HtmlReportAssets
     .chip.chip-put[aria-pressed="true"] { color: var(--m-put); background: var(--m-put-soft); border-color: var(--m-put-line); }
     .chip.chip-patch[aria-pressed="true"] { color: var(--m-patch); background: var(--m-patch-soft); border-color: var(--m-patch-line); }
     .chip.chip-delete[aria-pressed="true"] { color: var(--m-delete); background: var(--m-delete-soft); border-color: var(--m-delete-line); }
+    .chip.chip-query[aria-pressed="true"] { color: var(--m-query); background: var(--m-query-soft); border-color: var(--m-query-line); }
     .chip.chip-critical[aria-pressed="true"] { color: var(--sev-critical-ink); background: var(--sev-critical-bg); border-color: var(--sev-critical-bg); }
     .chip.chip-high[aria-pressed="true"] { color: var(--sev-high); background: var(--sev-high-soft); border-color: var(--sev-high-line); }
     .chip.chip-medium[aria-pressed="true"] { color: var(--sev-medium); background: var(--sev-medium-soft); border-color: var(--sev-medium-line); }
@@ -478,6 +485,9 @@ module HtmlReportAssets
     .method-put { color: var(--m-put); background: var(--m-put-soft); border-color: var(--m-put-line); }
     .method-patch { color: var(--m-patch); background: var(--m-patch-soft); border-color: var(--m-patch-line); }
     .method-delete { color: var(--m-delete); background: var(--m-delete-soft); border-color: var(--m-delete-line); }
+    .method-query { color: var(--m-query); background: var(--m-query-soft); border-color: var(--m-query-line); }
+    /* HEAD/OPTIONS intentionally stay hueless (method-default): they're not
+       primary request-risk verbs, so no dedicated color is assigned. */
     .method-default { background: transparent; color: var(--ink-3); border-color: var(--line-2); border-style: dashed; }
 
     .protocol-badge {
