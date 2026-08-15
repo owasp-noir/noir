@@ -237,7 +237,8 @@ module Noir
         lower_identifier = identifier.downcase
         if lower_identifier == "get" || lower_identifier == "post" || lower_identifier == "put" ||
            lower_identifier == "delete" || lower_identifier == "options" || lower_identifier == "head" ||
-           lower_identifier == "patch" || lower_identifier == "del" || lower_identifier == "all"
+           lower_identifier == "patch" || lower_identifier == "del" || lower_identifier == "all" ||
+           lower_identifier == "query"
           add_token(:http_method, identifier)
         else
           add_token(:identifier, identifier)
