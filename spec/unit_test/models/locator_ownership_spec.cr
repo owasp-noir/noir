@@ -124,7 +124,8 @@ describe "locator key ownership" do
   # to *read* them back, which is the whole point of the namespace. A writer is a
   # file that mints and then pushes, and a push of a minted key takes a local
   # variable rather than a `LocatorKeys::` constant. That pair is what identifies
-  # `koa.cr` and `express/router_mount_scanner.cr`, and it is the check the
+  # `koa.cr`, `oak.cr`, and `express/router_mount_scanner.cr` — all three resolve
+  # cross-file router mount prefixes the same way — and it is the check the
   # `analyzer/javascript/express` owner failed.
   it "writes namespace keys only from the owning subsystem" do
     namespace = Noir::LocatorKeys::EXPRESS_ROUTER_PREFIX
@@ -143,7 +144,7 @@ describe "locator key ownership" do
 
     # Guards this example specifically: if the minting helper is renamed, the
     # scan would find no writers and pass while checking nothing.
-    writers.size.should eq 2
+    writers.size.should eq 3
   end
 
   # Guards the guards. Every example above is a source scan, so a broken glob or

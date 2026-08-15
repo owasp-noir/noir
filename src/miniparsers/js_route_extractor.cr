@@ -544,6 +544,8 @@ module Noir
       "from \"polka\"", "from 'polka'",
       "from \"h3\"", "from 'h3'",
       "from \"@nestjs/", "from '@nestjs/",
+      "from \"@oak/oak\"", "from '@oak/oak'",
+      "deno.land/x/oak",
     ]
 
     # Path-level evidence that a file is a mock-server fixture.
@@ -743,6 +745,18 @@ module Noir
         "require(\"restify\")", "require('restify')",
         "from \"restify-router\"", "from 'restify-router'",
         "require(\"restify-router\")", "require('restify-router')",
+      ],
+      # Oak is Deno-native and ships no package.json, so its import
+      # evidence is the specifier itself: the JSR package (`@oak/oak`,
+      # optionally through a bare `jsr:` specifier) or the legacy URL
+      # import (`https://deno.land/x/oak@vX.Y.Z/mod.ts`). The bare
+      # "deno.land/x/oak" substring covers every versioned/unversioned
+      # URL form without needing to enumerate them.
+      :oak => [
+        "from \"@oak/oak\"", "from '@oak/oak'",
+        "from \"jsr:@oak/oak", "from 'jsr:@oak/oak",
+        "require(\"@oak/oak\")", "require('@oak/oak')",
+        "deno.land/x/oak",
       ],
     }
 
@@ -1234,6 +1248,17 @@ module Noir
           end
         end
       end
+
+      # Oak-style: const { X } = await ctx.request.body.json()
+      handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+ctx\.request\.body\.json\s*\(/) do |match|
+        if match.size > 0
+          params = match[1].split(",").map(&.strip)
+          params.each do |param|
+            clean_param = clean_destructured_param(param)
+            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
+          end
+        end
+      end
     end
 
     def self.extract_query_params(handler_body : String, endpoint : Endpoint)
@@ -1296,6 +1321,13 @@ module Noir
           endpoint.push_param(Param.new(match[1], "", "query"))
         end
       end
+
+      # Oak/Fetch-API-style: ctx.request.url.searchParams.get('param')
+      handler_body.scan(/ctx\.request\.url\.searchParams\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        if match.size > 0
+          endpoint.push_param(Param.new(match[1], "", "query"))
+        end
+      end
     end
 
     def self.extract_header_params(handler_body : String, endpoint : Endpoint)
@@ -1338,6 +1370,14 @@ module Noir
         endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
       end
       handler_body.scan(/\w+\.req\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # c.req.header(CONST) — unresolved
+        push_unresolved_param(endpoint, match[1], "header") if match.size > 0
+      end
+
+      # Oak/Fetch-API-style: ctx.request.headers.get('x-token')
+      handler_body.scan(/ctx\.request\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
+        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+      end
+      handler_body.scan(/ctx\.request\.headers\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # unresolved
         push_unresolved_param(endpoint, match[1], "header") if match.size > 0
       end
     end
