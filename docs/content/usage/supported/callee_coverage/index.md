@@ -26,7 +26,7 @@ This matrix lists frameworks where Noir supports per-endpoint callee extraction.
 
 | Language | Frameworks with callee coverage |
 |----------|---------------------------------|
-| C# | ASP.NET Core MVC, ASP.NET Core Minimal API, ASP.NET MVC, Carter, FastEndpoints, System.Net.HttpListener |
+| C# | ASP.NET Core MVC, ASP.NET Core Minimal API, ASP.NET MVC, Carter, FastEndpoints, ServiceStack, System.Net.HttpListener |
 | C++ | Crow, Drogon, cpp-httplib, oat++ |
 | Clojure | Compojure, Pedestal, Reitit |
 | Crystal | Amber, Grip, Kemal, Lucky, Marten |
