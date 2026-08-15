@@ -188,7 +188,7 @@ module Analyzer::Crystal
     end
 
     private def extract_route_target(line : String) : Tuple(String, String)?
-      if match = line.match(/\b(?:get|post|put|delete|patch|head|options|ws)\s+['"][^'"]+['"]\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*,\s*:(\w+)/)
+      if match = line.match(/\b(?:get|post|put|delete|patch|head|options|ws|query)\s+['"][^'"]+['"]\s*,\s*([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*,\s*:(\w+)/)
         {match[1], match[2]}
       end
     end
@@ -287,10 +287,25 @@ module Analyzer::Crystal
       Param.new("", "", "")
     end
 
+    # Kemal's `query` route DSL (RFC 10008, kemalcr/kemal#769) is
+    # Kemal-specific, unlike `get`/`post`/etc. which the shared engine's
+    # SIMPLE_ROUTE_RE already covers for every Crystal analyzer (Amber,
+    # Lucky). It's stitched in via `match_crystal_simple_route(..., extra:)`
+    # instead of touching that shared pattern, mirroring Lucky's TRACE
+    # extra route. The same `(?:^|[^.\w])` lead-in that keeps `before_get`
+    # / `after_get` from matching `get` also keeps `before_query` /
+    # `after_query` filters from matching here — they must not emit
+    # endpoints.
+    QUERY_ROUTE_PATTERN = /(?:^|[^.\w])query\s*(?:\(\s*)?['"](.+?)['"]/
+    KEMAL_EXTRA_ROUTES  = [{"QUERY", QUERY_ROUTE_PATTERN}] of Tuple(String, Regex)
+
     def line_to_endpoint(content : String) : Endpoint
       # Shared engine helper: precompiled per-verb patterns + includes?
       # gates. Replaces 8 sequential unguarded .scan calls per source line.
-      match_crystal_simple_route(Noir::CrystalCalleeExtractor.strip_comment(content))
+      match_crystal_simple_route(
+        Noir::CrystalCalleeExtractor.strip_comment(content),
+        extra: KEMAL_EXTRA_ROUTES
+      )
     end
   end
 end

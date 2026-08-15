@@ -9,6 +9,9 @@ expected_endpoints = [
   Endpoint.new("/delete_record", "DELETE", [Param.new("name", "", "json")]),
   Endpoint.new("/get_ip", "GET", [Param.new("X-Forwarded-For", "", "header")]),
   Endpoint.new("/update_record", "POST", [Param.new("page", "", "query"), Param.new("name", "", "json")]),
+  Endpoint.new("/search", "QUERY", [Param.new("criteria", "", "json")]),
+  Endpoint.new("/lookup", "GET", [Param.new("term", "", "query")]),
+  Endpoint.new("/lookup", "QUERY", [Param.new("term", "", "query")]),
   Endpoint.new("/", "GET"),
 ]
 

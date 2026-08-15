@@ -42,10 +42,14 @@ module Analyzer::Python
       }
     end
 
+    # `QUERY` (RFC 10008) is safe/idempotent like GET but, per the method's
+    # whole purpose, carries its filter criteria in a request body like
+    # POST — so it joins the body-bearing methods for "form"/"json", not
+    # the read-only "query" (query-string) type.
     REQUEST_PARAM_TYPES = {
       "query"  => nil,
-      "form"   => ["POST", "PUT", "PATCH", "DELETE"],
-      "json"   => ["POST", "PUT", "PATCH", "DELETE"],
+      "form"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
+      "json"   => ["POST", "PUT", "PATCH", "DELETE", "QUERY"],
       "cookie" => nil,
       "header" => nil,
     }
@@ -65,7 +69,7 @@ module Analyzer::Python
     # don't recompile them. VIEW_FUNC_KWARG_RE has no whitespace tolerance
     # (unlike Quart's) because Flask's add_url_rule args are matched on
     # space-stripped lines.
-    ROUTE_DECORATOR_RE  = /^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace)\s*\(/m
+    ROUTE_DECORATOR_RE  = /^\s*@\s*#{DOT_NATION}\s*\.\s*(?:route|get|post|put|patch|delete|head|options|trace|query)\s*\(/m
     ROUTE_REGISTRAR_RE  = /\b#{DOT_NATION}\s*\.\s*(?:add_url_rule|register_blueprint)\s*\(/
     VIEW_FUNC_KWARG_RE  = /view_func=(#{DOT_NATION})(?:,|\)|$)/
     DOTTED_REFERENCE_RE = /^#{DOT_NATION}$/

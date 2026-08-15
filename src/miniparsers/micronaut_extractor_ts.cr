@@ -16,8 +16,9 @@ module Noir
   #   * Class-level `@ServerWebSocket("/x")` — surfaced as `GET`
   #     with `protocol = "ws"`.
   #   * Verb annotations: `@Get`, `@Post`, `@Put`, `@Delete`,
-  #     `@Patch`, `@Head`, `@Options` from
-  #     `io.micronaut.http.annotation`.
+  #     `@Patch`, `@Head`, `@Options`, `@Query` from
+  #     `io.micronaut.http.annotation`, plus `@CustomHttpMethod(method
+  #     = "...")` for non-standard verbs.
   #   * Path supplied positionally (`@Get("/x")`) or via the
   #     `value` / `uri` / `uris` keyword. Array forms (`uris =
   #     {"/a", "/b"}`) fan out into one route per path.
@@ -49,6 +50,7 @@ module Noir
       "Patch"   => "PATCH",
       "Head"    => "HEAD",
       "Options" => "OPTIONS",
+      "Query"   => "QUERY",
     }
 
     PARAM_ANNOTATION_FORMAT = {
@@ -272,6 +274,14 @@ module Noir
             verb_node = ann
             method_args = args
             break
+          elsif ann_name == "CustomHttpMethod"
+            custom_verb = annotation_string_arg(args, source, Set{"method"}, constants, class_name)
+            unless custom_verb.nil? || custom_verb.empty?
+              verb = custom_verb.upcase
+              verb_node = ann
+              method_args = args
+              break
+            end
           end
         end
         next unless verb && verb_node
@@ -328,6 +338,14 @@ module Noir
             verb_node = ann
             method_args = args
             break
+          elsif ann_name == "CustomHttpMethod"
+            custom_verb = annotation_string_arg(args, source, Set{"method"}, constants, interface_name)
+            unless custom_verb.nil? || custom_verb.empty?
+              verb = custom_verb.upcase
+              verb_node = ann
+              method_args = args
+              break
+            end
           end
         end
         next unless verb && verb_node
