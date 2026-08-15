@@ -452,7 +452,7 @@ class OutputBuilderHtml < OutputBuilder
 
   # Distinct HTTP methods present, ordered by a canonical verb priority.
   private def present_methods(endpoints : Array(Endpoint)) : Array(String)
-    order = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    order = ["GET", "POST", "PUT", "PATCH", "DELETE", "QUERY", "HEAD", "OPTIONS"]
     methods = endpoints.map(&.method.upcase).uniq!
     methods.sort_by! { |m| {order.index(m) || order.size, m} }
   end

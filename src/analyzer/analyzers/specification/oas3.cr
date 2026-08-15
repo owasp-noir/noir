@@ -6,7 +6,10 @@ module Analyzer::Specification
   class Oas3 < SpecificationEngine
     analyzer_for "oas3"
 
-    HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace"}
+    # `query` is the OpenAPI 3.2 Path Item operation key for RFC 10008's
+    # QUERY method; the detector accepts every 3.x document, so a spec
+    # declaring it must not have the operation silently skipped.
+    HTTP_METHODS = {"get", "post", "put", "delete", "patch", "options", "head", "trace", "query"}
 
     def get_base_path(servers : JSON::Any)
       server_base_path(servers.as_a.map { |server_obj| server_url_json(server_obj) })

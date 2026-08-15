@@ -160,6 +160,12 @@ module Analyzer::Specification
 
       first = parts[0].upcase
       if HTTP_METHODS.includes?(first)
+        # `QUERY` must be spelled uppercase to count as a request verb.
+        # Prose idiomatically follows "Query" with a URL-ish token ("Query
+        # /users for the list."), so the case-lenient reading that is safe
+        # for the classic verbs fabricates endpoints from documentation for
+        # this one. The detector's REQUEST_LINE applies the same rule.
+        return {nil, nil} if first == "QUERY" && parts[0] != "QUERY"
         return {nil, nil} if parts.size < 2
         target = parts[1]
         # An explicit method is not enough — the target must be URL-ish, so a

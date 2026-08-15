@@ -161,6 +161,7 @@ Key points:
 - **Declare the tech with `analyzer_for`**. That single line *is* the registration — see step 3.
 - **Override overridable methods** if your framework's parsing differs (`get_static_path`, `get_route_path`; see Mux or GoZero for examples).
 - **Use `parallel_file_scan`** for the file walk; don't re-implement the channel + worker pool.
+- **Only list verbs the framework actually routes** in your method table. In particular, add `QUERY` (RFC 10008) only when upstream ships explicit support for it — a speculative entry reports endpoints the framework itself answers with 405. The same policy covers wildcard (`ANY`/`ALL`/`*`) routes: neither the shared `WILDCARD_HTTP_METHODS` (`src/utils/http_symbols.cr`) nor any analyzer-local wildcard fan-out list (several analyzers expand `ANY` at analysis time with their own table) should grow `QUERY`.
 
 ### 3. Declare the tech metadata
 

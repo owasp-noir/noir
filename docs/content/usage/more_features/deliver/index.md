@@ -92,7 +92,7 @@ noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --
 noir scan ./source -u http://localhost:3000 --probe-via http://localhost:8080 --probe-skip "GET:/admin"
 ```
 
-Supported HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT.
+Supported HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS, TRACE, CONNECT, QUERY.
 
 Multiple `--probe-match` / `--probe-skip` flags compose:
 

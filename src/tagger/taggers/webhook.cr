@@ -1,5 +1,6 @@
 require "../../models/tagger"
 require "../../models/endpoint"
+require "../../utils/http_symbols"
 
 # Flags inbound webhook / callback endpoints — routes that receive
 # server-to-server notifications from third parties (payment providers,
@@ -27,7 +28,9 @@ class WebhookTagger < Tagger
   # signals on "not a read", which — unlike an explicit POST/PUT/PATCH
   # allow-list — also covers wildcard ("ANY"/"*") and blank methods that
   # several analyzers emit for catch-all routes.
-  READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+  # The shared safe set (QUERY included per RFC 10008): a QUERY route must
+  # not trip the "not a read" write heuristic the way POST does.
+  READ_ONLY_METHODS = SAFE_HTTP_METHODS
 
   # OAuth / OIDC / SSO authorization-code callbacks (`/oauth/callback`,
   # `/auth/<provider>/callback`) are browser-redirect handlers, not

@@ -3,6 +3,11 @@ require "uri"
 require "../utils/http_symbols"
 
 module OutputBuilderOasCommon
+  # The operation keys a Path Item Object accepts in OpenAPI 3.0, the newest
+  # version Noir emits. `query` (RFC 10008) is deliberately not one of them —
+  # no OAS version Noir writes (2.0 / 3.0.3) can express it, so a QUERY
+  # endpoint degrades to the `x-noir-unsupported-methods` extension below
+  # rather than being dropped or downgraded to `get`.
   VALID_OPERATION_METHODS = Set{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
   ANY_OPERATION_METHODS   = WILDCARD_HTTP_METHODS.map(&.downcase)
 

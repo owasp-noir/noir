@@ -1,0 +1,5 @@
+### Search products (RFC 10008 QUERY)
+QUERY https://api.example.com/products/search
+Content-Type: application/x-www-form-urlencoded
+
+q=widget&limit=10

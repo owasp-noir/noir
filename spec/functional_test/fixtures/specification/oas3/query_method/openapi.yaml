@@ -1,0 +1,19 @@
+openapi: 3.2.0
+info:
+  title: Query method sample
+  version: 1.0.0
+paths:
+  /products/search:
+    query:
+      summary: Search products (RFC 10008 QUERY)
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                q:
+                  type: string
+      responses:
+        '200':
+          description: OK

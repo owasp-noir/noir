@@ -2472,6 +2472,17 @@ describe "NoirAIContext" do
     context.signals.find!(&.kind.== "unsafe_method").name.should contain("User.destroy")
   end
 
+  it "emits unsafe_method when a QUERY handler invokes a mutating callee" do
+    # RFC 10008 defines QUERY as safe + idempotent, so a mutation behind it
+    # is the same verb-vs-implementation mismatch as a mutating GET.
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_callee(Callee.new("Cart.update", "controller.rb", 9))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("unsafe_method")
+    context.signals.find!(&.kind.== "unsafe_method").name.should contain("QUERY")
+  end
+
   it "does NOT emit unsafe_method for mobile deep-link endpoints" do
     endpoint = Endpoint.new("myapp://open", "GET")
     endpoint.protocol = "mobile-scheme"

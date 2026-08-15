@@ -1,5 +1,7 @@
 require "../../../models/detector"
 require "../../../models/code_locator"
+require "../../../models/locator_keys"
+require "../../../utils/http_symbols"
 
 module Detector::Specification
   class HttpFile < Detector
@@ -11,7 +13,15 @@ module Detector::Specification
     # signal shared by the VS Code REST Client and JetBrains HTTP Client
     # dialects, and requiring the URL-ish char keeps `.rest` reStructuredText
     # prose ("Get started with the API", "Delete the file") from matching.
-    REQUEST_LINE = /^[ \t]*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|TRACE|CONNECT)[ \t]+\S*[.\/:{]/im
+    #
+    # The alternation is derived from `ALLOWED_HTTP_METHODS` — the analyzer
+    # parses every verb in that list, so a file whose only request uses one
+    # must still be detected here. `QUERY` alone is matched case-sensitively:
+    # unlike the classic verbs, English prose idiomatically puts a URL-ish
+    # token right after "Query" ("Query /users for the list."), so the
+    # lenient match that is safe for GET/POST would fabricate endpoints from
+    # documentation. The analyzer applies the same uppercase rule.
+    REQUEST_LINE = /^[ \t]*(?:#{(ALLOWED_HTTP_METHODS - ["QUERY"]).join('|')}|(?-i:QUERY))[ \t]+\S*[.\/:{]/im
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)

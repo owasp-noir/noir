@@ -168,3 +168,15 @@ FunctionalTester.new("fixtures/specification/oas3_edge_cases/", {
 }, edge_case_url_endpoints, {
   "url" => YAML::Any.new("https://api.example.com"),
 }).perform_tests
+
+# OpenAPI 3.2 added `query` as a Path Item operation key for RFC 10008's
+# QUERY method; a spec declaring it yields a QUERY endpoint instead of the
+# operation being silently skipped.
+FunctionalTester.new("fixtures/specification/oas3/query_method/", {
+  :techs     => 1,
+  :endpoints => 1,
+}, [
+  Endpoint.new("/products/search", "QUERY", [
+    Param.new("q", "", "form"),
+  ]),
+]).perform_tests

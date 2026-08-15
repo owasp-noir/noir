@@ -125,4 +125,24 @@ describe "OutputBuilderHttpie" do
     line.should contain("'avatar='")
     line.should_not contain("--form")
   end
+
+  it "prints a QUERY endpoint with its body intact" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/products/search", "QUERY")
+    endpoint.push_param(Param.new("q", "widget", "form"))
+
+    builder.print([endpoint])
+    line = builder.io.to_s.strip
+
+    line.should eq("http --form 'QUERY' '/products/search' 'q=widget'")
+  end
 end
