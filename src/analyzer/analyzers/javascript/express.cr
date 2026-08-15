@@ -295,7 +295,7 @@ module Analyzer::Javascript
       current_router = ""
       lines.each_with_index do |line, index|
         # Detect current router - support case variations of HTTP methods
-        if line =~ /(\w+)\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)/
+        if line =~ /(\w+)\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)/
           current_router = $1
         end
 
@@ -379,7 +379,7 @@ module Analyzer::Javascript
           prefix = m[2]
 
           # Now find all endpoints defined on this router
-          http_methods = %w[get post put delete patch options head all]
+          http_methods = %w[get post put delete patch options head all query]
 
           http_methods.each do |http_method|
             endpoint_pattern = cached_regex("express:nested_router:#{router_var}:#{http_method}") do
@@ -511,7 +511,7 @@ module Analyzer::Javascript
         next if router_prefix.empty?
 
         # Look for route handlers on this router
-        http_methods = %w[get post put delete patch options head all]
+        http_methods = %w[get post put delete patch options head all query]
 
         http_methods.each do |method|
           # Enhanced pattern to catch more route handler formats
@@ -557,7 +557,7 @@ module Analyzer::Javascript
 
     # Special method to process versioned routers like v1Router
     private def process_versioned_router(content : String, result : Array(Endpoint), path : String, router_name : String, prefix : String)
-      http_methods = %w[get post put delete patch options head all]
+      http_methods = %w[get post put delete patch options head all query]
 
       http_methods.each do |method|
         pattern = cached_regex("express:versioned_router:#{router_name}:#{method}") do
@@ -796,11 +796,11 @@ module Analyzer::Javascript
     def line_to_endpoint(line : String, router_detected : Bool = false) : Endpoint
       # Match both app.method and router.method patterns
       # Support case variations and catch v1Router, apiRouter, and any *Router patterns
-      combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
+      combined_pattern = /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(\s*['"]([^'"]+)['"]/
 
       if line =~ combined_pattern
         # Extract the actual method used
-        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/)
         if method_match
           actual_method = method_match[1].downcase
           actual_method = "delete" if actual_method == "del"
@@ -810,9 +810,9 @@ module Analyzer::Javascript
       end
 
       # Also try simple pattern match (without router name constraint)
-      simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(\s*['"]([^'"]+)['"]/
+      simple_pattern = /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(\s*['"]([^'"]+)['"]/
       if line =~ simple_pattern
-        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/)
         if method_match
           actual_method = method_match[1].downcase
           actual_method = "delete" if actual_method == "del"
@@ -822,7 +822,7 @@ module Analyzer::Javascript
       end
 
       # Handle route method with method as a parameter - case variations
-      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/
+      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"].*?\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|Del|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/
         path = $1
         method = $2.downcase
         # Handle special case for Del -> delete
@@ -838,10 +838,10 @@ module Analyzer::Javascript
       # Try to extract method from current line and path from next line
 
       # Check if current line has the method call (case variations)
-      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/ ||
-         line =~ /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/
+      if line =~ /\b(?:app|router|route|r|Router|v\d+Router|apiRouter|[\w]+Router)\s*\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/ ||
+         line =~ /\.\s*(?:get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/
         # Extract the actual method used
-        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL)\s*\(/)
+        method_match = line.match(/\.(get|Get|GET|post|Post|POST|put|Put|PUT|delete|Delete|DELETE|del|Del|DEL|patch|Patch|PATCH|options|Options|OPTIONS|head|Head|HEAD|all|All|ALL|query|Query|QUERY)\s*\(/)
         if method_match
           actual_method = method_match[1].downcase
           actual_method = "delete" if actual_method == "del"
@@ -933,7 +933,7 @@ module Analyzer::Javascript
         scan_pos = search_start
         loop do
           # Look for .method( pattern
-          method_match = content.match(/\.\s*(get|post|put|delete|patch|head|options)\s*\(/, scan_pos)
+          method_match = content.match(/\.\s*(get|post|put|delete|patch|head|options|query)\s*\(/, scan_pos)
           break unless method_match
           pos = method_match.begin(0)
           break unless pos

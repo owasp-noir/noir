@@ -1,4 +1,10 @@
-use axum::{extract::{Form, Query}, http::HeaderMap, response::Html, routing::{any, get, post}, Router};
+use axum::{
+    extract::{Form, Query},
+    http::HeaderMap,
+    response::Html,
+    routing::{any, get, on, post, query, query_service, MethodFilter},
+    Router,
+};
 use axum_extra::extract::CookieJar;
 use tower_http::services::ServeDir;
 
@@ -11,6 +17,11 @@ async fn main() {
         .route("/foo", get(handler))
         .route("/bar", post(handler))
         .route("/search", get(search))
+        .route("/search_query", query(search))
+        .route("/items", get(handler).query(search))
+        .route("/svc", query_service(ServeDir::new("assets")))
+        .route("/filter-query", on(MethodFilter::QUERY, handler))
+        .route("/filter-combo", on(MethodFilter::GET.or(MethodFilter::QUERY), handler))
         .route("/submit", post(submit))
         .route("/headers", get(headers))
         .route("/session", get(session))
@@ -29,7 +40,8 @@ async fn main() {
             "/api",
             Router::new()
                 .route("/users", get(handler))
-                .route("/admin", post(handler)),
+                .route("/admin", post(handler))
+                .route("/query-nested", query(handler)),
         )
         // Real applications often build a sub-router in a local binding before
         // mounting it. The route must inherit the nest prefix and must not also

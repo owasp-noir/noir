@@ -38,6 +38,15 @@ banks_update_patch = Endpoint.new("/banks", "PATCH", [Param.new("accountNumber",
 banks_transfer_put = Endpoint.new("/banks/transfer", "PUT", [Param.new("amount", "", "form")])
 banks_transfer_post = Endpoint.new("/banks/transfer", "POST", [Param.new("amount", "", "form")])
 
+# QUERY (RFC 10008) routes through [AcceptVerbs] like any other verb string;
+# the [Route("search")] base arrives on the line after [AcceptVerbs("QUERY")]
+# and is still picked up.
+banks_search_query = Endpoint.new("/banks/search", "QUERY", [Param.new("filters", "", "json")])
+
+# An unattributed parameter on a QUERY action binds from the body, same as
+# it does on PUT/POST/PATCH, not from the URL query string.
+banks_search_implicit = Endpoint.new("/banks/search/implicit", "QUERY", [Param.new("keyword", "", "form")])
+
 # `[FromRoute(Name = "branchId")] string internalBranchKey` binds the route
 # value, so the parameter is `branchId`; `{page=5}` carries a template default
 # that is not part of the URL.
@@ -59,6 +68,8 @@ expected_endpoints = [
   banks_update_patch,
   banks_transfer_put,
   banks_transfer_post,
+  banks_search_query,
+  banks_search_implicit,
   banks_branch,
   banks_page,
   banks_audit,
@@ -93,6 +104,18 @@ describe "ASP.NET Core MVC modern controller edge cases" do
   it "emits one endpoint per verb listed in [AcceptVerbs]" do
     tester.app.endpoints.count { |e| e.url == "/banks" }.should eq 2
     tester.app.endpoints.count { |e| e.url == "/banks/transfer" }.should eq 2
+  end
+
+  it "recognizes QUERY (RFC 10008) in [AcceptVerbs] with its [Route] base and body param" do
+    search = tester.app.endpoints.find! { |e| e.url == "/banks/search" && e.method == "QUERY" }
+    search.params.map(&.name).should eq(["filters"])
+    search.params.first.param_type.should eq "json"
+  end
+
+  it "binds an unattributed QUERY parameter from the body, not the query string" do
+    implicit = tester.app.endpoints.find! { |e| e.url == "/banks/search/implicit" && e.method == "QUERY" }
+    implicit.params.map(&.name).should eq(["keyword"])
+    implicit.params.first.param_type.should eq "form"
   end
 
   it "uses the explicit [From*(Name = ...)] binding name, not the C# identifier" do

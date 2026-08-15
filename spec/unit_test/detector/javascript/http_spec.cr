@@ -16,6 +16,17 @@ describe "Detect JS Node http" do
     instance.detect("server.js", content).should be_true
   end
 
+  it "detects http createServer with QUERY method branching" do
+    content = <<-JS
+      const http = require('http');
+      http.createServer((req, res) => {
+        if (req.method === 'QUERY' && req.url === '/search') res.end();
+      });
+      JS
+
+    instance.detect("server.js", content).should be_true
+  end
+
   it "detects node:https aliased TypeScript import" do
     content = <<-TS
       import { createServer as createHttpsServer } from 'node:https';

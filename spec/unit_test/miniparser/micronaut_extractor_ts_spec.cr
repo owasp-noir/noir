@@ -272,4 +272,67 @@ describe Noir::TreeSitterMicronautExtractor do
       {"GET", "/api/chat/{topic}/{username}", "ws"},
     ])
   end
+
+  it "detects the QUERY verb annotation and CustomHttpMethod QUERY, keeping @QueryValue distinct" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import io.micronaut.http.annotation.Body;
+      import io.micronaut.http.annotation.Controller;
+      import io.micronaut.http.annotation.CustomHttpMethod;
+      import io.micronaut.http.annotation.Get;
+      import io.micronaut.http.annotation.Query;
+      import io.micronaut.http.annotation.QueryValue;
+
+      @Controller("/search")
+      public class SearchController {
+          @Get("/")
+          public String list(@QueryValue(value = "q", defaultValue = "all") String query) {
+              return "";
+          }
+
+          @Query("/")
+          public String search(@Body FilterDto filters) {
+              return "";
+          }
+
+          @CustomHttpMethod(method = "QUERY", value = "/adv")
+          public String advanced(@Body AdvDto dto) {
+              return "";
+          }
+      }
+
+      class FilterDto {
+          private String term;
+          public void setTerm(String term) { this.term = term; }
+      }
+
+      class AdvDto {
+          private String expression;
+          public void setExpression(String expression) { this.expression = expression; }
+      }
+      JAVA
+
+    dto_index = {
+      "FilterDto" => [
+        Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("term", "private", true, ""),
+      ],
+      "AdvDto" => [
+        Noir::TreeSitterJavaParameterExtractor::FieldInfo.new("expression", "private", true, ""),
+      ],
+    } of String => Array(Noir::TreeSitterJavaParameterExtractor::FieldInfo)
+
+    routes = Noir::TreeSitterMicronautExtractor.extract_routes(source, dto_index)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"GET", "/search/", [
+        Param.new("q", "all", "query"),
+      ]},
+      {"QUERY", "/search/", [
+        Param.new("term", "", "json"),
+      ]},
+      {"QUERY", "/search/adv", [
+        Param.new("expression", "", "json"),
+      ]},
+    ])
+  end
 end

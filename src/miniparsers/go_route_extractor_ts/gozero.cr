@@ -209,25 +209,6 @@ module Noir
       {gozero_unwrap(key), gozero_unwrap(val)}
     end
 
-    # An HTTP method written as a string literal ("POST") or an
-    # `http.MethodX` selector; both collapse to the bare upper-cased verb.
-    # Shared by go-zero's `Method:` struct field and mux's `.Methods(...)`.
-    private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
-      case Noir::TreeSitter.node_type(node)
-      when "interpreted_string_literal", "raw_string_literal"
-        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "").upcase
-      when "selector_expression"
-        text = Noir::TreeSitter.node_text(node, source)
-        if idx = text.index("Method")
-          text[(idx + "Method".size)..].upcase
-        else
-          ""
-        end
-      else
-        ""
-      end
-    end
-
     private def gozero_string_value(node : LibTreeSitter::TSNode, source : String) : String
       case Noir::TreeSitter.node_type(node)
       when "interpreted_string_literal", "raw_string_literal"

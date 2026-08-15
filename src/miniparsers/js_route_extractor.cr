@@ -332,8 +332,8 @@ module Noir
     # `.route(`, plus Express-style mounts `.use(` which feed into the
     # cross-file router prefix table). Matching is millions of times
     # cheaper than tokenizing the file.
-    BRACKET_ROUTE_CALL_PATTERN  = /\[\s*['"](?:get|post|put|delete|del|patch|options|head|all)['"]\s*\]\s*\(/i
-    FLEXIBLE_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*(?:get|post|put|delete|del|patch|options|head|all|route|register|use)(?:\s|\n|\r)*\(/i
+    BRACKET_ROUTE_CALL_PATTERN  = /\[\s*['"](?:get|post|put|delete|del|patch|options|head|all|query)['"]\s*\]\s*\(/i
+    FLEXIBLE_ROUTE_CALL_PATTERN = /\.(?:\s|\n|\r)*(?:get|post|put|delete|del|patch|options|head|all|query|route|register|use)(?:\s|\n|\r)*\(/i
 
     # A 22-literal `includes?` pre-pass used to run ahead of these two
     # patterns (`".get("`, `".get ("`, ... for each verb). Every one of
@@ -886,7 +886,7 @@ module Noir
         return "ALL" # Keep ALL as-is for special handling
       when "OPTIONS"
         return "OPTIONS"
-      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD"
+      when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "QUERY"
         return method
       end
 

@@ -18,6 +18,7 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.normalize_http_method("DELETE").should eq("DELETE")
       Noir::JSRouteExtractor.normalize_http_method("PATCH").should eq("PATCH")
       Noir::JSRouteExtractor.normalize_http_method("HEAD").should eq("HEAD")
+      Noir::JSRouteExtractor.normalize_http_method("QUERY").should eq("QUERY")
     end
 
     it "uppercases methods" do
@@ -341,6 +342,26 @@ describe Noir::JSRouteExtractor do
       begin
         routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
         routes.any? { |r| r.url == "/users" && r.method == "GET" }.should be_true
+      ensure
+        file.delete
+      end
+    end
+
+    it "extracts HTTP QUERY routes in express source" do
+      content = <<-JS
+        const express = require("express");
+        const app = express();
+        const router = express.Router();
+        app.query("/search", (req, res) => res.json([]));
+        router.query("/items", (req, res) => res.json([]));
+        app.route("/filter").query((req, res) => res.json([]));
+        JS
+      file = File.tempfile("app", ".js", &.print(content))
+      begin
+        routes = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        routes.any? { |r| r.url == "/search" && r.method == "QUERY" }.should be_true
+        routes.any? { |r| r.url == "/items" && r.method == "QUERY" }.should be_true
+        routes.any? { |r| r.url == "/filter" && r.method == "QUERY" }.should be_true
       ensure
         file.delete
       end
