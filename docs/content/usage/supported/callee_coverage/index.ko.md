@@ -40,7 +40,7 @@ JSON, JSONL, YAML, TOML 같은 모델 기반 포맷과 plain 모델 직렬화는
 | JavaScript | AdonisJS, Apollo Server, Astro, Elysia, Express, Fastify, Fresh, Hapi, Hono, Koa, NestJS, Next.js, Nitro, NuxtJS, Remix, Restify, SvelteKit |
 | Kotlin | Ktor, Spring, http4k |
 | Lua | Lapis, lor |
-| PHP | CakePHP, CodeIgniter, Hyperf, Laminas, Laravel, Lumen, Pure, Slim, Symfony, ThinkPHP, Yii2 |
+| PHP | CakePHP, CodeIgniter, Hyperf, Laminas, Laravel, Lumen, Phalcon, Pure, Slim, Symfony, ThinkPHP, Yii2 |
 | Perl | Catalyst, Dancer2, Mojolicious |
 | Python | Bottle, Django, Django Ninja, Falcon, FastAPI, Flask, Litestar, Pyramid, Quart, Robyn, Sanic, Starlette, Tornado, aiohttp, http.server |
 | R | Plumber |
