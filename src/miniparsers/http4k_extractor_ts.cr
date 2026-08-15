@@ -29,7 +29,7 @@ module Noir
   # Recognised:
   #
   #   * Verbs `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`,
-  #     `OPTIONS`, `TRACE`, `CONNECT` — both bare (`GET`) and
+  #     `OPTIONS`, `TRACE`, `CONNECT`, `QUERY` — both bare (`GET`) and
   #     `Method.GET`-qualified.
   #   * Inline lambda handler — scanned for `req.query("name")`,
   #     `req.header("X-Foo")`, `req.form("x")`, `req.bodyString()`
@@ -51,7 +51,7 @@ module Noir
 
     HTTP_VERBS = Set{
       "GET", "POST", "PUT", "DELETE", "PATCH",
-      "HEAD", "OPTIONS", "TRACE", "CONNECT",
+      "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY",
     }
 
     struct Route

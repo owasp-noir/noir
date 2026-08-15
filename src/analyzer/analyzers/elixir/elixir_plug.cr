@@ -46,7 +46,7 @@ module Analyzer::Elixir
     # verb/`match`/`forward` macros. Files with none of those tokens
     # cannot contribute endpoints (models, views, plain modules).
     PLUG_ROUTE_EVIDENCE_RE = /
-      \b(?:get|post|put|patch|delete|head|options|forward|match)
+      \b(?:get|post|put|patch|delete|head|options|query|forward|match)
       \s*(?:\(\s*)?["']
     /x
 
@@ -229,6 +229,8 @@ module Analyzer::Elixir
       "head"    => "HEAD",
       "options" => "OPTIONS",
       "forward" => "FORWARD",
+      # RFC 10008, shipped in elixir-plug/plug#1319 (merged 2026-06-25).
+      "query" => "QUERY",
     }
 
     # Precompiled per-verb route regexes. `line_to_endpoint` runs once per
@@ -261,6 +263,11 @@ module Analyzer::Elixir
               endpoints << Endpoint.new(path, method_match[1].upcase)
             end
           end
+        elsif via_match = line.match(/(?:^|[^.\w])match\s+["\']([^"\']+)["\'][^:]*via:\s*:(\w+)/)
+          # match "/path", via: :query — Plug.Router's `via:` also accepts
+          # a single atom, not just a list.
+          path = via_match[1]
+          endpoints << Endpoint.new(path, via_match[2].upcase) if plug_route_path?(path)
         end
 
         # Match simple match statements (defaults to GET)

@@ -3,19 +3,23 @@ require "uri"
 require "../utils/http_symbols"
 
 module OutputBuilderOasCommon
-  # The operation keys a Path Item Object accepts in OpenAPI 3.0, the newest
-  # version Noir emits. `query` (RFC 10008) is deliberately not one of them —
-  # no OAS version Noir writes (2.0 / 3.0.3) can express it, so a QUERY
-  # endpoint degrades to the `x-noir-unsupported-methods` extension below
-  # rather than being dropped or downgraded to `get`.
-  VALID_OPERATION_METHODS = Set{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+  # The operation keys a Path Item Object accepts. `query` (RFC 10008)
+  # arrived with OpenAPI 3.2, so the oas3 builder only emits it as a real
+  # operation key — bumping the document's declared `openapi` version to
+  # 3.2.0 when (and only when) it does; every other emitted document stays on
+  # 3.0.3. Swagger 2.0 has no later version to adopt `query` into and can
+  # never express it, so `OAS2_OPERATION_METHODS` below excludes it and a
+  # QUERY endpoint keeps degrading to the `x-noir-unsupported-methods`
+  # extension rather than being dropped or downgraded to `get`.
+  VALID_OPERATION_METHODS = Set{"get", "put", "post", "delete", "options", "head", "patch", "trace", "query"}
   ANY_OPERATION_METHODS   = WILDCARD_HTTP_METHODS.map(&.downcase)
 
-  # Swagger 2.0's Path Item Object has no `trace` field — `trace` arrived with
-  # OpenAPI 3.0. Emitting one made the *whole document* invalid, not just that
-  # operation, and an `ANY` route expands across every verb, so this hit 25 of
-  # the fixture tree's OAS2 documents.
-  OAS2_OPERATION_METHODS = VALID_OPERATION_METHODS - Set{"trace"}
+  # Swagger 2.0's Path Item Object has no `trace` field (arrived with OpenAPI
+  # 3.0) and no `query` field (arrived with OpenAPI 3.2, a version Swagger 2.0
+  # will never advance to). Emitting either made the *whole document* invalid,
+  # not just that operation, and an `ANY` route expands across every verb, so
+  # `trace` alone hit 25 of the fixture tree's OAS2 documents.
+  OAS2_OPERATION_METHODS = VALID_OPERATION_METHODS - Set{"trace", "query"}
 
   # Converter names that can appear in a `<…>` path placeholder. Same list the
   # optimizer's `angle_bracket_param` uses, so the two resolve a placeholder

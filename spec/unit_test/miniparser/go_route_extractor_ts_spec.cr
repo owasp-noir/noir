@@ -592,6 +592,51 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "extracts Echo QUERY routes, Add, and Match slice method routes" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          e.QUERY("/search", handler)
+          g := e.Group("/api")
+          g.QUERY("/find", handler)
+          e.Add("QUERY", "/add-query", handler)
+          e.Match([]string{"GET", "QUERY"}, "/multi", handler)
+          g.Match([]string{http.MethodGet, "QUERY"}, "/group-multi", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+      source,
+      handle_method: "Add",
+      handle_many_methods: ["Match"]
+    )
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/group-multi"},
+      {"GET", "/multi"},
+      {"QUERY", "/add-query"},
+      {"QUERY", "/api/find"},
+      {"QUERY", "/api/group-multi"},
+      {"QUERY", "/multi"},
+      {"QUERY", "/search"},
+    ].sort)
+  end
+
+  it "does not treat SQL-client Query calls as routes" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          e.QUERY("/search", handler)
+          session.Query("SELECT * FROM users WHERE id = ?", id)
+          q.Query("UPDATE users SET name = ? WHERE id = ?", name, id)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"QUERY", "/search"}])
+  end
+
   it "does not treat zap.Any logging field constructors as routes" do
     source = <<-GO
       package main

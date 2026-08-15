@@ -364,4 +364,102 @@ describe Noir::TreeSitterJaxRsExtractor do
       {"GET", "/ws/chat/{roomId}", "ws"},
     ])
   end
+
+  it "resolves user-defined @HttpMethod annotations to their declared verb" do
+    source = <<-JAVA
+      package com.example.annotation;
+
+      import java.lang.annotation.ElementType;
+      import java.lang.annotation.Retention;
+      import java.lang.annotation.RetentionPolicy;
+      import java.lang.annotation.Target;
+      import jakarta.ws.rs.HttpMethod;
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @HttpMethod("QUERY")
+      public @interface QUERY {
+      }
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @HttpMethod("propfind")
+      public @interface PROPFIND {
+      }
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      public @interface NotAVerb {
+      }
+      JAVA
+
+    Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(source).should eq({
+      "QUERY"    => "QUERY",
+      "PROPFIND" => "PROPFIND",
+    })
+  end
+
+  it "never lets a custom @HttpMethod annotation shadow a built-in verb name" do
+    source = <<-JAVA
+      package com.example.annotation;
+
+      import jakarta.ws.rs.HttpMethod;
+
+      @HttpMethod("POST")
+      public @interface GET {
+      }
+      JAVA
+
+    Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(source).should eq({} of String => String)
+  end
+
+  it "applies a resolved custom verb to a resource method alongside body params, leaving built-ins untouched" do
+    annotation_source = <<-JAVA
+      package com.example.annotation;
+
+      import java.lang.annotation.ElementType;
+      import java.lang.annotation.Retention;
+      import java.lang.annotation.RetentionPolicy;
+      import java.lang.annotation.Target;
+      import jakarta.ws.rs.HttpMethod;
+
+      @Target(ElementType.METHOD)
+      @Retention(RetentionPolicy.RUNTIME)
+      @HttpMethod("QUERY")
+      public @interface QUERY {
+      }
+      JAVA
+
+    source = <<-JAVA
+      package com.example.api;
+
+      import com.example.annotation.QUERY;
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.core.Response;
+
+      @Path("/search")
+      public class SearchResource {
+          @QUERY
+          public Response search(FilterDto filters) {
+              return Response.ok().build();
+          }
+
+          @GET
+          @Path("/status")
+          public Response status() {
+              return Response.ok().build();
+          }
+      }
+      JAVA
+
+    custom_verb_annotations = Noir::TreeSitterJaxRsExtractor.extract_custom_verb_annotations(annotation_source)
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source, custom_verb_annotations: custom_verb_annotations)
+    routes.map { |r| {r.verb, r.path, r.params} }.should eq([
+      {"QUERY", "/search", [
+        Param.new("filters", "FilterDto", "json"),
+      ]},
+      {"GET", "/search/status", [] of Param},
+    ])
+  end
 end

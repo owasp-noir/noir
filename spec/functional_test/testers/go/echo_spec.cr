@@ -50,6 +50,21 @@ expected_endpoints = [
   Endpoint.new("/health", "GET"),
   # handlers.go: deeply nested groups
   Endpoint.new("/v2/admin/cache", "DELETE"),
+  # server.go: HTTP QUERY routes (e.QUERY, group.QUERY, e.Add, e.Match, group.Match)
+  Endpoint.new("/search-query", "QUERY", [
+    Param.new("filter", "", "query"),
+    Param.new("body", "", "json"),
+  ]),
+  Endpoint.new("/admin/query-admin", "QUERY"),
+  Endpoint.new("/add-query", "QUERY"),
+  Endpoint.new("/match-query", "GET", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/match-query", "QUERY", [
+    Param.new("q", "", "query"),
+  ]),
+  Endpoint.new("/admin/match-admin", "GET"),
+  Endpoint.new("/admin/match-admin", "QUERY"),
 ]
 
 FunctionalTester.new("fixtures/go/echo/", {
