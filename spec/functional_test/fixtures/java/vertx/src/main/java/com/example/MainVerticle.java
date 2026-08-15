@@ -45,11 +45,21 @@ public class MainVerticle {
     router.route().method(HttpMethod.GET).path(API_PREFIX + TASKS + "/:taskId").handler(this::getTask);
     router.route().path("/jobs/:jobId").method(HttpMethod.POST).handler(this::createJob);
     router.route(API_PREFIX + "/any/:anyId").handler(this::handleAny);
+
+    // HTTP QUERY routes (RFC 10008)
+    router.query("/search").handler(ctx -> {
+      String q = ctx.queryParam("q");
+      ctx.response().end("Search: " + q);
+    });
+    router.route(HttpMethod.QUERY, "/search/items").handler(this::searchItems);
+    router.route("/advanced-search").method(HttpMethod.QUERY).handler(this::advancedSearch);
+    router.route("/multi-search").method(HttpMethod.GET).method(HttpMethod.QUERY).handler(this::multiSearch);
     
     // Sub-router mounting
     Router apiRouter = Router.router(vertx);
     apiRouter.get("/v1/items").handler(this::getItems);
     apiRouter.post("/v1/items").handler(this::createItem);
+    apiRouter.query("/v1/search").handler(this::apiSearch);
     router.mountSubRouter("/api", apiRouter);
 
     Router adminRouter = Router.router(vertx);
@@ -165,5 +175,25 @@ public class MainVerticle {
   private void handleAny(RoutingContext ctx) {
     String anyId = ctx.request().getParam("anyId");
     ctx.response().end("Any method " + anyId);
+  }
+
+  private void searchItems(RoutingContext ctx) {
+    String filter = ctx.queryParam("filter");
+    ctx.response().end("Items search " + filter);
+  }
+
+  private void advancedSearch(RoutingContext ctx) {
+    String query = ctx.queryParam("query");
+    ctx.response().end("Advanced search " + query);
+  }
+
+  private void multiSearch(RoutingContext ctx) {
+    String term = ctx.queryParam("term");
+    ctx.response().end("Multi search " + term);
+  }
+
+  private void apiSearch(RoutingContext ctx) {
+    String keyword = ctx.queryParam("keyword");
+    ctx.response().end("API search " + keyword);
   }
 }

@@ -10,11 +10,11 @@ module Analyzer::Java
     analyzer_for "java_vertx"
 
     # Regex patterns for Vert.x route detection
-    REGEX_ROUTER_ROUTE         = /(\w+)\.(get|post|put|delete|patch|head|options|connect|trace)\s*\(([^)]*)\)/i
-    REGEX_ROUTE_METHOD         = /(\w+)\.route\s*\(([^)]*)\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(/i
+    REGEX_ROUTER_ROUTE         = /(\w+)\.(get|post|put|delete|patch|head|options|connect|trace|query)\s*\(([^)]*)\)/i
+    REGEX_ROUTE_METHOD         = /(\w+)\.route\s*\(([^)]*)\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace|query)\s*\(/i
     REGEX_ROUTE_HTTP_METHOD    = /(\w+)\.route\s*\(([^)]*)\)/i
-    REGEX_ROUTER_ROUTE_HANDLER = /router\.(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
-    REGEX_ROUTE_METHOD_HANDLER = /\.route\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace)\s*\(\s*this::([\w$]+)\s*\)/i
+    REGEX_ROUTER_ROUTE_HANDLER = /router\.(get|post|put|delete|patch|head|options|connect|trace|query)\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
+    REGEX_ROUTE_METHOD_HANDLER = /\.route\s*\(\s*["\']([^"\']*)["\']\s*\)\s*\.\s*(get|post|put|delete|patch|head|options|connect|trace|query)\s*\(\s*this::([\w$]+)\s*\)/i
     REGEX_ROUTE_ANY_HANDLER    = /(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i
     # Bare `route(path).handler(...)` — candidate set for lambda/terminal
     # handlers; method-ref form is handled by REGEX_ROUTE_ANY_HANDLER.
@@ -29,7 +29,7 @@ module Analyzer::Java
     # Unambiguous query accessors on RoutingContext (not getParam/pathParam).
     REGEX_QUERY_PARAM      = /\.\s*queryParam\s*\(\s*["']([^"']+)["']\s*\)/
     REGEX_QUERY_PARAMS_GET = /\.\s*queryParams\s*\(\s*\)\s*\.\s*get\s*\(\s*["']([^"']+)["']\s*\)/
-    HTTP_METHODS           = %w[GET POST PUT DELETE PATCH HEAD OPTIONS CONNECT TRACE]
+    HTTP_METHODS           = %w[GET POST PUT DELETE PATCH HEAD OPTIONS CONNECT TRACE QUERY]
     # Response-terminating RoutingContext/response calls used to distinguish
     # real route handlers from pass-through middleware lambdas (`.next()`).
     TERMINAL_HANDLER_MARKERS = [".end(", ".json(", ".redirect(", ".sendFile(", ".fail("]
@@ -40,6 +40,15 @@ module Analyzer::Java
       getter endpoint : String
 
       def initialize(@router_name, @method, @endpoint)
+      end
+    end
+
+    private struct FluentRouteChain
+      getter router_name : String
+      getter route_arg : String
+      getter chain : String
+
+      def initialize(@router_name, @route_arg, @chain)
       end
     end
 
@@ -81,8 +90,8 @@ module Analyzer::Java
                     # Skip if no Vert.x related content
                     next unless content.includes?("Router") || content.includes?("vertx")
 
-                    callees_by_route = include_callee ? extract_method_reference_callees(content, path) : {} of String => Array(Callee)
                     constants = path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new
+                    callees_by_route = include_callee ? extract_method_reference_callees(content, path, constants) : {} of String => Array(Callee)
                     client_names = client_receivers(content)
                     route_candidates = extract_route_candidates(content, constants, client_names)
                     # Only resolve handler bodies when unambiguous query accessors appear.
@@ -249,12 +258,27 @@ module Analyzer::Java
       end
 
       # Find fluent Route API chains like
-      # `router.route().method(HttpMethod.GET).path("/path")`.
-      extract_fluent_route_chains(content).each do |entry|
-        router_name, chain = entry
-        endpoints = fluent_route_paths(chain, constants)
-        methods = fluent_route_methods(chain)
-        next if endpoints.empty? || methods.empty?
+      # `router.route().method(HttpMethod.GET).path("/path")` or
+      # `router.route("/search").method(HttpMethod.QUERY)`.
+      extract_fluent_route_chains(content).each do |chain_info|
+        router_name = chain_info.router_name
+        next if client_names.includes?(router_name)
+
+        methods = fluent_route_methods(chain_info.chain)
+        next if methods.empty?
+
+        endpoints = [] of String
+        unless chain_info.route_arg.empty?
+          args = split_top_level_args(chain_info.route_arg)
+          if args.size == 1
+            if initial_path = resolve_route_path_arg(args[0], constants)
+              endpoints << initial_path unless initial_path.empty?
+            end
+          end
+        end
+        endpoints.concat(fluent_route_paths(chain_info.chain, constants))
+        endpoints.uniq!
+        next if endpoints.empty?
 
         methods.each do |method|
           endpoints.each do |endpoint|
@@ -448,6 +472,44 @@ module Analyzer::Java
 
           params = scan_query_params(body)
           result[route_key("ANY", endpoint)] = params unless params.empty?
+        end
+      end
+
+      extract_fluent_route_chains(content).each do |chain_info|
+        next if client_names.includes?(chain_info.router_name)
+
+        methods = fluent_route_methods(chain_info.chain)
+        next if methods.empty?
+
+        endpoints = [] of String
+        unless chain_info.route_arg.empty?
+          args = split_top_level_args(chain_info.route_arg)
+          if args.size == 1
+            if initial_path = resolve_route_path_arg(args[0], constants)
+              endpoints << initial_path if !initial_path.empty? && vertx_route_path?(initial_path)
+            end
+          end
+        end
+        endpoints.concat(fluent_route_paths(chain_info.chain, constants).select { |p| vertx_route_path?(p) })
+        endpoints.uniq!
+        next if endpoints.empty?
+
+        if handler_match = chain_info.chain.match(/\.\s*handler\s*\(/i)
+          open_idx = (handler_match.end || 1) - 1
+          close_idx = find_matching_paren(chain_info.chain, open_idx)
+          if close_idx
+            handler_arg = chain_info.chain[(open_idx + 1)...close_idx]
+            if body = resolve_handler_arg(handler_arg, method_bodies)
+              params = scan_query_params(body)
+              unless params.empty?
+                methods.each do |method|
+                  endpoints.each do |endpoint|
+                    result[route_key(method, endpoint)] = params
+                  end
+                end
+              end
+            end
+          end
         end
       end
 
@@ -659,14 +721,56 @@ module Analyzer::Java
       nil
     end
 
-    private def extract_fluent_route_chains(content : String) : Array(Tuple(String, String))
-      chains = [] of Tuple(String, String)
-      content.scan(/(\w+)\.route\s*\(\s*\)/) do |match|
+    private def extract_fluent_route_chains(content : String) : Array(FluentRouteChain)
+      chains = [] of FluentRouteChain
+      content.scan(/(\w+)\.route\s*\(([^)]*)\)/) do |match|
+        router_name = match[1]
+        route_arg = match[2].strip
         start = match.end || 0
-        statement_end = content.index(';', start) || content.size
-        chains << {match[1], content[start...statement_end]}
+        statement_end = find_statement_end(content, start)
+        chains << FluentRouteChain.new(router_name, route_arg, content[start...statement_end])
       end
       chains
+    end
+
+    private def find_statement_end(content : String, start : Int32) : Int32
+      paren_depth = 0
+      brace_depth = 0
+      in_string = false
+      quote = '\0'
+      escape = false
+
+      content.each_char_with_index do |char, idx|
+        next if idx < start
+
+        if in_string
+          if escape
+            escape = false
+          elsif char == '\\'
+            escape = true
+          elsif char == quote
+            in_string = false
+          end
+        else
+          case char
+          when '"', '\''
+            in_string = true
+            quote = char
+          when '('
+            paren_depth += 1
+          when ')'
+            paren_depth -= 1 if paren_depth > 0
+          when '{'
+            brace_depth += 1
+          when '}'
+            brace_depth -= 1 if brace_depth > 0
+          when ';'
+            return idx if paren_depth == 0 && brace_depth == 0
+          end
+        end
+      end
+
+      content.size
     end
 
     private def fluent_route_paths(chain : String, constants : Hash(String, String)) : Array(String)
@@ -713,7 +817,7 @@ module Analyzer::Java
       endpoint
     end
 
-    private def extract_method_reference_callees(content : String, path : String) : Hash(String, Array(Callee))
+    private def extract_method_reference_callees(content : String, path : String, constants : Hash(String, String)) : Hash(String, Array(Callee))
       handlers_by_route = {} of String => String
 
       content.scan(REGEX_ROUTER_ROUTE_HANDLER) do |match|
@@ -734,6 +838,47 @@ module Analyzer::Java
         next if endpoint.empty? || handler_name.empty?
 
         handlers_by_route[route_key(method, endpoint)] = handler_name
+      end
+
+      content.scan(/(\w+)\.route\s*\(([^)]*)\)\s*\.handler\s*\(\s*this::([\w$]+)\s*\)/i) do |match|
+        next if match.size < 4
+        args = split_top_level_args(match[2])
+        next unless args.size >= 2
+
+        method = resolve_http_method_arg(args[0])
+        endpoint = resolve_route_path_arg(args[1], constants)
+        handler_name = match[3]
+        next if method.nil? || !method.in?(HTTP_METHODS)
+        next if endpoint.nil? || endpoint.empty? || handler_name.empty?
+
+        handlers_by_route[route_key(method, endpoint)] = handler_name
+      end
+
+      extract_fluent_route_chains(content).each do |chain_info|
+        methods = fluent_route_methods(chain_info.chain)
+        next if methods.empty?
+
+        endpoints = [] of String
+        unless chain_info.route_arg.empty?
+          args = split_top_level_args(chain_info.route_arg)
+          if args.size == 1
+            if initial_path = resolve_route_path_arg(args[0], constants)
+              endpoints << initial_path unless initial_path.empty?
+            end
+          end
+        end
+        endpoints.concat(fluent_route_paths(chain_info.chain, constants))
+        endpoints.uniq!
+        next if endpoints.empty?
+
+        if m = chain_info.chain.match(/\.\s*handler\s*\(\s*this::([\w$]+)\s*\)/i)
+          handler_name = m[1]
+          methods.each do |method|
+            endpoints.each do |endpoint|
+              handlers_by_route[route_key(method, endpoint)] = handler_name
+            end
+          end
+        end
       end
 
       return {} of String => Array(Callee) if handlers_by_route.empty?
