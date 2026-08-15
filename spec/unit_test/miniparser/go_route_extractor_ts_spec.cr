@@ -592,6 +592,51 @@ describe Noir::TreeSitterGoRouteExtractor do
     ].sort)
   end
 
+  it "extracts Echo QUERY routes, Add, and Match slice method routes" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          e.QUERY("/search", handler)
+          g := e.Group("/api")
+          g.QUERY("/find", handler)
+          e.Add("QUERY", "/add-query", handler)
+          e.Match([]string{"GET", "QUERY"}, "/multi", handler)
+          g.Match([]string{http.MethodGet, "QUERY"}, "/group-multi", handler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
+      source,
+      handle_method: "Add",
+      handle_many_methods: ["Match"]
+    )
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/group-multi"},
+      {"GET", "/multi"},
+      {"QUERY", "/add-query"},
+      {"QUERY", "/api/find"},
+      {"QUERY", "/api/group-multi"},
+      {"QUERY", "/multi"},
+      {"QUERY", "/search"},
+    ].sort)
+  end
+
+  it "does not treat SQL-client Query calls as routes" do
+    source = <<-GO
+      package main
+      func main() {
+          e := echo.New()
+          e.QUERY("/search", handler)
+          session.Query("SELECT * FROM users WHERE id = ?", id)
+          q.Query("UPDATE users SET name = ? WHERE id = ?", name, id)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"QUERY", "/search"}])
+  end
+
   it "does not treat zap.Any logging field constructors as routes" do
     source = <<-GO
       package main
@@ -1062,5 +1107,54 @@ describe Noir::TreeSitterGoRouteExtractor do
       {"QUERY", "/items"},
       {"QUERY", "/search"},
     ].sort)
+  end
+
+  it "keeps ANY fan-out when a handler only checks OPTIONS (CORS preflight)" do
+    source = <<-GO
+      package main
+
+      import "net/http"
+
+      func main() {
+          mux := http.NewServeMux()
+          mux.HandleFunc("/cors", func(w http.ResponseWriter, r *http.Request) {
+              if r.Method == http.MethodOptions {
+                  w.WriteHeader(http.StatusNoContent)
+                  return
+              }
+              w.Write([]byte("ok"))
+          })
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([{"ANY", "/cors"}])
+  end
+
+  it "extracts Fiber-style Query routes and Add forms (RFC 10008)" do
+    source = <<-GO
+      package main
+      import (
+          fiber "github.com/gofiber/fiber/v2"
+      )
+      func main() {
+          app := fiber.New()
+          app.Query("/search", searchHandler)
+
+          api := app.Group("/api")
+          api.Query("/items", itemsHandler)
+
+          app.Add(fiber.MethodQuery, "/add-const", constHandler)
+          app.Add("QUERY", "/add-string", stringHandler)
+      }
+      GO
+
+    routes = Noir::TreeSitterGoRouteExtractor.extract_routes(source, handle_method: "Add")
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"QUERY", "/search"},
+      {"QUERY", "/api/items"},
+      {"QUERY", "/add-const"},
+      {"QUERY", "/add-string"},
+    ])
   end
 end

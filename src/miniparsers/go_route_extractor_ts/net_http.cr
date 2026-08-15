@@ -345,7 +345,11 @@ module Noir
         end
       end
 
-      if methods.empty?
+      # A lone OPTIONS mention is almost always a CORS-preflight early
+      # return (`if r.Method == http.MethodOptions { return }`) guarding an
+      # otherwise method-agnostic handler — keep the ANY fan-out instead of
+      # narrowing the surface to OPTIONS.
+      if methods.empty? || methods == ["OPTIONS"]
         yield Route.new(router_name, "ANY", path, raw_path, handler_text, row)
       else
         methods.each do |discovered_verb|

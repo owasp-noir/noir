@@ -26,18 +26,36 @@ module Analyzer::Python
 
     # `def get(...)` / `async def post(...)` method heads in class-based
     # views. Precompiled — an interpolated literal would be recompiled on
-    # every line of every CBV class body.
-    REGEX_CBV_METHOD_DEF = /\s+(?:async\s+)?def\s+(#{HTTP_METHODS.join("|")})\s*\(/
+    # every line of every CBV class body. Uses `HTTP_METHODS_EXCLUDING_QUERY`
+    # (see `PythonEngine`): Django's CBV dispatch (`View.dispatch`) looks up
+    # `request.method.lower()` against the class's `http_method_names`
+    # allowlist, which does not include `query` upstream — unlike Flask's
+    # duck-typed `getattr(self, request.method.lower())` dispatch, a
+    # `def query(self):` method is genuinely inert unless a view manually
+    # widens that allowlist, so matching it here would report a phantom
+    # route.
+    REGEX_CBV_METHOD_DEF = /\s+(?:async\s+)?def\s+(#{HTTP_METHODS_EXCLUDING_QUERY.join("|")})\s*\(/
 
-    # HTTP_METHODS is a fixed 8-element table (from PythonEngine), so the
+    # HTTP_METHODS is a fixed table (from PythonEngine), so the
     # decorator-stack scan and the `request.method == "..."` scan below
-    # (each an `HTTP_METHODS.each` loop run per decorator line / per
-    # function-body line) can look up a precompiled regex per method name
-    # instead of interpolating and recompiling one on every iteration.
-    # Purely a lookup-table hoist — the matched text/capture groups are
-    # unchanged, so it doesn't affect the line/offset values computed
-    # elsewhere in this file.
-    DECORATOR_METHOD_NAME_REGEXES = HTTP_METHODS.to_h { |m| {m, /[^a-zA-Z0-9](#{m})[^a-zA-Z0-9]/} }
+    # (each an `.each` loop run per decorator line / per function-body
+    # line) can look up a precompiled regex per method name instead of
+    # interpolating and recompiling one on every iteration. Purely a
+    # lookup-table hoist — the matched text/capture groups are unchanged,
+    # so it doesn't affect the line/offset values computed elsewhere in
+    # this file.
+    #
+    # `DECORATOR_METHOD_NAME_REGEXES` also uses `HTTP_METHODS_EXCLUDING_QUERY`,
+    # for the OTHER reason that constant documents: it bare-word-matches a
+    # method name anywhere in a decorator's text (this scan is not CBV-
+    # specific — it runs over the decorator stack above a plain function
+    # too), and real decorators (e.g. DRF-spectacular's
+    # `OpenApiParameter("query", ...)`) commonly carry `query` as a
+    # parameter name rather than a verb restriction.
+    # `REQUEST_METHOD_NAME_REGEXES` keeps the full list: it only fires on
+    # an explicit, quoted `request.method == "QUERY"` comparison, which is
+    # unambiguous developer-written evidence, not a name collision.
+    DECORATOR_METHOD_NAME_REGEXES = HTTP_METHODS_EXCLUDING_QUERY.to_h { |m| {m, /[^a-zA-Z0-9](#{m})[^a-zA-Z0-9]/} }
     REQUEST_METHOD_NAME_REGEXES   = HTTP_METHODS.to_h { |m| {m, /['"](#{m})['"]/} }
 
     # Map request parameters to their respective fields
@@ -1279,7 +1297,7 @@ module Analyzer::Python
                 restricted_methods ||= [] of ::String
                 methods.each { |m| restricted_methods << m unless restricted_methods.includes?(m) }
               else
-                HTTP_METHODS.each do |http_method_name|
+                HTTP_METHODS_EXCLUDING_QUERY.each do |http_method_name|
                   method_name_match = preceding_definition.downcase.match DECORATOR_METHOD_NAME_REGEXES[http_method_name]
                   unless method_name_match.nil?
                     suspicious_http_methods << http_method_name.upcase

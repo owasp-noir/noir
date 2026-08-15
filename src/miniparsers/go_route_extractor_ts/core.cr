@@ -1,4 +1,5 @@
 require "../../ext/tree_sitter/tree_sitter"
+require "../../utils/http_symbols"
 
 module Noir
   # Tree-sitter-backed Go route extractor.
@@ -198,9 +199,12 @@ module Noir
                        group_aliases : Array(String) = [] of String,
                        extra_verbs : Array(String) = [] of String,
                        handle_many_method : String? = nil,
+                       handle_many_methods : Array(String) = [] of String,
                        closure_group_methods : Array(String) = [] of String) : Array(Route)
       routes = [] of Route
       group_prefixes = external_groups.dup
+      all_handle_many = handle_many_methods.dup
+      all_handle_many << handle_many_method if handle_many_method && !all_handle_many.includes?(handle_many_method)
       Noir::TreeSitter.parse_go(source) do |root|
         string_values = collect_string_values(root, source)
         mux_chained_operands = Set(String).new
@@ -233,9 +237,9 @@ module Noir
           next unless Noir::TreeSitter.node_type(node) == "call_expression"
           if route = decode_verb_call(node, source, group_prefixes, extra_verbs, group_method, group_aliases, string_values, closure_groups)
             routes << route
-          elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method))
+          elsif handle_method && (route = decode_handle_call(node, source, group_prefixes, handle_method, group_method, group_aliases, string_values))
             routes << route
-          elsif handle_many_method && (many = decode_handle_many_call(node, source, group_prefixes, handle_many_method)) && !many.empty?
+          elsif !all_handle_many.empty? && (many = decode_handle_many_call(node, source, group_prefixes, all_handle_many, group_method, group_aliases, string_values)) && !many.empty?
             many.each { |r| routes << r }
           elsif handlefunc_methods && !mux_chained_operands.includes?(node_key(node))
             # Mux's `.Methods(...)` can list several verbs at once
@@ -973,12 +977,20 @@ module Noir
         elsif handler_text.empty?
           # First non-string positional arg after the path is treated as
           # the handler — matches Gin/Echo/Fiber calling conventions.
+          next if Noir::TreeSitter.node_type(arg) == "interpreted_string_literal" ||
+                  Noir::TreeSitter.node_type(arg) == "raw_string_literal"
           handler_text = Noir::TreeSitter.node_text(arg, source)
         end
         arg_index += 1
       end
 
       return unless raw_path
+
+      # `Query` collides with SQL-client APIs — gocql's `session.Query("SELECT …",
+      # id)` and database/sql receivers not listed in NON_ROUTER_OPERANDS pass a
+      # string first arg plus bind args that read as a handler. Route paths always
+      # start with `/`; SQL text never does.
+      return if verb.compare("query", case_insensitive: true) == 0 && !raw_path.starts_with?('/')
 
       # Filter out non-router method calls that masquerade as verb routes:
       #   * `http.Get("http://...")` — net/http client call. Real route
@@ -1075,13 +1087,16 @@ module Noir
     end
 
     # Decode `<router>.<handle_method>("METHOD", "/path", handler)` —
-    # i.e. httprouter's `router.Handle("GET", "/x", h)`. Distinct from
-    # `decode_verb_call` because the first positional argument is the
+    # i.e. httprouter's `router.Handle("GET", "/x", h)` or Echo's `e.Add("QUERY", "/x", h)`.
+    # Distinct from `decode_verb_call` because the first positional argument is the
     # method, not the path. Returns nil when the shape doesn't match.
     private def decode_handle_call(call : LibTreeSitter::TSNode,
                                    source : String,
                                    groups : Hash(String, String),
-                                   handle_method : String) : Route?
+                                   handle_method : String,
+                                   group_method : String = "Group",
+                                   group_aliases : Array(String) = [] of String,
+                                   string_values : Hash(String, String) = Hash(String, String).new) : Route?
       function = Noir::TreeSitter.field(call, "function")
       return unless function
       return unless Noir::TreeSitter.node_type(function) == "selector_expression"
@@ -1089,8 +1104,12 @@ module Noir
       operand = Noir::TreeSitter.field(function, "operand")
       field = Noir::TreeSitter.field(function, "field")
       return unless operand && field
-      return unless Noir::TreeSitter.node_type(operand) == "identifier"
       return unless Noir::TreeSitter.node_text(field, source) == handle_method
+
+      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+      return unless router_info
+      router_name, chain_prefix = router_info
+      return if NON_ROUTER_OPERANDS.includes?(router_name)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return unless args
@@ -1114,6 +1133,10 @@ module Noir
             method_lit = candidate unless candidate.empty?
           end
         else
+          if method_lit.nil?
+            candidate = decode_method_token(arg, source)
+            method_lit = candidate unless candidate.empty?
+          end
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
         end
       end
@@ -1121,13 +1144,9 @@ module Noir
       return unless method_lit && path_lit
       return if method_lit.empty? || path_lit.empty?
 
-      router_name = Noir::TreeSitter.node_text(operand, source)
-      return if NON_ROUTER_OPERANDS.includes?(router_name)
-      resolved = if prefix = groups[router_name]?
-                   group_join(prefix, path_lit)
-                 else
-                   path_lit
-                 end
+      base_prefix = groups[router_name]? || ""
+      base_prefix = group_join(base_prefix, chain_prefix) unless chain_prefix.empty?
+      resolved = base_prefix.empty? ? (path_lit.empty? ? "/" : path_lit) : group_join(base_prefix, path_lit)
 
       Route.new(
         router_name,
@@ -1141,12 +1160,15 @@ module Noir
 
     # Like `decode_handle_call` but the method argument lists several
     # verbs at once — Iris's `app.HandleMany("GET POST", "/x", h)` (and
-    # the comma-separated `"GET,POST"` form). Fans out into one Route per
-    # verb so each surfaces as its own endpoint.
+    # the comma-separated `"GET,POST"` form) or Echo's `e.Match([]string{"GET", "QUERY"}, "/x", h)`.
+    # Fans out into one Route per verb so each surfaces as its own endpoint.
     private def decode_handle_many_call(call : LibTreeSitter::TSNode,
                                         source : String,
                                         groups : Hash(String, String),
-                                        handle_method : String) : Array(Route)
+                                        handle_many_methods : Array(String),
+                                        group_method : String = "Group",
+                                        group_aliases : Array(String) = [] of String,
+                                        string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)
       empty = [] of Route
       function = Noir::TreeSitter.field(call, "function")
       return empty unless function
@@ -1154,47 +1176,53 @@ module Noir
       operand = Noir::TreeSitter.field(function, "operand")
       field = Noir::TreeSitter.field(function, "field")
       return empty unless operand && field
-      return empty unless Noir::TreeSitter.node_type(operand) == "identifier"
-      return empty unless Noir::TreeSitter.node_text(field, source) == handle_method
+      return empty unless handle_many_methods.includes?(Noir::TreeSitter.node_text(field, source))
+
+      router_info = router_operand_info(operand, source, groups, group_method, group_aliases, string_values)
+      return empty unless router_info
+      router_name, chain_prefix = router_info
+      return empty if NON_ROUTER_OPERANDS.includes?(router_name)
 
       args = Noir::TreeSitter.field(call, "arguments")
       return empty unless args
 
-      method_lit = nil
+      verbs = [] of String
       path_lit = nil
       handler_text = ""
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
         when "interpreted_string_literal", "raw_string_literal"
-          if method_lit.nil?
-            method_lit = decode_string_literal(arg, source)
+          if verbs.empty? && path_lit.nil?
+            s = decode_string_literal(arg, source)
+            verbs = s.split(/[\s,]+/).map(&.strip.upcase).reject(&.empty?)
           elsif path_lit.nil?
             path_lit = decode_string_literal(arg, source)
           end
+        when "composite_literal"
+          if verbs.empty? && path_lit.nil?
+            body = Noir::TreeSitter.field(arg, "body") || arg
+            Noir::TreeSitter.each_named_child(body) do |elem|
+              v = decode_method_token(elem, source)
+              verbs << v unless v.empty?
+            end
+          end
         when "selector_expression"
-          # The idiomatic constant form `app.HandleMany(http.MethodGet,
-          # "/x", h)` — resolve via the shared http.MethodX helper.
-          if method_lit.nil?
+          if verbs.empty? && path_lit.nil?
             candidate = decode_method_token(arg, source)
-            method_lit = candidate unless candidate.empty?
+            verbs << candidate unless candidate.empty?
           end
         else
           handler_text = Noir::TreeSitter.node_text(arg, source) if handler_text.empty? && !path_lit.nil?
         end
       end
 
-      return empty unless method_lit && path_lit
-      return empty if method_lit.empty? || path_lit.empty?
+      return empty if verbs.empty? || path_lit.nil?
+      return empty if path_lit.empty?
 
-      router_name = Noir::TreeSitter.node_text(operand, source)
-      return empty if NON_ROUTER_OPERANDS.includes?(router_name)
-      resolved = if prefix = groups[router_name]?
-                   group_join(prefix, path_lit)
-                 else
-                   path_lit
-                 end
+      base_prefix = groups[router_name]? || ""
+      base_prefix = group_join(base_prefix, chain_prefix) unless chain_prefix.empty?
+      resolved = base_prefix.empty? ? (path_lit.empty? ? "/" : path_lit) : group_join(base_prefix, path_lit)
 
-      verbs = method_lit.split(/[\s,]+/).map(&.strip.upcase).reject(&.empty?)
       verbs.map do |verb|
         Route.new(router_name, verb, resolved, path_lit, handler_text,
           Noir::TreeSitter.node_start_row(call))
@@ -1486,7 +1514,7 @@ module Noir
       end
     end
 
-    # Decode a Go string literal node's text content. Interpreted
+    # Tree-sitter splits string literals into quote and content nodes. Interpreted
     # literals (`"foo"`) expose an `interpreted_string_literal_content`
     # named child; raw literals (`` `foo` ``) keep their contents as the
     # whole node text minus the backticks. We concatenate content children
@@ -1510,24 +1538,40 @@ module Noir
       end
     end
 
-    # An HTTP method written as a string literal ("POST"), an
-    # `http.MethodX` selector, or an identifier (`MethodQuery`); collapses
-    # to the bare upper-cased verb. Shared across Go extractors.
+    # An HTTP method written as a string literal ("POST"), a selector expression
+    # like `http.MethodGet` or `echo.GET`, or an identifier — including a
+    # dot-imported `MethodQuery` constant; collapses to the bare upper-cased
+    # verb. Shared across Go extractors.
     private def decode_method_token(node : LibTreeSitter::TSNode, source : String) : String
-      case Noir::TreeSitter.node_type(node)
+      target = node
+      if Noir::TreeSitter.node_type(target) == "literal_element"
+        if child = first_named_child(target)
+          target = child
+        end
+      end
+
+      case Noir::TreeSitter.node_type(target)
       when "interpreted_string_literal", "raw_string_literal"
-        Noir::TreeSitter.node_text(node, source).gsub(/^["`]|["`]$/, "").upcase
+        decode_string_literal(target, source).upcase
       when "selector_expression"
-        text = Noir::TreeSitter.node_text(node, source)
+        text = Noir::TreeSitter.node_text(target, source)
         if idx = text.index("Method")
           text[(idx + "Method".size)..].upcase
         else
-          ""
+          field = Noir::TreeSitter.field(target, "field")
+          ftext = field ? Noir::TreeSitter.node_text(field, source).upcase : text.split('.').last.upcase
+          if ALLOWED_HTTP_METHODS.includes?(ftext) || HTTP_VERB_METHODS.includes?(ftext)
+            ftext
+          else
+            ""
+          end
         end
       when "identifier"
-        text = Noir::TreeSitter.node_text(node, source)
-        if text.starts_with?("Method")
-          text["Method".size..].upcase
+        text = Noir::TreeSitter.node_text(target, source)
+        stripped = text.starts_with?("Method") ? text["Method".size..] : text
+        id_text = stripped.upcase
+        if ALLOWED_HTTP_METHODS.includes?(id_text) || HTTP_VERB_METHODS.includes?(id_text)
+          id_text
         else
           ""
         end

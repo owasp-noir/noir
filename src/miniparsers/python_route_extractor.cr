@@ -20,7 +20,10 @@ module Noir
     extend self
 
     PYTHON_VAR_NAME = /[a-zA-Z_][a-zA-Z0-9_]*/
-    HTTP_METHODS    = %w[get post put patch delete head options trace]
+    # `query` (RFC 10008) recognizes `@<var>.query("/path")` shortcut
+    # decorators (Flask/Werkzeug shipped this; other decorator-based
+    # frameworks fall through harmlessly if they never define it).
+    HTTP_METHODS = %w[get post put patch delete head options trace query]
 
     # One match from `scan_decorators`.
     #

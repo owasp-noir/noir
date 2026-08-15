@@ -37,7 +37,7 @@ module Analyzer::Rust
     # legacy fallback the regex analyzer used. `any` covers
     # `axum::routing::any(handler)` — a verb-agnostic registration
     # commonly used for WebSocket upgrades and reverse-proxy fallbacks.
-    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "any"}
+    HTTP_VERBS = Set{"get", "post", "put", "delete", "patch", "head", "options", "any", "query"}
 
     # Method emitted for service-shaped registrations (`route_service`,
     # `nest_service`, `fallback_service`). Services aren't bound to a
@@ -234,10 +234,10 @@ module Analyzer::Rust
     }
 
     BUILDER_ROUTE_EMIT_NAMES = Set{
-      "get", "post", "put", "delete", "patch", "head", "options", "any",
+      "get", "post", "put", "delete", "patch", "head", "options", "any", "query",
       "unauthenticated_get", "unauthenticated_post", "unauthenticated_put",
       "unauthenticated_delete", "unauthenticated_patch", "unauthenticated_head",
-      "unauthenticated_options", "unauthenticated_any",
+      "unauthenticated_options", "unauthenticated_any", "unauthenticated_query",
     }
 
     private def router_emit?(call : LibTreeSitter::TSNode, source : String) : Bool
@@ -528,7 +528,7 @@ module Analyzer::Rust
       return false unless fn_node
 
       text = Noir::TreeSitter.node_text(fn_node, source)
-      !!text.match(/(?:^|::)[A-Za-z_]\w*(?:RouteBuilder|RouterBuilder)::new$/)
+      !!text.match(/(?:^|::)(?:[A-Za-z_]\w*)?(?:RouteBuilder|RouterBuilder)::new$/)
     end
 
     # Returns `{path, [{http_method, handler_name?}, ...]}` for a valid
@@ -628,21 +628,37 @@ module Analyzer::Rust
         break unless fn_node
         case Noir::TreeSitter.node_type(fn_node)
         when "identifier", "scoped_identifier"
-          # Innermost: `get(handler)` or aide's `get_with(handler, op)`.
-          verb = normalize_method_verb(Noir::TreeSitter.node_text(fn_node, source).split("::").last)
-          if verb
-            handlers.unshift({verb, first_callable_argument(cursor, source)})
+          # Innermost: `get(handler)`, `query(handler)`, `on(MethodFilter::QUERY, handler)`, or aide's `get_with(handler, op)`.
+          call_name = Noir::TreeSitter.node_text(fn_node, source).split("::").last
+          if on_method_filter_call?(call_name)
+            verbs, handler_name = extract_on_call(cursor, source)
+            verbs.reverse_each do |verb|
+              handlers.unshift({verb, handler_name})
+            end
+          else
+            verb = normalize_method_verb(call_name)
+            if verb
+              handlers.unshift({verb, first_callable_argument(cursor, source)})
+            end
           end
           break
         when "field_expression"
-          # Chained: `<inner>.post(...)` / `.post_with(...)`. Field is
+          # Chained: `<inner>.post(...)` / `.post_with(...)` / `.on(...)`. Field is
           # the verb. Non-verb layers (`.layer(...)`, `.route_layer(...)`)
           # are transparent.
           field = Noir::TreeSitter.field(fn_node, "field")
           if field
-            verb = normalize_method_verb(Noir::TreeSitter.node_text(field, source))
-            if verb
-              handlers.unshift({verb, first_callable_argument(cursor, source)})
+            field_name = Noir::TreeSitter.node_text(field, source)
+            if on_method_filter_call?(field_name)
+              verbs, handler_name = extract_on_call(cursor, source)
+              verbs.reverse_each do |verb|
+                handlers.unshift({verb, handler_name})
+              end
+            else
+              verb = normalize_method_verb(field_name)
+              if verb
+                handlers.unshift({verb, first_callable_argument(cursor, source)})
+              end
             end
           end
           inner = Noir::TreeSitter.field(fn_node, "value")
@@ -657,13 +673,81 @@ module Analyzer::Rust
       handlers
     end
 
+    private def on_method_filter_call?(name : String) : Bool
+      verb = name.downcase
+      verb == "on" || verb == "on_service" || verb == "on_with" || verb == "on_service_with"
+    end
+
+    private def extract_on_call(call : LibTreeSitter::TSNode, source : String) : Tuple(Array(String), String?)
+      args = named_arguments(call)
+      return {["GET"], nil.as(String?)} if args.empty?
+
+      verbs = extract_method_filter_verbs(args[0], source)
+      verbs = ["GET"] if verbs.empty?
+
+      handler_name = args.size > 1 ? callable_text(args[1], source) : nil
+      {verbs, handler_name}
+    end
+
+    private def extract_method_filter_verbs(node : LibTreeSitter::TSNode, source : String) : Array(String)
+      verbs = [] of String
+      collect_method_filter_verbs(node, source, verbs)
+      verbs.uniq!
+      verbs
+    end
+
+    private def collect_method_filter_verbs(node : LibTreeSitter::TSNode, source : String, verbs : Array(String))
+      case Noir::TreeSitter.node_type(node)
+      when "parenthesized_expression"
+        Noir::TreeSitter.each_named_child(node) do |child|
+          collect_method_filter_verbs(child, source, verbs)
+        end
+      when "binary_expression"
+        left = Noir::TreeSitter.field(node, "left")
+        right = Noir::TreeSitter.field(node, "right")
+        collect_method_filter_verbs(left, source, verbs) if left
+        collect_method_filter_verbs(right, source, verbs) if right
+      when "call_expression"
+        fn_node = Noir::TreeSitter.field(node, "function")
+        if fn_node
+          case Noir::TreeSitter.node_type(fn_node)
+          when "field_expression"
+            field = Noir::TreeSitter.field(fn_node, "field")
+            value = Noir::TreeSitter.field(fn_node, "value")
+            field_name = field ? Noir::TreeSitter.node_text(field, source) : ""
+            if field_name == "or" || field_name == "union"
+              collect_method_filter_verbs(value, source, verbs) if value
+              args = named_arguments(node)
+              args.each { |arg| collect_method_filter_verbs(arg, source, verbs) }
+            end
+          when "scoped_identifier", "identifier"
+            fn_text = Noir::TreeSitter.node_text(fn_node, source)
+            if fn_text.ends_with?("::all") || fn_text == "all"
+              verbs << "ANY"
+            end
+          end
+        end
+      when "scoped_identifier", "identifier"
+        text = Noir::TreeSitter.node_text(node, source)
+        leaf = text.split("::").last
+        case leaf.upcase
+        when "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "QUERY"
+          verbs << leaf.upcase
+        when "ALL"
+          verbs << "ANY"
+        end
+      end
+    end
+
     # Map a method-router constructor name to its canonical HTTP verb,
     # or `nil` if it isn't one. Handles plain axum verbs (`get`, `post`,
-    # … `any`) and aide's operation-annotated `*_with` variants
-    # (`get_with`, `post_with`, …). Returns the upcased verb.
+    # … `any`, `query`) and aide's operation-annotated `*_with` variants
+    # (`get_with`, `post_with`, …) and `*_service` variants (`query_service`, …).
+    # Returns the upcased verb.
     private def normalize_method_verb(name : String) : String?
       verb = name.downcase
       verb = verb[0...-"_with".size] if verb.ends_with?("_with")
+      verb = verb[0...-"_service".size] if verb.ends_with?("_service")
       HTTP_VERBS.includes?(verb) ? verb.upcase : nil
     end
 

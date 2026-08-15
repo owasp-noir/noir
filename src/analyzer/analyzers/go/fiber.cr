@@ -130,26 +130,19 @@ module Analyzer::Go
       param_type = "json"
       if line.includes?("Query")
         param_type = "query"
-      end
-      if line.includes?("FormValue")
+      elsif line.includes?("FormValue")
         param_type = "form"
-      end
-      # `c.Params("id")` — Fiber path-variable accessor (also
-      # `.ParamsInt("id")`). Distinct from `c.Query`/`c.FormValue`;
-      # was previously falling through to the `json` default.
-      if line.includes?(".Params(") || line.includes?(".ParamsInt(")
+      elsif line.includes?(".Params(") || line.includes?(".ParamsInt(")
         param_type = "path"
       end
 
-      first = line.strip.split("(")
-      if first.size > 1
-        second = first[1].split(")")
-        if second.size > 1
-          param_name = second[0].gsub("\"", "")
-          rtn = Param.new(param_name, "", param_type)
+      # Capture the accessor's first string-literal argument.
+      # Skip route registrations like `app.Query("/search", handler)`.
+      if match = line.match(/\.(?:Query|FormValue|Params|ParamsInt)\s*\(\s*"([^"]*)"/)
+        param_name = match[1]
+        return Param.new("", "", "") if param_name.starts_with?("/")
 
-          return rtn
-        end
+        return Param.new(param_name, "", param_type)
       end
 
       Param.new("", "", "")

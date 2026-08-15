@@ -21,6 +21,13 @@ expected_endpoints = [
     Param.new("name", "", "query"),
     Param.new("email", "", "query"),
   ]),
+  # HTTP QUERY method routes (@QueryMethod)
+  Endpoint.new("/search", "QUERY", [
+    Param.new("body", "", "body"),
+  ]),
+  Endpoint.new("/search/advanced", "QUERY", [
+    Param.new("body", "", "body"),
+  ]),
   # Header parameters
   Endpoint.new("/protected", "GET", [
     Param.new("authorization", "", "header"),

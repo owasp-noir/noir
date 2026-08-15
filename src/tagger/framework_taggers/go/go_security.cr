@@ -68,7 +68,7 @@ class GoSecurityTagger < FrameworkTagger
   # A route-definition call. Used only to *exclude* route lines from the
   # global-wrapper branch (inline route middleware is handled per-endpoint),
   # so an over-broad verb set here is safe.
-  ROUTE_DEF = /\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|CONNECT|TRACE|Get|Post|Put|Delete|Patch|Options|Head|Connect|Trace|Any|All|Handle|HandleFunc|Match|Add)\s*\(/
+  ROUTE_DEF = /\b(?:GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|CONNECT|TRACE|QUERY|Get|Post|Put|Delete|Patch|Options|Head|Connect|Trace|Query|Any|All|Handle|HandleFunc|Match|Add)\s*\(/
 
   def initialize(options : Hash(String, YAML::Any))
     super
