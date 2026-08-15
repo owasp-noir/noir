@@ -9,7 +9,7 @@ module Noir
   # routes through a framework DSL.
   class JSHttpRouteExtractor
     HTTP_METHODS = Set{
-      "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE",
+      "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "QUERY",
     }
 
     SOURCE_EXTENSIONS = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".tsx"]

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Param, Query, Body, Headers, Req, UploadedFile, UseGuards, UseInterceptors, Version } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Param, Query, Body, Headers, Req, UploadedFile, UseGuards, UseInterceptors, Version, QueryMethod } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 
 @Controller('users')
@@ -34,6 +34,19 @@ export class UserController {
   }
 }
 
+@Controller('search')
+export class SearchController {
+  @QueryMethod()
+  find(@Body() filters: any) {
+    return [];
+  }
+
+  @QueryMethod('advanced')
+  advanced(@Body() dto: any) {
+    return [];
+  }
+}
+
 @Controller('protected')
 export class ProtectedController {
   @Get()
@@ -64,3 +77,4 @@ export class AdminController {
     return {};
   }
 }
+

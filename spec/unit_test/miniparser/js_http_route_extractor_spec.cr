@@ -28,5 +28,54 @@ describe Noir::JSHttpRouteExtractor do
       endpoints.any? { |e| e.url == "/api/users" && e.method == "GET" }.should be_true
       endpoints.any? { |e| e.url == "/api/posts" && e.method == "POST" }.should be_true
     end
+
+    it "extracts HTTP QUERY routes from if conditions with body params" do
+      code = <<-JS
+        const http = require('node:http');
+        const server = http.createServer((req, res) => {
+          if (req.method === 'QUERY' && req.url === '/api/items/search') {
+            let body = '';
+            req.on('data', chunk => { body += chunk; });
+            req.on('end', () => {
+              const { query, limit } = JSON.parse(body);
+              res.end(JSON.stringify({ query, limit }));
+            });
+          }
+        });
+        JS
+
+      endpoints = Noir::JSHttpRouteExtractor.extract("app.js", code)
+      endpoints.size.should eq(1)
+      ep = endpoints.first
+      ep.url.should eq("/api/items/search")
+      ep.method.should eq("QUERY")
+      ep.params.map(&.name).should eq(["query", "limit"])
+      ep.params.map(&.param_type).should eq(["json", "json"])
+    end
+
+    it "extracts HTTP QUERY routes from switch statements" do
+      code = <<-JS
+        const http = require('http');
+        const server = http.createServer((req, res) => {
+          const url = new URL(req.url, 'http://localhost');
+          switch (req.method) {
+            case 'QUERY':
+              if (url.pathname === '/search') {
+                const { filter } = JSON.parse('{}');
+                res.end(filter);
+              }
+              break;
+          }
+        });
+        JS
+
+      endpoints = Noir::JSHttpRouteExtractor.extract("server.js", code)
+      endpoints.size.should eq(1)
+      ep = endpoints.first
+      ep.url.should eq("/search")
+      ep.method.should eq("QUERY")
+      ep.params.map(&.name).should eq(["filter"])
+      ep.params.map(&.param_type).should eq(["json"])
+    end
   end
 end

@@ -3,6 +3,7 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/extension", "GET"),
   Endpoint.new("/extension/method", "POST"),
+  Endpoint.new("/extension/query-method", "QUERY"),
   Endpoint.new("/", "GET"),
   Endpoint.new("/users/{id}", "GET", [
     Param.new("id", "", "path"),
@@ -15,7 +16,13 @@ expected_endpoints = [
   Endpoint.new("/users/{id}", "DELETE", [
     Param.new("id", "", "path"),
   ]),
+  Endpoint.new("/search", "QUERY", [
+    Param.new("body", "SearchRequest", "json"),
+    Param.new("filter", "", "query"),
+  ]),
+  Endpoint.new("/items", "QUERY"),
   Endpoint.new("/api/status", "GET"),
+  Endpoint.new("/api/search", "QUERY"),
   Endpoint.new("/api/v1/health", "GET"),
   Endpoint.new("/api/v1/submit", "POST", [Param.new("body", "SubmitData", "json")]),
   Endpoint.new("/api/v1/items/{itemId}", "GET", [

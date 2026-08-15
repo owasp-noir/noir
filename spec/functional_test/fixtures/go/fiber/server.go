@@ -62,5 +62,25 @@ func main() {
 		},
 	)
 
+	// HTTP QUERY routes (RFC 10008)
+	app.Query("/query-search", func(c *fiber.Ctx) error {
+		var body map[string]interface{}
+		_ = c.BodyParser(&body)
+		_ = c.Query("filter")
+		return c.SendString("query")
+	})
+
+	app.Add(fiber.MethodQuery, "/query-method-const", func(c *fiber.Ctx) error {
+		return c.SendString("add const")
+	})
+
+	app.Add("QUERY", "/query-string-verb", func(c *fiber.Ctx) error {
+		return c.SendString("add string")
+	})
+
+	mygroup.Query("/query-group", func(c *fiber.Ctx) error {
+		return c.SendString("group query")
+	})
+
 	log.Fatal(app.Listen(":3000"))
 }

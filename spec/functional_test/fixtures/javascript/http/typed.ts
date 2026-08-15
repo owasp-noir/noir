@@ -19,6 +19,18 @@ createHttpsServer((request: IncomingMessage, response: ServerResponse) => {
         response.end();
       }
       break;
+    case 'QUERY':
+      if (pathname === '/api/users/lookup') {
+        let body = '';
+        request.on('data', (chunk: string) => {
+          body += chunk;
+        });
+        request.on('end', () => {
+          const { id, filter } = JSON.parse(body);
+          response.end(JSON.stringify({ id, filter }));
+        });
+      }
+      break;
   }
 
   switch (pathname) {

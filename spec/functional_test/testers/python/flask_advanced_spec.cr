@@ -4,6 +4,7 @@ expected_endpoints = [
   # App-level shortcut decorators
   Endpoint.new("/app-get", "GET"),
   Endpoint.new("/app-post", "POST"),
+  Endpoint.new("/app-query", "QUERY", [Param.new("filter", "", "json")]),
 
   # Blueprint shortcut decorators
   Endpoint.new("/api/bp-get", "GET"),
@@ -11,6 +12,7 @@ expected_endpoints = [
   Endpoint.new("/api/bp-put", "PUT"),
   Endpoint.new("/api/bp-patch", "PATCH"),
   Endpoint.new("/api/bp-delete", "DELETE"),
+  Endpoint.new("/api/bp-query", "QUERY", [Param.new("term", "", "query")]),
 
   # MethodView - UserAPI
   Endpoint.new("/api/users", "GET", [Param.new("username", "", "query")]),
@@ -33,6 +35,12 @@ expected_endpoints = [
   Endpoint.new("/api/items-inferred", "GET", [Param.new("page", "", "query")]),
   Endpoint.new("/api/items-inferred", "POST", [Param.new("name", "", "json")]),
 
+  # MethodView - SearchAPI (inferred methods, no explicit methods= arg —
+  # GET + QUERY inferred from the class body, matching Werkzeug's
+  # http_method_funcs since pallets/flask#6065)
+  Endpoint.new("/api/search-view-inferred", "GET", [Param.new("keyword", "", "query")]),
+  Endpoint.new("/api/search-view-inferred", "QUERY", [Param.new("criteria", "", "json")]),
+
   # flask.views.View dispatch_request with class-level methods
   Endpoint.new("/api/reports-view", "GET", [Param.new("owner", "", "query")]),
   Endpoint.new("/api/reports-view", "POST", [Param.new("title", "", "json")]),
@@ -40,6 +48,10 @@ expected_endpoints = [
   # MethodView - AsyncAPI (async def)
   Endpoint.new("/api/async", "GET", [Param.new("category", "", "query")]),
   Endpoint.new("/api/async", "POST", [Param.new("title", "", "json")]),
+
+  # MethodView - SearchAPI (explicit QUERY method, RFC 10008)
+  Endpoint.new("/api/search-view", "GET", [Param.new("keyword", "", "query")]),
+  Endpoint.new("/api/search-view", "QUERY", [Param.new("criteria", "", "json")]),
 
   # add_url_rule with rule= keyword (not first positional)
   Endpoint.new("/api/items-kwarg", "GET", [Param.new("page", "", "query")]),

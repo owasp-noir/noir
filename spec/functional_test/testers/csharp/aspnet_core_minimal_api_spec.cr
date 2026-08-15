@@ -24,6 +24,14 @@ expected_endpoints = [
   Endpoint.new("/fallback", "ANY"),
   Endpoint.new("/bulk", "PUT"),
   Endpoint.new("/bulk", "PATCH"),
+  # QUERY (RFC 10008): HttpMethods.Query, a bare "QUERY" literal, and QUERY
+  # alongside another verb in the same MapMethods array.
+  Endpoint.new("/search", "QUERY", [
+    Param.new("filter", "", "json"),
+  ]),
+  Endpoint.new("/search-legacy", "QUERY"),
+  Endpoint.new("/lookup", "GET"),
+  Endpoint.new("/lookup", "QUERY"),
   Endpoint.new("/api/v1/products/{sku}", "GET", [
     Param.new("sku", "", "path"),
     Param.new("X-Mode", "", "header"),
@@ -62,5 +70,20 @@ describe "ASP.NET Core Minimal API analyzer edge cases" do
     users = tester.app.endpoints.find { |e| e.url == "/users" && e.method == "GET" }
     users.should_not be_nil
     users.as(Endpoint).details.technology.should eq "cs_aspnet_core_minimal_api"
+  end
+
+  it "recognizes QUERY (RFC 10008) from HttpMethods.Query and the bare literal in MapMethods" do
+    search = tester.app.endpoints.find! { |e| e.url == "/search" && e.method == "QUERY" }
+    search.params.map(&.name).should eq(["filter"])
+    search.params.first.param_type.should eq "json"
+
+    tester.app.endpoints.any? { |e| e.url == "/search-legacy" && e.method == "QUERY" }.should be_true
+  end
+
+  it "keeps QUERY alongside another verb in the same MapMethods array" do
+    tester.app.endpoints.count { |e| e.url == "/lookup" }.should eq 2
+    %w[GET QUERY].each do |verb|
+      tester.app.endpoints.any? { |e| e.url == "/lookup" && e.method == verb }.should be_true
+    end
   end
 end
