@@ -23,6 +23,15 @@ module Analyzer::Elixir
     # the same 7 PCRE2 patterns on every call (~3.4M recompiles on a 2400-file
     # repo, the dominant scan cost). The pattern depends only on the fixed verb
     # set, so build it once. See `add_standard_route` for the shape rationale.
+    # RFC 10008's `query` is deliberately absent here. Unlike Plug (which
+    # already ships `query/2`), Phoenix's own router macro is still pending
+    # (phoenixframework/phoenix#6737); adding a bare verb here — via
+    # `add_standard_route`, which has no `plug_route_path?`-style leading-`/`
+    # guard — would misread any unrelated `query("literal", CapitalizedMod)`
+    # local function (a common Ecto/dispatch-helper shape) as a route. Since
+    # a Phoenix router sits on Plug, `match :query, ...` already routes today
+    # without needing this table — see `match_route_methods` below, which
+    # upcases whatever verb atom it's given.
     STANDARD_ROUTE_METHODS = {
       "get"     => "GET",
       "post"    => "POST",
