@@ -31,6 +31,16 @@ expected_endpoints = [
     Param.new("author", "", "query"),
     Param.new("year", "", "query"),
   ]),
+  Endpoint.new("/books/search", "QUERY", [
+    Param.new("title", "", "json"),
+    Param.new("author", "", "json"),
+    Param.new("year", "", "json"),
+  ]),
+  Endpoint.new("/books/advanced", "QUERY", [
+    Param.new("title", "", "json"),
+    Param.new("author", "", "json"),
+    Param.new("year", "", "json"),
+  ]),
   Endpoint.new("/books/template", "GET", [
     Param.new("q", "", "query"),
   ]),
