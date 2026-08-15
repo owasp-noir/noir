@@ -102,5 +102,13 @@ describe "OutputBuilderPowershell" do
     line.should start_with("Invoke-WebRequest -CustomMethod \"QUERY\" -Uri \"/products/search\"")
     line.should contain("-Body \"q=widget\"")
     line.should contain("application/x-www-form-urlencoded")
+
+    # CONNECT is outside the enum too; pin it so a future "add CONNECT to
+    # ENUM_METHODS" edit (it looks plausibly missing next to TRACE) fails
+    # here instead of regressing every CONNECT endpoint to -Method.
+    builder.io = IO::Memory.new
+    builder.print([Endpoint.new("/tunnel", "CONNECT")])
+    connect_line = builder.io.to_s.split("\n").reject(&.empty?)[0]
+    connect_line.should start_with("Invoke-WebRequest -CustomMethod \"CONNECT\"")
   end
 end

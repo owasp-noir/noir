@@ -1,5 +1,6 @@
 require "../../models/tagger"
 require "../../models/endpoint"
+require "../../utils/http_symbols"
 
 # Flags administrative / privileged endpoints. These are high-value
 # targets for broken access control, privilege escalation, and forced
@@ -41,10 +42,9 @@ class AdminTagger < Tagger
   WEAK_PRIVILEGE_PARAM_NAMES_NORMALIZED =
     WEAK_PRIVILEGE_PARAM_NAMES.map(&.gsub(/[-_]/, "")).to_set
 
-  # `QUERY` counts as a read (RFC 10008: safe + idempotent), so a weak
-  # privilege param on a QUERY endpoint stays below the tag threshold,
-  # exactly as it does on a GET.
-  READ_ONLY_METHODS = Set{"GET", "HEAD", "OPTIONS", "QUERY"}
+  # The shared safe set (QUERY included per RFC 10008): a weak privilege
+  # param on a read stays below the tag threshold, exactly as on a GET.
+  READ_ONLY_METHODS = SAFE_HTTP_METHODS
 
   def perform(endpoints : Array(Endpoint))
     endpoints.each do |endpoint|

@@ -32,6 +32,14 @@ end
 # answers with 405.
 ALLOWED_HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "TRACE", "CONNECT", "QUERY"]
 
+# The verbs the read-vs-write heuristics treat as reads: GET/HEAD/OPTIONS
+# plus QUERY (safe + idempotent per RFC 10008). TRACE, though RFC-safe, is
+# excluded — it echoes the request rather than reading a resource, and no
+# consumer ever counted it as a read. One shared set so the admin/webhook
+# taggers, the ai_context unsafe-method signal, and the probe path-filler
+# cannot drift on which verbs are safe. Callers normalize case themselves.
+SAFE_HTTP_METHODS = Set{"GET", "HEAD", "OPTIONS", "QUERY"}
+
 # Verbs an endpoint can carry that are not HTTP methods: the wildcard
 # `ANY`, and the AsyncAPI / messaging verbs the optimizer allow-lists so
 # event-driven endpoints aren't downgraded to `GET`.

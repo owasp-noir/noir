@@ -185,7 +185,7 @@ class Deliver
   EXPORT_READ_TIMEOUT    = 60.seconds
 
   # Verbs whose path templates get filled in before probing. Restricted to
-  # the read-only ones on purpose.
+  # the read-only ones (the shared safe set, QUERY included) on purpose.
   #
   # `register_path_param` in the optimizer only substitutes a placeholder when
   # `--set-pvalue-path` supplied a value, so on a default scan `/users/{id}`
@@ -195,7 +195,7 @@ class Deliver
   # against a live record. Read-only verbs get the benefit without that risk;
   # for the rest the literal template still reaches an intercepting proxy,
   # where the user can edit and replay it deliberately.
-  PROBE_PATH_FILL_METHODS = Set{"GET", "HEAD", "OPTIONS"}
+  PROBE_PATH_FILL_METHODS = SAFE_HTTP_METHODS
 
   # Path-param names that name a number. A framework route constrained to an
   # integer (`/users/{id:int}`, Django's `<int:pk>`) rejects a word, so these

@@ -52,7 +52,10 @@ FunctionalTester.new("fixtures/specification/http_file/rest_ext/", {
 
 # RFC 10008 `QUERY` round-trips: the detector recognizes a file whose only
 # request uses the verb, and the analyzer emits it unchanged with its form
-# body — no GET downgrade anywhere in the pipeline.
+# body — no GET downgrade anywhere in the pipeline. The fixture dir also
+# holds `notes.rest`, prose whose sentences all start with "Query <url-ish>":
+# the endpoint count staying at 1 is the regression guard that mixed-case
+# "Query" prose is never fabricated into endpoints.
 FunctionalTester.new("fixtures/specification/http_file/query_method/", {
   :techs     => 1,
   :endpoints => 1,

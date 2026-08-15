@@ -24,7 +24,7 @@ module Analyzer::AI
     AGENT_CONTEXT_MAX_CHARS            = 100 * 1024
     AGENT_GREP_SNIPPET_MAX_CHARS       = 220
     AGENT_DEFAULT_FILE_PATTERN         = "*.{go,py,js,ts,java,rb,php,cs,cr,kt,rs,swift,scala,graphql}"
-    VALID_METHODS                      = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"]
+    VALID_METHODS                      = ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "QUERY"]
     VALID_PARAM_TYPES                  = ["query", "json", "form", "header", "cookie", "path"]
     MAX_ENDPOINT_URL_LENGTH            = 2048
     MAX_PARAM_NAME_LENGTH              =  128

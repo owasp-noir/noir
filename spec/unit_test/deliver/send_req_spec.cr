@@ -411,6 +411,21 @@ describe SendReq do
       end
     end
 
+    it "fills the template for a QUERY — it joined the read-only fill set" do
+      server = CapturingServer.new
+      begin
+        ep = Endpoint.new(server.url_for("/users/{id}"), "QUERY")
+        ep.params << Param.new("id", "", "path")
+
+        SendReq.new(base_deliver_options).run([ep])
+
+        server.requests.first[:method].should eq("QUERY")
+        server.requests.first[:path].should eq("/users/1")
+      ensure
+        server.close
+      end
+    end
+
     it "uses a string for a non-numeric param name" do
       server = CapturingServer.new
       begin

@@ -1,7 +1,7 @@
 # LLM prompts and formats for AI-powered endpoint analysis
 
 module LLM
-  SHARED_RULES       = "Output only JSON. No explanations. method in [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD]. param_type in [query, json, form, header, cookie, path]."
+  SHARED_RULES       = "Output only JSON. No explanations. method in [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, QUERY]. param_type in [query, json, form, header, cookie, path]. Use QUERY only when the code explicitly routes that verb."
   AGENT_SHARED_RULES = "Output only JSON. No markdown fences. Use only the defined action names. Do not guess endpoints without reading code."
 
   # Shared accuracy guidance injected into the endpoint-extraction
@@ -70,7 +70,7 @@ module LLM
     #{ENDPOINT_GUIDANCE}
 
     Output format:
-    - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
+    - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "QUERY". Use "QUERY" only when the code explicitly routes that verb.
     - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
     - Do not include any explanations, comments, or additional text.
     - Output only the JSON result.
@@ -138,7 +138,7 @@ module LLM
     - A route prefix may be declared in one file and consumed in another within the same bundle; cross-reference files to resolve the full path.
 
     Output format:
-    - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD".
+    - The "method" field should strictly use one of these values: "GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD", "QUERY". Use "QUERY" only when the code explicitly routes that verb.
     - The "param_type" must strictly use one of these values: "query", "json", "form", "header", "cookie", "path".
     - Include endpoints from ALL files in the bundle.
     - Do not include any explanations, comments, or additional text.
@@ -167,7 +167,7 @@ module LLM
     - Emit a separate endpoint for each HTTP method a route handles, and capture query/json/form/header/cookie/path parameters.
     - Include only endpoints the code actually serves; ignore URLs found only in comments, docs, tests, or outbound third-party calls. Do not fabricate endpoints.
     - Use finalize only when confident enough.
-    - Keep endpoint method to [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD].
+    - Keep endpoint method to [GET, POST, PUT, DELETE, PATCH, OPTIONS, HEAD, QUERY]; use QUERY only when the code explicitly routes that verb.
     - Use param_type in [query, json, form, header, cookie, path].
     PROMPT
 

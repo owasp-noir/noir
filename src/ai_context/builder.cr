@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "../utils/http_symbols"
 require "./patterns"
 require "./pattern_matcher"
 require "./source_reader"
@@ -184,7 +185,7 @@ module NoirAIContext
       # HEAD endpoint (often the GET-side of a `methods=['GET',
       # 'POST']` Flask split) has no security impact. Don't let it
       # bump priority on those routes.
-      method_safe = SAFE_METHODS.includes?(endpoint.method)
+      method_safe = SAFE_METHODS.includes?(endpoint.method.upcase)
       sharp_signal = context.signals.any? do |s|
         case s.kind
         when "csrf_exempt"
@@ -237,8 +238,9 @@ module NoirAIContext
     # CSRF / side-effect-on-read bug — the verb says "safe / idempotent"
     # but the code says otherwise. `QUERY` makes the same promise
     # (RFC 10008 defines it safe + idempotent), so a mutating QUERY
-    # handler earns the same signal.
-    SAFE_METHODS = Set{"GET", "HEAD", "OPTIONS", "QUERY"}
+    # handler earns the same signal. The shared set keeps this file,
+    # the taggers, and the probe path-filler agreeing on what a read is.
+    SAFE_METHODS = SAFE_HTTP_METHODS
 
     # Each verb may be followed by additional word chars
     # (`destroy_all`, `createMany`, `deleteOne`, `updateUser`), so we
@@ -254,11 +256,13 @@ module NoirAIContext
     # split that into one endpoint per method but share the
     # callees list. The mutating callee in the GET endpoint is
     # often the POST branch's call, not actually reachable via GET.
-    METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE)['"])/i
+    METHOD_DISPATCH_PATTERN = /(?:request\.method\s*==|req\.method\s*==|r\.Method\s*==|request\.getMethod\(\)\s*\.equals|\.match\(\s*['"](?:GET|POST|PUT|PATCH|DELETE|QUERY)['"])/i
 
     private def add_unsafe_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if endpoint.mobile?
-      return unless SAFE_METHODS.includes?(endpoint.method)
+      # Upcase like the taggers do: the optimizer normalizes before this
+      # runs on a scan, but library callers can hand in raw endpoints.
+      return unless SAFE_METHODS.includes?(endpoint.method.upcase)
       return if context.signals.any? { |s| s.kind == "unsafe_method" }
 
       mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
@@ -948,7 +952,7 @@ module NoirAIContext
 
     private def safe_kotlin_query_identifier_without_lookup?(endpoint : Endpoint, param : Param) : Bool
       return false unless endpoint.details.technology == "kotlin_spring"
-      return false unless SAFE_METHODS.includes?(endpoint.method)
+      return false unless SAFE_METHODS.includes?(endpoint.method.upcase)
       return false unless param.param_type == "query" && identifier_like?(param.name)
 
       !object_lookup_callee(endpoint)
@@ -1258,7 +1262,7 @@ module NoirAIContext
         # Explicit CSRF bypass is a negative signal. CSRF only
         # protects state-changing methods, so suppress it on safe
         # endpoints split out from multi-method handlers.
-        unless SAFE_METHODS.includes?(endpoint.method)
+        unless SAFE_METHODS.includes?(endpoint.method.upcase)
           CSRF_EXEMPT_PATTERNS.each do |pattern|
             next if context.signals.any? { |s| s.kind == "csrf_exempt" }
             if entry = PatternMatcher.detect_single_pattern(pattern, "", snippet, path_info.path, path_info.line, "route_source")
