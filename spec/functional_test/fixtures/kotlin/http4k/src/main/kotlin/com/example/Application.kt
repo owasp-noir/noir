@@ -1,20 +1,39 @@
 package com.example
 
+import org.http4k.contract.ContractRoute
+import org.http4k.contract.contract
+import org.http4k.contract.meta
+import org.http4k.core.Method
 import org.http4k.core.Method.DELETE
 import org.http4k.core.Method.GET
 import org.http4k.core.Method.PATCH
 import org.http4k.core.Method.POST
 import org.http4k.core.Method.PUT
+import org.http4k.core.Method.QUERY
 import org.http4k.core.Request
 import org.http4k.core.Response
 import org.http4k.core.Status.Companion.OK
 import org.http4k.routing.bind
 import org.http4k.routing.routes
 
+fun searchContract(): ContractRoute {
+    return "/contract-search" meta {
+        summary = "Search items"
+    } bindContract Method.QUERY to { req: Request ->
+        val q = req.query("q")
+        Response(OK)
+    }
+}
+
 val app = routes(
     "/hello" bind GET to { req: Request ->
         val name = req.query("name")
         Response(OK).body("hello $name")
+    },
+
+    "/search" bind Method.QUERY to { req: Request ->
+        val filter = req.query("filter")
+        Response(OK)
     },
 
     "/users" bind POST to { req: Request ->
@@ -30,6 +49,10 @@ val app = routes(
 
     "/api" bind routes(
         "/status" bind GET to { _: Request -> Response(OK) },
+        "/search" bind Method.QUERY to { req: Request ->
+            val filter = req.query("filter")
+            Response(OK)
+        },
         "/v1" bind routes(
             "/health" bind GET to { _: Request -> Response(OK) },
             "/submit" bind POST to { req: Request ->
@@ -41,7 +64,10 @@ val app = routes(
                 val category = req.query("category")
                 Response(OK)
             }
-        )
+        ),
+        contract {
+            routes += searchContract()
+        }
     ),
 
     "/sessions/{id}" bind DELETE to { req: Request ->

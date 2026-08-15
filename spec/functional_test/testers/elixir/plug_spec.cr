@@ -16,6 +16,9 @@ expected_endpoints = [
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/webhook", "PUT"),
   Endpoint.new("/simple", "GET"),
+  # RFC 10008 HTTP QUERY method: bare `query/2` macro and `via: :query`
+  Endpoint.new("/reports", "QUERY", [Param.new("filters", "", "form")]),
+  Endpoint.new("/webhook-query", "QUERY"),
   # ApiRouter endpoints
   Endpoint.new("/status", "GET"),
   Endpoint.new("/data", "POST"),

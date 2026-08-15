@@ -113,6 +113,13 @@ async def search(request):
     return web.Response(text=f"search {category} q={q}")
 
 
+@routes.route('QUERY', '/search/advanced')
+async def search_advanced(request):
+    data = await request.json()
+    filters = data.get('filters')
+    return web.Response(text=f"advanced search {filters}")
+
+
 @admin_routes.get('/stats')
 async def admin_stats(request):
     section = request.query.get('section')
@@ -136,11 +143,24 @@ async def tenant_create(request):
     return web.Response(text=f"tenant {name}")
 
 
+async def tenant_query(request):
+    data = await request.json()
+    term = data.get('term')
+    return web.Response(text=f"tenant query {term}")
+
+
 tenant_routes = [
     web.get('/tenants/{tenant_id}', tenant_detail),
     web.post('/tenants', tenant_create),
     web.patch('/external/{external_id}', external_handlers.external_patch),
+    web.route('QUERY', '/tenants/query', tenant_query),
 ]
+
+
+async def bulk_lookup(request):
+    data = await request.json()
+    ids = data.get('ids')
+    return web.Response(text=f"bulk lookup {ids}")
 
 
 def setup_routes(app):
@@ -155,6 +175,7 @@ def setup_routes(app):
     add_route('*', '/wildcard', index, name='wildcard')
     app.router.add_get('/feed/{channel}', websocket_feed)
     app.router.add_routes([web.view('/reports/{id}', ReportView)])
+    app.router.add_route('QUERY', '/lookup', bulk_lookup)
     app.router.add_static('/assets/', path='static')
 
 

@@ -79,6 +79,10 @@ defmodule ElixirPhoenixWeb.Router do
 
     match :post, "/hooks", PageController, :home
     match :put, "/hooks", PageController, :home
+    # RFC 10008 HTTP QUERY method: Phoenix routes sit on Plug, whose
+    # `query/2` macro already ships, so `match :query, ...` routes today
+    # even ahead of phoenixframework/phoenix#6737.
+    match :query, "/hooks", PageController, :home
   end
 
   # Nested resources: the child collection mounts under the parent's

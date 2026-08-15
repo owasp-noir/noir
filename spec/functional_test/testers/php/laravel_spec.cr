@@ -19,6 +19,12 @@ expected_endpoints = [
   Endpoint.new("/v1.0/albums/{record}/songs/{track}", "GET", [Param.new("record", "", "path"), Param.new("track", "", "path")]),
   Endpoint.new("/contact", "GET"),
   Endpoint.new("/contact", "POST"),
+  Endpoint.new("/filter", "GET"),
+  Endpoint.new("/filter", "QUERY"),
+  Endpoint.new("/search", "QUERY"),
+  Endpoint.new("/advanced-search", "QUERY"),
+  Endpoint.new("/search-chained", "QUERY"),
+  Endpoint.new("/secure-search", "QUERY"),
   Endpoint.new("/webhook", "GET"),
   Endpoint.new("/webhook", "POST"),
   Endpoint.new("/products", "GET"),
@@ -31,9 +37,11 @@ expected_endpoints = [
   Endpoint.new("/user", "GET"),
   Endpoint.new("/admin/settings", "GET"),
   Endpoint.new("/admin/settings", "POST"),
+  Endpoint.new("/admin/logs", "QUERY"),
   Endpoint.new("/me", "GET"),
   Endpoint.new("/api/v1/profile", "GET"),
   Endpoint.new("/api/v1/profile", "POST"),
+  Endpoint.new("/api/v1/query-items", "QUERY"),
   Endpoint.new("/api/v1/tokens", "GET"),
   Endpoint.new("/api/v1/tokens/{token}", "DELETE", [Param.new("token", "", "path")]),
   Endpoint.new("/api/v1/reports/daily", "GET"),
@@ -46,5 +54,5 @@ expected_endpoints = [
 
 FunctionalTester.new("fixtures/php/laravel/", {
   :techs     => 2,  # Detection still sees both php_laravel and php_pure
-  :endpoints => 70, # Analysis suppresses redundant php_pure and unprefixed group endpoints
+  :endpoints => 78, # Analysis suppresses redundant php_pure and unprefixed group endpoints
 }, expected_endpoints).perform_tests

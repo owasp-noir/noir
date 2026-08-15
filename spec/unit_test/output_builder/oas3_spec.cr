@@ -214,7 +214,7 @@ describe "OutputBuilderOas3" do
     typed_params.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"path", "report_id"}])
   end
 
-  it "degrades a QUERY endpoint to x-noir-unsupported-methods, not to get" do
+  it "emits a QUERY endpoint as a real `query` operation on an OpenAPI 3.2 document" do
     options = {
       "debug"   => YAML::Any.new(false),
       "verbose" => YAML::Any.new(false),
@@ -226,16 +226,29 @@ describe "OutputBuilderOas3" do
     builder = OutputBuilderOas3.new(options)
     builder.io = IO::Memory.new
 
-    endpoint = Endpoint.new("/products/search", "QUERY")
-    endpoint.push_param(Param.new("q", "widget", "form"))
+    get_endpoint = Endpoint.new("/pets", "GET")
 
-    builder.print([endpoint])
-    path_item = JSON.parse(builder.io.to_s)["paths"]["/products/search"]
+    query_endpoint = Endpoint.new("/products/search", "QUERY")
+    query_endpoint.push_param(Param.new("q", "widget", "form"))
 
-    # OpenAPI 3.0.3 has no `query` operation key; the verb must survive in
-    # the extension instead of being dropped or rewritten to another method.
-    path_item["x-noir-unsupported-methods"].as_a.should eq([JSON::Any.new("QUERY")])
-    path_item.as_h.keys.should_not contain("query")
-    path_item.as_h.keys.should_not contain("get")
+    builder.print([get_endpoint, query_endpoint])
+    spec = JSON.parse(builder.io.to_s)
+
+    # OpenAPI 3.2 added `query` to the Path Item Object, so the verb keeps
+    # its own operation key instead of degrading to the unsupported-methods
+    # extension. A single `query` operation anywhere in the document forces
+    # the whole document onto 3.2 — a "get"+"query" mix under a declared
+    # 3.0.3 would be invalid, since 3.0.3 has no `query` key at all.
+    spec["openapi"].as_s.should eq("3.2.0")
+
+    paths = spec["paths"]
+    paths["/pets"].as_h.keys.should contain("get")
+
+    query_path_item = paths["/products/search"]
+    query_path_item.as_h.keys.should_not contain("x-noir-unsupported-methods")
+    query_path_item.as_h.keys.should_not contain("get")
+
+    query_operation = query_path_item["query"]
+    query_operation["requestBody"]["content"]["application/x-www-form-urlencoded"]["schema"]["properties"].as_h.keys.should eq(["q"])
   end
 end
