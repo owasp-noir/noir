@@ -7,6 +7,7 @@ import io.micronaut.http.annotation.Body;
 import io.micronaut.http.annotation.Controller;
 import io.micronaut.http.annotation.Consumes;
 import io.micronaut.http.annotation.CookieValue;
+import io.micronaut.http.annotation.CustomHttpMethod;
 import io.micronaut.http.annotation.Delete;
 import io.micronaut.http.annotation.Get;
 import io.micronaut.http.annotation.Header;
@@ -14,6 +15,7 @@ import io.micronaut.http.annotation.Patch;
 import io.micronaut.http.annotation.PathVariable;
 import io.micronaut.http.annotation.Post;
 import io.micronaut.http.annotation.Put;
+import io.micronaut.http.annotation.Query;
 import io.micronaut.http.annotation.QueryValue;
 import io.micronaut.http.annotation.RequestBean;
 import io.micronaut.http.multipart.CompletedFileUpload;
@@ -75,6 +77,16 @@ public class BookController implements BookApi {
 
     @Get("/filter")
     public HttpResponse<?> filter(@RequestBean BookFilter filter) {
+        return HttpResponse.ok();
+    }
+
+    @Query("/search")
+    public HttpResponse<?> searchByQuery(@Body Book book) {
+        return HttpResponse.ok();
+    }
+
+    @CustomHttpMethod(method = "QUERY", value = "/advanced")
+    public HttpResponse<?> advancedSearch(@Body Book book) {
         return HttpResponse.ok();
     }
 
