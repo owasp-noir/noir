@@ -37,7 +37,7 @@ This matrix lists frameworks where Noir supports per-endpoint callee extraction.
 | Groovy | Grails |
 | Haskell | Scotty, Servant, Yesod |
 | Java | Apache Struts 2, Apache Wicket, Armeria, Dropwizard, Helidon MP, Helidon SE, JAX-RS, JDK HttpServer, Javalin, Micronaut, Play Framework, Quarkus, Spark Java, Spring, Vert.x |
-| JavaScript | AdonisJS, Apollo Server, Astro, Elysia, Express, Fastify, Feathers, Fresh, Hapi, Hono, Koa, NestJS, Next.js, Nitro, NuxtJS, Remix, Restify, SvelteKit |
+| JavaScript | AdonisJS, Apollo Server, Astro, Elysia, Express, Fastify, Feathers, Fresh, Hapi, Hono, Koa, NestJS, Next.js, Nitro, NuxtJS, Oak, Remix, Restify, SvelteKit |
 | Kotlin | Ktor, Spring, http4k |
 | Lua | Lapis, lor |
 | PHP | CakePHP, CodeIgniter, Hyperf, Laminas, Laravel, Lumen, Phalcon, Pure, Slim, Symfony, ThinkPHP, Yii2 |
