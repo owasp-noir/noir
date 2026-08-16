@@ -11,6 +11,8 @@
 # Upstream versions currently vendored:
 #   tree-sitter-python  v0.23.6
 
+require "../../miniparsers/extraction_result_cache"
+
 @[Link(ldflags: "`sh #{__DIR__}/build.sh`")]
 lib LibTreeSitter
   # ----- Opaque types -----
@@ -226,9 +228,57 @@ module Noir::TreeSitter
   # On expiry the parse returns null and `parse` raises, which the
   # per-file rescue in `parallel_analyze` / `scan_files` logs at debug —
   # one file dropped instead of the whole run.
-  PARSE_TIMEOUT_MICROS = begin
+  # Writable so a spec can force the expiry path deterministically — a
+  # sub-millisecond ceiling times out on any non-trivial source, where
+  # reproducing a real 10 s timeout would need a pathological fixture and
+  # ten seconds of suite time. Nothing in a scan writes it: the value is
+  # read once per parse and comes from `NOIR_PARSE_TIMEOUT_MS`.
+  class_property parse_timeout_micros : UInt64 = begin
     ms = ENV["NOIR_PARSE_TIMEOUT_MS"]?.try(&.strip.to_u64?)
     (ms && ms > 0 ? ms : 10_000_u64) * 1000_u64
+  end
+
+  # Sources that already failed to parse, keyed by content fingerprint and
+  # grammar.
+  #
+  # `parse_timeout_micros` bounds ONE `ts_parser_parse_string` call, but a
+  # file is offered to every analyzer of its language, and each one parses it
+  # independently — nine Rust analyzers each burn the full ceiling on the same
+  # unparsable `.rs` file, so a 10 s bound costs 90 s. The verdict is a pure
+  # function of (content, grammar), so remembering it turns that back into one
+  # ceiling per file. A timeout is wall-clock and so not strictly
+  # deterministic; that is the point — re-running a parse we already know
+  # takes longer than the ceiling cannot succeed in less time on the second
+  # try, it can only cost the ceiling again.
+  #
+  # Keyed on content rather than path because `parse` never sees a path, and
+  # content is the better key anyway: the `CodeLocator` cache hands the same
+  # string to sibling analyzers, and two paths holding identical bytes parse
+  # identically.
+  PARSE_FAILURE_MAX_ENTRIES = 4096
+
+  @@parse_failures = Hash(UInt64, Bool).new
+  @@parse_failure_order = [] of UInt64
+  @@parse_failure_mutex = Mutex.new
+
+  # A second scan in the same process (diff mode, library use) gets a clean
+  # slate, like every other content-keyed memo in the tree.
+  Noir::ExtractionResultCache.register_clearer do
+    @@parse_failure_mutex.synchronize do
+      @@parse_failures.clear
+      @@parse_failure_order.clear
+    end
+  end
+
+  private def self.parse_failure_key(source : String, language : LibTreeSitter::TSLanguage) : UInt64
+    Noir::ExtractionResultCache.source_fingerprint(source) &+
+      language.address &* 0xd6e8feb86659fd93_u64
+  end
+
+  # Number of remembered parse failures. Exposed for specs; not part of the
+  # public API contract.
+  def self.parse_failure_count : Int32
+    @@parse_failure_mutex.synchronize { @@parse_failures.size }
   end
 
   # Parses `source` with the given `language` and yields the root
@@ -236,9 +286,17 @@ module Noir::TreeSitter
   # pool and returned when the block exits; the tree is freed in the
   # same `ensure`.
   def self.parse(source : String, language : LibTreeSitter::TSLanguage, &)
+    failure_key = parse_failure_key(source, language)
+    # Checked before `checkout_parser` so a known-bad file does not even
+    # occupy a pool slot the other analyzers are waiting on.
+    if @@parse_failure_mutex.synchronize { @@parse_failures.has_key?(failure_key) }
+      raise "tree-sitter parse skipped: this source already failed to parse with this grammar"
+    end
+
     parser = checkout_parser(language)
     begin
-      LibTreeSitter.ts_parser_set_timeout_micros(parser, PARSE_TIMEOUT_MICROS)
+      timeout = parse_timeout_micros
+      LibTreeSitter.ts_parser_set_timeout_micros(parser, timeout)
       tree = LibTreeSitter.ts_parser_parse_string(parser, Pointer(Void).null.as(LibTreeSitter::TSTree), source.to_unsafe, source.bytesize.to_u32)
       if tree.null?
         # A halted parser holds the partial parse so the next call can
@@ -246,7 +304,12 @@ module Noir::TreeSitter
         # the shared pool — so reset it, or the next unrelated file
         # inherits this one's state.
         LibTreeSitter.ts_parser_reset(parser)
-        raise "ts_parser_parse_string returned null (timed out after #{PARSE_TIMEOUT_MICROS // 1000}ms, or out of memory)"
+        @@parse_failure_mutex.synchronize do
+          Noir::ExtractionResultCache.store_capped(
+            @@parse_failures, @@parse_failure_order, failure_key, true, PARSE_FAILURE_MAX_ENTRIES
+          )
+        end
+        raise "ts_parser_parse_string returned null (timed out after #{timeout // 1000}ms, or out of memory)"
       end
       begin
         yield LibTreeSitter.ts_tree_root_node(tree)
