@@ -58,6 +58,38 @@ describe Analyzer::Python::PythonEngine do
     callees[0].line.should eq(2)
   end
 
+  it "keeps a function body running past a comment that starts at column 0" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          early = request.args.get("early")
+      # commented-out code, flush against the left margin
+          late = request.args.get("late")
+          return late
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("early")
+    block.not_nil!.should contain("late")
+  end
+
+  it "still ends a function body at the next column-0 statement" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          inside = request.args.get("inside")
+      outside = request.args.get("outside")
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("inside")
+    block.not_nil!.should_not contain("outside")
+  end
+
   it "skips multi-line route decorators when locating the decorated function" do
     harness = PythonEngineSpecHarness.new(create_test_options)
     lines = [
