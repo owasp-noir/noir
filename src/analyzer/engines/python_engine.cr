@@ -340,7 +340,15 @@ module Analyzer::Python
               elsif !double_quote_open && line[line_index] == '\'' && line[line_index - 1] != '\\'
                 single_quote_open = !single_quote_open
               elsif !single_quote_open && !double_quote_open && line[line_index] == '#' && line[line_index - 1] != '\\'
-                clear_line = line[..(line_index - 1)]
+                # Exclusive range, NOT `line[..(line_index - 1)]`: at
+                # `line_index == 0` that is `line[..-1]`, and a negative range
+                # end counts from the end of the string in Crystal, so a
+                # comment starting at column 0 kept the WHOLE line as its
+                # comment-stripped form. The indent test below then read `#`
+                # as code at column 0 and ended the block, truncating the rest
+                # of the function body — every param and callee after a
+                # column-0 comment was lost.
+                clear_line = line[...line_index]
                 break
               end
             end
