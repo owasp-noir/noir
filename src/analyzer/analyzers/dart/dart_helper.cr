@@ -1,4 +1,5 @@
 require "../../../utils/path_scope"
+require "../../../utils/top_level_split"
 require "../../../miniparsers/dart_callee_extractor"
 
 module Analyzer::Dart
@@ -211,72 +212,36 @@ module Analyzer::Dart
       nil
     end
 
-    # Split a call's argument list on top-level commas. Each bracket kind
-    # (`()`, `{}`, `[]`, `<>`) gets its own counter so a generic argument
-    # (`Map<String, int>`) and a collection literal (`[a, b]`) both keep
-    # their inner commas, and string literals are skipped so a comma inside
-    # `'a,b'` never splits. The trailing segment is always emitted, so a
+    # Each bracket kind (`()`, `{}`, `[]`, `<>`) gets its own counter so a
+    # generic argument (`Map<String, int>`) and a collection literal
+    # (`[a, b]`) both keep their inner commas, and string literals are
+    # skipped so a comma inside `'a,b'` never splits. Nothing is stripped
+    # and every part is kept, the trailing one included, so a
     # single-argument call yields a one-element array.
+    #
+    # File-local rather than a `Rules` preset: it is the only splitter in
+    # the tree that counts `<>` and also keeps every part unstripped, so a
+    # central name would have exactly one user.
+    SPLIT_ARGS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::Keep,
+      per_kind: true,
+      clamp: true,
+    )
+
+    # Split a call's argument list on top-level commas.
     #
     # Note: `Serverpod#split_top_level_commas` is deliberately NOT this
     # method — it tracks only `<`/`(` on one shared counter and is not
-    # string-aware, matching the narrower shapes it parses.
+    # string-aware, matching the narrower shapes it parses. It goes through
+    # the same shared splitter with its own `Rules`, so the difference is
+    # now two constants to compare rather than two loops to diff.
     def split_top_level_args(text : String) : Array(String)
-      result = [] of String
-      chars = text.chars
-      depth_paren = 0
-      depth_brace = 0
-      depth_bracket = 0
-      depth_angle = 0
-      start = 0
-      i = 0
-      in_string = false
-      string_quote = '\0'
-
-      while i < chars.size
-        c = chars[i]
-        if in_string
-          if c == '\\' && i + 1 < chars.size
-            i += 2
-            next
-          end
-          in_string = false if c == string_quote
-          i += 1
-          next
-        end
-
-        case c
-        when '"', '\''
-          in_string = true
-          string_quote = c
-        when '('
-          depth_paren += 1
-        when ')'
-          depth_paren -= 1 if depth_paren > 0
-        when '{'
-          depth_brace += 1
-        when '}'
-          depth_brace -= 1 if depth_brace > 0
-        when '['
-          depth_bracket += 1
-        when ']'
-          depth_bracket -= 1 if depth_bracket > 0
-        when '<'
-          depth_angle += 1
-        when '>'
-          depth_angle -= 1 if depth_angle > 0
-        when ','
-          if depth_paren == 0 && depth_brace == 0 && depth_bracket == 0 && depth_angle == 0
-            result << chars[start...i].join
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      result << chars[start..].join if start <= chars.size
-      result
+      Noir::TopLevelSplit.split(text, ',', SPLIT_ARGS_RULES)
     end
 
     # Matches a bare handler reference (`_createUser`, `auth.handler`)

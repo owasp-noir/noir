@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/dart_callee_extractor"
+require "../../../utils/top_level_split"
 require "./dart_helper"
 
 module Analyzer::Dart
@@ -322,34 +323,29 @@ module Analyzer::Dart
       last
     end
 
+    # Serverpod's argument lists carry Dart generics (`Future<List<Foo>>`) and
+    # call expressions, and nothing else nests: this splitter sees method
+    # signatures, never string literals, so quote handling stays off.
+    #
+    # `Nest::Paren | Nest::Angle` with `per_kind: false` is the whole of the
+    # old body's depth model — one counter incremented by `<` and `(` alike
+    # and decremented by `>` and `)`, with `[]` and `{}` inert. Those are two
+    # orthogonal choices in `Rules` (`nest` picks which characters count,
+    # `per_kind` picks how many counters exist), which is why this reads as a
+    # plain preset despite earlier surveys in this series calling the
+    # combination inexpressible.
+    SPLIT_COMMAS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "",
+      escape: Noir::TopLevelSplit::Escape::None,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::Keep,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_commas(text : String) : Array(String)
-      parts = [] of String
-      # `String#[]` re-walks from byte 0 on every call once the source
-      # contains any multi-byte char, turning this scan O(n^2); index a
-      # materialized Array(Char) instead (O(1) per access).
-      chars = text.chars
-      depth = 0
-      start = 0
-      i = 0
-      while i < chars.size
-        c = chars[i]
-        case c
-        when '<', '('
-          depth += 1
-        when '>', ')'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            parts << chars[start...i].join
-            start = i + 1
-          end
-        else
-          # ignore
-        end
-        i += 1
-      end
-      parts << chars[start..].join
-      parts
+      Noir::TopLevelSplit.split(text, ',', SPLIT_COMMAS_RULES)
     end
 
     private def emit_endpoint(path : String,

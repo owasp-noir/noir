@@ -105,11 +105,11 @@ module Noir
       # php/wordpress.cr `split_top_level_args`, and engines/cfml_engine.cr
       # `split_arguments` (the last one is easy to miss: it is on the shared
       # engine, not an analyzer, so a survey scoped to `analyzers/` reports
-      # only two). On a fragment that
-      # closes a bracket opened in a prefix the regex already discarded (e.g.
-      # `")x, y"`) that is the difference between one part and two. Splitting
-      # requires depth EXACTLY 0, so a negative depth suppresses every
-      # remaining split rather than re-enabling them.
+      # only two). On a fragment that closes a bracket opened in a prefix
+      # the regex already discarded (e.g. `")x, y"`) that is the difference
+      # between one part and two. Splitting requires depth EXACTLY 0, so a
+      # negative depth suppresses every remaining split rather than
+      # re-enabling them.
       getter? clamp : Bool
 
       def initialize(
@@ -163,16 +163,22 @@ module Noir
 
       # `PYTHON` with one shared depth counter instead of per-kind counters.
       # Serves analyzer/analyzers/python/{django_ninja,falcon}.cr
-      # `split_python_arguments` and fastapi.cr `split_python_top_level`.
+      # `split_python_arguments`, fastapi.cr `split_python_top_level` and
+      # elixir/elixir_phoenix.cr `split_top_level_commas`.
       #
-      # A named preset rather than three inline `Rules.new(...)` literals
+      # A named preset rather than four inline `Rules.new(...)` literals
       # because the split is not a per-file accident: the Python analyzers
       # genuinely disagree on `per_kind`, and keeping the two variants
       # adjacent is what makes that disagreement — and the fact that it is
-      # only observable on unbalanced input — legible. Three copies of the
-      # same seven-argument literal in three files is exactly the drift this
+      # only observable on unbalanced input — legible. Four copies of the
+      # same seven-argument literal in four files is exactly the drift this
       # module exists to end.
-      PYTHON_SHARED_DEPTH = new(
+      #
+      # Named for the shape and not for Python because it turned out not to
+      # be a Python idiom at all: Phoenix's splitter, written independently
+      # in another language, agrees on all seven axes. It was
+      # `PYTHON_SHARED_DEPTH` while Python was its only user.
+      SHARED_DEPTH_RAW = new(
         nest: Nest::Paren | Nest::Bracket | Nest::Brace,
         quotes: "\"'",
         escape: Escape::InQuotes,

@@ -699,13 +699,13 @@ module Analyzer::Python
       nil
     end
 
-    # Delegates to the shared splitter. `Rules::PYTHON_SHARED_DEPTH`, not
+    # Delegates to the shared splitter. `Rules::SHARED_DEPTH_RAW`, not
     # `Rules::PYTHON`: this loop counted `(`, `[` and `{` on ONE depth
     # counter, which is observable on the unbalanced fragments the route
     # regexes actually hand it — `"[a)b, c"` splits here, but would not
     # under per-kind counters.
     private def split_python_arguments(args : ::String) : Array(::String)
-      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON_SHARED_DEPTH)
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::SHARED_DEPTH_RAW)
     end
 
     # A NinjaAPI / Router instance and everything discovered about it.

@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../utils/utils.cr"
+require "../../utils/top_level_split"
 
 module Analyzer::Cfml
   # Shared CFML parsing layer.
@@ -157,52 +158,36 @@ module Analyzer::Cfml
       names
     end
 
+    # `Rules::JAVA` with `Empties::DropAll` and, like erlang/cowboy.cr and
+    # php/wordpress.cr, WITHOUT clamping: the body this replaces closed
+    # brackets with a bare `depth -= 1`, so an argument slice that opens on
+    # a closer drives depth negative and suppresses every later split.
+    # Observable on the unbalanced fragments the CFML regexes hand over, so
+    # it is preserved rather than normalised.
+    #
+    # Escaping is `\\`-based, which is what the old body did and is NOT how
+    # CFML escapes a quote — CFML doubles it (`"say ""hi"""`), the way
+    # `matching_delimiter` below already handles. Reproduced verbatim here;
+    # correcting it changes where arguments split and belongs in its own
+    # change.
+    #
+    # File-local because this is the only splitter pairing `clamp: false`
+    # with `DropAll`.
+    SPLIT_ARGUMENTS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: false,
+      clamp: false,
+    )
+
     # Split on commas at nesting depth zero, so a comma inside a default
     # value or a nested call does not start a new argument.
     protected def split_arguments(raw : String) : Array(String)
-      chunks = [] of String
-      current = String::Builder.new
-      depth = 0
-      quote = nil.as(Char?)
-      escape = false
-
-      raw.each_char do |char|
-        if quote
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            quote = nil
-          end
-          current << char
-          next
-        end
-
-        case char
-        when '"', '\''
-          quote = char
-          current << char
-        when '(', '[', '{'
-          depth += 1
-          current << char
-        when ')', ']', '}'
-          depth -= 1
-          current << char
-        when ','
-          if depth == 0
-            chunks << current.to_s
-            current = String::Builder.new
-          else
-            current << char
-          end
-        else
-          current << char
-        end
-      end
-
-      chunks << current.to_s
-      chunks.map(&.strip).reject(&.empty?)
+      Noir::TopLevelSplit.split(raw, ',', SPLIT_ARGUMENTS_RULES)
     end
 
     # Arguments of a CFML function call: positional ones keyed "0", "1",

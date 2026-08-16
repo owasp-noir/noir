@@ -1168,14 +1168,14 @@ module Analyzer::Python
       parts
     end
 
-    # Delegates to the shared splitter. `Rules::PYTHON_SHARED_DEPTH`, not
+    # Delegates to the shared splitter. `Rules::SHARED_DEPTH_RAW`, not
     # `Rules::PYTHON`: this loop counted `(`, `[` and `{` on ONE depth
     # counter, which is observable on the unbalanced fragments the route
     # regexes actually hand it. The two wrappers above stay local — the
     # `nil`-on-single-part contract of `split_python_expression` is a FastAPI
     # call-site convention, not a splitting rule.
     private def split_python_top_level(input : ::String, delimiter : Char) : Array(::String)
-      Noir::TopLevelSplit.split(input, delimiter, Noir::TopLevelSplit::Rules::PYTHON_SHARED_DEPTH)
+      Noir::TopLevelSplit.split(input, delimiter, Noir::TopLevelSplit::Rules::SHARED_DEPTH_RAW)
     end
 
     private def static_route_path(path : ::String) : ::String

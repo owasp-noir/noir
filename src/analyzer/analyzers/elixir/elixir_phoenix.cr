@@ -1,5 +1,6 @@
 require "../../engines/elixir_engine"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Elixir
   class Phoenix < ElixirEngine
@@ -676,52 +677,14 @@ module Analyzer::Elixir
       end
     end
 
+    # Split an Elixir macro argument list on top-level commas.
+    #
+    # `Rules::SHARED_DEPTH_RAW` verbatim: one shared depth over `()`, `[]`
+    # and `{}`, both quote styles, nothing stripped and every part kept —
+    # `parse_macro_call_args` indexes positionally, so an interior empty
+    # has to hold its slot.
     private def split_top_level_commas(text : String) : Array(String)
-      parts = [] of String
-      buffer = String::Builder.new
-      depth = 0
-      in_string = false
-      escaped = false
-      quote = '\0'
-
-      text.each_char do |char|
-        if in_string
-          buffer << char
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-          buffer << char
-        when '(', '[', '{'
-          depth += 1
-          buffer << char
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-          buffer << char
-        when ','
-          if depth == 0
-            parts << buffer.to_s
-            buffer = String::Builder.new
-          else
-            buffer << char
-          end
-        else
-          buffer << char
-        end
-      end
-
-      parts << buffer.to_s
-      parts
+      Noir::TopLevelSplit.split(text, ',', Noir::TopLevelSplit::Rules::SHARED_DEPTH_RAW)
     end
 
     private def endpoints_from_route_macro(invocation : RouteMacroInvocation,
