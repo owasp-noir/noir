@@ -282,8 +282,18 @@ module Noir
     # ENTIRELY at depth 0 and outside quotes splits, so `":>"` does not fire on
     # a bare `":"` and `"||"` inside `f(a || b)` is invisible.
     #
-    # The delimiter itself must not contain a quote character or a backslash;
-    # every real separator (`":>"`, `":<|>"`, `"||"`, `"&&"`) is punctuation.
+    # PRECONDITION: no proper prefix of the delimiter may contain a character
+    # that is a quote under `rules`, a backslash, or an opener of an enabled
+    # `Nest` kind. Releasing a mismatched prefix character is what changes
+    # cursor state, and if that release opens a quote or raises depth the
+    # remaining buffered characters stop being top-level and are replayed
+    # after the characters that followed them in the source — `split("(((xy",
+    # "((x", nest: Paren)` yields `["(xy(("]`, not `["(", "y"]`.
+    #
+    # Every separator in the tree is punctuation outside all three sets
+    # (`","`, `":>"`, `":<|>"`, `"||"`, `"&&"`), so no caller is affected. The
+    # note in `Cursor#consume` about a quote-bearing delimiter is the same
+    # precondition seen from the other end.
     def split(text : String, delimiter : String, rules : Rules) : Array(String)
       chars = delimiter.chars
       return apply_empties([rules.strip? ? text.strip : text], rules) if chars.empty?

@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/haskell_callee_extractor"
+require "../../../utils/top_level_split"
 require "set"
 
 module Analyzer::Haskell
@@ -800,70 +801,37 @@ module Analyzer::Haskell
       depth == 0
     end
 
+    # Servant type-level API operators. Double quotes only: Haskell's `'` is a
+    # tick on promoted constructors (`'[JSON]`) and a primed identifier suffix,
+    # never a string delimiter, so treating it as a quote would swallow the
+    # rest of every `Get '[JSON] X`. `<>` are deliberately NOT counted as a
+    # nest kind even though `:<|>` contains both: Haskell writes no angle
+    # generics, and counting them would leave the separator's own `<` on the
+    # depth counter and suppress every later split. Per-kind clamped counters
+    # and `Empties::DropAll` are taken verbatim from the loop this replaces
+    # (three independent `*_depth` variables, each `-= 1 if > 0`, and a final
+    # `.map(&.strip).reject(&.empty?)`), both of which are observable on the
+    # unbalanced fragments the recursive callers hand it.
+    SPLIT_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: true,
+      clamp: true,
+    )
+
     # This is the hottest splitter in the file -- called (and recursed into,
     # via flatten_route_segments/distribute_route) on expanded Servant API
-    # bodies that can run up to MAX_EXPANSION_BYTES. `String#[](Int)` re-walks
-    # from byte 0 to locate a character index whenever the string isn't
-    # single-byte-optimizable (any non-ASCII content: accented path segments,
-    # unicode string literals, etc.), so indexing `input` by character inside
-    # a `while i < size` loop was O(n^2) on such input. Materialize the chars
-    # once (O(n)) and index the Array(Char) instead, which is O(1) per lookup;
-    # slices are joined back to String only when a part/segment is emitted.
+    # bodies that can run up to MAX_EXPANSION_BYTES. The hand-rolled loop this
+    # replaces materialized `input.chars` up front purely to dodge the O(n^2)
+    # that per-character `String#[](Int)` costs on non-ASCII input;
+    # `Noir::TopLevelSplit` is forward-only and needs neither the array nor the
+    # random access.
     private def split_top_level(input : String, separator : String) : Array(String)
-      parts = [] of String
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      chars = input.chars
-      sep_chars = separator.chars
-      start = 0
-      i = 0
-      sep_size = sep_chars.size
-
-      while i < chars.size
-        c = chars[i]
-        if c == '"'
-          i += 1
-          while i < chars.size && chars[i] != '"'
-            i += 1 if chars[i] == '\\' && i + 1 < chars.size
-            i += 1
-          end
-          i += 1 if i < chars.size
-          next
-        end
-
-        if c == '('
-          paren_depth += 1
-        elsif c == ')'
-          paren_depth -= 1 if paren_depth > 0
-        elsif c == '['
-          bracket_depth += 1
-        elsif c == ']'
-          bracket_depth -= 1 if bracket_depth > 0
-        elsif c == '{'
-          brace_depth += 1
-        elsif c == '}'
-          brace_depth -= 1 if brace_depth > 0
-        elsif paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 && matches_at?(chars, i, sep_chars)
-          parts << chars[start...i].join
-          i += sep_size
-          start = i
-          next
-        end
-
-        i += 1
-      end
-
-      parts << chars[start..].join
-      parts.map(&.strip).reject(&.empty?)
-    end
-
-    private def matches_at?(chars : Array(Char), index : Int32, sep : Array(Char)) : Bool
-      return false if index + sep.size > chars.size
-      sep.size.times do |k|
-        return false if chars[index + k] != sep[k]
-      end
-      true
+      Noir::TopLevelSplit.split(input, separator, SPLIT_RULES)
     end
   end
 end
