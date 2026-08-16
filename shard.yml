@@ -17,20 +17,36 @@ targets:
     main: src/noir.cr
 
 # Project Dependencies
+#
+# Every entry carries a version constraint. `shard.lock` pins the exact
+# revisions used to build this repo, but the lock is not what a consumer
+# resolves against: a shard that depends on noir, or any checkout without a
+# lock, resolves from the constraints below and would otherwise take whatever
+# tag happens to be newest. For a tool that ships an SBOM, the dependency
+# range belongs in the manifest, not only in the lockfile.
+#
+# Pre-1.0 shards use `~> 0.y.z` (admits patch releases only), since by
+# convention a 0.x minor bump is where the breaking change lands. Post-1.0
+# shards use `~> x.y`, which admits non-breaking minor releases.
 dependencies:
   acp:
     github: hahwul/acp.cr
+    version: ~> 0.2.0
   crest:
     github: mamantoha/crest
     version: ~> 1.4.0
   har:
     github: NeuraLegion/har
+    version: ~> 1.2
   http_proxy:
     github: mamantoha/http_proxy
+    version: ~> 0.15.0
   sarif:
     github: hahwul/sarif.cr
+    version: ~> 0.2.0
   toml:
     github: crystal-community/toml.cr
+    version: ~> 0.8.0
 
 # Development Dependencies
 development_dependencies:
