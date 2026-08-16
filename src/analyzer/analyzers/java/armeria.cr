@@ -5,6 +5,7 @@ require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_parameter_extractor_ts"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   class Armeria < Analyzer
@@ -401,45 +402,10 @@ module Analyzer::Java
       matches.size == 1 ? matches.first : nil
     end
 
+    # Same rules as `split_top_level_args`, splitting on `+` instead of `,` so
+    # a concatenated path expression breaks into its terms.
     private def split_top_level_concat(expr : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      expr.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when '+'
-          next unless depth == 0
-
-          parts << expr[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = expr[start..]?.to_s.strip
-      parts << tail unless tail.empty?
-      parts
+      Noir::TopLevelSplit.split(expr, '+', Noir::TopLevelSplit::Rules::JAVA)
     end
 
     private def strip_wrapping_parentheses(expr : String) : String
@@ -597,45 +563,12 @@ module Analyzer::Java
       name.split(/[.$]/).last
     end
 
+    # Delegates to the shared splitter; `Rules::JAVA` reproduces this file's
+    # previous hand-rolled loop exactly (both quote styles, backslash escapes
+    # inside quotes, one clamped depth shared by `()`/`[]`/`{}`, each part
+    # stripped, interior empties kept and a trailing empty dropped).
     private def split_top_level_args(expr : String) : Array(String)
-      args = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      expr.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          next unless depth == 0
-
-          args << expr[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = expr[start..]?.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(expr, ',', Noir::TopLevelSplit::Rules::JAVA)
     end
 
     # True when absolute_offset falls inside a string/comment per mask.

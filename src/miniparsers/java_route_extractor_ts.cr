@@ -1,4 +1,5 @@
 require "../utils/url_path"
+require "../utils/top_level_split"
 require "../ext/tree_sitter/tree_sitter"
 require "./extraction_result_cache"
 require "../models/endpoint"
@@ -457,25 +458,13 @@ module Noir
       end
     end
 
+    # Delegates to the shared splitter. `Rules::GENERICS_ONLY` reproduces this
+    # file's previous hand-rolled loop exactly: only `<` and `>` contribute
+    # depth (clamped at 0), quotes and backslashes are ordinary characters, no
+    # part is stripped and every empty part is kept. The caller strips and
+    # skips empties itself.
     private def split_top_level_commas(text : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      text.each_char_with_index do |char, index|
-        case char
-        when '<'
-          depth += 1
-        when '>'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            parts << text[start...index]
-            start = index + 1
-          end
-        end
-      end
-      parts << text[start..]
-      parts
+      Noir::TopLevelSplit.split(text, ',', Noir::TopLevelSplit::Rules::GENERICS_ONLY)
     end
 
     private def strip_generic_arguments(text : String) : String
