@@ -34,6 +34,23 @@ module Analyzer::Swift
     # is router-like.
     ROUTER_EXTENSION_PATTERN = /\bextension\s+(?:RoutesBuilder|Router)\b/
 
+    # Gate for `register_router_params`. All three patterns it runs require
+    # one of these three words, so a line without any of them cannot
+    # contribute a receiver and does not need to be matched at all.
+    #
+    # That pattern opens with an unanchored `([A-Za-z_]\w*)`, so PCRE2 tries
+    # it at every offset of the subject and backtracks the greedy `\w*` on
+    # each one — quadratic in the line length. Up to roughly half a megabyte
+    # the JIT absorbs it; past that the JIT stack overflows, PCRE2 falls back
+    # to the interpreter, and the cost becomes visible all at once: a
+    # 600 KB single-line `.swift` file (generated code, a vendored bundle)
+    # took 75 s in this one `scan` where 300 KB took milliseconds.
+    #
+    # A literal union is a plain memchr-class search with no backtracking, and
+    # since the full pattern requires one of these three words the gate cannot
+    # change what is found.
+    ROUTER_TYPE_RE = Regex.union("RoutesBuilder", "Router", "Application")
+
     # `route_definition?` runs on every scanned line (route detection, param
     # lookahead, body-boundary checks). One precompiled `Regex.union` scan
     # (PCRE2 JIT) replaces six naive `String#includes?` char scans; union
@@ -277,6 +294,8 @@ module Analyzer::Swift
     private def register_router_params(lines : Array(String), prefix_by_receiver : Hash(String, String))
       lines.each do |line|
         stripped = code_line(line)
+        next unless stripped.matches?(ROUTER_TYPE_RE)
+
         stripped.scan(ROUTER_PARAM_PATTERN) do |match|
           prefix_by_receiver[match[1]] ||= ""
         end

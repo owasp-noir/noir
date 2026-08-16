@@ -434,7 +434,17 @@ module Analyzer::Rust
     # comments). This matches how `#[get(...)] async fn handler` is
     # laid out in the AST — both are top-level siblings, not parent /
     # child.
-    protected def each_routing_pair(node : LibTreeSitter::TSNode, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
+    # `depth` bounds the descent. The recursive call sits *outside* the
+    # `each_named_child` block (children are materialised first so
+    # `find_paired_function` can look ahead), so the depth guard inside
+    # `each_named_child` has already unwound by the time we recurse and
+    # cannot see this walk. A `.rs` file nesting thousands of blocks deep
+    # — generated code, or a hand-built stress case — would otherwise run
+    # the fiber stack out, and a stack overflow aborts the process rather
+    # than failing the one file.
+    protected def each_routing_pair(node : LibTreeSitter::TSNode, depth : Int32 = 0, &block : LibTreeSitter::TSNode, LibTreeSitter::TSNode ->)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       named = [] of LibTreeSitter::TSNode
       Noir::TreeSitter.each_named_child(node) { |c| named << c }
       named.each_with_index do |child, idx|
@@ -442,7 +452,7 @@ module Analyzer::Rust
           pair_function = find_paired_function(named, idx + 1)
           block.call(child, pair_function) if pair_function
         end
-        each_routing_pair(child, &block)
+        each_routing_pair(child, depth + 1, &block)
       end
     end
 

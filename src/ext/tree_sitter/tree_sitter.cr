@@ -46,6 +46,8 @@ lib LibTreeSitter
   fun ts_parser_delete(parser : TSParser)
   fun ts_parser_set_language(parser : TSParser, language : TSLanguage) : Bool
   fun ts_parser_parse_string(parser : TSParser, old_tree : TSTree, string : LibC::Char*, length : LibC::UInt) : TSTree
+  fun ts_parser_set_timeout_micros(parser : TSParser, timeout_micros : UInt64)
+  fun ts_parser_reset(parser : TSParser)
 
   # ----- Tree / node -----
   fun ts_tree_delete(tree : TSTree)
@@ -209,6 +211,26 @@ module Noir::TreeSitter
     end
   end
 
+  # Wall-clock ceiling for a single `ts_parser_parse_string` call.
+  #
+  # tree-sitter's error recovery is quadratic on badly-malformed input: a
+  # 200 KB single line of unterminated string literals in a `.go` file
+  # spends minutes inside `ts_parser__recover` before returning. Nothing
+  # in noir can interrupt that — the parse is one blocking C call, so the
+  # scan simply stops, with no output and no way to tell which file did
+  # it. Files are capped at `MediaFilter::MAX_FILE_SIZE` (10 MB) and a
+  # well-formed file that size parses in well under a second, so ten
+  # seconds is ~100x headroom over any legitimate input while still
+  # bounding the pathological case.
+  #
+  # On expiry the parse returns null and `parse` raises, which the
+  # per-file rescue in `parallel_analyze` / `scan_files` logs at debug —
+  # one file dropped instead of the whole run.
+  PARSE_TIMEOUT_MICROS = begin
+    ms = ENV["NOIR_PARSE_TIMEOUT_MS"]?.try(&.strip.to_u64?)
+    (ms && ms > 0 ? ms : 10_000_u64) * 1000_u64
+  end
+
   # Parses `source` with the given `language` and yields the root
   # `LibTreeSitter::TSNode`. The parser is checked out from a per-language
   # pool and returned when the block exits; the tree is freed in the
@@ -216,8 +238,16 @@ module Noir::TreeSitter
   def self.parse(source : String, language : LibTreeSitter::TSLanguage, &)
     parser = checkout_parser(language)
     begin
+      LibTreeSitter.ts_parser_set_timeout_micros(parser, PARSE_TIMEOUT_MICROS)
       tree = LibTreeSitter.ts_parser_parse_string(parser, Pointer(Void).null.as(LibTreeSitter::TSTree), source.to_unsafe, source.bytesize.to_u32)
-      raise "ts_parser_parse_string returned null" if tree.null?
+      if tree.null?
+        # A halted parser holds the partial parse so the next call can
+        # resume it. We never resume — the parser goes straight back to
+        # the shared pool — so reset it, or the next unrelated file
+        # inherits this one's state.
+        LibTreeSitter.ts_parser_reset(parser)
+        raise "ts_parser_parse_string returned null (timed out after #{PARSE_TIMEOUT_MICROS // 1000}ms, or out of memory)"
+      end
       begin
         yield LibTreeSitter.ts_tree_root_node(tree)
       ensure
@@ -299,25 +329,70 @@ module Noir::TreeSitter
   # exact same named children in the same order.
   NAMED_CHILD_CURSOR_THRESHOLD = 8
 
+  # Nesting level of the `each_named_child` calls currently on this
+  # thread's stack — the descent depth of whatever AST walk is running.
+  #
+  # Thread-local rather than a plain class variable so two walks running
+  # on different threads (the MT runtime, or two analyzers under
+  # `parallel_analyze`) cannot corrupt each other's count.
+  #
+  # Every frame saves the value it found and restores it in an `ensure`,
+  # so the counter only ever *over*-estimates: a fiber that suspends
+  # mid-walk (a `logger` write inside a walker block) leaves its depth
+  # standing, and a walk that starts on the same thread meanwhile is
+  # bounded more tightly than it needed to be. That direction is the safe
+  # one — it can truncate a pathological walk early, never overrun the
+  # stack — and it costs one integer per node instead of per-fiber
+  # storage.
+  @[ThreadLocal]
+  @@walk_depth = 0
+
+  # Descent depth of the AST walk currently running on this thread.
+  # Exposed for specs; not part of the public API contract.
+  def self.walk_depth : Int32
+    @@walk_depth
+  end
+
   # Iterates named children without allocating an array.
+  #
+  # Yields nothing once the walk has descended `MAX_AST_DEPTH` levels.
+  # Practically every extractor in the tree descends by recursing inside
+  # this block, so bounding it here bounds all of them at once: the
+  # alternative is threading a `depth` parameter through ~300 hand-rolled
+  # walkers and remembering to do it in the next one. A source file with
+  # thousands of nested syntactic constructs (`((((...))))`, chained
+  # builders, generated code) otherwise recurses until the fiber stack
+  # runs out, and a stack overflow is a hard abort — it kills the whole
+  # scan, not just the file, and no `rescue` in `parallel_analyze` can
+  # catch it. Walkers that thread their own `depth` against
+  # `MAX_AST_DEPTH` still cut earlier and more precisely; this is the
+  # backstop for the ones that don't.
   #
   # The cursor path lives in a separate `@[NoInline]` method on purpose:
   # these extractors recurse through `each_named_child`'s block, so any
-  # local this method reserves (notably the 32-byte `TSTreeCursor` and
-  # the `ensure` machinery) is paid at every recursion level. Keeping the
-  # cursor out of this frame preserves the tiny original frame for the
-  # common narrow-node path, so deeply nested inputs don't overflow the
-  # stack (guarded by spec/unit_test/miniparser/extractor_recursion_depth_spec).
+  # local this method reserves (notably the 32-byte `TSTreeCursor`) is
+  # paid at every recursion level. Keeping the cursor out of this frame
+  # preserves the small original frame for the common narrow-node path,
+  # so legitimate deep input stays well inside the stack (guarded by
+  # spec/unit_test/miniparser/extractor_recursion_depth_spec).
   def self.each_named_child(node : LibTreeSitter::TSNode, &)
     count = LibTreeSitter.ts_node_named_child_count(node)
     return if count == 0
 
-    if count <= NAMED_CHILD_CURSOR_THRESHOLD
-      count.times do |i|
-        yield LibTreeSitter.ts_node_named_child(node, i.to_u32)
+    depth = @@walk_depth
+    return if depth >= MAX_AST_DEPTH
+    @@walk_depth = depth + 1
+
+    begin
+      if count <= NAMED_CHILD_CURSOR_THRESHOLD
+        count.times do |i|
+          yield LibTreeSitter.ts_node_named_child(node, i.to_u32)
+        end
+      else
+        each_named_child_via_cursor(node) { |child| yield child }
       end
-    else
-      each_named_child_via_cursor(node) { |child| yield child }
+    ensure
+      @@walk_depth = depth
     end
   end
 
