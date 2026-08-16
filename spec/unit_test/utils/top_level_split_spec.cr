@@ -389,4 +389,39 @@ describe Noir::TopLevelSplit do
       TLS.split("[a)b, c", ',', TLSRules::CPP).should eq ["[a)b, c"]
     end
   end
+
+  describe "Rules::JAVA" do
+    it "splits an annotation argument list and strips each part" do
+      TLS.split("value = \"/users/{id}\", method = RequestMethod.GET", ',', TLSRules::JAVA)
+        .should eq ["value = \"/users/{id}\"", "method = RequestMethod.GET"]
+    end
+
+    it "keeps a nested lambda handler as one argument" do
+      input = "\"/a\", ctx -> { ctx.json(map(\"x\", 1)); }"
+      TLS.split(input, ',', TLSRules::JAVA).should eq ["\"/a\"", "ctx -> { ctx.json(map(\"x\", 1)); }"]
+    end
+
+    it "splits a concatenated path expression on plus" do
+      TLS.split("BASE + \"/users\" + suffix", '+', TLSRules::JAVA)
+        .should eq ["BASE", "\"/users\"", "suffix"]
+    end
+
+    it "drops a trailing empty part but keeps an interior one" do
+      TLS.split("a, , b,", ',', TLSRules::JAVA).should eq ["a", "", "b"]
+    end
+
+    it "treats a single quote as a quote character, unlike Rules::CPP" do
+      TLS.split("sep(','), x", ',', TLSRules::JAVA).should eq ["sep(',')", "x"]
+    end
+
+    # The axis that separates this preset from quarkus.cr and wicket.cr, which
+    # add Nest::Angle: here a generic argument list breaks apart at its comma.
+    it "does not count angle brackets, so a generic type splits" do
+      TLS.split("Map<String, Integer> m", ',', TLSRules::JAVA).should eq ["Map<String", "Integer> m"]
+    end
+
+    it "uses one shared clamped depth across bracket kinds" do
+      TLS.split("[a)b, c", ',', TLSRules::JAVA).should eq ["[a)b", "c"]
+    end
+  end
 end

@@ -5,6 +5,7 @@ require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 require "yaml"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   # Quarkus is JAX-RS-flavoured, so this analyzer just drives the
@@ -572,45 +573,27 @@ module Analyzer::Java
       content[(open_idx + 1)...close_idx]
     end
 
+    # `Rules::JAVA` plus `Nest::Angle`, on the same shared depth counter. Not
+    # the shared `Rules::JAVA` preset: this splitter runs on a JAX-RS resource
+    # method's parameter list, where `Map<String, List<Integer>>` is one
+    # parameter and must not break in two. The cost is that a `<` used as a
+    # comparison — `f(a < b, c)` — raises the depth and swallows the comma,
+    # which cannot happen in a parameter list. File-local because quarkus is
+    # the only splitter with exactly this combination; wicket also counts
+    # angles but takes only `"` as a quote.
+    SPLIT_ARGS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_args(source : String) : Array(String)
-      args = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      source.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{', '<'
-          depth += 1
-        when ')', ']', '}', '>'
-          depth -= 1 if depth > 0
-        when ','
-          next unless depth == 0
-
-          args << source[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = source[start..]?.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(source, ',', SPLIT_ARGS_RULES)
     end
 
     private def parameter_variable_name(arg : String) : String

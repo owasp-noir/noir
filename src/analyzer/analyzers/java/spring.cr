@@ -6,6 +6,7 @@ require "../../../utils/spring_property_path"
 require "../../engines/java_engine"
 require "../../../utils/path_scope"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 require "yaml"
 
 module Analyzer::Java
@@ -1105,42 +1106,25 @@ module Analyzer::Java
       nil
     end
 
+    # `Rules::JAVA` minus the single-quote quote style, and dropping EVERY
+    # empty part rather than only a trailing one — the old body ended in
+    # `.map(&.strip).reject(&.empty?)`, so `"a" + + "b"` yielded two terms, not
+    # three. Both matter to the caller, which concatenates the terms it gets
+    # back into a route path. File-local because spring is the only splitter
+    # with this combination.
+    SPLIT_CONCAT_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_concat(expression : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escape = false
-
-      expression.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when '+'
-          if depth.zero?
-            parts << expression[start...index]
-            start = index + 1
-          end
-        end
-      end
-
-      parts << expression[start..]
-      parts.map(&.strip).reject(&.empty?)
+      Noir::TopLevelSplit.split(expression, '+', SPLIT_CONCAT_RULES)
     end
 
     private def strip_wrapping_parentheses(expression : String) : String

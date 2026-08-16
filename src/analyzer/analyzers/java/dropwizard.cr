@@ -4,6 +4,7 @@ require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 require "yaml"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   # Dropwizard ships Jersey under the hood, so JAX-RS resource
@@ -328,51 +329,13 @@ module Analyzer::Java
       base == "/" ? "/*" : "#{base.rstrip('/')}/*"
     end
 
+    # Delegates to the shared splitter. This file's copy was written against a
+    # `String::Builder` where armeria's and vertx's slice by index, but the two
+    # forms are observably identical — `Rules::JAVA` reproduces both (one
+    # clamped depth shared by `()`/`[]`/`{}`, both quote styles, backslash
+    # escapes inside quotes, stripped parts, trailing empty dropped).
     private def split_top_level_args(source : String) : Array(String)
-      args = [] of String
-      current = String::Builder.new
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-
-      source.each_char do |char|
-        if quote
-          current << char
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          quote = char
-          current << char
-        when '(', '{', '['
-          depth += 1
-          current << char
-        when ')', '}', ']'
-          depth -= 1 if depth > 0
-          current << char
-        when ','
-          if depth == 0
-            args << current.to_s.strip
-            current = String::Builder.new
-          else
-            current << char
-          end
-        else
-          current << char
-        end
-      end
-
-      tail = current.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(source, ',', Noir::TopLevelSplit::Rules::JAVA)
     end
 
     private def string_literal_value(expression : String) : String?

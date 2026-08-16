@@ -4,6 +4,7 @@ require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_route_extractor_ts"
 require "wait_group"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   class Vertx < Analyzer
@@ -644,45 +645,16 @@ module Analyzer::Java
       split_top_level(args, ',')
     end
 
+    # Delegates to the shared splitter; `Rules::JAVA` reproduces this file's
+    # previous hand-rolled loop exactly (both quote styles, backslash escapes
+    # inside quotes, one clamped depth shared by `()`/`[]`/`{}`, each part
+    # stripped, interior empties kept and a trailing empty dropped). Called
+    # with `,` through the wrapper above and with `+` from
+    # `resolve_route_path_arg`; the old `case`-on-`separator` put the separator
+    # branch last, so neither of those values could ever shadow a quote or
+    # bracket branch and the parameterization is faithful.
     private def split_top_level(expr : String, separator : Char) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escape = false
-
-      expr.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"', '\''
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when separator
-          next unless depth == 0
-
-          parts << expr[start...index].strip
-          start = index + 1
-        end
-      end
-
-      tail = expr[start..]?.to_s.strip
-      parts << tail unless tail.empty?
-      parts
+      Noir::TopLevelSplit.split(expr, separator, Noir::TopLevelSplit::Rules::JAVA)
     end
 
     private def resolve_route_path_arg(raw_arg : String, constants : Hash(String, String), depth = 0) : String?

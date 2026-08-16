@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../engines/java_engine"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../miniparsers/java_callee_extractor"
+require "../../../utils/top_level_split"
 
 module Analyzer::Java
   class Wicket < Analyzer
@@ -702,43 +703,25 @@ module Analyzer::Java
       after < content.size && content[after] == '('
     end
 
+    # `Rules::JAVA` plus `Nest::Angle` and minus the single-quote quote style.
+    # Both divergences are load-bearing here: `mountPage("/x", Foo.class)` and
+    # `MyPage<T>` both reach this splitter, so angles must nest, while a Java
+    # `'c'` char literal never wraps a mount path and treating `'` as a quote
+    # would let an apostrophe inside a string swallow the rest of the list.
+    # File-local because wicket is the only splitter with this combination.
+    SPLIT_ARGUMENTS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "\"",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_arguments(args : String) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      in_string = false
-      escape = false
-
-      args.each_char_with_index do |char, index|
-        if in_string
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '(', '[', '{', '<'
-          depth += 1
-        when ')', ']', '}', '>'
-          depth -= 1 if depth > 0
-        when ','
-          if depth.zero?
-            parts << args[start...index].strip
-            start = index + 1
-          end
-        end
-      end
-
-      tail = args[start..]?.try(&.strip)
-      parts << tail if tail && !tail.empty?
-      parts
+      Noir::TopLevelSplit.split(args, ',', SPLIT_ARGUMENTS_RULES)
     end
 
     private def class_literal_name(argument : String?) : String?

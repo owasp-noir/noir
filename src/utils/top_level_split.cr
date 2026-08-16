@@ -183,12 +183,23 @@ module Noir
       )
 
       # Java annotation and call-argument lists.
-      # Serves analyzer/analyzers/java/{vertx,dropwizard,armeria}.cr
-      # `split_top_level_args` / `split_top_level_concat`. One shared depth is
-      # unanimous across the Java splitters, unlike Python and JS.
+      # Serves four sites in analyzer/analyzers/java/: armeria.cr
+      # `split_top_level_args` AND `split_top_level_concat` (same body, `+`
+      # instead of `,`), dropwizard.cr `split_top_level_args`, and vertx.cr
+      # `split_top_level`, which takes the separator as a parameter and is
+      # called with both `,` and `+`. Note dropwizard's copy was written
+      # against a `String::Builder` and the other three against index slices;
+      # they are nevertheless observably identical, unbalanced input included.
+      # One shared depth is unanimous across the Java splitters, unlike Python
+      # and JS.
       #
-      # Near misses that need their own `Rules` when converted:
+      # Three Java sites each disagree with this preset on one or two axes and
+      # so carry a file-local `Rules` constant rather than a preset here — each
+      # is used by exactly one splitter, so naming them centrally would put
+      # three single-use constants in this file:
       #   quarkus.cr `split_top_level_args`   -> nest also includes Angle
+      #   wicket.cr  `split_arguments`        -> nest also includes Angle,
+      #                                          quotes "\"" only
       #   spring.cr  `split_top_level_concat` -> quotes "\"", Empties::DropAll
       JAVA = new(
         nest: Nest::Paren | Nest::Bracket | Nest::Brace,
@@ -218,12 +229,13 @@ module Noir
         clamp: true,
       )
 
-      # Generic/type-argument lists: angle brackets only, no quote handling.
+      # Type lists: angle brackets only, no quote handling.
       # Serves the three byte-identical `split_top_level_commas` clones in
-      # miniparsers/{java_route,jaxrs,micronaut}_extractor_ts.cr, which run on
-      # an already-extracted generic parameter list where `(`/`{` cannot
-      # legally appear and a stray `"` would swallow the rest of the
-      # signature. They keep empties and do not strip.
+      # miniparsers/{java_route,jaxrs,micronaut}_extractor_ts.cr. All three run
+      # on the tail of an `implements` clause with the class body already
+      # truncated at `{`, so only generic arguments can nest and a stray `"`
+      # would swallow the rest of the type list. They keep empties and do not
+      # strip; every caller strips each part itself and skips the empties.
       GENERICS_ONLY = new(
         nest: Nest::Angle,
         quotes: "",
