@@ -336,6 +336,112 @@ describe Noir::TopLevelSplit do
     end
   end
 
+  # The `String`-delimiter overload had unit coverage but no production caller
+  # until haskell/servant.cr (`,` / `:>` / `:<|>`) and
+  # specification/traefik.cr (`||` / `&&`) were converted. These exercise the
+  # buffering paths those two rule sets actually reach.
+  describe "multi-character delimiter, production rule sets" do
+    servant = tls_rules(
+      nest: ALL_BRACKETS,
+      quotes: "\"",
+      escape: TLSEscape::InQuotes,
+      strip: true,
+      empties: TLSEmpties::DropAll,
+      per_kind: true,
+      clamp: true,
+    )
+    traefik = tls_rules(
+      nest: TLSNest::Paren,
+      quotes: "",
+      escape: TLSEscape::None,
+      strip: true,
+      empties: TLSEmpties::DropAll,
+      per_kind: false,
+      clamp: true,
+    )
+
+    it "emits a late-failing partial match verbatim" do
+      # Three of the four separator characters match before the fourth fails;
+      # the buffered `:<|` must land in the part, not be dropped.
+      TLS.split("a :<| b :<|> c", ":<|>", servant).should eq ["a :<| b", "c"]
+    end
+
+    it "retries a late-failing partial match against a real match" do
+      # `:<|` fails at `:`, and the retry must find the `:<|>` that starts one
+      # character later rather than skipping the whole buffer past it.
+      TLS.split("a :<|:<|> b", ":<|>", servant).should eq ["a :<|", "b"]
+    end
+
+    it "keeps a trailing partial separator in the tail" do
+      TLS.split("a :> b :", ":>", servant).should eq ["a", "b :"]
+      TLS.split("a :<|> b :<|", ":<|>", servant).should eq ["a", "b :<|"]
+      TLS.split("a || b |", "||", traefik).should eq ["a", "b |"]
+    end
+
+    it "does not confuse two separators sharing a leading character" do
+      # Servant calls the same splitter with `:>` and `:<|>`; each call must
+      # see only its own separator.
+      api = "\"users\" :> Get '[JSON] [User] :<|> \"posts\" :> Post '[JSON] Post"
+      TLS.split(api, ":<|>", servant)
+        .should eq ["\"users\" :> Get '[JSON] [User]", "\"posts\" :> Post '[JSON] Post"]
+      TLS.split("\"users\" :> Get '[JSON] [User]", ":>", servant)
+        .should eq ["\"users\"", "Get '[JSON] [User]"]
+    end
+
+    it "treats separator angle brackets as ordinary characters when Angle is off" do
+      # `:<|>` carries `<` and `>`; with `Nest::Angle` disabled they must not
+      # touch the depth counters, or a buffered `<` would suppress later splits.
+      TLS.split("A :<|> B :<|> C", ":<|>", servant).should eq ["A", "B", "C"]
+      TLS.split("a < b :> c > d", ":>", servant).should eq ["a < b", "c > d"]
+    end
+
+    it "does not split a servant separator inside a promoted list or parens" do
+      TLS.split("\"a\" :> (X :<|> Y) :<|> Z", ":<|>", servant).should eq ["\"a\" :> (X :<|> Y)", "Z"]
+      TLS.split("Get '[JSON] [Map A B] :<|> Z", ":<|>", servant).should eq ["Get '[JSON] [Map A B]", "Z"]
+    end
+
+    it "keeps a servant separator inside a double-quoted segment" do
+      TLS.split("Summary \"does a :<|> b\" :<|> Z", ":<|>", servant)
+        .should eq ["Summary \"does a :<|> b\"", "Z"]
+    end
+
+    it "leaves backticks and quotes inert in a traefik rule" do
+      # `quotes: ""` is load-bearing: Traefik matcher arguments use backticks
+      # and may contain lone quotes, so any quote handling would swallow the
+      # rest of the rule.
+      TLS.split("Host(`a.com`) && (PathPrefix(`/x`) || PathPrefix(`/y`))", "&&", traefik)
+        .should eq ["Host(`a.com`)", "(PathPrefix(`/x`) || PathPrefix(`/y`))"]
+      TLS.split("Path(`/it's`) || Path(`/\"q\"`)", "||", traefik)
+        .should eq ["Path(`/it's`)", "Path(`/\"q\"`)"]
+    end
+
+    it "hides a traefik separator nested in matcher arguments" do
+      TLS.split("Header(`X-A`, `a||b`) || Path(`/x`)", "||", traefik)
+        .should eq ["Header(`X-A`, `a||b`)", "Path(`/x`)"]
+      TLS.split("Query(`a=1&&b=2`) && Path(`/y`)", "&&", traefik)
+        .should eq ["Query(`a=1&&b=2`)", "Path(`/y`)"]
+    end
+
+    it "does not count regexp brackets in a traefik rule" do
+      TLS.split("HostRegexp(`{sub:[a-z]+}.a.com`) && PathPrefix(`/v1`)", "&&", traefik)
+        .should eq ["HostRegexp(`{sub:[a-z]+}.a.com`)", "PathPrefix(`/v1`)"]
+    end
+
+    it "drops interior and edge empties for both rule sets" do
+      TLS.split("a :> :> b", ":>", servant).should eq ["a", "b"]
+      TLS.split(":> a :>", ":>", servant).should eq ["a"]
+      TLS.split("|| a || || b ||", "||", traefik).should eq ["a", "b"]
+      TLS.split("", ":<|>", servant).should eq [] of String
+      TLS.split("&&", "&&", traefik).should eq [] of String
+    end
+
+    it "does not desync a multi-character separator after multi-byte matchers" do
+      TLS.split("Host(`한국.com`) && Path(`/🚀`)", "&&", traefik)
+        .should eq ["Host(`한국.com`)", "Path(`/🚀`)"]
+      TLS.split("한국 :<|> 語 :<|> 🚀", ":<|>", servant).should eq ["한국", "語", "🚀"]
+    end
+  end
+
   describe "non-ASCII input" do
     it "splits Korean arguments correctly" do
       TLS.split("경로, 처리기, 옵션", ',', tls_rules).should eq ["경로", "처리기", "옵션"]

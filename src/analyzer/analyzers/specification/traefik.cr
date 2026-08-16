@@ -1,4 +1,5 @@
 require "../../engines/specification_engine"
+require "../../../utils/top_level_split"
 require "set"
 
 module Analyzer::Specification
@@ -195,41 +196,28 @@ module Analyzer::Specification
       values
     end
 
+    # Traefik router rules: `Host(`a.com`) && (PathPrefix(`/x`) ||
+    # PathPrefix(`/y`))`. `quotes: ""` is load-bearing — matcher arguments are
+    # written with backticks, single quotes and double quotes interchangeably
+    # and routinely contain unbalanced ones (`Path(`/it's`)`, a regexp with a
+    # lone quote), so any quote handling at all would swallow the rest of the
+    # rule and lose every alternative after it. Only `()` nests; `[]`/`{}`
+    # appear inside `HostRegexp` character classes and repetition counts, where
+    # counting them would be actively wrong. No escape handling: the replaced
+    # loop had none, and a `\` in a matcher regexp is a regexp escape, not a
+    # string escape.
+    SPLIT_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren,
+      quotes: "",
+      escape: Noir::TopLevelSplit::Escape::None,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level(input : String, delimiter : String) : Array(String)
-      parts = [] of String
-      current = ""
-      depth = 0
-      i = 0
-
-      while i < input.size
-        ch = input[i]
-        if ch == '('
-          depth += 1
-          current += ch.to_s
-          i += 1
-          next
-        elsif ch == ')'
-          depth -= 1 if depth > 0
-          current += ch.to_s
-          i += 1
-          next
-        end
-
-        # `i` is a CHAR index (input[i]); use char-based slicing, not byte_slice,
-        # so a multi-byte char before a `||` doesn't desync delimiter detection.
-        if depth == 0 && input[i, delimiter.size]? == delimiter
-          parts << current.strip unless current.strip.empty?
-          current = ""
-          i += delimiter.size
-          next
-        end
-
-        current += ch.to_s
-        i += 1
-      end
-
-      parts << current.strip unless current.strip.empty?
-      parts.reject(&.empty?)
+      Noir::TopLevelSplit.split(input, delimiter, SPLIT_RULES)
     end
 
     private def normalize_path(path : String) : String
