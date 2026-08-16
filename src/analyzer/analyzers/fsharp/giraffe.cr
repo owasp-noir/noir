@@ -80,7 +80,6 @@ module Analyzer::Fsharp
     def analyze
       include_callee = callees_needed?
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".fs") || path.ends_with?(".fsx")
         # Skip .NET test conventions: `/tests/` and `/test/`
         # parent dirs, and `*Tests.fs` filenames. Giraffe's own

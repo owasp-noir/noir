@@ -37,8 +37,6 @@ module Analyzer::Erlang
 
     def analyze
       get_files_by_extension(".erl").each do |path|
-        next if File.directory?(path)
-
         content = read_file_content(path)
         # Every Elli route clause is a `handle(` head; skip files without
         # one before paying for the comment strip.

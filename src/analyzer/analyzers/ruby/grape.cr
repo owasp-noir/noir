@@ -80,7 +80,6 @@ module Analyzer::Ruby
       all_files.each do |path|
         next unless path.ends_with?(".rb")
         next if ruby_non_production_path?(path)
-        next if File.directory?(path)
         content = read_file_content(path)
         # Only base-class definitions (`Grape::API`) and aggregators
         # (`mount`) feed the index; plain route files inherit from a custom

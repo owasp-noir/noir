@@ -459,7 +459,6 @@ module Analyzer::Javascript
       main_files = [] of String
 
       @all_files.each do |file|
-        next if File.directory?(file)
         next unless ExpressConstants::JS_EXTENSIONS.any? { |ext| file.ends_with?(ext) }
         next unless @base_paths.any? { |base| Noir::PathScope.under_root?(file, base) }
         main_files << file

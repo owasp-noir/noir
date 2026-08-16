@@ -61,7 +61,6 @@ module Analyzer::Cpp
         files = CPP_EXTENSIONS.flat_map { |ext| locator.files_by_extension(ext) }
 
         parallel_analyze(files) do |path|
-          next if File.directory?(path)
           next unless File.exists?(path)
           # The vendored single-header library defines the Server/Client classes
           # themselves; never scan it for routes (avoids FPs + a big perf hit).

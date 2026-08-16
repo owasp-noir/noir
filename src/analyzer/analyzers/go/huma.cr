@@ -67,7 +67,6 @@ module Analyzer::Go
       file_contents_cache = Hash(String, String).new
 
       get_files_by_extension(".go").each do |scan_path|
-        next if File.directory?(scan_path)
         next if GoEngine.go_test_file?(base_relative_path(scan_path))
         begin
           dir = File.dirname(scan_path)

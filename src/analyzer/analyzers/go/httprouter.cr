@@ -31,7 +31,6 @@ module Analyzer::Go
       # twins on `GoCalleeExtractor`.
       file_contents = Hash(String, String).new
       get_files_by_extension(".go").each do |fp|
-        next if File.directory?(fp)
         begin
           file_contents[fp] = read_file_content(fp)
         rescue IO::Error

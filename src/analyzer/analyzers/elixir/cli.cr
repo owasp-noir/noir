@@ -23,7 +23,6 @@ module Analyzer::Elixir
       files = get_files_by_extension(".ex") + get_files_by_extension(".exs")
 
       files.each do |path|
-        next if File.directory?(path)
         next if cli_test_path?(path)
         begin
           content = read_file_content(path)

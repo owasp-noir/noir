@@ -113,7 +113,6 @@ module Analyzer::Rust
       mounts = [] of MountEntry
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".rs"
         next if RustEngine.test_path?(base_relative_path(path))
         base = configured_base_for(path)

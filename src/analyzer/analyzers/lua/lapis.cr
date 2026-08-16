@@ -47,7 +47,6 @@ module Analyzer::Lua
       include_callee = callees_needed?
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".lua") || path.ends_with?(".moon")
         # Skip Busted / OpenResty spec files. Lapis's own
         # `spec/**/*_spec.moon` and `spec_openresty/`/`spec_cqueues/`

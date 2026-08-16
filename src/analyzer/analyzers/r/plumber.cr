@@ -28,7 +28,7 @@ module Analyzer::R
 
     def analyze
       r_files = get_files_by_extension(".R") + get_files_by_extension(".r")
-      r_files = r_files.uniq.reject! { |path| File.directory?(path) }
+      r_files = r_files.uniq
       return @result if r_files.empty?
 
       r_files.each do |path|

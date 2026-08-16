@@ -925,7 +925,7 @@ module Analyzer::Swift
 
     private def swift_source_files : Array(String)
       all_files.select do |path|
-        File.exists?(path) && !File.directory?(path) &&
+        File.exists?(path) &&
           File.extname(path) == ".swift" &&
           !swift_test_path?(path) && !swift_vendor_path?(path)
       end

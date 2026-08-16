@@ -84,7 +84,6 @@ module Analyzer::Rust
     private def build_global_handler_info : Hash(ScopedNameKey, HandlerInfo)
       info = {} of ScopedNameKey => HandlerInfo
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)
@@ -649,7 +648,6 @@ module Analyzer::Rust
       edges = Hash(ScopedNameKey, Array(PrefixEdge)).new
       pushed = Set(ScopedNameKey).new
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)
@@ -797,7 +795,6 @@ module Analyzer::Rust
       consts = {} of ScopedNameKey => String
       pattern = /(?:const|static)\s+([A-Z_][A-Z0-9_]*)\s*:\s*&(?:'static\s+)?str\s*=\s*"([^"]*)"/
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)

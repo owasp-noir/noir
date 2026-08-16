@@ -35,7 +35,6 @@ module Analyzer::Swift
       endpoints = {} of String => Endpoint
 
       get_files_by_extension(".swift").each do |path|
-        next if File.directory?(path)
         next if SwiftEngine.swift_test_path?(base_relative_path(path))
         next unless File.exists?(path)
 

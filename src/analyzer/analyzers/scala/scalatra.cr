@@ -48,7 +48,6 @@ module Analyzer::Scala
     private def build_mount_prefixes : Hash(String, String)
       map = {} of String => String
       all_files.each do |path|
-        next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".scala"
         next if scalatra_test_path?(path)
         begin

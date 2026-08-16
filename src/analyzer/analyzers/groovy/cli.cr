@@ -65,7 +65,6 @@ module Analyzer::Groovy
     def analyze
       endpoints = {} of String => Endpoint
       get_files_by_extension(".groovy").each do |path|
-        next if File.directory?(path)
         next if cli_test_path?(path)
         next unless File.exists?(path)
         begin

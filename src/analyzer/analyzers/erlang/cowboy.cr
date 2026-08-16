@@ -88,9 +88,7 @@ module Analyzer::Erlang
     end
 
     private def erlang_sources : Array(String)
-      files = get_files_by_extension(".erl") + get_files_by_extension(".hrl")
-      files.reject! { |path| File.directory?(path) }
-      files
+      get_files_by_extension(".erl") + get_files_by_extension(".hrl")
     end
 
     # Erlang requires the module name to match the file name, so the

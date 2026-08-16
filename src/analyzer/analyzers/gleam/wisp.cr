@@ -111,7 +111,7 @@ module Analyzer::Gleam
     @contents = {} of String => String
 
     def analyze
-      gleam_files = get_files_by_extension(".gleam").reject! { |path| File.directory?(path) }
+      gleam_files = get_files_by_extension(".gleam")
       return @result if gleam_files.empty?
 
       build_module_index(gleam_files)

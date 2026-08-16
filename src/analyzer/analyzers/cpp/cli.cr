@@ -85,7 +85,6 @@ module Analyzer::Cpp
 
       EXTS.each do |ext|
         get_files_by_extension(ext).each do |path|
-          next if File.directory?(path)
           next if cpp_test_path?(path)
           next unless File.exists?(path)
 

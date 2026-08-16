@@ -64,7 +64,7 @@ module Analyzer::Asp
     INCLUDE_NAME_RE = /\A(?:lib|partial)\./i
 
     def analyze
-      asp_files = get_files_by_extension(".asp").reject { |path| File.directory?(path) }
+      asp_files = get_files_by_extension(".asp")
       return @result if asp_files.empty?
 
       # Pass 1: every file reachable only via `#include` is a fragment,
@@ -87,8 +87,6 @@ module Analyzer::Asp
       targets = Set(String).new
 
       files.each do |path|
-        next if File.directory?(path)
-
         content = read_file_content(path)
         next unless content.includes?("#include")
 

@@ -48,7 +48,6 @@ module Analyzer::Java
                 begin
                   path = channel.receive?
                   break if path.nil?
-                  next if File.directory?(path)
 
                   relative_path = get_relative_path(configured_base_for(path), path)
 

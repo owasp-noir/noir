@@ -41,7 +41,6 @@ module Analyzer::Dart
       registrations = [] of Registration
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".dart")
         # `test/integration/*_endpoint_test.dart` exercises endpoints but
         # is not itself a server surface.
