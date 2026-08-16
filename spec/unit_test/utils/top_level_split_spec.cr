@@ -189,6 +189,47 @@ describe Noir::TopLevelSplit do
     end
   end
 
+  # Languages that escape a quote by DOUBLING it rather than with a
+  # backslash — CFML (`analyzer/engines/cfml_engine.cr`), SQL, VB — need no
+  # `Rules` axis of their own, and these cases are why.
+  #
+  # Toggling on every quote and treating a doubled pair as a literal are
+  # indistinguishable to a top-level splitter: a pair is two ADJACENT quote
+  # characters, so the window in which the toggling model believes the run
+  # closed is zero characters wide. A run of L quotes flips the state iff L
+  # is odd under either reading, and the only characters processed in a
+  # differing state are the quote characters themselves, which neither nest
+  # nor split. Checked exhaustively when `cfml_engine.cr` moved to
+  # `Escape::None`: a doubling model agreed with this module on all
+  # 159,999,840 comparisons of 1,440 `Rules` combinations against every
+  # string up to length 5 over `" ' , a \ ( ) < ` {`.
+  describe "doubled-quote escapes (no dedicated mode)" do
+    doubling = tls_rules(escape: TLSEscape::None)
+
+    it "keeps a delimiter inside a literal holding a doubled quote" do
+      TLS.split(%q(a = "say ""hi"", loudly", b = 2), ',', doubling)
+        .should eq [%q(a = "say ""hi"", loudly"), "b = 2"]
+    end
+
+    it "keeps a delimiter inside a single-quoted literal holding a doubled quote" do
+      TLS.split(%q(a = 'it''s, fine', b = 2), ',', doubling)
+        .should eq [%q(a = 'it''s, fine'), "b = 2"]
+    end
+
+    it "handles a doubled quote at the very start and the very end of a literal" do
+      TLS.split(%q(a = """x, y""", b = 2), ',', doubling)
+        .should eq [%q(a = """x, y"""), "b = 2"]
+    end
+
+    it "closes the run on the unpaired quote of an odd run" do
+      TLS.split(%q(a = "x""", b = 2), ',', doubling).should eq [%q(a = "x"""), "b = 2"]
+    end
+
+    it "treats an empty literal followed by a delimiter as closed" do
+      TLS.split(%q(a = "", b = 2), ',', doubling).should eq [%q(a = ""), "b = 2"]
+    end
+  end
+
   describe "Escape::InQuotes" do
     it "does not close the run on an escaped quote" do
       TLS.split("\"a\\\"b\", c", ',', tls_rules(escape: TLSEscape::InQuotes))

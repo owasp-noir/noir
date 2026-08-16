@@ -15,7 +15,10 @@ component extends="framework.one" {
 
 			// `hint` labels the entry; only the second key is a route.
 			{ 'hint' = 'Standard Route', '$GET/old/path' = '/new/path' },
-			{ 'hint' = "Standard \" Route, with comma", '$GET/escaped/comma' = '/new/path' },
+			// A quote inside a CFML string is written by DOUBLING it — there is
+			// no backslash escape — and the comma after it is still inside the
+			// literal.
+			{ 'hint' = "Standard "" Route, with comma", '$GET/escaped/comma' = '/new/path' },
 
 			// Expands per the framework's resourceRouteTemplates.
 			{ 'hint' = 'Resource Routes', '$RESOURCES' = 'dogs' }

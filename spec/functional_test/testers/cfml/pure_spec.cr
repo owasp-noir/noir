@@ -41,6 +41,28 @@ expected_endpoints = [
     Param.new("page", "", "form"),
   ]),
 
+  # A CFML string has no backslash escape, so a default value ending in one
+  # (a Windows path) closes at the next quote: the argument list still ends
+  # at the `)` on the same line, and `mask` is its own argument.
+  Endpoint.new("/api/Files.cfc?method=listUploads", "GET", [
+    Param.new("folder", "", "query"),
+    Param.new("mask", "", "query"),
+  ]),
+  Endpoint.new("/api/Files.cfc?method=listUploads", "POST", [
+    Param.new("folder", "", "form"),
+    Param.new("mask", "", "form"),
+  ]),
+  # A quote inside a string is written by doubling it, and the comma inside
+  # that literal does not separate arguments.
+  Endpoint.new("/api/Files.cfc?method=describe", "GET", [
+    Param.new("label", "", "query"),
+    Param.new("page", "", "query"),
+  ]),
+  Endpoint.new("/api/Files.cfc?method=describe", "POST", [
+    Param.new("label", "", "form"),
+    Param.new("page", "", "form"),
+  ]),
+
   # .cfm pages are file-path routed
   Endpoint.new("/index.cfm", "GET", [
     Param.new("view", "", "query"),
