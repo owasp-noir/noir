@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "../../../miniparsers/cpp_callee_extractor"
+require "../../../utils/top_level_split"
 require "wait_group"
 
 module Analyzer::Cpp
@@ -384,57 +385,11 @@ module Analyzer::Cpp
       normalize_handler_target(raw_handler)
     end
 
+    # Delegates to the shared splitter; `Rules::CPP` reproduces this file's
+    # previous hand-rolled loop exactly (double quotes only, backslash escapes
+    # inside quotes, per-kind clamped depth, trailing empty dropped).
     private def split_top_level_args(raw : String) : Array(String)
-      args = [] of String
-      current = String::Builder.new
-      paren_depth = 0
-      brace_depth = 0
-      bracket_depth = 0
-      in_string = false
-      escaped = false
-
-      raw.each_char do |char|
-        if in_string
-          current << char
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == '"'
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '"'
-          in_string = true
-        when '('
-          paren_depth += 1
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-        when '{'
-          brace_depth += 1
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-        when '['
-          bracket_depth += 1
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-        when ','
-          if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0
-            args << current.to_s.strip
-            current = String::Builder.new
-            next
-          end
-        end
-
-        current << char
-      end
-
-      tail = current.to_s.strip
-      args << tail unless tail.empty?
-      args
+      Noir::TopLevelSplit.split(raw, ',', Noir::TopLevelSplit::Rules::CPP)
     end
 
     private def callees_for_handler(content : String, path : String, handler_target : HandlerTarget) : Array(Noir::CppCalleeExtractor::Entry)
