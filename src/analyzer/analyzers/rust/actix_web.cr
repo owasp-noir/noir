@@ -200,18 +200,28 @@ module Analyzer::Rust
       registrations
     end
 
+    # `depth` bounds the descent. Most of this walk recurses inside
+    # `each_named_child`, whose own guard would catch it, but the
+    # `.service(...)` branch recurses on the *receiver* — one level per
+    # link of an `App::new().service(a).service(b)...` chain, outside any
+    # `each_named_child` block. A generated or adversarial `.rs` file with
+    # thousands of chained links would run the fiber stack out, and a
+    # stack overflow aborts the whole scan rather than failing one file.
     private def collect_service_registrations(node : LibTreeSitter::TSNode,
                                               source : String,
                                               test_regions : Array(Tuple(Int32, Int32)),
                                               file_path : String,
                                               active_prefix : String,
-                                              registrations : Hash(String, Array(String)))
+                                              registrations : Hash(String, Array(String)),
+                                              depth : Int32 = 0)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       if Noir::TreeSitter.node_type(node) == "function_item"
         if name = function_name(node, source)
           if prefixes = lookup_configure_prefixes(name, file_path)
             Noir::TreeSitter.each_named_child(node) do |child|
               prefixes.each do |prefix|
-                collect_service_registrations(child, source, test_regions, file_path, scoped_route_path(active_prefix, prefix), registrations)
+                collect_service_registrations(child, source, test_regions, file_path, scoped_route_path(active_prefix, prefix), registrations, depth + 1)
               end
             end
             return
@@ -237,16 +247,16 @@ module Analyzer::Rust
           if handler_name = service_handler_name(named[0], source)
             push_registration(registrations, handler_name, service_prefix)
           else
-            collect_service_registrations(named[0], source, test_regions, file_path, service_prefix, registrations)
+            collect_service_registrations(named[0], source, test_regions, file_path, service_prefix, registrations, depth + 1)
           end
 
-          collect_service_registrations(receiver, source, test_regions, file_path, active_prefix, registrations) if receiver
+          collect_service_registrations(receiver, source, test_regions, file_path, active_prefix, registrations, depth + 1) if receiver
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_service_registrations(child, source, test_regions, file_path, active_prefix, registrations)
+        collect_service_registrations(child, source, test_regions, file_path, active_prefix, registrations, depth + 1)
       end
     end
 
@@ -301,7 +311,10 @@ module Analyzer::Rust
                                                 active_prefix : String,
                                                 base : String,
                                                 glob_contexts : Array(String),
-                                                regs : Array(NamedTuple(base: String, ref: String, prefix: String)))
+                                                regs : Array(NamedTuple(base: String, ref: String, prefix: String)),
+                                                depth : Int32 = 0)
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       if Noir::TreeSitter.node_type(node) == "call_expression"
         return if RustEngine.inside_test_region?(node, test_regions)
 
@@ -329,16 +342,16 @@ module Analyzer::Rust
               end
             end
           else
-            collect_qualified_registrations(arg, source, test_regions, service_prefix, base, glob_contexts, regs)
+            collect_qualified_registrations(arg, source, test_regions, service_prefix, base, glob_contexts, regs, depth + 1)
           end
 
-          collect_qualified_registrations(receiver, source, test_regions, active_prefix, base, glob_contexts, regs) if receiver
+          collect_qualified_registrations(receiver, source, test_regions, active_prefix, base, glob_contexts, regs, depth + 1) if receiver
           return
         end
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        collect_qualified_registrations(child, source, test_regions, active_prefix, base, glob_contexts, regs)
+        collect_qualified_registrations(child, source, test_regions, active_prefix, base, glob_contexts, regs, depth + 1)
       end
     end
 

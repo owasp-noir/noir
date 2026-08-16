@@ -1492,9 +1492,19 @@ module Noir
       first_named_child(node)
     end
 
+    # `depth` bounds the descent: this walks operand-by-operand through
+    # `+` chains and parentheses, which nest one AST level per term. It
+    # recurses on `field`/`first_named_child` rather than through
+    # `each_named_child`, so the shared guard there does not see it and a
+    # generated Go file — a 20k-term string concatenation, `((((...))))`
+    # — would run the fiber stack out. A stack overflow aborts the whole
+    # process, so the scan dies rather than the file.
     private def string_expr_text(node : LibTreeSitter::TSNode,
                                  source : String,
-                                 values : Hash(String, String)) : String?
+                                 values : Hash(String, String),
+                                 depth : Int32 = 0) : String?
+      return if depth > Noir::TreeSitter::MAX_AST_DEPTH
+
       case Noir::TreeSitter.node_type(node)
       when "interpreted_string_literal", "raw_string_literal"
         decode_string_literal(node, source)
@@ -1504,13 +1514,13 @@ module Noir
         left = Noir::TreeSitter.field(node, "left")
         right = Noir::TreeSitter.field(node, "right")
         return unless left && right
-        left_text = string_expr_text(left, source, values)
-        right_text = string_expr_text(right, source, values)
+        left_text = string_expr_text(left, source, values, depth + 1)
+        right_text = string_expr_text(right, source, values, depth + 1)
         return unless left_text && right_text
         "#{left_text}#{right_text}"
       when "parenthesized_expression"
         child = first_named_child(node)
-        child ? string_expr_text(child, source, values) : nil
+        child ? string_expr_text(child, source, values, depth + 1) : nil
       end
     end
 

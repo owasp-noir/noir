@@ -16,8 +16,15 @@ require "../../../src/miniparsers/http4k_extractor_ts"
 require "../../../src/miniparsers/adonisjs_extractor_ts"
 require "../../../src/miniparsers/jvm_lambda_dsl_extractor_ts"
 require "../../../src/miniparsers/kotlin_ktor_route_extractor_ts"
+require "../../../src/miniparsers/go_route_extractor_ts"
 
 private NEST = 3000
+
+# The Go cases below nest inside a single expression rather than one
+# block per level, so each level costs far less stack than a full walker
+# frame — 3000 still fits comfortably. Raised until the unguarded parser
+# actually overflowed, so removing the guard fails the spec.
+private GO_NEST = 20_000
 
 describe "extractor recursion depth bounds" do
   it "Elysia tolerates a 3000-link chained DSL without crashing" do
@@ -76,6 +83,25 @@ describe "extractor recursion depth bounds" do
       nest_methods: Set{"path"},
     )
     Noir::TreeSitterJvmLambdaDslExtractor.extract_routes(body, config)
+  end
+
+  # `string_expr_text` resolves a route/group prefix built out of `+`
+  # concatenation and parentheses. It recurses on the operands via
+  # `field(...)`, not through `each_named_child`, so the shared depth
+  # guard there never sees it — generated Go with a long concatenated
+  # constant used to take the whole scan down with it.
+  it "Go route extractor tolerates a #{GO_NEST}-term string concatenation without crashing" do
+    body = String.build do |io|
+      io << "package main\n\nvar prefix = "
+      GO_NEST.times { |i| io << " + " unless i == 0; io << %("a") }
+      io << "\n\nfunc reg(r *gin.Engine) {\n  r.GET(prefix, h)\n}\n"
+    end
+    Noir::TreeSitterGoRouteExtractor.extract_routes(body)
+  end
+
+  it "Go route extractor tolerates #{GO_NEST} nested parentheses without crashing" do
+    body = "package main\n\nvar prefix = #{"(" * GO_NEST}\"/a\"#{")" * GO_NEST}\n"
+    Noir::TreeSitterGoRouteExtractor.extract_routes(body)
   end
 
   it "Ktor route extractor tolerates 3000 nested route() blocks without crashing" do
