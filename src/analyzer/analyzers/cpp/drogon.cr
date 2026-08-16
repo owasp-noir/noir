@@ -62,7 +62,6 @@ module Analyzer::Cpp
         files = CPP_EXTENSIONS.flat_map { |ext| locator.files_by_extension(ext) }
 
         parallel_analyze(files) do |path|
-          next if File.directory?(path)
           next unless File.exists?(path)
           next unless CPP_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
 

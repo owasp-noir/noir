@@ -231,7 +231,6 @@ module Analyzer::Crystal
       actions = Hash(HandlerActionKey, Array(Noir::CrystalCalleeExtractor::Entry)).new
 
       get_files_by_extension(".cr").each do |path|
-        next if File.directory?(path)
         next unless File.exists?(path)
         next if crystal_dependency_path?(path)
 

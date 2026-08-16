@@ -36,7 +36,7 @@ module Analyzer::Elixir
       modules = [] of ChannelModule
 
       files = get_files_by_extension(".ex").reject do |path|
-        File.directory?(path) || elixir_test_path?(path) || !File.exists?(path)
+        elixir_test_path?(path) || !File.exists?(path)
       end
 
       # Pass 1 — topic↔module declarations from socket modules.

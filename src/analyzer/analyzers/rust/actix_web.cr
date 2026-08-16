@@ -283,7 +283,6 @@ module Analyzer::Rust
     private def build_cross_file_scope_registrations : Array(NamedTuple(base: String, ref: String, prefix: String))
       regs = [] of NamedTuple(base: String, ref: String, prefix: String)
       all_files.each do |path|
-        next if File.directory?(path)
         next unless File.exists?(path) && File.extname(path) == ".rs"
         next if RustEngine.test_path?(base_relative_path(path))
         base = configured_base_for(path)
@@ -411,7 +410,6 @@ module Analyzer::Rust
     private def build_configure_fn_prefix : Array(NamedTuple(base: String, ref: String, prefix: String, source_path: String))
       result = [] of NamedTuple(base: String, ref: String, prefix: String, source_path: String)
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)
@@ -515,7 +513,6 @@ module Analyzer::Rust
 
       aliases = {} of String => String
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         read_file_content(fpath).scan(/\bpub\s+use\s+([^;{}]+?)\s+as\s+([A-Za-z_]\w*)\s*;/) do |m|
@@ -944,7 +941,6 @@ module Analyzer::Rust
 
       entries = [] of GlobalFunctionEntry
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         src = read_file_content(fpath)

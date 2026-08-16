@@ -59,7 +59,6 @@ module Analyzer::Kotlin
       endpoints = {} of String => Endpoint
 
       get_files_by_extension(".kt").each do |path|
-        next if File.directory?(path)
         next if KotlinEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 

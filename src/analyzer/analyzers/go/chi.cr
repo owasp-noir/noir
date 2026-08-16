@@ -39,7 +39,6 @@ module Analyzer::Go
       chi_dirs = Set(String).new
 
       get_files_by_extension(".go").each do |scan_path|
-        next if File.directory?(scan_path)
         begin
           dir = File.dirname(scan_path)
           package_files[dir] ||= [] of String

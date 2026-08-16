@@ -116,7 +116,6 @@ module Analyzer::Perl
       callees = ControllerCalleeIndex.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         ext = File.extname(path)
         next unless ext == ".pl" || ext == ".pm" || ext == ".psgi" || ext == ".t"
         next if perl_test_path?(path, ext)

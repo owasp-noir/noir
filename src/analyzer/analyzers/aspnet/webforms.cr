@@ -109,7 +109,6 @@ module Analyzer::Aspnet
     def analyze
       pages = PAGE_EXTENSIONS.flat_map { |extension| get_files_by_extension(extension) }
         .uniq!
-        .reject { |path| File.directory?(path) }
       return @result if pages.empty?
 
       # These lookups walk the whole file map; resolve them once up front

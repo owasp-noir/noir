@@ -74,7 +74,6 @@ module Analyzer::Go
     # `connect.NewXxxHandler(XxxProcedure, ...)` constructor.
     private def discover_connect_go_endpoints(seen_urls : Set(String))
       get_files_by_extension(".go").each do |path|
-        next if File.directory?(path)
         next if GoEngine.go_test_file?(base_relative_path(path))
         begin
           content = read_file_content(path)
@@ -127,7 +126,6 @@ module Analyzer::Go
       mounts = {} of ServiceMountKey => ServiceMount
       begin
         get_files_by_extension(".go").each do |path|
-          next if File.directory?(path)
           next if GoEngine.go_test_file?(base_relative_path(path))
           base_path = configured_base_for(path)
           content = read_file_content(path)

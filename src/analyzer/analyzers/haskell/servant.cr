@@ -23,7 +23,6 @@ module Analyzer::Haskell
       server_bindings = include_callee ? build_server_bindings : ServerBindings.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         content = read_file_content(path)
@@ -76,7 +75,6 @@ module Analyzer::Haskell
       handlers = HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
@@ -97,7 +95,6 @@ module Analyzer::Haskell
       bindings = ServerBindings.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         extract_server_binding_targets(read_file_content(path)).each do |entry|

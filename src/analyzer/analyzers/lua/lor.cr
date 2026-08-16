@@ -78,7 +78,6 @@ module Analyzer::Lua
     private def collect_files : Array(String)
       result = [] of String
       all_files.each do |path|
-        next if File.directory?(path)
         next unless path.ends_with?(".lua") || path.ends_with?(".moon")
         next if lor_test_path?(path)
         result << path

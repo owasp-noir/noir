@@ -37,7 +37,6 @@ module Analyzer::Clojure
       endpoints = {} of String => Endpoint
       [".clj", ".cljs", ".cljc"].each do |ext|
         get_files_by_extension(ext).each do |path|
-          next if File.directory?(path)
           next if cli_test_path?(path)
           next unless File.exists?(path)
           begin

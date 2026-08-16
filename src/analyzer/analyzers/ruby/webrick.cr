@@ -87,7 +87,6 @@ module Analyzer::Ruby
       all_files.each do |path|
         next unless path.ends_with?(".rb") || path.ends_with?(".ru")
         next if ruby_non_production_path?(path)
-        next if File.directory?(path)
         next unless File.exists?(path)
 
         content = read_file_content(path)

@@ -1234,7 +1234,6 @@ module Analyzer::Rust
       edges = Hash(NestScopedKey, Array(NestEdge)).new
 
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         src = read_file_content(fpath)
@@ -1497,7 +1496,6 @@ module Analyzer::Rust
       fn_routes = Hash(UtoipaScopedKey, Array(Tuple(String, String?))).new
 
       all_files.each do |fpath|
-        next if File.directory?(fpath)
         next unless File.exists?(fpath) && File.extname(fpath) == ".rs"
         next if RustEngine.test_path?(base_relative_path(fpath))
         base = configured_base_for(fpath)

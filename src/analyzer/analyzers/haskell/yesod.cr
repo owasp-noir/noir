@@ -20,8 +20,6 @@ module Analyzer::Haskell
       handler_bodies = include_callee ? build_handler_bodies : HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
-
         if route_file?(path)
           # The expanded path canonicalizes the dedup key only. Reporting it
           # as well recorded an absolute machine path in `code_paths`, while
@@ -72,7 +70,6 @@ module Analyzer::Haskell
       handlers = HandlerBodies.new
 
       all_files.each do |path|
-        next if File.directory?(path)
         next unless haskell_source?(path)
 
         Noir::HaskellCalleeExtractor.function_bodies(read_file_content(path), path).each do |body|
