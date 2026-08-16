@@ -63,7 +63,6 @@ module Analyzer::Cfml
     private BYTE_CLOSE_BRACKET = ']'.ord.to_u8
     private BYTE_DQUOTE        = '"'.ord.to_u8
     private BYTE_SQUOTE        = '\''.ord.to_u8
-    private BYTE_BACKSLASH     = '\\'.ord.to_u8
 
     # Route registrations are statements. An identifier as generic as
     # `get` or `delete` also appears inside expressions
@@ -165,11 +164,31 @@ module Analyzer::Cfml
     # Observable on the unbalanced fragments the CFML regexes hand over, so
     # it is preserved rather than normalised.
     #
-    # Escaping is `\\`-based, which is what the old body did and is NOT how
-    # CFML escapes a quote — CFML doubles it (`"say ""hi"""`), the way
-    # `matching_delimiter` below already handles. Reproduced verbatim here;
-    # correcting it changes where arguments split and belongs in its own
-    # change.
+    # `Escape::None` because CFML has no backslash escape at all. `"C:\log\"`
+    # is the seven-character string `C:\log\`, and a quote is escaped by
+    # DOUBLING it (`"say ""hi"""`). Reading `\` as an escape — which the
+    # hand-rolled body this replaced did, and which the rest of this engine
+    # did too until the same change — swallowed the closing quote of any
+    # string ending in a backslash, i.e. any Windows path, leaving the run
+    # open so the remainder of the argument list merged into the current part
+    # and every argument after it was lost.
+    #
+    # There is deliberately no doubled-quote mode for the OTHER half of the
+    # rule, and that is not an oversight. For a top-level splitter "a
+    # repeated delimiter is a literal delimiter" and "quotes toggle" are
+    # indistinguishable: a doubled pair is two ADJACENT quote characters, so
+    # the toggling model's spurious closed-then-reopened window is zero
+    # characters wide. The state after any maximal run of quotes is the same
+    # under both models (a run of length L flips the state iff L is odd
+    # either way), and the only characters ever processed in a differing
+    # state are the quote characters themselves, which neither nest nor
+    # split. Checked by brute force rather than by argument: a doubling
+    # model run against `TopLevelSplit` over all 1,440 `Rules` combinations
+    # x 111,111 inputs (every string up to length 5 over `" ' , a \ ( ) < `
+    # backtick `{`) agreed on all 159,999,840 comparisons. `matching_delimiter`
+    # below implements doubling explicitly; that is equally correct and
+    # equally immaterial, and it is kept because a byte scanner reads more
+    # obviously with the rule written out.
     #
     # File-local because this is the only splitter pairing `clamp: false`
     # with `DropAll`.
@@ -177,7 +196,7 @@ module Analyzer::Cfml
       nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
             Noir::TopLevelSplit::Nest::Brace,
       quotes: "\"'",
-      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      escape: Noir::TopLevelSplit::Escape::None,
       strip: true,
       empties: Noir::TopLevelSplit::Empties::DropAll,
       per_kind: false,
@@ -266,6 +285,13 @@ module Analyzer::Cfml
     # the same trap `PhpEngine#find_matching_php_close_brace` documents
     # after CJK-commented sources hung the PHP analyzer. Every delimiter
     # is ASCII, so it can never collide with a UTF-8 continuation byte.
+    #
+    # A quoted run ends at the first unpaired quote of the kind that opened
+    # it: CFML escapes a quote by doubling it and has NO backslash escape,
+    # so `"C:\log\"` is a complete string and the `)` after it closes the
+    # call. Treating `\` as an escape here consumed that closing quote and
+    # left the run open, and a run that never closes means no match — the
+    # whole call, and every route in it, silently disappeared.
     protected def matching_delimiter(content : String, open_index : Int32,
                                      open_byte : UInt8, close_byte : UInt8) : Int32?
       bytes = content.to_slice
@@ -276,17 +302,12 @@ module Analyzer::Cfml
       position = start
       size = bytes.size
       quote = 0_u8
-      escape = false
 
       while position < size
         byte = bytes[position]
 
         if quote != 0_u8
-          if escape
-            escape = false
-          elsif byte == BYTE_BACKSLASH
-            escape = true
-          elsif byte == quote
+          if byte == quote
             if position + 1 < size && bytes[position + 1] == quote
               position += 2
               next
@@ -359,8 +380,9 @@ module Analyzer::Cfml
     # mentions `mapper()` move the start of the chain, so unrelated calls
     # before the real chain were read as routes.
     #
-    # The scan is string-aware: CFML escapes a quote by doubling it, and
-    # `//` occurs inside ordinary string values (URLs).
+    # The scan is string-aware: CFML escapes a quote by doubling it and has
+    # no backslash escape (`"C:\wwwroot\"` is a whole string), and `//`
+    # occurs inside ordinary string values (URLs).
     protected def strip_script_comments(content : String) : String
       return content unless content.includes?("//") || content.includes?("/*")
 
@@ -369,17 +391,12 @@ module Analyzer::Cfml
       io = String::Builder.new(content.bytesize)
       index = 0
       quote = nil.as(Char?)
-      escape = false
 
       while index < size
         char = chars[index]
 
         if quote
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
+          if char == quote
             if index + 1 < size && chars[index + 1] == quote
               io << char
               io << chars[index + 1]
@@ -452,7 +469,6 @@ module Analyzer::Cfml
     # the header mid-value and silently dropped every tokenised route.
     private def attributes_before_body(window : String) : String
       quote = nil.as(Char?)
-      escape = false
       chars = window.chars
       size = chars.size
       index = 0
@@ -461,11 +477,7 @@ module Analyzer::Cfml
         char = chars[index]
 
         if quote
-          if escape
-            escape = false
-          elsif char == '\\'
-            escape = true
-          elsif char == quote
+          if char == quote
             if index + 1 < size && chars[index + 1] == quote
               index += 2
               next
