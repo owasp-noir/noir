@@ -302,18 +302,29 @@ module Noir
     # ENTIRELY at depth 0 and outside quotes splits, so `":>"` does not fire on
     # a bare `":"` and `"||"` inside `f(a || b)` is invisible.
     #
-    # PRECONDITION: no proper prefix of the delimiter may contain a character
-    # that is a quote under `rules`, a backslash, or an opener of an enabled
-    # `Nest` kind. Releasing a mismatched prefix character is what changes
-    # cursor state, and if that release opens a quote or raises depth the
-    # remaining buffered characters stop being top-level and are replayed
-    # after the characters that followed them in the source — `split("(((xy",
-    # "((x", nest: Paren)` yields `["(xy(("]`, not `["(", "y"]`.
+    # LIMITATION — a delimiter with a state-changing proper prefix: matching a
+    # multi-character separator means buffering characters while they are still
+    # a prefix of it, and a mismatch releases only the first buffered character
+    # before retrying the rest. That release is what changes cursor state, so if
+    # a proper prefix of the delimiter contains a quote character or an opener
+    # of an enabled `Nest` kind, releasing it opens a quoted run or raises the
+    # depth — and from that point the separator can no longer match at depth 0.
+    # `split("(((xy", "((x", nest: Paren)` therefore yields `["(((xy"]`: the
+    # only place `"((x"` could match starts at index 1, and index 0's `(` has
+    # already taken the depth to 1, so the depth-0 rule forbids the split. Same
+    # for quotes: `split("\"\"\"xy", "\"\"x", quotes: "\"")` yields
+    # `["\"\"\"xy"]`, the first `"` having opened a run that swallows the rest.
     #
-    # Every separator in the tree is punctuation outside all three sets
-    # (`","`, `":>"`, `":<|>"`, `"||"`, `"&&"`), so no caller is affected. The
-    # note in `Cursor#consume` about a quote-bearing delimiter is the same
-    # precondition seen from the other end.
+    # This suppresses SPLITS only. The characters themselves are never lost or
+    # reordered: the moment a release ends the top-level/unquoted state, the
+    # rest of the buffer is flushed immediately, so every part holds the input
+    # characters of its window in source order.
+    #
+    # Every separator actually used in the tree is punctuation outside both sets
+    # (`","` and `":>"` / `":<|>"` in haskell/servant.cr, `"||"` in
+    # specification/traefik.cr), so no caller sees the limitation at all. The
+    # note in `Cursor#consume` about a quote-bearing delimiter is this same
+    # situation seen from the other end.
     def split(text : String, delimiter : String, rules : Rules) : Array(String)
       chars = delimiter.chars
       return apply_empties([rules.strip? ? text.strip : text], rules) if chars.empty?
@@ -348,8 +359,10 @@ module Noir
     #
     # Char delimiter only, deliberately: every caller that needs offsets splits
     # on a single character, and the multi-character path buffers a pending
-    # prefix whose release re-orders characters (see the `String` overload's
-    # precondition) — which would make an offset ambiguous.
+    # prefix that is only committed to a part once the match fails (see the
+    # `String` overload's limitation note) — so a part could begin with
+    # characters read well before the scan decided they belonged to it, which
+    # would make its offset ambiguous.
     def split_spans(
       text : String,
       delimiter : Char,
@@ -445,6 +458,20 @@ module Noir
                 break
               end
               cur.consume(pending.shift)
+
+              # Releasing a character is the only thing that moves the cursor,
+              # and it can raise depth or open a quoted run. Either one means
+              # the still-buffered characters can never complete a top-level
+              # match, so they must be released NOW: holding them would send
+              # every following character down the `cur.consume(ch)` path below
+              # while they waited for `flush_pending` at end of scan, which
+              # appends them AFTER characters that follow them in the source.
+              # This also keeps the invariant the rest of the loop relies on —
+              # a non-empty buffer implies depth 0 with no quote open.
+              if cur.quote || !cur.top_level?
+                cur.flush_pending
+                break
+              end
             end
             next
           elsif ch == first
@@ -600,9 +627,12 @@ module Noir
       end
 
       def consume(ch : Char) : Nil
-        # Only reachable with a quote open when a delimiter containing a quote
-        # character stranded a partial match (documented as unsupported); the
-        # char still lands verbatim in the part so nothing is lost.
+        # Reachable with a quote already open only from `flush_pending`, when a
+        # released delimiter-prefix character opened the run and the rest of the
+        # buffer is being drained behind it (see the `String` overload's
+        # limitation note). Inside a run nothing may change state, so the char
+        # lands verbatim in the part: order is preserved and nothing is lost,
+        # the run simply stays open.
         if @quote
           @current << ch
           return

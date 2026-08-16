@@ -13,6 +13,13 @@ private def tls_rules(**opts)
   TLSRules.new(**opts)
 end
 
+# `strip: false` + `Empties::Keep` so nothing but the delimiter is ever removed
+# and the emitted characters can be compared against the input directly.
+private def tls_raw_rules(nest : TLSNest, quotes : String)
+  TLSRules.new(nest: nest, quotes: quotes, escape: TLSEscape::None,
+    strip: false, empties: TLSEmpties::Keep)
+end
+
 describe Noir::TopLevelSplit do
   describe "basic splitting" do
     it "splits a flat list" do
@@ -333,6 +340,57 @@ describe Noir::TopLevelSplit do
     it "returns the whole input for an empty separator" do
       TLS.split(" a,b ", "", tls_rules(strip: true)).should eq ["a,b"]
       TLS.split(" a,b ", "", tls_rules(strip: false, empties: TLSEmpties::Keep)).should eq [" a,b "]
+    end
+  end
+
+  # A delimiter whose proper prefix is itself a nest opener or a quote character
+  # cannot match at depth 0 once that prefix has been released — releasing it is
+  # what raises the depth / opens the run. That suppresses SPLITS, which is what
+  # the depth-0 contract requires; it must never reorder the characters, which
+  # is what the buffered prefix used to do (it was replayed by the end-of-scan
+  # flush, i.e. AFTER everything that followed it in the source).
+  describe "multi-character delimiter whose prefix changes cursor state" do
+    it "keeps characters in source order when a released prefix raises depth" do
+      # `"((x"` can only match at index 1, but index 0's `(` already took the
+      # depth to 1, so no split is allowed. Every character survives, in order.
+      TLS.split("(((xy", "((x", tls_raw_rules(TLSNest::Paren, ""))
+        .should eq ["(((xy"]
+    end
+
+    it "keeps characters in source order when a released prefix opens a quote" do
+      TLS.split("\"\"\"xy", "\"\"x", tls_raw_rules(TLSNest::None, "\""))
+        .should eq ["\"\"\"xy"]
+    end
+
+    it "keeps characters in source order for a single-quote delimiter prefix" do
+      # Same shape with a one-character prefix, so the whole tail of the buffer
+      # is released while the run it just opened is still open.
+      TLS.split("''ab", "'a", tls_raw_rules(TLSNest::None, "'"))
+        .should eq ["''ab"]
+    end
+
+    it "still splits on matches that precede the state change" do
+      TLS.split("a((x b (((x c", "((x", tls_raw_rules(TLSNest::Paren, ""))
+        .should eq ["a", " b (((x c"]
+    end
+
+    it "resumes splitting once the depth returns to zero" do
+      TLS.split("(((x))) ((x tail", "((x", tls_raw_rules(TLSNest::Paren, ""))
+        .should eq ["(((x))) ", " tail"]
+    end
+
+    it "leaves the prefix inert when the opener is not an enabled nest kind" do
+      # `<` only opens depth when Nest::Angle is enabled; without it the buffer
+      # is never stranded and `"<<x"` matches at index 1 as usual.
+      TLS.split("<<<xy", "<<x", tls_raw_rules(TLSNest::Paren, ""))
+        .should eq ["<", "y"]
+      TLS.split("<<<xy", "<<x", tls_raw_rules(TLSNest::Angle, ""))
+        .should eq ["<<<xy"]
+    end
+
+    it "leaves the prefix inert when the quote character is not enabled" do
+      TLS.split("\"\"\"xy", "\"\"x", tls_raw_rules(TLSNest::None, ""))
+        .should eq ["\"", "y"]
     end
   end
 
