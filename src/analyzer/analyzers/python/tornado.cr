@@ -142,11 +142,17 @@ module Analyzer::Python
       lines.each_with_index do |line, idx|
         flags[idx] = in_triple
         i = 0
-        size = line.size
+        # `chars`, not `line[i]`: `String#[](Int)` walks from the start of the
+        # string on every call once the content is not single-byte, so
+        # indexing inside this loop was O(n^2) per line on any file with a
+        # non-ASCII comment or string literal. `join_multiline_call` below
+        # already carried this fix; this scan did not.
+        chars = line.chars
+        size = chars.size
         while i < size
-          c = line[i]
+          c = chars[i]
           if in_triple
-            if c == triple_char && i + 2 < size && line[i + 1] == triple_char && line[i + 2] == triple_char
+            if c == triple_char && i + 2 < size && chars[i + 1] == triple_char && chars[i + 2] == triple_char
               in_triple = false
               i += 3
               next
@@ -155,16 +161,29 @@ module Analyzer::Python
           elsif c == '#'
             break # comment runs to end of line
           elsif c == '"' || c == '\''
-            if i + 2 < size && line[i + 1] == c && line[i + 2] == c
+            if i + 2 < size && chars[i + 1] == c && chars[i + 2] == c
               in_triple = true
               triple_char = c
               i += 3
               next
             end
-            # Single-line string: skip to its (unescaped) closing quote.
+            # Single-line string: skip to its closing quote, consuming a
+            # backslash and whatever follows it.
+            #
+            # An escape FLAG, not the one-character lookback this replaces
+            # (`line[i] == c && line[i - 1] != '\\'`): a lookback cannot tell
+            # an escaped quote from an escaped BACKSLASH followed by a quote,
+            # so `"C:\\"` read as unterminated and the scan ran off the end of
+            # the line — taking any `"""` later on that line with it, which is
+            # what decides whether the FOLLOWING lines count as docstring.
+            # Same defect as #2625 fixed in the Express router-mount scanner.
             i += 1
             while i < size
-              break if line[i] == c && line[i - 1] != '\\'
+              if chars[i] == '\\'
+                i += 2
+                next
+              end
+              break if chars[i] == c
               i += 1
             end
             i += 1

@@ -90,6 +90,40 @@ describe Analyzer::Python::PythonEngine do
     block.not_nil!.should_not contain("outside")
   end
 
+  it "closes a string that ends in an escaped backslash" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          root = "C:\\\\"
+          inside = request.args.get("inside")
+      outside = request.args.get("outside")
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("inside")
+    # The escaped backslash used to leave the string open for the rest of the
+    # file, so every following line was kept "because a quote is still open".
+    block.not_nil!.should_not contain("outside")
+  end
+
+  it "still treats a genuinely escaped quote as part of the string" do
+    harness = PythonEngineSpecHarness.new(create_test_options)
+    source = <<-PY
+      def handler():
+          msg = 'it\\'s # not a comment'
+          inside = request.args.get("inside")
+      outside = request.args.get("outside")
+      PY
+
+    block = harness.parse_code_block(source)
+
+    block.should_not be_nil
+    block.not_nil!.should contain("inside")
+    block.not_nil!.should_not contain("outside")
+  end
+
   it "skips multi-line route decorators when locating the decorated function" do
     harness = PythonEngineSpecHarness.new(create_test_options)
     lines = [

@@ -319,14 +319,46 @@ module Analyzer::Python
         lines[1..].each_with_index do |line, body_idx|
           line_index = 0
           clear_line = line
-          while line_index < line.size
-            if line_index < line.size - 2
+          # `String#[](Int)` walks from the start of the string on every call
+          # once the content is not single-byte, so indexing `line` inside this
+          # loop was O(n^2) per line on any file with a non-ASCII comment or
+          # string literal — and `line[i..i + 2]` allocated a three-character
+          # String for every character besides. `join_multiline_call` in
+          # `python/tornado.cr` already carried the same `chars` fix with the
+          # same reasoning.
+          chars = line.chars
+          size = chars.size
+          # A backslash inside a quoted run consumes the next character,
+          # whatever it is. This used to be a one-character lookback
+          # (`line[line_index - 1] != '\\'`), which cannot tell an escaped
+          # quote from an escaped BACKSLASH followed by a quote: `"C:\\"` read
+          # as unterminated, so the run stayed open and the rest of the line —
+          # `#` comments included — was swallowed. Same defect as #2625 fixed
+          # in the Express router-mount scanner. The lookback also indexed
+          # `line[-1]` at column 0, and a negative index counts from the END of
+          # the string in Crystal, so a quote in column 0 was read as escaped
+          # whenever the line happened to end in a backslash.
+          #
+          # Reset per line, like the quote flags are not: a backslash at
+          # end-of-line continues a string, but the continuation is a fresh
+          # line and the first character of it is not escaped.
+          escaped = false
+          while line_index < size
+            ch = chars[line_index]
+
+            if escaped
+              escaped = false
+              line_index += 1
+              next
+            end
+
+            if line_index < size - 2
               if !single_quote_open && !double_quote_open
-                if !double_comment_open && line[line_index..line_index + 2] == "'''"
+                if !double_comment_open && ch == '\'' && chars[line_index + 1] == '\'' && chars[line_index + 2] == '\''
                   single_comment_open = !single_comment_open
                   line_index += 3
                   next
-                elsif !single_comment_open && line[line_index..line_index + 2] == "\"\"\""
+                elsif !single_comment_open && ch == '"' && chars[line_index + 1] == '"' && chars[line_index + 2] == '"'
                   double_comment_open = !double_comment_open
                   line_index += 3
                   next
@@ -335,11 +367,13 @@ module Analyzer::Python
             end
 
             if !single_comment_open && !double_comment_open
-              if !single_quote_open && line[line_index] == '"' && line[line_index - 1] != '\\'
+              if ch == '\\' && (single_quote_open || double_quote_open)
+                escaped = true
+              elsif !single_quote_open && ch == '"'
                 double_quote_open = !double_quote_open
-              elsif !double_quote_open && line[line_index] == '\'' && line[line_index - 1] != '\\'
+              elsif !double_quote_open && ch == '\''
                 single_quote_open = !single_quote_open
-              elsif !single_quote_open && !double_quote_open && line[line_index] == '#' && line[line_index - 1] != '\\'
+              elsif !single_quote_open && !double_quote_open && ch == '#'
                 # Exclusive range, NOT `line[..(line_index - 1)]`: at
                 # `line_index == 0` that is `line[..-1]`, and a negative range
                 # end counts from the end of the string in Crystal, so a
