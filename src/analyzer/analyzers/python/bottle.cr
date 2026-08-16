@@ -2,6 +2,7 @@ require "../../../miniparsers/python_route_extractor"
 require "../../../miniparsers/python_route_extractor_ts"
 require "../../engines/python_engine"
 require "./python_helper"
+require "../../../utils/top_level_split"
 
 module Analyzer::Python
   class Bottle < PythonEngine
@@ -342,64 +343,12 @@ module Analyzer::Python
       nil
     end
 
+    # Delegates to the shared splitter; `Rules::PYTHON` reproduces this
+    # file's previous hand-rolled loop exactly (both quote styles, backslash
+    # escapes inside quotes, per-kind clamped depth, no strip, and every
+    # empty part kept so positional indexing of the result stays valid).
     private def split_python_arguments(args : String) : Array(String)
-      parts = [] of String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      args.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '('
-          paren_depth += 1
-          current << ch
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-          current << ch
-        when '['
-          bracket_depth += 1
-          current << ch
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-          current << ch
-        when '{'
-          brace_depth += 1
-          current << ch
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-          current << ch
-        when ','
-          if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
     end
 
     # Memoized per keyword — the keyword set is tiny (`path`, `rule`,

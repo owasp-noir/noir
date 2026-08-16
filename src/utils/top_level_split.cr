@@ -139,16 +139,18 @@ module Noir
       )
 
       # Python call-argument lists and expression terms.
-      # Serves the four byte-identical `split_python_arguments` clones in
-      # analyzer/analyzers/python/{django,starlette,bottle,pyramid}.cr plus
-      # django.cr `split_python_expression_terms`. Note these deliberately do
-      # NOT strip and keep every empty part — callers strip themselves and
-      # some index positionally, so an interior empty must hold its slot.
+      # Serves the six byte-identical `split_python_arguments` clones in
+      # analyzer/analyzers/python/{bottle,cherrypy,django,pyramid,sanic,
+      # starlette}.cr plus django.cr `split_python_expression_terms` (same
+      # body, `+` instead of `,`). Note these deliberately do NOT strip and
+      # keep every empty part — callers strip themselves and some index
+      # positionally, so an interior empty must hold its slot.
       #
       # Near misses that need their own `Rules` when converted:
-      #   fastapi.cr `split_python_top_level`  -> per_kind: false
-      #   flask.cr   `split_python_call_args`  -> Escape::Always, strip: true,
-      #                                           Empties::DropAll
+      #   flask.cr  `split_python_call_args`  -> Escape::Always, strip: true,
+      #                                          Empties::DropAll, and one
+      #                                          counter shared by `[`/`{`
+      #                                          only — not expressible here.
       PYTHON = new(
         nest: Nest::Paren | Nest::Bracket | Nest::Brace,
         quotes: "\"'",
@@ -156,6 +158,27 @@ module Noir
         strip: false,
         empties: Empties::Keep,
         per_kind: true,
+        clamp: true,
+      )
+
+      # `PYTHON` with one shared depth counter instead of per-kind counters.
+      # Serves analyzer/analyzers/python/{django_ninja,falcon}.cr
+      # `split_python_arguments` and fastapi.cr `split_python_top_level`.
+      #
+      # A named preset rather than three inline `Rules.new(...)` literals
+      # because the split is not a per-file accident: the Python analyzers
+      # genuinely disagree on `per_kind`, and keeping the two variants
+      # adjacent is what makes that disagreement — and the fact that it is
+      # only observable on unbalanced input — legible. Three copies of the
+      # same seven-argument literal in three files is exactly the drift this
+      # module exists to end.
+      PYTHON_SHARED_DEPTH = new(
+        nest: Nest::Paren | Nest::Bracket | Nest::Brace,
+        quotes: "\"'",
+        escape: Escape::InQuotes,
+        strip: false,
+        empties: Empties::Keep,
+        per_kind: false,
         clamp: true,
       )
 
