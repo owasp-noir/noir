@@ -1,5 +1,6 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
+require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
   # Remix v2 is filesystem-routed under `app/routes/`. The route URL
@@ -159,34 +160,27 @@ module Analyzer::Javascript
       url == "/" ? "/" : url.sub(/\/+$/, "")
     end
 
+    # `[...]` is the only thing that nests in a Remix flat-route filename, and
+    # a filename has no string literals, so quote handling is off — a route
+    # named `it's.tsx` would otherwise open a quoted run and never split.
+    # Empties are kept and parts are not stripped because `normalize_segment`
+    # and the caller decide what an empty segment means; a filename cannot
+    # contain leading or trailing whitespace worth trimming anyway.
+    FLAT_SEGMENT_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Bracket,
+      quotes: "",
+      escape: Noir::TopLevelSplit::Escape::None,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::Keep,
+      per_kind: false,
+      clamp: true,
+    )
+
     # Split a dot-flat Remix route name on segment separators, treating a
     # `.` inside an escaped `[...]` group as a literal (e.g.
     # `jokes[.]rss` is ONE segment whose URL is `/jokes.rss`, not two).
     private def split_flat_segments(name : String) : Array(String)
-      segments = [] of String
-      current = String::Builder.new
-      depth = 0
-      name.each_char do |ch|
-        case ch
-        when '['
-          depth += 1
-          current << ch
-        when ']'
-          depth -= 1 if depth > 0
-          current << ch
-        when '.'
-          if depth == 0
-            segments << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-      segments << current.to_s
-      segments
+      Noir::TopLevelSplit.split(name, '.', FLAT_SEGMENT_RULES)
     end
 
     # Unescape `[...]` literals (the brackets are removed; their contents

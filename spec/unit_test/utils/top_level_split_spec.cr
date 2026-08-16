@@ -424,4 +424,59 @@ describe Noir::TopLevelSplit do
       TLS.split("[a)b, c", ',', TLSRules::JAVA).should eq ["[a)b", "c"]
     end
   end
+
+  describe "Rules::JS" do
+    it "splits a decorator argument list and strips each part" do
+      TLS.split("'users/:id', { name: 'x', tags: [1, 2] }", ',', TLSRules::JS)
+        .should eq ["'users/:id'", "{ name: 'x', tags: [1, 2] }"]
+    end
+
+    # Backticks are the axis that separates this preset from JAVA/CPP: a
+    # template literal wraps most JS route strings, and without backtick
+    # quoting the comma inside `${...}` would break the route in half.
+    it "treats a backtick template literal as one quoted run" do
+      TLS.split("`/users/${ids.join(',')}/posts`, handler", ',', TLSRules::JS)
+        .should eq ["`/users/${ids.join(',')}/posts`", "handler"]
+    end
+
+    it "keeps a nested template literal intact" do
+      TLS.split("`${`${x, y}`, z}`, tail", ',', TLSRules::JS)
+        .should eq ["`${`${x, y}`, z}`", "tail"]
+    end
+
+    it "keeps an arrow function with its own parameter list as one part" do
+      TLS.split("'/x', (req, res) => res.send('ok'), next", ',', TLSRules::JS)
+        .should eq ["'/x'", "(req, res) => res.send('ok')", "next"]
+    end
+
+    it "splits a concatenated path expression on plus" do
+      TLS.split("BASE + `/users/${id}`", '+', TLSRules::JS)
+        .should eq ["BASE", "`/users/${id}`"]
+    end
+
+    # DropAll, unlike JAVA's DropTrailing: interior empties vanish too, so a
+    # caller cannot index parts positionally.
+    it "drops interior and trailing empty parts" do
+      TLS.split("a, , b,", ',', TLSRules::JS).should eq ["a", "b"]
+    end
+
+    it "retains a backslash escaping a quote inside a run" do
+      TLS.split("'a\\', b'", ',', TLSRules::JS).should eq ["'a\\', b'"]
+    end
+
+    # The axis that separates this preset from typescript/trpc.cr, whose
+    # file-local rules share one depth counter and would split here.
+    it "uses per-kind clamped depth counters" do
+      TLS.split("[a)b, c", ',', TLSRules::JS).should eq ["[a)b, c"]
+    end
+
+    it "does not count angle brackets, unlike nextjs.cr's file-local rules" do
+      TLS.split("Promise<a, b>", ',', TLSRules::JS).should eq ["Promise<a", "b>"]
+    end
+
+    it "keeps a non-ASCII quoted argument in one part" do
+      TLS.split("'안녕, 세상', handler", ',', TLSRules::JS)
+        .should eq ["'안녕, 세상'", "handler"]
+    end
+  end
 end

@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/top_level_split"
 
 module Analyzer::Typescript
   class TRPC < Analyzer::Javascript::JavascriptEngine
@@ -723,42 +724,25 @@ module Analyzer::Typescript
       nil
     end
 
+    # `Rules::JS` except that one depth counter is shared by `()`, `[]` and
+    # `{}` instead of one per kind — this file's copy tracked a single `depth`
+    # where nestjs.cr and loopback.cr tracked three. Only observable on the
+    # unbalanced fragments these actually receive: on `"[a)b, c"` the shared
+    # counter reads `)` as closing the `[` and splits, where `Rules::JS`
+    # stays at bracket depth 1 and returns one part.
+    SPLIT_TOP_LEVEL_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'`",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropAll,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level(text : String, delimiter : Char) : Array(String)
-      parts = [] of String
-      start = 0
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-
-      text.each_char_with_index do |char, index|
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        else
-          if char == delimiter && depth == 0
-            parts << text[start...index].strip
-            start = index + 1
-          end
-        end
-      end
-
-      parts << text[start..-1].strip
-      parts.reject(&.empty?)
+      Noir::TopLevelSplit.split(text, delimiter, SPLIT_TOP_LEVEL_RULES)
     end
 
     private def skip_top_level_to_comma(chars : Array(Char), start : Int32) : Int32
