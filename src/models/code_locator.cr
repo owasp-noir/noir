@@ -4,8 +4,6 @@ require "./logger"
 require "./locator_key"
 
 class CodeLocator
-  @@instance : CodeLocator? = nil
-
   # Default content cache budget (bytes). Override via
   # `NOIR_CONTENT_CACHE_MAX_MB` (value in megabytes). Set to 0 or the
   # env `NOIR_CONTENT_CACHE_DISABLE=true` to disable caching entirely,
@@ -105,8 +103,17 @@ class CodeLocator
     DEFAULT_CONTENT_CACHE_BUDGET
   end
 
+  # LAB (#2613): `@@instance ||= new` is a read-then-write race once the
+  # default execution context has parallelism > 1 — two threads can both see
+  # nil and each construct a locator, after which half the process talks to
+  # an object the other half never registered a file with. The instance is
+  # cheap and unconditionally needed, so it is built eagerly at class-init
+  # time (single-threaded, before `main`) rather than guarded by a lock on
+  # every one of the many `CodeLocator.instance` reads.
+  @@instance : CodeLocator = new
+
   def self.instance : CodeLocator
-    @@instance ||= new
+    @@instance
   end
 
   def set(key : Noir::LocatorKey(String), value : String)

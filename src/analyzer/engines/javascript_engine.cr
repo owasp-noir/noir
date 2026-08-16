@@ -27,14 +27,21 @@ module Analyzer::Javascript
     # Crystal recompiles an interpolated regex literal (/...#{x}.../) on
     # every evaluation — a full PCRE2 JIT compile. Patterns keyed by a
     # discovered name ("req", "query", "body", router vars, ...) are
-    # low-cardinality across a scan, so memoize them per analyzer
-    # instance. Fibers are cooperative (no preview_mt), so the plain
-    # Hash is safe under parallel_file_scan.
+    # low-cardinality across a scan, so memoize them per analyzer instance.
+    #
+    # LAB (#2613): the cache is per instance, but one instance's
+    # `parallel_file_scan` spawns many fibers that all reach this — safe only
+    # while the default execution context has a parallelism of 1. Guarded so
+    # resizing it cannot corrupt the Hash. The miss path is a PCRE2 compile
+    # that happens once per key per scan, so the lock is never the cost.
     @dynamic_regex_cache = Hash(String, Regex).new
+    @dynamic_regex_cache_mutex = Mutex.new
 
     protected def cached_regex(key : String, & : -> Regex) : Regex
-      @dynamic_regex_cache.fetch(key) do
-        @dynamic_regex_cache[key] = yield
+      @dynamic_regex_cache_mutex.synchronize do
+        @dynamic_regex_cache.fetch(key) do
+          @dynamic_regex_cache[key] = yield
+        end
       end
     end
 

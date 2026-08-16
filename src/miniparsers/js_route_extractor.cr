@@ -910,9 +910,16 @@ module Noir
 
     # Memoizes the direct-call patterns built in extract_params_from_context;
     # the alternation is derived from the route's HTTP method, so the key set
-    # is tiny. Fibers are cooperative (no preview_mt), so the plain Hash is
-    # safe under the analyzers' parallel file scans.
+    # is tiny.
+    #
+    # LAB (#2613): this used to note that fibers are cooperative so a plain
+    # Hash was safe. That held only because the default execution context runs
+    # with a parallelism of 1; the moment it is resized, two threads can
+    # rehash this concurrently. The critical section is a hash lookup over a
+    # handful of keys, and the miss path compiles a regex once per key for the
+    # whole process, so a plain mutex costs nothing measurable.
     @@direct_call_res = Hash(String, Regex).new
+    @@direct_call_res_mutex = Mutex.new
 
     # Equivalent to matching /['"`]<literal>['"`]/ — the literal bracketed by
     # a quote character on each side — without compiling a per-path regex.
@@ -981,8 +988,10 @@ module Noir
         # Memoized — method_alternation has ~8 distinct values, and an
         # interpolated regex literal would recompile (full PCRE2 compile)
         # once per endpoint.
-        direct_call_pattern = @@direct_call_res.fetch(method_alternation) do
-          @@direct_call_res[method_alternation] = /\.\s*(?:#{method_alternation})\s*\(/i
+        direct_call_pattern = @@direct_call_res_mutex.synchronize do
+          @@direct_call_res.fetch(method_alternation) do
+            @@direct_call_res[method_alternation] = /\.\s*(?:#{method_alternation})\s*\(/i
+          end
         end
         if direct_match = search_window.match(direct_call_pattern)
           candidate_idx = start_idx + (direct_match.begin(0) || 0)

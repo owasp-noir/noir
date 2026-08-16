@@ -8,6 +8,41 @@ require "../utils/path_scope"
 require "../utils/text_file"
 require "../utils/utils"
 
+# LAB (#2613) — `Analyzer#result` accumulated from parallel fibers.
+#
+# Around 220 analyzers push into `result` from inside `parallel_file_scan` /
+# `scan_files` worker fibers. That is safe today only because the default
+# execution context runs with a parallelism of 1, so no two fibers are ever
+# inside `Array#<<` at the same instant. Resize the context and those become
+# real data races: `Array#<<` reallocates and writes @size non-atomically, so
+# concurrent pushes drop endpoints or corrupt the buffer outright.
+#
+# Fixing it at the ~220 call sites would be a huge, error-prone diff. Locking
+# the *mutation* here instead keeps every call site unchanged: analyzers still
+# write `result << endpoint` and `result.concat(...)`.
+#
+# The mutex is reentrant because `Array#concat(Enumerable)` is implemented in
+# terms of `<<`, so the guarded methods can nest.
+#
+# Reads (`each`, `size`) are deliberately NOT guarded: every one of them runs
+# after the parallel phase has joined, and guarding iteration would need a
+# read-write lock to avoid serialising the scan.
+class SafeEndpointList < Array(Endpoint)
+  @mutex = Mutex.new(:reentrant)
+
+  def <<(value : Endpoint)
+    @mutex.synchronize { super }
+  end
+
+  def concat(other) : self
+    @mutex.synchronize { super }
+  end
+
+  def push(*values : Endpoint)
+    @mutex.synchronize { super }
+  end
+end
+
 class Analyzer
   include FileHelper
 
@@ -27,6 +62,9 @@ class Analyzer
   DEFAULT_CONTENT_CHANNEL_CAPACITY = 16
   MAX_ANALYZER_WORKERS             = 64
 
+  # Declared as the base type so the analyzer-registry Proc stays
+  # `Proc(..., Array(Endpoint))`; the instance is the locking subclass, and
+  # `<<`/`concat` dispatch virtually onto it.
   @result : Array(Endpoint)
   @endpoint_references : Array(EndpointReference)
   @base_path : String
@@ -49,7 +87,7 @@ class Analyzer
     @base_path = @base_paths.first? || ""
     @normalized_base_paths = @base_paths.map { |base| {base, Noir::PathScope.normalize_root(base)} }
     @url = options["url"].to_s
-    @result = [] of Endpoint
+    @result = SafeEndpointList.new
     @endpoint_references = [] of EndpointReference
     @is_debug = any_to_bool(options["debug"])
     @is_verbose = any_to_bool(options["verbose"])
