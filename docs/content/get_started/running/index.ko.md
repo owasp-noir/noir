@@ -159,7 +159,7 @@ noir scan . --ai-context guards,sinks
 | `--concurrency <N>`   | 워커 수 (기본값: CPU 코어 수) |
 | `--cache-disable`     | 이번 실행에 한해 LLM 응답 캐시 비활성화 |
 | `--cache-clear`       | 실행 전에 LLM 응답 캐시 초기화 |
-| `--strict`            | 분석기가 하나라도 실패하면 종료 코드 2 반환 (결과 출력은 그대로) |
+| `--strict`            | 분석기가 실패했거나 건너뛴 파일이 있으면 종료 코드 2 반환 (결과 출력은 그대로) |
 | `--verbose`           | 상세 로깅 |
 | `--no-log`            | 모든 로그 억제 |
 | `--no-color`          | plain 출력의 ANSI 색상 비활성화 |

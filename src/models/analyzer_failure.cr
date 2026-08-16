@@ -1,8 +1,13 @@
 require "json"
 require "yaml"
 
-# One tech analyzer that raised and was skipped, named so the scan can say
-# which part of the code base it never actually looked at.
+# Coverage a tech analyzer did not deliver, named so the scan can say which
+# part of the code base it never actually looked at. Two shapes reach this,
+# both of them "endpoints may be missing here":
+#
+#   * the analyzer raised and was skipped entirely
+#   * the analyzer completed but skipped individual files it could not read
+#     or parse — one entry per tech, tallied by `Noir::SkippedFiles`
 #
 # `analysis_endpoints` has always caught per-tech exceptions and kept going,
 # which is the right call — one broken analyzer must not cost the user the

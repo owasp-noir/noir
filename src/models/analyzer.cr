@@ -2,6 +2,7 @@ require "./logger"
 require "./endpoint"
 require "./file_helper"
 require "./code_locator"
+require "./skipped_files"
 require "wait_group"
 require "../utils/media_filter"
 require "../utils/path_scope"
@@ -84,6 +85,22 @@ class Analyzer
     def self.tech_name : String
       {{ tech }}
     end
+
+    # Instance-side view of the same declaration. The per-file rescues live on
+    # this base class, which has no way to name the analyzer that is running
+    # inside them, so a skipped file could not be attributed to a tech.
+    # Deriving it from `analyzer_for` keeps the name written exactly once.
+    def tech : String
+      {{ tech }}
+    end
+  end
+
+  # Overridden by `analyzer_for` in every registered analyzer. The base value
+  # exists so shared code can call it unconditionally; it is deliberately NOT
+  # a `self.tech_name` fallback, which would turn "forgot `analyzer_for`" from
+  # a compile error into an analyzer that silently never runs.
+  def tech : String
+    ""
   end
 
   # Prefer the detector-populated cache over a fresh disk read. On
@@ -238,10 +255,15 @@ class Analyzer
               block.call(path)
             rescue File::NotFoundError
               @logger.debug "File not found: #{path}"
+              Noir::SkippedFiles.record(tech, path, "file not found") if path
             rescue e : Exception
               if path
                 @logger.debug "Error processing file #{path}: #{e.message}"
+                Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
               else
+                # No path means the worker itself failed, not a file — there is
+                # nothing to tally, and the tech-level rescue in
+                # `analysis_endpoints` is what reports a dead analyzer.
                 @logger.debug "Error in worker: #{e.message}"
               end
             end
@@ -263,6 +285,7 @@ class Analyzer
         block.call(path)
       rescue e
         logger.debug "Error analyzing #{path}: #{e}"
+        Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
       end
     end
   rescue e
