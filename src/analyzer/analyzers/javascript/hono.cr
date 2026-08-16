@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/top_level_split"
 require "./express/router_mount_scanner"
 
 module Analyzer::Javascript
@@ -181,62 +182,7 @@ module Analyzer::Javascript
     end
 
     private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
-      args = [] of Tuple(String, Int32)
-      arg_start = start_pos
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-      i = start_pos
-
-      # `content[i]` re-decodes UTF-8 from byte 0 on every call once the
-      # string isn't single_byte_optimizable? (any non-ASCII char), making
-      # this O(n^2) on a large non-ASCII handler body. Index a
-      # pre-materialized Char array instead — same semantics, O(1) lookup.
-      chars = content.chars
-      while i < end_pos
-        char = chars[i]
-
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            args << normalized_arg(content, arg_start, i)
-            arg_start = i + 1
-          end
-        end
-
-        i += 1
-      end
-
-      args << normalized_arg(content, arg_start, end_pos)
-      args
-    end
-
-    private def normalized_arg(content : String, start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
-      start_idx = skip_whitespace(content, start_pos)
-      stop_idx = end_pos
-      while stop_idx > start_idx && content[stop_idx - 1].whitespace?
-        stop_idx -= 1
-      end
-
-      {content[start_idx...stop_idx], start_idx}
+      Noir::TopLevelSplit.split_spans(content, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
     end
 
     private def skip_whitespace(content : String, pos : Int32) : Int32

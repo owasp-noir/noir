@@ -3,6 +3,7 @@ require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/import_graph"
 require "../../../utils/url_path"
+require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
   # Feathers.js (https://feathersjs.com) is service-based rather than
@@ -672,65 +673,7 @@ module Analyzer::Javascript
     # depth aware), local to this analyzer.
     # ---------------------------------------------------------------
     private def split_top_level_args(content : String, start_pos : Int32, end_pos : Int32) : Array(Tuple(String, Int32))
-      args = [] of Tuple(String, Int32)
-      arg_start = start_pos
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-      i = start_pos
-      chars = content.chars
-
-      while i < end_pos
-        char = chars[i]
-
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when ','
-          if depth == 0
-            args << normalized_arg(content, arg_start, i)
-            arg_start = i + 1
-          end
-        end
-
-        i += 1
-      end
-
-      args << normalized_arg(content, arg_start, end_pos)
-      args
-    end
-
-    private def normalized_arg(content : String, start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
-      start_idx = skip_ws(content, start_pos)
-      stop_idx = end_pos
-      while stop_idx > start_idx && content[stop_idx - 1].whitespace?
-        stop_idx -= 1
-      end
-      {content[start_idx...stop_idx], start_idx}
-    end
-
-    private def skip_ws(content : String, pos : Int32) : Int32
-      i = pos
-      while i < content.size && content[i].whitespace?
-        i += 1
-      end
-      i
+      Noir::TopLevelSplit.split_spans(content, ',', Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
     end
 
     private def quoted_literal(text : String) : String?
