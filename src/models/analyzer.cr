@@ -27,6 +27,17 @@ require "../utils/utils"
 # Reads (`each`, `size`) are deliberately NOT guarded: every one of them runs
 # after the parallel phase has joined, and guarding iteration would need a
 # read-write lock to avoid serialising the scan.
+#
+# MEASURED AND NOT SHIPPABLE AS-IS. Introducing this subclass changes
+# single-threaded detection output: on an 8x-duplicated fixture corpus one
+# `POST /users` endpoint comes out with a different param multiset than on
+# main, and it does so even when ONLY `<<` is overridden. Subclassing turns
+# `@result`'s static type into the virtual `Array(Endpoint)+`, which is
+# enough to re-resolve an overload somewhere downstream. So central locking
+# by subclassing Array is not the free shortcut it looks like — making the
+# ~220 accumulation sites safe needs per-site work or a per-fiber buffer
+# that merges once. Kept here only so the parallelism measurements in
+# #2613 are reproducible.
 class SafeEndpointList < Array(Endpoint)
   @mutex = Mutex.new(:reentrant)
 
