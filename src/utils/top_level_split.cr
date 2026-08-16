@@ -213,12 +213,31 @@ module Noir
 
       # JavaScript/TypeScript object-literal and argument lists.
       # Serves analyzer/analyzers/javascript/nestjs.cr and
-      # analyzer/analyzers/typescript/loopback.cr `split_top_level`. Backticks
-      # are quote characters because template literals wrap most route
-      # strings; missing them merges a whole `${...}` route into one part.
+      # analyzer/analyzers/typescript/loopback.cr `split_top_level`, which are
+      # byte-identical and are called with both `,` and `+`. Backticks are
+      # quote characters because template literals wrap most route strings;
+      # missing them merges a whole `${...}` route into one part.
       #
-      # Near misses that need their own `Rules` when converted:
-      #   typescript/trpc.cr `split_top_level` -> per_kind: false
+      # Three more JS/TS sites each disagree on one to four axes and carry a
+      # file-local `Rules` constant rather than a preset here, each being the
+      # only user of its variant:
+      #   typescript/trpc.cr  `split_top_level`        -> per_kind: false
+      #   javascript/nextjs.cr `split_top_level_commas` -> no quotes, no
+      #                                          escape, nest adds Angle,
+      #                                          strip: false, Empties::Keep
+      #   javascript/remix.cr `split_flat_segments`    -> Nest::Bracket only,
+      #                                          no quotes, strip: false,
+      #                                          Empties::Keep, delimiter `.`
+      #
+      # NOT converted — javascript/express/router_mount_scanner.cr
+      # `split_at_top_level_commas` agrees with this preset on every axis
+      # except escaping, which it does with `prev_char != '\\'` instead of an
+      # escape flag. That misreads `"a\\"` as an unterminated string (the
+      # escaped backslash is taken as escaping the closing quote), so no
+      # `Escape` value reproduces it and converting would change where it
+      # splits. The three `split_top_level_args` copies in
+      # javascript/{express,feathers,hono}.cr are likewise left alone: they
+      # return `{part, offset}` tuples, and this module returns only strings.
       JS = new(
         nest: Nest::Paren | Nest::Bracket | Nest::Brace,
         quotes: "\"'`",

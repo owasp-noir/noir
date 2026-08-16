@@ -2,6 +2,7 @@ require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
 require "../../../miniparsers/import_graph"
+require "../../../utils/top_level_split"
 
 module Analyzer::Javascript
   class Nextjs < JavascriptEngine
@@ -600,33 +601,31 @@ module Analyzer::Javascript
       end
     end
 
+    # Unlike every other JS/TS splitter this one has NO quote handling at all,
+    # counts `<` `>` as nesting, and neither strips nor drops empty parts —
+    # reproduced verbatim from the body it replaces.
+    #
+    # The two callers explain the shape: `exported_alias_for_method` passes the
+    # inside of an `export { a, b as c }` clause and
+    # `extract_server_action_params` passes a TypeScript parameter list, so
+    # generics have to nest (`{ params }: { params: Promise<{ id: string }> }`)
+    # but neither input can contain a string literal. Both strip each part and
+    # skip the empties themselves.
+    SPLIT_TOP_LEVEL_COMMAS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+      quotes: "",
+      escape: Noir::TopLevelSplit::Escape::None,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::Keep,
+      per_kind: false,
+      clamp: true,
+    )
+
     # Split a comma-separated string at top-level commas only (ignoring those inside
     # braces, brackets, parens, or angle brackets).
     private def split_top_level_commas(s : String) : Array(String)
-      parts = [] of String
-      depth = 0
-      buffer = String::Builder.new
-      s.each_char do |c|
-        case c
-        when '{', '[', '(', '<'
-          depth += 1
-          buffer << c
-        when '}', ']', ')', '>'
-          depth -= 1 if depth > 0
-          buffer << c
-        when ','
-          if depth == 0
-            parts << buffer.to_s
-            buffer = String::Builder.new
-          else
-            buffer << c
-          end
-        else
-          buffer << c
-        end
-      end
-      parts << buffer.to_s
-      parts
+      Noir::TopLevelSplit.split(s, ',', SPLIT_TOP_LEVEL_COMMAS_RULES)
     end
 
     # Extract only simple top-level identifiers from a flat destructure body.

@@ -1,6 +1,7 @@
 require "../../engines/javascript_engine"
 require "../../../miniparsers/js_callee_extractor"
 require "../../../miniparsers/js_route_extractor"
+require "../../../utils/top_level_split"
 
 module Analyzer::Typescript
   # LoopBack 4 (`@loopback/rest`) routes controller methods with OpenAPI
@@ -320,51 +321,7 @@ module Analyzer::Typescript
     end
 
     private def split_top_level(text : String, delimiter : Char) : Array(String)
-      parts = [] of String
-      start = 0
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      quote : Char? = nil
-      escaped = false
-
-      text.each_char_with_index do |char, index|
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '('
-          paren_depth += 1
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-        when '['
-          bracket_depth += 1
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-        when '{'
-          brace_depth += 1
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-        else
-          if char == delimiter && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-            parts << text[start...index].strip
-            start = index + 1
-          end
-        end
-      end
-
-      parts << text[start..-1].strip
-      parts.reject(&.empty?)
+      Noir::TopLevelSplit.split(text, delimiter, Noir::TopLevelSplit::Rules::JS)
     end
 
     private def push_unique_param(endpoint : Endpoint, param : Param)
