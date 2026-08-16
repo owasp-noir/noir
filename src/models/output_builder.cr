@@ -1,4 +1,5 @@
 require "./logger"
+require "./analyzer_failure"
 require "./endpoint"
 require "./passive_scan"
 require "../utils/*"
@@ -115,6 +116,13 @@ class OutputBuilder
   @stdout_broken : Bool
 
   property io : IO
+
+  # Tech analyzers that raised during the scan being reported. Carried as a
+  # property rather than a third `print` argument: only three of the thirty
+  # builders have anywhere to put it, and the other twenty-seven would have
+  # grown a parameter they ignore. Defaults to empty so a builder constructed
+  # directly (specs, library callers) reports a clean scan.
+  property analyzer_failures : Array(AnalyzerFailure) = [] of AnalyzerFailure
 
   def initialize(options : Hash(String, YAML::Any))
     @is_debug = any_to_bool(options["debug"])

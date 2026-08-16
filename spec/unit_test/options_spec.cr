@@ -29,6 +29,11 @@ describe "default_options" do
     noir_options["no_spinner"].should be_false
   end
 
+  it "has strict mode disabled by default" do
+    noir_options = create_test_options
+    noir_options["strict"].should be_false
+  end
+
   # Concurrency is auto-scaled to the host's CPU count, clamped to the
   # [4, 32] window. The exact value depends on the box the suite runs
   # on, so the spec asserts the window rather than a literal.
@@ -52,6 +57,21 @@ describe "run_options_parser" do
     begin
       noir_options = run_options_parser()
       noir_options["no_spinner"].should be_true
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "supports --strict" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["--strict"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["strict"].should be_true
     ensure
       ARGV.clear
       ARGV.concat(original_argv)

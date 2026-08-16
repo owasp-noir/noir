@@ -262,6 +262,23 @@ module Noir::CLI::ScanCommand
     !options["ai_model"].to_s.empty? || provider.downcase.starts_with?("acp:")
   end
 
+  # Names the analyzers that raised, so a scan whose coverage was cut short
+  # says so instead of reporting the surviving endpoints as the whole story.
+  # Laid out like the detected-techs list above it (`├──` / `└──`), because
+  # it answers the same question — which techs were actually processed.
+  private def self.report_analyzer_failures(logger : NoirLogger,
+                                            failures : Array(AnalyzerFailure),
+                                            scope : String)
+    return if failures.empty?
+
+    plural = failures.size == 1 ? "analyzer" : "analyzers"
+    logger.warning "#{failures.size} #{plural} failed#{scope}; results may be incomplete."
+    failures.each_with_index do |failure, index|
+      prefix = index < failures.size - 1 ? "├──" : "└──"
+      logger.sub "#{prefix} #{failure.tech}: #{failure.message}"
+    end
+  end
+
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
     app = NoirRunner.new noir_options
     start_time = Time.instant
@@ -381,6 +398,7 @@ module Noir::CLI::ScanCommand
       app.analyze
     end
     app.logger.success "Identified #{app.endpoints.size} endpoints in total."
+    report_analyzer_failures(app.logger, app.analyzer_failures, "")
 
     elapsed = Time.instant - start_time
     app.logger.info "Scan completed in #{(elapsed.total_milliseconds / 1000.0).round(4)} s."
@@ -400,10 +418,26 @@ module Noir::CLI::ScanCommand
       locator.clear_all
       app_diff.detect
       app_diff.analyze
+      # The diff is computed against the old codebase's endpoint list, so an
+      # analyzer that died over there turns unscanned routes into phantom
+      # "added" entries. Named separately from the base scan's failures —
+      # the two scans have different code, and only one of them is the one
+      # the user is about to act on.
+      report_analyzer_failures(app.logger, app_diff.analyzer_failures, " in the --diff-path codebase")
 
       app.logger.info "Generating Diff Report."
       app.diff_report(app_diff)
     end
+
+    # After the report, never before: a degraded scan still has results, and
+    # the point of `--strict` is to flag them, not to withhold them. Exit 2
+    # rather than 1 so a CI gate can tell "scan ran, coverage incomplete"
+    # from the usage/validation errors that already exit 1.
+    degraded = !app.analyzer_failures.empty?
+    if diff_app = app_diff
+      degraded ||= !diff_app.analyzer_failures.empty?
+    end
+    exit(2) if degraded && any_to_bool(app.options["strict"]?)
   rescue e : Noir::InvalidExcludePathError
     # Raised from the detector's file walk once a malformed --exclude-path
     # glob is actually reached. Without this the process printed a raw

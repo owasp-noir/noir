@@ -429,6 +429,9 @@ def run_options_parser
     parser.on "--no-log", "Show only results" do
       noir_options["nolog"] = YAML::Any.new(true)
     end
+    parser.on "--strict", "Exit with code 2 if any analyzer failed" do
+      noir_options["strict"] = YAML::Any.new(true)
+    end
 
     parser.separator "\n PASSIVE SCAN:".colorize(:blue)
     parser.on "-P", "--passive-scan", "Enable passive security scan" do

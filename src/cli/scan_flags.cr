@@ -86,6 +86,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--no-color", "Disable color output"),
     Flag.new("--no-spinner", "Disable loading spinner animations"),
     Flag.new("--no-log", "Show only results"),
+    Flag.new("--strict", "Exit with code 2 if any analyzer failed"),
     Flag.new("--passive-scan", "Enable passive security scan", shorts: %w[-P]),
     Flag.new("--passive-scan-path", "Custom passive rules path", Arg::File, hint: "path"),
     Flag.new("--passive-scan-severity", "Min severity", Arg::Choice,

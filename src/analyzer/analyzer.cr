@@ -1,6 +1,7 @@
 require "./analyzers/**"
 require "./analyzers/file_analyzers/*"
 require "../miniparsers/extraction_result_cache"
+require "../models/analyzer_failure"
 require "../models/locator_keys"
 require "../techs/techs"
 
@@ -104,7 +105,12 @@ def filter_redundant_generic_techs(techs : Array(String)) : Array(String)
   techs.reject { |tech| drop.includes?(tech) }
 end
 
-def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger)
+# `failures` is an out-parameter rather than a second return value so the
+# existing signature keeps working: library embedders and specs call this
+# positionally and have no interest in the failure list. Callers that do care
+# (the CLI, via `NoirRunner`) pass an array and get every tech that raised.
+def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLogger,
+                       failures : Array(AnalyzerFailure)? = nil)
   result = [] of Endpoint
   file_analyzer = FileAnalyzer.new options
   logger.info "Initializing analyzers"
@@ -164,6 +170,15 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
           logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
         rescue e
           logger.warning "Analyzer[#{tech}] failed: #{e.message}"
+          if collected = failures
+            # `e.message` is nilable and can be empty (`IndexError.new`,
+            # `raise ""`), and a report that reads `go_gin: ` names no cause
+            # at all — the class name is at least something to search for.
+            reason = e.message.presence || e.class.name
+            # Same mutex as the result concat above, not a second one: this
+            # runs on a spawned fiber and `collected` is shared by all of them.
+            mutex.synchronize { collected << AnalyzerFailure.new(tech, reason) }
+          end
         end
       end
     end

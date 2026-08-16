@@ -7,6 +7,7 @@ require "../output_builder/*"
 require "../optimizer/llm_optimizer.cr"
 require "../ai_context/augmentor.cr"
 require "../mobile/linker.cr"
+require "./analyzer_failure.cr"
 require "./endpoint.cr"
 require "./logger.cr"
 require "../utils/*"
@@ -32,8 +33,12 @@ class NoirRunner
   @noir_home : String
   @passive_scans : Array(PassiveScan)
   @passive_results : Array(PassiveScanResult)
+  # Tech analyzers that raised during the last `analyze`. Empty is the
+  # positive statement "every selected analyzer ran to completion", which is
+  # what tells a degraded scan from a clean one.
+  @analyzer_failures = [] of AnalyzerFailure
 
-  getter options, techs, endpoints, logger, passive_results
+  getter options, techs, endpoints, logger, passive_results, analyzer_failures
 
   def initialize(options)
     @options = options
@@ -136,7 +141,14 @@ class NoirRunner
   end
 
   def analyze
-    @endpoints = analysis_endpoints options, @techs, @logger
+    # Cleared before the pass, not merely appended to. Diff mode builds a
+    # second runner, but an embedder can call `analyze` twice on one runner —
+    # and a failure list carrying the previous scan's entries would report a
+    # clean run as degraded (and, under `--strict`, fail the build) forever
+    # after. Same class of leak as the options-hash one
+    # `apply_cfml_components_only!` documents.
+    @analyzer_failures.clear
+    @endpoints = analysis_endpoints options, @techs, @logger, @analyzer_failures
 
     # Use the new optimizer module
     optimizer = LLMEndpointOptimizer.new(@logger, @options)
@@ -256,12 +268,12 @@ class NoirRunner
   # fourth place a format had to be listed.
   def report
     format = options["format"].to_s
-    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results)
+    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results, @analyzer_failures)
 
     # `CliValidation` rejects an unknown `-f` before a scan starts, so this
     # only catches a library caller that built the options hash itself:
     # fall back to the default format rather than printing nothing at all.
-    Noir::OutputFormats.render(Noir::OutputFormats::DEFAULT, @options, @endpoints, @passive_results)
+    Noir::OutputFormats.render(Noir::OutputFormats::DEFAULT, @options, @endpoints, @passive_results, @analyzer_failures)
   end
 
   def techs=(value : Array(String))

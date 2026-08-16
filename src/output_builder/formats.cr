@@ -81,15 +81,26 @@ module Noir::OutputFormats
   # Each `when` branch instantiates one concrete builder, so the call is
   # resolved per class rather than through the `OutputBuilder` base type —
   # which is what lets builders keep their own `print` overloads.
+  #
+  # `errors` reaches the builder as a property rather than a `print`
+  # argument, so the formats with nowhere to put it (every command and
+  # only-* format) need no signature change. It defaults to empty for
+  # callers that render a report they did not scan for.
   def self.render(format : String,
                   options : Hash(String, YAML::Any),
                   endpoints : Array(Endpoint),
-                  passive_results : Array(PassiveScanResult)) : Bool
+                  passive_results : Array(PassiveScanResult),
+                  errors : Array(AnalyzerFailure) = [] of AnalyzerFailure) : Bool
     {% begin %}
       case format
       {% for builder in OutputBuilder.all_subclasses.select(&.annotation(Noir::OutputFormat)) %}
       when {{ builder.annotation(Noir::OutputFormat)[:name] }}
-        {{ builder }}.new(options).print(endpoints, passive_results)
+        # Named `renderer`, not `builder`: `builder` is the macro loop
+        # variable holding the class, and reusing it for the instance makes
+        # the two impossible to tell apart when reading the expansion.
+        renderer = {{ builder }}.new(options)
+        renderer.analyzer_failures = errors
+        renderer.print(endpoints, passive_results)
       {% end %}
       else
         return false

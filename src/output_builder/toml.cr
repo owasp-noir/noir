@@ -7,7 +7,15 @@ class OutputBuilderToml < OutputBuilder
   include OutputBuilderTomlSerializer
 
   def print(endpoints : Array(Endpoint), passive_results : Array(PassiveScanResult) = [] of PassiveScanResult)
-    message = {"endpoints" => endpoints, "passive_results" => passive_results}.to_json
+    # Always emitted, empty included — see the note in `json.cr`. TOML is the
+    # one format that cannot fully honor that: `generate_toml` renders arrays
+    # as `[[table]]` blocks, and an empty array has no block to render, so a
+    # clean scan stays silent here. That asymmetry belongs to the format.
+    message = {
+      "endpoints"       => endpoints,
+      "passive_results" => passive_results,
+      "errors"          => analyzer_failures,
+    }.to_json
     json_obj = JSON.parse(message)
     toml_output = generate_toml(json_obj.as_h)
     ob_puts toml_output
