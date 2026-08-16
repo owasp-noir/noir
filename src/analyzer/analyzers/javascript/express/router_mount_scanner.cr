@@ -1,6 +1,7 @@
 require "../../../../models/code_locator"
 require "../../../../utils/js_literal_scanner"
 require "../../../../utils/path_scope"
+require "../../../../utils/top_level_split"
 require "../../../../utils/url_path"
 require "../express_constants"
 require "../../../../utils/text_file"
@@ -1028,6 +1029,29 @@ module Analyzer::Javascript
       extracted
     end
 
+    # `Rules::JS` on five of seven axes — same nest kinds, same three quote
+    # characters, same per-kind depth counters, same clamp, same
+    # `Escape::InQuotes`. It diverges on `strip` and `empties` only, and only
+    # because the hand-rolled body it replaces never stripped and kept its
+    # interior empties: `Rules::JS` strips and drops every empty part.
+    #
+    # Both divergences are invisible to the single caller — the loop in
+    # `parse_destructured_names` does `item.strip` and skips the result when it
+    # is empty — so this is faithfulness to the replaced body, not a behavior
+    # requirement. File-local because no other splitter in the tree wants this
+    # combination, and promoting a preset for one caller whose two distinctive
+    # axes are unobservable would be misleading.
+    SPLIT_COMMA_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'`",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: true,
+      clamp: true,
+    )
+
     # Split a string at top-level commas, respecting nesting and string literals.
     #
     # This is a literal-aware tokenizer that splits on commas only when they are
@@ -1035,69 +1059,17 @@ module Analyzer::Javascript
     #
     # Example: "a, b = {x: 1, y: 2}, c" → ["a", " b = {x: 1, y: 2}", " c"]
     #
+    # The hand-rolled body this replaces closed a quoted run with a one-character
+    # lookback (`ch == in_string && prev_char != '\\'`) rather than an escape
+    # flag. A lookback cannot tell an escaped quote from an escaped backslash
+    # followed by a quote, so `'C:\\uploads\\'` was read as an unterminated
+    # string: the closing quote looked escaped, the run never ended, and every
+    # remaining top-level comma was swallowed, collapsing the whole argument list
+    # into one part. `Escape::InQuotes` consumes the backslash AND the character
+    # after it, so a doubled backslash consumes itself and the quote that follows
+    # closes the run — while a genuinely escaped quote (`'it\'s'`) still does not.
     private def split_at_top_level_commas(input : String) : Array(String)
-      items = [] of String
-      current = ""
-      depth_brace = 0         # Tracks {} nesting (objects, blocks)
-      depth_bracket = 0       # Tracks [] nesting (arrays)
-      depth_paren = 0         # Tracks () nesting (function calls, grouping)
-      in_string : Char? = nil # Tracks if we're inside a string and which quote char
-      prev_char : Char? = nil # For detecting escaped quotes
-
-      input.each_char do |ch|
-        # --- String literal handling ---
-        # When inside a string, accumulate characters until we hit the closing quote
-        if in_string
-          current += ch
-          # End of string: same quote char, not escaped by backslash
-          if ch == in_string && prev_char != '\\'
-            in_string = nil
-          end
-          prev_char = ch
-          next
-        end
-
-        # Start of a string literal
-        if ch == '"' || ch == '\'' || ch == '`'
-          in_string = ch
-          current += ch
-          prev_char = ch
-          next
-        end
-
-        # --- Nesting depth tracking ---
-        # Track depth so we only split on commas at the top level
-        case ch
-        when '{'
-          depth_brace += 1
-        when '}'
-          depth_brace -= 1 if depth_brace > 0
-        when '['
-          depth_bracket += 1
-        when ']'
-          depth_bracket -= 1 if depth_bracket > 0
-        when '('
-          depth_paren += 1
-        when ')'
-          depth_paren -= 1 if depth_paren > 0
-        when ','
-          # Only split at top-level commas (not inside any nested structure)
-          if depth_brace == 0 && depth_bracket == 0 && depth_paren == 0
-            items << current
-            current = ""
-            prev_char = ch
-            next
-          end
-        end
-
-        current += ch
-        prev_char = ch
-      end
-
-      # Don't forget the last item (no trailing comma)
-      items << current unless current.empty?
-
-      items
+      Noir::TopLevelSplit.split(input, ',', SPLIT_COMMA_RULES)
     end
 
     # Resolve a require path relative to the requiring file

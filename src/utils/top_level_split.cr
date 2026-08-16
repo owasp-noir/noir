@@ -234,14 +234,16 @@ module Noir
       #   javascript/remix.cr `split_flat_segments`    -> Nest::Bracket only,
       #                                          no quotes, strip: false,
       #                                          Empties::Keep, delimiter `.`
+      #   javascript/express/router_mount_scanner.cr
+      #                       `split_at_top_level_commas` -> strip: false,
+      #                                          Empties::DropTrailing
       #
-      # NOT converted — javascript/express/router_mount_scanner.cr
-      # `split_at_top_level_commas` agrees with this preset on every axis
-      # except escaping, which it does with `prev_char != '\\'` instead of an
-      # escape flag. That misreads `"a\\"` as an unterminated string (the
-      # escaped backslash is taken as escaping the closing quote), so no
-      # `Escape` value reproduces it and converting would change where it
-      # splits.
+      # That last one was the only site converted with a DELIBERATE behavior
+      # change: its hand-rolled body closed a quoted run with a `prev_char !=
+      # '\\'` lookback, which reads `"a\\"` as unterminated because the escaped
+      # backslash is taken as escaping the closing quote. No `Escape` value
+      # reproduces that, and reproducing it was not worth doing — it is a bug,
+      # and `Escape::InQuotes` is what the lookback was reaching for.
       JS = new(
         nest: Nest::Paren | Nest::Bracket | Nest::Brace,
         quotes: "\"'`",
