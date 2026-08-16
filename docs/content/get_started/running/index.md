@@ -156,6 +156,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--concurrency <N>`   | Worker count (default: CPU cores) |
 | `--cache-disable`     | Disable the LLM response cache for this run |
 | `--cache-clear`       | Clear the LLM response cache before running |
+| `--strict`            | Exit with code 2 if any analyzer failed (the scan still reports its results) |
 | `--verbose`           | Detailed logging |
 | `--no-log`            | Suppress all logs |
 | `--no-color`          | Disable ANSI colors in plain output |

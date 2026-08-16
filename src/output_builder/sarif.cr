@@ -14,6 +14,13 @@ class OutputBuilderSarif < OutputBuilder
       b.run("OWASP Noir", Noir::VERSION) do |r|
         r.information_uri("https://github.com/owasp-noir/noir")
 
+        # SARIF's own signal for "this run did not complete as intended".
+        # A tech analyzer that raised means part of the code base was never
+        # examined, so the empty result list for it is not a finding of
+        # nothing — and `executionSuccessful` is the field a CI gate reads
+        # to tell those two apart.
+        r.invocation(execution_successful: analyzer_failures.empty?)
+
         # Add endpoint discovery rule
         if !endpoints.empty?
           r.rule("endpoint-discovery",

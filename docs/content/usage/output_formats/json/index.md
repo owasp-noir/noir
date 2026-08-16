@@ -58,8 +58,31 @@ The result is an object with an `endpoints` array. Each endpoint has the URL, HT
       "protocol": "http",
       "tags": []
     }
+  ],
+  "errors": []
+}
+```
+
+## Analyzer Failures
+
+A tech analyzer that raises is logged and skipped, and the scan continues with the rest. `errors` records which ones that happened to, so an empty result for a framework can be told apart from a framework that was never analyzed:
+
+```json
+{
+  "endpoints": [],
+  "passive_results": [],
+  "errors": [
+    { "tech": "go_gin", "message": "Index out of bounds" }
   ]
 }
+```
+
+The key is always present. `"errors": []` is the positive statement that every selected analyzer ran to completion.
+
+`-f yaml` carries the same key, and `-f sarif` reports it as `runs[0].invocations[0].executionSuccessful`. Add `--strict` to make a degraded scan exit with code 2, after the report has been written:
+
+```bash
+noir scan . -f json --no-log --strict > endpoints.json
 ```
 
 ## JSONL Output

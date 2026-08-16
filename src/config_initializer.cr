@@ -21,6 +21,7 @@ class ConfigInitializer
     ai_context
     nolog
     no_spinner
+    strict
     probe # legacy `send_req` is migrated to `probe` before this coercion runs
     tls_skip_verify
     all_taggers
@@ -241,6 +242,7 @@ class ConfigInitializer
       "ai_context"                   => YAML::Any.new(false),
       "nolog"                        => YAML::Any.new(false),
       "no_spinner"                   => YAML::Any.new(false),
+      "strict"                       => YAML::Any.new(false),
       "output"                       => YAML::Any.new(""),
       "export_es"                    => YAML::Any.new(""),
       "probe_via"                    => YAML::Any.new(""),
@@ -349,6 +351,9 @@ class ConfigInitializer
 
       # Whether to disable loading spinners while keeping normal logs
       no_spinner: #{options["no_spinner"]}
+
+      # Whether to exit with code 2 when any analyzer fails
+      strict: #{options["strict"]}
 
       # The output file to write to
       output: "#{options["output"]}"

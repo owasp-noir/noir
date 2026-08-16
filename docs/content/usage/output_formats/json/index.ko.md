@@ -46,8 +46,31 @@ noir scan . -f json --no-log
       "protocol": "http",
       "tags": []
     }
+  ],
+  "errors": []
+}
+```
+
+## 분석기 실패 기록
+
+분석기 하나가 예외로 죽어도 스캔은 나머지 기술을 계속 처리합니다. `errors`에는 그렇게 건너뛴 분석기가 남기 때문에, 결과가 비어 있는 이유가 "해당 프레임워크가 없어서"인지 "아예 분석하지 못해서"인지 구분할 수 있습니다.
+
+```json
+{
+  "endpoints": [],
+  "passive_results": [],
+  "errors": [
+    { "tech": "go_gin", "message": "Index out of bounds" }
   ]
 }
+```
+
+이 키는 항상 출력됩니다. `"errors": []`는 선택된 분석기가 모두 끝까지 실행됐다는 뜻입니다.
+
+`-f yaml`도 같은 키를 담고, `-f sarif`는 `runs[0].invocations[0].executionSuccessful`로 같은 사실을 알립니다. `--strict`를 붙이면 리포트를 출력한 뒤 종료 코드 2로 끝나므로 CI에서 바로 걸러낼 수 있습니다.
+
+```bash
+noir scan . -f json --no-log --strict > endpoints.json
 ```
 
 ## JSONL 출력
