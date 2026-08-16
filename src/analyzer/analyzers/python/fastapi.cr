@@ -1,4 +1,5 @@
 require "../../engines/python_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Python
   class FastAPI < PythonEngine
@@ -1167,48 +1168,14 @@ module Analyzer::Python
       parts
     end
 
+    # Delegates to the shared splitter. `Rules::PYTHON_SHARED_DEPTH`, not
+    # `Rules::PYTHON`: this loop counted `(`, `[` and `{` on ONE depth
+    # counter, which is observable on the unbalanced fragments the route
+    # regexes actually hand it. The two wrappers above stay local — the
+    # `nil`-on-single-part contract of `split_python_expression` is a FastAPI
+    # call-site convention, not a splitting rule.
     private def split_python_top_level(input : ::String, delimiter : Char) : Array(::String)
-      parts = [] of ::String
-      start = 0
-      depth = 0
-      in_quote = nil
-      escaped = false
-      index = 0
-      # `String#[]` walks from the start on every call for non-ASCII
-      # content, so indexing `input` directly inside this while loop was
-      # O(n^2); `chars` gives O(1) random access instead. The
-      # `input[start...index]` slices below stay on `input` — they only
-      # run once per delimiter found, not once per character.
-      chars = input.chars
-      while index < chars.size
-        ch = chars[index]
-        if in_quote
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-        else
-          case ch
-          when '\'', '"'
-            in_quote = ch
-          when '(', '[', '{'
-            depth += 1
-          when ')', ']', '}'
-            depth -= 1 if depth > 0
-          else
-            if ch == delimiter && depth == 0
-              parts << input[start...index]
-              start = index + 1
-            end
-          end
-        end
-        index += 1
-      end
-      parts << input[start..]
-      parts
+      Noir::TopLevelSplit.split(input, delimiter, Noir::TopLevelSplit::Rules::PYTHON_SHARED_DEPTH)
     end
 
     private def static_route_path(path : ::String) : ::String

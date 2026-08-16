@@ -1,5 +1,6 @@
 require "../../engines/python_engine"
 require "json"
+require "../../../utils/top_level_split"
 
 module Analyzer::Python
   class Django < PythonEngine
@@ -502,64 +503,10 @@ module Analyzer::Python
       end
     end
 
+    # Same rules as `split_python_arguments`, splitting on `+` instead of `,`
+    # so a concatenated URL-prefix expression breaks into its terms.
     private def split_python_expression_terms(expression : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      expression.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '('
-          paren_depth += 1
-          current << ch
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-          current << ch
-        when '['
-          bracket_depth += 1
-          current << ch
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-          current << ch
-        when '{'
-          brace_depth += 1
-          current << ch
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-          current << ch
-        when '+'
-          if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
+      Noir::TopLevelSplit.split(expression, '+', Noir::TopLevelSplit::Rules::PYTHON)
     end
 
     private def extract_urlpattern_lists(content : ::String) : Hash(::String, ::String)
@@ -1192,64 +1139,12 @@ module Analyzer::Python
       ""
     end
 
+    # Delegates to the shared splitter; `Rules::PYTHON` reproduces this
+    # file's previous hand-rolled loop exactly (both quote styles, backslash
+    # escapes inside quotes, per-kind clamped depth, no strip, and every
+    # empty part kept so positional indexing of the result stays valid).
     private def split_python_arguments(args : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      paren_depth = 0
-      bracket_depth = 0
-      brace_depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      args.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '('
-          paren_depth += 1
-          current << ch
-        when ')'
-          paren_depth -= 1 if paren_depth > 0
-          current << ch
-        when '['
-          bracket_depth += 1
-          current << ch
-        when ']'
-          bracket_depth -= 1 if bracket_depth > 0
-          current << ch
-        when '{'
-          brace_depth += 1
-          current << ch
-        when '}'
-          brace_depth -= 1 if brace_depth > 0
-          current << ch
-        when ','
-          if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON)
     end
 
     # Extract endpoints from a given file

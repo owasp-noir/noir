@@ -1,4 +1,5 @@
 require "../../engines/python_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Python
   class Falcon < PythonEngine
@@ -290,50 +291,13 @@ module Analyzer::Python
       extract_keyword_string(args, "prefix") || args[0]?.try { |arg| Helper.extract_python_string(arg) }
     end
 
+    # Delegates to the shared splitter. `Rules::PYTHON_SHARED_DEPTH`, not
+    # `Rules::PYTHON`: this loop counted `(`, `[` and `{` on ONE depth
+    # counter, which is observable on the unbalanced fragments the route
+    # regexes actually hand it — `"[a)b, c"` splits here, but would not
+    # under per-kind counters.
     private def split_python_arguments(args : ::String) : Array(::String)
-      parts = [] of ::String
-      current = String::Builder.new
-      depth = 0
-      in_quote : Char? = nil
-      escaped = false
-
-      args.each_char do |ch|
-        if in_quote
-          current << ch
-          if escaped
-            escaped = false
-          elsif ch == '\\'
-            escaped = true
-          elsif ch == in_quote
-            in_quote = nil
-          end
-          next
-        end
-
-        case ch
-        when '\'', '"'
-          in_quote = ch
-          current << ch
-        when '(', '[', '{'
-          depth += 1
-          current << ch
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-          current << ch
-        when ','
-          if depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << ch
-          end
-        else
-          current << ch
-        end
-      end
-
-      parts << current.to_s
-      parts
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON_SHARED_DEPTH)
     end
 
     # Memoized per keyword — the keyword set is tiny (`prefix`) but this
