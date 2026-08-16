@@ -1,4 +1,5 @@
 require "../../engines/php_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Php
   class Laminas < PhpEngine
@@ -400,47 +401,34 @@ module Analyzer::Php
       methods.empty? ? HTTP_METHODS : methods
     end
 
-    # Byte-level scan for O(1) positional access instead of `String#[](Int)`,
-    # which is O(n) on strings containing multi-byte characters and turns a
-    # single call into O(n^2) — see `find_matching_delimiter` below for the
-    # same fix applied elsewhere in this file.
+    # `Rules::SHARED_DEPTH_RAW` with a trailing empty dropped, then a
+    # `strip` applied by this method rather than by the splitter.
+    #
+    # The order matters and is not cosmetic. The body this replaces
+    # stripped each part as it pushed it, but decided whether to emit the
+    # tail from the RAW slice (`if start < size`), so `f(a, )` kept a final
+    # `""` while `f(a,)` did not. Stripping inside the splitter would test
+    # the stripped tail and drop both. Splitting raw and stripping
+    # afterwards reproduces the original exactly.
+    #
+    # The old scan walked bytes to dodge `String#[](Int)`; the shared
+    # splitter is a single forward `each_char` pass, so it is O(n) on any
+    # input without needing the byte detour. Every delimiter, quote and
+    # bracket involved is ASCII and UTF-8 continuation bytes are all
+    # >= 0x80, so the two scans see the same split points.
+    SPLIT_ARGS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: true,
+    )
+
     private def split_top_level_args(content : String) : Array(String)
-      args = [] of String
-      bytes = content.to_slice
-      start = 0
-      i = 0
-      depth = 0
-      in_string = false
-      quote = 0_u8
-      escaped = false
-      size = bytes.size
-
-      while i < size
-        byte = bytes[i]
-        if in_string
-          if escaped
-            escaped = false
-          elsif byte == BYTE_BACKSLASH
-            escaped = true
-          elsif byte == quote
-            in_string = false
-          end
-        elsif byte == BYTE_SQUOTE || byte == BYTE_DQUOTE
-          in_string = true
-          quote = byte
-        elsif byte == BYTE_LBRACKET || byte == BYTE_LPAREN || byte == BYTE_LBRACE
-          depth += 1
-        elsif byte == BYTE_RBRACKET || byte == BYTE_RPAREN || byte == BYTE_RBRACE
-          depth -= 1 if depth > 0
-        elsif byte == BYTE_COMMA && depth == 0
-          args << String.new(bytes[start...i]).strip
-          start = i + 1
-        end
-        i += 1
-      end
-
-      args << String.new(bytes[start...size]).strip if start < size
-      args
+      Noir::TopLevelSplit.split(content, ',', SPLIT_ARGS_RULES).map(&.strip)
     end
 
     private def parse_top_level_entries(content : String) : Array(PhpArrayEntry)

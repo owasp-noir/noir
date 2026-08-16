@@ -1,4 +1,5 @@
 require "../../engines/php_engine"
+require "../../../utils/top_level_split"
 
 module Analyzer::Php
   # WordPress attack-surface extractor.
@@ -328,47 +329,39 @@ module Analyzer::Php
       nil
     end
 
+    # `Rules::SHARED_DEPTH_RAW` with a trailing empty dropped and, like
+    # erlang/cowboy.cr, WITHOUT clamping: the body this replaces closed
+    # brackets with a bare `depth -= 1`, so a fragment beginning with a
+    # closer (`")x, y"`) drives depth negative and stops splitting. That is
+    # observable on the regex-sliced input this actually receives, so it is
+    # preserved rather than normalised.
+    #
+    # File-local because wordpress is the only splitter pairing
+    # `clamp: false` with unstripped parts.
+    SPLIT_ARGS_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: false,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: false,
+    )
+
     # Split a PHP argument list on top-level commas, ignoring commas
     # nested inside (), [], {} or quoted strings. Only the first two
     # arguments are needed, but splitting fully keeps the logic simple.
+    #
+    # The empty-input guard is the old tail condition
+    # `if start <= args.size - 1 || parts.empty?`, whose `|| parts.empty?`
+    # arm fires for exactly one input: `""`, which yielded `[""]` and not
+    # `[]`. `Empties::DropTrailing` can only return `[]` for that same
+    # input, so restoring it here is exact — and cheaper than a fourth
+    # `Empties` case for one caller.
     private def split_top_level_args(args : String) : Array(String)
-      parts = [] of String
-      depth = 0
-      in_string = false
-      quote = '\0'
-      escaped = false
-      start = 0
-      args.each_char_with_index do |char, i|
-        if in_string
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            in_string = false
-          end
-          next
-        end
-
-        case char
-        when '\'', '"'
-          in_string = true
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1
-        when ','
-          if depth == 0
-            parts << args[start...i]
-            start = i + 1
-          end
-        else
-          # no-op
-        end
-      end
-      parts << args[start..] if start <= args.size - 1 || parts.empty?
-      parts
+      parts = Noir::TopLevelSplit.split(args, ',', SPLIT_ARGS_RULES)
+      parts.empty? ? [""] : parts
     end
 
     # ASCII delimiters for the paren matcher below (mirrors PhpEngine's

@@ -1,4 +1,5 @@
 require "../../engines/specification_engine"
+require "../../../utils/top_level_split"
 require "uri"
 
 module Analyzer::Specification
@@ -549,40 +550,30 @@ module Analyzer::Specification
         pos
       end
 
+      # Angle brackets nest because TypeSpec generics (`Response<Widget>`)
+      # reach this splitter; single quotes do not quote because TypeSpec
+      # string literals are double-quoted only.
+      #
+      # Nothing is stripped and a trailing empty is dropped — that is the
+      # old `parts << text[start..] if start < text.size` tail guard, which
+      # skipped the tail exactly when the last character was a top-level
+      # delimiter (and on the empty string).
+      #
+      # File-local: it is the only splitter with this combination, and the
+      # only spec-format one at all.
+      SPLIT_TOP_LEVEL_RULES = Noir::TopLevelSplit::Rules.new(
+        nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+              Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+        quotes: "\"",
+        escape: Noir::TopLevelSplit::Escape::InQuotes,
+        strip: false,
+        empties: Noir::TopLevelSplit::Empties::DropTrailing,
+        per_kind: false,
+        clamp: true,
+      )
+
       private def split_top_level(text : String, delim : Char) : Array(String)
-        parts = [] of String
-        depth = 0
-        in_string = false
-        start = 0
-        i = 0
-        while i < text.size
-          c = text[i]
-          if in_string
-            if c == '\\' && i + 1 < text.size
-              i += 2
-              next
-            elsif c == '"'
-              in_string = false
-            end
-          else
-            case c
-            when '"'
-              in_string = true
-            when '(', '{', '[', '<'
-              depth += 1
-            when ')', '}', ']', '>'
-              depth -= 1 if depth > 0
-            else
-              if c == delim && depth == 0
-                parts << text[start...i]
-                start = i + 1
-              end
-            end
-          end
-          i += 1
-        end
-        parts << text[start..] if start < text.size
-        parts
+        Noir::TopLevelSplit.split(text, delim, SPLIT_TOP_LEVEL_RULES)
       end
     end
   end

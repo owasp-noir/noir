@@ -1,5 +1,6 @@
 require "../../../models/analyzer"
 require "./erlang_helper"
+require "../../../utils/top_level_split"
 require "set"
 
 module Analyzer::Erlang
@@ -337,61 +338,35 @@ module Analyzer::Erlang
       end
     end
 
+    # `Rules::JAVA` except that a closer at depth 0 is NOT clamped: the
+    # bare `depth -= 1` of the body this replaces drives depth negative on
+    # a fragment that closes a bracket the caller's regex already sliced
+    # away (`")x, y"`), which suppresses every later split. Preserved
+    # verbatim because it is observable on exactly the unbalanced input
+    # `each_qs_field` hands over.
+    #
+    # The original pushed interior parts unstripped and dropped the tail
+    # only when `tail.strip.empty?`, then ran `parts.map(&.strip)` over
+    # everything. That is `strip: true` + `Empties::DropTrailing`: the
+    # emptiness test is on the stripped tail either way.
+    #
+    # File-local because cowboy is the only splitter combining
+    # `clamp: false` with stripping.
+    SPLIT_TOP_LEVEL_RULES = Noir::TopLevelSplit::Rules.new(
+      nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+            Noir::TopLevelSplit::Nest::Brace,
+      quotes: "\"'",
+      escape: Noir::TopLevelSplit::Escape::InQuotes,
+      strip: true,
+      empties: Noir::TopLevelSplit::Empties::DropTrailing,
+      per_kind: false,
+      clamp: false,
+    )
+
     # Splits an Erlang tuple/list body on its top-level commas, ignoring
     # commas nested in strings, quoted atoms, tuples, lists or binaries.
     private def split_top_level(body : String) : Array(String)
-      parts = [] of String
-      current = String::Builder.new
-      depth = 0
-      i = 0
-      chars = body.chars
-
-      while i < chars.size
-        c = chars[i]
-
-        if c == '"' || c == '\''
-          quote = c
-          current << c
-          i += 1
-          while i < chars.size
-            ch = chars[i]
-            if ch == '\\' && i + 1 < chars.size
-              current << ch
-              current << chars[i + 1]
-              i += 2
-              next
-            end
-            current << ch
-            i += 1
-            break if ch == quote
-          end
-          next
-        end
-
-        case c
-        when '{', '[', '('
-          depth += 1
-          current << c
-        when '}', ']', ')'
-          depth -= 1
-          current << c
-        when ','
-          if depth == 0
-            parts << current.to_s
-            current = String::Builder.new
-          else
-            current << c
-          end
-        else
-          current << c
-        end
-
-        i += 1
-      end
-
-      tail = current.to_s
-      parts << tail unless tail.strip.empty?
-      parts.map(&.strip)
+      Noir::TopLevelSplit.split(body, ',', SPLIT_TOP_LEVEL_RULES)
     end
   end
 end

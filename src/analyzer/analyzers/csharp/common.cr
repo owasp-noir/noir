@@ -1,5 +1,6 @@
 require "../../../miniparsers/csharp_callee_extractor"
 require "../../../minilexers/csharp_lexer"
+require "../../../utils/top_level_split"
 
 module Analyzer::CSharp::Common
   # Standard .NET test-source conventions:
@@ -186,64 +187,31 @@ module Analyzer::CSharp::Common
     {signature, index - 1}
   end
 
+  # Inside a string literal commas/brackets are data, not structure — e.g.
+  # a route literal `"/a,b"` or a `new[] { "GET", "POST" }` arg. Single
+  # quotes are NOT a quote style: in C# they wrap a char literal, which
+  # never carries a route, and treating `'` as a quote would let an
+  # apostrophe inside a `"..."`-free fragment swallow the rest of the list.
+  #
+  # `Empties::DropTrailing`, not `DropAll`: the comma branch pushed
+  # `current.to_s.strip` with no emptiness guard, so `(a, , b)` kept its
+  # interior `""`; only the tail was guarded by `unless tail.empty?`.
+  #
+  # File-local because no other splitter combines `Nest::Angle` with
+  # per-kind counters — java/wicket.cr comes closest and shares one depth.
+  SPLIT_PARAMETERS_RULES = Noir::TopLevelSplit::Rules.new(
+    nest: Noir::TopLevelSplit::Nest::Paren | Noir::TopLevelSplit::Nest::Bracket |
+          Noir::TopLevelSplit::Nest::Brace | Noir::TopLevelSplit::Nest::Angle,
+    quotes: "\"",
+    escape: Noir::TopLevelSplit::Escape::InQuotes,
+    strip: true,
+    empties: Noir::TopLevelSplit::Empties::DropTrailing,
+    per_kind: true,
+    clamp: true,
+  )
+
   protected def split_csharp_parameters(param_list : String) : Array(String)
-    params = [] of String
-    current = String::Builder.new
-    generic_depth = 0
-    paren_depth = 0
-    bracket_depth = 0
-    brace_depth = 0
-    in_string = false
-    escaped = false
-
-    param_list.each_char do |char|
-      # Inside a string literal commas/brackets are data, not structure —
-      # e.g. a route literal `"/a,b"` or a `new[] { "GET", "POST" }` arg.
-      if in_string
-        current << char
-        if escaped
-          escaped = false
-        elsif char == '\\'
-          escaped = true
-        elsif char == '"'
-          in_string = false
-        end
-        next
-      end
-
-      case char
-      when '"'
-        in_string = true
-      when '<'
-        generic_depth += 1
-      when '>'
-        generic_depth -= 1 if generic_depth > 0
-      when '('
-        paren_depth += 1
-      when ')'
-        paren_depth -= 1 if paren_depth > 0
-      when '['
-        bracket_depth += 1
-      when ']'
-        bracket_depth -= 1 if bracket_depth > 0
-      when '{'
-        brace_depth += 1
-      when '}'
-        brace_depth -= 1 if brace_depth > 0
-      when ','
-        if generic_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0
-          params << current.to_s.strip
-          current = String::Builder.new
-          next
-        end
-      end
-
-      current << char
-    end
-
-    tail = current.to_s.strip
-    params << tail unless tail.empty?
-    params
+    Noir::TopLevelSplit.split(param_list, ',', SPLIT_PARAMETERS_RULES)
   end
 
   # Returns the substring inside the first balanced parameter-list parens of
