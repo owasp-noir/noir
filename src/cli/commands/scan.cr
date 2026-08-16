@@ -262,17 +262,19 @@ module Noir::CLI::ScanCommand
     !options["ai_model"].to_s.empty? || provider.downcase.starts_with?("acp:")
   end
 
-  # Names the analyzers that raised, so a scan whose coverage was cut short
-  # says so instead of reporting the surviving endpoints as the whole story.
-  # Laid out like the detected-techs list above it (`├──` / `└──`), because
-  # it answers the same question — which techs were actually processed.
+  # Names the analyzers whose coverage was cut short — the analyzer itself
+  # raised, or it skipped files it could not read or parse — so a degraded
+  # scan says so instead of reporting the surviving endpoints as the whole
+  # story. Laid out like the detected-techs list above it (`├──` / `└──`),
+  # because it answers the same question: which techs actually processed
+  # what.
   private def self.report_analyzer_failures(logger : NoirLogger,
                                             failures : Array(AnalyzerFailure),
                                             scope : String)
     return if failures.empty?
 
     plural = failures.size == 1 ? "analyzer" : "analyzers"
-    logger.warning "#{failures.size} #{plural} failed#{scope}; results may be incomplete."
+    logger.warning "#{failures.size} #{plural} reported incomplete coverage#{scope}; some endpoints may be missing."
     failures.each_with_index do |failure, index|
       prefix = index < failures.size - 1 ? "├──" : "└──"
       logger.sub "#{prefix} #{failure.tech}: #{failure.message}"

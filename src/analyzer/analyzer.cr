@@ -3,6 +3,7 @@ require "./analyzers/file_analyzers/*"
 require "../miniparsers/extraction_result_cache"
 require "../models/analyzer_failure"
 require "../models/locator_keys"
+require "../models/skipped_files"
 require "../techs/techs"
 
 def initialize_analyzers(logger : NoirLogger)
@@ -119,6 +120,11 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # / repeated library use) so fingerprints cannot serve stale tables.
   Noir::ExtractionResultCache.clear_all
 
+  # Same reasoning: a per-file skip tallied by the previous pass would be
+  # reported against this one, and under `--strict` would fail every
+  # subsequent build.
+  Noir::SkippedFiles.clear
+
   # Same reasoning, for the locator slots written and read inside one
   # analysis pass (the Express router prefixes). Detector-written keys are
   # deliberately NOT cleared here — this pass is what drains them.
@@ -182,6 +188,13 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
         end
       end
     end
+  end
+
+  # A file an analyzer opened and could not finish is coverage lost just as
+  # surely as an analyzer that never ran, so it joins the same list. Added
+  # after the tech-level failures so a dead analyzer still reads first.
+  if collected = failures
+    Noir::SkippedFiles.failures.each { |failure| collected << failure }
   end
 
   # `hooks_count` reports only the hooks that can produce something for

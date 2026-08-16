@@ -65,19 +65,22 @@ The result is an object with an `endpoints` array. Each endpoint has the URL, HT
 
 ## Analyzer Failures
 
-A tech analyzer that raises is logged and skipped, and the scan continues with the rest. `errors` records which ones that happened to, so an empty result for a framework can be told apart from a framework that was never analyzed:
+A tech analyzer that raises is logged and skipped, and the scan continues with the rest. So is a single file the analyzer cannot read or parse — a file over the parse-time ceiling, for instance — which costs only itself rather than the run. `errors` records both, so an empty result for a framework can be told apart from a framework that was never analyzed, and a complete scan from one that quietly dropped files:
 
 ```json
 {
   "endpoints": [],
   "passive_results": [],
   "errors": [
-    { "tech": "go_gin", "message": "Index out of bounds" }
+    { "tech": "go_gin", "message": "Index out of bounds" },
+    { "tech": "rust_axum", "message": "skipped 2 files: src/gen.rs, src/vendor.rs; first error: ts_parser_parse_string returned null (timed out after 10000ms, or out of memory)" }
   ]
 }
 ```
 
-The key is always present. `"errors": []` is the positive statement that every selected analyzer ran to completion.
+Skipped files are tallied per tech rather than listed one entry each, with up to five example paths, so a broken checkout cannot flood the report.
+
+The key is always present. `"errors": []` is the positive statement that every selected analyzer ran to completion over every file it was given.
 
 `-f yaml` carries the same key, and `-f sarif` reports it as `runs[0].invocations[0].executionSuccessful`. Add `--strict` to make a degraded scan exit with code 2, after the report has been written:
 
