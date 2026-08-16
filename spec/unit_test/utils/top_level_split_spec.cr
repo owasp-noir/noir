@@ -468,6 +468,116 @@ describe Noir::TopLevelSplit do
     end
   end
 
+  describe ".split_spans" do
+    it "reports the offset of each part" do
+      TLS.split_spans("a,b,c", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"a", 0}, {"b", 2}, {"c", 4}]
+    end
+
+    it "skips leading whitespace when reporting an offset" do
+      TLS.split_spans("  a ,   b  ", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"a", 2}, {"b", 8}]
+    end
+
+    it "reports offsets as char indices, not byte indices" do
+      # "한국" is six bytes but two chars, so a byte offset would report 8.
+      TLS.split_spans("한국, handler", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"한국", 0}, {"handler", 4}]
+    end
+
+    it "keeps offsets in char units with an emoji before the window" do
+      TLS.split_spans("🚀🚀 x, y", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"🚀🚀 x", 0}, {"y", 6}]
+    end
+
+    it "returns absolute offsets when a window is given" do
+      content = "app.get('/users', handler)"
+      TLS.split_spans(content, ',', TLSRules::JS_POSITIONAL_ARGS, 8, 25)
+        .should eq [{"'/users'", 8}, {"handler", 18}]
+    end
+
+    it "returns absolute offsets when non-ASCII precedes the window" do
+      content = "// 한국어 주석\napp.get('/유저', handler)"
+      open_paren = content.index!('(')
+      close_paren = content.rindex!(')')
+      TLS.split_spans(content, ',', TLSRules::JS_POSITIONAL_ARGS, open_paren + 1, close_paren)
+        .should eq [{"'/유저'", open_paren + 1}, {"handler", open_paren + 8}]
+    end
+
+    it "treats a negative end_pos as the end of the text" do
+      TLS.split_spans("a, b", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"a", 0}, {"b", 3}]
+    end
+
+    it "clamps a window that runs past the end of the text" do
+      TLS.split_spans("a,b", ',', tls_rules(empties: TLSEmpties::Keep), -5, 99)
+        .should eq [{"a", 0}, {"b", 2}]
+    end
+
+    it "emits one empty part for an empty window" do
+      TLS.split_spans("a,b", ',', tls_rules(empties: TLSEmpties::Keep), 1, 1)
+        .should eq [{"", 1}]
+    end
+
+    # An empty part still needs a position, and the position the replaced
+    # bodies reported is where their forward whitespace scan stopped: the
+    # delimiter that ended the part.
+    it "gives an interior empty part the offset of its delimiter" do
+      TLS.split_spans("a, ,b", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"a", 0}, {"", 3}, {"b", 4}]
+    end
+
+    it "gives consecutive empty parts each the offset of their own delimiter" do
+      TLS.split_spans(",,a", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"", 0}, {"", 1}, {"a", 2}]
+    end
+
+    # The scan for a whitespace-only part's offset is not bounded by the
+    # window, so it can land past `end_pos`. Callers index `text` with the
+    # offset, so it has to stay a real position in `text`.
+    it "lets a whitespace-only final part report an offset past the window" do
+      TLS.split_spans("a,  b", ',', tls_rules(empties: TLSEmpties::Keep), 0, 3)
+        .should eq [{"a", 0}, {"", 4}]
+    end
+
+    it "reports text.size when nothing but whitespace follows" do
+      TLS.split_spans("a,  ", ',', tls_rules(empties: TLSEmpties::Keep))
+        .should eq [{"a", 0}, {"", 4}]
+    end
+
+    it "honours Empties::DropAll while keeping the surviving offsets" do
+      TLS.split_spans("a, , b", ',', tls_rules(empties: TLSEmpties::DropAll))
+        .should eq [{"a", 0}, {"b", 5}]
+    end
+
+    it "honours Empties::DropTrailing while keeping the surviving offsets" do
+      TLS.split_spans("a, b,", ',', tls_rules(empties: TLSEmpties::DropTrailing))
+        .should eq [{"a", 0}, {"b", 3}]
+    end
+
+    it "does not split inside a template literal, and offsets the next part after it" do
+      input = "`/users/${a, b}`, handler"
+      TLS.split_spans(input, ',', TLSRules::JS_POSITIONAL_ARGS)
+        .should eq [{"`/users/${a, b}`", 0}, {"handler", 18}]
+    end
+  end
+
+  describe "Rules::JS_POSITIONAL_ARGS" do
+    # Unlike Rules::JS this shares one depth counter, so a `)` opened before
+    # the window cancels the `[`.
+    it "shares one depth counter across bracket kinds" do
+      TLS.split_spans("[a)b, c", ',', TLSRules::JS_POSITIONAL_ARGS)
+        .should eq [{"[a)b", 0}, {"c", 6}]
+    end
+
+    # Unlike Rules::JS an empty argument holds its slot, because every caller
+    # reads `args[2]` as the handler.
+    it "keeps empty arguments so later arguments hold their index" do
+      TLS.split_spans("'/x', , handler", ',', TLSRules::JS_POSITIONAL_ARGS)
+        .should eq [{"'/x'", 0}, {"", 6}, {"handler", 8}]
+    end
+  end
+
   describe "Rules::CPP" do
     it "keeps a whole nested handler call as one argument" do
       input = "app->Get(\"/users/{id}\", [](const Req &r, Res &s) { s.set(\"a,b\"); })"

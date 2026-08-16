@@ -241,9 +241,7 @@ module Noir
       # escape flag. That misreads `"a\\"` as an unterminated string (the
       # escaped backslash is taken as escaping the closing quote), so no
       # `Escape` value reproduces it and converting would change where it
-      # splits. The three `split_top_level_args` copies in
-      # javascript/{express,feathers,hono}.cr are likewise left alone: they
-      # return `{part, offset}` tuples, and this module returns only strings.
+      # splits.
       JS = new(
         nest: Nest::Paren | Nest::Bracket | Nest::Brace,
         quotes: "\"'`",
@@ -251,6 +249,28 @@ module Noir
         strip: true,
         empties: Empties::DropAll,
         per_kind: true,
+        clamp: true,
+      )
+
+      # JavaScript/TypeScript call-argument lists split with `split_spans`,
+      # where the caller needs each argument's absolute position as well as
+      # its text.
+      # Serves the three byte-identical `split_top_level_args` copies in
+      # analyzer/analyzers/javascript/{express,feathers,hono}.cr and
+      # miniparsers/js_http_route_extractor.cr `split_top_level`.
+      #
+      # Differs from `JS` on two axes, both load-bearing:
+      #   * one SHARED depth counter, not per-kind
+      #   * `Empties::Keep`, because every caller indexes the result
+      #     positionally (`args[0]` is the route, `args[2]` the handler), so
+      #     an empty argument must hold its slot or the handler shifts left.
+      JS_POSITIONAL_ARGS = new(
+        nest: Nest::Paren | Nest::Bracket | Nest::Brace,
+        quotes: "\"'`",
+        escape: Escape::InQuotes,
+        strip: true,
+        empties: Empties::Keep,
+        per_kind: false,
         clamp: true,
       )
 
@@ -300,12 +320,86 @@ module Noir
       split_impl(text, chars, rules)
     end
 
+    # Splits like `split`, but also reports where each part starts.
+    #
+    # Returns `{part, offset}` tuples where `offset` is an ABSOLUTE CHAR index
+    # into `text` (not a byte index, and not relative to `start_pos`) pointing
+    # at the first non-whitespace character of that part. Callers use it to map
+    # an argument back onto the file it was sliced out of, so they need a
+    # position in the same coordinate system they passed the window in.
+    #
+    # `start_pos` and `end_pos` bound the scan, again as char indices;
+    # `end_pos < 0` means "to the end of `text`". Both are clamped into
+    # `0..text.size`, and an inverted window is treated as empty.
+    #
+    # The window is applied by testing the index while iterating, NOT by
+    # slicing `text` first: char-range slicing is O(n) on any string holding a
+    # multi-byte codepoint, which is the very cost this module exists to avoid.
+    #
+    # Offset of an empty or whitespace-only part: the first non-whitespace
+    # character at or after where the part began, looked for in the WHOLE of
+    # `text` and not just inside the part — so a part that is only whitespace
+    # reports the index of the delimiter that ended it, and a whitespace-only
+    # final part can report an index past `end_pos`. That is what the four
+    # hand-rolled copies this replaces did (their `skip_whitespace` helper was
+    # bounded by `content.size`, never by the part or the window), and callers
+    # feed the offset straight back into `text`, so the position must stay a
+    # valid index into `text` rather than being clamped to the part.
+    #
+    # Char delimiter only, deliberately: every caller that needs offsets splits
+    # on a single character, and the multi-character path buffers a pending
+    # prefix whose release re-orders characters (see the `String` overload's
+    # precondition) — which would make an offset ambiguous.
+    def split_spans(
+      text : String,
+      delimiter : Char,
+      rules : Rules,
+      start_pos : Int32 = 0,
+      end_pos : Int32 = -1,
+    ) : Array(Tuple(String, Int32))
+      size = text.size
+      from = start_pos.clamp(0, size)
+      to = end_pos < 0 ? size : end_pos.clamp(from, size)
+
+      cur = Cursor.new(rules, spans: true)
+      scan(text, [delimiter], rules, cur, from, to)
+      cur.resolve_pending_spans(first_non_whitespace_at(text, to)) if cur.pending_spans?
+      apply_empties_spans(cur.parts, cur.offsets, rules)
+    end
+
     private def split_impl(text : String, delim : Array(Char), rules : Rules) : Array(String)
       cur = Cursor.new(rules)
+      scan(text, delim, rules, cur, 0, Int32::MAX)
+      apply_empties(cur.parts, rules)
+    end
+
+    # The one state machine, shared by `split` and `split_spans`. `start_pos`
+    # and `end_pos` are already clamped; `split` passes the whole string, so
+    # its two window tests are constant-false and constant-true.
+    private def scan(
+      text : String,
+      delim : Array(Char),
+      rules : Rules,
+      cur : Cursor,
+      start_pos : Int32,
+      end_pos : Int32,
+    ) : Nil
       multi = delim.size > 1
       first = delim[0]
+      spans = cur.spans?
 
-      text.each_char do |ch|
+      text.each_char_with_index do |ch, index|
+        next if index < start_pos
+        break if index >= end_pos
+
+        # Every character inside the window is offered to the span tracker
+        # before anything else looks at it, delimiters included, because the
+        # replaced bodies computed offsets purely positionally: quoting and
+        # depth do not affect which character is "the first non-whitespace
+        # one", and a delimiter is the character that resolves the offset of
+        # a whitespace-only part.
+        cur.note_span(index, ch) if spans
+
         # Inside a quoted run nothing else can happen: no depth change, no
         # split, no new quote. This branch is first because it is also the
         # cheapest, and quoted route strings are where the delimiter character
@@ -364,7 +458,19 @@ module Noir
 
       cur.flush_pending
       cur.emit
-      apply_empties(cur.parts, rules)
+    end
+
+    # First non-whitespace char index at or after `from`, or `text.size` if
+    # there is none. Walks forward instead of indexing for the usual reason:
+    # `text[i]` is O(i) once the string is not single-byte. Only called when a
+    # part ended without ever seeing a non-whitespace character.
+    private def first_non_whitespace_at(text : String, from : Int32) : Int32
+      index = 0
+      text.each_char do |ch|
+        return index if index >= from && !ch.whitespace?
+        index += 1
+      end
+      index
     end
 
     private def prefix_of?(buffer : Array(Char), delim : Array(Char)) : Bool
@@ -387,6 +493,33 @@ module Noir
       end
     end
 
+    # `apply_empties` over parallel part/offset arrays. Written out rather than
+    # zipping first and filtering after so `Empties::Keep` — what every current
+    # span caller uses — pays for one allocation instead of two.
+    private def apply_empties_spans(
+      parts : Array(String),
+      offsets : Array(Int32),
+      rules : Rules,
+    ) : Array(Tuple(String, Int32))
+      last = parts.size
+      case rules.empties
+      in Empties::Keep
+        # nothing to drop
+      in Empties::DropTrailing
+        last -= 1 if last > 0 && parts[last - 1].empty?
+      in Empties::DropAll
+        spans = Array(Tuple(String, Int32)).new(parts.size)
+        parts.each_with_index do |part, i|
+          spans << {part, offsets[i]} unless part.empty?
+        end
+        return spans
+      end
+
+      spans = Array(Tuple(String, Int32)).new(last)
+      last.times { |i| spans << {parts[i], offsets[i]} }
+      spans
+    end
+
     # Mutable scan state. A class rather than a bundle of locals so the
     # delimiter-mismatch path can hand a buffered char back to the same
     # ordinary-consumption code the main loop uses, instead of duplicating the
@@ -400,9 +533,46 @@ module Noir
       property quote : Char? = nil
       property? escaped = false
 
-      @depths = StaticArray(Int32, 4).new(0)
+      # Parallel to `parts`, and only filled when `spans?`. `UNRESOLVED` marks
+      # a part that had no non-whitespace character of its own; it is patched
+      # by the next non-whitespace character seen anywhere after it.
+      UNRESOLVED = -1
 
-      def initialize(@rules : Rules)
+      getter offsets = [] of Int32
+      getter? spans : Bool
+
+      @depths = StaticArray(Int32, 4).new(0)
+      @offset = UNRESOLVED
+      @pending_spans = 0
+
+      def initialize(@rules : Rules, @spans : Bool = false)
+      end
+
+      def pending_spans? : Bool
+        @pending_spans > 0
+      end
+
+      # Offered every character in the window, in order, before the split
+      # machinery looks at it.
+      def note_span(index : Int32, ch : Char) : Nil
+        return if ch.whitespace?
+
+        if @pending_spans > 0
+          # Parts emitted without an offset all resolve to the same character
+          # — the first non-whitespace one after them — because that is where
+          # each of their forward scans would have stopped.
+          stop = @offsets.size
+          (stop - @pending_spans).upto(stop - 1) { |i| @offsets[i] = index }
+          @pending_spans = 0
+        end
+
+        @offset = index if @offset == UNRESOLVED
+      end
+
+      def resolve_pending_spans(index : Int32) : Nil
+        stop = @offsets.size
+        (stop - @pending_spans).upto(stop - 1) { |i| @offsets[i] = index }
+        @pending_spans = 0
       end
 
       # In shared-depth mode only slot 0 is ever touched, so the same all-zero
@@ -416,6 +586,11 @@ module Noir
         part = part.strip if @rules.strip?
         @parts << part
         @current = String::Builder.new
+
+        return unless @spans
+        @offsets << @offset
+        @pending_spans += 1 if @offset == UNRESOLVED
+        @offset = UNRESOLVED
       end
 
       def flush_pending : Nil

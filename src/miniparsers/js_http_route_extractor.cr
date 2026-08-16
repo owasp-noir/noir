@@ -1,5 +1,6 @@
 require "../models/endpoint"
 require "../miniparsers/js_route_extractor"
+require "../utils/top_level_split"
 
 module Noir
   # Extracts routes from direct Node.js core http/https createServer handlers.
@@ -763,63 +764,12 @@ module Noir
       split_top_level(content, start_pos, end_pos, ',')
     end
 
+    # `delimiter` must not be a quote character or a bracket: the body this
+    # replaced tested it in a `case` arm AFTER the quote and bracket arms, so
+    # those shadowed it, while `split_spans` tests the delimiter first. Both
+    # call sites pass `,`, where the two agree.
     private def self.split_top_level(content : String, start_pos : Int32, end_pos : Int32, delimiter : Char) : Array(Tuple(String, Int32))
-      args = [] of Tuple(String, Int32)
-      # Chars-array walk (see arrow_params) — this scans a whole argument
-      # span at absolute offsets into the file, so per-access String
-      # re-seeking made it O(span x file) on non-ASCII sources.
-      chars = content.chars
-      arg_start = start_pos
-      depth = 0
-      quote : Char? = nil
-      escaped = false
-      i = start_pos
-
-      while i < end_pos
-        char = chars[i]
-        if quote
-          if escaped
-            escaped = false
-          elsif char == '\\'
-            escaped = true
-          elsif char == quote
-            quote = nil
-          end
-          i += 1
-          next
-        end
-
-        case char
-        when '\'', '"', '`'
-          quote = char
-        when '(', '[', '{'
-          depth += 1
-        when ')', ']', '}'
-          depth -= 1 if depth > 0
-        when delimiter
-          if depth == 0
-            args << normalized_arg(content, chars, arg_start, i)
-            arg_start = i + 1
-          end
-        end
-        i += 1
-      end
-
-      args << normalized_arg(content, chars, arg_start, end_pos)
-      args
-    end
-
-    private def self.normalized_arg(content : String, chars : Array(Char), start_pos : Int32, end_pos : Int32) : Tuple(String, Int32)
-      start_idx = start_pos
-      while start_idx < chars.size && chars[start_idx].whitespace?
-        start_idx += 1
-      end
-      stop_idx = end_pos
-      while stop_idx > start_idx && chars[stop_idx - 1].whitespace?
-        stop_idx -= 1
-      end
-
-      {content[start_idx...stop_idx], start_idx}
+      Noir::TopLevelSplit.split_spans(content, delimiter, Noir::TopLevelSplit::Rules::JS_POSITIONAL_ARGS, start_pos, end_pos)
     end
 
     private def self.skip_whitespace(content : String, pos : Int32) : Int32
