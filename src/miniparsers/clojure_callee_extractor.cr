@@ -1,9 +1,14 @@
 require "../models/endpoint"
 require "./callee_extractor_base"
+require "./clojure_scanner"
 
 module Noir::ClojureCalleeExtractor
   extend self
   include Noir::CalleeExtractorBase
+  # `skip_comment`, `skip_string`, `skip_char_literal`, `find_matching_delimiter`
+  # and `line_number_for` come from the shared reader, which the Clojure
+  # analyzers use too — there is one implementation, not a copy per caller.
+  include Noir::ClojureScanner
 
   RESERVED = Set{
     "def", "defn", "defmacro", "fn", "let", "letfn", "if", "if-not",
@@ -50,6 +55,11 @@ module Noir::ClojureCalleeExtractor
         i = skip_comment(source, i, end_index)
       when '"'
         i = skip_string(source, i, end_index) + 1
+      when '\\'
+        # Character literal — consume it whole, before anything reads the
+        # character it carries: `\"` must not open a string and `\(` must not
+        # open a form.
+        i = skip_char_literal(source, i, end_index) + 1
       when '\'', '`'
         i = skip_quoted_form(source, i + 1, end_index)
       when '#'
@@ -159,6 +169,9 @@ module Noir::ClojureCalleeExtractor
         i = skip_comment(source, i, end_index)
       when '"'
         i = skip_string(source, i, end_index) + 1
+      when '\\'
+        # Character literal — see `scan_function_definitions`.
+        i = skip_char_literal(source, i, end_index) + 1
       when '`'
         # Syntax-quote of a bare symbol (`` `ns/handler ``) is the idiomatic
         # Pedestal tabular-route handler reference — capture it. Syntax-quoted
@@ -253,7 +266,7 @@ module Noir::ClojureCalleeExtractor
     return i if i >= limit
 
     case source.byte_at(i).unsafe_chr
-    when '(', '[', '{', '"', '~'
+    when '(', '[', '{', '"', '\\', '~'
       skip_quoted_form(source, index + 1, limit)
     else
       symbol, after = read_symbol(source, i, limit)
@@ -279,6 +292,8 @@ module Noir::ClojureCalleeExtractor
       find_matching_delimiter(source, i, '{', '}', limit) + 1
     when '"'
       skip_string(source, i, limit) + 1
+    when '\\'
+      skip_char_literal(source, i, limit) + 1
     else
       _, after_symbol = read_symbol(source, i, limit)
       after_symbol
@@ -312,60 +327,6 @@ module Noir::ClojureCalleeExtractor
       end
     end
     i
-  end
-
-  private def skip_comment(source : String, index : Int32, limit : Int32) : Int32
-    i = index
-    while i < limit && source.byte_at(i).unsafe_chr != '\n'
-      i += 1
-    end
-    i
-  end
-
-  private def skip_string(source : String, index : Int32, limit : Int32) : Int32
-    i = index + 1
-    escaping = false
-
-    while i < limit
-      char = source.byte_at(i).unsafe_chr
-      if escaping
-        escaping = false
-      elsif char == '\\'
-        escaping = true
-      elsif char == '"'
-        return i
-      end
-      i += 1
-    end
-
-    limit - 1
-  end
-
-  private def find_matching_delimiter(source : String, index : Int32, open_char : Char, close_char : Char, limit : Int32) : Int32
-    depth = 0
-    i = index
-
-    while i < limit
-      char = source.byte_at(i).unsafe_chr
-      case char
-      when ';'
-        i = skip_comment(source, i, limit)
-      when '"'
-        i = skip_string(source, i, limit)
-      when open_char
-        depth += 1
-      when close_char
-        depth -= 1
-        return i if depth == 0
-      end
-      i += 1
-    end
-
-    index
-  end
-
-  private def line_number_for(source : String, index : Int32, start_line : Int32) : Int32
-    start_line + source.to_slice[0, index].count('\n'.ord.to_u8)
   end
 
   private def whitespace?(char : Char) : Bool
