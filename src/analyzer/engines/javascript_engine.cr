@@ -6,7 +6,19 @@ module Analyzer::Javascript
     # Default extension set for JavaScript/TypeScript source files.
     # Analyzers with a different filter (e.g. Nitro adds `.mts`, NestJS JS
     # only uses `.js`/`.jsx`) pass their own list to `parallel_file_scan`.
-    DEFAULT_EXTENSIONS      = [".js", ".ts", ".jsx", ".tsx"]
+    #
+    # This list mirrors what the JS detectors declare in `extensions:`
+    # (`.js .mjs .cjs .jsx .ts .tsx`). It has to: detection and analysis
+    # read the same tree, so any extension a detector accepts but this
+    # list omits produces a project that detects fine and then yields
+    # zero endpoints, with nothing logged and nothing for `--strict` to
+    # report. `.mjs`/`.cjs` were exactly that hole — an ESM Express app
+    # (`app.mjs`) detected as `js_express` and returned no routes.
+    # Analyzers that pass their own list (koa, hapi, sails, adonisjs,
+    # elysia, feathers, ...) already spelled `.mjs`/`.cjs` out by hand;
+    # the six that relied on this default (express, fastify, hono,
+    # restify, apollo, graphql_yoga, plus socketio) silently did not.
+    DEFAULT_EXTENSIONS      = [".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx"]
     JS_PROJECT_ROOT_MARKERS = [
       "package.json",
       "next.config.js", "next.config.ts", "next.config.mjs", "next.config.cjs",
