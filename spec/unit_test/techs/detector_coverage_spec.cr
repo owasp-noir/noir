@@ -77,7 +77,6 @@ UNTESTED_DETECTORS = [
   "java/spark",
   "javascript/adonisjs",
   "javascript/cli",
-  "javascript/fresh",
   "javascript/hapi",
   "javascript/nuxtjs",
   "javascript/remix",
