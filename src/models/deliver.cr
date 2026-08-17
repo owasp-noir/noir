@@ -230,8 +230,14 @@ class Deliver
     return endpoint.url unless PROBE_PATH_FILL_METHODS.includes?(request_method.upcase)
 
     url = endpoint.url
-    endpoint.params.each do |param|
-      next unless param.param_type == "path"
+    # Longest name first. The `:name` form has no closing delimiter, so a
+    # param whose name merely *starts with* another's used to be eaten by the
+    # shorter substitution in declaration order: Express `/u/:id/:idx` with
+    # params [id, idx] was probed as `/u/1/1x`, a path the app does not route.
+    path_params = endpoint.params.select { |param| param.param_type == "path" }
+    path_params.sort_by! { |param| -param.name.size }
+
+    path_params.each do |param|
       # A non-empty value means --set-pvalue-path already applied and the
       # optimizer substituted it; nothing left to fill.
       next unless param.value.empty?
@@ -244,9 +250,11 @@ class Deliver
       url = url.gsub("<#{param.name}>", filler)
       # `:name` only counts at a segment boundary. Anchoring to a preceding
       # `/` keeps the scheme/port colon in `http://host:8080` and embedded
-      # example text like `/profiles/celeb_:USERNAME` out of it. No trailing
-      # anchor, so Play-style `/:lang.json` fills correctly.
-      url = url.gsub(/(\A|\/):#{escaped}/) { "#{$1}#{filler}" }
+      # example text like `/profiles/celeb_:USERNAME` out of it. The trailing
+      # lookahead ends the name at the first character that can't be part of
+      # one, so `:id` no longer matches the head of `:idx` while Play-style
+      # `/:lang.json` and `/:id-suffix` still fill.
+      url = url.gsub(/(\A|\/):#{escaped}(?![A-Za-z0-9_])/) { "#{$1}#{filler}" }
     end
 
     url
