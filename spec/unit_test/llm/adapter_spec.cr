@@ -132,19 +132,71 @@ describe LLM::AdapterFactory do
       adapter.should be_a(LLM::ACPAdapter)
     end
 
-    it "returns an OllamaAdapter when the provider mentions ollama" do
+    it "returns an OllamaAdapter for the ollama alias" do
       adapter = LLM::AdapterFactory.for("ollama", "llama3")
       adapter.should be_a(LLM::OllamaAdapter)
     end
 
-    it "returns an OllamaAdapter for an ollama:// URL form" do
-      adapter = LLM::AdapterFactory.for("http://example.com/ollama", "llama3")
+    it "returns an OllamaAdapter for a URL whose host is an ollama server" do
+      adapter = LLM::AdapterFactory.for("http://ollama.internal:11434", "llama3")
       adapter.should be_a(LLM::OllamaAdapter)
+    end
+
+    it "does not route an OpenAI-compatible gateway to Ollama because of its path" do
+      # The path belongs to whoever runs the gateway. Matching "ollama"
+      # anywhere in the provider string handed this URL Ollama's native API
+      # and its body shape, and posted them to
+      # `http://127.0.0.1:18085/ollama/v1/api/generate`; the 404 came back
+      # as an empty AI result rather than an error.
+      adapter = LLM::AdapterFactory.for("http://127.0.0.1:18085/ollama/v1", "gpt-4o")
+      adapter.should be_a(LLM::GeneralAdapter)
     end
 
     it "returns a GeneralAdapter for any non-ACP / non-ollama provider" do
       adapter = LLM::AdapterFactory.for("openai", "gpt-4o", "sk-fake")
       adapter.should be_a(LLM::GeneralAdapter)
+    end
+  end
+
+  describe ".ollama_native?" do
+    it "matches the exact alias" do
+      LLM::AdapterFactory.ollama_native?("ollama").should be_true
+      LLM::AdapterFactory.ollama_native?("  OLLAMA ").should be_true
+    end
+
+    it "matches on the host, not on the path" do
+      LLM::AdapterFactory.ollama_native?("http://ollama:11434").should be_true
+      LLM::AdapterFactory.ollama_native?("http://my-ollama.lan:11434").should be_true
+      LLM::AdapterFactory.ollama_native?("http://127.0.0.1:18085/ollama/v1").should be_false
+      LLM::AdapterFactory.ollama_native?("https://gateway.example/proxy/ollama").should be_false
+    end
+
+    it "leaves an explicit OpenAI-compatible path on an ollama host alone" do
+      LLM::AdapterFactory.ollama_native?("http://ollama:11434/v1/chat/completions").should be_false
+    end
+
+    it "does not treat a non-ollama provider as native" do
+      LLM::AdapterFactory.ollama_native?("openai").should be_false
+      LLM::AdapterFactory.ollama_native?("http://localhost:11434").should be_false
+      LLM::AdapterFactory.ollama_native?("not a url at all").should be_false
+    end
+  end
+
+  describe ".ollama_base_url" do
+    it "defaults the bare alias to the local server" do
+      LLM::AdapterFactory.ollama_base_url("ollama").should eq("http://localhost:11434")
+    end
+
+    it "drops the OpenAI-compatible /v1 mount the CLI help advertises" do
+      # `LLM::Ollama` appends `/api/generate`, so keeping `/v1` produced
+      # `http://ollama:11434/v1/api/generate` — a 404 on every request.
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434/v1").should eq("http://ollama:11434")
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434/v1/").should eq("http://ollama:11434")
+    end
+
+    it "keeps a plain server URL as-is" do
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434").should eq("http://ollama:11434")
+      LLM::AdapterFactory.ollama_base_url("http://ollama:11434/").should eq("http://ollama:11434")
     end
   end
 

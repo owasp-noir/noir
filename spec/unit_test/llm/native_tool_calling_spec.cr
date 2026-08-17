@@ -33,6 +33,21 @@ describe LLM::NativeToolCalling do
     it "keeps unknown providers as normalized lowercase strings" do
       LLM::NativeToolCalling.canonical_provider(" CustomProvider ").should eq("customprovider")
     end
+
+    it "matches on the host rather than anywhere in the URL" do
+      # The path is chosen by whoever runs the gateway, so a substring test
+      # over the whole URL canonicalized these to a provider the operator
+      # never named — and, in `AdapterFactory`, picked the wrong API for it.
+      LLM::NativeToolCalling.canonical_provider("http://127.0.0.1:18085/ollama/v1")
+        .should eq("http://127.0.0.1:18085/ollama/v1")
+      LLM::NativeToolCalling.canonical_provider("https://gw.internal/openai/v1/chat/completions")
+        .should eq("https://gw.internal/openai/v1/chat/completions")
+    end
+
+    it "still matches a host-only form that carries no scheme" do
+      LLM::NativeToolCalling.canonical_provider("api.openai.com").should eq("openai")
+      LLM::NativeToolCalling.canonical_provider("api.x.ai").should eq("xai")
+    end
   end
 
   describe ".normalize_allowlist" do
