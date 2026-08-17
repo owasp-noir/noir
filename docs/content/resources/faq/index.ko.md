@@ -20,7 +20,7 @@ Homebrew, Snapcraft, Docker 등을 통해 설치할 수 있습니다. [설치](@
 
 ### Noir에 어떻게 기여할 수 있나요?
 
-[기여 가이드](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md)를 읽고 시작하세요.
+[기여 가이드](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md)를 읽고 시작하세요.
 
 ### Noir는 무료인가요?
 

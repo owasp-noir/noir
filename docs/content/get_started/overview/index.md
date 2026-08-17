@@ -88,7 +88,7 @@ flowchart LR
 
 ## Contributing
 
-Noir is open-source and welcomes contributions. See the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for details.
+Noir is open-source and welcomes contributions. See the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md) for details.
 
 ### Contributors
 

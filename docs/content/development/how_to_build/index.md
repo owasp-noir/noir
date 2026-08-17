@@ -23,7 +23,7 @@ All contributions are welcome: bug fixes, features, and documentation improvemen
     ```
 6.  **Open a Pull Request** with a description
 
-See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) for detailed guidelines.
+See [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md) for detailed guidelines.
 
 ## Development Setup
 

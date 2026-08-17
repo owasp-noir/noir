@@ -36,10 +36,10 @@
       - any-glob-to-any-file:
           - docs/**
           - README.md
-          - CODE_OF_CONDUCT.md
-          - CONTRIBUTING.md
-          - LICENSE.md
-          - SECURITY.md
+          - LICENSE
+          - .github/CODE_OF_CONDUCT.md
+          - .github/CONTRIBUTING.md
+          - .github/SECURITY.md
 📝 blog:
   - changed-files:
       - any-glob-to-any-file: docs/content/blog/**

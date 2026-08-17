@@ -20,7 +20,7 @@ See the full list on the [Supported Languages and Frameworks](@/usage/supported/
 
 ### How can I contribute to Noir?
 
-Read the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md) to get started.
+Read the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md) to get started.
 
 ### Is Noir free?
 
