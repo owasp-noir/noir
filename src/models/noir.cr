@@ -30,7 +30,6 @@ class NoirRunner
   @no_spinner : Bool
   @concurrency : Int32
   @config_file : String
-  @noir_home : String
   @passive_scans : Array(PassiveScan)
   @passive_results : Array(PassiveScanResult)
   # Tech analyzers that raised during the last `analyze`. Empty is the
@@ -43,7 +42,13 @@ class NoirRunner
   def initialize(options)
     @options = options
     @config_file = @options["config_file"].to_s
-    @noir_home = Noir::Home.path
+    # `@noir_home = Noir::Home.path` used to run here. Nothing ever read the
+    # field, but `Noir::Home.path` dies when neither NOIR_HOME nor HOME is
+    # set — so every scan in a HOME-less environment (distroless image,
+    # `--user` container, hardened CI runner) died on this line even with an
+    # explicit `--config-file`. The callers that genuinely need the home
+    # directory (LLM cache, `-f html` template, passive rules) resolve it
+    # themselves, at the point of use.
     @passive_scans = [] of PassiveScan
     @passive_results = [] of PassiveScanResult
 

@@ -34,6 +34,36 @@ class ConfigInitializer
     cache_clear
   ]
 
+  # Keys whose value must end up an Int, because every consumer reads
+  # them through `YAML::Any#as_i`. A quoted number (`ai_max_token:
+  # "4000"`) parses as a String and blew up at the cast — and the
+  # generated template itself models the quoted spelling with
+  # `concurrency: "…"`, so that is the shape users copy. The equivalent
+  # CLI flags run through `positive_int_or_die!`; these had neither
+  # coercion nor validation. Bounds are checked afterwards in
+  # `Noir::CliValidation`, the shared CLI+config gate.
+  INTEGER_CONFIG_KEYS = %w[
+    ai_max_token
+    ai_agent_max_steps
+  ]
+
+  # Keys stored as one comma-separated String, because the CLI flags
+  # that feed them accumulate into that shape. A YAML sequence is the
+  # natural spelling for a list of globs or tech names — and `base:` /
+  # `probe_header:` in the same file *are* sequences — so accept it and
+  # join. Untreated, `exclude_path: ["*.py"]` stringified to Crystal's
+  # array inspect (`["*.py"]`), matched no file and excluded nothing
+  # silently; the tech keys at least failed loudly, but with that same
+  # inspect string quoted back at the user.
+  CSV_CONFIG_KEYS = %w[
+    exclude_path
+    exclude_codes
+    techs
+    only_techs
+    exclude_techs
+    use_taggers
+  ]
+
   # Keys whose value should always end up as an Array(YAML::Any) so
   # callers can iterate without per-call type checks.
   ARRAY_CONFIG_KEYS = %w[
@@ -78,21 +108,52 @@ class ConfigInitializer
   # post-CLI merge inside NoirRunner that re-overwrote everything
   # the CLI had just set.
   def initialize(override_path : String? = nil)
-    @config_dir = Noir::Home.path
-
     if override_path && !override_path.empty?
-      @config_file = override_path
+      # Resolve the override *without* touching Noir::Home. `Noir::Home.path`
+      # calls `Noir::CLI.die` when neither NOIR_HOME nor HOME is set, and it
+      # used to run on the first line of this method — so `--config-file
+      # ./f.yaml`, the documented escape hatch for exactly that environment,
+      # died before the override was ever looked at. Distroless images,
+      # `--user`-run containers and hardened CI runners routinely have no
+      # HOME, which left no way to run a scan at all. The default home is
+      # only required when the default config is what we are about to read.
+      @config_file = expand_config_path(override_path)
+      # Only used by `setup`, which no-ops for an override. Kept in sync
+      # with the file so the field never points somewhere unrelated.
+      @config_dir = File.dirname(@config_file)
       @is_override = true
     else
-      @config_file = File.join(@config_dir, "config.yaml")
+      @config_dir = File.expand_path(Noir::Home.path)
+      @config_file = File.expand_path(File.join(@config_dir, "config.yaml"))
       @is_override = false
     end
+  end
 
-    @config_dir = File.expand_path(@config_dir)
-    @config_file = File.expand_path(@config_file)
+  # Expand `~` in a user-supplied `--config-file` path, matching
+  # `Noir::Home.path`'s deliberate `home: true`: a value that arrives from a
+  # Dockerfile `ENV`, a systemd `Environment=` or a .env loader never gets
+  # the shell's tilde expansion, so a literal `~/noir.yaml` would otherwise
+  # resolve to a bogus `./~/noir.yaml` under the cwd. Guarded on the leading
+  # `~` so the HOME-less case — the whole reason this branch skips
+  # Noir::Home — can't be reintroduced through `Path.home`.
+  private def expand_config_path(path : String) : String
+    return File.expand_path(path, home: true) if path.starts_with?('~')
+    File.expand_path(path)
   end
 
   def setup
+    # `--config-file PATH` names a file the user already created, so nothing
+    # under the default home is needed for that run — not the directory
+    # scaffolding below, and not the template write. Bailing out first is
+    # what lets `--config-file` work in an environment with no HOME at all:
+    # `@config_dir` there is just the override's own directory, and creating
+    # it would be a side effect the user never asked for.
+    #
+    # A missing --config-file path is a user error, surfaced by
+    # CliValidation later; auto-creating a default template there would
+    # silently mask the typo with a generated file.
+    return if @is_override
+
     # Create the directory if it doesn't exist. 0700, not the default 0755:
     # everything Noir keeps here is private to the user — the 0600 config
     # below with its `ai_key`, and the AI response cache, whose entries are
@@ -102,17 +163,9 @@ class ConfigInitializer
     Dir.mkdir(@config_dir, 0o700) unless Dir.exists?(@config_dir)
     Dir.mkdir("#{@config_dir}/passive_rules", 0o700) unless Dir.exists?("#{@config_dir}/passive_rules")
 
-    # Create the config file if it doesn't exist — but only when this
-    # is the *default* config path. When the user passed
-    # `--config-file PATH`, a missing file is a user error and is
-    # surfaced by CliValidation later; auto-creating a default
-    # template at the user-supplied path would silently mask the
-    # typo with a generated file.
-    #
     # Written 0600: the file carries an `ai_key` field documented as
     # where real provider API keys go, so it should never be created
     # world-readable on a shared box (matches ssh/aws-cli/gh).
-    return if @is_override
     File.write(@config_file, generate_config_file, perm: 0o600) unless File.exists?(@config_file)
   rescue e
     # A silently-swallowed failure here (unwritable NOIR_HOME, disk full)
@@ -171,6 +224,39 @@ class ConfigInitializer
           STDERR.puts "WARNING: config key '#{key}' has invalid boolean value #{value.to_s.inspect}; expected true/false/yes/no. Treating as false.".colorize(:yellow)
           symbolized_hash[key] = YAML::Any.new(false)
         end
+      end
+
+      # Coerce quoted / stringified numbers into a real Int so the
+      # `YAML::Any#as_i` reads downstream can't raise. An unparsable value
+      # drops the key entirely so the merge below restores the default —
+      # the same "warn, then fall back" shape as the boolean pass above.
+      # (Range checks live in CliValidation, which both the CLI flag and
+      # this path go through.)
+      INTEGER_CONFIG_KEYS.each do |key|
+        value = symbolized_hash[key]?
+        next if value.nil?
+        next if value.raw.is_a?(Int) # already a real YAML int
+
+        parsed = value.to_s.strip.to_i64?
+        if parsed.nil?
+          STDERR.puts "WARNING: config key '#{key}' has invalid integer value #{value.to_s.inspect}; using the default.".colorize(:yellow)
+          symbolized_hash.delete(key)
+        else
+          symbolized_hash[key] = YAML::Any.new(parsed)
+        end
+      end
+
+      # Accept a YAML sequence for the comma-separated string keys and join
+      # it, so `exclude_path: ["*.py"]` means the same thing as
+      # `exclude_path: "*.py"` instead of stringifying to an inspect form
+      # that matches nothing.
+      CSV_CONFIG_KEYS.each do |key|
+        value = symbolized_hash[key]?
+        next if value.nil?
+        raw = value.raw
+        next unless raw.is_a?(Array)
+
+        symbolized_hash[key] = YAML::Any.new(raw.map(&.to_s.strip).reject(&.empty?).join(","))
       end
 
       # Normalize array-style keys: empty string → empty array,
