@@ -98,4 +98,127 @@ describe Noir::PerlCalleeExtractor do
     ])
     callees.has_key?("users#show").should be_false
   end
+
+  it "does not lex a heredoc body as code" do
+    source = <<-PERL
+      get '/hello' => sub ($c) {
+        my $html = <<'HTML';
+      <div class="x"> } don't stop
+      HTML
+        AlphaService::build();
+        $c->render(text => $html);
+      };
+      PERL
+
+    sub_start = source.index!("sub")
+    body = Noir::PerlCalleeExtractor.extract_sub_after(source, sub_start)
+    body.should_not be_nil
+
+    body.try do |body_text, start_line|
+      Noir::PerlCalleeExtractor.callees_for_body(body_text, "app.pl", start_line).map(&.[0]).should eq([
+        "AlphaService::build",
+        "c.render",
+      ])
+    end
+  end
+
+  it "masks interpolating and bare heredocs and keeps line numbers" do
+    source = <<-PERL
+      sub render ($c) {
+        my $a = <<"ONE";
+      value { $c->wrong('x')
+      ONE
+        my $b = <<TWO;
+      more } text
+      TWO
+        RealService::run();
+      }
+      PERL
+
+    bodies = Noir::PerlCalleeExtractor.named_sub_bodies(source, "App.pm")
+    bodies.keys.should eq(["render"])
+    render = bodies["render"]
+    Noir::PerlCalleeExtractor.callees_for_body(render[:body], render[:path], render[:start_line])
+      .map { |name, _, line| {name, line} }.should eq([{"RealService::run", 8}])
+  end
+
+  it "masks an indented <<~ heredoc whose terminator is indented" do
+    source = <<-PERL
+      sub greet ($c) {
+          my $text = <<~END;
+              hi } there don't stop
+              END
+          IndentService::run();
+      }
+      PERL
+
+    bodies = Noir::PerlCalleeExtractor.named_sub_bodies(source, "App.pm")
+    greet = bodies["greet"]
+    Noir::PerlCalleeExtractor.callees_for_body(greet[:body], greet[:path], greet[:start_line])
+      .map(&.[0]).should eq(["IndentService::run"])
+  end
+
+  it "does not treat a left shift as a heredoc" do
+    source = <<-PERL
+      sub bits ($c) {
+        my $mask = $x << 2;
+        my $wide = 1 << MAX;
+        ShiftService::run();
+      }
+      PERL
+
+    Noir::PerlCalleeExtractor.strip_non_code(source).should eq(source)
+
+    bodies = Noir::PerlCalleeExtractor.named_sub_bodies(source, "App.pm")
+    bits = bodies["bits"]
+    Noir::PerlCalleeExtractor.callees_for_body(bits[:body], bits[:path], bits[:start_line])
+      .map(&.[0]).should eq(["ShiftService::run"])
+  end
+
+  it "blanks an unterminated heredoc to EOF instead of looping" do
+    source = <<-PERL
+      sub broken ($c) {
+        my $html = <<'NEVER';
+      dangling } body '
+        LostService::run();
+      }
+      PERL
+
+    stripped = Noir::PerlCalleeExtractor.strip_non_code(source)
+    stripped.lines.size.should eq(source.lines.size)
+    stripped.includes?("LostService").should be_false
+    Noir::PerlCalleeExtractor.named_sub_bodies(source, "App.pm").should be_empty
+  end
+
+  it "treats $# as the last-index sigil, not a comment" do
+    source = <<-'PERL'
+      get '/last' => sub ($c) { my $n = $#{$c->stash('items')}; BetaService::run(); $c->render(text => $n); };
+      PERL
+
+    sub_start = source.index!("sub")
+    body = Noir::PerlCalleeExtractor.extract_sub_after(source, sub_start)
+    body.should_not be_nil
+
+    body.try do |body_text, start_line|
+      Noir::PerlCalleeExtractor.callees_for_body(body_text, "app.pl", start_line).map(&.[0]).should eq([
+        "c.stash",
+        "BetaService::run",
+        "c.render",
+      ])
+    end
+  end
+
+  it "still treats a real # as a comment" do
+    source = <<-PERL
+      sub notes ($c) {
+        my $last = $#items; # Ghost::call();
+        NoteService::run();
+      }
+      PERL
+
+    bodies = Noir::PerlCalleeExtractor.named_sub_bodies(source, "App.pm")
+    notes = bodies["notes"]
+    Noir::PerlCalleeExtractor.callees_for_body(notes[:body], notes[:path], notes[:start_line])
+      .map(&.[0]).should eq(["NoteService::run"])
+  end
 end

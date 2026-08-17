@@ -70,7 +70,7 @@ module Noir::PerlCalleeExtractor
 
   def named_sub_bodies(source : String, file_path : String) : Hash(String, SubBody)
     bodies = {} of String => SubBody
-    chars = source.chars
+    chars = code_chars(source)
     stripped = strip_non_code(chars)
 
     stripped.scan(/\bsub\s+([A-Za-z_][A-Za-z0-9_]*)\b/) do |match|
@@ -89,7 +89,7 @@ module Noir::PerlCalleeExtractor
                         start_index : Int32,
                         search_limit : Int32 = source.size,
                         body_limit : Int32 = source.size) : Tuple(String, Int32)?
-    chars = source.chars
+    chars = code_chars(source)
     sub_index = find_keyword(chars, "sub", start_index, search_limit)
     return unless sub_index
 
@@ -100,7 +100,7 @@ module Noir::PerlCalleeExtractor
   def extract_sub_at(source : String,
                      sub_index : Int32,
                      limit : Int32 = source.size) : Tuple(String, Int32)?
-    extract_sub_at(source.chars, sub_index, limit)
+    extract_sub_at(code_chars(source), sub_index, limit)
   end
 
   def extract_sub_at(chars : Array(Char),
@@ -119,7 +119,7 @@ module Noir::PerlCalleeExtractor
   # Public String overload kept for callers outside this module.
   def find_matching_delimiter(source : String, open_index : Int32, open_char : Char, close_char : Char,
                               limit : Int32 = source.size) : Int32?
-    find_matching_delimiter(source.chars, open_index, open_char, close_char, limit)
+    find_matching_delimiter(code_chars(source), open_index, open_char, close_char, limit)
   end
 
   def find_matching_delimiter(chars : Array(Char), open_index : Int32, open_char : Char, close_char : Char,
@@ -154,11 +154,191 @@ module Noir::PerlCalleeExtractor
   # Public String overload kept for callers outside this module.
   def strip_non_code(source : String) : String
     # Fast path: nothing to blank when the source has no comment, short
-    # string, or quote-like (`q`/`qq`/`qw`/`qr`/`qx`) markers. Preserves
-    # byte-identical output for the common "already plain code" case used
-    # by brace-depth walks.
-    return source unless strip_non_code_needed?(source)
-    strip_non_code(source.chars)
+    # string, quote-like (`q`/`qq`/`qw`/`qr`/`qx`), or heredoc markers.
+    # Preserves byte-identical output for the common "already plain code"
+    # case used by brace-depth walks.
+    heredocs = source.includes?("<<")
+    needed = strip_non_code_needed?(source)
+    return source unless heredocs || needed
+
+    chars = source.chars
+    masked = heredocs ? mask_heredocs(chars) : chars
+    # `mask_heredocs` returns the input untouched when the `<<` was a shift,
+    # which keeps the byte-identical fast path for plain code.
+    return source if !needed && masked.same?(chars)
+
+    strip_non_code(masked)
+  end
+
+  # Heredoc bodies are data, not code: their braces would close the enclosing
+  # `sub` early and a stray apostrophe would open a "string" that blanks the
+  # statements after it. Mask them (and the `<<TAG` token itself) with spaces
+  # before any other lexing runs, keeping newlines so every character offset
+  # and line number stays identical.
+  private def code_chars(source : String) : Array(Char)
+    chars = source.chars
+    source.includes?("<<") ? mask_heredocs(chars) : chars
+  end
+
+  private def mask_heredocs(chars : Array(Char)) : Array(Char)
+    # `<<` is far more often a left shift than a heredoc, so the copy is only
+    # allocated once a real marker is seen.
+    masked = nil.as(Array(Char)?)
+    pending = [] of Tuple(String, Bool)
+    index = 0
+    size = chars.size
+
+    while index < size
+      if pending.empty?
+        if comment_start?(chars, index)
+          index = skip_comment(chars, index, size)
+          next
+        elsif quote_like_start?(chars, index)
+          index = skip_quote_like(chars, index, size)
+          next
+        elsif chars[index] == '"' || chars[index] == '\''
+          index = skip_short_string(chars, index, size)
+          next
+        end
+      elsif chars[index] == '\n'
+        # Bodies start on the line after the marker; several heredocs may be
+        # opened on one line (`print <<A, <<B;`) and stack in order.
+        buffer = masked || chars.dup
+        masked = buffer
+        cursor = index + 1
+        pending.each do |tag, indented|
+          cursor = blank_heredoc_body(chars, buffer, cursor, tag, indented)
+        end
+        pending.clear
+        index = cursor
+        next
+      end
+
+      if marker = heredoc_marker_at(chars, index)
+        tag, indented, token_end = marker
+        buffer = masked || chars.dup
+        masked = buffer
+        blank_range(buffer, index, token_end)
+        pending << {tag, indented}
+        index = token_end
+        next
+      end
+
+      index += 1
+    end
+
+    masked || chars
+  end
+
+  # `<<TAG` / `<<'TAG'` / `<<"TAG"` / `<<~TAG`. Perl only reads a bare
+  # (unquoted) terminator when it follows `<<` with no space, which is what
+  # keeps `$x << 2` and `$x << $bits` reading as a left shift. For the bare
+  # form we additionally require that a matching terminator line exists, so a
+  # shift by a named constant (`1<<MAX`) is not swallowed as a heredoc.
+  private def heredoc_marker_at(chars : Array(Char), index : Int32) : Tuple(String, Bool, Int32)?
+    return unless chars[index] == '<' && chars[index + 1]? == '<'
+
+    cursor = index + 2
+    indented = false
+    if chars[cursor]? == '~'
+      indented = true
+      cursor += 1
+    end
+
+    quote = chars[cursor]?
+    if quote == '\'' || quote == '"'
+      cursor += 1
+      tag_start = cursor
+      while (char = chars[cursor]?) && identifier_part?(char)
+        cursor += 1
+      end
+      return if cursor == tag_start
+      return unless chars[cursor]? == quote
+      return {chars[tag_start...cursor].join, indented, cursor + 1}
+    end
+
+    tag_start = cursor
+    first = chars[cursor]?
+    return unless first && identifier_start?(first)
+    while (char = chars[cursor]?) && identifier_part?(char)
+      cursor += 1
+    end
+
+    tag = chars[tag_start...cursor].join
+    return unless indented || heredoc_terminator_ahead?(chars, cursor, tag, indented)
+    {tag, indented, cursor}
+  end
+
+  private def heredoc_terminator_ahead?(chars : Array(Char), index : Int32, tag : String, indented : Bool) : Bool
+    cursor = index
+    while cursor < chars.size && chars[cursor] != '\n'
+      cursor += 1
+    end
+    cursor += 1
+
+    while cursor < chars.size
+      line_end = cursor
+      while line_end < chars.size && chars[line_end] != '\n'
+        line_end += 1
+      end
+      return true if heredoc_terminator?(chars, cursor, line_end, tag, indented)
+      cursor = line_end + 1
+    end
+
+    false
+  end
+
+  # Blanks every line of the body plus the terminator line. An unterminated
+  # heredoc blanks to EOF and returns — it never loops.
+  private def blank_heredoc_body(chars : Array(Char), masked : Array(Char),
+                                 index : Int32, tag : String, indented : Bool) : Int32
+    cursor = index
+
+    while cursor < chars.size
+      line_end = cursor
+      while line_end < chars.size && chars[line_end] != '\n'
+        line_end += 1
+      end
+
+      terminator = heredoc_terminator?(chars, cursor, line_end, tag, indented)
+      blank_range(masked, cursor, line_end)
+      cursor = line_end < chars.size ? line_end + 1 : line_end
+      return cursor if terminator
+    end
+
+    cursor
+  end
+
+  private def heredoc_terminator?(chars : Array(Char), line_start : Int32, line_end : Int32,
+                                  tag : String, indented : Bool) : Bool
+    start_index = line_start
+    if indented
+      while start_index < line_end && chars[start_index].whitespace?
+        start_index += 1
+      end
+    end
+
+    finish = line_end
+    while finish > start_index && chars[finish - 1].whitespace?
+      finish -= 1
+    end
+
+    return false unless finish - start_index == tag.size
+
+    offset = start_index
+    tag.each_char do |char|
+      return false unless chars[offset] == char
+      offset += 1
+    end
+    true
+  end
+
+  private def blank_range(masked : Array(Char), start_index : Int32, finish_index : Int32)
+    index = start_index
+    while index < finish_index && index < masked.size
+      masked[index] = ' ' unless masked[index] == '\n'
+      index += 1
+    end
   end
 
   def strip_non_code(chars : Array(Char)) : String
@@ -406,7 +586,11 @@ module Noir::PerlCalleeExtractor
   end
 
   private def comment_start?(chars : Array(Char), index : Int32) : Bool
-    chars[index] == '#'
+    return false unless chars[index] == '#'
+    # `$#array`, `$#{$ref}` and `$#$ref` are the last-index sigil, not a
+    # comment. Treating them as one blanked the rest of the line — including
+    # the closing brace of a one-line `sub` — and dropped every callee on it.
+    !(index > 0 && chars[index - 1] == '$')
   end
 
   private def skip_comment(chars : Array(Char), index : Int32, limit : Int32) : Int32
