@@ -1,3 +1,5 @@
+require "../prefix_scope"
+
 # Shared Go route-group scope resolution for the Go framework taggers.
 #
 # Both `go_auth` and `go_security` answer the same question: a middleware
@@ -28,6 +30,11 @@
 # callers can decline to tag, matching `spring_security`'s treatment of a
 # filter chain scoped only by a matcher it cannot resolve.
 module GoRouteGroupScope
+  # `prefix_covers?` — the segment-aware match a resolved group prefix is
+  # tested with. Shared with the Express and Ktor taggers, which used to
+  # compare with a bare `starts_with?`.
+  include PrefixScope
+
   # What a receiver / middleware registration resolves to.
   #
   #   Global  — no enclosing group; an engine-level `.Use` guards everything
@@ -161,12 +168,5 @@ module GoRouteGroupScope
   def self.join_prefix(base : String, seg : String) : String
     parts = "#{base}/#{seg}".split("/").reject(&.empty?)
     parts.empty? ? "/" : "/" + parts.join("/")
-  end
-
-  # Segment-aware prefix match so "/web" guards "/web/x" but not "/website".
-  # The root scope "/" guards every endpoint.
-  def prefix_covers?(prefix : String, url : String) : Bool
-    return true if prefix == "/"
-    url == prefix || url.starts_with?("#{prefix}/")
   end
 end
