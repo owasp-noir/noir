@@ -104,25 +104,21 @@ module Analyzer::Python
     # work is independent (no shared cross-file maps mutated without
     # synchronization). Analyzers that accumulate blueprint/app state
     # across files should use `each_python_source` instead.
+    #
+    # Deliberately no `begin/rescue` around `block.call`. There was one, and
+    # because it sat *inside* the `parallel_analyze` block it caught the
+    # exception before `parallel_analyze`'s own rescue could tally it — so a
+    # file every Python analyzer failed on was a `--debug` line and nothing
+    # else, while the identical failure under `scan_files` produced an
+    # `errors` entry and `--strict` exit 2. `parallel_analyze` already
+    # isolates the failure to the one file; this is where it gets recorded.
     protected def parallel_python_sources(&block : String, String -> Nil) : Nil
       files = python_source_files
       if base_paths.size <= 1
         base = base_paths.first? || ""
-        parallel_analyze(files) do |path|
-          begin
-            block.call(path, base)
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
+        parallel_analyze(files) { |path| block.call(path, base) }
       else
-        parallel_analyze(files) do |path|
-          begin
-            block.call(path, python_base_path_for(path))
-          rescue e
-            logger.debug "Error analyzing #{path}: #{e}"
-          end
-        end
+        parallel_analyze(files) { |path| block.call(path, python_base_path_for(path)) }
       end
     end
 

@@ -404,6 +404,13 @@ class FileAnalyzer < Analyzer
 
   @@hooks = [] of Hook
 
+  # Not registered through `analyzer_for` — the FileAnalyzer runs outside the
+  # tech registry — but its per-file rescue needs a name to report a skipped
+  # file under, and an empty one renders as `": skipped 1 file…"`.
+  def tech : String
+    "file_analyzer"
+  end
+
   def self.add_hook(func : Proc(String, String, Array(Endpoint)), requires_url : Bool = true)
     @@hooks << Hook.new(func, requires_url)
   end
@@ -472,6 +479,10 @@ class FileAnalyzer < Analyzer
               end
             rescue e
               logger.debug e
+              # Same contract as `parallel_analyze`'s worker rescue: one file
+              # that blows up a hook costs only itself, and the fact that it
+              # did reaches `errors` instead of only `--debug`.
+              Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name) if path
             end
           end
         end

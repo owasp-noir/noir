@@ -1,5 +1,6 @@
 require "crest"
 require "../models/deliver"
+require "../models/skipped_files"
 
 # POSTs the discovered endpoint catalog as a single JSON document to a
 # user-supplied webhook URL. The body shape is the same one `-f json`
@@ -51,7 +52,15 @@ class SendWebhook < Deliver
   rescue e
     # Surface the failure at warning level: a swallowed debug line let the
     # user believe the catalog was delivered when the POST never landed.
+    #
+    # And record it, because a warning is still only a warning: a pipeline
+    # whose entire purpose is shipping the catalog to a receiver went green
+    # under `--strict` while shipping nothing.
     @logger.warning "Webhook delivery to #{webhook_url} failed: #{e.message}"
     @logger.debug_sub e
+    Noir::SkippedFiles.record_gap(
+      Noir::SkippedFiles::DELIVER_SCOPE,
+      "webhook delivery to #{webhook_url} failed: #{e.message.presence || e.class.name}"
+    )
   end
 end

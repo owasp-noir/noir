@@ -1,4 +1,5 @@
 require "../../models/analyzer"
+require "../../models/skipped_files"
 require "./file_scan_engine"
 require "../../miniparsers/crystal_callee_extractor"
 
@@ -243,6 +244,10 @@ module Analyzer::Crystal
           collect_actions_into(index, read_file_content(path).lines, path)
         rescue e
           logger.debug "crystal action index #{path}: #{e}"
+          # A file missing from the action index costs the callees of every
+          # route that dispatches into it, which is coverage lost as surely
+          # as a route missed outright.
+          Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
         end
       end
       index
