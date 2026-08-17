@@ -192,6 +192,17 @@ module Noir::OptionsParsing
         end
         append_to_yaml_array(noir_options, pvalue_key, args[i + 1])
         i += 2
+      elsif (eq_idx = arg.index('=')) && (eq_pvalue_key = LEGACY_PVALUE_TARGETS[arg[0...eq_idx]]?)
+        # `--set-pvalue=VALUE`. In v0 these were real `parser.on
+        # "--set-pvalue VALUE"` entries, so Crystal's OptionParser accepted
+        # both spellings; this hand-rolled extractor only matched the bare
+        # token, and the `=` form fell through to `invalid_option` and hard
+        # failed. `Noir::CLI::Legacy.translate_flag_aliases` handles `=` for
+        # the probe aliases, so the two legacy layers also disagreed.
+        # Split on the *first* `=` only, so `--set-pvalue=key=val` keeps
+        # "key=val" as the value.
+        append_to_yaml_array(noir_options, eq_pvalue_key, arg[(eq_idx + 1)..])
+        i += 1
       else
         result << arg
         i += 1
@@ -395,15 +406,19 @@ def run_options_parser
       # Accumulate same as --exclude-path / --use-taggers / -t etc.
       # so users can repeat the flag (`--exclude-codes 404
       # --exclude-codes 500`) without losing the first value.
-      append_to_csv_option(noir_options, "exclude_codes", v)
+      # `reset_seen` scopes that accumulation to this command line: the
+      # first occurrence replaces a config-file value outright.
+      append_to_csv_option(noir_options, "exclude_codes", v, reset_seen: csv_reset_seen)
     end
     parser.on "--exclude-path PATTERN", "Exclude files by glob (e.g. *.test.js,*_test.go; repeatable)" do |v|
       # Storage is a comma-separated string (the detector splits on
       # `,` per-file). Pre-fix, the second `--exclude-path` clobbered
       # the first via plain `=`. Concatenate instead so users can
       # repeat the flag OR pack patterns into one comma list — both
-      # shapes accumulate to the same final list.
-      append_to_csv_option(noir_options, "exclude_path", v)
+      # shapes accumulate to the same final list. `reset_seen` keeps
+      # that accumulation inside the command line: a config-file
+      # `exclude_path` is replaced, not extended.
+      append_to_csv_option(noir_options, "exclude_path", v, reset_seen: csv_reset_seen)
     end
     parser.on "--include LIST", "Enrich plain output (comma-separated: path,techs,callee)" do |v|
       Noir::OptionsParsing.apply_include_list(noir_options, v)
@@ -467,8 +482,10 @@ def run_options_parser
       # (`NoirTaggers.run_tagger`) gets the union, not just the last
       # `--use-taggers` value. Pre-fix `--use-taggers hunt
       # --use-taggers cors` silently dropped `hunt` because the
-      # second assignment overwrote the first.
-      append_to_csv_option(noir_options, "use_taggers", v)
+      # second assignment overwrote the first. `reset_seen` keeps the
+      # union scoped to the command line, so a config-file
+      # `use_taggers` is replaced rather than added to.
+      append_to_csv_option(noir_options, "use_taggers", v, reset_seen: csv_reset_seen)
     end
 
     # PROBE — fire HTTP requests against the endpoints noir just
@@ -594,14 +611,20 @@ def run_options_parser
     # masked only when auto-detection happened to re-surface the
     # dropped tech. `--only-techs` and `--exclude-techs` had the
     # same shape.
+    #
+    # All three pass `reset_seen` so accumulation stops at the config
+    # file: the first CLI occurrence replaces whatever the file set.
+    # `--only-techs` is where that mattered most — appending *widened*
+    # the restriction the flag exists to impose, and left no way to
+    # override a config-file `only_techs` from the command line at all.
     parser.on "-t LIST", "--techs rails,php", "Add these techs to the analyzer set (in addition to auto-detected ones; repeatable)" do |v|
-      append_to_csv_option(noir_options, "techs", v)
+      append_to_csv_option(noir_options, "techs", v, reset_seen: csv_reset_seen)
     end
     parser.on "--only-techs LIST", "Restrict auto-detection to these tech detectors (repeatable)" do |v|
-      append_to_csv_option(noir_options, "only_techs", v)
+      append_to_csv_option(noir_options, "only_techs", v, reset_seen: csv_reset_seen)
     end
     parser.on "--exclude-techs LIST", "Drop these techs from the final result after detection (repeatable)" do |v|
-      append_to_csv_option(noir_options, "exclude_techs", v)
+      append_to_csv_option(noir_options, "exclude_techs", v, reset_seen: csv_reset_seen)
     end
 
     parser.separator "\n CONFIG:".colorize(:blue)
