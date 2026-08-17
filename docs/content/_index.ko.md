@@ -190,7 +190,7 @@ template = "landing"
     <div class="community-copy" data-reveal style="--reveal-delay: 90ms">
       <h2 class="section-title">공개적으로 만듭니다</h2>
       <p>Noir는 OWASP 재단 프로젝트이며 MIT 라이선스로 배포되고, 실제로 사용하는 사람들이 관리합니다. 프레임워크 지원과 스캔 규칙, 출력 형식은 모두 기여로 채워집니다.</p>
-      <a class="btn btn-outline" href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
+      <a class="btn btn-outline" href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
         기여 가이드 읽기
         <svg class="ic" aria-hidden="true"><use href="#i-arrow-up-right"/></svg>
       </a>

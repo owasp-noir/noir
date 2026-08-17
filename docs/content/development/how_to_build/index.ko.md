@@ -23,7 +23,7 @@ sort_by = "weight"
     ```
 6.  변경 사항 설명을 포함하여 **풀 리퀘스트를 생성**합니다.
 
-자세한 가이드라인은 [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md)를 참조하세요.
+자세한 가이드라인은 [CONTRIBUTING.md](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md)를 참조하세요.
 
 ## 개발 환경 설정
 

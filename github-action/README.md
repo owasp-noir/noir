@@ -201,4 +201,4 @@ This action is part of the OWASP Noir project and is licensed under the MIT Lice
 
 ## Contributing
 
-Contributions are welcome! Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file in the main repository.
+Contributions are welcome! Please see the [CONTRIBUTING.md](../.github/CONTRIBUTING.md) file in the main repository.

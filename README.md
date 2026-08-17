@@ -8,7 +8,7 @@
 </div>
 
 <p align="center">
-<a href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md">
+<a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md">
 <img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black"></a>
 <a href="https://github.com/owasp-noir/noir/releases">
 <img src="https://img.shields.io/github/v/release/owasp-noir/noir?style=for-the-badge&color=black&labelColor=black&logo=web"></a>
@@ -94,7 +94,7 @@ OWASP Noir joined the OWASP Foundation in **June 2024**.
 ## Contributing
 
 Noir is an open-source project made with ❤️.
-If you would like to contribute, please check [CONTRIBUTING.md](./CONTRIBUTING.md) and submit a Pull Request.
+If you would like to contribute, please check [CONTRIBUTING.md](./.github/CONTRIBUTING.md) and submit a Pull Request.
 
 [![](./docs/static/CONTRIBUTORS.svg)](https://github.com/owasp-noir/noir/graphs/contributors)
 

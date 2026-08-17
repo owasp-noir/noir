@@ -188,7 +188,7 @@ template = "landing"
     <div class="community-copy" data-reveal style="--reveal-delay: 90ms">
       <h2 class="section-title">Built in the open</h2>
       <p>Noir is an OWASP Foundation project, MIT licensed, and maintained by the people who use it. Framework support, scan rules, and output formats all arrive as contributions.</p>
-      <a class="btn btn-outline" href="https://github.com/owasp-noir/noir/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
+      <a class="btn btn-outline" href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
         Read the contributing guide
         <svg class="ic" aria-hidden="true"><use href="#i-arrow-up-right"/></svg>
       </a>

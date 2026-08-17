@@ -5,4 +5,4 @@ Contact: mailto:h.lee@owasp.org
 Expires: 2027-06-02T00:00:00.000Z
 Preferred-Languages: en, ko
 Canonical: https://owasp-noir.github.io/noir/.well-known/security.txt
-Policy: https://github.com/owasp-noir/noir/blob/main/SECURITY.md
+Policy: https://github.com/owasp-noir/noir/blob/main/.github/SECURITY.md

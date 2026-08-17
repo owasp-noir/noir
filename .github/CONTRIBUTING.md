@@ -156,7 +156,7 @@ template = "blog_post"
 Your markdown content starts here.
 ```
 
-- `authors` is the taxonomy field — each string must match a key in [`docs/data/authors.yaml`](docs/data/authors.yaml). Multiple authors are allowed (`authors = ["a", "b"]`).
+- `authors` is the taxonomy field — each string must match a key in [`docs/data/authors.yaml`](../docs/data/authors.yaml). Multiple authors are allowed (`authors = ["a", "b"]`).
 - `template = "blog_post"` is required so the post uses the blog layout instead of the default docs page.
 - `tags` are optional but help discoverability.
 
