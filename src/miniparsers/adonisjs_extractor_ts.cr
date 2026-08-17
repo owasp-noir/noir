@@ -90,6 +90,12 @@ module Noir
     # `session.get('plan')`, a Lucid `Model.query()...delete('*')`, etc.
     ROUTER_RECEIVERS = Set{"router", "Route"}
 
+    # Route paths and controller references are written as either a quoted
+    # string or a backtick template literal — tree-sitter-javascript emits
+    # `template_string` for the latter. `decode_string` has always known how
+    # to unwrap both; only the call-site gates were rejecting backticks.
+    STRING_LITERAL_TYPES = Set{"string", "template_string"}
+
     struct Route
       getter verb : String
       getter path : String
@@ -347,13 +353,24 @@ module Noir
       string_argument_at(call, source, 0)
     end
 
+    # Index over EVERY argument, not only the string-shaped ones.
+    # Counting string nodes alone made the positions depend on which
+    # arguments happened to be strings, so a non-string first argument
+    # silently promoted the second one:
+    # `Route.get(`/users/${id}`, 'UsersController.show')` used to report
+    # `GET /UsersController.show` — a URL that exists nowhere in the app —
+    # because the template literal was invisible to this counter and the
+    # controller string landed on index 0.
     private def string_argument_at(call : LibTreeSitter::TSNode, source : String, target_index : Int32) : String?
       args = arguments_node(call)
       return unless args
       index = 0
       Noir::TreeSitter.each_named_child(args) do |arg|
-        next unless Noir::TreeSitter.node_type(arg) == "string"
-        return decode_string(arg, source) if index == target_index
+        type = Noir::TreeSitter.node_type(arg)
+        next if type == "comment"
+        if index == target_index
+          return STRING_LITERAL_TYPES.includes?(type) ? decode_string(arg, source) : nil
+        end
         index += 1
       end
       nil
@@ -406,8 +423,16 @@ module Noir
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
             io << Noir::TreeSitter.node_text(child, source)
+          when "template_substitution"
+            # `` `/users/${id}` `` — keep the hole as a `{id}` placeholder
+            # rather than dropping it, which would collapse the path to
+            # `/users/` (or `/users//edit` for an interior hole). Same
+            # convention the Python f-string and Kotlin template decoders
+            # use, and the shape downstream path-param extraction expects.
+            io << Noir::TreeSitter.node_text(child, source).lchop('$')
           end
         end
       end

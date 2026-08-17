@@ -111,4 +111,24 @@ describe Noir::TreeSitterElysiaExtractor do
     routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
     routes.first.query_params.should eq(["filter"])
   end
+
+  # Regression: the route/group path gates matched node type "string" only,
+  # so every backtick path was invisible and the route was dropped.
+  it "accepts backtick template-literal route and group paths" do
+    source = <<-TS
+      const app = new Elysia()
+          .group(`/api/v1`, (app) =>
+              app
+                  .get(`/health`, () => 'ok')
+                  .post(`/users/${id}`, ({ body }) => body)
+          )
+          .listen(3000)
+      TS
+
+    routes = Noir::TreeSitterElysiaExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.sort!.should eq([
+      {"GET", "/api/v1/health"},
+      {"POST", "/api/v1/users/{id}"},
+    ].sort)
+  end
 end
