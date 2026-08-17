@@ -107,5 +107,74 @@ describe NoirPassiveScan do
       results = NoirPassiveScan.detect("config.py", content, [rule], logger)
       results.size.should eq(1)
     end
+
+    it "detects matches with omitted matchers-condition on single matcher" do
+      rule_yaml = <<-YAML
+        id: test-single
+        category: sec
+        techs: []
+        info:
+          name: Single Matcher Rule
+          author: []
+          severity: high
+          description: single matcher
+          reference: []
+        matchers:
+          - type: word
+            condition: or
+            patterns:
+              - MY_SECRET_TOKEN
+        YAML
+      rule = PassiveScan.new(YAML.parse(rule_yaml))
+      content = "MY_SECRET_TOKEN = 'abc123xyz'"
+
+      results = NoirPassiveScan.detect("config.py", content, [rule], logger)
+      results.size.should eq(1)
+      results.first.extract.should contain("MY_SECRET_TOKEN")
+    end
+
+    it "detects matches with uppercase condition: OR and type: WORD / REGEX" do
+      word_rule_yaml = <<-YAML
+        id: test-upper-word
+        category: sec
+        techs: []
+        info:
+          name: Upper Word Rule
+          author: []
+          severity: high
+          description: uppercase condition
+          reference: []
+        matchers-condition: OR
+        matchers:
+          - type: WORD
+            condition: OR
+            patterns:
+              - TARGET_STRING
+        YAML
+      regex_rule_yaml = <<-YAML
+        id: test-upper-regex
+        category: sec
+        techs: []
+        info:
+          name: Upper Regex Rule
+          author: []
+          severity: high
+          description: uppercase regex
+          reference: []
+        matchers-condition: OR
+        matchers:
+          - type: REGEX
+            condition: OR
+            patterns:
+              - "TOKEN_[A-Z0-9]{8}"
+        YAML
+      word_rule = PassiveScan.new(YAML.parse(word_rule_yaml))
+      regex_rule = PassiveScan.new(YAML.parse(regex_rule_yaml))
+      content = "TARGET_STRING\nTOKEN_ABCD1234"
+
+      results = NoirPassiveScan.detect("test.txt", content, [word_rule, regex_rule], logger)
+      results.size.should eq(2)
+      results.map(&.id).should eq(["test-upper-word", "test-upper-regex"])
+    end
   end
 end

@@ -14,15 +14,26 @@ struct PassiveScan
     property reference : Array(YAML::Any)
 
     def initialize(yaml : YAML::Any)
-      @name = yaml["name"].as_s
-      @severity = yaml["severity"].as_s
-      @description = yaml["description"].as_s
-      @reference = yaml["reference"].as_a
-      @author = yaml["author"].as_a
+      @name = yaml["name"]?.try(&.as_s?) || yaml["name"]?.try(&.to_s) || ""
+      @severity = yaml["severity"]?.try(&.as_s?) || yaml["severity"]?.try(&.to_s) || "info"
+      @description = yaml["description"]?.try(&.as_s?) || yaml["description"]?.try(&.to_s) || ""
+      @reference = if ref_node = yaml["reference"]?
+                     ref_node.as_a? || [ref_node] of YAML::Any
+                   else
+                     [] of YAML::Any
+                   end
+      @author = if author_node = yaml["author"]?
+                  author_node.as_a? || [author_node] of YAML::Any
+                else
+                  [] of YAML::Any
+                end
     end
   end
 
   struct Matcher
+    ALLOWED_TYPES      = {"word", "regex"}
+    ALLOWED_CONDITIONS = {"and", "or"}
+
     property type : String
     property patterns : Array(YAML::Any)
     # Pre-stringified patterns. detect.cr's hot path used to call
@@ -38,13 +49,27 @@ struct PassiveScan
     property? regex_compile_failed : Bool
 
     def initialize(yaml : YAML::Any)
-      @type = yaml["type"].as_s
-      @patterns = yaml["patterns"].as_a
+      raw_type = yaml["type"]?.try(&.as_s?) || yaml["type"]?.try(&.to_s) || ""
+      @type = raw_type.downcase
+      @patterns = if patterns_node = yaml["patterns"]?
+                    patterns_node.as_a? || [patterns_node] of YAML::Any
+                  else
+                    [] of YAML::Any
+                  end
       @string_patterns = @patterns.map(&.to_s)
-      @condition = yaml["condition"].as_s
+      raw_condition = yaml["condition"]?.try(&.as_s?) || yaml["condition"]?.try(&.to_s) || "or"
+      @condition = raw_condition.downcase
       @regex_compile_failed = false
 
-      if @type == "regex"
+      if !ALLOWED_TYPES.includes?(@type)
+        Log.warn { "Passive scan matcher has invalid type: #{@type.inspect} (expected 'word' or 'regex')" }
+      end
+
+      if !ALLOWED_CONDITIONS.includes?(@condition)
+        Log.warn { "Passive scan matcher has invalid condition: #{@condition.inspect} (expected 'and' or 'or')" }
+      end
+
+      if @type == "regex" && ALLOWED_CONDITIONS.includes?(@condition)
         if @condition == "or"
           begin
             @compiled_regex = Regex.union(@string_patterns.map { |p| Regex.new(p) })
@@ -64,7 +89,16 @@ struct PassiveScan
         end
       end
     end
+
+    def valid? : Bool
+      ALLOWED_TYPES.includes?(@type) &&
+        ALLOWED_CONDITIONS.includes?(@condition) &&
+        !@patterns.empty? &&
+        !@string_patterns.empty?
+    end
   end
+
+  ALLOWED_MATCHERS_CONDITIONS = {"and", "or"}
 
   property id : String
   property info : Info
@@ -74,22 +108,40 @@ struct PassiveScan
   property techs : Array(YAML::Any)
 
   def initialize(yaml : YAML::Any)
-    @id = yaml["id"].as_s
-    @info = Info.new(yaml["info"])
-    @matchers = yaml["matchers"].as_a.map { |matcher| Matcher.new(matcher) }
-    @matchers_condition = yaml["matchers-condition"].to_s
-    @category = yaml["category"].as_s
-    @techs = yaml["techs"].as_a
+    @id = yaml["id"]?.try(&.as_s?) || yaml["id"]?.try(&.to_s) || ""
+    @info = if info_yaml = yaml["info"]?
+              Info.new(info_yaml)
+            else
+              Info.new(YAML::Any.new({} of YAML::Any => YAML::Any))
+            end
+    @matchers = if matchers_yaml = yaml["matchers"]?.try(&.as_a?)
+                  matchers_yaml.map { |matcher| Matcher.new(matcher) }
+                else
+                  [] of Matcher
+                end
+    raw_matchers_condition = yaml["matchers-condition"]?.try(&.as_s?) || yaml["matchers-condition"]?.try(&.to_s) || "or"
+    @matchers_condition = raw_matchers_condition.downcase
+    @category = yaml["category"]?.try(&.as_s?) || yaml["category"]?.try(&.to_s) || ""
+    @techs = if techs_yaml = yaml["techs"]?
+               techs_yaml.as_a? || [techs_yaml] of YAML::Any
+             else
+               [] of YAML::Any
+             end
+
+    if !ALLOWED_MATCHERS_CONDITIONS.includes?(@matchers_condition)
+      Log.warn { "Passive scan rule #{@id.inspect} has invalid matchers-condition: #{@matchers_condition.inspect} (expected 'and' or 'or')" }
+    end
   end
 
-  # A rule is usable when it has an id, a non-empty info name, and at
-  # least one matcher. The earlier `@info != ""` check compared an
-  # Info struct against a String, which is always true and therefore a
-  # no-op; the rewrite checks `@info.name` instead so rules with an
-  # empty name (effectively unusable for SARIF / human output) are
-  # dropped during load.
-  def valid?
-    !@id.empty? && !@info.name.empty? && !@matchers.empty?
+  # A rule is usable when it has an id, a non-empty info name, at
+  # least one matcher, all matchers are valid (allowed type, condition,
+  # non-empty patterns), and matchers_condition is 'and' or 'or'.
+  def valid? : Bool
+    !@id.empty? &&
+      !@info.name.empty? &&
+      !@matchers.empty? &&
+      @matchers.all?(&.valid?) &&
+      ALLOWED_MATCHERS_CONDITIONS.includes?(@matchers_condition)
   end
 end
 
