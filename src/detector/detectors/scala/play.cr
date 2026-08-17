@@ -2,7 +2,7 @@ require "../../../models/detector"
 
 module Detector::Scala
   class Play < Detector
-    detector_for "scala_play", extensions: %w[.scala .sbt], basenames: %w[build.sbt]
+    detector_for "scala_play", extensions: %w[.scala .sbt routes routes.conf], basenames: %w[build.sbt]
 
     def detect(filename : String, file_contents : String) : Bool
       # Detect Play Framework by Scala-specific indicators
@@ -20,7 +20,9 @@ module Detector::Scala
         # Check for Play-style route definitions with Scala-style types
         if file_contents =~ /^\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+/m
           # Look for Scala-specific patterns in routes file (e.g., Option[...], ?=)
-          return true if file_contents.includes?("Option[") || file_contents.includes?("?=")
+          if file_contents.includes?("Option[") || file_contents.includes?("?=")
+            return !file_contents.includes?("Integer")
+          end
         end
       end
 

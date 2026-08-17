@@ -40,4 +40,18 @@ describe "Detect Scala Play" do
   it "routes file without route definitions" do
     instance.detect("routes", "# Just comments").should be_false
   end
+
+  it "applicable? admits routes and routes.conf" do
+    instance.applicable?("conf/routes").should be_true
+    instance.applicable?("conf/admin.routes").should be_true
+    instance.applicable?("conf/routes.conf").should be_true
+    instance.applicable?("routes").should be_true
+    instance.applicable?("build.sbt").should be_true
+    instance.applicable?("app/controllers/HomeController.scala").should be_true
+    instance.applicable?("app/controllers/HomeController.java").should be_false
+  end
+
+  it "routes file with Java-specific Integer type is not detected as Scala" do
+    instance.detect("conf/routes", "GET /items controllers.Items.list(category: String, page: Integer ?= 1)").should be_false
+  end
 end
