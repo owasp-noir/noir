@@ -9,6 +9,9 @@ class OutputBuilderOas3 < OutputBuilder
 
   def print(endpoints : Array(Endpoint))
     paths = {} of String => Hash(String, JSON::Any)
+    # Template shape (`/users/{}`) => the `paths` key that shape resolved to.
+    # Two routes differing only in placeholder name are the same path item.
+    canonical_paths = {} of String => String
     # Only a document that actually carries a `query` operation needs to
     # declare 3.2 — every other document stays on 3.0.3, the version every
     # other operation key here has always been valid against.
@@ -58,6 +61,13 @@ class OutputBuilderOas3 < OutputBuilder
 
       declared_path_params = endpoint.params.compact_map { |p| p.name if p.request_type == "path" }
       oas_path = normalize_oas_path(route_path(url_parts[:route]), declared_path_params)
+      canonical_path = canonical_oas_path(oas_path, canonical_paths)
+      path_variant = nil
+      if canonical_path != oas_path
+        rename_path_parameters(parameters, path_template_renames(oas_path, canonical_path))
+        path_variant = oas_path
+        oas_path = canonical_path
+      end
       template_names = path_template_names(oas_path)
       template_names.each do |name|
         # A path template variable must win over a same-named query/header/
@@ -137,11 +147,13 @@ class OutputBuilderOas3 < OutputBuilder
       unless paths.has_key?(oas_path)
         paths[oas_path] = {} of String => JSON::Any
       end
+      add_path_variant_extension(paths[oas_path], path_variant) if path_variant
 
       # Add method to path
       methods = operation_methods(endpoint.method)
       if methods.empty?
         add_unsupported_method_extension(paths[oas_path], endpoint.method)
+        add_unsupported_operation(paths[oas_path], endpoint.method, operation)
       else
         methods.each do |method|
           add_operation(paths[oas_path], method, operation)
@@ -171,7 +183,6 @@ class OutputBuilderOas3 < OutputBuilder
   # builder constructed with a partial options hash (specs, library use) hit a
   # KeyError here while the sibling oas2 builder read the same option safely.
   private def target_url : String
-    url = @options["url"]?.to_s
-    url.empty? ? "http://localhost" : url
+    document_server_url(@options["url"]?.to_s)
   end
 end

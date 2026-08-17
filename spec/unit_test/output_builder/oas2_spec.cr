@@ -143,7 +143,9 @@ describe "OutputBuilderOas2" do
     paths = spec["paths"]
 
     spec["host"].as_s.should eq("api.example.com")
-    spec["basePath"].as_s.should eq("/v1")
+    # `-u`'s path is already prefixed onto every route by the optimizer, so
+    # repeating it here made every operation resolve to `/v1/v1/...`.
+    spec["basePath"].as_s.should eq("/")
     spec["schemes"].as_a.should eq([JSON::Any.new("https")])
 
     paths.as_h.has_key?("/users/{user_id}").should be_true
@@ -232,5 +234,127 @@ describe "OutputBuilderOas2" do
     path_item["x-noir-unsupported-methods"].as_a.should eq([JSON::Any.new("QUERY")])
     path_item.as_h.keys.should_not contain("query")
     path_item.as_h.keys.should_not contain("get")
+
+    # The verb name alone is not the endpoint. Everything the operation had
+    # to say — its form fields here — survives in the operation extension.
+    unsupported = path_item["x-noir-unsupported-operations"]["QUERY"]
+    unsupported["parameters"].as_a.map { |p| {p["in"].as_s, p["name"].as_s} }
+      .should eq([{"formData", "q"}])
+    unsupported["consumes"].as_a.should eq([JSON::Any.new("application/x-www-form-urlencoded")])
+  end
+
+  it "keeps the base path out of basePath and the port in host" do
+    # `-u` is prepended to every endpoint URL by the optimizer, so the route
+    # already carries the base path. Declaring it as `basePath` too resolved
+    # every operation to `<base><base><path>`, which `-f curl` — the oracle,
+    # same run, same endpoint — never did.
+    cases = [
+      {"", nil},
+      {"https://h", "h"},
+      {"https://h/v2", "h"},
+      {"https://h:8443/v2", "h:8443"},
+      {"https://h:8443/v2/nested/deeper", "h:8443"},
+    ] of Tuple(String, String?)
+
+    cases.each do |(target, host)|
+      options = {
+        "debug"   => YAML::Any.new(false),
+        "verbose" => YAML::Any.new(false),
+        "color"   => YAML::Any.new(false),
+        "nolog"   => YAML::Any.new(false),
+        "output"  => YAML::Any.new(""),
+        "url"     => YAML::Any.new(target),
+      }
+      builder = OutputBuilderOas2.new(options)
+      builder.io = IO::Memory.new
+
+      # What the optimizer hands the builder once `-u` is applied.
+      prefix = target.empty? ? "" : target
+      builder.print([Endpoint.new("#{prefix}/users", "GET")])
+      spec = JSON.parse(builder.io.to_s)
+
+      spec["basePath"].as_s.should eq("/")
+      if host
+        spec["host"].as_s.should eq(host)
+      else
+        spec.as_h.has_key?("host").should be_false
+      end
+      # The path key keeps the base path, so host + basePath + key is the URL
+      # `-f curl` prints for the same endpoint.
+      spec["paths"].as_h.keys.should eq([target.empty? ? "/users" : "#{URI.parse(target).path}/users"])
+    end
+  end
+
+  it "merges two routes that differ only in placeholder name" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    show = Endpoint.new("/users/:id", "GET")
+    show.push_param(Param.new("id", "", "path"))
+    show.push_param(Param.new("fields", "", "query"))
+
+    destroy = Endpoint.new("/users/:userId", "DELETE")
+    destroy.push_param(Param.new("userId", "", "path"))
+
+    # Same method on the same shape is a real conflict: merge, don't drop.
+    alternate = Endpoint.new("/users/:userId", "GET")
+    alternate.push_param(Param.new("userId", "", "path"))
+    alternate.push_param(Param.new("expand", "", "query"))
+
+    builder.print([show, destroy, alternate])
+    paths = JSON.parse(builder.io.to_s)["paths"]
+
+    paths.as_h.keys.should eq(["/users/{id}"])
+    paths["/users/{id}"]["x-noir-path-variants"].as_a
+      .should eq([JSON::Any.new("/users/{userId}")])
+
+    get_params = paths["/users/{id}"]["get"]["parameters"].as_a
+      .map { |p| {p["in"].as_s, p["name"].as_s} }
+    get_params.should contain({"path", "id"})
+    get_params.should contain({"query", "fields"})
+    get_params.should contain({"query", "expand"})
+    get_params.count { |location, _| location == "path" }.should eq(1)
+
+    delete_params = paths["/users/{id}"]["delete"]["parameters"].as_a
+    delete_params.map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"path", "id"}])
+  end
+
+  it "unions the body fields of operations merged onto one path and method" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    # Noir addresses many GraphQL resolvers on one path with a `#fragment`;
+    # they collapse onto one `POST /graphql`, and keeping only the first
+    # schema dropped every later resolver's input fields.
+    query = Endpoint.new("/graphql#Query.user", "POST")
+    query.push_param(Param.new("id", "", "json"))
+
+    mutation = Endpoint.new("/graphql#Mutation.createUser", "POST")
+    mutation.push_param(Param.new("name", "", "json"))
+    mutation.push_param(Param.new("email", "", "json"))
+
+    builder.print([query, mutation])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/graphql"]["post"]
+
+    body = operation["parameters"].as_a.find! { |p| p["in"].as_s == "body" }
+    body["schema"]["properties"].as_h.keys.sort!.should eq(["email", "id", "name"])
+    operation["x-noir-operations"].as_a
+      .should eq([JSON::Any.new("Query.user"), JSON::Any.new("Mutation.createUser")])
   end
 end

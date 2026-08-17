@@ -23,6 +23,18 @@ private struct OasCommonTestHelper
   def test_swagger_url_parts(raw_url : String)
     swagger_url_parts(raw_url)
   end
+
+  def test_document_server_url(raw_url : String)
+    document_server_url(raw_url)
+  end
+
+  def test_path_template_shape(path : String)
+    path_template_shape(path)
+  end
+
+  def test_path_template_renames(from : String, to : String)
+    path_template_renames(from, to)
+  end
 end
 
 describe OutputBuilderOasCommon do
@@ -120,15 +132,78 @@ describe OutputBuilderOasCommon do
     it "parses url parts properly" do
       parts = helper.test_swagger_url_parts("https://api.example.com/v1")
       parts[:host].should eq("api.example.com")
-      parts[:base_path].should eq("/v1")
       parts[:schemes].should eq(["https"])
     end
 
     it "handles scheme-less urls" do
       parts = helper.test_swagger_url_parts("api.example.com/v1")
       parts[:host].should eq("api.example.com")
-      parts[:base_path].should eq("/v1")
       parts[:schemes].should eq(["http", "https"])
+    end
+
+    it "keeps an explicit port in the Swagger host" do
+      # Swagger 2.0's `host` is `host[:port]`; dropping the port aimed every
+      # generated client at 443/80 instead of the port `-u` named.
+      helper.test_swagger_url_parts("https://api.example.com:8443/v2")[:host]
+        .should eq("api.example.com:8443")
+      helper.test_swagger_url_parts("api.example.com:8080")[:host]
+        .should eq("api.example.com:8080")
+    end
+
+    it "leaves a default port off the Swagger host" do
+      helper.test_swagger_url_parts("https://api.example.com/")[:host]
+        .should eq("api.example.com")
+      helper.test_swagger_url_parts("https://api.example.com:443/v2")[:host]
+        .should eq("api.example.com")
+      helper.test_swagger_url_parts("http://api.example.com:80/v2")[:host]
+        .should eq("api.example.com")
+    end
+
+    it "reports no host when the url names none" do
+      helper.test_swagger_url_parts("")[:host].should be_nil
+      helper.test_swagger_url_parts("")[:schemes].should eq(["http", "https"])
+    end
+  end
+
+  describe "#document_server_url" do
+    it "drops the base path the optimizer already prefixed onto every route" do
+      helper.test_document_server_url("https://api.example.com/v2")
+        .should eq("https://api.example.com")
+      helper.test_document_server_url("https://api.example.com:8443/v2")
+        .should eq("https://api.example.com:8443")
+      helper.test_document_server_url("https://api.example.com")
+        .should eq("https://api.example.com")
+      helper.test_document_server_url("").should eq("http://localhost")
+    end
+
+    it "falls back to a bare root when the url names no authority" do
+      helper.test_document_server_url("/api").should eq("/")
+    end
+  end
+
+  describe "#path_template_shape" do
+    it "erases template variable names" do
+      # OAS 2.0 and 3.x both treat two templated paths with the same
+      # hierarchy but different variable names as one path.
+      helper.test_path_template_shape("/users/{id}").should eq("/users/{}")
+      helper.test_path_template_shape("/users/{userId}").should eq("/users/{}")
+      helper.test_path_template_shape("/users/{id}/posts/{postId}")
+        .should eq("/users/{}/posts/{}")
+      helper.test_path_template_shape("/users/id").should eq("/users/id")
+    end
+  end
+
+  describe "#path_template_renames" do
+    it "maps variable names slot by slot" do
+      helper.test_path_template_renames("/users/{userId}", "/users/{id}")
+        .should eq({"userId" => "id"})
+      helper.test_path_template_renames("/a/{x}/b/{y}", "/a/{p}/b/{q}")
+        .should eq({"x" => "p", "y" => "q"})
+    end
+
+    it "reports nothing for names that already agree" do
+      helper.test_path_template_renames("/a/{x}/b/{y}", "/a/{x}/b/{q}")
+        .should eq({"y" => "q"})
     end
   end
 end
