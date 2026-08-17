@@ -121,4 +121,64 @@ describe "noir CLI surface (built binary)" do
       result.exit_code.should eq(0)
     end
   end
+
+  describe "scan" do
+    it "rejects a -u/--url with no host" do
+      result = run_noir(["scan", FIXTURE, "-u", "http://", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("has no host")
+      result.exit_code.should eq(1)
+    end
+
+    it "rejects a -u/--url whose authority holds whitespace" do
+      result = run_noir(["scan", FIXTURE, "-u", "not a url", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("whitespace or control characters")
+      result.exit_code.should eq(1)
+    end
+
+    it "rejects an --exclude-path glob that would silently match nothing" do
+      {"*.{rb", "{", "", "  "}.each do |pattern|
+        result = run_noir(["scan", FIXTURE, "--exclude-path", pattern, "-f", "json", "--no-log"])
+        result.stdout.should be_empty
+        result.stderr.should contain("--exclude-path")
+        result.exit_code.should eq(1)
+      end
+    end
+
+    it "still fails a CLI-typed --status-codes without a URL" do
+      result = run_noir(["scan", FIXTURE, "--status-codes", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("--status-codes needs a target URL")
+      result.exit_code.should eq(1)
+    end
+
+    it "warns and carries on when the URL-dependent value came from a config file" do
+      # `status_codes:` is a documented config key, so enforcing the URL
+      # dependency after the merge made a plain `noir scan ./app` die,
+      # blaming a flag the user never typed.
+      config = File.tempfile("noir-cli-spec", ".yaml") do |file|
+        file.puts "status_codes: true"
+      end
+
+      begin
+        result = run_noir(["scan", FIXTURE, "--config-file", config.path, "-f", "json", "--no-log"])
+        result.stderr.should contain("config key `status_codes`")
+        result.exit_code.should eq(0)
+        # The warning belongs on stderr — stdout must stay byte-parseable.
+        JSON.parse(result.stdout)["endpoints"].as_a.empty?.should be_false
+      ensure
+        config.delete
+      end
+    end
+
+    it "leaves a well-formed scan untouched" do
+      result = run_noir(["scan", FIXTURE, "-u", "http://localhost:3000", "-f", "json", "--no-log"])
+      result.stderr.should be_empty
+      result.exit_code.should eq(0)
+      urls = JSON.parse(result.stdout)["endpoints"].as_a.map(&.["url"].as_s)
+      urls.empty?.should be_false
+      urls.all?(&.starts_with?("http://localhost:3000/")).should be_true
+    end
+  end
 end
