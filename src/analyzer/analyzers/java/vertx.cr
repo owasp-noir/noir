@@ -63,80 +63,60 @@ module Analyzer::Java
     end
 
     def analyze
-      # Source Analysis
       include_callee = callees_needed?
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            all_files.each { |file| channel.send(file) }
-            channel.close
-          end
+      # Source Analysis — driven by the shared pool on `Analyzer`. See the
+      # note in `java/armeria.cr`: the inlined pool this replaces closed the
+      # channel outside an `ensure` and caught only `IO::Error`, so a
+      # non-IO failure in a worker (a tree-sitter parse timeout, for one)
+      # killed the worker and hung the whole scan on a full channel.
+      scan_files(all_files) do |path|
+        next if JavaEngine.test_path?(base_relative_path(path))
+        next unless File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
 
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if JavaEngine.test_path?(base_relative_path(path))
+        details = Details.new(PathInfo.new(path))
+        content = read_file_content(path)
 
-                  if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
-                    details = Details.new(PathInfo.new(path))
-                    content = read_file_content(path)
+        # Skip if no Vert.x related content
+        next unless content.includes?("Router") || content.includes?("vertx")
 
-                    # Skip if no Vert.x related content
-                    next unless content.includes?("Router") || content.includes?("vertx")
+        constants = path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new
+        callees_by_route = include_callee ? extract_method_reference_callees(content, path, constants) : {} of String => Array(Callee)
+        client_names = client_receivers(content)
+        route_candidates = extract_route_candidates(content, constants, client_names)
+        # Only resolve handler bodies when unambiguous query accessors appear.
+        query_params_by_route = if content.includes?("queryParam")
+                                  method_bodies = extract_method_bodies(content)
+                                  extract_query_params_by_route(content, constants, method_bodies, client_names)
+                                else
+                                  {} of String => Array(String)
+                                end
+        mounts = extract_mounts(content, constants)
+        mounted_routers = Set(String).new
+        mounts.each { |mount| mounted_routers << mount.child_router }
 
-                    constants = path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new
-                    callees_by_route = include_callee ? extract_method_reference_callees(content, path, constants) : {} of String => Array(Callee)
-                    client_names = client_receivers(content)
-                    route_candidates = extract_route_candidates(content, constants, client_names)
-                    # Only resolve handler bodies when unambiguous query accessors appear.
-                    query_params_by_route = if content.includes?("queryParam")
-                                              method_bodies = extract_method_bodies(content)
-                                              extract_query_params_by_route(content, constants, method_bodies, client_names)
-                                            else
-                                              {} of String => Array(String)
-                                            end
-                    mounts = extract_mounts(content, constants)
-                    mounted_routers = Set(String).new
-                    mounts.each { |mount| mounted_routers << mount.child_router }
+        route_candidates.each do |route|
+          next if mounted_routers.includes?(route.router_name)
 
-                    route_candidates.each do |route|
-                      next if mounted_routers.includes?(route.router_name)
+          found = build_endpoint(route.endpoint, route.method, details)
+          attach_query_params(found, query_params_by_route, route.method, route.endpoint)
+          attach_callees(found, callees_by_route, route.method, route.endpoint)
+          @result << found
+        end
 
-                      found = build_endpoint(route.endpoint, route.method, details)
-                      attach_query_params(found, query_params_by_route, route.method, route.endpoint)
-                      attach_callees(found, callees_by_route, route.method, route.endpoint)
-                      @result << found
-                    end
+        routes_by_router = route_candidates.group_by(&.router_name)
+        mounts.each do |mount|
+          child_routes = routes_by_router[mount.child_router]?
+          next unless child_routes
 
-                    routes_by_router = route_candidates.group_by(&.router_name)
-                    mounts.each do |mount|
-                      child_routes = routes_by_router[mount.child_router]?
-                      next unless child_routes
-
-                      child_routes.each do |child|
-                        endpoint = Noir::URLPath.join_trimmed(mount.endpoint, child.endpoint)
-                        found = build_endpoint(endpoint, child.method, details)
-                        attach_query_params(found, query_params_by_route, child.method, child.endpoint)
-                        attach_callees(found, callees_by_route, child.method, child.endpoint)
-                        @result << found
-                      end
-                    end
-                  end
-                rescue e : IO::Error
-                  logger.debug "Skipping #{path}: #{e.message}"
-                end
-              end
-            end
+          child_routes.each do |child|
+            endpoint = Noir::URLPath.join_trimmed(mount.endpoint, child.endpoint)
+            found = build_endpoint(endpoint, child.method, details)
+            attach_query_params(found, query_params_by_route, child.method, child.endpoint)
+            attach_callees(found, callees_by_route, child.method, child.endpoint)
+            @result << found
           end
         end
-      rescue e
-        logger.debug e
       end
       Fiber.yield
 

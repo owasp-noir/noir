@@ -31,58 +31,37 @@ module Analyzer::Java
     def analyze
       servlet_methods = collect_servlet_methods
 
-      # Source Analysis
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
+      # Source Analysis — driven by the shared pool on `Analyzer`. See the
+      # note in `java/armeria.cr`: the inlined pool this replaces closed the
+      # channel outside an `ensure` and caught only `IO::Error`, so a
+      # non-IO failure in a worker killed the worker and left the producer
+      # parked on a full channel for the rest of the process's life.
+      scan_files(all_files) do |path|
+        relative_path = get_relative_path(configured_base_for(path), path)
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            all_files.each { |file| channel.send(file) }
-            channel.close
+        if File.exists?(path) && File.extname(path) == ".jsp"
+          next if web_inf_jsp?(relative_path)
+
+          content = read_file_content(path)
+          params_query = extract_params(content)
+          details = Details.new(PathInfo.new(path))
+          result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
+          extract_form_endpoints(content, details).each do |endpoint|
+            result << endpoint
           end
-
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-
-                  relative_path = get_relative_path(configured_base_for(path), path)
-
-                  if File.exists?(path) && File.extname(path) == ".jsp"
-                    next if web_inf_jsp?(relative_path)
-
-                    content = read_file_content(path)
-                    params_query = extract_params(content)
-                    details = Details.new(PathInfo.new(path))
-                    result << Endpoint.new(jsp_request_path(relative_path), "GET", params_query, details)
-                    extract_form_endpoints(content, details).each do |endpoint|
-                      result << endpoint
-                    end
-                  elsif File.exists?(path) && File.extname(path) == ".java"
-                    content = read_file_content(path)
-                    details = Details.new(PathInfo.new(path))
-                    extract_web_servlet_endpoints(content, details).each do |endpoint|
-                      result << endpoint
-                    end
-                  elsif File.exists?(path) && File.basename(path) == "web.xml"
-                    content = read_file_content(path)
-                    details = Details.new(PathInfo.new(path))
-                    extract_web_xml_endpoints(content, servlet_methods, details, configured_base_for(path)).each do |endpoint|
-                      result << endpoint
-                    end
-                  end
-                rescue e : IO::Error
-                  logger.debug "Skipping #{path}: #{e.message}"
-                end
-              end
-            end
+        elsif File.exists?(path) && File.extname(path) == ".java"
+          content = read_file_content(path)
+          details = Details.new(PathInfo.new(path))
+          extract_web_servlet_endpoints(content, details).each do |endpoint|
+            result << endpoint
+          end
+        elsif File.exists?(path) && File.basename(path) == "web.xml"
+          content = read_file_content(path)
+          details = Details.new(PathInfo.new(path))
+          extract_web_xml_endpoints(content, servlet_methods, details, configured_base_for(path)).each do |endpoint|
+            result << endpoint
           end
         end
-      rescue e
-        logger.debug e
       end
       Fiber.yield
 

@@ -28,85 +28,68 @@ module Analyzer::Java
     PATH_PREFIX_ANNOTATION  = "PathPrefix"
 
     def analyze
-      # Source Analysis
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
       annotated_service_prefixes = collect_annotated_service_prefixes
       service_with_routes_index = collect_service_with_routes_index
 
-      begin
-        WaitGroup.wait do |wg|
-          # Producer — tracked by the WaitGroup
-          wg.spawn do
-            all_files.each { |file| channel.send(file) }
-            channel.close
-          end
+      # Source Analysis — driven by the shared pool on `Analyzer`, not by a
+      # local copy of it. The inlined pool this replaces closed the channel
+      # as a trailing statement and caught only `IO::Error`, so any other
+      # failure in a worker (a tree-sitter parse timeout, an `IndexError` on
+      # a malformed file) killed that worker outright; once every worker was
+      # gone the producer parked forever on a full channel and the scan hung
+      # with no output. `scan_files` rescues `Exception` per file and closes
+      # in an `ensure`, and records the skip so it reaches `errors`.
+      scan_files(all_files) do |path|
+        next if JavaEngine.test_path?(base_relative_path(path))
+        next unless File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
 
-          worker_count.times do
-            wg.spawn do
-              loop do
-                begin
-                  path = channel.receive?
-                  break if path.nil?
-                  next if JavaEngine.test_path?(base_relative_path(path))
+        content = read_file_content(path)
+        base = configured_base_for(path)
 
-                  if File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
-                    content = read_file_content(path)
-                    base = configured_base_for(path)
-
-                    # Annotation-based services (`@Get("/x")` etc.) —
-                    # Kotlin files reach here too, but tree-sitter-java
-                    # doesn't parse Kotlin cleanly, so skip non-Java.
-                    if content.includes?("com.linecorp.armeria.server.annotation.") && path.ends_with?(".java")
-                      analyze_annotated_service(path, content, base, annotated_service_prefixes)
-                    end
-
-                    # Server.builder()-style routes (regex-anchored, then
-                    # depth-scanned — the builder chain isn't worth a
-                    # dedicated TS walk yet).
-                    details = Details.new(PathInfo.new(path))
-                    # Both the string-constant table (a full tree-sitter
-                    # parse) and the non-code mask (a char walk) are only
-                    # needed once a `Server.builder()` anchor is present.
-                    # Most files are annotated services with no builder
-                    # chain at all, so build both lazily on the first match
-                    # to avoid parsing every file twice.
-                    #
-                    # The mask marks char offsets inside string literals or
-                    # comments, letting us drop builder chains that only
-                    # appear in documentation (e.g. a Kotlin `@Description`
-                    # value or a Java text block) — a real FP source. The
-                    # same mask is reused when scanning the extracted block
-                    # so commented-out `.service`/`.route()` calls inside an
-                    # otherwise-live chain are not reported.
-                    non_code_mask = nil.as(Array(Bool)?)
-                    constants = nil.as(Hash(String, String)?)
-                    content.scan(REGEX_SERVER_BUILDER) do |builder_match|
-                      start = builder_match.begin(0)
-                      next unless start
-                      after_builder = builder_match.end(0)
-                      next unless after_builder
-
-                      mask = (non_code_mask ||= build_non_code_mask(content))
-                      next if start < mask.size && mask[start]
-
-                      finish = scan_server_builder_statement_end(content, after_builder, mask)
-                      next unless finish && finish >= start
-                      server_codeblock = content[start..finish]
-
-                      resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
-                      collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base, mask, start)
-                      collect_builder_routes(server_codeblock, resolved_constants, details, mask, start)
-                    end
-                  end
-                rescue e : IO::Error
-                  logger.debug "Skipping #{path}: #{e.message}"
-                end
-              end
-            end
-          end
+        # Annotation-based services (`@Get("/x")` etc.) —
+        # Kotlin files reach here too, but tree-sitter-java
+        # doesn't parse Kotlin cleanly, so skip non-Java.
+        if content.includes?("com.linecorp.armeria.server.annotation.") && path.ends_with?(".java")
+          analyze_annotated_service(path, content, base, annotated_service_prefixes)
         end
-      rescue e
-        logger.debug e
+
+        # Server.builder()-style routes (regex-anchored, then
+        # depth-scanned — the builder chain isn't worth a
+        # dedicated TS walk yet).
+        details = Details.new(PathInfo.new(path))
+        # Both the string-constant table (a full tree-sitter
+        # parse) and the non-code mask (a char walk) are only
+        # needed once a `Server.builder()` anchor is present.
+        # Most files are annotated services with no builder
+        # chain at all, so build both lazily on the first match
+        # to avoid parsing every file twice.
+        #
+        # The mask marks char offsets inside string literals or
+        # comments, letting us drop builder chains that only
+        # appear in documentation (e.g. a Kotlin `@Description`
+        # value or a Java text block) — a real FP source. The
+        # same mask is reused when scanning the extracted block
+        # so commented-out `.service`/`.route()` calls inside an
+        # otherwise-live chain are not reported.
+        non_code_mask = nil.as(Array(Bool)?)
+        constants = nil.as(Hash(String, String)?)
+        content.scan(REGEX_SERVER_BUILDER) do |builder_match|
+          start = builder_match.begin(0)
+          next unless start
+          after_builder = builder_match.end(0)
+          next unless after_builder
+
+          mask = (non_code_mask ||= build_non_code_mask(content))
+          next if start < mask.size && mask[start]
+
+          finish = scan_server_builder_statement_end(content, after_builder, mask)
+          next unless finish && finish >= start
+          server_codeblock = content[start..finish]
+
+          resolved_constants = constants ||= (path.ends_with?(".java") ? Noir::TreeSitterJavaRouteExtractor.extract_string_constants(content) : Hash(String, String).new)
+          collect_service_routes(server_codeblock, resolved_constants, details, service_with_routes_index, base, mask, start)
+          collect_builder_routes(server_codeblock, resolved_constants, details, mask, start)
+        end
       end
 
       @result

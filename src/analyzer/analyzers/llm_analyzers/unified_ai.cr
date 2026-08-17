@@ -171,25 +171,37 @@ module Analyzer::AI
       queue = Channel(Tuple(Int32, String, Int32)).new(DEFAULT_CHANNEL_CAPACITY)
 
       WaitGroup.wait do |wg|
+        # `ensure`, not a trailing statement: if the producer raises
+        # mid-send, an unclosed channel leaves every worker parked in
+        # `receive?` forever and `WaitGroup.wait` never returns — a silent
+        # hang with no output and no exit code. Same reason
+        # `Analyzer#parallel_analyze` closes in an `ensure`.
         wg.spawn do
-          bundles.each_with_index do |bundle, index|
-            content, token_count = bundle
-            queue.send({index, content, token_count})
+          begin
+            bundles.each_with_index do |bundle, index|
+              content, token_count = bundle
+              queue.send({index, content, token_count})
+            end
+          ensure
+            queue.close
           end
-          queue.close
         end
 
         worker_count.times do
           wg.spawn do
             loop do
-              item = queue.receive?
-              break if item.nil?
-              index, content, token_count = item
-              logger.info "Processing bundle #{index + 1}/#{total} (#{token_count} tokens)"
+              # The rescue covers the whole iteration, not just
+              # `process_bundle`: a worker that dies leaves its share of the
+              # bundles unprocessed and, once all of them are gone, parks the
+              # producer on a full channel.
               begin
+                item = queue.receive?
+                break if item.nil?
+                index, content, token_count = item
+                logger.info "Processing bundle #{index + 1}/#{total} (#{token_count} tokens)"
                 process_bundle(content, adapter)
               rescue ex : Exception
-                logger.debug "Error processing bundle #{index + 1}: #{ex.message}"
+                logger.debug "Error processing bundle: #{ex.message}"
               end
             end
           end
