@@ -3,6 +3,42 @@ require "../../../src/models/logger"
 require "../../../src/miniparsers/jaxrs_extractor_ts"
 
 describe Noir::TreeSitterJaxRsExtractor do
+  # A root-mounted resource composes `@Path("/")` with a bare `@GET` through
+  # `URLPath.join_trimmed`, which used to trim the prefix down to `""`. The
+  # route reached the optimizer with an empty URL, and `optimize_endpoints`
+  # skips those — so `GET /` disappeared from every output format with no
+  # warning, while its `@POST @Path("/things")` sibling came through fine.
+  it "keeps the root path for a bare verb on a root-mounted resource" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.POST;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.core.Response;
+
+      @Path("/")
+      public class RootResource {
+          @GET
+          public Response index() {
+              return Response.ok().build();
+          }
+
+          @POST
+          @Path("/things")
+          public Response create() {
+              return Response.ok().build();
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/"},
+      {"POST", "/things"},
+    ])
+  end
+
   it "extracts application-level base paths from @ApplicationPath" do
     source = <<-JAVA
       package com.example;

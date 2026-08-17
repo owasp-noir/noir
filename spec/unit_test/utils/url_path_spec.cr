@@ -51,6 +51,20 @@ describe "Noir::URLPath.join_trimmed" do
     Noir::URLPath.join_trimmed("/api", "").should eq "/api"
   end
 
+  # The regression this file exists to pin: trimming a root-mounted prefix
+  # emptied it, and an endpoint with an empty URL is dropped wholesale by
+  # `EndpointOptimizer#optimize_endpoints`. A JAX-RS `@Path("/")` class with
+  # a bare `@GET` method resolves through exactly this pair.
+  it "keeps the root when trimming would empty a non-empty prefix" do
+    Noir::URLPath.join_trimmed("/", "").should eq "/"
+    Noir::URLPath.join_trimmed("//", "").should eq "/"
+    Noir::URLPath.join_trimmed("///", "").should eq "/"
+  end
+
+  it "still returns the empty string only when both sides are empty" do
+    Noir::URLPath.join_trimmed("", "").should eq ""
+  end
+
   it "returns the suffix untouched when the prefix is empty" do
     Noir::URLPath.join_trimmed("", "/users").should eq "/users"
     Noir::URLPath.join_trimmed("", "users").should eq "users"
@@ -98,9 +112,28 @@ describe "Noir::URLPath.join_absorbing" do
     Noir::URLPath.join_absorbing("", "").should eq ""
   end
 
-  it "differs from join_trimmed on an all-slash prefix" do
-    Noir::URLPath.join_trimmed("/", "").should eq ""
-    Noir::URLPath.join_absorbing("/", "").should eq "/"
+  # They used to disagree here — `join_trimmed("/", "")` was `""` — and that
+  # disagreement was the bug, not a design difference. The two rules coincide
+  # on every input now, and `join_trimmed` delegates; this sweeps the empty /
+  # `"/"` / `"//"` / trailing-slash matrix so a future edit to either cannot
+  # reintroduce a divergence unnoticed.
+  it "agrees with join_trimmed on the whole empty/slash matrix" do
+    sides = ["", "/", "//", "///", "/api", "/api/", "/api//", "users", "/users", "//users", "users/"]
+    sides.each do |prefix|
+      sides.each do |suffix|
+        Noir::URLPath.join_trimmed(prefix, suffix).should eq Noir::URLPath.join_absorbing(prefix, suffix)
+      end
+    end
+  end
+
+  # Neither helper roots a bare suffix — that is `join_rooted`'s job, and the
+  # JVM extractors depend on an unmapped class staying unrooted so the
+  # analyzer above them can apply the context path.
+  it "never emits an empty result unless both sides are empty" do
+    ["/", "//", "/api", "/api/"].each do |prefix|
+      Noir::URLPath.join_absorbing(prefix, "").should_not be_empty
+    end
+    Noir::URLPath.join_absorbing("", "").should eq ""
   end
 end
 
@@ -143,7 +176,8 @@ describe "Noir::URLPath.join_rooted" do
   end
 
   # And why neither of the existing joins could be reused: both emit an
-  # empty URL for the unmapped-class-with-bare-mapping case.
+  # empty URL for the unmapped-class-with-bare-mapping case. (Only for that
+  # case now — `join_trimmed("/", "")` is `"/"`, not `""`.)
   it "differs from join_trimmed and join_absorbing on the empty pair" do
     Noir::URLPath.join_trimmed("", "").should eq ""
     Noir::URLPath.join_absorbing("", "").should eq ""
@@ -178,5 +212,26 @@ describe "Noir::URLPath.absolute_join" do
 
   it "always prepends a leading slash" do
     Noir::URLPath.absolute_join("noslash").should eq("/noslash")
+  end
+
+  # An all-slash segment — Compojure's `(context "/" ...)`, an all-slash
+  # WebFlux prefix — is not empty on entry, so rejecting empties before
+  # trimming left it in the join as an empty component.
+  it "drops a segment that is empty only after trimming" do
+    Noir::URLPath.absolute_join("/api", "/", "users").should eq("/api/users")
+    Noir::URLPath.absolute_join("/api", "//", "users").should eq("/api/users")
+    Noir::URLPath.absolute_join("/", "users").should eq("/users")
+    Noir::URLPath.absolute_join("/api", "/").should eq("/api")
+  end
+
+  it "never emits a double slash from any all-slash segment" do
+    ["/", "//", "///"].each do |slashes|
+      Noir::URLPath.absolute_join("/api", slashes, "users").should_not contain("//")
+    end
+  end
+
+  it "roots an all-slash-only join" do
+    Noir::URLPath.absolute_join("/").should eq("/")
+    Noir::URLPath.absolute_join("", "").should eq("/")
   end
 end
