@@ -57,12 +57,27 @@ describe "Detect JS NestJS" do
     instance.detect("component.jsx", "@Controller('api')").should be_true
   end
 
-  it "should_not_detect_typescript_file" do
-    instance.detect("component.ts", "@Controller('api')").should be_false
+  it "mjs_and_cjs_files" do
+    instance.applicable?("app.mjs").should be_true
+    instance.detect("app.mjs", "import { NestFactory } from '@nestjs/core'").should be_true
+
+    instance.applicable?("app.cjs").should be_true
+    instance.detect("app.cjs", "require('@nestjs/core')").should be_true
   end
 
-  it "should_not_detect_tsx_file" do
+  it "should_not_gate_in_typescript_or_manifest_files" do
+    instance.applicable?("component.ts").should be_false
+    instance.applicable?("component.tsx").should be_false
+    instance.applicable?("component.mts").should be_false
+    instance.applicable?("component.cts").should be_false
+    instance.applicable?("package.json").should be_false
+  end
+
+  it "should_not_detect_typescript_file" do
+    instance.detect("component.ts", "@Controller('api')").should be_false
     instance.detect("component.tsx", "@Controller('api')").should be_false
+    instance.detect("component.mts", "@Controller('api')").should be_false
+    instance.detect("component.cts", "@Controller('api')").should be_false
   end
 
   it "should_not_detect_non_nestjs" do
