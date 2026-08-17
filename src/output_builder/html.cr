@@ -230,6 +230,8 @@ class OutputBuilderHtml < OutputBuilder
     body_id = "ep-body-#{index}"
     curl = curl_attribute_for(endpoint, baked)
 
+    show_status = any_to_bool(@options["status_codes"]?) || !@options["exclude_codes"]?.to_s.empty?
+
     String.build do |html|
       html << "<div class=\"card\" data-endpoint data-method=\"#{HTML.escape(endpoint.method.upcase)}\" data-text=\"#{HTML.escape(search_text)}\" data-url=\"#{HTML.escape(baked[:url])}\""
       html << " data-curl=\"#{HTML.escape(curl)}\"" if curl
@@ -247,8 +249,14 @@ class OutputBuilderHtml < OutputBuilder
       html << "<span class=\"method-badge #{method_class}\">#{HTML.escape(endpoint.method)}</span>\n"
       html << "<span class=\"url\">#{HTML.escape(baked[:url])}</span>\n"
 
-      if endpoint.protocol != "http" || !endpoint.tags.empty? || !endpoint.params.empty?
+      if show_status || endpoint.protocol != "http" || !endpoint.tags.empty? || !endpoint.params.empty?
         html << "<span class=\"card-details\">\n"
+        if show_status
+          status_code = endpoint.details.status_code
+          status_text = status_code ? status_code.to_s : "error"
+          status_class = get_status_class(status_code)
+          html << "<span class=\"status-badge #{status_class}\">#{HTML.escape(status_text)}</span>\n"
+        end
         if endpoint.protocol != "http"
           html << "<span class=\"protocol-badge\">#{HTML.escape(endpoint.protocol)}</span>\n"
         end
@@ -506,6 +514,22 @@ class OutputBuilderHtml < OutputBuilder
     when "medium"   then "severity-medium"
     when "low"      then "severity-low"
     else                 "severity-info"
+    end
+  end
+
+  private def get_status_class(status_code : Int32?) : String
+    return "status-error" if status_code.nil?
+
+    if status_code >= 500
+      "status-5xx"
+    elsif status_code >= 400
+      "status-4xx"
+    elsif status_code >= 300
+      "status-3xx"
+    elsif status_code >= 200
+      "status-2xx"
+    else
+      "status-default"
     end
   end
 end

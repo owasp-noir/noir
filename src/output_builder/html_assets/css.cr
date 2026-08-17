@@ -508,6 +508,21 @@ module HtmlReportAssets
       border: 1px solid var(--line);
       color: var(--ink-2);
     }
+    .status-badge {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 700;
+      padding: 0.12rem 0.45rem;
+      border: 1px solid var(--line-2);
+      letter-spacing: 0.06em;
+    }
+    .status-2xx { color: var(--m-get); background: var(--m-get-soft); border-color: var(--m-get-line); }
+    .status-3xx { color: var(--m-query); background: var(--m-query-soft); border-color: var(--m-query-line); }
+    .status-4xx { color: var(--m-delete); background: var(--m-delete-soft); border-color: var(--m-delete-line); }
+    .status-5xx { color: var(--m-patch); background: var(--m-patch-soft); border-color: var(--m-patch-line); }
+    .status-error { color: var(--m-delete); background: var(--m-delete-soft); border-color: var(--m-delete-line); }
+    .status-default { background: transparent; color: var(--ink-3); border-color: var(--line-2); }
 
     /* ===== Card body ============================================= */
     .card-body {
