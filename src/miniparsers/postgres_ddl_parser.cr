@@ -180,11 +180,25 @@ module Noir
             end
           end
         when c == '\''
+          # In a standard SQL string a backslash is an ordinary character and
+          # `''` is the only way to write a quote. In an `E'…'` escape string
+          # `\'` is *also* an escaped quote (and `\\` an escaped backslash).
+          # Treating `E'it\'s fine'` as ending at the backslash-escaped quote
+          # left the rest of the literal parsed as code and re-opened a string
+          # on the next quote, which masked the columns that followed — the
+          # `label` / `body` params vanished from the PostgREST surface.
+          escape_string = escape_string_prefix?(chars, i)
           i += 1
           while i < size
             if chars[i] == '\'' && i + 1 < size && chars[i + 1] == '\''
               chars[i] = ' '
               chars[i + 1] = ' '
+              i += 2
+              next
+            end
+            if escape_string && chars[i] == '\\' && i + 1 < size
+              chars[i] = ' '
+              chars[i + 1] = ' ' unless chars[i + 1] == '\n'
               i += 2
               next
             end
@@ -212,6 +226,18 @@ module Noir
       end
 
       String.build(size) { |io| chars.each { |ch| io << ch } }
+    end
+
+    # True when the quote at `start` opens a Postgres escape string — a
+    # standalone `E` / `e` immediately before it (`E'…'`). The prefix has to
+    # be a token of its own: `codeE'x'` is not an escape string.
+    private def escape_string_prefix?(chars : Array(Char), start : Int32) : Bool
+      return false if start == 0
+      prev = chars[start - 1]
+      return false unless prev == 'E' || prev == 'e'
+      return true if start < 2
+      before = chars[start - 2]
+      !(before.alphanumeric? || before == '_' || before == '$')
     end
 
     # `$$` or `$name$` at `start`, else nil.
