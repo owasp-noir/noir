@@ -27,13 +27,13 @@ describe "Detect JS AdonisJS" do
 
   it "detects source files with AdonisJS markers" do
     instance.applicable?("start/routes.ts").should be_true
-    instance.detect("start/routes.ts", %{import router from '@adonisjs/core/services/router';}).should be_true
+    instance.detect("start/routes.ts", %(import router from '@adonisjs/core/services/router';)).should be_true
 
     instance.applicable?("start/routes.js").should be_true
-    instance.detect("start/routes.js", %{const Route = use('@ioc:Adonis/Core/Route');}).should be_true
+    instance.detect("start/routes.js", %(const Route = use('@ioc:Adonis/Core/Route');)).should be_true
 
     instance.applicable?("start/routes.mjs").should be_true
-    instance.detect("start/routes.mjs", %{import router from '@adonisjs/core/services/router';}).should be_true
+    instance.detect("start/routes.mjs", %(import router from '@adonisjs/core/services/router';)).should be_true
   end
 
   it "does not detect package.json without AdonisJS" do

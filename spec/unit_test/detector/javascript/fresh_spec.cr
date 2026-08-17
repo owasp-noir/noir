@@ -27,21 +27,21 @@ describe "Detect JS Fresh" do
 
   it "detects main.ts with $fresh/ marker" do
     instance.applicable?("main.ts").should be_true
-    instance.detect("main.ts", %{import { start } from "$fresh/server.ts";}).should be_true
+    instance.detect("main.ts", %(import { start } from "$fresh/server.ts";)).should be_true
   end
 
   it "detects source files with $fresh/ marker" do
     instance.applicable?("routes/index.tsx").should be_true
-    instance.detect("routes/index.tsx", %{import { Handlers } from "$fresh/server.ts";}).should be_true
+    instance.detect("routes/index.tsx", %(import { Handlers } from "$fresh/server.ts";)).should be_true
 
     instance.applicable?("routes/api/users.ts").should be_true
-    instance.detect("routes/api/users.ts", %{import { FreshContext } from "$fresh/server.ts";}).should be_true
+    instance.detect("routes/api/users.ts", %(import { FreshContext } from "$fresh/server.ts";)).should be_true
 
     instance.applicable?("routes/index.js").should be_true
-    instance.detect("routes/index.js", %{import { Handlers } from "$fresh/server.ts";}).should be_true
+    instance.detect("routes/index.js", %(import { Handlers } from "$fresh/server.ts";)).should be_true
 
     instance.applicable?("routes/index.jsx").should be_true
-    instance.detect("routes/index.jsx", %{import { Handlers } from "$fresh/server.ts";}).should be_true
+    instance.detect("routes/index.jsx", %(import { Handlers } from "$fresh/server.ts";)).should be_true
   end
 
   it "does not detect deno.json without fresh marker" do

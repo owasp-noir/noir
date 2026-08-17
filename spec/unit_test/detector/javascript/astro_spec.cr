@@ -7,10 +7,13 @@ describe "Detect JS Astro" do
 
   it "detects .astro files" do
     instance.applicable?("src/pages/index.astro").should be_true
-    instance.detect("src/pages/index.astro", "---
-const title = 'Home';
----
-<html><body>{title}</body></html>").should be_true
+    content = <<-ASTRO
+      ---
+      const title = 'Home';
+      ---
+      <html><body>{title}</body></html>
+      ASTRO
+    instance.detect("src/pages/index.astro", content).should be_true
   end
 
   it "detects astro config files" do
