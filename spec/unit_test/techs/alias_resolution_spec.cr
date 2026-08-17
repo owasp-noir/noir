@@ -116,4 +116,14 @@ describe "tech alias resolution" do
     claims.size.should be > 500
     claims.count { |_, techs| techs.size > 1 }.should be > 10
   end
+
+  it "pins ambiguous aliases to their home ecosystem where known" do
+    # When multiple technologies claim a popular tool/library name, the pin
+    # must resolve to the tool's native home ecosystem rather than an arbitrary
+    # claimant reached first in catalog order.
+    NoirTechs.similar_to_tech("clap").should eq("rust_cli")
+    NoirTechs.similar_to_tech("argparse").should eq("python_cli")
+    NoirTechs.similar_to_tech("optionparser").should eq("ruby_cli")
+    NoirTechs.similar_to_tech("picocli").should eq("java_cli")
+  end
 end

@@ -186,10 +186,10 @@ module NoirTechs
   AMBIGUOUS_ALIAS_WINNERS = {
     # C++ / Lua / Python / PHP CLI argument parsers.
     "abseil"   => "cpp_cli",
-    "argparse" => "cpp_cli",
+    "argparse" => "python_cli",
     "getopt"   => "cpp_cli",
     # Crystal / Elixir / Ruby.
-    "optionparser" => "crystal_cli",
+    "optionparser" => "ruby_cli",
     # JS / Rust.
     "getopts" => "js_cli",
     # Crystal / Go stdlib HTTP servers.
@@ -200,13 +200,13 @@ module NoirTechs
     # JVM CLI parsers, claimed by the Groovy, Java and Kotlin CLI analyzers.
     "commons-cli" => "groovy_cli",
     "jcommander"  => "groovy_cli",
-    "picocli"     => "groovy_cli",
+    "picocli"     => "java_cli",
     # Java / Kotlin. Worth revisiting on its own merits — a Kotlin Spring
     # project asking for `-t spring` gets the Java analyzer — but that is a
     # behaviour question, not this table's job to change silently.
     "spring" => "java_spring",
     # Rust / Zig.
-    "clap" => "zig_cli",
+    "clap" => "rust_cli",
     # Java / Scala.
     "play"           => "scala_play",
     "play-framework" => "scala_play",
