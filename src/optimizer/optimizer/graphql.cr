@@ -51,7 +51,16 @@ class EndpointOptimizer
     url.split('#', 2).first
   end
 
-  private def merge_graphql_params(target : Endpoint, source : Endpoint) : Nil
+  # Merge `source`'s GraphQL params into `target` and return the result.
+  #
+  # It has to *return* the endpoint, like `promote_source_context` and
+  # `merge_endpoint_context` next door: `Endpoint` is a struct, so `target`
+  # is a copy of the caller's value. `target.params << …` lands anyway
+  # because `Array` is itself a reference, but the `target.details = …`
+  # promotion below wrote only the copy — which is why an SDL-derived
+  # endpoint could hand over its `graphql_query` document (params survived)
+  # while its `graphql_sdl` technology was silently discarded (scalar lost).
+  private def merge_graphql_params(target : Endpoint, source : Endpoint) : Endpoint
     target_sdl = graphql_sdl_endpoint?(target)
     source_sdl = graphql_sdl_endpoint?(source)
 
@@ -75,6 +84,8 @@ class EndpointOptimizer
       details.technology = source.details.technology
       target.details = details
     end
+
+    target
   end
 
   private def graphql_endpoint?(endpoint : Endpoint) : Bool

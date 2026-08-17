@@ -596,6 +596,121 @@ describe "EndpointOptimizer" do
       result[0].details.code_paths.map(&.path).should eq(["ArticleController.kt", "schema.graphqls"])
     end
 
+    # `merge_graphql_params` used to take `target` by value and assign
+    # `target.details` on that copy. `target.params << …` survived because
+    # `Array` is a reference, so the SDL document replaced the runtime one
+    # (asserted below) while the `graphql_sdl` technology promotion right
+    # underneath it was silently dropped — half the method landed.
+    it "promotes the SDL technology onto the surviving GraphQL duplicate" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      runtime_details = Details.new(PathInfo.new("app.js", 12))
+      runtime_details.technology = "javascript_graphql_yoga"
+      runtime_endpoint = Endpoint.new(
+        "/graphql#Query.user", "POST",
+        [Param.new("graphql_query", "query { user { id } }", "json")],
+        runtime_details
+      )
+
+      sdl_details = Details.new(PathInfo.new("schema.graphqls", 4))
+      sdl_details.technology = "graphql_sdl"
+      sdl_endpoint = Endpoint.new(
+        "/graphql#Query.user", "POST",
+        [Param.new("graphql_query", "query SDLVERSION($id: ID!) { user(id: $id) { id } }", "json")],
+        sdl_details
+      )
+
+      # "app.js" sorts before "schema.graphqls", so the runtime endpoint is
+      # the one kept and the SDL one is the source being merged in.
+      result = optimizer.optimize_endpoints([runtime_endpoint, sdl_endpoint])
+
+      result.size.should eq(1)
+      doc_param = result[0].params.find! { |param| param.name == "graphql_query" }
+      doc_param.value.should contain("SDLVERSION")
+      result[0].details.technology.should eq("graphql_sdl")
+    end
+
+    # The dedup merged four collections and threw every scalar the losing
+    # endpoint carried away. `protocol` is the consequential one: taggers run
+    # *after* the optimizer and `WebsocketTagger` keys off exactly this field,
+    # so a `ws` endpoint that lost the source-location tiebreak to a plain
+    # HTTP one at the same path silently stopped being tagged.
+    it "carries the losing duplicate's protocol, metadata and status code" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      http_endpoint = Endpoint.new("/chat", "GET", [] of Param, Details.new(PathInfo.new("a_http.py", 3)))
+
+      ws_details = Details.new(PathInfo.new("b_ws.py", 9))
+      ws_details.status_code = 101
+      ws_endpoint = Endpoint.new("/chat", "GET", [] of Param, ws_details)
+      ws_endpoint.protocol = "ws"
+      ws_endpoint.kind = "channel"
+      ws_endpoint.metadata = {"channel" => "room:lobby"}
+
+      # "a_http.py" sorts first, so the HTTP endpoint wins the tiebreak and
+      # the websocket facts are the ones at risk of being dropped.
+      result = optimizer.optimize_endpoints([http_endpoint, ws_endpoint])
+
+      result.size.should eq(1)
+      result[0].protocol.should eq("ws")
+      result[0].kind.should eq("channel")
+      result[0].metadata.should eq({"channel" => "room:lobby"})
+      result[0].details.status_code.should eq(101)
+    end
+
+    it "does not overwrite scalars the surviving duplicate already carries" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      winner_details = Details.new(PathInfo.new("a_first.py", 1))
+      winner_details.status_code = 200
+      winner = Endpoint.new("/chat", "GET", [] of Param, winner_details)
+      winner.protocol = "wss"
+      winner.metadata = {"source" => "winner"}
+
+      loser_details = Details.new(PathInfo.new("b_second.py", 1))
+      loser_details.status_code = 101
+      loser = Endpoint.new("/chat", "GET", [] of Param, loser_details)
+      loser.protocol = "ws"
+      loser.metadata = {"source" => "loser"}
+
+      result = optimizer.optimize_endpoints([winner, loser])
+
+      result.size.should eq(1)
+      result[0].protocol.should eq("wss")
+      result[0].metadata.should eq({"source" => "winner"})
+      result[0].details.status_code.should eq(200)
+    end
+
+    # `internal` marks a declaration of a request the app *makes*
+    # (`@FeignClient`, `@HttpExchange`), which `Deliver#skip_probe_target?`
+    # reads to skip probing. Another analyzer finding a real served route at
+    # the same address contradicts that, so it is cleared rather than kept —
+    # otherwise whichever of the two sorted first decided whether a genuine
+    # endpoint got probed.
+    it "clears internal when a served route dedups with an outbound declaration" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      client = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("a_client.java", 5)), true)
+      served = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("b_controller.java", 7)), false)
+
+      result = optimizer.optimize_endpoints([client, served])
+
+      result.size.should eq(1)
+      result[0].internal.should be_false
+    end
+
+    it "keeps internal when both duplicates are outbound declarations" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      first = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("a_client.java", 5)), true)
+      second = Endpoint.new("/users", "GET", [] of Param, Details.new(PathInfo.new("b_client.java", 7)), true)
+
+      result = optimizer.optimize_endpoints([first, second])
+
+      result.size.should eq(1)
+      result[0].internal.should be_true
+    end
+
     it "still merges Kotlin Spring GraphQL endpoints with SDL when the controller is under a build module" do
       optimizer = EndpointOptimizer.new(logger, options)
       temp_dir = File.join(Dir.tempdir, "noir-optimizer-graphql-#{Process.pid}-#{Time.utc.to_unix_ms}")
