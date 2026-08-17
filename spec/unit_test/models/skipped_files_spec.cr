@@ -51,4 +51,53 @@ describe Noir::SkippedFiles do
     Noir::SkippedFiles.count.should eq(0)
     Noir::SkippedFiles.failures.should be_empty
   end
+
+  # The noun is part of the tally key, not decoration. An unlistable directory
+  # costs its whole subtree; folding it into the file tally would report the
+  # loss of a tree as the loss of one file, and whichever noun arrived first
+  # would decide how both read.
+  it "keeps a separate tally per noun and pluralizes each correctly" do
+    Noir::SkippedFiles.record("detect", "src/app.rb", "unreadable", phase: Noir::SkippedFiles::Phase::Scan)
+    Noir::SkippedFiles.record("detect", "src/locked", "permission denied",
+      noun: "directory", phase: Noir::SkippedFiles::Phase::Scan)
+    Noir::SkippedFiles.record("detect", "src/other", "permission denied",
+      noun: "directory", phase: Noir::SkippedFiles::Phase::Scan)
+
+    messages = Noir::SkippedFiles.failures.map(&.message)
+    messages.size.should eq(2)
+    messages.any?(&.includes?("skipped 1 file:")).should be_true
+    messages.any?(&.includes?("skipped 2 directories:")).should be_true
+  end
+
+  # Losses with no per-item granularity — an export that never landed, a rule
+  # set that loaded nothing — carry their own message and are never merged.
+  it "records one entry per gap, verbatim" do
+    Noir::SkippedFiles.record_gap("deliver", "webhook delivery to http://x failed: refused")
+    Noir::SkippedFiles.record_gap("deliver", "Elasticsearch delivery to http://y failed: refused")
+
+    failures = Noir::SkippedFiles.failures
+    failures.size.should eq(2)
+    failures.map(&.tech).uniq!.should eq(["deliver"])
+    failures.first.message.should eq("webhook delivery to http://x failed: refused")
+    # Gaps count no items, so the file tally stays honest.
+    Noir::SkippedFiles.count.should eq(0)
+  end
+
+  # The two phases exist so `analysis_endpoints` can reset its own pass
+  # without erasing what the detection walk already found — a full clear there
+  # would drop the walk's gaps before anything reported them.
+  it "clears one phase without touching the other" do
+    Noir::SkippedFiles.record("detect", "src/locked.rb", "permission denied",
+      phase: Noir::SkippedFiles::Phase::Scan)
+    Noir::SkippedFiles.record("go_gin", "main.go", "boom",
+      phase: Noir::SkippedFiles::Phase::Analysis)
+    Noir::SkippedFiles.record_gap("deliver", "webhook never landed")
+
+    Noir::SkippedFiles.clear(Noir::SkippedFiles::Phase::Analysis)
+
+    Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Analysis).should be_empty
+    scan_phase = Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Scan)
+    scan_phase.map(&.tech).sort!.should eq(["deliver", "detect"])
+    Noir::SkippedFiles.failures.size.should eq(2)
+  end
 end
