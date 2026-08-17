@@ -802,4 +802,47 @@ describe Noir::JSRouteExtractor do
       stripped.should_not contain("gone")
     end
   end
+  describe "line_for_char_pos" do
+    it "resolves a char index on non-ASCII content" do
+      # `to_slice` is byte-indexed; feeding it a char index straight from
+      # the lexer under-counted newlines once the file held any multi-byte
+      # character, so routes reported a line from earlier in the file.
+      content = "// 주석 — 설명\nconst a = 1;\napp.get('/x', h);\n"
+      pos = content.index("app").should_not be_nil
+
+      Noir::JSRouteExtractor.line_for_char_pos(content, pos).should eq(3)
+      Noir::JSRouteExtractor.line_for_char_pos(content, 0).should eq(1)
+    end
+
+    it "resolves a char index on ASCII content" do
+      content = "a\nb\nc"
+      Noir::JSRouteExtractor.line_for_char_pos(content, 4).should eq(3)
+    end
+
+    it "reports the right route line below a non-ASCII literal" do
+      content = <<-JS
+        const express = require('express');
+        const app = express();
+
+        const 메시지 = '안녕하세요 여러분 반갑습니다 오늘도 좋은 하루 되세요';
+
+        app.get('/users', (req, res) => res.json({ m: 메시지 }));
+
+        app.listen(3000);
+
+        app.post('/items', (req, res) => res.json({}));
+        JS
+
+      file = File.tempfile("noir_js_route", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        lines = endpoints.to_h { |e| {"#{e.method} #{e.url}", e.details.code_paths.first.line} }
+        lines["GET /users"].should eq(6)
+        lines["POST /items"].should eq(10)
+      ensure
+        file.delete
+      end
+    end
+  end
 end

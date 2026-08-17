@@ -274,9 +274,12 @@ module Noir
           # Normalize HTTP method (e.g., DEL -> DELETE)
           normalized_method = normalize_http_method(pattern.method)
 
-          # Convert byte offset to line number
+          # `start_pos` is a JSLexer token position, i.e. an index into
+          # `Array(Char)`. `to_slice` is bytes, so it has to be converted
+          # first or every route below a non-ASCII literal reports a line
+          # from somewhere earlier in the file.
           line_number = if pattern.start_pos >= 0
-                          content.to_slice[0, pattern.start_pos].count('\n'.ord.to_u8) + 1
+                          line_for_char_pos(content, pattern.start_pos)
                         else
                           1
                         end
@@ -1228,6 +1231,17 @@ module Noir
       end
 
       builder.to_s
+    end
+
+    # 1-based line number for a CHAR index into `content`.
+    def self.line_for_char_pos(content : String, pos : Int32) : Int32
+      byte_pos = if content.bytesize == content.size
+                   pos
+                 else
+                   content.char_index_to_byte_index(pos) || content.bytesize
+                 end
+      byte_pos = content.bytesize if byte_pos > content.bytesize
+      content.to_slice[0, byte_pos].count('\n'.ord.to_u8) + 1
     end
 
     # Does the '/' the stripper is looking at open a regex literal?

@@ -77,5 +77,26 @@ describe Noir::JSHttpRouteExtractor do
       ep.params.map(&.name).should eq(["filter"])
       ep.params.map(&.param_type).should eq(["json"])
     end
+
+    it "finds a named handler declared with a non-ASCII type annotation" do
+      # The handler offset was computed as `match.begin(0) + match[0].bytesize`,
+      # mixing a char index with a byte length. Any multi-byte character in
+      # the declaration pushed the offset past the handler body and the
+      # route disappeared entirely.
+      code = <<-TS
+        import { createServer } from 'node:http';
+
+        const handler: 요청핸들러 = function (req, res) {
+          if (req.url === '/api/status' && req.method === 'GET') {
+            res.end('ok');
+          }
+        };
+
+        createServer(handler).listen(3000);
+        TS
+
+      endpoints = Noir::JSHttpRouteExtractor.extract("server.ts", code)
+      endpoints.map { |e| {e.method, e.url} }.should eq([{"GET", "/api/status"}])
+    end
   end
 end
