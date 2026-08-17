@@ -1,5 +1,4 @@
 require "../utils/url_path"
-require "../utils/top_level_split"
 require "../ext/tree_sitter/tree_sitter"
 require "./extraction_result_cache"
 require "../models/endpoint"
@@ -405,28 +404,45 @@ module Noir
       name == "HttpExchange" || name.ends_with?("Exchange")
     end
 
+    # Simple names of the `implements` interfaces, read straight from the
+    # tree-sitter `interfaces` field (a `super_interfaces` node wrapping a
+    # `type_list`).
+    #
+    # Reading the field rather than slicing the class node's text at the
+    # first `{` matters: the node text starts at the `modifiers` child, so
+    # a class-level annotation whose arguments contain a brace —
+    # `@Produces({MediaType.APPLICATION_JSON})`, `@RequestMapping({"/api"})`,
+    # `@CrossOrigin(origins = {...})` — was mistaken for the class body and
+    # cut the header off before `implements` was ever reached, silently
+    # killing interface route inheritance. `superclass_name` below already
+    # reads its field; this is the same idea for the interface list.
     private def implemented_interface_names(class_decl : LibTreeSitter::TSNode, source : String) : Array(String)
-      header = Noir::TreeSitter.node_text(class_decl, source)
-      if body_start = header.index('{')
-        header = header[...body_start]
-      end
+      names = [] of String
+      return names unless interfaces = Noir::TreeSitter.field(class_decl, "interfaces")
 
-      match = header.match(/\bimplements\s+(.+)\z/m)
-      return [] of String unless match
-
-      names = split_top_level_commas(match[1]).compact_map do |raw|
-        type_name = raw.strip
-        next if type_name.empty?
-        type_name = strip_generic_arguments(type_name)
-        type_name = type_name.split(/\s+/).first? || type_name
-        if idx = type_name.rindex('.')
-          type_name[(idx + 1)..]
+      Noir::TreeSitter.each_named_child(interfaces) do |child|
+        if Noir::TreeSitter.node_type(child) == "type_list"
+          Noir::TreeSitter.each_named_child(child) do |type_node|
+            append_simple_type_name(type_node, source, names)
+          end
         else
-          type_name
+          append_simple_type_name(child, source, names)
         end
       end
-      names.uniq!
       names
+    end
+
+    # Appends the simple name of a type node — generics dropped, package
+    # qualifier dropped, any leading `@Annotation` on an `annotated_type`
+    # discarded — skipping empties and duplicates.
+    private def append_simple_type_name(type_node : LibTreeSitter::TSNode, source : String, names : Array(String))
+      name = strip_generic_arguments(Noir::TreeSitter.node_text(type_node, source))
+      name = name.split(/\s+/).last? || name
+      return if name.empty?
+      if idx = name.rindex('.')
+        name = name[(idx + 1)..]
+      end
+      names << name unless name.empty? || names.includes?(name)
     end
 
     # An `abstract class` is never instantiated as a controller, so its
@@ -456,15 +472,6 @@ module Noir
       else
         name
       end
-    end
-
-    # Delegates to the shared splitter. `Rules::GENERICS_ONLY` reproduces this
-    # file's previous hand-rolled loop exactly: only `<` and `>` contribute
-    # depth (clamped at 0), quotes and backslashes are ordinary characters, no
-    # part is stripped and every empty part is kept. The caller strips and
-    # skips empties itself.
-    private def split_top_level_commas(text : String) : Array(String)
-      Noir::TopLevelSplit.split(text, ',', Noir::TopLevelSplit::Rules::GENERICS_ONLY)
     end
 
     private def strip_generic_arguments(text : String) : String
