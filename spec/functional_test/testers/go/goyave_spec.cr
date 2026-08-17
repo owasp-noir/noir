@@ -4,7 +4,9 @@ expected_endpoints = [
   Endpoint.new("/", "GET"),
   Endpoint.new("/create", "POST"),
   Endpoint.new("/product/{id}", "GET", [
-    Param.new("id", "[0-9]+", "path"),
+    # `{id:[0-9]+}` — the regex is a constraint, not a value, and the
+    # analyzer records none. Same rule as php/laminas `constraints`.
+    Param.new("id", "", "path"),
   ]),
   Endpoint.new("/api/users", "GET"),
   Endpoint.new("/api/version", "GET"),

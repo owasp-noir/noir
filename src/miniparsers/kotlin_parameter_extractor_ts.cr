@@ -4,6 +4,7 @@ require "../models/code_locator"
 require "./extraction_result_cache"
 require "./import_graph"
 require "../utils/text_file"
+require "../utils/jvm_literal"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Kotlin Spring.
@@ -92,10 +93,30 @@ module Noir
       getter null_validation_groups : Array(String)
       getter? server_managed : Bool
       getter validation_annotations : Array(String)
+      # True when `init_value` came from a `string_literal` node and was
+      # therefore already decoded (quotes stripped) on the way in.
+      getter? init_string_literal : Bool
 
       def initialize(@name, @access_modifier, @has_setter, @init_value,
                      @null_validation_groups = [] of String, @server_managed = false,
-                     @validation_annotations = [] of String)
+                     @validation_annotations = [] of String,
+                     @init_string_literal = false)
+      end
+
+      # The request-ready value of this field's initializer, or "" when the
+      # initializer is an expression with no literal form.
+      #
+      # `init_value` cannot be handed to `Noir::JvmLiteral.value_of` directly,
+      # because Kotlin's collector stores mixed shapes: a `string_literal` is
+      # decoded (`= "untitled"` -> `untitled`) while every other initializer
+      # keeps its raw source (`= LocalDateTime.now()`). A decoded string is
+      # indistinguishable from a bare identifier once stored, so running the
+      # literal check over it erased every string default in a Kotlin DTO.
+      # The flag is what tells the two apart. Java's collector keeps raw text
+      # throughout, which is why its call site passes `init_value` straight in.
+      def literal_default : String
+        return @init_value if @init_string_literal
+        Noir::JvmLiteral.value_of(@init_value)
       end
 
       def null_for_any_group?(groups : Array(String)) : Bool
@@ -692,12 +713,14 @@ module Noir
           next unless Noir::TreeSitter.node_type(param) == "class_parameter"
           name = ""
           init = ""
+          init_string = false
           Noir::TreeSitter.each_named_child(param) do |child|
             case Noir::TreeSitter.node_type(child)
             when "simple_identifier"
               name = Noir::TreeSitter.node_text(child, source) if name.empty?
             when "string_literal"
               init = decode_string_literal(child, source)
+              init_string = true
             when "user_type", "nullable_type", "binding_pattern_kind",
                  "modifiers", "parameter_modifiers", "annotation"
               # type / val|var marker / property annotations — not a
@@ -713,7 +736,8 @@ module Noir
           next if name.empty?
           fields << FieldInfo.new(
             name, "public", true, init, null_validation_groups(param, source),
-            server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source)
+            server_managed_field?(param, source, name, init, class_name, class_text), validation_annotations(param, source),
+            init_string
           )
         end
       end
@@ -740,6 +764,7 @@ module Noir
             next if property_has_accessor?(member)
             name = ""
             init = ""
+            init_string = false
             Noir::TreeSitter.each_named_child(member) do |child|
               case Noir::TreeSitter.node_type(child)
               when "variable_declaration"
@@ -752,13 +777,17 @@ module Noir
               when "simple_identifier"
                 name = Noir::TreeSitter.node_text(child, source) if name.empty?
               when "string_literal"
-                init = decode_string_literal(child, source) if init.empty?
+                if init.empty?
+                  init = decode_string_literal(child, source)
+                  init_string = true
+                end
               end
             end
             next if name.empty?
             fields << FieldInfo.new(
               name, "public", true, init, null_validation_groups(member, source),
-              server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source)
+              server_managed_field?(member, source, name, init, class_name, class_text), validation_annotations(member, source),
+              init_string
             )
             last_prop_name = name
           else
@@ -1043,7 +1072,14 @@ module Noir
             next if field.server_managed?
             next if field.null_for_any_group?(validation_groups)
             next unless json_body || field.access_modifier == "public" || field.has_setter?
-            expanded_default = default_value || field.init_value
+            # `default_value` is an annotation-supplied value
+            # (`@RequestParam(defaultValue = "all")`) and is already literal.
+            # A field initialiser only becomes a value when it is one —
+            # `var addedAt: LocalDateTime = LocalDateTime.now()` was
+            # publishing `{"addedAt":"LocalDateTime.now()"}`. See
+            # `FieldInfo#literal_default` for why `init_value` alone is not
+            # enough to decide that.
+            expanded_default = default_value || field.literal_default
             sink << param_from_field(field, expanded_default, effective_format)
           end
         end
@@ -1149,7 +1185,11 @@ module Noir
       if fields = class_fields[type_name]?
         fields.each do |field|
           next if field.server_managed?
-          push_unique_param(params, param_from_field(field, field.init_value, format))
+          # `literal_default`, not `init_value`: this inferred-body path
+          # (`req.awaitBody<Post>()`) fed the raw initialiser straight into
+          # `Param#value`, so it published `{"addedAt":"LocalDateTime.now()"}`
+          # while the annotated `@RequestBody` path above did not.
+          push_unique_param(params, param_from_field(field, field.literal_default, format))
         end
       elsif simple_bindable_param?(type_name)
         push_unique_param(params, Param.new("body", "", format))

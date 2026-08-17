@@ -14,7 +14,9 @@ expected_endpoints = [
     Param.new("item_id", "", "path"),
   ]),
   Endpoint.new("/api/cbv/items/{item_id}", "GET", [
-    Param.new("include_meta", "False", "query"),
+    # `Query(False)` unwraps to the literal it carries, spelled for the
+    # wire rather than for Python.
+    Param.new("include_meta", "false", "query"),
     Param.new("item_id", "", "path"),
   ]),
   Endpoint.new("/api/constant/registered", "POST"),

@@ -6,6 +6,7 @@ require "../../engines/kotlin_engine"
 require "../../../utils/utils.cr"
 require "../../../utils/path_scope"
 require "../../../utils/url_path"
+require "../../../utils/jvm_literal"
 
 module Analyzer::Kotlin
   class Spring < Analyzer
@@ -811,7 +812,7 @@ module Analyzer::Kotlin
     private def graphql_input_field_param(field : Noir::TreeSitterKotlinParameterExtractor::FieldInfo,
                                           argument_name : String) : Param
       name = argument_name == "input" ? field.name : "#{argument_name}.#{field.name}"
-      param = Param.new(name, field.init_value, "json")
+      param = Param.new(name, field.literal_default, "json")
       param.add_tag(Tag.new("graphql-input-field", argument_name, "kotlin_spring_graphql_analyzer"))
       param
     end

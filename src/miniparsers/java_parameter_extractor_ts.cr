@@ -5,6 +5,7 @@ require "./extraction_result_cache"
 require "./import_graph"
 require "./java_route_extractor_ts"
 require "../utils/text_file"
+require "../utils/jvm_literal"
 
 module Noir
   # Tree-sitter-backed parameter extractor for Java/Spring.
@@ -973,7 +974,10 @@ module Noir
         json_body = effective_format == "json"
         fields.each do |field|
           next unless json_body || field.access_modifier == "public" || field.has_setter?
-          expanded_default = default_value || field.init_value
+          # `default_value` comes from an annotation and is already literal;
+          # `init_value` is raw Java source and only becomes a value when it
+          # is one. See `Noir::JvmLiteral`.
+          expanded_default = default_value || Noir::JvmLiteral.value_of(field.init_value)
           sink << Param.new(field.name, expanded_default, effective_format)
         end
       end

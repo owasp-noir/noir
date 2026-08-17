@@ -2,6 +2,7 @@ require "../../../models/analyzer"
 require "../../../miniparsers/java_callee_extractor"
 require "../../../miniparsers/java_route_extractor_ts"
 require "../../../utils/url_path"
+require "../../../utils/jvm_literal"
 
 module Analyzer::Java
   class Play < Analyzer
@@ -529,15 +530,12 @@ module Analyzer::Java
       nil
     end
 
+    # A Play routes default (`name: T ?= <expr>`) is a Scala/Java expression,
+    # not a value: `?= "json"` and `?= 1` are real defaults, `?= null` says
+    # there is no default, and `?= List.empty` has no literal form at all.
+    # See `Noir::JvmLiteral` for why the last two must not reach `Param#value`.
     private def normalize_route_default_value(raw_default : String) : String
-      value = raw_default.strip
-      return "" if value.empty?
-
-      if value.size >= 2 && ((value.starts_with?('"') && value.ends_with?('"')) || (value.starts_with?("'") && value.ends_with?("'")))
-        return value[1..-2]
-      end
-
-      value
+      Noir::JvmLiteral.value_of(raw_default)
     end
 
     private def request_route_param_type?(param_type : String?) : Bool

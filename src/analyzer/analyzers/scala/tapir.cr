@@ -341,17 +341,17 @@ module Analyzer::Scala
         elsif m["path_type"]?
           name = m["path_name"]? || default_path_name(segments)
           segments << "{#{name}}"
-          collect_param(params, name, "", "path")
+          collect_param(params, name, "path")
         elsif q = m["query_name"]?
-          collect_param(params, q, m["query_type"]? || "", "query")
+          collect_param(params, q, "query")
         elsif q = m["queries_name"]?
-          collect_param(params, q, m["queries_type"]? || "", "query")
+          collect_param(params, q, "query")
         elsif h = m["header_name"]?
-          collect_param(params, h, m["header_type"]? || "", "header")
+          collect_param(params, h, "header")
         elsif h = m["header_name2"]?
-          collect_param(params, h, "", "header")
+          collect_param(params, h, "header")
         elsif c = m["cookie_name"]?
-          collect_param(params, c, m["cookie_type"]? || "", "cookie")
+          collect_param(params, c, "cookie")
         elsif body = m["body"]?
           inner = m["body_type"]? || ""
           param_type = case body
@@ -362,14 +362,26 @@ module Analyzer::Scala
                        else
                          "body"
                        end
-          collect_param(params, "body", inner, param_type)
+          # The body's value carries its DTO name (`jsonBody[Book]` ->
+          # `{"body":"Book"}`), matching what javalin/ktor/akka/http4s/
+          # zio-http/helidon already emit for a body param.
+          collect_param(params, "body", param_type, inner)
         end
       end
     end
 
-    private def collect_param(params : Array(Param), name : String, type_value : String, param_type : String)
+    # Query / header / cookie / path inputs record no value. Tapir declares
+    # each one's Scala *type* (`query[Option[Int]]("limit")`), and that used
+    # to be stored in `Param#value` — but `value` is the request value every
+    # HTTP-shaped consumer sends: the curl builder emitted `?limit=Option[Int]`
+    # and the OAS builders promoted it to an `enum` entry on the parameter.
+    # `Param` has no declared-type field to put a scalar type in, so it is
+    # dropped rather than published as a value it is not. A `body` param is
+    # the documented exception: its value names the DTO, which is the
+    # convention every other JVM analyzer already follows.
+    private def collect_param(params : Array(Param), name : String, param_type : String, value : String = "")
       return if params.any? { |p| p.name == name && p.param_type == param_type }
-      params << Param.new(name, type_value, param_type)
+      params << Param.new(name, value, param_type)
     end
 
     # Replace top-level identifier references to known path/param constants with

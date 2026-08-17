@@ -24,7 +24,8 @@ expected_endpoints = [
     Param.new("label", "new,hot", "query"),
   ]),
   Endpoint.new("/api/list-all", "GET", [
-    Param.new("version", "null", "query"),
+    # `?= null` is "no default", not the string "null".
+    Param.new("version", "", "query"),
   ]),
   Endpoint.new("/fixed-home", "GET"),
   Endpoint.new("/files/$path<.+>", "GET", [Param.new("path", "", "path")]),
