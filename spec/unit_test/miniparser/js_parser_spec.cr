@@ -208,6 +208,43 @@ describe Noir::JSParser do
     end
   end
 
+  describe "route builder chains" do
+    it "stops the .route() chain at the end of a semicolon-free statement" do
+      # StandardJS / Prettier `semi: false` style. The chain walk used to
+      # stop only at a `;`, so with none in the file it kept collecting
+      # verbs from the following statements and hung them on /profile.
+      code = <<-JS
+        const express = require('express')
+        const app = express()
+
+        app.route('/profile')
+          .get((req, res) => res.json({}))
+
+        app.post('/orders', (req, res) => res.json({}))
+        app.delete('/carts', (req, res) => res.json({}))
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      pairs = routes.map { |r| "#{r.method} #{r.path}" }.uniq!.sort!
+      pairs.should eq(["DELETE /carts", "GET /profile", "POST /orders"])
+    end
+
+    it "still collects every verb of a real chain" do
+      code = <<-JS
+        const express = require('express');
+        const app = express();
+        app.route('/profile')
+          .get((req, res) => res.json({}))
+          .put((req, res) => res.json({}))
+          .delete((req, res) => res.json({}));
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      methods = routes.select { |r| r.path == "/profile" }.map(&.method).uniq!.sort!
+      methods.should eq(["DELETE", "GET", "PUT"])
+    end
+  end
+
   describe "JSRoutePattern" do
     it "stores method and path" do
       pattern = Noir::JSRoutePattern.new("GET", "/users")
