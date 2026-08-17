@@ -132,4 +132,48 @@ describe Noir::HaskellCalleeExtractor do
       {"invalidArgs", 65},
     ])
   end
+
+  # Regression: a `'` glued to an identifier matched the <= 8 character
+  # char-literal heuristic, so `xs' <- go' 1` was masked from the first
+  # prime to the second — `go'` disappeared and the leftover `xs` was
+  # reported as a phantom callee.
+  it "treats a prime as part of the identifier, not the start of a char literal" do
+    body = <<-HASKELL
+      do
+        xs' <- go' 1
+        pure xs'
+      HASKELL
+
+    callees = Noir::HaskellCalleeExtractor.callees_for_body(body, "Handler/Home.hs", 10)
+    names = callees.map { |name, _, _| name }
+    names.should contain("go'")
+    names.should_not contain("xs")
+  end
+
+  it "handles a primed identifier sitting next to a real char literal" do
+    body = <<-HASKELL
+      do
+        xs' <- splitOn' ','
+        render' xs'
+      HASKELL
+
+    callees = Noir::HaskellCalleeExtractor.callees_for_body(body, "Handler/Home.hs", 20)
+    names = callees.map { |name, _, _| name }
+    # The primes belong to the identifiers; `','` is preceded by a space, so
+    # it is still a genuine char literal and stays masked.
+    names.should eq(["splitOn'", "render'"])
+  end
+
+  it "keeps the prime on a primed top-level function name" do
+    source = <<-HASKELL
+      module Handler.Home where
+
+      getHomeR' :: Handler Html
+      getHomeR' = do
+        pure ()
+      HASKELL
+
+    bodies = Noir::HaskellCalleeExtractor.function_bodies(source, "Handler/Home.hs")
+    bodies.map { |body| body[:name] }.should eq(["getHomeR'"])
+  end
 end
