@@ -11,6 +11,12 @@ module Detector::Javascript
     # four separate whole-file scans per JS/TS source.
     NEXT_IMPORT = /require\(['"]next(?:\/[^'"]+)?['"]\)|from\s+['"]next(?:\/[^'"]+)?['"]/
 
+    # The named HTTP-verb export an App Router `route.{js,ts}` must declare
+    # to serve anything, in the forms Next.js accepts: `export async
+    # function GET`, `export const POST = ...`, and the destructured
+    # `export const { POST } = serve(...)` a handler factory returns.
+    ROUTE_HANDLER_EXPORT = /\bexport\s+(?:async\s+)?(?:function|const|let|var)?\s*\{?\s*(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/
+
     def detect(filename : String, file_contents : String) : Bool
       # Check for Next.js config files
       if filename.ends_with?("next.config.js") ||
@@ -42,10 +48,20 @@ module Detector::Javascript
       end
 
       # App Router route handlers: /app/**/route.{js,ts}
-      if filename.includes?("/app/") &&
+      #
+      # `app` is an ordinary directory name — the project's own documented
+      # Docker command mounts the repo at `-w /app` — so this matches the
+      # base-relative path, and demands a content signal the same way the
+      # Pages Router branch above does. A bare `route.ts` under some
+      # `app/` directory is not on its own a Next.js marker; a route
+      # handler additionally exports a named HTTP verb or speaks to the
+      # `Next*` request/response types.
+      if base_relative_path(filename).includes?("/app/") &&
          (filename.ends_with?("/route.js") || filename.ends_with?("/route.ts") ||
          filename.ends_with?("/route.jsx") || filename.ends_with?("/route.tsx") ||
-         filename.ends_with?("/route.mjs"))
+         filename.ends_with?("/route.mjs")) &&
+         (next_js_content_signal?(file_contents) ||
+         content_matches?(file_contents, ROUTE_HANDLER_EXPORT))
         return true
       end
 
