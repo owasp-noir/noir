@@ -25,7 +25,7 @@ expected_endpoints = [
   Endpoint.new("/api/blogs", "POST", [
     Param.new("title", "", "json"),
     Param.new("body", "", "json"),
-    Param.new("published", "False", "json"),
+    Param.new("published", "false", "json"),
   ]),
   # @api.api_operation(["POST", "PATCH"], "/mixed") emits one endpoint per verb.
   Endpoint.new("/api/mixed", "POST"),

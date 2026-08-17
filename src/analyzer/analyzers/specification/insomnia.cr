@@ -97,7 +97,7 @@ module Analyzer::Specification
       end
 
       if auth = request["authentication"]?
-        process_json_auth(auth, params)
+        process_json_auth(auth, env, params)
       end
 
       # Body
@@ -248,7 +248,7 @@ module Analyzer::Specification
       end
 
       if auth = item["authentication"]?
-        process_yaml_auth(auth, params)
+        process_yaml_auth(auth, env, params)
       end
 
       if body_node = item["body"]?
@@ -397,10 +397,19 @@ module Analyzer::Specification
       normalized.empty? ? "param" : normalized
     end
 
+    # First-wins, except that a later declaration carrying a value upgrades a
+    # placeholder. The URL scan runs first and registers `{userId}` (and any
+    # `?include=`) with no value at all; the concrete value lives in the
+    # request's own `pathParameters` / `parameters` list, which is read after.
+    # Plain first-wins therefore discarded exactly the entry that had the data
+    # — `pathParameters: [{name: userId, value: "42"}]` produced `userId=`.
     private def add_param(params : Array(Param), name : String, value : String, param_type : String)
       normalized = name.strip
       return if normalized.empty?
-      return if params.any? { |p| p.name == normalized && p.param_type == param_type }
+      if index = params.index { |p| p.name == normalized && p.param_type == param_type }
+        params[index] = Param.new(normalized, value, param_type) if params[index].value.empty? && !value.empty?
+        return
+      end
       params << Param.new(normalized, value, param_type)
     end
 
@@ -418,29 +427,34 @@ module Analyzer::Specification
       logger.debug "Failed to parse Insomnia JSON body: #{e}"
     end
 
-    private def process_json_auth(auth : JSON::Any, params : Array(Param))
+    # `key` / `value` / `token` are templated the same way the URL is —
+    # `authentication: {type: bearer, token: "{{ token }}"}` against an
+    # `environments.data.token` — so they go through `resolve_vars` too.
+    # Only the URL did, which is why a bearer header came out as the literal
+    # `Bearer {{ token }}` instead of the credential the collection defines.
+    private def process_json_auth(auth : JSON::Any, env : Hash(String, String), params : Array(Param))
       return if auth["disabled"]?.try(&.as_bool?) == true
       type = auth["type"]?.try(&.as_s?) || ""
       process_auth_fields(
         type,
-        auth["key"]?.try(&.as_s?) || "",
-        auth["value"]?.try(&.as_s?) || "",
+        resolve_vars(auth["key"]?.try(&.as_s?) || "", env),
+        resolve_vars(auth["value"]?.try(&.as_s?) || "", env),
         auth["addTo"]?.try(&.as_s?) || "",
-        auth["token"]?.try(&.as_s?) || "",
+        resolve_vars(auth["token"]?.try(&.as_s?) || "", env),
         auth["prefix"]?.try(&.as_s?) || "",
         params
       )
     end
 
-    private def process_yaml_auth(auth : YAML::Any, params : Array(Param))
+    private def process_yaml_auth(auth : YAML::Any, env : Hash(String, String), params : Array(Param))
       return if auth["disabled"]?.try(&.as_bool?) == true
       type = auth["type"]?.try(&.as_s?) || ""
       process_auth_fields(
         type,
-        auth["key"]?.try(&.as_s?) || "",
-        auth["value"]?.try(&.as_s?) || "",
+        resolve_vars(auth["key"]?.try(&.as_s?) || "", env),
+        resolve_vars(auth["value"]?.try(&.as_s?) || "", env),
         auth["addTo"]?.try(&.as_s?) || "",
-        auth["token"]?.try(&.as_s?) || "",
+        resolve_vars(auth["token"]?.try(&.as_s?) || "", env),
         auth["prefix"]?.try(&.as_s?) || "",
         params
       )

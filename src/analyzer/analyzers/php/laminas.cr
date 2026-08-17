@@ -336,6 +336,16 @@ module Analyzer::Php
       normalize_laminas_route_path(normalized)
     end
 
+    # Regex metacharacters. A Laminas constraint is a validation *pattern*
+    # (`'itemId' => '[0-9]+'`), so it only doubles as a value when it matches
+    # exactly one string — i.e. when it contains none of these.
+    CONSTRAINT_METACHARACTERS = "\\^$.|?*+()[]{}"
+
+    # A constraint carrying no metacharacters (`'format' => 'json'`) matches a
+    # single literal and is a usable value; a real pattern is not. `Param#value`
+    # is what HTTP-shaped consumers send and what the OAS builders publish as
+    # an `enum`, so passing the pattern straight through advertised `[0-9]+`
+    # as a concrete `itemId`.
     private def extract_laminas_path_params(route_path : String, constraints = Hash(String, String).new) : Array(Param)
       params = [] of Param
       seen = Set(String).new
@@ -344,7 +354,11 @@ module Analyzer::Php
         name = match[1]
         next if seen.includes?(name)
 
-        params << Param.new(name, constraints[name]? || "", "path")
+        constraint = constraints[name]?
+        value = constraint && !constraint.empty? &&
+                constraint.each_char.none? { |c| CONSTRAINT_METACHARACTERS.includes?(c) } ? constraint : ""
+
+        params << Param.new(name, value, "path")
         seen.add(name)
       end
 

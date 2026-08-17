@@ -920,16 +920,28 @@ module Noir
           next unless keys.includes?("value") || keys.includes?("name")
           return resolve_string_value(child, source, constants, current_class)
         elsif child_type == "element_value_pair"
-          key = ""
-          value : LibTreeSitter::TSNode? = nil
-          Noir::TreeSitter.each_named_child(child) do |sub|
-            case Noir::TreeSitter.node_type(sub)
-            when "identifier"
-              key = Noir::TreeSitter.node_text(sub, source) if key.empty?
-            else
-              value = sub if value.nil?
+          # Read the pair through its `key`/`value` fields rather than by
+          # walking named children and calling the first `identifier` the key.
+          # In `@QueryValue(defaultValue = CODE_DEFAULT)` the value is an
+          # `identifier` too, so the walk consumed the key, then skipped the
+          # constant reference as "another identifier" and left `value` nil —
+          # the pair was dropped and the resolved default (`"none"`) never
+          # reached the param.
+          key_node = Noir::TreeSitter.field(child, "key")
+          value = Noir::TreeSitter.field(child, "value")
+          key = key_node ? Noir::TreeSitter.node_text(key_node, source) : ""
+
+          if key.empty? || value.nil?
+            # Grammar without those fields: fall back to positional order —
+            # first named child is the key, second is the value.
+            seen = [] of LibTreeSitter::TSNode
+            Noir::TreeSitter.each_named_child(child) { |sub| seen << sub }
+            if seen.size >= 2
+              key = Noir::TreeSitter.node_text(seen[0], source)
+              value = seen[1]
             end
           end
+
           next unless keys.includes?(key) && value
           value_type = Noir::TreeSitter.node_type(value)
           return resolve_string_value(value, source, constants, current_class) if annotation_string_value_node?(value_type)

@@ -2,20 +2,22 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/echo", "GET", [
-    Param.new("msg", "The message to echo", "query"),
+    # roxygen `@param <name> <description>` — the trailing text is the
+    # parameter's description, not a default value.
+    Param.new("msg", "", "query"),
   ]),
   Endpoint.new("/submit", "POST", [
-    Param.new("username", "The username", "body"),
-    Param.new("password", "The password", "body"),
+    Param.new("username", "", "body"),
+    Param.new("password", "", "body"),
   ]),
   Endpoint.new("/users/:id/posts/:post_id", "GET", [
     Param.new("id", "", "path"),
     Param.new("post_id", "", "path"),
-    Param.new("limit", "Query limit", "query"),
+    Param.new("limit", "", "query"),
   ]),
   Endpoint.new("/users/:id", "PUT", [
     Param.new("id", "", "path"),
-    Param.new("name", "The new name", "body"),
+    Param.new("name", "", "body"),
   ]),
   Endpoint.new("/hello", "GET"),
   Endpoint.new("/save/:key", "POST", [

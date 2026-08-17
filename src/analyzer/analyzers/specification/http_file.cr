@@ -134,8 +134,8 @@ module Analyzer::Specification
       url_path = extract_path_from_url(url_raw)
       return if url_path.empty?
 
-      extract_query_param_names(url_raw).each do |query_name|
-        add_param(params, query_name, "", "query")
+      extract_query_params(url_raw).each do |query_name, query_value|
+        add_param(params, query_name, query_value, "query")
       end
 
       extract_path_vars(url_path).each do |path_name|
@@ -270,7 +270,15 @@ module Analyzer::Specification
       normalize_path(path)
     end
 
-    private def extract_query_param_names(url_string : String) : Array(String)
+    # Name *and* value. A `.http` file records a concrete request — `GET
+    # /query_http?q=1234` means the caller sent `q=1234` — so the value is
+    # real data, the same as the ones the HAR and Bruno analyzers keep. Only
+    # the names were kept before, so replaying an IntelliJ/VS Code `.http`
+    # file through `-f curl` produced `?q=` and dropped what to send.
+    #
+    # A value still carrying `{{...}}` is a template the caller's environment
+    # never resolved; that is a placeholder, not data, so it is left empty.
+    private def extract_query_params(url_string : String) : Array(Tuple(String, String))
       query = ""
       begin
         uri = URI.parse(url_string)
@@ -286,13 +294,18 @@ module Analyzer::Specification
         end
       end
 
-      names = [] of String
+      pairs = [] of Tuple(String, String)
       query.split('&').each do |pair|
         next if pair.empty?
-        name = pair.split('=', 2).first.strip
-        names << name unless name.empty?
+        name, _, raw_value = pair.partition('=')
+        name = name.strip
+        next if name.empty?
+        value = raw_value.strip
+        value = "" if value.includes?("{{")
+        value = URI.decode_www_form(value) rescue value
+        pairs << {name, value}
       end
-      names
+      pairs
     end
 
     private def extract_path_vars(path : String) : Array(String)

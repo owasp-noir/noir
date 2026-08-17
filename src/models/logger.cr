@@ -47,7 +47,17 @@ class NoirLogger
   def initialize(debug : Bool, verbose : Bool, colorize : Bool, no_log : Bool, no_spinner : Bool = false)
     @debug = debug
     @verbose = verbose
-    @color_mode = colorize
+    # Every glyph below is emitted as `.colorize(...).toggle(@color_mode)`,
+    # and `Colorize::Object#toggle` overwrites the enabled flag the object
+    # captured from `Colorize.enabled?` — so it bypasses Crystal's own
+    # "only on a terminal" default the same way it bypasses `NO_COLOR`.
+    # This logger writes to STDERR only, so gate on STDERR rather than on
+    # `Colorize.enabled?`, which also requires STDOUT to be a terminal and
+    # would drop the color from an interactive `noir scan . -f json > out`.
+    # Without this, `noir scan ./app 2> run.log` wrote `\e[32m✔\e[39m` into
+    # the log file — the same ANSI-into-a-pipe problem `OutputBuilder`
+    # already fixed for STDOUT, on the other stream.
+    @color_mode = colorize && Colorize.default_enabled?(STDERR)
     @no_log = no_log
     @no_spinner = no_spinner
     @spinner_active = false

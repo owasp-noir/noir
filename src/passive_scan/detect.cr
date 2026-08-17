@@ -44,7 +44,7 @@ module NoirPassiveScan
             # secret. See NoirPassiveScan::FalsePositive for the invariant.
             unless FalsePositive.suppress?(rule, line)
               unless detected_logged
-                logger.sub "└── Detected: #{rule.info.name}"
+                logger.sub "├── Passive rule matched: #{rule.info.name}"
                 detected_logged = true
               end
               results << PassiveScanResult.new(rule, file_path, index + 1, line)
@@ -74,7 +74,7 @@ module NoirPassiveScan
               # secret. See NoirPassiveScan::FalsePositive.
               break if FalsePositive.suppress?(rule, line)
               unless detected_logged
-                logger.sub "└── Detected: #{rule.info.name}"
+                logger.sub "├── Passive rule matched: #{rule.info.name}"
                 detected_logged = true
               end
               results << PassiveScanResult.new(rule, file_path, index + 1, line)

@@ -736,6 +736,41 @@ describe Noir::TreeSitterKotlinParameterExtractor do
       fields["Article"].map(&.init_value).should eq(["", "todo"])
     end
 
+    # `init_value` stores mixed shapes — a string literal arrives decoded,
+    # every other initializer keeps its raw source — so the two cannot be
+    # told apart after the fact. `literal_default` is what resolves that:
+    # without the flag behind it, running a literal check over the decoded
+    # `untitled` erased every Kotlin string default, while the raw
+    # `LocalDateTime.now()` leaked into `Param#value`.
+    describe "FieldInfo#literal_default" do
+      it "keeps a string default and drops an expression" do
+        source = <<-KT
+          data class Article(
+              var title: String = "untitled",
+              var views: Int = 7,
+              var draft: Boolean = false,
+              var addedAt: LocalDateTime = LocalDateTime.now(),
+              var slug: String = title.toSlug(),
+              var note: String? = null,
+          )
+          KT
+        fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)["Article"]
+        fields.map(&.name).should eq(["title", "views", "draft", "addedAt", "slug", "note"])
+        fields.map(&.literal_default).should eq(["untitled", "7", "false", "", "", ""])
+      end
+
+      it "keeps a class-body string default" do
+        source = <<-KT
+          class User {
+              var name: String = "anon"
+              var seenAt: LocalDateTime = LocalDateTime.now()
+          }
+          KT
+        fields = Noir::TreeSitterKotlinParameterExtractor.extract_class_fields(source)["User"]
+        fields.map(&.literal_default).should eq(["anon", ""])
+      end
+    end
+
     it "does not leak property annotation tokens into a field's init value" do
       source = <<-KT
         data class CreateUserRequest(

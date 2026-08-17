@@ -1,4 +1,5 @@
 require "./ai_context/features.cr"
+require "./cli/common.cr"
 require "./completions.cr"
 require "./output_builder/formats.cr"
 require "./config_initializer.cr"
@@ -678,6 +679,17 @@ def run_options_parser
     noir_options["ai_context_features"]?.try(&.to_s) || "",
     "config ai_context_features"
   )
+
+  # `NO_COLOR` has to land in `options["color"]`, not just in
+  # `Colorize.enabled`. The router already sets `Colorize.enabled = false`
+  # for it, but every colored string noir emits goes through
+  # `.colorize(...).toggle(@is_color)`, and `Colorize::Object#toggle`
+  # *overwrites* the global flag the object captured at construction. So
+  # `NO_COLOR=1 noir scan ./app` kept printing escape codes while
+  # `--no-color` worked, contradicting `noir help` ("NO_COLOR env also
+  # works"). Applied after the parser so it outranks a config file, and
+  # last so an explicit `--no-color` can only agree with it.
+  noir_options["color"] = YAML::Any.new(false) if Noir::CLI.no_color_env?
 
   noir_options
 end

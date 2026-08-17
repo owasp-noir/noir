@@ -1,6 +1,7 @@
 require "../../models/analyzer"
 require "../../miniparsers/import_graph"
 require "../../miniparsers/python_callee_extractor"
+require "../../utils/top_level_split"
 require "json"
 
 module Analyzer::Python
@@ -149,18 +150,56 @@ module Analyzer::Python
       is_option = false
       is_default = false
       bracket_count = 0
+      # `{` / `}` needs the same depth tracking `[` / `]` gets. Without it a
+      # dict or set default leaks its separators into the parameter loop:
+      # `def f(tags: set = {"x", "y"}, after: str = "t")` split on the comma
+      # inside the braces and produced a parameter literally named `"y"}`.
+      brace_count = 0
       parentheses_count = 1
+
+      # Quoted runs, tracked exactly as `python_delimiter_delta` does it (same
+      # escape rule, same "only same-line quoting is modelled" limit — the
+      # reset below restores it per line).
+      #
+      # Nothing here was quote-aware before, so every delimiter inside a
+      # string default was counted as structure: `def f(a: str = "(", b: int
+      # = 1)` lost both parameters because the `(` was never closed, and
+      # `def f(a: str = "x,y", b: str = "t")` split mid-literal into a
+      # parameter named `y"`. The depth counters also ran negative on a
+      # stray closer, and since the split guard demands EXACTLY zero, one
+      # unbalanced character disabled every remaining split in the header —
+      # so both counters are clamped at zero, the same rule
+      # `Noir::TopLevelSplit::Rules::PYTHON` already applies.
+      in_quote : Char? = nil
+      escaped = false
 
       line_index = start_index
       # Iterate over the parameter line to parse each parameter
       while parentheses_count != 0
         while index < param_line.size
           char = param_line[index]
-          if char == '['
+          if in_quote
+            # Inside a quoted run every delimiter is literal text. This must
+            # not skip the append below — the characters are still part of
+            # the name/type/default being built.
+            if escaped
+              escaped = false
+            elsif char == '\\'
+              escaped = true
+            elsif char == in_quote
+              in_quote = nil
+            end
+          elsif char == '\'' || char == '"'
+            in_quote = char
+          elsif char == '['
             bracket_count += 1
           elsif char == ']'
-            bracket_count -= 1
-          elsif bracket_count == 0
+            bracket_count -= 1 if bracket_count > 0
+          elsif char == '{'
+            brace_count += 1
+          elsif char == '}'
+            brace_count -= 1 if brace_count > 0
+          elsif bracket_count == 0 && brace_count == 0
             if char == '('
               parentheses_count += 1
             elsif parentheses_count == 1 && char == '='
@@ -186,7 +225,13 @@ module Analyzer::Python
                 end
                 break
               end
-            elsif char == ':'
+            elsif parentheses_count == 1 && !is_default && char == ':'
+              # Only the annotation colon separates name from type, and it is
+              # always at depth 1 before any `=`. A `:` seen anywhere else
+              # belongs to the text it sits in — `Query(description="a: b")`,
+              # a nested dict, a lambda — and used to be dropped on the floor,
+              # which is what mangled a multi-line `Cookie(openapi_examples=
+              # {"Cookie One": {...}})` default into `"Cookie One" {...}`.
               is_option = true
               index += 1
               next
@@ -208,6 +253,11 @@ module Analyzer::Python
         if line_index < source_lines.size
           param_line = source_lines[line_index]
           index = 0
+          # An unterminated quote is a same-line artefact (a `#` comment, a
+          # triple-quoted opener), not a run that should swallow the rest of
+          # the header — reset with the line, as `python_delimiter_delta` does.
+          in_quote = nil
+          escaped = false
           next
         end
 
@@ -447,20 +497,106 @@ module Analyzer::Python
       1
     end
 
-    # Returns the literal value from a string if it represents a number or a quoted string
-    def return_literal_value(data : ::String) : ::String
-      # Check if the data is numeric
-      return data if data.numeric?
+    # FastAPI / django-ninja parameter markers. `q: str = Query("abc")` does
+    # not default `q` to the *object* `Query("abc")` — the marker is a
+    # declaration, and the default it carries is its first positional
+    # argument or its `default=` keyword.
+    PARAM_MARKER_CALLS = %w[Query Header Cookie Path Body Form File]
 
-      # Check if the data is a string
-      unless data.empty?
-        if data[0] == data[-1] && data[0].in?('"', '\'')
-          return data[1..-2]
+    # Python spellings for "there is no value here". `...` (Ellipsis) is how
+    # FastAPI marks a *required* parameter, so it is an absence too.
+    PYTHON_EMPTY_LITERALS = %w[None ... Ellipsis]
+
+    # Python's two triple-quote fences, spelled as an explicit array because
+    # `%w[""" ''']` reads as a `%w` element containing quote characters.
+    TRIPLE_QUOTE_FENCES = ["\"\"\"", "'''"]
+
+    # The request-ready value a Python parameter default evaluates to.
+    #
+    # Anything that is not a literal has no value, and returning the source
+    # text instead is worse than returning nothing: `value` is what the
+    # curl / httpie / PowerShell / Postman / OpenAPI builders put on the
+    # wire, so a leaked expression became `-H 'x_token: Header(None)'` and
+    # `?q=Query()`. Callers only ever ask this to turn a default into a
+    # value, so a non-literal answers with the empty string — the same thing
+    # a parameter with no default at all produces.
+    def return_literal_value(data : ::String) : ::String
+      python_literal_value(data) || ""
+    end
+
+    # The literal `expr` evaluates to, or nil when it is not a literal.
+    #
+    # Separate from `return_literal_value` because "not a literal" and "the
+    # empty string" are different answers here: `Query()` is not a literal
+    # (recurse no further), while `Query(None)` unwraps to one that happens
+    # to be empty.
+    private def python_literal_value(expr : ::String, depth : Int32 = 0) : ::String?
+      value = expr.strip
+      return if value.empty?
+      # Guards a pathological `Query(Query(Query(...)))`; real markers nest
+      # one deep at most.
+      return if depth > 4
+
+      # `to_f?` rather than the `String#numeric?` helper, which is
+      # monkey-patched onto ::String from inside `analyzers/python/fastapi.cr`
+      # — an engine must not depend on one of its analyzers having been
+      # required first.
+      return value if value.to_f?
+
+      TRIPLE_QUOTE_FENCES.each do |fence|
+        if value.size >= fence.size * 2 && value.starts_with?(fence) && value.ends_with?(fence)
+          return value[fence.size..-(fence.size + 1)]
         end
       end
 
-      data
+      if value.size >= 2 && value[0] == value[-1] && value[0].in?('"', '\'')
+        return value[1..-2]
+      end
+
+      # Python's booleans are `True`/`False`; the wire wants `true`/`false`.
+      return "true" if value == "True"
+      return "false" if value == "False"
+      return "" if PYTHON_EMPTY_LITERALS.includes?(value)
+
+      if inner = param_marker_default(value)
+        return python_literal_value(inner, depth + 1)
+      end
+
+      nil
     end
+
+    # The default expression carried by a `Query(...)` / `Header(...)` style
+    # marker call, or nil when `expr` is not one of those calls (or carries
+    # no default). `fastapi.Query(...)` and `params.Query(...)` count too.
+    private def param_marker_default(expr : ::String) : ::String?
+      return unless expr.ends_with?(')')
+      open = expr.index('(')
+      return unless open && open > 0
+
+      callee = expr[0, open].strip.split('.').last
+      return unless PARAM_MARKER_CALLS.includes?(callee)
+
+      args = expr[(open + 1)..-2]
+      return if args.blank?
+
+      positional = nil
+      Noir::TopLevelSplit.split(args, ',', Noir::TopLevelSplit::Rules::PYTHON).each do |raw|
+        arg = raw.strip
+        next if arg.empty?
+        # Matched rather than `includes?('=')` so `Query("a=b")` still reads
+        # as positional and `Query(default = 3)` still reads as a keyword.
+        if kwarg = KEYWORD_ARGUMENT_RE.match(arg)
+          return arg[kwarg[0].size..].strip if kwarg[1] == "default"
+          next
+        end
+        positional ||= arg
+      end
+
+      positional
+    end
+
+    # `name =` at the head of a call argument, excluding `==`/`>=`/`<=`/`!=`.
+    KEYWORD_ARGUMENT_RE = /\A([A-Za-z_]\w*)\s*=(?!=)/
 
     # `PackageType::FILE` / `PackageType::CODE` constants are now
     # canonical at `Noir::ImportGraph::Python::PackageType`. Aliasing
