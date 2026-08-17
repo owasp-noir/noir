@@ -76,4 +76,49 @@ describe "noir CLI surface (built binary)" do
       result.exit_code.should eq(0)
     end
   end
+
+  describe "config" do
+    it "rejects --config-file with no value instead of using the default file" do
+      result = run_noir(["config", "path", "--config-file"])
+      result.stdout.should be_empty
+      result.stderr.should contain("--config-file requires an argument.")
+      result.exit_code.should eq(1)
+    end
+
+    it "expands a leading ~ in --config-file" do
+      result = run_noir(["config", "path", "--config-file=~/noir-spec-nope.yaml"])
+      result.stdout.strip.should eq(File.join(Path.home.to_s, "noir-spec-nope.yaml"))
+      result.exit_code.should eq(0)
+    end
+
+    it "rejects a surplus positional instead of running a different action" do
+      result = run_noir(["config", "path", "init"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Unexpected argument: init")
+      result.exit_code.should eq(1)
+    end
+
+    it "rejects an unknown flag" do
+      result = run_noir(["config", "show", "--bogus-flag"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Unknown option: --bogus-flag")
+      result.exit_code.should eq(1)
+    end
+  end
+
+  describe "completion" do
+    it "rejects a second shell instead of emitting only the first" do
+      result = run_noir(["completion", "zsh", "bash"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Unexpected argument: bash")
+      result.exit_code.should eq(1)
+    end
+
+    it "still emits a single requested script on stdout" do
+      result = run_noir(["completion", "zsh"])
+      result.stdout.should contain("#compdef noir")
+      result.stderr.should be_empty
+      result.exit_code.should eq(0)
+    end
+  end
 end

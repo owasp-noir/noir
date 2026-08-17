@@ -11,33 +11,100 @@ require "../../utils/home"
 module Noir::CLI::ConfigCommand
   ACTIONS = Noir::CLI::Catalog::CONFIG_ACTIONS
 
-  def self.run(argv : Array(String))
+  # Parsed argv. Extracted from `run` (mirroring `CacheCommand.parse_argv`)
+  # so the parsing rules stay unit-testable — `run` keeps the `exit`/`die`
+  # side effects. `error` is recorded rather than raised so `run` can turn
+  # it into a clean `Noir::CLI.die` line.
+  record Parsed,
+    action : String?,
+    override_path : String?,
+    help : Bool,
+    error : String?
+
+  def self.parse_argv(argv : Array(String)) : Parsed
     action = nil
     override_path = nil
+    help = false
+    error = nil
+    rest = [] of String
+
     i = 0
     while i < argv.size
       a = argv[i]
       case a
       when "-h", "--help"
-        print_help
-        exit
+        help = true
+      when "--no-color", "--no-spinner"
+        # Global flags — the router consumes both before dispatching here.
+        # Accepted (not rejected as unknown) so a direct `run` call and a
+        # future router change both behave.
       when "--config-file"
         # Honor the global --config-file flag inside the subcommand so
         # `noir config show --config-file X` reads X, not the default path.
-        override_path = argv[i + 1]?
-        i += 1
+        #
+        # A missing value used to fall through as `nil` and silently
+        # resolve the DEFAULT path — so `noir config show --config-file`
+        # printed a different file than the one the user asked to inspect,
+        # and `edit` would have created it. Every other --config-file
+        # consumer errors here; so does this one now.
+        value = argv[i + 1]?
+        if value.nil? || value.empty? || value.starts_with?("-")
+          error ||= "--config-file requires an argument."
+        else
+          override_path = value
+          i += 1
+        end
       when .starts_with?("--config-file=")
-        override_path = a.split("=", 2)[1]
+        value = a.split("=", 2)[1]
+        if value.empty?
+          error ||= "--config-file requires an argument."
+        else
+          override_path = value
+        end
       else
-        action ||= a
+        if a.starts_with?("-")
+          # An unknown flag used to be taken as a positional and then
+          # dropped, so `noir config show --bogus` ran `show` and exited 0.
+          error ||= "Unknown option: #{a}. Run `noir config --help`."
+        elsif action.nil?
+          action = a
+        else
+          rest << a
+        end
       end
       i += 1
     end
 
+    # Surplus positionals were dropped too: `noir config path init` quietly
+    # ran only `path`. Surface them instead of guessing which was meant —
+    # `cache` and `rules` already do.
+    if error.nil? && !rest.empty?
+      plural = rest.size > 1 ? "s" : ""
+      error = "Unexpected argument#{plural}: #{rest.join(", ")}. `noir config` takes a single action."
+    end
+
+    Parsed.new(action: action, override_path: override_path, help: help, error: error)
+  end
+
+  def self.run(argv : Array(String))
+    parsed = parse_argv(argv)
+
+    if parsed.help
+      print_help
+      exit
+    end
+
+    if err = parsed.error
+      Noir::CLI.die(err)
+    end
+
+    action = parsed.action
     if action.nil?
       print_help
       exit
     end
+
+    override_path = parsed.override_path
 
     case action
     when "show" then show(override_path)
@@ -206,8 +273,14 @@ module Noir::CLI::ConfigCommand
     end
   end
 
+  # `home: true` for the same reason `Noir::Home.path` uses it: a leading
+  # `~` only gets expanded by an interactive shell, and `--config-file`
+  # values routinely arrive from places that never do — the `=` form
+  # (`--config-file=~/x.yaml`) is not tilde-expanded by most shells, and
+  # Docker/systemd/CI wrappers don't expand at all. Without it the path
+  # resolved to a literal `~` directory under the cwd.
   def self.config_path(override : String? = nil) : String
-    return File.expand_path(override) if override && !override.empty?
+    return File.expand_path(override, home: true) if override && !override.empty?
     File.expand_path(File.join(Noir::Home.path, "config.yaml"))
   end
 
