@@ -111,17 +111,17 @@ describe Noir::ScalaLexer do
     # skewed the moment a paren falls on the wrong side of the split — so
     # these assert the lexer's own output rather than any endpoint count.
     it "keeps an interpolated string with a quoted hole as ONE string token" do
-      src = %q|val x = s"a ${cfg("k")} b"|
+      src = "val x = s\"a ${cfg(\"k\")} b\""
       lex = Noir::ScalaLexer.new(src)
 
       strings = lex.tokens.select { |t| t.kind == :string }
-      strings.map(&.value).should eq([%q|"a ${cfg("k")} b"|])
+      strings.map(&.value).should eq(["\"a ${cfg(\"k\")} b\""])
       # `k` used to leak out of the string and be lexed as an identifier.
       lex.tokens.select { |t| t.kind == :ident }.map(&.value).should eq(["val", "x", "s"])
     end
 
     it "keeps parenthesis depth balanced around an interpolated hole" do
-      src = %q|foo(s"${f("(")}")|
+      src = "foo(s\"${f(\"(\")}\")"
       lex = Noir::ScalaLexer.new(src)
 
       masked = lex.masked.join
@@ -132,7 +132,7 @@ describe Noir::ScalaLexer do
     end
 
     it "does not treat `${` inside a plain (non-interpolated) string as a hole" do
-      src = %q|val x = "${cfg("k")}"|
+      src = "val x = \"${cfg(\"k\")}\""
       lex = Noir::ScalaLexer.new(src)
 
       # No interpolator prefix, so `"${cfg("` really is the whole literal and
@@ -141,7 +141,7 @@ describe Noir::ScalaLexer do
     end
 
     it "treats `$$` as an escaped dollar rather than the start of a hole" do
-      src = %q|val x = s"$${literal} tail"|
+      src = "val x = s\"$${literal} tail\""
       lex = Noir::ScalaLexer.new(src)
 
       lex.tokens.count { |t| t.kind == :string }.should eq(1)
@@ -159,11 +159,11 @@ describe Noir::ScalaLexer do
     end
 
     it "leaves the short `$ident` form as plain string content" do
-      src = %q|val u = s"/api/$version/users"|
+      src = "val u = s\"/api/$version/users\""
       lex = Noir::ScalaLexer.new(src)
 
-      lex.code_lines[0].should eq(%q|val u = s"/api/$version/users"|)
-      lex.tokens.select { |t| t.kind == :string }.map(&.value).should eq([%q|"/api/$version/users"|])
+      lex.code_lines[0].should eq("val u = s\"/api/$version/users\"")
+      lex.tokens.select { |t| t.kind == :string }.map(&.value).should eq(["\"/api/$version/users\""])
     end
   end
 end

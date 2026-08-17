@@ -214,43 +214,30 @@ describe "Noir::PostgresDdlParser" do
   # literal was then parsed as code and the next quote re-opened a string,
   # masking the columns that followed off the generated PostgREST surface.
   it "does not close an E'...' escape string on a backslash-escaped quote" do
-    state = parse_ddl <<-'SQL'
-      create table public.notes (
-        id bigserial primary key,
-        title text not null default E'it\'s fine',
-        label text,
-        body text
-      );
-      SQL
+    state = parse_ddl(
+      "create table public.notes (" \
+      "id bigserial primary key, " \
+      "title text not null default E'it\\'s fine', " \
+      "label text, " \
+      "body text);"
+    )
 
     columns_of(state, "public.notes").should eq(["id", "title", "label", "body"])
   end
 
   it "honours a backslash-escaped backslash inside an E'...' string" do
-    state = parse_ddl <<-'SQL'
-      create table public.paths (
-        id int,
-        sep text default E'\\',
-        label text
-      );
-      SQL
+    state = parse_ddl(
+      "create table public.paths (id int, sep text default E'\\\\', label text);"
+    )
 
     columns_of(state, "public.paths").should eq(["id", "sep", "label"])
   end
 
   it "keeps the doubled-quote rule for both plain and escape strings" do
-    state = parse_ddl <<-'SQL'
-      create table public.plain (
-        id int,
-        title text default 'it''s fine',
-        label text
-      );
-      create table public.escaped (
-        id int,
-        title text default E'it''s fine',
-        body text
-      );
-      SQL
+    state = parse_ddl(
+      "create table public.plain (id int, title text default 'it''s fine', label text);\n" \
+      "create table public.escaped (id int, title text default E'it''s fine', body text);"
+    )
 
     columns_of(state, "public.plain").should eq(["id", "title", "label"])
     columns_of(state, "public.escaped").should eq(["id", "title", "body"])
@@ -260,25 +247,17 @@ describe "Noir::PostgresDdlParser" do
   # literal really does end at the quote right after it — only the `E`
   # prefix changes that.
   it "leaves the backslash literal in a plain SQL string" do
-    state = parse_ddl <<-'SQL'
-      create table public.win (
-        id int,
-        sep text default 'C:\',
-        label text
-      );
-      SQL
+    state = parse_ddl(
+      "create table public.win (id int, sep text default 'C:\\', label text);"
+    )
 
     columns_of(state, "public.win").should eq(["id", "sep", "label"])
   end
 
   it "accepts the lowercase e'...' escape-string prefix" do
-    state = parse_ddl <<-'SQL'
-      create table public.codes (
-        id int,
-        code text default e'a\'b',
-        label text
-      );
-      SQL
+    state = parse_ddl(
+      "create table public.codes (id int, code text default e'a\\'b', label text);"
+    )
 
     columns_of(state, "public.codes").should eq(["id", "code", "label"])
   end
