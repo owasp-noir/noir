@@ -77,7 +77,6 @@ UNTESTED_DETECTORS = [
   "java/spark",
   "javascript/cli",
   "javascript/hapi",
-  "javascript/nuxtjs",
   "javascript/remix",
   "javascript/sveltekit",
   "kotlin/cli",
