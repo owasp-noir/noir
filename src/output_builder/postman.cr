@@ -25,7 +25,9 @@ class OutputBuilderPostman < OutputBuilder
       url_parts = split_route_url(endpoint.url)
 
       # Build URL parts
-      path_parts = route_path(url_parts[:route]).split("/").reject(&.empty?)
+      route_p = route_path(url_parts[:route])
+      path_parts = route_p.split("/").reject(&.empty?)
+      path_parts << "" if route_p.ends_with?("/") && !path_parts.empty?
       path_with_vars = path_parts.map do |part|
         if part.starts_with?("<") && part.ends_with?(">") && part.includes?(":")
           # Handle <type:param> format - convert to :param
@@ -96,6 +98,7 @@ class OutputBuilderPostman < OutputBuilder
       body = nil
       has_json_body = endpoint.params.any? { |p| p.request_type == "json" }
       has_form_body = endpoint.params.any? { |p| p.request_type == "form" }
+      has_file_body = endpoint.params.any? { |p| p.request_type == "file" }
 
       if has_json_body
         json_body = {} of String => JSON::Any
@@ -105,7 +108,7 @@ class OutputBuilderPostman < OutputBuilder
           end
         end
 
-        body = {
+        body_hash = {
           "mode"    => JSON::Any.new("raw"),
           "raw"     => JSON::Any.new(json_body.to_json),
           "options" => JSON::Any.new({
@@ -122,6 +125,62 @@ class OutputBuilderPostman < OutputBuilder
             "value" => JSON::Any.new("application/json"),
           } of String => JSON::Any)
         end
+
+        if has_file_body
+          form_data = [] of JSON::Any
+          endpoint.params.each do |param|
+            if param.request_type == "form"
+              form_data << JSON::Any.new({
+                "key"   => JSON::Any.new(param.name),
+                "value" => JSON::Any.new(param.value),
+                "type"  => JSON::Any.new("text"),
+              } of String => JSON::Any)
+            elsif param.request_type == "file"
+              form_data << JSON::Any.new({
+                "key"  => JSON::Any.new(param.name),
+                "type" => JSON::Any.new("file"),
+                "src"  => JSON::Any.new(param.value),
+              } of String => JSON::Any)
+            end
+          end
+          body_hash["formdata"] = JSON::Any.new(form_data)
+        elsif has_form_body
+          form_data = [] of JSON::Any
+          endpoint.params.each do |param|
+            if param.request_type == "form"
+              form_data << JSON::Any.new({
+                "key"   => JSON::Any.new(param.name),
+                "value" => JSON::Any.new(param.value),
+                "type"  => JSON::Any.new("text"),
+              } of String => JSON::Any)
+            end
+          end
+          body_hash["urlencoded"] = JSON::Any.new(form_data)
+        end
+
+        body = body_hash
+      elsif has_file_body
+        form_data = [] of JSON::Any
+        endpoint.params.each do |param|
+          if param.request_type == "form"
+            form_data << JSON::Any.new({
+              "key"   => JSON::Any.new(param.name),
+              "value" => JSON::Any.new(param.value),
+              "type"  => JSON::Any.new("text"),
+            } of String => JSON::Any)
+          elsif param.request_type == "file"
+            form_data << JSON::Any.new({
+              "key"  => JSON::Any.new(param.name),
+              "type" => JSON::Any.new("file"),
+              "src"  => JSON::Any.new(param.value),
+            } of String => JSON::Any)
+          end
+        end
+
+        body = {
+          "mode"     => JSON::Any.new("formdata"),
+          "formdata" => JSON::Any.new(form_data),
+        } of String => JSON::Any
       elsif has_form_body
         form_data = [] of JSON::Any
         endpoint.params.each do |param|
@@ -203,6 +262,8 @@ class OutputBuilderPostman < OutputBuilder
     url.empty? ? "http://localhost" : url
   end
 
+  KNOWN_NON_QUERY_TYPES = {"path", "header", "cookie", "json", "form", "file"}
+
   # The query string the emitted request actually carries: the one the route
   # itself spells out, plus the query params the analyzer recorded.
   #
@@ -222,7 +283,7 @@ class OutputBuilderPostman < OutputBuilder
     pairs = route_query.dup
 
     endpoint.params.each do |param|
-      next unless param.request_type == "query"
+      next if KNOWN_NON_QUERY_TYPES.includes?(param.request_type)
       next if pairs.includes?({param.name, param.value})
       # A value-less declaration of a name the route already pins is the same
       # parameter, not an override: appending `action=` after

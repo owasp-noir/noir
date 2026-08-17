@@ -304,4 +304,172 @@ describe "OutputBuilderPostman URLs" do
     request["method"].as_s.should eq("QUERY")
     request["body"]["urlencoded"].as_a.map(&.["key"].as_s).should eq(["q"])
   end
+
+  it "preserves trailing empty segment for trailing-slash routes" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([
+      Endpoint.new("/api/users/", "GET"),
+      Endpoint.new("/api/users", "POST"),
+    ])
+    items = JSON.parse(builder.io.to_s)["item"].as_a
+
+    items[0]["name"].as_s.should eq("GET /api/users/")
+    items[0]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/api/users/")
+    items[0]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["api", "users", ""])
+
+    items[1]["name"].as_s.should eq("POST /api/users")
+    items[1]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/api/users")
+    items[1]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["api", "users"])
+  end
+
+  it "preserves trailing empty segment for absolute trailing-slash routes" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    builder.print([Endpoint.new("https://example.com/api/users/", "GET")])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+
+    item["request"]["url"]["raw"].as_s.should eq("https://example.com/api/users/")
+    item["request"]["url"]["path"].as_a.map(&.as_s).should eq(["api", "users", ""])
+  end
+end
+
+describe "OutputBuilderPostman Parameters and Bodies" do
+  options = {
+    "debug"   => YAML::Any.new(false),
+    "verbose" => YAML::Any.new(false),
+    "color"   => YAML::Any.new(false),
+    "nolog"   => YAML::Any.new(false),
+    "output"  => YAML::Any.new(""),
+    "url"     => YAML::Any.new(""),
+  }
+
+  it "emits JSON body and retains form fields as urlencoded when both are present" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/items", "POST")
+    endpoint.push_param(Param.new("name", "Fluffy", "json"))
+    endpoint.push_param(Param.new("role", "admin", "form"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["name"].as_s.should eq("Fluffy")
+    body["options"]["raw"]["language"].as_s.should eq("json")
+
+    urlencoded = body["urlencoded"].as_a
+    urlencoded.size.should eq(1)
+    urlencoded[0]["key"].as_s.should eq("role")
+    urlencoded[0]["value"].as_s.should eq("admin")
+    urlencoded[0]["type"].as_s.should eq("text")
+
+    headers = item["request"]["header"].as_a
+    headers.any? { |h| h["key"].as_s == "Content-Type" && h["value"].as_s == "application/json" }.should be_true
+  end
+
+  it "emits formdata with type file and src for file params" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload", "POST")
+    endpoint.push_param(Param.new("description", "avatar image", "form"))
+    endpoint.push_param(Param.new("avatar", "profile.png", "file"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("formdata")
+    formdata = body["formdata"].as_a
+    formdata.size.should eq(2)
+
+    text_entry = formdata.find { |e| e["key"].as_s == "description" }.should_not be_nil
+    text_entry["type"].as_s.should eq("text")
+    text_entry["value"].as_s.should eq("avatar image")
+
+    file_entry = formdata.find { |e| e["key"].as_s == "avatar" }.should_not be_nil
+    file_entry["type"].as_s.should eq("file")
+    file_entry["src"].as_s.should eq("profile.png")
+  end
+
+  it "emits raw JSON body and retains formdata when json and file params are present" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload-meta", "POST")
+    endpoint.push_param(Param.new("title", "New Upload", "json"))
+    endpoint.push_param(Param.new("attachment", "document.pdf", "file"))
+    endpoint.push_param(Param.new("category", "docs", "form"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["title"].as_s.should eq("New Upload")
+
+    formdata = body["formdata"].as_a
+    formdata.size.should eq(2)
+    formdata.any? { |e| e["key"].as_s == "attachment" && e["type"].as_s == "file" && e["src"].as_s == "document.pdf" }.should be_true
+    formdata.any? { |e| e["key"].as_s == "category" && e["type"].as_s == "text" && e["value"].as_s == "docs" }.should be_true
+  end
+
+  it "routes unknown param types to query list" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/stream", "GET")
+    endpoint.push_param(Param.new("websocket", "true", "websocket"))
+    endpoint.push_param(Param.new("custom_meta", "xyz", "custom_type"))
+
+    builder.print([endpoint])
+    url = JSON.parse(builder.io.to_s)["item"][0]["request"]["url"]
+
+    url["raw"].as_s.should eq("{{baseUrl}}/stream?websocket=true&custom_meta=xyz")
+    query_params = url["query"].as_a
+    query_params.size.should eq(2)
+    query_params[0]["key"].as_s.should eq("websocket")
+    query_params[0]["value"].as_s.should eq("true")
+    query_params[1]["key"].as_s.should eq("custom_meta")
+    query_params[1]["value"].as_s.should eq("xyz")
+  end
+
+  it "handles body-typed param as json body alias" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/submit", "POST")
+    endpoint.push_param(Param.new("payload", "sample_payload", "body"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["payload"].as_s.should eq("sample_payload")
+    body["options"]["raw"]["language"].as_s.should eq("json")
+  end
+
+  it "handles body-typed param together with form params" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/login", "POST")
+    endpoint.push_param(Param.new("LoginForm", "credentials", "body"))
+    endpoint.push_param(Param.new("remember", "1", "form"))
+
+    builder.print([endpoint])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    body = item["request"]["body"]
+
+    body["mode"].as_s.should eq("raw")
+    JSON.parse(body["raw"].as_s)["LoginForm"].as_s.should eq("credentials")
+    body["urlencoded"].as_a[0]["key"].as_s.should eq("remember")
+    body["urlencoded"].as_a[0]["value"].as_s.should eq("1")
+  end
 end
