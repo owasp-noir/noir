@@ -281,8 +281,14 @@ module Analyzer::Java
       resources_root = File.join(project_root, "src/main/resources/META-INF/resources")
       return endpoints unless Dir.exists?(resources_root)
 
+      # `Dir.glob` rather than a `file_map` lookup: the endpoint set is
+      # "every file Quarkus serves out of META-INF/resources", including
+      # the images and fonts the media filter keeps out of the index. That
+      # also means `--exclude-path` never reached this walk, so it is
+      # applied per file here.
       Dir.glob(File.join(resources_root, "**", "*")).sort.each do |file|
         next if File.directory?(file)
+        next if excluded_path?(file)
 
         relative_path = file[resources_root.size..].lstrip('/')
         next if relative_path.empty?

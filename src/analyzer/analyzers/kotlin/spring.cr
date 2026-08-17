@@ -338,25 +338,38 @@ module Analyzer::Kotlin
         if location.starts_with?("classpath:")
           resource_path = location.sub("classpath:", "").strip
           full_resource_path = File.join(src_path, "main/resources", resource_path)
-          if Dir.exists?(full_resource_path)
-            Dir.glob("#{escape_glob_path(full_resource_path)}/**/*") do |file|
-              next if File.directory?(file)
-              relative_path = file.sub(full_resource_path, "")
-              full_url = Noir::URLPath.absolute_join(webflux_base_path, relative_path)
-              @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
-            end
-          end
+          emit_static_files(full_resource_path, webflux_base_path) if Dir.exists?(full_resource_path)
         elsif location.starts_with?("file:")
           file_path = location.sub("file:", "").strip
-          if Dir.exists?(file_path)
-            Dir.glob("#{escape_glob_path(file_path)}/**/*") do |file|
-              next if File.directory?(file)
-              relative_path = file.sub(file_path, "")
-              full_url = Noir::URLPath.absolute_join(webflux_base_path, relative_path)
-              @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
-            end
+          next unless Dir.exists?(file_path)
+          # A `file:` location is an absolute (or CWD-relative) disk path
+          # taken verbatim from the app's own config, so it can point
+          # anywhere — `file:/etc/` made noir walk the machine's
+          # configuration directory and emit an endpoint per file, with
+          # absolute `code_paths` leaking the scanning machine's layout
+          # into a report that may be shared. The `classpath:` branch is
+          # rooted at `src_path` and has no such reach.
+          unless within_scan_base?(file_path)
+            logger.debug "Skipping static-location #{location}: resolves outside the scan base"
+            next
           end
+          emit_static_files(file_path, webflux_base_path)
         end
+      end
+    end
+
+    # Every file under a resolved static-resource directory is a GET
+    # endpoint. The walk is a `Dir.glob` rather than a `file_map` lookup
+    # because the endpoint set is "every file under this directory",
+    # including the images and fonts the media filter keeps out of the
+    # index — so `--exclude-path` has to be re-applied here by hand.
+    private def emit_static_files(root : String, webflux_base_path : String)
+      Dir.glob("#{escape_glob_path(root)}/**/*") do |file|
+        next if File.directory?(file)
+        next if excluded_path?(file)
+        relative_path = file.sub(root, "")
+        full_url = Noir::URLPath.absolute_join(webflux_base_path, relative_path)
+        @result << Endpoint.new(full_url, "GET", Details.new(PathInfo.new(file)))
       end
     end
 

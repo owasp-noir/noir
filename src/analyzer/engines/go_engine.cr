@@ -472,8 +472,14 @@ module Analyzer::Go
         full_path = resolve_public_dir_path(p_dir)
 
         next unless File.directory?(full_path)
+        # `Dir.glob`, not a `file_map` lookup: a static directory's
+        # endpoint set is every file in it, including the images and fonts
+        # the media filter keeps out of the index. `--exclude-path` is
+        # therefore re-applied per file — the index-based
+        # `resolve_public_dirs` below gets it for free.
         Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
           next if File.directory?(path)
+          next if excluded_path?(path)
           if File.exists?(path)
             static_url = p_dir["static_path"]
             if static_url.ends_with?("/")

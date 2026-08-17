@@ -426,6 +426,10 @@ module Analyzer::Mobile
       return unless Dir.exists?(nav_dir)
 
       Dir.glob(File.join(nav_dir, "*.xml")).sort.each do |nav_path|
+        # The walk is its own, so `--exclude-path` has to be applied here:
+        # the detector's filter only covers files that reach an analyzer
+        # through `CodeLocator`.
+        next if excluded_path?(nav_path)
         begin
           doc = XML.parse(read_file_content(nav_path))
           root = find_child(doc, "navigation")
@@ -669,6 +673,7 @@ module Analyzer::Mobile
         if Dir.exists?(buildsrc)
           {"*.kt", "*.kts", "*.gradle"}.each do |pattern|
             Dir.glob(File.join(buildsrc, "**", pattern)).sort.each do |src|
+              next if excluded_path?(src)
               begin
                 if m = read_file_content(src).match(def_re)
                   return m[1]
@@ -774,6 +779,7 @@ module Analyzer::Mobile
       return strings unless Dir.exists?(values_dir)
 
       Dir.glob(File.join(values_dir, "*.xml")).sort.each do |path|
+        next if excluded_path?(path)
         begin
           doc = XML.parse(read_file_content(path))
           next unless resources = find_child(doc, "resources")
