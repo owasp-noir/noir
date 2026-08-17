@@ -21,6 +21,11 @@ module Noir::CLI::VersionCommand
         help = true
       when "--verbose"
         verbose = true
+      when "-v", "-V", "--version"
+        # The v0 spellings of this very command. They no longer get
+        # rewritten once a verb opens ARGV (see `Legacy.rewrite`), so
+        # accept them here rather than making `noir version -v` — a
+        # redundant but harmless thing to type — die as an unknown option.
       else
         unknown ||= a
       end

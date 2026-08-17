@@ -35,17 +35,39 @@ describe "Noir::CLI::Legacy.rewrite" do
     Noir::CLI::Legacy.rewrite(["--generate-completion", "bash", "./extra"]).should eq(["completion", "bash"])
   end
 
-  it "rewrites -v and -V to the version subcommand (global anywhere in ARGV)" do
+  it "rewrites -v and -V to the version subcommand in a v0 (verb-less) invocation" do
     Noir::CLI::Legacy.rewrite(["-v"]).should eq(["version"])
     Noir::CLI::Legacy.rewrite(["-V"]).should eq(["version"])
-    Noir::CLI::Legacy.rewrite(["scan", "-v"]).should eq(["version"])
-    Noir::CLI::Legacy.rewrite(["scan", "./app", "-v"]).should eq(["version"])
-    Noir::CLI::Legacy.rewrite(["scan", "./app", "-V"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["-b", "./app", "-v"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["-b", "./app", "-V"]).should eq(["version"])
   end
 
   it "rewrites --version the same way as -v" do
     Noir::CLI::Legacy.rewrite(["--version"]).should eq(["version"])
-    Noir::CLI::Legacy.rewrite(["list", "techs", "--version"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["-b", "./app", "--version"]).should eq(["version"])
+  end
+
+  it "leaves a subcommand's own flags alone" do
+    # The rewrite table is a global argv substitution, so scanning past a
+    # verb let it hijack that subcommand's flags: `noir rules update -v`
+    # printed the version and exited 0 while `noir rules -h` advertises
+    # `-v, --verbose` — the rules were never updated, and the caller of
+    # `noir rules update && noir scan . -P` saw success.
+    Noir::CLI::Legacy.rewrite(["rules", "update", "-v"]).should eq(["rules", "update", "-v"])
+    Noir::CLI::Legacy.rewrite(["scan", "-v"]).should eq(["scan", "-v"])
+    Noir::CLI::Legacy.rewrite(["scan", "./app", "-V"]).should eq(["scan", "./app", "-V"])
+    Noir::CLI::Legacy.rewrite(["list", "techs", "--version"]).should eq(["list", "techs", "--version"])
+    Noir::CLI::Legacy.rewrite(["cache", "clear", "--build-info"]).should eq(["cache", "clear", "--build-info"])
+    Noir::CLI::Legacy.rewrite(["config", "show", "--list-techs"]).should eq(["config", "show", "--list-techs"])
+    Noir::CLI::Legacy.rewrite(["completion", "--generate-completion", "zsh"])
+      .should eq(["completion", "--generate-completion", "zsh"])
+  end
+
+  it "still rewrites when the first token is a path or flag, not a verb" do
+    # v0 had no subcommands at all, so every v0 invocation opens with a
+    # flag or a path — those keep the global-rewrite behaviour.
+    Noir::CLI::Legacy.rewrite(["./app", "--version"]).should eq(["version"])
+    Noir::CLI::Legacy.rewrite(["--no-color", "--build-info"]).should eq(["version", "--verbose"])
   end
 
   it "leaves non-terminal v0 invocations untouched" do
@@ -64,6 +86,15 @@ describe "Noir::CLI::Legacy.rewrite" do
     # routes to.
     Noir::CLI::Legacy.rewrite(["--list-techs", "--build-info"]).should eq(["list", "techs"])
     Noir::CLI::Legacy.rewrite(["--build-info", "--list-techs"]).should eq(["version", "--verbose"])
+  end
+
+  it "reports a v1 verb at the head of argv" do
+    Noir::CLI::Legacy.subcommand_invocation?(["rules", "update"]).should be_true
+    Noir::CLI::Legacy.subcommand_invocation?(["scan"]).should be_true
+    Noir::CLI::Legacy.subcommand_invocation?([] of String).should be_false
+    Noir::CLI::Legacy.subcommand_invocation?(["-b", "./app"]).should be_false
+    # Only the head counts — that is the exact token the router tests.
+    Noir::CLI::Legacy.subcommand_invocation?(["-b", "scan"]).should be_false
   end
 
   it "is idempotent on already-rewritten input" do

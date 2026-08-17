@@ -81,7 +81,8 @@ module Noir::CLI::HelpCommand
       #{green.call("GLOBAL FLAGS:")}
         --no-color        Strip ANSI color from every command's output (NO_COLOR env also works)
         --no-spinner      Disable loading spinner animations while keeping normal logs
-        -v, -V, --version Print the noir version and exit (alias for `noir version`)
+        -v, -V, --version Print the noir version and exit; after a verb, use `noir version`
+                          (a subcommand's own -v is its own — e.g. `noir rules update -v`)
         -h, --help        Show this overview, or, after a verb, that command's help
 
       Run `noir help <command>` (or `noir <command> -h`) for command-specific flags.
