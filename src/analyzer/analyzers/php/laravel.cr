@@ -183,13 +183,16 @@ module Analyzer::Php
                                        file_path : String,
                                        include_callee : Bool,
                                        base_line : Int32 = 1,
-                                       imports : Hash(String, String) = EMPTY_IMPORTS) : Array(Endpoint)
+                                       imports : Hash(String, String) = EMPTY_IMPORTS,
+                                       php_mode : Bool = false) : Array(Endpoint)
       endpoints = [] of Endpoint
       # One structural pass over this file/body. `PhpLexer` masks strings,
       # comments and heredoc/nowdoc bodies a single time; every
       # balanced-delimiter, statement-end and skip-range query below reuses
-      # the same lexer instead of re-scanning the raw text per route.
-      lexer = Noir::PhpLexer.new(content)
+      # the same lexer instead of re-scanning the raw text per route. A whole
+      # file starts outside `<?php`; a group body handed back by the recursive
+      # pass below was already carved out of a PHP region.
+      lexer = Noir::PhpLexer.new(content, php_mode: php_mode)
       route_groups = extract_route_groups(content, lexer)
       resource_controller_cache = {} of String => ControllerActionMap?
       # Character ranges that are inside PHP comments (`//`, `#`, `/* */`),
@@ -280,7 +283,7 @@ module Analyzer::Php
       route_groups.each do |group|
         new_prefix = group.prefix.empty? ? prefix : build_full_path(prefix, group.prefix)
         group_base_line = base_line + newline_count_before(content, group.body_start)
-        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports))
+        endpoints.concat(analyze_routes_content(group.body, new_prefix, file_path, include_callee, group_base_line, imports, php_mode: true))
       end
 
       endpoints
