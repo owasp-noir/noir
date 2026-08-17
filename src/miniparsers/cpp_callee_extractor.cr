@@ -35,9 +35,10 @@ module Noir::CppCalleeExtractor
   def callees_for_body(body : String, file_path : String, start_line : Int32) : Array(Entry)
     entries = [] of Entry
     in_block_comment = false
+    raw_terminator = nil.as(String?)
 
     body.each_line.with_index do |line, index|
-      stripped, in_block_comment = strip_non_code_with_state(line, in_block_comment)
+      stripped, in_block_comment, raw_terminator = strip_non_code_with_state(line, in_block_comment, raw_terminator)
       scan_line(stripped, file_path, start_line + index, entries)
     end
 
@@ -151,7 +152,13 @@ module Noir::CppCalleeExtractor
     while i < size
       char = ptr[i].unsafe_chr
 
-      if char == '"' || char == '\''
+      if char == '"' && (delimiter = raw_string_delimiter(source, i, size))
+        # Comments are only blanked at or before `i`, so reading ahead in the
+        # untouched `source` and in `bytes` is equivalent here.
+        i = skip_raw_string(source, i, size, delimiter) + 1
+      elsif char == '\'' && digit_separator?(source, i)
+        i += 1
+      elsif char == '"' || char == '\''
         quote = char
         i += 1
         while i < size
@@ -228,7 +235,9 @@ module Noir::CppCalleeExtractor
     RESERVED.includes?(last) || ROUTE_MACROS.includes?(last)
   end
 
-  private def strip_non_code_with_state(line : String, in_block_comment : Bool) : Tuple(String, Bool)
+  private def strip_non_code_with_state(line : String,
+                                        in_block_comment : Bool,
+                                        raw_terminator : String?) : Tuple(String, Bool, String?)
     bytesize = line.bytesize
     ptr = line.to_unsafe
     in_string = false
@@ -236,6 +245,15 @@ module Noir::CppCalleeExtractor
     escaped = false
     index = 0
     stripped = String::Builder.new(bytesize)
+
+    # A raw string opened on an earlier line runs until its `)delim"`; nothing
+    # before that is code, however many quotes or braces it contains.
+    if pending = raw_terminator
+      closed = find_bytes(line, pending, 0, bytesize)
+      return {"", in_block_comment, pending} unless closed
+      index = closed + pending.bytesize
+      raw_terminator = nil
+    end
 
     while index < bytesize
       byte = ptr[index]
@@ -262,9 +280,18 @@ module Noir::CppCalleeExtractor
         elsif char == '\''
           in_char = false
         end
+      elsif char == '"' && (delimiter = raw_string_delimiter(line, index, bytesize))
+        terminator = ")#{delimiter}\""
+        body_start = index + delimiter.bytesize + 2
+        if closed = find_bytes(line, terminator, body_start, bytesize)
+          index = closed + terminator.bytesize
+          next
+        end
+        raw_terminator = terminator
+        break
       elsif char == '"'
         in_string = true
-      elsif char == '\''
+      elsif char == '\'' && !digit_separator?(line, index)
         in_char = true
       elsif char == '/' && index + 1 < bytesize && ptr[index + 1].unsafe_chr == '/'
         break
@@ -278,10 +305,26 @@ module Noir::CppCalleeExtractor
       index += 1
     end
 
-    {stripped.to_s, in_block_comment}
+    {stripped.to_s, in_block_comment, raw_terminator}
+  end
+
+  private def find_bytes(source : String, needle : String, start_index : Int32, limit : Int32) : Int32?
+    size = needle.bytesize
+    index = start_index
+
+    while index + size <= limit
+      return index if bytes_match?(source, index, needle)
+      index += 1
+    end
+
+    nil
   end
 
   private def skip_string(source : String, index : Int32, limit : Int32) : Int32
+    if delimiter = raw_string_delimiter(source, index, limit)
+      return skip_raw_string(source, index, limit, delimiter)
+    end
+
     i = index + 1
     escaping = false
 
@@ -300,7 +343,100 @@ module Noir::CppCalleeExtractor
     limit - 1
   end
 
+  # A raw string literal (`R"(...)"`, `R"tag(...)tag"`, optionally prefixed
+  # `u8`/`L`/`u`/`U`) ends only at its exact `)delim"` terminator. Its body may
+  # hold unbalanced quotes, braces and newlines — that is the point of the
+  # form — so the ordinary quote scanner desynchronizes on it. Returns the
+  # d-char delimiter (possibly empty) when `index` opens a raw string.
+  private def raw_string_delimiter(source : String, index : Int32, limit : Int32) : String?
+    return unless raw_string_prefix?(source, index)
+
+    i = index + 1
+    # At most 16 d-chars, then the mandatory `(`.
+    stop = Math.min(limit, index + 18)
+    delimiter = String::Builder.new
+
+    while i < stop
+      char = source.byte_at(i).unsafe_chr
+      return delimiter.to_s if char == '('
+      return if char == ')' || char == '\\' || char == '"' || char.ascii_whitespace?
+      delimiter << char
+      i += 1
+    end
+
+    nil
+  end
+
+  # Returns the index of the closing `"`, matching `skip_string`'s contract.
+  # An unterminated raw string degrades to the end of the scanned range.
+  private def skip_raw_string(source : String, index : Int32, limit : Int32, delimiter : String) : Int32
+    terminator = ")#{delimiter}\""
+    size = terminator.bytesize
+    i = index + delimiter.bytesize + 2
+
+    while i + size <= limit
+      return i + size - 1 if bytes_match?(source, i, terminator)
+      i += 1
+    end
+
+    limit - 1
+  end
+
+  private def raw_string_prefix?(source : String, index : Int32) : Bool
+    return false if index <= 0
+    return false unless source.byte_at(index - 1).unsafe_chr == 'R'
+
+    start = index - 1
+    if start >= 2 && source.byte_at(start - 2).unsafe_chr == 'u' && source.byte_at(start - 1).unsafe_chr == '8'
+      start -= 2
+    elsif start >= 1 && {'L', 'u', 'U'}.includes?(source.byte_at(start - 1).unsafe_chr)
+      start -= 1
+    end
+
+    return true if start == 0
+    !identifier_byte?(source.byte_at(start - 1).unsafe_chr)
+  end
+
+  private def bytes_match?(source : String, index : Int32, needle : String) : Bool
+    return false if index + needle.bytesize > source.bytesize
+
+    offset = index
+    needle.each_byte do |byte|
+      return false unless source.byte_at(offset) == byte
+      offset += 1
+    end
+    true
+  end
+
+  private def identifier_byte?(char : Char) : Bool
+    char.ascii_alphanumeric? || char == '_'
+  end
+
+  # C++14 digit separators (`1'000'000`, `0x1'F`) are not char literals. Every
+  # `'` opening one made the scanner run to EOF, so a handler containing one
+  # yielded zero callees — parity-dependent, so it failed silently.
+  private def digit_separator?(source : String, index : Int32) : Bool
+    return false if index <= 0
+    return false unless source.byte_at(index - 1).unsafe_chr.ascii_alphanumeric?
+    return false if index + 1 >= source.bytesize
+    return false unless source.byte_at(index + 1).unsafe_chr.ascii_alphanumeric?
+
+    # Walk back to the start of the token: a separator only ever appears inside
+    # a numeric literal, so the token must begin with a digit. This keeps the
+    # `L'a'` / `u8'x'` / `U'x'` encoding prefixes reading as char literals.
+    start = index - 1
+    while start > 0
+      char = source.byte_at(start - 1).unsafe_chr
+      break unless char.ascii_alphanumeric? || char == '_' || char == '\'' || char == '.'
+      start -= 1
+    end
+
+    source.byte_at(start).unsafe_chr.ascii_number?
+  end
+
   private def skip_char_literal(source : String, index : Int32, limit : Int32) : Int32
+    return index if digit_separator?(source, index)
+
     i = index + 1
     escaping = false
 
