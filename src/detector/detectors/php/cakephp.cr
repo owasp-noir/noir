@@ -14,7 +14,7 @@ module Detector::Php
 
       # Check for CakePHP console script
       if File.basename(filename) == "cake" || File.basename(filename) == "cake.php"
-        if file_contents.includes?("Cake") || file_contents.includes?("cake")
+        if file_contents.includes?("Cake\\Console\\CommandRunner")
           return true
         end
       end

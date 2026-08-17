@@ -29,10 +29,11 @@ describe "Detect CakePHP" do
   end
 
   it "detects CakePHP from cake script" do
-    cake_content = <<-PHP
+    cake_content = <<-'PHP'
       #!/usr/bin/php
       <?php
-      // This is a dummy cake executable
+      use Cake\Console\CommandRunner;
+      exit((new CommandRunner())->run($argv));
       PHP
     instance.detect("cake", cake_content).should be_true
   end
@@ -48,8 +49,9 @@ describe "Detect CakePHP" do
     instance.detect("config/routes.php", routes_content).should be_true
   end
 
-  it "does not detect CakePHP from unrelated cake file without Cake marker" do
+  it "does not detect CakePHP from unrelated cake file without Cake console marker" do
     instance.detect("cake", "#!/bin/bash\necho hello").should be_false
+    instance.detect("bin/cake", "#!/usr/bin/php\n<?php\n// dummy script without CommandRunner").should be_false
   end
 
   it "does not detect CakePHP from non-CakePHP files" do
