@@ -635,42 +635,145 @@ module LLM
     end
   end
 
+  # One request's worth of bundled source.
+  #
+  # `paths` rides along so a failed request can name the coverage it lost:
+  # an LLM call that comes back empty is the only trace those files' endpoints
+  # ever had, and without the list the analyzer could only report "something
+  # failed" rather than which files went unread.
+  struct Bundle
+    getter content : String
+    getter tokens : Int32
+    getter paths : Array(String)
+
+    def initialize(@content : String, @tokens : Int32, @paths : Array(String))
+    end
+  end
+
+  # Floor on how much of an oversized file goes into one part. A provider
+  # budget small enough to make this bind (`--ai-max-token 200`) cannot fit a
+  # useful request either way; splitting into 1-line parts would just turn one
+  # doomed call into hundreds of them.
+  MIN_SPLIT_CHARS = 1024
+
   # Create a bundle of files that fits within token limits
-  # Returns the bundle content and the estimated token count
+  # Returns one `Bundle` per request to send
   def self.bundle_files(files : Array(Tuple(String, String)),
                         max_tokens : Int32,
-                        safety_margin : Float64 = 0.8) : Array(Tuple(String, Int32))
+                        safety_margin : Float64 = 0.8) : Array(Bundle)
     if max_tokens <= 0
       max_tokens = MODEL_TOKEN_LIMITS["default"].as(Int32)
     end
     safe_limit = (max_tokens * safety_margin).to_i
-    bundles = [] of Tuple(String, Int32)
+    bundles = [] of Bundle
     base_tokens = estimate_tokens(SYSTEM_BUNDLE)
     # Accumulate sections and join once per bundle. The previous
     # `current_bundle += file_section` reallocated and recopied the whole
     # bundle for every file, which on a large-context provider (one bundle
     # can hold hundreds of files) is quadratic in the bundle's size.
     sections = [] of String
+    paths = [] of String
     current_tokens = base_tokens
 
     files.each do |file_path, content|
       file_section = "- File: \"#{file_path}\"\n```\n#{content}\n```\n"
       file_tokens = estimate_tokens(file_section)
+      # A file whose own section does not fit is the case the accumulator
+      # could never handle: the flush below is guarded on `!sections.empty?`,
+      # so the file was then appended unconditionally and shipped as a bundle
+      # far over the limit. The provider answers 400 and every endpoint in
+      # that file disappears. It is not an exotic input — a custom provider
+      # URL falls through `get_max_tokens` to the 4000-token global default,
+      # which puts the ceiling at roughly 12 KB of source.
+      oversized = base_tokens + file_tokens > safe_limit
 
-      if current_tokens + file_tokens > safe_limit && !sections.empty?
-        bundles << {sections.join, current_tokens}
+      if (oversized || current_tokens + file_tokens > safe_limit) && !sections.empty?
+        bundles << Bundle.new(sections.join, current_tokens, paths.dup)
         sections.clear
+        paths.clear
         current_tokens = base_tokens
       end
 
-      sections << file_section
-      current_tokens += file_tokens
+      if oversized
+        split_file_sections(file_path, content, safe_limit - base_tokens).each do |section|
+          bundles << Bundle.new(section, base_tokens + estimate_tokens(section), [file_path])
+        end
+      else
+        sections << file_section
+        paths << file_path
+        current_tokens += file_tokens
+      end
     end
 
     unless sections.empty?
-      bundles << {sections.join, current_tokens}
+      bundles << Bundle.new(sections.join, current_tokens, paths)
     end
 
     bundles
+  end
+
+  # Split one over-budget file into labelled parts, each its own bundle.
+  # Splitting beats truncating: the endpoints in the tail of a large routes
+  # file are exactly as real as the ones at the top.
+  private def self.split_file_sections(file_path : String, content : String, budget_tokens : Int32) : Array(String)
+    # The part label is written before the parts are counted, so reserve room
+    # for a generous count rather than the real one.
+    overhead = "- File: \"#{file_path}\" (part 999/999)\n```\n\n```\n".size
+    limit = budget_tokens * 4 - overhead
+    limit = MIN_SPLIT_CHARS if limit < MIN_SPLIT_CHARS
+
+    chunks = split_content(content, limit)
+    total = chunks.size
+    chunks.map_with_index do |chunk, index|
+      "- File: \"#{file_path}\" (part #{index + 1}/#{total})\n```\n#{chunk}\n```\n"
+    end
+  end
+
+  # Prefers line boundaries so each part is still readable source; a single
+  # line longer than the budget (a minified bundle, a generated table) falls
+  # back to a character-wise cut.
+  private def self.split_content(content : String, limit : Int32) : Array(String)
+    chunks = [] of String
+    buffer = [] of String
+    size = 0
+
+    content.each_line(chomp: false) do |line|
+      pieces = line.size > limit ? hard_split(line, limit) : [line]
+      pieces.each do |piece|
+        if size > 0 && size + piece.size > limit
+          chunks << buffer.join
+          buffer.clear
+          size = 0
+        end
+        buffer << piece
+        size += piece.size
+      end
+    end
+
+    chunks << buffer.join unless buffer.empty?
+    chunks << "" if chunks.empty?
+    chunks
+  end
+
+  # Cuts on character boundaries, never byte offsets: a mid-UTF-8 slice would
+  # hand the provider invalid bytes.
+  private def self.hard_split(text : String, limit : Int32) : Array(String)
+    pieces = [] of String
+    buffer = String::Builder.new
+    count = 0
+
+    text.each_char do |char|
+      buffer << char
+      count += 1
+      if count >= limit
+        pieces << buffer.to_s
+        buffer = String::Builder.new
+        count = 0
+      end
+    end
+
+    tail = buffer.to_s
+    pieces << tail unless tail.empty?
+    pieces
   end
 end
