@@ -4,7 +4,7 @@ module Detector::Javascript
   class Adonisjs < Detector
     detector_for "js_adonisjs",
       extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
-      basenames: %w[package.json]
+      basenames: %w[package.json ace]
 
     PACKAGE_MARKERS = Regex.union("@adonisjs/core", "\"adonis-") # legacy adonis-* packages
     SOURCE_MARKERS  = Regex.union("@adonisjs/core", "@ioc:Adonis")
