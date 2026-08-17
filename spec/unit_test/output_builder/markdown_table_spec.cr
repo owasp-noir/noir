@@ -80,9 +80,33 @@ describe "OutputBuilderMarkdownTable" do
     expected_line_1 = "| GET\\|POST /test\\|url | http\\|https | `param\\|name (query\\|type)`  |"
     lines[2].should eq(expected_line_1)
 
-    # Line 3: | GET\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `&lt;i&gt;html&lt;/i&gt; (query)`  |
-    expected_line_2 = "| GET\\\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `&lt;i&gt;html&lt;/i&gt; (query)`  |"
+    # Line 3: Endpoint outside code span is HTML/backslash escaped; param inside code span keeps literal HTML/backslashes
+    expected_line_2 = "| GET\\\\POST /&lt;script&gt;alert(1)&lt;/script&gt; | http | `<i>html</i> (query)`  |"
     lines[3].should eq(expected_line_2)
+  end
+
+  it "preserves literal <, >, and \\ inside code spans while escaping pipes" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderMarkdownTable.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/test", "GET")
+    endpoint.push_param(Param.new("c<ook>ie", "val", "cookie"))
+    endpoint.push_param(Param.new("path\\to", "val", "path"))
+    endpoint.push_param(Param.new("foo|bar", "val", "query"))
+
+    builder.print([endpoint])
+    cell = builder.io.to_s.split("\n")[2]
+
+    cell.should contain("`c<ook>ie (cookie)`")
+    cell.should contain("`path\\to (path)`")
+    cell.should contain("`foo\\|bar (query)`")
   end
 
   it "keeps the code span intact when a param name contains a backtick" do
