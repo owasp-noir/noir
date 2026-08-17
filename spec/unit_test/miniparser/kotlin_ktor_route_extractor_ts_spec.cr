@@ -563,4 +563,34 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
       ])
     end
   end
+
+  it "ignores a commented-out const val shadowing the live declaration" do
+    # `constants[name] ||= value` is first-wins, and the declaration regex used
+    # to run over the raw source: a dead constant left above the real one
+    # permanently shadowed it, so every route built from it reported a URL that
+    # does not exist while the real one was lost.
+    source = <<-KT
+      package com.example
+
+      object Paths {
+          // deprecated: const val API = "/old-api"
+          /* const val API = "/older-api" */
+          const val API = "/api"
+      }
+
+      routing {
+          route(Paths.API) {
+              get("/users") { }
+          }
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinKtorRouteExtractor.extract_string_constants(source)
+    constants["Paths.API"].should eq("/api")
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source, constants)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/users"},
+    ])
+  end
 end

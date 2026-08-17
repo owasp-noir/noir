@@ -2,6 +2,7 @@ require "../utils/url_path"
 require "../ext/tree_sitter/tree_sitter"
 require "../models/endpoint"
 require "./kotlin_callee_extractor"
+require "./kotlin_source_mask"
 
 module Noir
   # Tree-sitter-backed http4k extractor.
@@ -108,7 +109,12 @@ module Noir
       current_type = ""
       current_depth = 0
 
-      source.each_line do |line|
+      # Comment-free copy that still carries the literal values. Read the
+      # raw source instead and a commented-out `const val PATH = "/old"`
+      # above the live declaration wins the `||=` below and permanently
+      # shadows it, so every route built from that constant reports a URL
+      # that does not exist while the real one is lost.
+      Noir::KotlinSourceMask.code_only(source).each_line do |line|
         if package_name.empty?
           if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
             package_name = match[1]

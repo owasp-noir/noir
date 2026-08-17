@@ -539,4 +539,92 @@ describe Noir::TreeSitterKotlinRouteExtractor do
     prefixes = Noir::TreeSitterKotlinRouteExtractor.extract_stomp_application_prefixes(source)
     prefixes.should eq(["/app", "/topic"])
   end
+
+  it "ignores a commented-out const val shadowing the live declaration" do
+    # `constants[name] ||= value` means first-wins, and the declaration regex
+    # used to run over the raw source: a dead constant left above the real one
+    # permanently shadowed it, so every route built from it reported a URL
+    # that does not exist while the real one was lost.
+    source = <<-KT
+      package com.example
+
+      object GatewayPolicy {
+          // deprecated: const val MCP_ENDPOINT_PATH = "/old-mcp"
+          /* const val MCP_ENDPOINT_PATH = "/older-mcp" */
+          const val MCP_ENDPOINT_PATH = "/mcp"
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    constants["MCP_ENDPOINT_PATH"].should eq("/mcp")
+    constants["GatewayPolicy.MCP_ENDPOINT_PATH"].should eq("/mcp")
+    constants["com.example.GatewayPolicy.MCP_ENDPOINT_PATH"].should eq("/mcp")
+  end
+
+  it "keeps a gateway PredicateSpec helper readable behind a non-ASCII comment" do
+    # The comment mask emitted one space per *byte*; `MatchData#end` is a char
+    # offset, so a multi-byte comment on the helper line shifted every offset
+    # after it and the expression tail was over-trimmed away.
+    source = <<-KT
+      package com.example
+
+      object GatewayPolicy {
+          const val MCP_ENDPOINT_PATH = "/mcp"
+      }
+
+      class GatewayRouteConfig {
+          fun customRouteLocator(builder: RouteLocatorBuilder): RouteLocator {
+              val routesBuilder = builder.routes()
+              routesBuilder.route("post") { predicateSpec ->
+                  predicateSpec.isPostRequestToMcpEndpoint().uri("no://op")
+              }
+              return routesBuilder.build()
+          }
+
+          /* MCP 엔드포인트 전용 조건 */ private fun PredicateSpec.isPostRequestToMcpEndpoint() = method(HttpMethod.POST).and().path(GatewayPolicy.MCP_ENDPOINT_PATH)
+      }
+      KT
+
+    constants = Noir::TreeSitterKotlinRouteExtractor.extract_string_constants(source)
+    routes = Noir::TreeSitterKotlinRouteExtractor.extract_routes(source, constants)
+
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"POST", "/mcp"},
+    ])
+  end
+
+  it "does not turn a commented-out STOMP addEndpoint into a real endpoint" do
+    source = <<-KT
+      package com.example
+
+      class WsConfig {
+          override fun registerStompEndpoints(registry: StompEndpointRegistry) {
+              // registry.addEndpoint("/ws-legacy-removed").withSockJS()
+              registry.addEndpoint("/ws").withSockJS()
+          }
+      }
+      KT
+
+    routes = [] of Noir::TreeSitterKotlinRouteExtractor::Route
+    Noir::TreeSitter.parse_kotlin(source) do |root|
+      routes = Noir::TreeSitterKotlinRouteExtractor.extract_stomp_routes_from(root, source)
+    end
+
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/ws"},
+    ])
+  end
+
+  it "does not read a STOMP application prefix out of a comment" do
+    source = <<-KT
+      class WsConfig {
+          override fun configureMessageBroker(registry: MessageBrokerRegistry) {
+              // registry.setApplicationDestinationPrefixes("/legacy")
+              registry.setApplicationDestinationPrefixes("/app")
+          }
+      }
+      KT
+
+    Noir::TreeSitterKotlinRouteExtractor.extract_stomp_application_prefixes(source).should eq(["/app"])
+  end
 end

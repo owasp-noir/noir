@@ -1,5 +1,6 @@
 require "../../utils/url_path"
 require "../../ext/tree_sitter/tree_sitter"
+require "../kotlin_source_mask"
 
 module Noir
   # Tree-sitter-backed Kotlin route extractor.
@@ -75,8 +76,15 @@ module Noir
       # Scrubbed copy (strings/comments blanked, newlines preserved) for brace
       # counting, so a `}` inside a const string value can't close the type early.
       scrubbed_lines = visible_kotlin_code(source).lines
+      # Comment-free copy that still carries the literal values, so the
+      # declaration regexes below read real code only. Running them on the
+      # raw source let a commented-out `const val PATH = "/old"` above the
+      # live one win the `||=` and permanently shadow it — every route built
+      # from that constant then reported a URL that does not exist while the
+      # real one was lost.
+      code_lines = Noir::KotlinSourceMask.code_only(source).lines
 
-      source.each_line.with_index do |line, idx|
+      code_lines.each_with_index do |line, idx|
         if package_name.empty?
           if match = line.match(/^\s*package\s+([A-Za-z_][A-Za-z0-9_.]*)/)
             package_name = match[1]
