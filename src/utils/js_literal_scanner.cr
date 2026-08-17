@@ -274,27 +274,48 @@ module Noir
       end
     end
 
-    # Determine if '/' at current position likely starts a regex literal.
-    # `window` is the rstrip'd tail of the scanned output — enough for both
-    # the last-char probe and the keyword `ends_with?` probe.
-    private def self.looks_like_regex?(window : Array(Char)) : Bool
-      last_char = window.last?
-      return true if last_char && REGEX_PRECEDING_CHARS.includes?(last_char)
-
-      REGEX_PRECEDING_KEYWORDS.each do |keyword|
-        return true if window_ends_with?(window, keyword)
-      end
-
-      false
+    # The single rule for "can a '/' here start a regex literal?".
+    #
+    # `last_char` is the last non-whitespace character of the code scanned
+    # so far (nil when nothing has been scanned yet) and `last_word` is the
+    # identifier that ends at `last_char`, or "" when `last_char` is
+    # punctuation. Every JavaScript scanner in the tree asks this question —
+    # the literal scanners below, `JSRouteExtractor.strip_js_comments` and
+    # `JSLexer#looks_like_regex?` — and they must agree: a '/' misread as
+    # division lets the regex body's quotes and `//` open a string or a
+    # comment that runs to EOF, which silently drops every route in the file.
+    def self.regex_context?(last_char : Char?, last_word : String) : Bool
+      return false unless last_char
+      return true if REGEX_PRECEDING_CHARS.includes?(last_char)
+      return false if last_word.empty?
+      REGEX_PRECEDING_KEYWORDS.includes?(last_word)
     end
 
-    private def self.window_ends_with?(window : Array(Char), keyword : String) : Bool
-      return false if window.size < keyword.size
-      offset = window.size - keyword.size
-      keyword.each_char_with_index do |ch, i|
-        return false unless window[offset + i] == ch
+    # Determine if '/' at current position likely starts a regex literal.
+    # `window` is the rstrip'd tail of the scanned output — enough for both
+    # the last-char probe and the trailing-word keyword probe.
+    private def self.looks_like_regex?(window : Array(Char)) : Bool
+      last_char = window.last?
+      return false unless last_char
+      return true if REGEX_PRECEDING_CHARS.includes?(last_char)
+      return false unless word_char?(last_char)
+
+      regex_context?(last_char, window_tail_word(window))
+    end
+
+    private def self.word_char?(char : Char) : Bool
+      char.alphanumeric? || char == '_' || char == '$'
+    end
+
+    # The identifier ending at the window's last character. The window holds
+    # 12 chars and the longest keyword ("instanceof") is 10, so any word that
+    # fills the window is already longer than every keyword.
+    private def self.window_tail_word(window : Array(Char)) : String
+      start = window.size
+      while start > 0 && word_char?(window[start - 1])
+        start -= 1
       end
-      true
+      window[start..].join
     end
 
     private def self.find_matching_impl(src, open_idx : Int32, open_char : Char, close_char : Char) : Int32?
@@ -383,22 +404,19 @@ module Noir
         end
         prev_char = prev_idx >= 0 ? chr(src, prev_idx) : '('
 
-        # Check for punctuation or extract previous word for keyword check
-        is_regex = REGEX_PRECEDING_CHARS.includes?(prev_char)
+        # Extract the identifier ending at prev_char so the shared rule can
+        # do the keyword probe; punctuation carries no word.
+        prev_word = if word_char?(prev_char)
+                      word_start = prev_idx
+                      while word_start > 0 && word_char?(chr(src, word_start - 1))
+                        word_start -= 1
+                      end
+                      word_string(src, word_start, prev_idx + 1)
+                    else
+                      ""
+                    end
 
-        unless is_regex
-          word_end = prev_idx + 1
-          word_start = prev_idx
-          while word_start > 0 && (chr(src, word_start - 1).alphanumeric? || chr(src, word_start - 1) == '_')
-            word_start -= 1
-          end
-          if word_start < word_end
-            prev_word = word_string(src, word_start, word_end)
-            is_regex = REGEX_PRECEDING_KEYWORDS.includes?(prev_word)
-          end
-        end
-
-        if is_regex
+        if regex_context?(prev_char, prev_word)
           pos += 1
           in_char_class = false
           while pos < size

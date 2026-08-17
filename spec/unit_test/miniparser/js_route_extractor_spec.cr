@@ -735,4 +735,71 @@ describe Noir::JSRouteExtractor do
       ).should be_false
     end
   end
+
+  describe "strip_js_comments" do
+    it "keeps blanking comments after a regex literal containing a quote" do
+      # `str.replace(/'/g, "&#39;")` used to leave the scanner inside a
+      # string for the rest of the file, so the commented-out decorator
+      # below survived and was reported as a live endpoint.
+      content = <<-TS
+        escape(str: string) { return str.replace(/'/g, "&#39;"); }
+
+        // @Get('legacy-removed')
+        @Post('create')
+        TS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should_not contain("legacy-removed")
+      stripped.should contain("@Post('create')")
+    end
+
+    it "does not open a comment from a '/*' inside a string" do
+      # Mirror image of the case above: with the state inverted, the `/*`
+      # in a plain string literal started a block comment that blanked
+      # every route below it.
+      content = <<-TS
+        escape(str) { return str.replace(/'/g, '&#39;'); }
+        const blockOpen = '/*';
+        @Get('list')
+        @Post('create')
+        TS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("@Get('list')")
+      stripped.should contain("@Post('create')")
+    end
+
+    it "keeps a '//' inside a regex character class out of comment state" do
+      content = "const sep = /[//]/; app.get('/kept', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/kept', h);")
+    end
+
+    it "preserves length and newline positions" do
+      content = <<-JS
+        const re = /a'b/;
+        // gone
+        app.get('/x', h);
+        JS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.size.should eq(content.size)
+      stripped.count('\n').should eq(content.count('\n'))
+    end
+
+    it "resyncs at end of line when a '/' is misjudged as a regex" do
+      # `</p>` looks like a regex opening after '<'. Bounding the state to
+      # one line keeps that misjudgement from eating the rest of the file.
+      content = <<-JSX
+        const el = <p>a</p>;
+        // gone
+        app.get('/x', h);
+        JSX
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/x', h);")
+      stripped.should_not contain("gone")
+    end
+  end
 end

@@ -1,3 +1,5 @@
+require "../utils/js_literal_scanner"
+
 module Noir
   # MiniToken represents a simple token in JavaScript code
   class JSToken
@@ -247,37 +249,34 @@ module Noir
     end
 
     # Heuristic to determine if '/' starts a regex literal.
-    # In JavaScript, regex literals can appear after certain tokens that cannot
-    # be followed by a division operator. This covers the most common cases
-    # for route definitions but is not exhaustive for all JS contexts.
+    #
+    # The rule itself lives in `JSLiteralScanner.regex_context?` — this only
+    # maps the last token onto the (last significant char, trailing word)
+    # pair that rule takes. Keeping one copy matters: the lexer used to
+    # accept a much shorter list of preceding tokens than the scanner, so
+    # `(s) => /["']/.test(s)` lexed the '/' as division and the following
+    # quote opened a string token that ran to EOF, losing every route in
+    # the file.
     private def looks_like_regex? : Bool
       return false if @tokens.empty?
 
       last_token = @tokens.last
 
-      # Regex can follow opening brackets and parentheses
-      return true if last_token.type == :lparen
-      return true if last_token.type == :lbracket
-      return true if last_token.type == :lbrace
-
-      # Regex can follow punctuation that expects an expression
-      return true if last_token.type == :comma
-      return true if last_token.type == :colon
-      return true if last_token.type == :semicolon
-
-      # Regex can follow assignment and comparison operators
-      return true if last_token.type == :assign
-      return true if last_token.value == "="
-
-      # Regex can follow keywords that expect an expression
-      if last_token.type == :keyword
-        case last_token.value
-        when "return", "case", "throw", "in", "of", "typeof", "instanceof", "void", "delete", "new"
-          return true
-        end
+      case last_token.type
+      when :string, :template_literal, :regex
+        # Literal payloads: the token's value is data, not code, so its last
+        # character says nothing about what follows the closing delimiter.
+        # A '/' after a completed literal is always division.
+        false
+      when :keyword
+        JSLiteralScanner.regex_context?(last_token.value[-1]?, last_token.value)
+      else
+        # Punctuation, operators and `:unknown` (where '!' and the '>' of
+        # '=>' land) each carry a single character; identifiers, numbers and
+        # closing brackets end in a character the shared set rejects, so the
+        # same probe covers them without a per-type list.
+        JSLiteralScanner.regex_context?(last_token.value[-1]?, "")
       end
-
-      false
     end
 
     # Tokenize a regex literal

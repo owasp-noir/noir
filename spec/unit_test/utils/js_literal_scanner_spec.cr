@@ -258,4 +258,32 @@ describe Noir::JSLiteralScanner do
       idx.should eq(9)
     end
   end
+
+  describe "regex_context?" do
+    it "accepts operators that expect an expression" do
+      ['(', '[', '{', ',', ':', ';', '=', '!', '&', '|', '?', '>', '<'].each do |ch|
+        Noir::JSLiteralScanner.regex_context?(ch, "").should be_true
+      end
+    end
+
+    it "accepts keywords that expect an expression" do
+      Noir::JSLiteralScanner.regex_context?('n', "return").should be_true
+      Noir::JSLiteralScanner.regex_context?('f', "typeof").should be_true
+    end
+
+    it "rejects a value-producing tail" do
+      Noir::JSLiteralScanner.regex_context?(')', "").should be_false
+      Noir::JSLiteralScanner.regex_context?(']', "").should be_false
+      Noir::JSLiteralScanner.regex_context?('x', "x").should be_false
+      Noir::JSLiteralScanner.regex_context?('n', "login").should be_false
+      Noir::JSLiteralScanner.regex_context?(nil, "").should be_false
+    end
+
+    it "matches whole words, not keyword suffixes" do
+      # "login" ends with "in" — a suffix match would call `login / 2`
+      # a regex and swallow the rest of the expression.
+      Noir::JSLiteralScanner.regex_context?('n', "in").should be_true
+      Noir::JSLiteralScanner.regex_context?('n', "login").should be_false
+    end
+  end
 end
