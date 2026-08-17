@@ -8,7 +8,13 @@ module Analyzer::Javascript
     EXTENSIONS = [".js", ".ts", ".mjs", ".mts"]
 
     def analyze
-      result = [] of Endpoint
+      # Route candidates paired with the Nuxt app root they came from. A
+      # monorepo can hold several Nuxt apps under one scan base, and each
+      # app's `server/` tree is its own routing table: `apps/admin/…/auth.ts`
+      # and `apps/site/…/auth.ts` are two handlers, not one file seen twice.
+      # Collecting first and folding afterwards (see `fold_route_candidates`)
+      # keeps the outcome independent of which fiber finished first.
+      candidates = [] of Tuple(String, Endpoint)
       mutex = Mutex.new
       include_callee = callees_needed?
 
@@ -28,13 +34,13 @@ module Analyzer::Javascript
         # routes serve real traffic.
         next if relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/")
         next if relative.includes?("/__tests__/") || relative.includes?("/__mocks__/")
-        analyze_nuxt_file(path, result, mutex, include_callee)
+        analyze_nuxt_file(path, candidates, mutex, include_callee)
       end
 
-      result
+      fold_route_candidates(candidates)
     end
 
-    private def analyze_nuxt_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
+    private def analyze_nuxt_file(path : String, candidates : Array(Tuple(String, Endpoint)), mutex : Mutex, include_callee : Bool)
       # Extract endpoint from file path
       # server/api/hello.ts -> /api/hello
       # server/api/users/[id].ts -> /api/users/:id
@@ -55,6 +61,15 @@ module Analyzer::Javascript
       end
 
       return if base_path_idx.nil?
+
+      # Everything above `/server/api/` or `/server/routes/` is the Nuxt app
+      # root — empty when the scan base *is* the app. It keys the dedup in
+      # `fold_route_candidates` and nothing else: an app root is a filesystem
+      # location, not a URL prefix. Nitro mounts each app's `server/` tree at
+      # that app's own base, so `apps/admin/server/routes/auth.ts` is served as
+      # `/auth`, and prefixing the directory (`/apps/admin/auth`) would invent
+      # a URL no deployment answers.
+      app_root = scoped[0...base_path_idx]
 
       # Get the path after /server/api/ or /server/routes/
       if is_api_route
@@ -225,21 +240,64 @@ module Analyzer::Javascript
 
           attach_js_callees(endpoint, callees) if include_callee
 
-          mutex.synchronize do
-            existing_idx = result.index { |e| e.url == url && e.method == method }
-            if existing_idx
-              # Method-specific files take precedence over generic handlers
-              if specific_method
-                result[existing_idx] = endpoint
-              end
-            else
-              result << endpoint
-            end
-          end
+          mutex.synchronize { candidates << {app_root, endpoint} }
         end
       rescue e : Exception
         logger.debug "Error reading file #{path}: #{e.message}"
       end
+    end
+
+    # Fold candidates that resolve to the same (app root, URL, method) into one
+    # endpoint, merging params, callees and code paths.
+    #
+    # This used to run inside the scan: the first file to reach the mutex kept
+    # the endpoint and every later one was discarded outright, params, callees
+    # and code path included. `parallel_file_scan` hands files to N workers, so
+    # "first" meant "whichever fiber won", which had two consequences. Within
+    # one app, `users.ts` and `users/index.ts` both resolve to `ANY /api/users`
+    # and the losing file's params vanished — and since the loser never reached
+    # the optimizer, the deterministic sort there never saw it, so `-f json`
+    # differed between runs of the same scan. Across apps in a monorepo, one
+    # `auth.ts` erased the other's route entirely.
+    #
+    # Folding after the scan over a sorted list makes the merge order — and so
+    # the emitted `code_paths` and `params` order — depend only on the source
+    # tree. Duplicates that survive as separate app roots still carry the same
+    # URL, which the optimizer merges by its own documented rules.
+    private def fold_route_candidates(candidates : Array(Tuple(String, Endpoint))) : Array(Endpoint)
+      ordered = candidates.sort_by do |candidate|
+        app_root, endpoint = candidate
+        code_path = endpoint.details.code_paths.first?
+        {app_root, endpoint.url, endpoint.method, code_path.try(&.path) || "", code_path.try(&.line) || -1}
+      end
+
+      result = [] of Endpoint
+      seen = {} of Tuple(String, String, String) => Int32
+
+      ordered.each do |candidate|
+        app_root, endpoint = candidate
+        key = {app_root, endpoint.url, endpoint.method}
+
+        if existing_idx = seen[key]?
+          # `Endpoint` is a struct, so `result[existing_idx]` hands back a copy.
+          # `push_param` / `push_callee` / `add_path` mutate arrays, which are
+          # references and would survive on their own, but write the copy back
+          # so any future scalar merge here lands too.
+          merged = result[existing_idx]
+          endpoint.params.each { |param| merged.push_param(param) }
+          endpoint.callees.each { |callee| merged.push_callee(callee) }
+          # `Details#add_path` does not dedup, unlike its neighbours.
+          endpoint.details.code_paths.each do |code_path|
+            merged.details.add_path(code_path) unless merged.details.code_paths.any? { |existing| existing == code_path }
+          end
+          result[existing_idx] = merged
+        else
+          seen[key] = result.size
+          result << endpoint
+        end
+      end
+
+      result
     end
 
     private def strip_extension(path : String) : String
