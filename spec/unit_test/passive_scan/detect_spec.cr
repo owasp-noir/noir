@@ -49,6 +49,31 @@ describe NoirPassiveScan do
       filtered.size.should eq(1)
       filtered.first.info.name.should eq("High Rule")
     end
+
+    it "filters out a rule with no declared severity when min_severity is critical (defaults to low)" do
+      no_sev_rule_yaml = <<-YAML
+        id: test-no-sev
+        category: sec
+        techs: []
+        info:
+          name: No Severity Rule
+          author: []
+          description: no severity specified
+          reference: []
+        matchers:
+          - type: word
+            condition: or
+            patterns:
+              - secret
+        matchers-condition: or
+        YAML
+
+      no_sev_rule = PassiveScan.new(YAML.parse(no_sev_rule_yaml))
+      no_sev_rule.info.severity.should eq("low")
+
+      filtered = NoirPassiveScan.filter_rules_by_severity([no_sev_rule], "critical")
+      filtered.should be_empty
+    end
   end
 
   describe ".detect" do

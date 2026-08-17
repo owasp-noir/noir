@@ -32,7 +32,7 @@ describe "PassiveScan" do
       info = PassiveScan::Info.new(yaml)
 
       info.name.should eq("Minimal Info")
-      info.severity.should eq("info")
+      info.severity.should eq("low")
       info.description.should eq("")
       info.author.should eq([] of YAML::Any)
       info.reference.should eq([] of YAML::Any)
@@ -103,6 +103,7 @@ describe "PassiveScan" do
       matcher = PassiveScan::Matcher.new(yaml)
 
       matcher.valid?.should be_false
+      matcher.validation_errors.should contain("invalid type \"keyword\" (expected 'word' or 'regex')")
     end
 
     it "rejects invalid matcher condition" do
@@ -116,6 +117,7 @@ describe "PassiveScan" do
       matcher = PassiveScan::Matcher.new(yaml)
 
       matcher.valid?.should be_false
+      matcher.validation_errors.should contain("invalid condition \"xor\" (expected 'and' or 'or')")
     end
 
     it "rejects empty patterns list" do
@@ -128,6 +130,7 @@ describe "PassiveScan" do
       matcher = PassiveScan::Matcher.new(yaml)
 
       matcher.valid?.should be_false
+      matcher.validation_errors.should contain("missing or empty 'patterns'")
     end
 
     it "sets regex_compile_failed for invalid regex patterns" do
@@ -205,6 +208,29 @@ describe "PassiveScan" do
       scan.valid?.should be_true
     end
 
+    it "defaults missing severity to 'low'" do
+      yaml_str = <<-YAML
+        id: "test-default-sev"
+        info:
+          name: "Default Severity Rule"
+          author: []
+          description: ""
+          reference: []
+        matchers:
+          - type: "word"
+            patterns:
+              - "secret"
+            condition: "or"
+        category: "security"
+        techs: []
+        YAML
+      yaml = YAML.parse(yaml_str)
+      scan = PassiveScan.new(yaml)
+
+      scan.info.severity.should eq("low")
+      scan.valid?.should be_true
+    end
+
     it "normalizes uppercase matchers-condition to lowercase" do
       yaml_str = <<-YAML
         id: "test-upper-condition"
@@ -260,6 +286,30 @@ describe "PassiveScan" do
       scan.valid?.should be_true
     end
 
+    it "rejects scan with unrecognized severity" do
+      yaml_str = <<-YAML
+        id: "test-bad-sev"
+        info:
+          name: "Bad Severity Rule"
+          author: []
+          severity: "unknown_level"
+          description: ""
+          reference: []
+        matchers:
+          - type: "word"
+            patterns:
+              - "secret"
+            condition: "or"
+        category: "security"
+        techs: []
+        YAML
+      yaml = YAML.parse(yaml_str)
+      scan = PassiveScan.new(yaml)
+
+      scan.valid?.should be_false
+      scan.validation_errors.should contain("invalid severity \"unknown_level\" (expected critical, high, medium, low)")
+    end
+
     it "rejects scan with invalid matcher type (e.g. keyword)" do
       yaml_str = <<-YAML
         id: "test-invalid-type"
@@ -283,6 +333,7 @@ describe "PassiveScan" do
       scan = PassiveScan.new(yaml)
 
       scan.valid?.should be_false
+      scan.validation_errors.should contain("matcher[0]: invalid type \"keyword\" (expected 'word' or 'regex')")
     end
 
     it "rejects scan with invalid matchers-condition" do
@@ -309,6 +360,7 @@ describe "PassiveScan" do
       scan = PassiveScan.new(yaml)
 
       scan.valid?.should be_false
+      scan.validation_errors.should contain("invalid matchers-condition \"invalid\" (expected 'and' or 'or')")
     end
 
     it "rejects scan with empty id" do
@@ -332,6 +384,7 @@ describe "PassiveScan" do
       scan = PassiveScan.new(yaml)
 
       scan.valid?.should be_false
+      scan.validation_errors.should contain("missing or empty 'id'")
     end
 
     it "rejects scan with empty info name" do
@@ -355,6 +408,7 @@ describe "PassiveScan" do
       scan = PassiveScan.new(yaml)
 
       scan.valid?.should be_false
+      scan.validation_errors.should contain("missing or empty 'info.name'")
     end
 
     it "rejects scan with empty matchers" do
@@ -374,6 +428,7 @@ describe "PassiveScan" do
       scan = PassiveScan.new(yaml)
 
       scan.valid?.should be_false
+      scan.validation_errors.should contain("missing or empty 'matchers'")
     end
   end
 

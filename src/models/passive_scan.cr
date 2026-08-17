@@ -1,4 +1,5 @@
 require "./logger"
+require "../passive_scan/severity"
 require "yaml"
 require "json"
 require "log"
@@ -15,7 +16,8 @@ struct PassiveScan
 
     def initialize(yaml : YAML::Any)
       @name = yaml["name"]?.try(&.as_s?) || yaml["name"]?.try(&.to_s) || ""
-      @severity = yaml["severity"]?.try(&.as_s?) || yaml["severity"]?.try(&.to_s) || "info"
+      raw_severity = yaml["severity"]?.try(&.as_s?) || yaml["severity"]?.try(&.to_s) || ""
+      @severity = raw_severity.empty? ? "low" : raw_severity.downcase
       @description = yaml["description"]?.try(&.as_s?) || yaml["description"]?.try(&.to_s) || ""
       @reference = if ref_node = yaml["reference"]?
                      ref_node.as_a? || [ref_node] of YAML::Any
@@ -61,14 +63,6 @@ struct PassiveScan
       @condition = raw_condition.downcase
       @regex_compile_failed = false
 
-      if !ALLOWED_TYPES.includes?(@type)
-        Log.warn { "Passive scan matcher has invalid type: #{@type.inspect} (expected 'word' or 'regex')" }
-      end
-
-      if !ALLOWED_CONDITIONS.includes?(@condition)
-        Log.warn { "Passive scan matcher has invalid condition: #{@condition.inspect} (expected 'and' or 'or')" }
-      end
-
       if @type == "regex" && ALLOWED_CONDITIONS.includes?(@condition)
         if @condition == "or"
           begin
@@ -90,11 +84,16 @@ struct PassiveScan
       end
     end
 
+    def validation_errors : Array(String)
+      errors = [] of String
+      errors << "invalid type #{@type.inspect} (expected 'word' or 'regex')" unless ALLOWED_TYPES.includes?(@type)
+      errors << "invalid condition #{@condition.inspect} (expected 'and' or 'or')" unless ALLOWED_CONDITIONS.includes?(@condition)
+      errors << "missing or empty 'patterns'" if @patterns.empty? || @string_patterns.empty?
+      errors
+    end
+
     def valid? : Bool
-      ALLOWED_TYPES.includes?(@type) &&
-        ALLOWED_CONDITIONS.includes?(@condition) &&
-        !@patterns.empty? &&
-        !@string_patterns.empty?
+      validation_errors.empty?
     end
   end
 
@@ -127,21 +126,36 @@ struct PassiveScan
              else
                [] of YAML::Any
              end
+  end
 
-    if !ALLOWED_MATCHERS_CONDITIONS.includes?(@matchers_condition)
-      Log.warn { "Passive scan rule #{@id.inspect} has invalid matchers-condition: #{@matchers_condition.inspect} (expected 'and' or 'or')" }
+  def validation_errors : Array(String)
+    errors = [] of String
+    errors << "missing or empty 'id'" if @id.empty?
+    errors << "missing or empty 'info.name'" if @info.name.empty?
+    errors << "invalid severity #{@info.severity.inspect} (expected #{PassiveScanSeverity.valid_levels.join(", ")})" unless PassiveScanSeverity.valid?(@info.severity)
+    errors << "missing or empty 'matchers'" if @matchers.empty?
+    errors << "invalid matchers-condition #{@matchers_condition.inspect} (expected 'and' or 'or')" unless ALLOWED_MATCHERS_CONDITIONS.includes?(@matchers_condition)
+    @matchers.each_with_index do |matcher, idx|
+      matcher.validation_errors.each do |err|
+        errors << "matcher[#{idx}]: #{err}"
+      end
     end
+    errors
   end
 
   # A rule is usable when it has an id, a non-empty info name, at
   # least one matcher, all matchers are valid (allowed type, condition,
-  # non-empty patterns), and matchers_condition is 'and' or 'or'.
+  # non-empty patterns), valid severity, and matchers_condition is 'and' or 'or'.
   def valid? : Bool
-    !@id.empty? &&
-      !@info.name.empty? &&
-      !@matchers.empty? &&
-      @matchers.all?(&.valid?) &&
-      ALLOWED_MATCHERS_CONDITIONS.includes?(@matchers_condition)
+    errors = validation_errors
+    if !errors.empty?
+      rule_label = @id.empty? ? "<unknown id>" : "rule '#{@id}'"
+      errors.each do |err|
+        Log.warn { "Passive scan #{rule_label} is invalid: #{err}" }
+      end
+      return false
+    end
+    true
   end
 end
 
