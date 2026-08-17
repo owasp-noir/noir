@@ -76,7 +76,6 @@ UNTESTED_DETECTORS = [
   "java/quarkus",
   "java/spark",
   "javascript/adonisjs",
-  "javascript/astro",
   "javascript/cli",
   "javascript/fresh",
   "javascript/hapi",
