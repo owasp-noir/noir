@@ -5,18 +5,46 @@ describe "Detect JS AdonisJS" do
   options = create_test_options
   instance = Detector::Javascript::Adonisjs.new options
 
-  it "detects ace bootstrap file" do
+  it "detects ace bootstrap file with AdonisJS markers" do
+    adonis_v5_ace = <<-ACE
+      #!/usr/bin/env node
+      const { Ignitor } = require('@adonisjs/core/build/standalone')
+      new Ignitor(__dirname).ace().handle(process.argv.slice(2))
+      ACE
+
+    adonis_v6_ace = <<-ACE
+      import 'reflect-metadata'
+      import { Ignitor, prettyPrintError } from '@adonisjs/core'
+      const APP_ROOT = new URL('./', import.meta.url)
+      new Ignitor(APP_ROOT).ace().handle(process.argv.splice(2))
+      ACE
+
     instance.applicable?("ace").should be_true
-    instance.detect("ace", "#!/usr/bin/env node").should be_true
+    instance.detect("ace", adonis_v5_ace).should be_true
 
     instance.applicable?("./ace").should be_true
-    instance.detect("./ace", "#!/usr/bin/env node").should be_true
+    instance.detect("./ace", adonis_v5_ace).should be_true
 
     instance.applicable?("bin/ace").should be_true
-    instance.detect("bin/ace", "#!/usr/bin/env node").should be_true
+    instance.detect("bin/ace", adonis_v5_ace).should be_true
 
     instance.applicable?("ace.js").should be_true
-    instance.detect("ace.js", "import './bin/console.js'").should be_true
+    instance.detect("ace.js", adonis_v6_ace).should be_true
+  end
+
+  it "does not detect vendored ace editor ace.js" do
+    vendored_ace_editor = <<-ACE
+      define("ace/ace", ["require", "exports", "module"], function(require, exports, module) {
+        "use strict";
+        var ace = exports;
+        ace.edit = function(el) { return new Editor(el); };
+      });
+      ACE
+
+    instance.applicable?("ace.js").should be_true
+    instance.detect("ace.js", vendored_ace_editor).should be_false
+    instance.detect("public/js/ace.js", vendored_ace_editor).should be_false
+    instance.detect("vendor/ace/ace.js", "/** Ace Editor v1.4.12 */ window.ace = {};").should be_false
   end
 
   it "detects package.json with AdonisJS dependency" do

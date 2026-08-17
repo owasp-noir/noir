@@ -16,10 +16,9 @@ module Detector::Typescript
       /NestFactory\.create\s*\(/,
     )
 
-    SOURCE_EXTENSIONS = %w[.ts .tsx .cts .mts]
-
     def detect(filename : String, file_contents : String) : Bool
-      return false unless SOURCE_EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
+      return false unless filename.ends_with?(".ts") || filename.ends_with?(".tsx") ||
+                          filename.ends_with?(".cts") || filename.ends_with?(".mts")
       content_matches?(file_contents, SIGNAL)
     end
   end

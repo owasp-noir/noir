@@ -16,10 +16,9 @@ module Detector::Javascript
       /NestFactory\.create\s*\(/,
     )
 
-    SOURCE_EXTENSIONS = %w[.js .mjs .cjs .jsx]
-
     def detect(filename : String, file_contents : String) : Bool
-      return false unless SOURCE_EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
+      return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") ||
+                          filename.ends_with?(".cjs") || filename.ends_with?(".jsx")
       content_matches?(file_contents, SIGNAL)
     end
   end
