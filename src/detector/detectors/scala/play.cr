@@ -19,10 +19,8 @@ module Detector::Scala
       if filename.ends_with?("routes") || filename.ends_with?("routes.conf")
         # Check for Play-style route definitions with Scala-style types
         if file_contents =~ /^\s*(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s+/m
-          # Look for Scala-specific patterns in routes file (e.g., Option[...], ?=)
-          if file_contents.includes?("Option[") || file_contents.includes?("?=")
-            return !file_contents.includes?("Integer")
-          end
+          # Look for Scala-specific patterns in routes file (e.g., Option[...])
+          return true if file_contents.includes?("Option[")
         end
       end
 
