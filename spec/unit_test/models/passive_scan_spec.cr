@@ -32,7 +32,11 @@ describe "PassiveScan" do
       info = PassiveScan::Info.new(yaml)
 
       info.name.should eq("Minimal Info")
-      info.severity.should eq("low")
+      # Left empty rather than defaulted — see `PassiveScan#validation_errors`,
+      # which rejects the rule by name. Any default below the `high` the
+      # `--passive-scan-severity` option ships with would silently filter the
+      # rule out instead.
+      info.severity.should eq("")
       info.description.should eq("")
       info.author.should eq([] of YAML::Any)
       info.reference.should eq([] of YAML::Any)
@@ -208,7 +212,7 @@ describe "PassiveScan" do
       scan.valid?.should be_true
     end
 
-    it "defaults missing severity to 'low'" do
+    it "rejects a rule with no declared severity, naming the field" do
       yaml_str = <<-YAML
         id: "test-default-sev"
         info:
@@ -227,8 +231,14 @@ describe "PassiveScan" do
       yaml = YAML.parse(yaml_str)
       scan = PassiveScan.new(yaml)
 
-      scan.info.severity.should eq("low")
-      scan.valid?.should be_true
+      # A rule that declares no severity cannot be filtered meaningfully:
+      # the default `--passive-scan-severity` threshold is `high`, so any
+      # default the loader picked below that would drop the rule from every
+      # report without saying so. Rejecting it at load is the visible
+      # failure — `load_rules` warns and the count excludes it.
+      scan.info.severity.should eq("")
+      scan.valid?.should be_false
+      scan.validation_errors.should contain("missing 'info.severity' (expected critical, high, medium, low)")
     end
 
     it "normalizes uppercase matchers-condition to lowercase" do

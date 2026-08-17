@@ -16,8 +16,15 @@ struct PassiveScan
 
     def initialize(yaml : YAML::Any)
       @name = yaml["name"]?.try(&.as_s?) || yaml["name"]?.try(&.to_s) || ""
+      # Left empty when absent rather than defaulted, so `validation_errors`
+      # can reject it by name. Defaulting is not available here: the default
+      # `--passive-scan-severity` threshold is `high`, so any default below
+      # that silently filters the rule out — "Loaded 1 valid passive scan
+      # rules" followed by no findings, which is the same invisible
+      # false negative as the unknown-severity-includes-everything bug this
+      # replaced, only pointing the other way.
       raw_severity = yaml["severity"]?.try(&.as_s?) || yaml["severity"]?.try(&.to_s) || ""
-      @severity = raw_severity.empty? ? "low" : raw_severity.downcase
+      @severity = raw_severity.downcase
       @description = yaml["description"]?.try(&.as_s?) || yaml["description"]?.try(&.to_s) || ""
       @reference = if ref_node = yaml["reference"]?
                      ref_node.as_a? || [ref_node] of YAML::Any
@@ -132,7 +139,11 @@ struct PassiveScan
     errors = [] of String
     errors << "missing or empty 'id'" if @id.empty?
     errors << "missing or empty 'info.name'" if @info.name.empty?
-    errors << "invalid severity #{@info.severity.inspect} (expected #{PassiveScanSeverity.valid_levels.join(", ")})" unless PassiveScanSeverity.valid?(@info.severity)
+    if @info.severity.empty?
+      errors << "missing 'info.severity' (expected #{PassiveScanSeverity.valid_levels.join(", ")})"
+    elsif !PassiveScanSeverity.valid?(@info.severity)
+      errors << "invalid severity #{@info.severity.inspect} (expected #{PassiveScanSeverity.valid_levels.join(", ")})"
+    end
     errors << "missing or empty 'matchers'" if @matchers.empty?
     errors << "invalid matchers-condition #{@matchers_condition.inspect} (expected 'and' or 'or')" unless ALLOWED_MATCHERS_CONDITIONS.includes?(@matchers_condition)
     @matchers.each_with_index do |matcher, idx|

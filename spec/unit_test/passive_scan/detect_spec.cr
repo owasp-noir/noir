@@ -50,7 +50,7 @@ describe NoirPassiveScan do
       filtered.first.info.name.should eq("High Rule")
     end
 
-    it "filters out a rule with no declared severity when min_severity is critical (defaults to low)" do
+    it "treats a rule with no declared severity as invalid rather than filtering it silently" do
       no_sev_rule_yaml = <<-YAML
         id: test-no-sev
         category: sec
@@ -69,10 +69,12 @@ describe NoirPassiveScan do
         YAML
 
       no_sev_rule = PassiveScan.new(YAML.parse(no_sev_rule_yaml))
-      no_sev_rule.info.severity.should eq("low")
 
-      filtered = NoirPassiveScan.filter_rules_by_severity([no_sev_rule], "critical")
-      filtered.should be_empty
+      # `load_rules` drops it and warns, so it never reaches the severity
+      # filter at all. That is the point: a rule silently filtered out reads
+      # exactly like a rule that found nothing.
+      no_sev_rule.info.severity.should eq("")
+      no_sev_rule.valid?.should be_false
     end
   end
 
