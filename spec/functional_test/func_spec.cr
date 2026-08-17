@@ -202,6 +202,30 @@ class FunctionalTester
                   .any? { |found| found.param_type == param.param_type }
                   .should be_true
               end
+
+              # `value` was never asserted at all, which is how a tester could
+              # declare `Param.new("version", "null", "query")` and go green
+              # while the emitted request really was `?version=null`. `value`
+              # is what the curl / httpie / PowerShell builders put on the
+              # wire and what the OAS builders publish as an `enum`, so a
+              # wrong one is a wrong request, not cosmetics.
+              #
+              # Only a declared (non-empty) value is checked, because `""` is
+              # this harness's established "not asserted" placeholder — most
+              # testers spell it for params whose value is derived and long
+              # (a GraphQL operation document, a JSON-RPC envelope). The other
+              # half of the hole — an analyzer leaking source text into a
+              # param the tester left blank — is covered precisely, and much
+              # faster, by the unit specs for `PythonEngine#return_literal_value`
+              # and `Noir::JvmLiteral.value_of`.
+              if !param.value.empty?
+                it "check '#{param.name}' value '#{param.value}'" do
+                  actual_params(expected, param.name)
+                    .select { |found| found.param_type == param.param_type }
+                    .map(&.value)
+                    .should contain param.value
+                end
+              end
             end
           end
         end
