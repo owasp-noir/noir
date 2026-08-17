@@ -73,6 +73,6 @@ class OutputBuilderHttpie < OutputBuilder
   end
 
   private def shell_quote(str : String) : String
-    "'#{str.gsub("'", "'\\''")}'"
+    "'#{str.gsub("'", "'\\''").gsub("\r", "\\r").gsub("\n", "\\n")}'"
   end
 end
