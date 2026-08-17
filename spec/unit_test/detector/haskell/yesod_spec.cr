@@ -24,4 +24,14 @@ describe "Detect Haskell Yesod" do
   it "haskell/unrelated" do
     instance.detect("src/Main.hs", "main = putStrLn \"hello\"").should be_false
   end
+
+  it "literate_haskell/applicable" do
+    instance.applicable?("src/Foundation.lhs").should be_true
+    instance.applicable?("src/Foundation.hs").should be_true
+    instance.applicable?("src/Foundation.rs").should be_false
+  end
+
+  it "literate_haskell/import_yesod" do
+    instance.detect("src/Foundation.lhs", "import Yesod\nmain = pure ()").should be_true
+  end
 end

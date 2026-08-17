@@ -3,7 +3,7 @@ require "../../../models/detector"
 module Detector::Haskell
   class Servant < Detector
     detector_for "haskell_servant",
-      extensions: %w[.hs .cabal .dhall],
+      extensions: %w[.hs .lhs .cabal .dhall],
       basenames: %w[stack.yaml package.yaml]
 
     def detect(filename : String, file_contents : String) : Bool

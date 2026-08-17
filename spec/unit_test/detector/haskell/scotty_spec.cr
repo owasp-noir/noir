@@ -24,4 +24,14 @@ describe "Detect Haskell Scotty" do
   it "haskell/unrelated" do
     instance.detect("src/Main.hs", "main = putStrLn \"hello\"").should be_false
   end
+
+  it "literate_haskell/applicable" do
+    instance.applicable?("src/Main.lhs").should be_true
+    instance.applicable?("src/Main.hs").should be_true
+    instance.applicable?("src/Main.rs").should be_false
+  end
+
+  it "literate_haskell/import_scotty" do
+    instance.detect("src/Main.lhs", "import Web.Scotty\nmain = pure ()").should be_true
+  end
 end
