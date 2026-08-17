@@ -85,7 +85,6 @@ UNTESTED_DETECTORS = [
   "mobile/android",
   "mobile/well_known",
   "perl/cli",
-  "php/cakephp",
   "php/cli",
   "php/thinkphp",
   "python/bottle",
