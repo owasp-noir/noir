@@ -5,7 +5,28 @@ require "../utils/utils"
 require "../utils/http_symbols"
 require "../utils/url_origin"
 
+# Max concurrent in-flight probe requests, shared by every class that fires
+# requests at discovered endpoints. Bounds the fiber/socket fan-out so a large
+# endpoint set can't exhaust file descriptors. Backed by the validated
+# --concurrency value (already clamped to a sane ceiling).
+#
+# A module rather than a `Deliver` method because `StatusCodeProbe` is
+# deliberately not a `Deliver` subclass (see its class comment) yet has to
+# bound its fan-out exactly the same way. Keeping the rule in one place is what
+# stops the two from drifting again: the status probe was strictly sequential
+# for exactly as long as this lived on `Deliver` alone.
+module ProbeConcurrency
+  DEFAULT_PROBE_CONCURRENCY = 16
+
+  protected def concurrency_limit : Int32
+    n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
+    n > 0 ? n : DEFAULT_PROBE_CONCURRENCY
+  end
+end
+
 class Deliver
+  include ProbeConcurrency
+
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @is_debug : Bool
@@ -345,14 +366,6 @@ class Deliver
 
   protected def export_read_timeout : Time::Span
     EXPORT_READ_TIMEOUT
-  end
-
-  # Max concurrent in-flight probe requests. Bounds the fiber/socket fan-out
-  # so a large endpoint set can't exhaust file descriptors. Backed by the
-  # validated --concurrency value (already clamped to a sane ceiling).
-  protected def concurrency_limit : Int32
-    n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
-    n > 0 ? n : 16
   end
 
   # TLS context for outbound delivery. Verifying (secure) by default; the
