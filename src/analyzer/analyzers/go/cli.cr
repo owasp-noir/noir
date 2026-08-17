@@ -165,7 +165,7 @@ module Analyzer::Go
           content = GoEngine.strip_comments(raw)
           next unless cli_evidence?(content)
 
-          binary = go_binary_name(modules, path)
+          binary = go_binary_name(modules, path, content)
           root_url = "cli://#{binary}"
           lines = content.lines
           framework_cli = content.matches?(FRAMEWORK_IMPORTS_RE)
@@ -200,7 +200,7 @@ module Analyzer::Go
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -239,10 +239,23 @@ module Analyzer::Go
       content_matches?(content, OS_ARGS_RE)
     end
 
-    private def go_binary_name(modules : Array(Tuple(String, String)), path : String) : String
+    # A Go module can hold many commands — `cmd/foo`, `services/bar/cmd` —
+    # and each `package main` directory is a separate binary. Naming every
+    # one of them after the module merged unrelated programs' flags into a
+    # single `cli://<module>` endpoint. Library packages keep the module
+    # name, so the cross-file merge this analyzer is built around still
+    # works for the helper files a command pulls its flags from.
+    PACKAGE_MAIN_RE = /^\s*package\s+main\b/m
+
+    private def go_binary_name(modules : Array(Tuple(String, String)), path : String, content : String) : String
       expanded = File.expand_path(File.dirname(path))
       modules.each do |module_path, module_dir|
         if expanded == module_dir || expanded.starts_with?("#{module_dir}/")
+          if expanded != module_dir && content.matches?(PACKAGE_MAIN_RE)
+            if name = cli_directory_binary_name(path)
+              return name
+            end
+          end
           return File.basename(module_path)
         end
       end

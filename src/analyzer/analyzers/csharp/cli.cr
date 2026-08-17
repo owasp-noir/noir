@@ -93,7 +93,7 @@ module Analyzer::CSharp
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -116,8 +116,9 @@ module Analyzer::CSharp
       end
       stem = File.basename(path, ".cs")
       if stem == "Program" || stem == "Main" || stem == "Cli" || stem == "App"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end

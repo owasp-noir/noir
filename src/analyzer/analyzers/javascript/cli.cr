@@ -148,7 +148,7 @@ module Analyzer::Javascript
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       Fiber.yield
       @result
     end
