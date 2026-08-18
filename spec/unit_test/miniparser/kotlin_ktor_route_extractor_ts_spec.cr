@@ -564,6 +564,37 @@ describe Noir::TreeSitterKotlinKtorRouteExtractor do
     end
   end
 
+  it "does not read a documented query parameter as a QUERY route" do
+    # `.describe { parameters { query("name") { } } }` documents an endpoint;
+    # it does not declare one. The parameter sub-DSL has the same shape as the
+    # QUERY verb call — a name and a trailing lambda, inside routing — so
+    # every documented query parameter used to surface as a route named after
+    # the parameter. The route the block hangs off must survive.
+    source = <<-KT
+      routing {
+          get("/stream-bytes") {
+              call.respondText("ok")
+          }.describe {
+              tag("Dynamic data")
+              summary = "Streams n random bytes"
+              parameters {
+                  query("chunk_size") {
+                      description = "in bytes"
+                  }
+                  query("seed") { }
+              }
+          }
+          query("/search") { }
+      }
+      KT
+
+    routes = Noir::TreeSitterKotlinKtorRouteExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/stream-bytes"},
+      {"QUERY", "/search"},
+    ])
+  end
+
   it "ignores a commented-out const val shadowing the live declaration" do
     # `constants[name] ||= value` is first-wins, and the declaration regex used
     # to run over the raw source: a dead constant left above the real one
