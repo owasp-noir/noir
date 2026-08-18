@@ -143,50 +143,60 @@ class EndpointOptimizer
         end
       end
 
+      # An endpoint with no URL is not addressable, so it cannot be reported.
+      # But reaching here means an analyzer or a path-composition helper
+      # produced one, which is a bug upstream rather than something to
+      # swallow: `join_trimmed` returning `""` for a root-mounted prefix hid
+      # exactly that for every root-mapped JAX-RS / http4k / Micronaut /
+      # Elysia / AdonisJS route. Debug level so normal runs stay quiet.
+      if tiny_tmp.url.empty?
+        @logger.debug_sub "  - Dropping endpoint with an empty URL: '#{tiny_tmp.method}' (#{tiny_tmp.details.technology || "unknown"})"
+        next
+      end
+
       # Duplicate check
-      unless tiny_tmp.url.empty?
-        absolute_url = tiny_tmp.url.matches?(ABSOLUTE_URL_RE)
+      absolute_url = tiny_tmp.url.matches?(ABSOLUTE_URL_RE)
 
-        # Ensure a leading slash for relative URLs. Compare against the
-        # `'/'` char literal — comparing the `Char` returned by `[]` to
-        # the `"/"` string is always true, which would prepend a slash
-        # even to already-rooted URLs (the double-slash collapse below
-        # papered over it). Mobile deep links are exempt: an unresolved
-        # `@string/...://` or `${...}://` scheme isn't a relative path, so
-        # rooting it (`/@string/...`) would corrupt the URL.
-        if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http?
-          tiny_tmp.url = "/#{tiny_tmp.url}"
-        end
+      # Ensure a leading slash for relative URLs. Compare against the
+      # `'/'` char literal — comparing the `Char` returned by `[]` to
+      # the `"/"` string is always true, which would prepend a slash
+      # even to already-rooted URLs (the double-slash collapse below
+      # papered over it). Mobile deep links are exempt: an unresolved
+      # `@string/...://` or `${...}://` scheme isn't a relative path, so
+      # rooting it (`/@string/...`) would corrupt the URL.
+      if !absolute_url && tiny_tmp.url[0] != '/' && !tiny_tmp.non_http?
+        tiny_tmp.url = "/#{tiny_tmp.url}"
+      end
 
-        # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
-        # unresolved gradle manifest placeholder, not a JS template literal
-        # for the shape-normalizer to rewrite.
-        tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
-        dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
+      # Mobile deep-link URLs are kept verbatim: a `${...}` there is an
+      # unresolved gradle manifest placeholder, not a JS template literal
+      # for the shape-normalizer to rewrite.
+      tiny_tmp.url = normalize_url_shape(tiny_tmp.url) unless tiny_tmp.non_http?
+      dedup_url = tiny_tmp.non_http? ? tiny_tmp.url : normalize_url_shape(tiny_tmp.url, collection_endpoint?(tiny_tmp))
 
-        key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, cross_tech_keys)}
+      key = {tiny_tmp.method, dedup_url, endpoint_source_scope(tiny_tmp, cross_tech_keys)}
 
-        if final_map.has_key?(key)
-          dup = final_map[key]
-          @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
-          duplicate_count += 1
-          if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
-            merge_graphql_params(dup, tiny_tmp)
-          else
-            merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp))
-          end
-          tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
-          tiny_tmp.callees.each do |callee|
-            dup.push_callee(callee)
-          end
-          tiny_tmp.details.code_paths.each do |path_info|
-            dup.details.add_path(path_info) unless dup.details.code_paths.any? { |existing| existing == path_info }
-          end
-          dup = promote_source_context(dup, tiny_tmp)
-          final_map[key] = dup
+      if final_map.has_key?(key)
+        dup = final_map[key]
+        @logger.debug_sub "  - Found duplicated endpoint: #{tiny_tmp.method} #{tiny_tmp.url}"
+        duplicate_count += 1
+        if graphql_endpoint?(dup) || graphql_endpoint?(tiny_tmp)
+          dup = merge_graphql_params(dup, tiny_tmp)
         else
-          final_map[key] = tiny_tmp
+          merge_params(dup, tiny_tmp, source_collection_pair?(dup, tiny_tmp))
         end
+        tiny_tmp.tags.each { |tag| merge_tag(dup, tag) }
+        tiny_tmp.callees.each do |callee|
+          dup.push_callee(callee)
+        end
+        tiny_tmp.details.code_paths.each do |path_info|
+          dup.details.add_path(path_info) unless dup.details.code_paths.any? { |existing| existing == path_info }
+        end
+        dup = promote_source_context(dup, tiny_tmp)
+        dup = promote_scalar_context(dup, tiny_tmp)
+        final_map[key] = dup
+      else
+        final_map[key] = tiny_tmp
       end
     end
 
@@ -307,7 +317,7 @@ class EndpointOptimizer
 
   private def merge_endpoint_context(target : Endpoint, source : Endpoint) : Endpoint
     if graphql_endpoint?(target) || graphql_endpoint?(source)
-      merge_graphql_params(target, source)
+      target = merge_graphql_params(target, source)
     else
       merge_params(target, source, source_collection_pair?(target, source))
     end
@@ -348,6 +358,47 @@ class EndpointOptimizer
     details.code_paths = promoted
     target.details = details
     target.params.reject! { |param| collection_noise_header_param?(param) }
+    target
+  end
+
+  # Carry the losing duplicate's scalar fields onto the winner.
+  #
+  # The dedup merges four collections (params, tags, callees, code_paths) and
+  # used to discard everything else the loser knew. Which of two endpoints
+  # with the same `(method, url, scope)` wins is decided by source location,
+  # so the facts below were kept or lost depending on which file happened to
+  # sort first:
+  #
+  # - `protocol`: ~20 analyzers set `ws` on endpoints that also have an
+  #   ordinary HTTP path (`python/fastapi.cr`, `python/starlette.cr`,
+  #   `java/spring.cr`, `elixir/phoenix_channel.cr`, …). `WebsocketTagger`
+  #   keys off exactly this field and the taggers run *after* the optimizer,
+  #   so losing it dropped the `websocket` tag from the report.
+  # - `metadata`: the mobile deep-link facts (action/category/host/package).
+  # - `details.status_code`: recorded by spec/capture-derived analyzers.
+  # - `kind`: Next.js marks server actions here; the plain report prints it.
+  #
+  # `internal` moves the other way. It means "the app declares this request,
+  # it does not serve it" (`@FeignClient` / `@HttpExchange`), and `Deliver`
+  # reads it to skip probing. Another analyzer finding a real served route at
+  # the same address contradicts that, so the merge clears the flag instead
+  # of OR-ing it — otherwise a probe of a genuine endpoint would be
+  # suppressed by whichever declaration sorted first.
+  #
+  # Returns the endpoint: `Endpoint` is a struct, so these writes land on a
+  # copy unless the caller assigns the result back.
+  private def promote_scalar_context(target : Endpoint, source : Endpoint) : Endpoint
+    target.protocol = source.protocol if target.protocol == "http" && source.protocol != "http"
+    target.metadata = source.metadata if target.metadata.nil?
+    target.kind = source.kind if target.kind.empty?
+    target.internal = false if target.internal && !source.internal
+
+    if target.details.status_code.nil? && (status_code = source.details.status_code)
+      details = target.details
+      details.status_code = status_code
+      target.details = details
+    end
+
     target
   end
 

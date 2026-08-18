@@ -103,7 +103,7 @@ module Analyzer::Cpp
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -117,8 +117,9 @@ module Analyzer::Cpp
       stem = File.basename(path)
       EXTS.each { |ext| stem = stem[0...-ext.size] if stem.ends_with?(ext) }
       if stem == "main" || stem == "app" || stem == "cli"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end

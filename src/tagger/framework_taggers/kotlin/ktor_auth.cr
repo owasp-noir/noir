@@ -1,8 +1,11 @@
 require "../../../models/framework_tagger"
 require "../../../models/endpoint"
+require "../prefix_scope"
 
 @[Noir::TaggerFor(key: "ktor_auth", name: "Ktor Auth Tagger", desc: "Identifies Ktor authentication patterns (authenticate blocks, principals)", order: 200)]
 class KtorAuthTagger < FrameworkTagger
+  include PrefixScope
+
   # Ktor authenticate block patterns
   AUTHENTICATE_BLOCK_PATTERNS = [
     {/authenticate\s*\(/, "Ktor authenticate block"},
@@ -17,9 +20,21 @@ class KtorAuthTagger < FrameworkTagger
     {/sessions\.get</, "Ktor session check"},
   ]
 
+  # `route("/api") {` — a nested URL-prefix block.
+  ROUTE_BLOCK = /route\s*\(\s*"([^"]+)"/
+
+  # The start of a route handler (`get("/x") {`, `post {`). Used as a
+  # boundary so a handler-body scan stops before the next route.
+  ROUTE_HANDLER = /^(?:get|post|put|patch|delete|head|options)\s*[({]/
+
+  # One `authenticate {}` block found by the pre-scan: which file it is in,
+  # the line range its braces span, and the `route()` prefix it sits under.
+  alias AuthScope = NamedTuple(file: String, start_line: Int32, end_line: Int32,
+    prefix: String, description: String)
+
   def initialize(options : Hash(String, YAML::Any))
     super
-    @auth_scopes = [] of {prefix: String, description: String}
+    @auth_scopes = [] of AuthScope
   end
 
   def self.target_techs : Array(String)
@@ -45,44 +60,71 @@ class KtorAuthTagger < FrameworkTagger
       next if content.nil?
       next unless content.includes?("authenticate")
 
-      scan_auth_blocks(content)
+      scan_auth_blocks(File.expand_path(file), content)
     end
   end
 
-  private def scan_auth_blocks(content : String)
-    lines = content.split("\n")
-    # Stack-based prefix tracking for nested route() blocks
-    prefix_stack = [] of String
+  # Record every `authenticate {}` block in `content` with the line range it
+  # covers and the `route()` prefix it is nested under.
+  #
+  # Both stacks are keyed on real brace depth. Popping a `route()` prefix on
+  # "any line that is just `}`" — what this used to do — retired the prefix
+  # when a `get {}` handler closed, so a block nested two `route()` levels
+  # deep was recorded one level up and its tag spilled onto sibling routes,
+  # and onto other files entirely. `GoRouteGroupScope#each_group_scoped_line`
+  # tracks the same thing the same way.
+  private def scan_auth_blocks(file : String, content : String)
+    route_frames = [] of NamedTuple(threshold: Int32, prefix: String)
+    auth_frames = [] of NamedTuple(threshold: Int32, start_line: Int32, prefix: String, description: String)
+    depth = 0
 
-    lines.each do |line|
+    content.split("\n").each_with_index do |line, idx|
+      line_num = idx + 1
       stripped = line.strip
 
-      # Track route() prefix nesting
-      route_match = stripped.match(/route\s*\(\s*"([^"]+)"/)
-      if route_match
-        prefix_stack << route_match[1]
+      if route_match = stripped.match(ROUTE_BLOCK)
+        route_frames << {threshold: depth, prefix: route_match[1]}
       end
 
-      # Detect authenticate block (only record if route prefix is known)
-      if !prefix_stack.empty?
-        AUTHENTICATE_BLOCK_PATTERNS.each do |pattern, _desc|
-          if stripped.matches?(pattern)
-            auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
-            auth_name = auth_match ? auth_match[1] : "default"
-            prefix = normalize_prefix(prefix_stack)
-            @auth_scopes << {
-              prefix:      prefix,
-              description: "Protected by Ktor authenticate(\"#{auth_name}\") block",
-            }
-          end
-        end
+      # Only record a block whose route prefix is known.
+      if !route_frames.empty? && AUTHENTICATE_BLOCK_PATTERNS.any? { |pattern, _desc| stripped.matches?(pattern) }
+        auth_match = stripped.match(/authenticate\s*\(\s*"([^"]+)"/)
+        auth_name = auth_match ? auth_match[1] : "default"
+        auth_frames << {
+          threshold:   depth,
+          start_line:  line_num,
+          prefix:      normalize_prefix(route_frames.map(&.[:prefix])),
+          description: "Protected by Ktor authenticate(\"#{auth_name}\") block",
+        }
       end
 
-      # Pop prefix on closing brace (end of route block)
-      if (stripped == "}" || stripped == "})") && !prefix_stack.empty?
-        prefix_stack.pop
+      depth += line.count('{') - line.count('}')
+
+      while !route_frames.empty? && depth <= route_frames.last[:threshold]
+        route_frames.pop
+      end
+      while !auth_frames.empty? && depth <= auth_frames.last[:threshold]
+        close_auth_frame(file, auth_frames.pop, line_num)
       end
     end
+
+    # A block whose brace never closed (truncated or unparseable file) runs
+    # to the end of the file.
+    while frame = auth_frames.pop?
+      close_auth_frame(file, frame, Int32::MAX)
+    end
+  end
+
+  private def close_auth_frame(file : String,
+                               frame : NamedTuple(threshold: Int32, start_line: Int32, prefix: String, description: String),
+                               end_line : Int32)
+    @auth_scopes << {
+      file:        file,
+      start_line:  frame[:start_line],
+      end_line:    end_line,
+      prefix:      frame[:prefix],
+      description: frame[:description],
+    }
   end
 
   private def normalize_prefix(segments : Array(String)) : String
@@ -154,21 +196,36 @@ class KtorAuthTagger < FrameworkTagger
     nil
   end
 
+  # Scan the route's own handler body — and only it — for principal/session
+  # access.
+  #
+  # This used to start one line *below* the route with `brace_depth = 1`,
+  # assuming the handler's `{` was still open. For `get("/public") { … }`,
+  # closed on its own line, that assumption is false and the walk marched
+  # straight into the next route's body: a public route inherited its
+  # neighbour's `call.principal<…>()`. Seed the depth from the route line
+  # instead, and scan that line too so a one-line handler is read at all.
   private def check_route_auth(lines : Array(String), route_line : Int32) : String?
-    idx = route_line + 1
+    idx = route_line
     end_idx = [route_line + 15, lines.size - 1].min
-    brace_depth = 1 # Inside the route handler's opening {
+    brace_depth = 0
+    entered = false
 
     while idx <= end_idx
       current = lines[idx]
       stripped = current.strip
+
+      # The next route declaration ends this handler no matter what the
+      # braces looked like.
+      break if idx > route_line && stripped.matches?(ROUTE_HANDLER)
 
       ROUTE_AUTH_PATTERNS.each do |pattern, desc|
         return desc if stripped.matches?(pattern)
       end
 
       brace_depth += current.count('{') - current.count('}')
-      break if brace_depth <= 0
+      entered = true if current.includes?('{')
+      break if entered && brace_depth <= 0
 
       idx += 1
     end
@@ -176,11 +233,28 @@ class KtorAuthTagger < FrameworkTagger
     nil
   end
 
+  # An `authenticate {}` block found by the pre-scan guards this endpoint when
+  # the route is declared inside the block's braces. For a route declared in
+  # another file — Ktor's `route("/admin") { adminRoutes() }` extension-function
+  # split — the braces say nothing, so fall back to the block's `route()`
+  # prefix, matched on a segment boundary.
   private def check_scope_auth(endpoint : Endpoint) : String?
+    return if @auth_scopes.empty?
+
     url = endpoint.url
+    locations = endpoint.details.code_paths.map { |info| {File.expand_path(info.path), info.line} }
+
     @auth_scopes.each do |scope|
-      return scope[:description] if url.starts_with?(scope[:prefix])
+      local = locations.select { |path, _| path == scope[:file] }
+
+      if local.empty?
+        next if scope[:prefix] == "/"
+        return scope[:description] if prefix_covers?(scope[:prefix], url)
+      elsif local.any? { |_, line| !line.nil? && line >= scope[:start_line] && line <= scope[:end_line] }
+        return scope[:description]
+      end
     end
+
     nil
   end
 end

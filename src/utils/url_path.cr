@@ -54,10 +54,19 @@ module Noir
     # trailing slashes that must not survive into the emitted URL; use `join`
     # where the segments are already normalised and a trailing slash is
     # meaningful.
+    #
+    # It used to return the raw `prefix.rstrip('/')` for an empty suffix,
+    # which turns a root-mounted prefix into the empty string:
+    # `join_trimmed("/", "")` was `""`, so a JAX-RS resource with
+    # `@Path("/")` on the class and a bare `@GET` on the method emitted an
+    # endpoint with no URL — and `EndpointOptimizer#optimize_endpoints`
+    # silently skips those, so the route vanished from every output format.
+    # Closing that hole makes this rule identical to `join_absorbing`'s, so
+    # it delegates rather than carrying a second copy that can drift; the
+    # two names are kept because the call sites read differently (a prefix
+    # stack that must not leak slashes vs. Spring's mapping composition).
     def self.join_trimmed(prefix : String, suffix : String) : String
-      return suffix if prefix.empty?
-      return prefix.rstrip('/') if suffix.empty?
-      "#{prefix.rstrip('/')}/#{suffix.lstrip('/')}"
+      join_absorbing(prefix, suffix)
     end
 
     # Spring's mapping-composition rule, shared by the Java and Kotlin
@@ -69,9 +78,10 @@ module Noir
     # through to the seam join. Only an all-slash class prefix
     # (`@RequestMapping("/")`) keeps the root `/`.
     #
-    # Not `join_trimmed`: that keeps an empty-prefix suffix untouched but
-    # trims a trailing slash when the *suffix* is empty without the
-    # root-`/` restore this rule needs.
+    # This is also what `join_trimmed` resolves to — the JVM/JS prefix-stack
+    # rule and Spring's composition rule agree on every input once the
+    # root-`/` restore below is in place. `join_absorbing` is the
+    # implementation of record; see `join_trimmed` for why both names exist.
     def self.join_absorbing(prefix : String, path : String) : String
       return path if prefix.empty?
       if path.empty?
@@ -124,10 +134,19 @@ module Noir
     #
     # Used by the Clojure analyzers, whose route DSLs compose bare
     # segments, and by Kotlin Spring's WebFlux path assembly.
+    #
+    # The trim runs *before* the reject: a segment that is only slashes
+    # (`(context "/" ...)` in Compojure, an all-slash WebFlux prefix) is not
+    # empty on entry but becomes empty once trimmed, and rejecting first left
+    # it in the join as an empty component — `absolute_join("/api", "/",
+    # "users")` produced `"/api//users"`. `collapse_path_slashes` hides that
+    # for ordinary HTTP endpoints, but not for URLs that skip normalization
+    # (`normalize_url_shape` returns early on `\/`, and `non_http?` endpoints
+    # are never normalized at all).
     def self.absolute_join(*segments : String) : String
       path = segments
-        .reject(&.empty?)
         .map(&.chomp("/").lstrip("/"))
+        .reject(&.empty?)
         .join("/")
 
       path.starts_with?("/") ? path : "/#{path}"

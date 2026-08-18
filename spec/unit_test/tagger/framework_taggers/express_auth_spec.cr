@@ -198,6 +198,124 @@ describe "ExpressAuthTagger" do
     endpoint.tags[0].description.should contain("app.use()")
   end
 
+  # --- negative cases: a route that nothing protects must never be tagged ---
+
+  it "does not tag the whole app from a sub-router's own use(auth)" do
+    tmpdir = File.tempname("express_subrouter")
+    Dir.mkdir_p(File.join(tmpdir, "routes"))
+
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const express = require('express');",
+      "const app = express();",
+      "const admin = require('./routes/admin');",
+      "app.get('/health', (req, res) => { res.json({ ok: true }); });",
+      "app.use('/admin', admin);",
+    ].join("\n"))
+
+    admin_js = File.join(tmpdir, "routes", "admin.js")
+    File.write(admin_js, [
+      "const express = require('express');",
+      "const router = express.Router();",
+      "router.use(requireAuth);",
+      "router.get('/panel', (req, res) => { res.json({ panel: true }); });",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    locator = CodeLocator.instance
+    Dir.glob("#{tmpdir}/**/*").each do |file|
+      next if File.directory?(file)
+      locator.register_path(file)
+    end
+
+    health_details = Details.new(PathInfo.new(app_js, 4))
+    health_details.technology = "js_express"
+    health = Endpoint.new("/health", "GET", [] of Param, health_details)
+
+    panel_details = Details.new(PathInfo.new(admin_js, 4))
+    panel_details.technology = "js_express"
+    panel = Endpoint.new("/admin/panel", "GET", [] of Param, panel_details)
+
+    ExpressAuthTagger.new(noir_options).perform([health, panel])
+
+    # `router.use(requireAuth)` guards the sub-router, not the application.
+    health.tags.empty?.should be_true
+    panel.tags.empty?.should be_false
+    panel.tags[0].description.should contain("router.use()")
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "does not attribute the next route's middleware to the route above it" do
+    tmpdir = File.tempname("express_adjacent")
+    Dir.mkdir_p(tmpdir)
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const express = require('express');",
+      "const app = express();",
+      "app.get('/public/one', (req, res) => { res.json({}); });",
+      "app.get('/secret/two', requireAuth, (req, res) => { res.json({}); });",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    locator = CodeLocator.instance
+    Dir.glob("#{tmpdir}/**/*").each do |file|
+      next if File.directory?(file)
+      locator.register_path(file)
+    end
+
+    public_details = Details.new(PathInfo.new(app_js, 3))
+    public_details.technology = "js_express"
+    public_endpoint = Endpoint.new("/public/one", "GET", [] of Param, public_details)
+
+    secret_details = Details.new(PathInfo.new(app_js, 4))
+    secret_details.technology = "js_express"
+    secret_endpoint = Endpoint.new("/secret/two", "GET", [] of Param, secret_details)
+
+    ExpressAuthTagger.new(noir_options).perform([public_endpoint, secret_endpoint])
+
+    public_endpoint.tags.empty?.should be_true
+    secret_endpoint.tags.empty?.should be_false
+    secret_endpoint.tags[0].description.should contain("requireAuth")
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "does not let an app.use('/admin') mount guard /administration" do
+    tmpdir = File.tempname("express_prefix")
+    Dir.mkdir_p(tmpdir)
+    app_js = File.join(tmpdir, "app.js")
+    File.write(app_js, [
+      "const express = require('express');",
+      "const app = express();",
+      "app.use('/admin', requireAuth);",
+      "app.get('/administration/report', (req, res) => { res.json({}); });",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    locator = CodeLocator.instance
+    Dir.glob("#{tmpdir}/**/*").each do |file|
+      next if File.directory?(file)
+      locator.register_path(file)
+    end
+
+    details = Details.new(PathInfo.new(app_js, 4))
+    details.technology = "js_express"
+    endpoint = Endpoint.new("/administration/report", "GET", [] of Param, details)
+
+    ExpressAuthTagger.new(noir_options).perform([endpoint])
+
+    endpoint.tags.empty?.should be_true
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "handles empty code_paths gracefully" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)

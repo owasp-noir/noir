@@ -52,7 +52,7 @@ module Analyzer::Swift
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 

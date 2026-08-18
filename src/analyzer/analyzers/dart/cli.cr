@@ -43,7 +43,7 @@ module Analyzer::Dart
           next
         end
       end
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       @result
     end
 
@@ -90,8 +90,9 @@ module Analyzer::Dart
     private def cli_binary_name(path : String) : String
       stem = File.basename(path, ".dart")
       if stem == "main" || stem == "cli" || stem == "app"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end

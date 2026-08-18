@@ -108,7 +108,7 @@ module Analyzer::Python
         end
       end
 
-      endpoints.each_value { |ep| @result << ep }
+      @result.concat(cli_endpoints(endpoints))
       Fiber.yield
       @result
     end
@@ -138,8 +138,9 @@ module Analyzer::Python
       end
       stem = File.basename(path, ".py")
       if stem == "__main__" || stem == "__init__"
-        parent = File.basename(File.dirname(path))
-        return parent unless parent.empty?
+        if name = cli_directory_binary_name(path)
+          return name
+        end
       end
       stem
     end

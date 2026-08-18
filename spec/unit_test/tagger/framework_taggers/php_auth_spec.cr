@@ -45,6 +45,78 @@ describe "PhpAuthTagger" do
     endpoint.tags[0].name.should eq("auth")
   end
 
+  it "does not attribute the next route's middleware to the route above it" do
+    tmpdir = File.tempname("php_adjacent_routes")
+    Dir.mkdir_p(tmpdir)
+    routes = File.join(tmpdir, "web.php")
+    File.write(routes, [
+      "<?php",
+      "",
+      "Route::get('/public', function () { return 'public'; });",
+      "Route::get('/me', function () { return 'me'; })->middleware('auth');",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    public_details = Details.new(PathInfo.new(routes, 3))
+    public_details.technology = "php_laravel"
+    public_endpoint = Endpoint.new("/public", "GET", [] of Param, public_details)
+
+    me_details = Details.new(PathInfo.new(routes, 4))
+    me_details.technology = "php_laravel"
+    me_endpoint = Endpoint.new("/me", "GET", [] of Param, me_details)
+
+    PhpAuthTagger.new(noir_options).perform([public_endpoint, me_endpoint])
+
+    public_endpoint.tags.empty?.should be_true
+    me_endpoint.tags.empty?.should be_false
+    me_endpoint.tags[0].description.should contain("Laravel auth middleware")
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
+  it "does not sweep the next method's auth check into this action's body" do
+    tmpdir = File.tempname("php_method_body")
+    Dir.mkdir_p(tmpdir)
+    controller = File.join(tmpdir, "ReportController.php")
+    File.write(controller, [
+      "<?php",                                     # 1
+      "",                                          # 2
+      "class ReportController extends Controller", # 3
+      "{",                                         # 4
+      "    public function publicIndex()",         # 5
+      "    {",                                     # 6
+      "        return response()->json(['ok' => true]);",
+      "    }",                        # 8
+      "",                             # 9
+      "    public function secret()", # 10
+      "    {",                        # 11
+      "        $this->authorize('view', Report::class);",
+      "    }",
+      "}",
+    ].join("\n"))
+
+    noir_options = create_test_options
+    noir_options["base"] = YAML::Any.new(tmpdir)
+
+    public_details = Details.new(PathInfo.new(controller, 5))
+    public_details.technology = "php_laravel"
+    public_endpoint = Endpoint.new("/reports/public", "GET", [] of Param, public_details)
+
+    secret_details = Details.new(PathInfo.new(controller, 10))
+    secret_details.technology = "php_laravel"
+    secret_endpoint = Endpoint.new("/reports/secret", "GET", [] of Param, secret_details)
+
+    PhpAuthTagger.new(noir_options).perform([public_endpoint, secret_endpoint])
+
+    public_endpoint.tags.empty?.should be_true
+    secret_endpoint.tags.empty?.should be_false
+    secret_endpoint.tags[0].description.should contain("Policy authorization")
+
+    FileUtils.rm_rf(tmpdir)
+  end
+
   it "does not tag public controller" do
     noir_options = create_test_options
     noir_options["base"] = YAML::Any.new(fixture_base)
