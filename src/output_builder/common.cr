@@ -84,12 +84,16 @@ class OutputBuilderCommon < OutputBuilder
     endpoints.each do |endpoint|
       baked = bake_endpoint(endpoint.url, endpoint.params)
 
+      # Hues mirror the HTML report's method badges so the two outputs read
+      # alike: QUERY is cyan there (`--m-query`), and safe-but-bodied, so it
+      # gets its own hue rather than falling through to the uncolored default.
       r_method_color = case endpoint.method
                        when "GET"    then :green
                        when "POST"   then :blue
                        when "PUT"    then Colorize::Color256.new(208)
                        when "PATCH"  then Colorize::Color256.new(208)
                        when "DELETE" then :red
+                       when "QUERY"  then :cyan
                        else               :default
                        end
 
