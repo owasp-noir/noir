@@ -335,4 +335,35 @@ describe Noir::TreeSitterMicronautExtractor do
       ]},
     ])
   end
+
+  it "reads implements from the AST so a brace in a class annotation cannot truncate the header" do
+    # `@Produces({MediaType.APPLICATION_JSON})` puts a `{` in the class
+    # node's text before `implements`. The header used to be cut at the
+    # first `{` on the assumption it opened the class body, so the
+    # interface was never seen and every inherited route silently vanished.
+    source = <<-JAVA
+      package com.example.api;
+
+      import io.micronaut.http.annotation.Controller;
+      import io.micronaut.http.annotation.Get;
+      import io.micronaut.http.annotation.Produces;
+      import io.micronaut.http.MediaType;
+
+      public interface CatalogApi {
+          @Get("/catalog/{id}")
+          String show(String id);
+      }
+
+      @Produces({MediaType.APPLICATION_JSON})
+      @Controller("/api")
+      public class CatalogController implements CatalogApi {
+          public String show(String id) { return ""; }
+      }
+      JAVA
+
+    implementations = Noir::TreeSitterMicronautExtractor.extract_controller_interface_implementations(source)
+    implementations.map { |impl| {impl.class_name, impl.interface_names, impl.paths} }.should eq([
+      {"CatalogController", ["CatalogApi"], ["/api"]},
+    ])
+  end
 end

@@ -274,9 +274,12 @@ module Noir
           # Normalize HTTP method (e.g., DEL -> DELETE)
           normalized_method = normalize_http_method(pattern.method)
 
-          # Convert byte offset to line number
+          # `start_pos` is a JSLexer token position, i.e. an index into
+          # `Array(Char)`. `to_slice` is bytes, so it has to be converted
+          # first or every route below a non-ASCII literal reports a line
+          # from somewhere earlier in the file.
           line_number = if pattern.start_pos >= 0
-                          content.to_slice[0, pattern.start_pos].count('\n'.ord.to_u8) + 1
+                          line_for_char_pos(content, pattern.start_pos)
                         else
                           1
                         end
@@ -1122,10 +1125,23 @@ module Noir
     # accurate. Comment bodies are blanked to spaces so a commented-
     # out decorator like `// @Get('/old')` never matches the route
     # regex.
+    #
+    # Regex literals get their own state because their bodies routinely
+    # contain quote characters (`str.replace(/'/g, "&#39;")`). Without it a
+    # single such line inverted the string state for the rest of the file,
+    # which cut both ways: real comments stopped being blanked, so
+    # commented-out routes were reported as live endpoints, and real string
+    # bodies were scanned as code, so a `//` or `/*` inside a string opened
+    # a comment that swallowed every route below it.
     def self.strip_js_comments(content : String) : String
       builder = String::Builder.new(content.bytesize)
       state = :code
       escaped = false
+      in_char_class = false
+      # Index of the last non-whitespace character emitted outside a comment.
+      # Only consulted when a '/' shows up in code, so the backward word walk
+      # it feeds costs nothing on the common path.
+      last_sig = -1
       chars = content.chars
       i = 0
       len = chars.size
@@ -1148,17 +1164,25 @@ module Noir
               next
             end
           end
-          case char
-          when '\''
-            state = :single
-          when '"'
-            state = :double
-          when '`'
-            state = :template
+          if char == '/' && regex_literal_start?(chars, last_sig)
+            state = :regex
+            escaped = false
+            in_char_class = false
+          else
+            case char
+            when '\''
+              state = :single
+            when '"'
+              state = :double
+            when '`'
+              state = :template
+            end
           end
           builder << char
+          last_sig = i unless char.whitespace?
         when :single, :double, :template
           builder << char
+          last_sig = i unless char.whitespace?
           if escaped
             escaped = false
           elsif char == '\\'
@@ -1166,6 +1190,25 @@ module Noir
           elsif (state == :single && char == '\'') ||
                 (state == :double && char == '"') ||
                 (state == :template && char == '`')
+            state = :code
+          end
+        when :regex
+          builder << char
+          last_sig = i unless char.whitespace?
+          if escaped
+            escaped = false
+          elsif char == '\\'
+            escaped = true
+          elsif char == '\n'
+            # A JavaScript regex literal cannot span lines. Resyncing here
+            # keeps a misjudged '/' (a JSX `</tag>`, say) from swallowing
+            # the rest of the file.
+            state = :code
+          elsif char == '[' && !in_char_class
+            in_char_class = true
+          elsif char == ']' && in_char_class
+            in_char_class = false
+          elsif char == '/' && !in_char_class
             state = :code
           end
         when :line_comment
@@ -1188,6 +1231,38 @@ module Noir
       end
 
       builder.to_s
+    end
+
+    # 1-based line number for a CHAR index into `content`.
+    def self.line_for_char_pos(content : String, pos : Int32) : Int32
+      byte_pos = if content.bytesize == content.size
+                   pos
+                 else
+                   content.char_index_to_byte_index(pos) || content.bytesize
+                 end
+      byte_pos = content.bytesize if byte_pos > content.bytesize
+      content.to_slice[0, byte_pos].count('\n'.ord.to_u8) + 1
+    end
+
+    # Does the '/' the stripper is looking at open a regex literal?
+    # `last_sig` is the index of the last non-whitespace character already
+    # emitted as code. The decision itself belongs to JSLiteralScanner so
+    # the stripper, the literal scanners and JSLexer cannot drift apart.
+    private def self.regex_literal_start?(chars : Array(Char), last_sig : Int32) : Bool
+      return false if last_sig < 0
+
+      prev_char = chars[last_sig]
+      prev_word = if prev_char.alphanumeric? || prev_char == '_' || prev_char == '$'
+                    start = last_sig
+                    while start > 0 && (chars[start - 1].alphanumeric? || chars[start - 1] == '_' || chars[start - 1] == '$')
+                      start -= 1
+                    end
+                    String.build { |io| (start..last_sig).each { |k| io << chars[k] } }
+                  else
+                    ""
+                  end
+
+      JSLiteralScanner.regex_context?(prev_char, prev_word)
     end
 
     def self.extract_body_params(handler_body : String, endpoint : Endpoint)

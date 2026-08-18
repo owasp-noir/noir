@@ -462,4 +462,73 @@ describe Noir::TreeSitterJaxRsExtractor do
       {"GET", "/search/status", [] of Param},
     ])
   end
+
+  it "reads implements/extends from the AST so a brace in a class annotation cannot truncate the header" do
+    # `@Produces({MediaType.APPLICATION_JSON})` is the canonical JAX-RS
+    # spelling and puts a `{` in the class node's text before `implements`.
+    # The header used to be cut at the first `{` on the assumption it opened
+    # the class body, so the interface was never seen and every inherited
+    # route silently vanished.
+    source = <<-JAVA
+      package com.example.api;
+
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.POST;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.PathParam;
+      import jakarta.ws.rs.Produces;
+      import jakarta.ws.rs.core.MediaType;
+      import jakarta.ws.rs.core.Response;
+
+      @Path("/catalog")
+      public interface CatalogApi {
+          @GET
+          @Path("/{id}")
+          Response show(@PathParam("id") String id);
+      }
+
+      @Produces({MediaType.APPLICATION_JSON})
+      @Path("/api")
+      public class CatalogResource implements CatalogApi {
+          public Response show(String id) {
+              return Response.ok().build();
+          }
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/catalog/{id}"},
+    ])
+  end
+
+  it "reads the superclass from the AST even behind a brace-carrying annotation" do
+    source = <<-JAVA
+      package com.example.api;
+
+      import jakarta.ws.rs.GET;
+      import jakarta.ws.rs.Path;
+      import jakarta.ws.rs.Produces;
+      import jakarta.ws.rs.core.MediaType;
+      import jakarta.ws.rs.core.Response;
+
+      public abstract class BaseResource {
+          @GET
+          @Path("/ping")
+          public Response ping() {
+              return Response.ok().build();
+          }
+      }
+
+      @Produces({MediaType.APPLICATION_JSON})
+      @Path("/api")
+      public class PingResource extends BaseResource {
+      }
+      JAVA
+
+    routes = Noir::TreeSitterJaxRsExtractor.extract_routes(source)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/ping"},
+    ])
+  end
 end

@@ -525,4 +525,41 @@ describe Noir::TreeSitterJavaRouteExtractor do
     missing = expected.reject { |e| found.includes?(e) }
     missing.should be_empty
   end
+
+  it "reads implements/extends from the AST so a brace in a class annotation cannot truncate the header" do
+    # `@RequestMapping({"/api"})` and `@CrossOrigin(origins = {...})` put a
+    # `{` in the class node's text *before* `implements`. The header used to
+    # be cut at the first `{` on the assumption it opened the class body, so
+    # neither the interface nor the superclass was ever seen and every
+    # inherited route silently vanished.
+    source = <<-JAVA
+      package com.example;
+
+      @RequestMapping("/catalog")
+      public interface CatalogApi {
+          @GetMapping("/{id}")
+          Catalog getCatalog(@PathVariable("id") String id);
+      }
+
+      @RequestMapping("/base")
+      public abstract class BaseController {
+          @DeleteMapping("/purge")
+          void purge();
+      }
+
+      @RestController
+      @CrossOrigin(origins = {"https://a.example", "https://b.example"})
+      @RequestMapping({"/api"})
+      public class CatalogController extends BaseController implements CatalogApi {}
+      JAVA
+
+    implementations = [] of Noir::TreeSitterJavaRouteExtractor::ControllerInterfaceImplementation
+    Noir::TreeSitter.parse_java(source) do |root|
+      implementations = Noir::TreeSitterJavaRouteExtractor.extract_controller_interface_implementations_from(root, source)
+    end
+
+    implementations.map { |i| {i.class_name, i.interface_names, i.paths} }.should eq([
+      {"CatalogController", ["CatalogApi", "BaseController"], ["/api"]},
+    ])
+  end
 end

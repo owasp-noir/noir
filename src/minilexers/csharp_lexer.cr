@@ -106,17 +106,17 @@ module Noir
       end
     end
 
-    private def mask_line_comment(start : Int32) : Int32
+    private def mask_line_comment(start : Int32, record_span : Bool = true) : Int32
       i = start
       while i < @size && @chars[i] != '\n'
         @masked[i] = ' '
         i += 1
       end
-      @spans << {:comment, start, i}
+      @spans << {:comment, start, i} if record_span
       i
     end
 
-    private def mask_block_comment(start : Int32) : Int32
+    private def mask_block_comment(start : Int32, record_span : Bool = true) : Int32
       # Blank the `/*` opener first, then scan for `*/` from after it so `/*/`
       # is not mis-read as self-closing.
       @masked[start] = ' '
@@ -132,13 +132,13 @@ module Noir
         @masked[i] = ' ' unless @chars[i] == '\n'
         i += 1
       end
-      @spans << {:comment, start, i}
+      @spans << {:comment, start, i} if record_span
       i
     end
 
     # `start` points at the opening `'`. Masks a char literal, honouring a
     # single backslash escape (`'\''`, `'\\'`, `'\}'`).
-    private def mask_char_literal(start : Int32) : Int32
+    private def mask_char_literal(start : Int32, record_span : Bool = true) : Int32
       @masked[start] = ' '
       i = start + 1
       escaped = false
@@ -155,7 +155,7 @@ module Noir
         end
         i += 1
       end
-      @spans << {:string, start, i}
+      @spans << {:string, start, i} if record_span
       i
     end
 
@@ -197,6 +197,22 @@ module Noir
         if interpolated && interp_depth > 0 && c == '"' && !escaped
           i = mask_nested_hole_string(i)
           next
+        end
+
+        if interpolated && interp_depth > 0 && c == '\''
+          i = mask_char_literal(i, record_span: false)
+          next
+        end
+
+        if interpolated && interp_depth > 0 && c == '/'
+          nxt = i + 1 < @size ? @chars[i + 1] : '\0'
+          if nxt == '/'
+            i = mask_line_comment(i, record_span: false)
+            next
+          elsif nxt == '*'
+            i = mask_block_comment(i, record_span: false)
+            next
+          end
         end
 
         @masked[i] = ' ' unless c == '\n'

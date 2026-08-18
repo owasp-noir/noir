@@ -735,4 +735,114 @@ describe Noir::JSRouteExtractor do
       ).should be_false
     end
   end
+
+  describe "strip_js_comments" do
+    it "keeps blanking comments after a regex literal containing a quote" do
+      # `str.replace(/'/g, "&#39;")` used to leave the scanner inside a
+      # string for the rest of the file, so the commented-out decorator
+      # below survived and was reported as a live endpoint.
+      content = <<-TS
+        escape(str: string) { return str.replace(/'/g, "&#39;"); }
+
+        // @Get('legacy-removed')
+        @Post('create')
+        TS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should_not contain("legacy-removed")
+      stripped.should contain("@Post('create')")
+    end
+
+    it "does not open a comment from a '/*' inside a string" do
+      # Mirror image of the case above: with the state inverted, the `/*`
+      # in a plain string literal started a block comment that blanked
+      # every route below it.
+      content = <<-TS
+        escape(str) { return str.replace(/'/g, '&#39;'); }
+        const blockOpen = '/*';
+        @Get('list')
+        @Post('create')
+        TS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("@Get('list')")
+      stripped.should contain("@Post('create')")
+    end
+
+    it "keeps a '//' inside a regex character class out of comment state" do
+      content = "const sep = /[//]/; app.get('/kept', h);"
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/kept', h);")
+    end
+
+    it "preserves length and newline positions" do
+      content = <<-JS
+        const re = /a'b/;
+        // gone
+        app.get('/x', h);
+        JS
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.size.should eq(content.size)
+      stripped.count('\n').should eq(content.count('\n'))
+    end
+
+    it "resyncs at end of line when a '/' is misjudged as a regex" do
+      # `</p>` looks like a regex opening after '<'. Bounding the state to
+      # one line keeps that misjudgement from eating the rest of the file.
+      content = <<-JSX
+        const el = <p>a</p>;
+        // gone
+        app.get('/x', h);
+        JSX
+
+      stripped = Noir::JSRouteExtractor.strip_js_comments(content)
+      stripped.should contain("app.get('/x', h);")
+      stripped.should_not contain("gone")
+    end
+  end
+  describe "line_for_char_pos" do
+    it "resolves a char index on non-ASCII content" do
+      # `to_slice` is byte-indexed; feeding it a char index straight from
+      # the lexer under-counted newlines once the file held any multi-byte
+      # character, so routes reported a line from earlier in the file.
+      content = "// 주석 — 설명\nconst a = 1;\napp.get('/x', h);\n"
+      pos = content.index("app").should_not be_nil
+
+      Noir::JSRouteExtractor.line_for_char_pos(content, pos).should eq(3)
+      Noir::JSRouteExtractor.line_for_char_pos(content, 0).should eq(1)
+    end
+
+    it "resolves a char index on ASCII content" do
+      content = "a\nb\nc"
+      Noir::JSRouteExtractor.line_for_char_pos(content, 4).should eq(3)
+    end
+
+    it "reports the right route line below a non-ASCII literal" do
+      content = <<-JS
+        const express = require('express');
+        const app = express();
+
+        const 메시지 = '안녕하세요 여러분 반갑습니다 오늘도 좋은 하루 되세요';
+
+        app.get('/users', (req, res) => res.json({ m: 메시지 }));
+
+        app.listen(3000);
+
+        app.post('/items', (req, res) => res.json({}));
+        JS
+
+      file = File.tempfile("noir_js_route", ".js")
+      begin
+        File.write(file.path, content)
+        endpoints = Noir::JSRouteExtractor.extract_routes(file.path, content)
+        lines = endpoints.to_h { |e| {"#{e.method} #{e.url}", e.details.code_paths.first.line} }
+        lines["GET /users"].should eq(6)
+        lines["POST /items"].should eq(10)
+      ensure
+        file.delete
+      end
+    end
+  end
 end

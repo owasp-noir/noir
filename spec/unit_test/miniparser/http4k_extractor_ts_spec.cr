@@ -198,4 +198,40 @@ describe Noir::TreeSitterHttp4kExtractor do
       {"QUERY", "/items"},
     ])
   end
+
+  it "ignores a commented-out const val shadowing the live declaration" do
+    # `constants[name] ||= value` is first-wins, and the declaration regex used
+    # to run over the raw source: a dead constant left above the real one
+    # permanently shadowed it, so every route built from it reported a URL that
+    # does not exist while the real one was lost.
+    source = <<-KT
+      package com.example
+
+      import org.http4k.core.Method.GET
+      import org.http4k.core.Response
+      import org.http4k.core.Status.Companion.OK
+      import org.http4k.routing.bind
+      import org.http4k.routing.routes
+
+      object Paths {
+          // deprecated: const val API = "/old-api"
+          /* const val API = "/older-api" */
+          const val API = "/api"
+      }
+
+      val app = routes(
+          Paths.API bind routes(
+              "/users" bind GET to { req -> Response(OK) }
+          )
+      )
+      KT
+
+    constants = Noir::TreeSitterHttp4kExtractor.extract_string_constants(source)
+    constants["Paths.API"].should eq("/api")
+
+    routes = Noir::TreeSitterHttp4kExtractor.extract_routes(source, constants)
+    routes.map { |r| {r.verb, r.path} }.should eq([
+      {"GET", "/api/users"},
+    ])
+  end
 end

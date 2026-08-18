@@ -48,6 +48,12 @@ module Noir
       "HEAD", "OPTIONS",
     }
 
+    # `path:` is written as either a quoted string or a backtick template
+    # literal — tree-sitter-javascript emits `template_string` for the
+    # latter. `decode_string` has always known how to unwrap both; the
+    # gate below rejecting backticks dropped the whole route object.
+    STRING_LITERAL_TYPES = Set{"string", "template_string"}
+
     struct Route
       getter verb : String
       getter path : String
@@ -130,7 +136,7 @@ module Noir
         when "method"
           collect_method_values(value, source, methods)
         when "path"
-          path = decode_string(value, source) if Noir::TreeSitter.node_type(value) == "string"
+          path = decode_string(value, source) if STRING_LITERAL_TYPES.includes?(Noir::TreeSitter.node_type(value))
         when "handler"
           handler = value
         end
@@ -315,20 +321,27 @@ module Noir
     end
 
     # tree-sitter-javascript wraps string contents in
-    # `string_fragment` named children. Templates / escapes get
-    # additional siblings — we just join the fragments which keeps
-    # the simple-string case correct without choking on the rest.
+    # `string_fragment` named children — template literals included.
+    # Escapes get additional siblings we skip, which keeps the simple
+    # case correct without choking on the rest.
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
             io << Noir::TreeSitter.node_text(child, source)
+          when "template_substitution"
+            # `` `/users/${id}` `` — keep the hole as a `{id}` placeholder
+            # rather than dropping it, which would collapse the path to
+            # `/users/`. Same convention as the Python f-string and Kotlin
+            # template decoders.
+            io << Noir::TreeSitter.node_text(child, source).lchop('$')
           end
         end
       end
       return buf unless buf.empty?
       raw = Noir::TreeSitter.node_text(node, source)
-      if raw.size >= 2 && (raw[0] == '\'' || raw[0] == '"') && raw[0] == raw[-1]
+      if raw.size >= 2 && (raw[0] == '\'' || raw[0] == '"' || raw[0] == '`') && raw[0] == raw[-1]
         raw[1..-2]
       else
         raw

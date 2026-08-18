@@ -1,104 +1,10 @@
 # Part of Noir::TreeSitterKotlinRouteExtractor: shared annotation/string/expression decoding helpers.
 module Noir
   module TreeSitterKotlinRouteExtractor
+    # Comments and string contents blanked, character offsets preserved.
+    # See `Noir::KotlinSourceMask`.
     private def visible_kotlin_code(source : String) : String
-      slash = '/'.ord.to_u8
-      star = '*'.ord.to_u8
-      double_quote = '"'.ord.to_u8
-      single_quote = '\''.ord.to_u8
-      backslash = '\\'.ord.to_u8
-      newline = '\n'.ord.to_u8
-      space = ' '.ord.to_u8
-
-      bytes = source.to_slice
-      mode = :code
-      quote = 0_u8
-      raw_string = false
-      escaped = false
-      i = 0
-
-      String.build(source.bytesize) do |io|
-        while i < bytes.size
-          byte = bytes[i]
-
-          case mode
-          when :line_comment
-            if byte == newline
-              io.write_byte(byte)
-              mode = :code
-            else
-              io.write_byte(space)
-            end
-            i += 1
-          when :block_comment
-            if byte == newline
-              io.write_byte(byte)
-              i += 1
-            elsif i + 1 < bytes.size && byte == star && bytes[i + 1] == slash
-              io.write_byte(space)
-              io.write_byte(space)
-              i += 2
-              mode = :code
-            else
-              io.write_byte(space)
-              i += 1
-            end
-          when :string
-            if raw_string && i + 2 < bytes.size && byte == double_quote && bytes[i + 1] == double_quote && bytes[i + 2] == double_quote
-              io.write_byte(space)
-              io.write_byte(space)
-              io.write_byte(space)
-              i += 3
-              mode = :code
-              raw_string = false
-            elsif !raw_string && byte == quote && !escaped
-              io.write_byte(space)
-              i += 1
-              mode = :code
-            else
-              io.write_byte(byte == newline ? byte : space)
-              if raw_string
-                i += 1
-              elsif escaped
-                escaped = false
-                i += 1
-              else
-                escaped = byte == backslash
-                i += 1
-              end
-            end
-          else
-            if i + 1 < bytes.size && byte == slash && bytes[i + 1] == slash
-              io.write_byte(space)
-              io.write_byte(space)
-              i += 2
-              mode = :line_comment
-            elsif i + 1 < bytes.size && byte == slash && bytes[i + 1] == star
-              io.write_byte(space)
-              io.write_byte(space)
-              i += 2
-              mode = :block_comment
-            elsif i + 2 < bytes.size && byte == double_quote && bytes[i + 1] == double_quote && bytes[i + 2] == double_quote
-              io.write_byte(space)
-              io.write_byte(space)
-              io.write_byte(space)
-              i += 3
-              mode = :string
-              raw_string = true
-            elsif byte == double_quote || byte == single_quote
-              io.write_byte(space)
-              quote = byte
-              raw_string = false
-              escaped = false
-              i += 1
-              mode = :string
-            else
-              io.write_byte(byte)
-              i += 1
-            end
-          end
-        end
-      end
+      Noir::KotlinSourceMask.visible(source)
     end
 
     private def function_name(func : LibTreeSitter::TSNode, source : String) : String
@@ -347,21 +253,28 @@ module Noir
       methods
     end
 
+    # Call sites are located on the visible copy — a commented-out
+    # `registry.addEndpoint("/ws-legacy-removed")`, or the same call
+    # quoted inside a string, is not a call — but the argument text is
+    # sliced out of the raw source, because that is where the literal
+    # values the caller wants still exist. `KotlinSourceMask` preserves
+    # character offsets, so the two indexes refer to the same place.
     private def each_method_call_arguments(source : String, method_name : String, &)
+      visible = visible_kotlin_code(source)
       offset = 0
       name_size = method_name.size
 
-      while marker = source.index(method_name, offset)
+      while marker = visible.index(method_name, offset)
         offset = marker + name_size
-        next unless method_call_name?(source, marker, name_size)
+        next unless method_call_name?(visible, marker, name_size)
 
-        open_idx = source.index('(', marker)
+        open_idx = visible.index('(', marker)
         next unless open_idx
-        close_idx = find_matching_paren(source, open_idx)
+        close_idx = find_matching_paren(visible, open_idx)
         next unless close_idx
 
         args = source[(open_idx + 1)...close_idx]
-        line = source[0...marker].count('\n') + 1
+        line = visible[0...marker].count('\n') + 1
         yield args, line
       end
     end

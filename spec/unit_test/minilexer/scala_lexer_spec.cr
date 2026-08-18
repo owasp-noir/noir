@@ -101,4 +101,69 @@ describe Noir::ScalaLexer do
       tokens[-1].line.should eq(2)
     end
   end
+
+  describe "string interpolation holes" do
+    # There was no interpolation state at all: the first `"` inside `${…}`
+    # closed the literal, so the hole's expression was lexed as code and the
+    # next `"` re-opened a string. Nothing observable broke today (the Scala
+    # analyzers key on braces, and in the simple case both stray parens
+    # happened to land inside one of the two string spans), but the depth is
+    # skewed the moment a paren falls on the wrong side of the split — so
+    # these assert the lexer's own output rather than any endpoint count.
+    it "keeps an interpolated string with a quoted hole as ONE string token" do
+      src = "val x = s\"a ${cfg(\"k\")} b\""
+      lex = Noir::ScalaLexer.new(src)
+
+      strings = lex.tokens.select { |t| t.kind == :string }
+      strings.map(&.value).should eq(["\"a ${cfg(\"k\")} b\""])
+      # `k` used to leak out of the string and be lexed as an identifier.
+      lex.tokens.select { |t| t.kind == :ident }.map(&.value).should eq(["val", "x", "s"])
+    end
+
+    it "keeps parenthesis depth balanced around an interpolated hole" do
+      src = "foo(s\"${f(\"(\")}\")"
+      lex = Noir::ScalaLexer.new(src)
+
+      masked = lex.masked.join
+      masked.count('(').should eq(1)
+      masked.count(')').should eq(1)
+      lex.tokens.map(&.kind).count(:lparen).should eq(1)
+      lex.tokens.map(&.kind).count(:rparen).should eq(1)
+    end
+
+    it "does not treat `${` inside a plain (non-interpolated) string as a hole" do
+      src = "val x = \"${cfg(\"k\")}\""
+      lex = Noir::ScalaLexer.new(src)
+
+      # No interpolator prefix, so `"${cfg("` really is the whole literal and
+      # `k` really is code — same as before, and as Scala reads it.
+      lex.tokens.select { |t| t.kind == :ident }.map(&.value).should eq(["val", "x", "k"])
+    end
+
+    it "treats `$$` as an escaped dollar rather than the start of a hole" do
+      src = "val x = s\"$${literal} tail\""
+      lex = Noir::ScalaLexer.new(src)
+
+      lex.tokens.count { |t| t.kind == :string }.should eq(1)
+      lex.tokens.map(&.kind).should_not contain(:lbrace)
+    end
+
+    it "tracks holes in a triple-quoted interpolated string too" do
+      src = "val x = s\"\"\"a ${f(\"\"\"b\"\"\")} c\"\"\"\npath(\"real\")"
+      lex = Noir::ScalaLexer.new(src)
+
+      lex.code_lines[0].includes?("b").should be_false # inside the triple quote
+      lex.code_lines[1].should eq("path(\"real\")")
+      lex.masked.join.count('(').should eq(1) # only `path(`
+      lex.masked.join.count(')').should eq(1)
+    end
+
+    it "leaves the short `$ident` form as plain string content" do
+      src = "val u = s\"/api/$version/users\""
+      lex = Noir::ScalaLexer.new(src)
+
+      lex.code_lines[0].should eq("val u = s\"/api/$version/users\"")
+      lex.tokens.select { |t| t.kind == :string }.map(&.value).should eq(["\"/api/$version/users\""])
+    end
+  end
 end

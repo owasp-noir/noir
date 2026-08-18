@@ -17,12 +17,19 @@ module Noir::HaskellCalleeExtractor
     "not", "and", "or", "maybe", "either", "fst", "snd",
   }
 
-  QUALIFIED_CALL_REGEX = /(?<![A-Za-z0-9_'.])((?:[A-Z][A-Za-z0-9_']*\.)+[a-z_][A-Za-z0-9_']*)\b/
-  STATEMENT_CALL_REGEX = /^\s*([a-z_][A-Za-z0-9_']*)\b(?=\s|$|\()/
-  BIND_CALL_REGEX      = /(?:<-|=)\s*([a-z_][A-Za-z0-9_']*)\b(?=\s|$|\()/
-  DOLLAR_CALL_REGEX    = /\$\s*([a-z_][A-Za-z0-9_']*)\b(?=\s|$|\()/
-  PAREN_CALL_REGEX     = /[(,]\s*([a-z_][A-Za-z0-9_']*)\b(?=\s|$|\()/
-  BRANCH_CALL_REGEX    = /(?:->|\bthen\b|\belse\b)\s*([a-z_][A-Za-z0-9_']*)\b(?=\s|$|\()/
+  # No trailing `\b` on the captured name. `\b` after `[A-Za-z0-9_']*` is
+  # redundant whenever the name ends in a word character (the greedy class
+  # has already consumed every one of them), and it is *unsatisfiable* when
+  # the name ends in a prime: `\b` would demand a word character after the
+  # `'` while the lookahead demands whitespace / EOL / `(`. So the only
+  # thing it ever did was force `go'` to backtrack down to `go` — or, with
+  # the lookahead, fail to match at all.
+  QUALIFIED_CALL_REGEX = /(?<![A-Za-z0-9_'.])((?:[A-Z][A-Za-z0-9_']*\.)+[a-z_][A-Za-z0-9_']*)(?![A-Za-z0-9_'])/
+  STATEMENT_CALL_REGEX = /^\s*([a-z_][A-Za-z0-9_']*)(?=\s|$|\()/
+  BIND_CALL_REGEX      = /(?:<-|=)\s*([a-z_][A-Za-z0-9_']*)(?=\s|$|\()/
+  DOLLAR_CALL_REGEX    = /\$\s*([a-z_][A-Za-z0-9_']*)(?=\s|$|\()/
+  PAREN_CALL_REGEX     = /[(,]\s*([a-z_][A-Za-z0-9_']*)(?=\s|$|\()/
+  BRANCH_CALL_REGEX    = /(?:->|\bthen\b|\belse\b)\s*([a-z_][A-Za-z0-9_']*)(?=\s|$|\()/
 
   def function_bodies(content : String, file_path : String) : Array(FunctionBody)
     cleaned = strip_non_code(content)
@@ -32,7 +39,7 @@ module Noir::HaskellCalleeExtractor
 
     while index < lines.size
       line = lines[index]
-      match = line.match(/^([a-z_][A-Za-z0-9_']*)\b.*=/)
+      match = line.match(/^([a-z_][A-Za-z0-9_']*).*=/)
       unless match
         index += 1
         next
@@ -145,7 +152,9 @@ module Noir::HaskellCalleeExtractor
   end
 
   private def same_function_equation?(line : String, name : String) : Bool
-    !!line.match(/^#{Regex.escape(name)}\b.*=/)
+    # `(?![A-Za-z0-9_'])` rather than `\b`: `\b` treats the prime as a
+    # boundary, so `foo` would claim `foo' x = …` — a different function.
+    !!line.match(/^#{Regex.escape(name)}(?![A-Za-z0-9_']).*=/)
   end
 
   # Index of the binding `=`, skipping operators that merely contain `=`
@@ -230,9 +239,23 @@ module Noir::HaskellCalleeExtractor
     return false if start + 2 >= chars.size
     return false if chars[start + 1] == '['
 
+    # A `'` glued to the end of an identifier is a prime — part of the name
+    # (`go'`, `xs''`), never the opening of a char literal. Haskell char
+    # literals (`'a'`, `'\n'`, `'\''`, `'\1234'`) are always preceded by
+    # whitespace or a delimiter. Without this, `xs' <- go' 1` matched the
+    # <= 8 character heuristic and everything from the prime on `xs` to the
+    # prime on `go` was masked away: `go'` vanished and the leftover `xs`
+    # was reported as a phantom callee.
+    return false if start > 0 && identifier_char?(chars[start - 1])
+
     finish = skip_char(chars, start)
     return false if finish >= chars.size
     finish - start <= 8
+  end
+
+  # Characters that may appear *inside* a Haskell identifier, prime included.
+  private def identifier_char?(char : Char) : Bool
+    char.alphanumeric? || char == '_' || char == '\''
   end
 
   private def append_blanks_until_line_end(stripped : String::Builder, chars : Array(Char), start : Int32) : Int32

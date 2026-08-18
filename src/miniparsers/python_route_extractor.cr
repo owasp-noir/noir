@@ -166,9 +166,10 @@ module Noir
     end
 
     # Net `(` − `)` count for a single line, ignoring parens inside
-    # single- or double-quoted strings on the same line. Used by
-    # `find_def_line` to walk through multi-line decorator headers
-    # without breaking the loop on continuation tokens.
+    # single- or double-quoted strings on the same line and comments
+    # starting with `#`. Used by `find_def_line` to walk through
+    # multi-line decorator headers without breaking the loop on
+    # continuation tokens.
     private def line_paren_delta(line : String) : Int32
       depth = 0
       in_quote = nil
@@ -187,6 +188,8 @@ module Noir
         case ch
         when '\'', '"'
           in_quote = ch
+        when '#'
+          break
         when '('
           depth += 1
         when ')'

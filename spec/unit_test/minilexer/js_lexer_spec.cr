@@ -151,5 +151,56 @@ describe Noir::JSLexer do
         tokens.map(&.type).should eq(expected_types)
       end
     end
+
+    it "identifies regex after operators the shared scanner accepts" do
+      # The lexer used to accept only `( [ { , : ; =` plus a keyword list,
+      # so `!`, the `>` of `=>`, `&&` and `||` all lexed the following `/`
+      # as division.
+      cases = {
+        "=> /abc/"    => [:assign, :unknown, :regex],
+        "! /abc/"     => [:unknown, :regex],
+        "&& /abc/"    => [:unknown, :unknown, :regex],
+        "|| /abc/"    => [:unknown, :unknown, :regex],
+        "? /abc/"     => [:unknown, :regex],
+        "return /a/g" => [:keyword, :regex],
+      }
+
+      cases.each do |code, expected_types|
+        lexer = Noir::JSLexer.new(code)
+        lexer.tokenize.map(&.type).should eq(expected_types)
+      end
+    end
+
+    it "keeps a quote-carrying regex out of the string state" do
+      # `(s) => /["']/.test(s)` — the unpaired quote inside the regex used
+      # to open a string token that ran to end of file, so every route
+      # below it disappeared.
+      code = <<-JS
+        const hasQuote = (s) => /["']/.test(s);
+        app.get('/users', h);
+        JS
+
+      tokens = Noir::JSLexer.new(code).tokenize
+      regex = tokens.find { |t| t.type == :regex }.should_not be_nil
+      # Regex value is the pattern, then \x00, then the flags.
+      regex.value.should eq("[\"']\x00")
+
+      # The route after it still lexes as its own statement.
+      tokens.select { |t| t.type == :string }.map(&.value).should eq(["/users"])
+    end
+
+    it "still treats a division that follows a value as an operator" do
+      {
+        "(a + b) / 2" => :rparen,
+        "arr[0] / 2"  => :rbracket,
+        "'a' / 2"     => :string,
+        "x.y / 2"     => :identifier,
+      }.each do |code, before_slash|
+        tokens = Noir::JSLexer.new(code).tokenize
+        slash_idx = tokens.index { |t| t.type == :operator && t.value == "/" }
+        slash_idx = slash_idx.should_not be_nil
+        tokens[slash_idx - 1].type.should eq(before_slash)
+      end
+    end
   end
 end

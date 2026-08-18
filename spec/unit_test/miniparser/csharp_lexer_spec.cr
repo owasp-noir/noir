@@ -50,11 +50,50 @@ describe Noir::CSharpLexer do
     it "blanks a char literal so a brace char is not counted" do
       Noir::CSharpLexer.new("c = '}'; d = '\\''; e();").masked_lines[0].count('}').should eq(0)
     end
+
+    it "handles char literals inside an interpolation hole" do
+      cases = [
+        "var s = $\"{Chars['{']}\"; after();",
+        "var s = $\"{Chars['}']}\"; after();",
+        "var s = $\"{Chars['\"']}\"; after();",
+        "var s = $\"{Chars['a']}\"; after();",
+        "var s = $\"{Chars['\\'']}\"; after();",
+        "var s = $\"{Chars['\\\\']}\"; after();",
+        "var s = $\"{Chars['\\n']}\"; after();",
+        "var s = $\"{Chars['\\0']}\"; after();",
+        "var s = $\"{Chars['\\x41']}\"; after();",
+        "var s = $\"{Chars['\\u0041']}\"; after();",
+        "var s = $@\"{Chars['{']}\"; after();",
+        "var s = @$\"{Chars['{']}\"; after();",
+      ]
+      cases.each do |src|
+        lex = Noir::CSharpLexer.new(src)
+        lex.in_code?(src.index!("after")).should be_true
+        lex.masked_lines[0].count('{').should eq(0)
+        lex.masked_lines[0].count('}').should eq(0)
+      end
+    end
+
+    it "handles comments inside an interpolation hole" do
+      src1 = "var s = $\"{\n// comment with { and } and \"\nfoo()\n}\"; after();"
+      lex1 = Noir::CSharpLexer.new(src1)
+      lex1.in_code?(src1.index!("after")).should be_true
+
+      src2 = "var s = $\"{ /* comment { \" } */ foo() }\"; after();"
+      lex2 = Noir::CSharpLexer.new(src2)
+      lex2.in_code?(src2.index!("after")).should be_true
+    end
   end
 
   describe "#matching_delimiter" do
     it "closes a method block past a `}` inside a string" do
       src = "{ var j = T(\"a } b\"); More(); }"
+      lex = Noir::CSharpLexer.new(src)
+      lex.matching_delimiter(src.index!('{')).should eq(src.size - 1)
+    end
+
+    it "closes a method block past a char literal inside an interpolated string" do
+      src = "{ var tag = $\"{ Chars['{'] }\"; More(); }"
       lex = Noir::CSharpLexer.new(src)
       lex.matching_delimiter(src.index!('{')).should eq(src.size - 1)
     end

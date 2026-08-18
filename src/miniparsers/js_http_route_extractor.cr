@@ -200,7 +200,11 @@ module Noir
 
       content.scan(/(?:const|let|var)\s+([A-Za-z_$]\w*)\s*(?::[^=;]+)?=\s*/) do |match|
         name = match[1]
-        start_pos = (match.begin(0) || 0) + match[0].bytesize
+        # `begin(0)` is a char index but `bytesize` is a byte length, so the
+        # sum landed short of the handler on any file with a non-ASCII
+        # character before it (a Korean type annotation was enough to lose
+        # the route). `end(0)` is the char index we actually want.
+        start_pos = match.end(0) || 0
         if handler = function_handler_at(content, start_pos)
           handlers[name] = handler
         elsif handler = arrow_handler_at(content, start_pos)

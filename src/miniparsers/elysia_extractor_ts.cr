@@ -69,6 +69,12 @@ module Noir
     GROUP_METHODS       = Set{"group"}
     TRANSPARENT_METHODS = Set{"guard", "use"}
 
+    # Route and group paths are written as either a quoted string or a
+    # backtick template literal — tree-sitter-javascript emits
+    # `template_string` for the latter, and every path gate below accepts
+    # both. `decode_string` has always known how to unwrap them; only the
+    # call-site gates rejected backticks.
+
     struct Route
       getter verb : String
       getter path : String
@@ -159,7 +165,7 @@ module Noir
       group_body : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
-        when "string"
+        when "string", "template_string"
           group_path ||= decode_string(arg, source)
         when "arrow_function"
           group_body ||= arrow_body(arg)
@@ -190,7 +196,7 @@ module Noir
       handler : LibTreeSitter::TSNode? = nil
       Noir::TreeSitter.each_named_child(args) do |arg|
         case Noir::TreeSitter.node_type(arg)
-        when "string"
+        when "string", "template_string"
           path ||= decode_string(arg, source)
         when "arrow_function"
           handler ||= arg
@@ -397,8 +403,15 @@ module Noir
     private def decode_string(node : LibTreeSitter::TSNode, source : String) : String
       buf = String.build do |io|
         Noir::TreeSitter.each_named_child(node) do |child|
-          if Noir::TreeSitter.node_type(child) == "string_fragment"
+          case Noir::TreeSitter.node_type(child)
+          when "string_fragment"
             io << Noir::TreeSitter.node_text(child, source)
+          when "template_substitution"
+            # `` `/users/${id}` `` — keep the hole as a `{id}` placeholder
+            # rather than dropping it, which would collapse the path to
+            # `/users/`. Same convention as the Python f-string and Kotlin
+            # template decoders.
+            io << Noir::TreeSitter.node_text(child, source).lchop('$')
           end
         end
       end

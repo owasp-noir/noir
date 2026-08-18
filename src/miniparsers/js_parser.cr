@@ -761,22 +761,28 @@ module Noir
           route_rparen = skip_matching_paren(idx + 3)
           if route_rparen
             each_prefixed_path(paths, router_var, router_prefixes) do |path_entry, prefixed_path|
-              # Scan ahead for chained HTTP method calls (bounded to avoid O(n^2))
+              # Walk the chained calls that follow `route(...)`. A member-call
+              # chain is contiguous: the only thing that may follow the
+              # closing paren and still belong to this statement is the '.'
+              # of the next call. Stopping at anything else — rather than
+              # only at a semicolon — is what makes this correct in
+              # semicolon-free (ASI) style, where the previous scan ran on
+              # into the next statement and hung its verbs on this path.
+              # Still bounded so a pathological chain can't go quadratic.
               j = route_rparen + 1
               steps = 0
               max_steps = 1000
               while j + 2 < limit && steps < max_steps
-                if @tokens[j].type == :dot && http_method?(@tokens[j + 1]) && @tokens[j + 2].type == :lparen
+                break unless @tokens[j].type == :dot && @tokens[j + 2].type == :lparen &&
+                             (@tokens[j + 1].type == :identifier || http_method?(@tokens[j + 1]))
+                method_rparen = skip_matching_paren(j + 2)
+                break unless method_rparen
+                # Non-verb links (`.all(...)`-style middleware) keep the
+                # chain alive without emitting a route.
+                if http_method?(@tokens[j + 1])
                   results << create_route_with_params(@tokens[j + 1].value, prefixed_path, path_entry.path, start_pos, path_entry.is_regex?)
-                  method_rparen = skip_matching_paren(j + 2)
-                  break unless method_rparen
-                  j = method_rparen + 1
-                  steps += 1
-                  next
-                elsif @tokens[j].type == :semicolon
-                  break
                 end
-                j += 1
+                j = method_rparen + 1
                 steps += 1
               end
             end
@@ -1024,36 +1030,45 @@ module Noir
           method_idx += 1
         end
 
-        # Now look for the next chained method
+        # Now look for the next chained method. `method_idx` sits on the
+        # token right after the previous call's closing paren, and a
+        # member-call chain is contiguous — only a '.' can follow and still
+        # belong to this statement. Scanning past anything else (the old
+        # loop only stopped at a semicolon) attributed the verbs of the
+        # following statements to this path whenever the file was written
+        # in semicolon-free style.
         while method_idx < @tokens.size - 2
-          if @tokens[method_idx].type == :dot &&
-             http_method?(@tokens[method_idx + 1]) &&
-             @tokens[method_idx + 2].type == :lparen
-            method = @tokens[method_idx + 1].value.upcase
+          break unless @tokens[method_idx].type == :dot &&
+                       @tokens[method_idx + 2].type == :lparen &&
+                       (@tokens[method_idx + 1].type == :identifier || http_method?(@tokens[method_idx + 1]))
 
-            # Create routes for all prefixed paths
-            paths = @current_route_paths || [@current_route_path.as(String)]
-            raw_path = @current_route_raw_path || paths.first
-            start_pos = @current_route_start_pos || @tokens[@current_route_start_idx.as(Int32)].position
-
-            paths.each do |path|
-              route = JSRoutePattern.new(method, path, raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-              results << route
-            end
-
-            @position = method_idx + 2 # Move past the dot and method name
-            # Don't reset yet - there might be more methods chained
-            return results
-          elsif @tokens[method_idx].type == :semicolon ||
-                (@tokens[method_idx].value == "route" && method_idx > @position + 5)
-            # End of chain
-            break
+          unless http_method?(@tokens[method_idx + 1])
+            # A non-verb link (middleware, `.all(...)`-style helpers) keeps
+            # the chain alive without producing a route.
+            link_rparen = skip_matching_paren(method_idx + 2)
+            break unless link_rparen
+            method_idx = link_rparen + 1
+            next
           end
 
-          method_idx += 1
+          method = @tokens[method_idx + 1].value.upcase
+
+          # Create routes for all prefixed paths
+          paths = @current_route_paths || [@current_route_path.as(String)]
+          raw_path = @current_route_raw_path || paths.first
+          start_pos = @current_route_start_pos || @tokens[@current_route_start_idx.as(Int32)].position
+
+          paths.each do |path|
+            route = JSRoutePattern.new(method, path, raw_path, start_pos)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+            results << route
+          end
+
+          @position = method_idx + 2 # Move past the dot and method name
+          # Don't reset yet - there might be more methods chained
+          return results
         end
 
         # No more methods found in chain, reset
@@ -1098,36 +1113,41 @@ module Noir
 
         paths = prefixes_to_apply.map { |prefix| prefix.empty? ? base_path : URLPath.join(prefix, base_path) }
 
-        # Look for method chaining after .route('/path')
+        # Look for method chaining after .route('/path'). Same contiguity
+        # rule as the continuation scan above: only a '.' may follow the
+        # closing paren, otherwise the statement is over.
         method_idx = idx + 6 # Skip past string and closing paren
         while method_idx < @tokens.size - 2
-          if @tokens[method_idx].type == :dot &&
-             http_method?(@tokens[method_idx + 1]) &&
-             @tokens[method_idx + 2].type == :lparen
-            method = @tokens[method_idx + 1].value.upcase
+          break unless @tokens[method_idx].type == :dot &&
+                       @tokens[method_idx + 2].type == :lparen &&
+                       (@tokens[method_idx + 1].type == :identifier || http_method?(@tokens[method_idx + 1]))
 
-            # Create routes for all prefixed paths
-            paths.each do |path|
-              route = JSRoutePattern.new(method, path, raw_path, start_pos)
-              extract_path_params(path).each do |param|
-                route.push_param(param)
-              end
-              results << route
-            end
-
-            # Set up for chain continuation (store all paths)
-            @current_route_path = paths.first
-            @current_route_paths = paths
-            @current_route_start_idx = idx
-            @current_route_raw_path = raw_path
-            @current_route_start_pos = start_pos
-            @position = method_idx + 2 # Move past dot and method
-            return results
-          elsif @tokens[method_idx].type == :semicolon
-            # End of statement without finding a method
-            break
+          unless http_method?(@tokens[method_idx + 1])
+            link_rparen = skip_matching_paren(method_idx + 2)
+            break unless link_rparen
+            method_idx = link_rparen + 1
+            next
           end
-          method_idx += 1
+
+          method = @tokens[method_idx + 1].value.upcase
+
+          # Create routes for all prefixed paths
+          paths.each do |path|
+            route = JSRoutePattern.new(method, path, raw_path, start_pos)
+            extract_path_params(path).each do |param|
+              route.push_param(param)
+            end
+            results << route
+          end
+
+          # Set up for chain continuation (store all paths)
+          @current_route_path = paths.first
+          @current_route_paths = paths
+          @current_route_start_idx = idx
+          @current_route_raw_path = raw_path
+          @current_route_start_pos = start_pos
+          @position = method_idx + 2 # Move past dot and method
+          return results
         end
       end
 

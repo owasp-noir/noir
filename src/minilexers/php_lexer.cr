@@ -24,6 +24,11 @@ module Noir
   # re-implements (balanced-brace matching, statement-end scanning, string/
   # comment skip ranges) with a single shared pass that is:
   #
+  #   * open/close-tag aware — a `.php` file is HTML with islands of code in
+  #     it, so everything outside `<?php … ?>` is inert output text. Lexing it
+  #     as code let a lone apostrophe in `<h1>Today's report</h1>` open a
+  #     string that masked the rest of the file, silently dropping every route
+  #     declared below it.
   #   * heredoc/nowdoc aware — `<<<EOT … EOT` / `<<<'EOT' … EOT` bodies are
   #     masked, so route-shaped text or stray `{};` inside a heredoc can no
   #     longer leak as a false endpoint or corrupt a brace/statement bound.
@@ -33,8 +38,8 @@ module Noir
   #     `Array(Char)` with O(1) indexing, so CJK-commented controllers stay
   #     O(n) instead of the O(n^2) that `String#[](Int)` caused.
   #
-  # The lexer masks every non-code region (strings, comments, heredoc/nowdoc
-  # bodies) into spaces in `@masked` while preserving newlines and overall
+  # The lexer masks every non-code region (inline HTML, strings, comments,
+  # heredoc/nowdoc bodies) into spaces in `@masked` while preserving newlines and overall
   # length, so the structural helpers in `Noir::MaskedLexer` are plain depth
   # counters over `@masked` with no string-state bookkeeping of their own.
   class PhpLexer
@@ -46,27 +51,39 @@ module Noir
     @chars : Array(Char)
     @tokens : Array(PhpToken)?
 
-    def initialize(source : String)
+    # `source` is a whole `.php` file by default, so lexing starts in HTML
+    # mode: nothing is code until the first `<?php` / `<?=`. Pass
+    # `php_mode: true` when `source` is a fragment already carved out of a PHP
+    # region (a closure body handed back for a recursive pass, say), which by
+    # construction has no opening tag of its own.
+    def initialize(source : String, *, php_mode : Bool = false)
       @chars = source.chars
       @size = @chars.size
       @masked = Array(Char).new(@size)
       @spans = [] of Tuple(Symbol, Int32, Int32)
       @tokens = nil
       @skip_ranges = nil
-      scan
+      scan(php_mode)
     end
 
     # Single masking pass. Walks the character array once, copying code
     # characters into `@masked` verbatim and blanking the interior of strings,
-    # comments and heredoc/nowdoc bodies (newlines kept). Each masked region is
-    # recorded in `@spans`.
-    private def scan
-      i = 0
+    # comments, heredoc/nowdoc bodies and inline-HTML regions (newlines kept).
+    # Each masked region is recorded in `@spans`.
+    private def scan(php_mode : Bool)
+      i = php_mode ? 0 : mask_inline_html(0)
       while i < @size
         c = @chars[i]
         nxt = i + 1 < @size ? @chars[i + 1] : '\0'
 
-        if c == '/' && nxt == '/'
+        # `?>` leaves PHP mode. This test sits alongside the string/comment/
+        # heredoc branches rather than ahead of them on purpose: those branches
+        # consume their whole region, so a `?>` written inside a literal or a
+        # block comment never reaches the top of this loop and cannot close
+        # the block.
+        if c == '?' && nxt == '>'
+          i = mask_inline_html(i)
+        elsif c == '/' && nxt == '/'
           i = mask_line_comment(i)
         elsif c == '#' && nxt != '['
           # `#` is a line comment, but `#[` opens a PHP 8 attribute (code).
@@ -90,11 +107,68 @@ module Noir
       end
     end
 
+    # `start` is the first character of an inert region: the top of a file that
+    # has not opened PHP yet, or the `?` of the `?>` that just closed it.
+    # Everything from there up to and including the next open tag is literal
+    # output, not code — masking it is what stops an apostrophe in prose, a
+    # `#`, a `//` or a `<<<` in markup from opening a string, a comment or a
+    # heredoc that runs to EOF and swallows the code below.
+    #
+    # The region is blanked into `@masked` with its line breaks kept (every
+    # analyzer reports `code_path` lines from these offsets, so the character
+    # count and the newline positions have to survive) and recorded as a single
+    # `:html` span. Returns the index just past the open tag, or `@size` when
+    # the file never opens PHP again — a file whose last PHP block runs to EOF
+    # without a closing `?>` is the recommended style, not an error.
+    private def mask_inline_html(start : Int32) : Int32
+      i = start
+      while i < @size
+        if len = open_tag_len(i)
+          len.times { @masked << ' ' }
+          i += len
+          @spans << {:html, start, i}
+          return i
+        end
+        c = @chars[i]
+        @masked << (c == '\n' || c == '\r' ? c : ' ')
+        i += 1
+      end
+      @spans << {:html, start, @size} if start < @size
+      @size
+    end
+
+    # Length of the PHP open tag at `i`, or nil when `i` isn't one. `<?=` is
+    # the short echo tag and opens code just like `<?php`, which is spelled
+    # case-insensitively and must be followed by whitespace or EOF (`<?phpinfo`
+    # is text). The bare `<?` short tag is accepted too — legacy files that use
+    # it would otherwise be read as one giant HTML blob and lose every route —
+    # except before `xml`, which would make an XML processing instruction open
+    # a PHP block in a template.
+    private def open_tag_len(i : Int32) : Int32?
+      return unless @chars[i] == '<' && i + 1 < @size && @chars[i + 1] == '?'
+      return 3 if @chars[i + 2]? == '='
+      if @chars[i + 2]?.try(&.downcase) == 'p' &&
+         @chars[i + 3]?.try(&.downcase) == 'h' &&
+         @chars[i + 4]?.try(&.downcase) == 'p'
+        after = @chars[i + 5]?
+        return 5 if after.nil? || after.ascii_whitespace?
+      end
+      return if @chars[i + 2]?.try(&.downcase) == 'x' &&
+                @chars[i + 3]?.try(&.downcase) == 'm' &&
+                @chars[i + 4]?.try(&.downcase) == 'l'
+      2
+    end
+
     # Blank from `start` (a `/` or `#`) to end of line; the newline itself is
     # left intact. Returns the index just past the comment body.
     private def mask_line_comment(start : Int32) : Int32
       i = start
       while i < @size && @chars[i] != '\n'
+        # A `//` or `#` comment also ends at `?>`: PHP leaves the tag outside
+        # the comment so that it still closes the block. Without this a
+        # one-line `<?php // note ?>` would keep the lexer in PHP mode over all
+        # the markup that follows.
+        break if @chars[i] == '?' && @chars[i + 1]? == '>'
         @masked << ' '
         i += 1
       end
@@ -321,9 +395,14 @@ module Noir
         # Emit any recorded span that starts here.
         if span_idx < spans.size && spans[span_idx][1] == i
           kind, s, e = spans[span_idx]
-          result << PhpToken.new(kind, @chars[s...e].join, s, e, line_for.call(s))
           span_idx += 1
           i = e
+          # Inert markup outside `<?php … ?>` is masked like a string literal
+          # so it can never be read as code, but unlike a literal it is not
+          # part of the program: a `.php` file with no open tag at all is pure
+          # HTML and has no tokens.
+          next if kind == :html
+          result << PhpToken.new(kind, @chars[s...e].join, s, e, line_for.call(s))
           next
         end
 
