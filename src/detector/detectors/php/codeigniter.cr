@@ -4,7 +4,7 @@ module Detector::Php
   class CodeIgniter < Detector
     detector_for "php_codeigniter",
       extensions: %w[.php .phtml],
-      basenames: %w[composer.json composer.lock]
+      basenames: %w[composer.json composer.lock spark]
 
     def detect(filename : String, file_contents : String) : Bool
       # composer.json with CodeIgniter dependency
@@ -16,7 +16,7 @@ module Detector::Php
       end
 
       # CodeIgniter 4 CLI script
-      if filename.ends_with?("/spark") || filename == "spark"
+      if File.basename(filename) == "spark"
         if file_contents.includes?("CodeIgniter") || file_contents.includes?("Config\\Paths")
           return true
         end

@@ -4,7 +4,7 @@ module Detector::Javascript
   class Fresh < Detector
     detector_for "js_fresh",
       extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
-      basenames: %w[package.json]
+      basenames: %w[package.json deno.json deno.jsonc]
 
     FRESH_MARKER = /\$fresh\//
 

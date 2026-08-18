@@ -3,7 +3,7 @@ require "../../../models/detector"
 module Detector::Javascript
   class Astro < Detector
     detector_for "js_astro",
-      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      extensions: %w[.js .mjs .cjs .jsx .ts .tsx .astro],
       basenames: %w[package.json]
 
     def detect(filename : String, file_contents : String) : Bool

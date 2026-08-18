@@ -4,7 +4,7 @@ module Detector::Javascript
   class Adonisjs < Detector
     detector_for "js_adonisjs",
       extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
-      basenames: %w[package.json]
+      basenames: %w[package.json ace]
 
     PACKAGE_MARKERS = Regex.union("@adonisjs/core", "\"adonis-") # legacy adonis-* packages
     SOURCE_MARKERS  = Regex.union("@adonisjs/core", "@ioc:Adonis")
@@ -17,9 +17,12 @@ module Detector::Javascript
         return true
       end
 
-      # `ace.js` is the AdonisJS CLI bootstrap — present in every
-      # project root.
-      return true if base == "ace.js" || base == "ace"
+      # `ace.js` / `ace` is the AdonisJS CLI bootstrap. Must contain
+      # AdonisJS markers to avoid false-positive matches on vendored
+      # Ace code editor files (`ace.js`).
+      if (base == "ace.js" || base == "ace") && content_matches?(file_contents, SOURCE_MARKERS)
+        return true
+      end
 
       # Source-side markers — handlers / route files import the v6
       # service-locator router or the v5 IoC alias.

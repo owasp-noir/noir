@@ -3,7 +3,7 @@ require "../../../models/detector"
 module Detector::Javascript
   class Nuxtjs < Detector
     detector_for "js_nuxtjs",
-      extensions: %w[.js .mjs .cjs .jsx .ts .tsx],
+      extensions: %w[.js .mjs .cjs .jsx .ts .tsx .mts .cts],
       basenames: %w[package.json]
 
     EVENT_HANDLER = /defineEventHandler/

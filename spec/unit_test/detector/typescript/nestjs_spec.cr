@@ -53,12 +53,32 @@ describe "Detect TypeScript NestJS" do
     instance.detect("component.tsx", "@Controller('api')").should be_true
   end
 
+  it "mts_and_cts_files" do
+    instance.applicable?("app.mts").should be_true
+    instance.detect("app.mts", "import { NestFactory } from '@nestjs/core'").should be_true
+
+    instance.applicable?("app.cts").should be_true
+    instance.detect("app.cts", "require('@nestjs/core')").should be_true
+  end
+
+  it "should_not_gate_in_javascript_or_manifest_files" do
+    instance.applicable?("app.js").should be_false
+    instance.applicable?("app.jsx").should be_false
+    instance.applicable?("app.mjs").should be_false
+    instance.applicable?("app.cjs").should be_false
+    instance.applicable?("package.json").should be_false
+    instance.applicable?("tsconfig.json").should be_false
+  end
+
   it "should_not_detect_non_nestjs" do
     instance.detect("app.ts", "import express from 'express'").should be_false
   end
 
   it "should_not_detect_javascript_file" do
     instance.detect("app.js", "import { NestFactory } from '@nestjs/core'").should be_false
+    instance.detect("app.jsx", "@Controller('api')").should be_false
+    instance.detect("app.mjs", "@Controller('api')").should be_false
+    instance.detect("app.cjs", "@Controller('api')").should be_false
   end
 
   it "should_not_detect_wrong_file_extension" do

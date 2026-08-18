@@ -98,4 +98,23 @@ describe "Detect Groovy Grails" do
   it "non_groovy_file_outside_grails_app" do
     instance.detect("project/src/main/groovy/Foo.groovy", "println 'hi'").should be_false
   end
+
+  # The `grails-app/` branch carries no content check, so it has to run on
+  # the scan-base-relative path. On the raw path a checkout that merely
+  # *sat under* an unrelated directory named `grails-app` made every file
+  # in the project — a one-line Python script included — report as Grails.
+  it "scopes the grails-app layout to the scan base" do
+    locator = CodeLocator.instance
+    previous_bases = locator.scan_base_paths
+
+    begin
+      locator.scan_base_paths = ["/srv/myproj"]
+      instance.detect("/srv/myproj/grails-app/controllers/BookController.groovy", "class BookController {}").should be_true
+
+      locator.scan_base_paths = ["/srv/grails-app/myproj"]
+      instance.detect("/srv/grails-app/myproj/src/a.py", "print(1)").should be_false
+    ensure
+      locator.scan_base_paths = previous_bases
+    end
+  end
 end

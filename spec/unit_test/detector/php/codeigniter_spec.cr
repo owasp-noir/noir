@@ -59,4 +59,13 @@ describe "Detect CodeIgniter" do
     instance.detect("index.php", "<?php echo 'Hello World';").should_not be_true
     instance.detect("composer.json", %({"name": "app", "require": {"php": "^8.0"}})).should_not be_true
   end
+
+  it "applicable? admits spark, composer.json, and PHP files" do
+    instance.applicable?("spark").should be_true
+    instance.applicable?("./spark").should be_true
+    instance.applicable?("t5/spark").should be_true
+    instance.applicable?("composer.json").should be_true
+    instance.applicable?("app/Config/Routes.php").should be_true
+    instance.applicable?("spark.py").should be_false
+  end
 end
