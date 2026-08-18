@@ -45,15 +45,33 @@ module Noir::CLI::ScanCommand
       ARGV.concat(saved)
     end
 
-    execute(noir_options)
+    # `args_copy`, not `noir_options`, is what says which settings the user
+    # typed on this command line: by the time the parser returns, a
+    # config-file value and a CLI flag are the same entry in the same hash.
+    execute(noir_options, args_copy)
   end
 
-  private def self.execute(noir_options : Hash(String, YAML::Any))
+  # Long-flag tokens present on the command line, with `--flag=value`
+  # reduced to `--flag`. The only question asked of it is "did the user
+  # type this flag?", which is why the values are dropped.
+  def self.cli_flag_names(argv : Array(String)) : Set(String)
+    names = Set(String).new
+    argv.each do |arg|
+      next unless arg.starts_with?("-")
+      names << (arg.index('=') ? arg.split("=", 2)[0] : arg)
+    end
+    names
+  end
+
+  private def self.execute(noir_options : Hash(String, YAML::Any), argv : Array(String))
+    cli_flags = cli_flag_names(argv)
+
     apply_cache_flags(noir_options)
     apply_prompt_overrides(noir_options)
     normalize_url!(noir_options)
     normalize_probe_via!(noir_options)
-    validate_url_dependent_flags(noir_options)
+    validate_url_dependent_flags(noir_options, cli_flags)
+    validate_exclude_path!(noir_options, argv)
     validate_options!(noir_options)
 
     if noir_options["nolog"] == false
@@ -127,6 +145,11 @@ module Noir::CLI::ScanCommand
     # crashes deep in the socket layer with an opaque error.
     begin
       parsed = URI.parse(url)
+
+      if host_problem = host_error(parsed.host)
+        Noir::CLI.die("-u/--url #{host_problem} in #{url.inspect}. Expected a base URL like http://localhost:3000.")
+      end
+
       if port = parsed.port
         unless (1..65535).includes?(port)
           Noir::CLI.die("-u/--url port #{port} is out of range (1-65535) in '#{url}'.")
@@ -148,6 +171,28 @@ module Noir::CLI::ScanCommand
       STDERR.puts "WARNING: -u/--url should be a base URL — query string / fragment '#{dropped}' would corrupt the per-endpoint URL. Stripping.".colorize(WARNING_COLOR)
       noir_options["url"] = YAML::Any.new(stripped)
     end
+  end
+
+  # Why `-u` needs an authority, not just a scheme: it is the *base* URL
+  # every discovered path is appended to. `URI.parse` is happy without a
+  # host — `-u http://` parses with an empty one — and the concatenation
+  # then promotes the first discovered path segment to the authority, so
+  # `/a` becomes `http://a`. With `--probe` or `--status-codes` that
+  # fires real HTTP requests at a host the user never named.
+  #
+  # Whitespace and control characters are rejected for the same reason
+  # `normalize_probe_via!` rejects a missing host: `-u "not a url"` and
+  # `-u $'http://a\nb/'` are accepted today and baked into every endpoint
+  # of the JSON/OAS/Postman output as an unusable URL.
+  #
+  # Returns nil when the host is usable, otherwise the reason (phrased to
+  # slot into the `-u/--url <reason> in <url>` message).
+  def self.host_error(host : String?) : String?
+    return "has no host" if host.nil? || host.empty?
+    if host.each_char.any? { |c| c.whitespace? || c.control? }
+      return "has whitespace or control characters in the host"
+    end
+    nil
   end
 
   # `--probe-via` is handed to Crest as a `p_addr` / `p_port` pair, and
@@ -207,35 +252,74 @@ module Noir::CLI::ScanCommand
     end
   end
 
-  private def self.validate_url_dependent_flags(noir_options : Hash(String, YAML::Any))
+  # A url-dependent setting the user did NOT type on this command line
+  # came from the config file, which cannot know whether this particular
+  # run has a target URL. Aborting on it bricked every URL-less scan for
+  # anyone with `status_codes:`/`probe:` in their config — a documented
+  # key the generated template lists — and blamed a flag they never
+  # typed. A CLI flag stays a hard usage error; a config value is
+  # downgraded to a warning and switched off for this run.
+  private def self.require_url_or_disable!(noir_options : Hash(String, YAML::Any),
+                                           cli_flags : Set(String),
+                                           flag : String,
+                                           key : String,
+                                           example : String,
+                                           disabled : YAML::Any)
+    if cli_flags.includes?(flag)
+      Noir::CLI.die("#{flag} needs a target URL. Pass it with -u/--url, e.g. `#{example}`.")
+    end
+
+    STDERR.puts "WARNING: config key `#{key}` (#{flag}) needs a target URL; none was given, so it is disabled for this scan. Pass one with -u/--url, or drop `#{key}` from the config file.".colorize(WARNING_COLOR)
+    noir_options[key] = disabled
+  end
+
+  private def self.validate_url_dependent_flags(noir_options : Hash(String, YAML::Any),
+                                                cli_flags : Set(String))
     url = noir_options["url"].to_s
 
-    if noir_options["status_codes"] == true && url.empty?
-      Noir::CLI.die("--status-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --status-codes -u http://localhost:3000`.")
+    if url.empty?
+      if noir_options["status_codes"] == true
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--status-codes", key: "status_codes",
+          example: "noir scan ./app --status-codes -u http://localhost:3000",
+          disabled: YAML::Any.new(false))
+      end
+
+      # `--probe` and `--probe-via` both fire HTTP requests against
+      # `endpoint.url`, which is just the discovered path (e.g. `/sign`)
+      # until `-u/--url` prepends a base. Without `-u` the request URL is
+      # malformed and Crest raises — but the SendReq / SendWithProxy
+      # delivery loops catch + log to debug level only, so the user sees
+      # the normal JSON output with zero requests sent and no warning.
+      # Fail early instead.
+      if noir_options["probe"]? == YAML::Any.new(true)
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--probe", key: "probe",
+          example: "noir scan ./app --probe -u http://localhost:3000",
+          disabled: YAML::Any.new(false))
+      end
+
+      probe_via = noir_options["probe_via"]?.try(&.to_s) || ""
+      unless probe_via.empty?
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--probe-via", key: "probe_via",
+          example: "noir scan ./app --probe-via #{probe_via} -u http://localhost:3000",
+          disabled: YAML::Any.new(""))
+      end
+
+      unless noir_options["exclude_codes"].to_s.empty?
+        require_url_or_disable!(noir_options, cli_flags,
+          flag: "--exclude-codes", key: "exclude_codes",
+          example: "noir scan ./app --exclude-codes 404,500 -u http://localhost:3000",
+          disabled: YAML::Any.new(""))
+      end
     end
 
-    # `--probe` and `--probe-via` both fire HTTP requests against
-    # `endpoint.url`, which is just the discovered path (e.g. `/sign`)
-    # until `-u/--url` prepends a base. Without `-u` the request URL is
-    # malformed and Crest raises — but the SendReq / SendWithProxy
-    # delivery loops catch + log to debug level only, so the user sees
-    # the normal JSON output with zero requests sent and no warning.
-    # Fail early instead.
-    if noir_options["probe"]? == YAML::Any.new(true) && url.empty?
-      Noir::CLI.die("--probe needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe -u http://localhost:3000`.")
-    end
-
-    probe_via = noir_options["probe_via"]?.try(&.to_s) || ""
-    if !probe_via.empty? && url.empty?
-      Noir::CLI.die("--probe-via needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --probe-via #{probe_via} -u http://localhost:3000`.")
-    end
-
+    # Runs whether or not a URL was given: a malformed value is a typo
+    # worth reporting even on the config-sourced path above (which leaves
+    # the key empty, so this loop then has nothing to check).
     exclude_codes = noir_options["exclude_codes"].to_s
     return if exclude_codes.empty?
-
-    if url.empty?
-      Noir::CLI.die("--exclude-codes needs a target URL. Pass it with -u/--url, e.g. `noir scan ./app --exclude-codes 404,500 -u http://localhost:3000`.")
-    end
 
     exclude_codes.split(",").each do |code|
       begin
@@ -243,6 +327,85 @@ module Noir::CLI::ScanCommand
       rescue
         Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
       end
+    end
+  end
+
+  # `--exclude-path` patterns are only interpreted deep inside the
+  # detector's file walk, so a malformed one either aborts the scan
+  # halfway (an unterminated `[`, which at least reports itself) or
+  # silently matches nothing — `'*.{rb'`, `'{'`, `''` and `'  '` were all
+  # accepted and excluded exactly zero files, which from the outside is
+  # indistinguishable from an exclusion that worked. Validate the whole
+  # list at parse time instead, before a single file is read.
+  private def self.validate_exclude_path!(noir_options : Hash(String, YAML::Any),
+                                          argv : Array(String))
+    if blank_exclude_path_arg?(argv)
+      Noir::CLI.die("--exclude-path needs a glob pattern; the value given is empty.")
+    end
+
+    raw = noir_options["exclude_path"]?.try(&.to_s) || ""
+    return if raw.empty?
+
+    raw.split(",").each do |entry|
+      # Normalized exactly the way `Noir::ExcludePath` normalizes it, so
+      # what is validated is what will run.
+      pattern = entry.strip.gsub('\\', '/')
+      if pattern.empty?
+        Noir::CLI.die("--exclude-path contains a blank pattern in #{raw.inspect}; every comma-separated entry must be a glob.")
+      end
+
+      if problem = glob_error(pattern)
+        Noir::CLI.die("--exclude-path contains an invalid glob pattern (#{problem}): #{pattern.inspect}.")
+      end
+    end
+  end
+
+  # `--exclude-path ''` and `--exclude-path=` both collapse to the same
+  # empty string the option carries when it was never passed at all (and
+  # `exclude_path: ""` is in the generated config template), so the fully
+  # blank case can only be read off argv.
+  private def self.blank_exclude_path_arg?(argv : Array(String)) : Bool
+    argv.each_with_index do |arg, i|
+      if arg == "--exclude-path"
+        value = argv[i + 1]?
+        # A missing value is OptionParser's error to report, not ours.
+        return true if value && value.strip.empty?
+      elsif arg.starts_with?("--exclude-path=")
+        return true if arg.split("=", 2)[1].strip.empty?
+      end
+    end
+    false
+  end
+
+  # Returns nil for a usable glob, otherwise the reason it is broken.
+  #
+  # `File.match?` parses the pattern itself, so character-class errors
+  # come back from Crystal with its own wording. Brace groups it accepts
+  # and then never matches (`*.{rb` matches nothing at all), so the
+  # `{`/`}` balance is checked here — skipping over character classes,
+  # inside which a brace is an ordinary character.
+  def self.glob_error(pattern : String) : String?
+    depth = 0
+    in_class = false
+    pattern.each_char do |char|
+      if in_class
+        in_class = false if char == ']'
+      elsif char == '['
+        in_class = true
+      elsif char == '{'
+        depth += 1
+      elsif char == '}'
+        depth -= 1
+        return "unmatched `}`" if depth < 0
+      end
+    end
+    return "unterminated `{` group" if depth > 0
+
+    begin
+      File.match?(pattern, "noir")
+      nil
+    rescue ex : File::BadPatternError
+      ex.message || "invalid pattern"
     end
   end
 

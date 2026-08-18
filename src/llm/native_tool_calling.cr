@@ -1,3 +1,5 @@
+require "uri"
+
 module LLM::NativeToolCalling
   DEFAULT_ALLOWLIST = ["openai", "xai", "github"]
 
@@ -20,18 +22,31 @@ module LLM::NativeToolCalling
 
   def self.canonical_provider(provider : String) : String
     p = provider.downcase.strip
+    return p unless p.includes?("://") || p.includes?(".")
 
-    if p.includes?("://") || p.includes?(".")
-      return "openai" if p.includes?("openai")
-      return "xai" if p.includes?("x.ai") || p.includes?("xai")
-      return "github" if p.includes?("github")
-      return "azure" if p.includes?("azure")
-      return "ollama" if p.includes?("ollama")
-      return "vllm" if p.includes?("vllm")
-      return "lmstudio" if p.includes?("lmstudio")
-    end
+    # Match on the host, not on the whole URL. The path is chosen by whoever
+    # runs the gateway, so `https://gw.internal/ollama/v1` used to canonicalize
+    # to a provider the operator never named — the same substring bug that sent
+    # such a URL to Ollama's native API in `AdapterFactory`. A host-less form
+    # ("openai.com", "api.x.ai") still matches on the string itself.
+    haystack = host_of(p) || p
+
+    return "openai" if haystack.includes?("openai")
+    return "xai" if haystack.includes?("x.ai") || haystack.includes?("xai")
+    return "github" if haystack.includes?("github")
+    return "azure" if haystack.includes?("azure")
+    return "ollama" if haystack.includes?("ollama")
+    return "vllm" if haystack.includes?("vllm")
+    return "lmstudio" if haystack.includes?("lmstudio")
 
     p
+  end
+
+  private def self.host_of(provider : String) : String?
+    return unless provider.includes?("://")
+    URI.parse(provider).host
+  rescue URI::Error
+    nil
   end
 
   def self.normalize_allowlist(allowlist : Array(String)? = nil) : Array(String)

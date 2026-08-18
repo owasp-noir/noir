@@ -156,6 +156,86 @@ describe ConfigInitializer do
     end
   end
 
+  # Every consumer of these keys reads them through `YAML::Any#as_i`. A
+  # quoted number parses as a String and used to raise "Cast from String to
+  # Int64 failed" inside the AI analyzer — caught as an analyzer failure, so
+  # the run exited 0 with AI analysis silently skipped. The generated
+  # template models the quoted spelling itself (`concurrency: "…"`), so it is
+  # the shape users copy.
+  describe "INTEGER_CONFIG_KEYS coercion" do
+    it "coerces a quoted ai_max_token into an Int" do
+      with_noir_home("ai_max_token: \"4000\"\n") do |options|
+        options["ai_max_token"].as_i.should eq(4000)
+      end
+    end
+
+    it "coerces a quoted ai_agent_max_steps into an Int" do
+      with_noir_home("ai_agent_max_steps: \"7\"\n") do |options|
+        options["ai_agent_max_steps"].as_i.should eq(7)
+      end
+    end
+
+    it "leaves a real YAML int alone" do
+      with_noir_home("ai_max_token: 1200\n") do |options|
+        options["ai_max_token"].as_i.should eq(1200)
+      end
+    end
+
+    it "falls back to the default for an unparsable integer" do
+      # Same "warn on stderr, keep going with the default" shape as the
+      # invalid-boolean path, so `.as_i` downstream can never raise.
+      with_noir_home("ai_max_token: \"abc\"\n") do |options|
+        options["ai_max_token"].as_i.should eq(0)
+      end
+    end
+  end
+
+  # A YAML sequence is the natural spelling for a list of globs or tech
+  # names, and `base:` / `probe_header:` in the same file *are* sequences.
+  # Untreated, `exclude_path: ["*.py"]` stringified to Crystal's array
+  # inspect, which matches no file — the pattern silently excluded nothing.
+  describe "CSV_CONFIG_KEYS normalization" do
+    it "joins a YAML sequence for exclude_path with commas" do
+      body = <<-YAML
+        exclude_path:
+          - "*.py"
+          - "*_test.go"
+        YAML
+      with_noir_home(body) do |options|
+        options["exclude_path"].to_s.should eq("*.py,*_test.go")
+      end
+    end
+
+    it "normalizes every CSV key, not just exclude_path" do
+      body = <<-YAML
+        exclude_codes: [404, 500]
+        techs: [ruby_sinatra]
+        only_techs: [ruby_rails]
+        exclude_techs: [php_pure]
+        use_taggers: [cors, oauth]
+        YAML
+      with_noir_home(body) do |options|
+        options["exclude_codes"].to_s.should eq("404,500")
+        options["techs"].to_s.should eq("ruby_sinatra")
+        options["only_techs"].to_s.should eq("ruby_rails")
+        options["exclude_techs"].to_s.should eq("php_pure")
+        options["use_taggers"].to_s.should eq("cors,oauth")
+      end
+    end
+
+    it "leaves an existing comma string untouched" do
+      with_noir_home("exclude_path: \"*.py,*.rb\"\n") do |options|
+        options["exclude_path"].to_s.should eq("*.py,*.rb")
+      end
+    end
+
+    it "turns an empty sequence into an empty string" do
+      with_noir_home("use_taggers: []\n") do |options|
+        options["use_taggers"].to_s.should eq("")
+      end
+    end
+  end
+
   describe "generate_config_file" do
     it "documents only_techs and tls_skip_verify (both are live config keys)" do
       body = ConfigInitializer.new.generate_config_file
@@ -234,6 +314,85 @@ describe ConfigInitializer do
         options.has_key?("send_req").should be_false
       ensure
         File.delete(path) if File.exists?(path)
+      end
+    end
+
+    # `Noir::Home.path` calls `Noir::CLI.die` when neither NOIR_HOME nor HOME
+    # is set, and `initialize` used to evaluate it on its first line — above
+    # the override branch. So `--config-file ./f.yaml`, the documented escape
+    # hatch for exactly that environment (distroless images, `--user`
+    # containers, hardened CI runners), died before the override was looked
+    # at, leaving no way to run a scan at all.
+    #
+    # Note what a regression looks like here: the pre-fix code doesn't fail
+    # this example, it `exit(1)`s the whole spec process.
+    it "reads an override file with neither NOIR_HOME nor HOME set" do
+      path = File.tempname("noir-cfg-homeless-")
+      File.write(path, "concurrency: 9\n")
+      saved_home = ENV["HOME"]?
+      saved_noir_home = ENV["NOIR_HOME"]?
+      ENV.delete("HOME")
+      ENV.delete("NOIR_HOME")
+
+      begin
+        options = ConfigInitializer.new(path).read_config
+        options["concurrency"].to_s.should eq("9")
+      ensure
+        ENV["HOME"] = saved_home if saved_home
+        ENV["NOIR_HOME"] = saved_noir_home if saved_noir_home
+        File.delete?(path)
+      end
+    end
+
+    # The escape hatch should open, not make the error disappear: with no
+    # override there is genuinely nowhere to read from, and the clear
+    # "set NOIR_HOME" message is the right answer. `setup` is the part that
+    # would otherwise try to `mkdir` a home that can't be resolved, so pin
+    # that it still walks the Noir::Home path when there's no override.
+    it "still resolves the default config under NOIR_HOME when no override is given" do
+      dir = File.tempname("noir-cfg-default-home-")
+      Dir.mkdir(dir)
+      saved_home = ENV["HOME"]?
+      saved_noir_home = ENV["NOIR_HOME"]?
+      ENV.delete("HOME")
+      ENV["NOIR_HOME"] = dir
+
+      begin
+        ConfigInitializer.new.setup
+        File.exists?(File.join(dir, "config.yaml")).should be_true
+      ensure
+        ENV["HOME"] = saved_home if saved_home
+        if s = saved_noir_home
+          ENV["NOIR_HOME"] = s
+        else
+          ENV.delete("NOIR_HOME")
+        end
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    # `Noir::Home.path` expands a leading `~` on purpose: a path arriving from
+    # a Dockerfile `ENV` / systemd `Environment=` / .env loader never gets the
+    # shell's expansion. `--config-file` is fed from the same kinds of place
+    # and had no expansion at all, so `~/noir.yaml` resolved to a literal
+    # `./~/noir.yaml` under the cwd.
+    it "expands a leading ~ in the override path" do
+      home = File.tempname("noir-cfg-tilde-home-")
+      Dir.mkdir(home)
+      saved_home = ENV["HOME"]?
+      ENV["HOME"] = home
+      File.write(File.join(home, "noir.yaml"), "concurrency: 23\n")
+
+      begin
+        options = ConfigInitializer.new("~/noir.yaml").read_config
+        options["concurrency"].to_s.should eq("23")
+      ensure
+        if s = saved_home
+          ENV["HOME"] = s
+        else
+          ENV.delete("HOME")
+        end
+        FileUtils.rm_rf(home)
       end
     end
 

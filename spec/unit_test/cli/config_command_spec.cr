@@ -77,7 +77,89 @@ describe "Noir::CLI::ConfigCommand.default_editor" do
   end
 end
 
+describe "Noir::CLI::ConfigCommand.parse_argv" do
+  it "captures the action" do
+    parsed = Noir::CLI::ConfigCommand.parse_argv(["show"])
+    parsed.action.should eq("show")
+    parsed.override_path.should be_nil
+    parsed.help.should be_false
+    parsed.error.should be_nil
+  end
+
+  it "captures --config-file in both the spaced and `=` forms" do
+    Noir::CLI::ConfigCommand.parse_argv(["show", "--config-file", "/tmp/a.yaml"])
+      .override_path.should eq("/tmp/a.yaml")
+    Noir::CLI::ConfigCommand.parse_argv(["show", "--config-file=/tmp/a.yaml"])
+      .override_path.should eq("/tmp/a.yaml")
+  end
+
+  it "does not swallow the action that follows --config-file's value" do
+    parsed = Noir::CLI::ConfigCommand.parse_argv(["--config-file", "/tmp/a.yaml", "show"])
+    parsed.action.should eq("show")
+    parsed.override_path.should eq("/tmp/a.yaml")
+    parsed.error.should be_nil
+  end
+
+  it "errors when --config-file has no value" do
+    # `nil` used to fall through to the DEFAULT config path, so
+    # `noir config show --config-file` printed a different file than the
+    # one the user asked to inspect — and `edit` would have created it.
+    Noir::CLI::ConfigCommand.parse_argv(["show", "--config-file"])
+      .error.should eq("--config-file requires an argument.")
+    Noir::CLI::ConfigCommand.parse_argv(["show", "--config-file="])
+      .error.should eq("--config-file requires an argument.")
+    Noir::CLI::ConfigCommand.parse_argv(["--config-file", "--no-color", "show"])
+      .error.should eq("--config-file requires an argument.")
+  end
+
+  it "leaves override_path nil when --config-file is malformed" do
+    Noir::CLI::ConfigCommand.parse_argv(["show", "--config-file"])
+      .override_path.should be_nil
+  end
+
+  it "rejects a surplus positional instead of dropping it" do
+    # `noir config path init` used to run `path` and exit 0, so a typo
+    # ran a different command than the one typed.
+    parsed = Noir::CLI::ConfigCommand.parse_argv(["path", "init"])
+    parsed.action.should eq("path")
+    parsed.error.should eq("Unexpected argument: init. `noir config` takes a single action.")
+  end
+
+  it "pluralizes and lists every surplus positional" do
+    Noir::CLI::ConfigCommand.parse_argv(["path", "init", "show"])
+      .error.should eq("Unexpected arguments: init, show. `noir config` takes a single action.")
+  end
+
+  it "rejects an unknown flag instead of ignoring it" do
+    Noir::CLI::ConfigCommand.parse_argv(["show", "--bogus-flag"])
+      .error.should eq("Unknown option: --bogus-flag. Run `noir config --help`.")
+  end
+
+  it "accepts the router's global flags" do
+    parsed = Noir::CLI::ConfigCommand.parse_argv(["--no-color", "show", "--no-spinner"])
+    parsed.action.should eq("show")
+    parsed.error.should be_nil
+  end
+
+  it "flags -h / --help anywhere in argv" do
+    Noir::CLI::ConfigCommand.parse_argv(["-h"]).help.should be_true
+    Noir::CLI::ConfigCommand.parse_argv(["show", "--help"]).help.should be_true
+  end
+end
+
 describe "Noir::CLI::ConfigCommand.config_path" do
+  it "expands a leading ~ in --config-file" do
+    # Most shells do not expand a tilde after `=`, and Docker/systemd
+    # wrappers never expand one — pre-fix this resolved to a literal `~`
+    # directory under the cwd.
+    expected = File.join(Path.home.to_s, "nope.yaml")
+    Noir::CLI::ConfigCommand.config_path("~/nope.yaml").should eq(expected)
+  end
+
+  it "leaves an absolute --config-file path alone" do
+    Noir::CLI::ConfigCommand.config_path("/tmp/noir-test.yaml").should eq("/tmp/noir-test.yaml")
+  end
+
   it "resolves under NOIR_HOME when set" do
     saved = ENV["NOIR_HOME"]?
     ENV["NOIR_HOME"] = "/tmp/noir-test-home"

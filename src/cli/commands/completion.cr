@@ -9,28 +9,63 @@ module Noir::CLI::CompletionCommand
   SHELLS = Noir::CLI::Catalog::SHELLS
 
   # Parsed argv. Extracted from `run` so the parser stays unit-testable
-  # without going through the `exit`/`die` side effects.
-  record Parsed, shell : String?, help : Bool
+  # without going through the `exit`/`die` side effects. `error` is
+  # recorded rather than raised so `run` can turn it into a clean
+  # `Noir::CLI.die` line.
+  record Parsed, shell : String?, help : Bool, error : String?
 
   def self.parse_argv(argv : Array(String)) : Parsed
     shell = nil
     help = false
+    error = nil
+    rest = [] of String
+
     argv.each do |a|
       case a
       when "-h", "--help"
         help = true
+      when "--no-color", "--no-spinner"
+        # Global flags — the router consumes both before dispatching here.
+        # Accepted (not rejected as unknown) so a direct `run` call and a
+        # future router change both behave.
       else
-        # Shell names are matched case-insensitively (`ZSH` == `zsh`).
-        shell ||= a.downcase
+        if a.starts_with?("-")
+          # Silently ignoring an unknown flag meant `noir completion zsh
+          # --oops` emitted a script and exited 0, hiding the typo.
+          error ||= "Unknown option: #{a}. Run `noir completion --help`."
+        elsif shell.nil?
+          # Shell names are matched case-insensitively (`ZSH` == `zsh`).
+          shell = a.downcase
+        else
+          rest << a
+        end
       end
     end
-    Parsed.new(shell: shell, help: help)
+
+    # `noir completion zsh bash` used to emit zsh only, exit 0, and leave
+    # the user's bash completion silently unwritten. `cache` and `rules`
+    # already reject surplus positionals; so does this now.
+    if error.nil? && !rest.empty?
+      plural = rest.size > 1 ? "s" : ""
+      error = "Unexpected argument#{plural}: #{rest.join(", ")}. Usage: noir completion <shell>"
+    end
+
+    Parsed.new(shell: shell, help: help, error: error)
   end
 
   def self.run(argv : Array(String))
     parsed = parse_argv(argv)
 
-    if parsed.help || parsed.shell.nil?
+    if parsed.help
+      print_help
+      exit
+    end
+
+    if err = parsed.error
+      Noir::CLI.die(err)
+    end
+
+    if parsed.shell.nil?
       print_help
       exit
     end

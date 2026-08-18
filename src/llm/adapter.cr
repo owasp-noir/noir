@@ -4,6 +4,7 @@
 # - LLM::General (OpenAI-compatible chat APIs)
 # - LLM::Ollama (Ollama local API with optional KV context reuse)
 
+require "uri"
 require "./general/client"
 require "./ollama/ollama"
 require "./acp/client"
@@ -161,6 +162,45 @@ module LLM
       active_allowlist.includes?(LLM::NativeToolCalling.canonical_provider(provider))
     end
 
+    # Ollama's native API (`POST /api/generate`) is a different protocol and a
+    # different body shape from the OpenAI-compatible `/v1/chat/completions`
+    # every other provider speaks, so this decision has to be precise.
+    #
+    # It used to be `provider.downcase.includes?("ollama")` tested against the
+    # *whole* provider string. A path segment is chosen by whoever runs the
+    # gateway, so an OpenAI-compatible endpoint mounted at
+    # `http://gw.example/ollama/v1` was handed the wrong API — and, because
+    # the same full string is used as the base URL, the request went to
+    # `http://gw.example/ollama/v1/api/generate`. The 404 came back as an
+    # empty result rather than an error.
+    #
+    # Only the exact alias and the *host* decide now. A host named `ollama`
+    # that is explicitly serving the compatibility path is still an
+    # OpenAI-compatible endpoint.
+    def self.ollama_native?(provider : String) : Bool
+      prov = provider.strip.downcase
+      return true if prov == "ollama"
+      return false unless prov.includes?("://")
+
+      uri = URI.parse(prov)
+      host = uri.host
+      return false if host.nil? || !host.includes?("ollama")
+
+      !uri.path.to_s.chomp("/").ends_with?("/chat/completions")
+    rescue URI::Error
+      false
+    end
+
+    # The native API lives at the server root. The CLI's own help prints
+    # `ollama -> http://localhost:11434/v1`, and that `/v1` is the
+    # OpenAI-compatible mount: appending `/api/generate` to it yields a 404,
+    # so it is dropped before `LLM::Ollama` builds the endpoint URL.
+    def self.ollama_base_url(provider : String) : String
+      prov = provider.strip
+      return "http://localhost:11434" unless prov.includes?("://")
+      prov.chomp("/").rchop("/v1").chomp("/")
+    end
+
     def self.for(
       provider : String,
       model : String,
@@ -172,9 +212,8 @@ module LLM
       if LLM::ACPClient.acp_provider?(prov)
         acp_model = LLM::ACPClient.default_model(provider, model)
         ACPAdapter.new(LLM::ACPClient.new(provider, acp_model, event_sink))
-      elsif prov.includes?("ollama")
-        url = provider.includes?("://") ? provider : "http://localhost:11434"
-        OllamaAdapter.new(LLM::Ollama.new(url, model))
+      elsif ollama_native?(prov)
+        OllamaAdapter.new(LLM::Ollama.new(ollama_base_url(provider), model))
       else
         native_tool_calling = native_tool_calling_enabled_for_provider?(provider, native_tool_calling_allowlist)
         GeneralAdapter.new(LLM::General.new(provider, model, api_key), native_tool_calling)

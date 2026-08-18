@@ -3,6 +3,25 @@ require "../../src/tagger/tagger"
 require "../../src/techs/techs"
 require "../../src/options.cr"
 
+# Runs `run_options_parser` against a temporary `--config-file` plus the given
+# CLI arguments, so a spec can pin the config-vs-CLI precedence of one flag.
+# ARGV and the temp file are restored/removed either way.
+private def with_config_argv(config_body : String, args : Array(String), &)
+  config_path = File.tempname("noir-precedence-", ".yaml")
+  File.write(config_path, config_body)
+  original_argv = ARGV.dup
+
+  ARGV.clear
+  ARGV.concat(["-b", "./app", "--config-file", config_path] + args)
+  begin
+    yield run_options_parser
+  ensure
+    ARGV.clear
+    ARGV.concat(original_argv)
+    File.delete?(config_path)
+  end
+end
+
 describe "default_options" do
   it "init" do
     noir_options = create_test_options
@@ -402,6 +421,121 @@ describe "run_options_parser" do
     ensure
       ARGV.clear
       ARGV.concat(original_argv)
+    end
+  end
+
+  # `append_to_csv_option`'s own comment states the rule — "First CLI
+  # occurrence of this flag replaces any config-file value outright (CLI wins
+  # over config, not `config,cli`)" — but `reset_seen:` was passed at exactly
+  # one call site. Every other CSV flag concatenated onto the config value.
+  # For `--only-techs` that *inverted* the flag: the CLI widened the
+  # restriction instead of replacing it, and there was no way to override a
+  # config-file `only_techs` from the command line at all.
+  #
+  # The four cases below are the whole contract: the reset is per-flag and
+  # fires once, on the transition from config to CLI. A second occurrence of
+  # the same flag on one command line must still accumulate.
+  describe "CSV flags override the config file rather than appending to it" do
+    csv_cases = [
+      {flag: "--exclude-codes", key: "exclude_codes", config: "404", first: "500", second: "418"},
+      {flag: "--exclude-path", key: "exclude_path", config: "*.md", first: "*.js", second: "*.ts"},
+      {flag: "--use-taggers", key: "use_taggers", config: "cors", first: "oauth", second: "hunt"},
+      {flag: "-t", key: "techs", config: "ruby_rails", first: "python_flask", second: "php_pure"},
+      {flag: "--only-techs", key: "only_techs", config: "ruby_rails", first: "python_flask", second: "php_pure"},
+      {flag: "--exclude-techs", key: "exclude_techs", config: "ruby_rails", first: "python_flask", second: "php_pure"},
+    ]
+
+    csv_cases.each do |c|
+      it "#{c[:flag]}: config-only value is kept when the flag is absent" do
+        with_config_argv("#{c[:key]}: \"#{c[:config]}\"\n", [] of String) do |options|
+          options[c[:key]].to_s.should eq(c[:config])
+        end
+      end
+
+      it "#{c[:flag]}: one CLI occurrence replaces the config value" do
+        with_config_argv("#{c[:key]}: \"#{c[:config]}\"\n", [c[:flag], c[:first]]) do |options|
+          options[c[:key]].to_s.should eq(c[:first])
+        end
+      end
+
+      it "#{c[:flag]}: two CLI occurrences accumulate with each other, not with the config" do
+        args = [c[:flag], c[:first], c[:flag], c[:second]]
+        with_config_argv("#{c[:key]}: \"#{c[:config]}\"\n", args) do |options|
+          options[c[:key]].to_s.should eq("#{c[:first]},#{c[:second]}")
+        end
+      end
+
+      it "#{c[:flag]}: repeated CLI flags still accumulate with no config file" do
+        original_argv = ARGV.dup
+        ARGV.clear
+        ARGV.concat(["-b", "./app", c[:flag], c[:first], c[:flag], c[:second]])
+        begin
+          run_options_parser[c[:key]].to_s.should eq("#{c[:first]},#{c[:second]}")
+        ensure
+          ARGV.clear
+          ARGV.concat(original_argv)
+        end
+      end
+    end
+
+    # The reset is keyed per flag, so one flag's first occurrence must not
+    # clear a different flag's config value.
+    it "resets only the flag that was actually passed" do
+      body = "only_techs: \"ruby_rails\"\nexclude_path: \"*.md\"\n"
+      with_config_argv(body, ["--only-techs", "python_flask"]) do |options|
+        options["only_techs"].to_s.should eq("python_flask")
+        options["exclude_path"].to_s.should eq("*.md")
+      end
+    end
+  end
+
+  # In v0 these were real `parser.on "--set-pvalue VALUE"` entries, so
+  # Crystal's OptionParser accepted both spellings. The v1 hand-rolled
+  # extractor only matched the bare token, so the `=` form fell through to
+  # `invalid_option` and hard-failed — while
+  # `Noir::CLI::Legacy.translate_flag_aliases` *does* handle `=` for the
+  # probe aliases, leaving the two legacy layers disagreeing.
+  describe "legacy --set-pvalue= (equals form)" do
+    it "accepts the = form for every LEGACY_PVALUE_TARGETS entry" do
+      Noir::OptionsParsing::LEGACY_PVALUE_TARGETS.each do |flag, key|
+        opts = create_test_options
+        remaining = Noir::OptionsParsing.extract_legacy_aliases(["#{flag}=EQ_VALUE"], opts)
+        remaining.should be_empty
+        opts[key].as_a.map(&.to_s).should eq(["EQ_VALUE"])
+      end
+    end
+
+    it "splits on the first = only, so a VALUE containing = survives" do
+      opts = create_test_options
+      Noir::OptionsParsing.extract_legacy_aliases(["--set-pvalue-query=key=val"], opts)
+      opts["set_pvalue_query"].as_a.map(&.to_s).should eq(["key=val"])
+    end
+
+    it "mixes with the bare form and accumulates" do
+      opts = create_test_options
+      Noir::OptionsParsing.extract_legacy_aliases(
+        ["--set-pvalue", "BARE", "--set-pvalue=EQ"],
+        opts,
+      )
+      opts["set_pvalue"].as_a.map(&.to_s).should eq(["BARE", "EQ"])
+    end
+
+    it "leaves an unrelated = token for OptionParser" do
+      opts = create_test_options
+      remaining = Noir::OptionsParsing.extract_legacy_aliases(["--format=json"], opts)
+      remaining.should eq(["--format=json"])
+    end
+
+    it "reaches noir_options through the full parser" do
+      original_argv = ARGV.dup
+      ARGV.clear
+      ARGV.concat(["-b", "./app", "--set-pvalue=abc"])
+      begin
+        run_options_parser["set_pvalue"].as_a.map(&.to_s).should eq(["abc"])
+      ensure
+        ARGV.clear
+        ARGV.concat(original_argv)
+      end
     end
   end
 

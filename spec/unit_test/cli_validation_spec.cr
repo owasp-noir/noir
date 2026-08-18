@@ -296,4 +296,89 @@ describe Noir::CliValidation do
       Noir::CliValidation.validate_tech_names!(options)
     end
   end
+
+  # `--passive-scan-severity` is validated by its flag handler in options.cr,
+  # but the identical `passive_scan_severity:` config key reached
+  # `PassiveScanSeverity` untouched — and `meets_threshold?` returns true when
+  # the threshold is unknown. So a config-file typo didn't loosen the filter
+  # by a level, it removed it: the user's intended filter became no filter,
+  # silently. Both sources now pass through this one gate.
+  describe "passive_scan_severity" do
+    it "rejects an unknown severity" do
+      options = create_test_options
+      options["passive_scan_severity"] = YAML::Any.new("bogus")
+
+      expect_raises(Noir::CliValidation::Error, /Invalid passive scan severity "bogus"/) do
+        Noir::CliValidation.validate_passive_scan_severity!(options)
+      end
+    end
+
+    it "rejects an empty severity" do
+      # `passive_scan_severity:` with no value parses to nil -> "", which is
+      # just as unknown to PassiveScanSeverity as a typo is.
+      options = create_test_options
+      options["passive_scan_severity"] = YAML::Any.new("")
+
+      expect_raises(Noir::CliValidation::Error, /Invalid passive scan severity/) do
+        Noir::CliValidation.validate_passive_scan_severity!(options)
+      end
+    end
+
+    it "accepts every documented level" do
+      %w[critical high medium low].each do |level|
+        options = create_test_options
+        options["passive_scan_severity"] = YAML::Any.new(level)
+        Noir::CliValidation.validate_passive_scan_severity!(options)
+        options["passive_scan_severity"].to_s.should eq(level)
+      end
+    end
+
+    it "normalizes case, matching what the CLI flag stores" do
+      options = create_test_options
+      options["passive_scan_severity"] = YAML::Any.new("HIGH")
+      Noir::CliValidation.validate_passive_scan_severity!(options)
+      options["passive_scan_severity"].to_s.should eq("high")
+    end
+  end
+
+  # `--ai-max-token` / `--ai-agent-max-steps` are bounded by
+  # `positive_int_or_die!` on the CLI side; their config twins had no bound at
+  # all. ConfigInitializer coerces the value to an Int, this checks the range.
+  describe "ai integer options" do
+    it "rejects a zero agent step budget" do
+      options = create_test_options
+      options["ai_agent_max_steps"] = YAML::Any.new(0)
+
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-agent-max-steps '0'/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+
+    it "rejects a negative token budget" do
+      options = create_test_options
+      options["ai_max_token"] = YAML::Any.new(-1)
+
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-max-token '-1'/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+
+    it "accepts ai_max_token 0, the shipped default meaning \"no limit\"" do
+      # `--ai-max-token 0` is rejected on the CLI, but 0 is what
+      # default_options and the generated template both carry, so the config
+      # path must keep accepting it.
+      options = create_test_options
+      Noir::CliValidation.validate_ai_integer_options!(options)
+      options["ai_max_token"].as_i.should eq(0)
+    end
+
+    it "rejects a non-numeric value that survived coercion" do
+      options = create_test_options
+      options["ai_max_token"] = YAML::Any.new("abc")
+
+      expect_raises(Noir::CliValidation::Error, /Invalid --ai-max-token "abc"/) do
+        Noir::CliValidation.validate_ai_integer_options!(options)
+      end
+    end
+  end
 end

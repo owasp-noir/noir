@@ -14,11 +14,10 @@ require "./common"
 # them via its own OptionParser. That keeps `noir -b ./app -P` working
 # exactly as it did in v0.
 module Noir::CLI::Legacy
-  # Global short-circuits. The first time any of these appear anywhere
-  # in ARGV the entire invocation is rewritten to the canonical v1
-  # subcommand call, so flags that are inherently global (`-v`,
-  # `--version`) behave the same no matter whether the user typed them
-  # before, after, or in place of a verb.
+  # Global short-circuits for *v0-shaped* invocations. v0 had no verb,
+  # so these flags could sit anywhere in ARGV; the first one found
+  # rewrites the whole invocation to the canonical v1 subcommand call.
+  # A v1 invocation that opens with a verb is exempt — see `rewrite`.
   TERMINAL_REWRITES = {
     "--list-techs"   => ["list", "techs"],
     "--list-taggers" => ["list", "taggers"],
@@ -45,9 +44,34 @@ module Noir::CLI::Legacy
     "--use-filters"  => "--probe-skip",
   }
 
+  # True when ARGV opens with a v1 verb, i.e. exactly the shape the
+  # router dispatches to a subcommand (`head` must be in
+  # `KNOWN_COMMANDS`). Everything after that verb is that subcommand's
+  # own argv and must reach its own parser untouched.
+  def self.subcommand_invocation?(argv : Array(String)) : Bool
+    head = argv.first?
+    return false if head.nil?
+    Noir::CLI::KNOWN_COMMANDS.includes?(head)
+  end
+
   # Returns a possibly-rewritten ARGV. If a terminal v0 flag is found,
   # the entire ARGV is replaced with the equivalent v1 invocation.
+  #
+  # The scan stops before it starts on a v1 subcommand invocation. The
+  # rewrite table is a *global* argv substitution, so scanning past a
+  # verb let it hijack that subcommand's own flags: `noir rules update
+  # -v` matched `-v => ["version"]`, printed the version and exited 0
+  # while `noir rules --help` advertises `-v, --verbose` and the rules
+  # were never updated — silently turning the documented
+  # `noir rules update && noir scan . -P` precondition into a no-op that
+  # reports success. `-V`, `--version`, `--list-techs`, `--build-info`,
+  # `--help-all` and `--generate-completion` had the identical exposure,
+  # so the rule itself is scoped rather than the one entry. v0
+  # invocations are unaffected: they have no verb to open with (v0 had
+  # no subcommands), so `noir -b ./app --list-techs` still rewrites.
   def self.rewrite(argv : Array(String)) : Array(String)
+    return argv if subcommand_invocation?(argv)
+
     argv.each_with_index do |arg, i|
       if rewrite = TERMINAL_REWRITES[arg]?
         return rewrite.dup

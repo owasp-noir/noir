@@ -5,6 +5,7 @@ require "./techs/techs"
 require "./llm/acp/targets"
 require "./llm/native_tool_calling"
 require "./output_builder/formats"
+require "./passive_scan/severity"
 
 module Noir::CliValidation
   class Error < Exception
@@ -19,6 +20,8 @@ module Noir::CliValidation
     validate_config_file!(options)
     validate_tech_names!(options)
     validate_passive_scan_paths!(options)
+    validate_passive_scan_severity!(options)
+    validate_ai_integer_options!(options)
     validate_ai_provider_pair!(options)
     validate_ai_native_tools_allowlist!(options)
     warn_about_unused_delivery_flags(options)
@@ -119,6 +122,55 @@ module Noir::CliValidation
       next if path.empty?
       raise Error.new("--passive-scan-path does not exist: #{path}") unless File.exists?(path)
       raise Error.new("--passive-scan-path is not a directory: #{path}") unless File.directory?(path)
+    end
+  end
+
+  # `--passive-scan-severity` is checked by its own flag handler in
+  # options.cr, but the identical `passive_scan_severity:` config key reached
+  # `PassiveScanSeverity` untouched — and `meets_threshold?` treats an
+  # unrecognized threshold as "include everything" (`return true if
+  # min_level.nil?`). So a typo in the config file didn't loosen the filter
+  # by one level, it removed it, silently, in the direction the user least
+  # wanted. Gate both sources here, in the one place config and CLI meet.
+  def self.validate_passive_scan_severity!(options : Hash(String, YAML::Any))
+    value = options["passive_scan_severity"]?
+    return if value.nil? # library caller that never set the key
+
+    severity = value.to_s
+    unless PassiveScanSeverity.valid?(severity)
+      raise Error.new("Invalid passive scan severity #{severity.inspect}. Valid: #{PassiveScanSeverity.valid_levels.join(", ")}")
+    end
+
+    # The flag handler stores a downcased value; do the same for the config
+    # path so downstream comparisons see one spelling.
+    options["passive_scan_severity"] = YAML::Any.new(severity.downcase)
+  end
+
+  # `--ai-max-token` / `--ai-agent-max-steps` are bounded by
+  # `positive_int_or_die!` on the CLI side. Their config-file twins had no
+  # bound at all, so a negative or zero step budget went straight into the
+  # agent loop. ConfigInitializer has already coerced the value to an Int by
+  # this point; all that's left is the range.
+  #
+  # Zero is meaningful for `ai_max_token` only — it is the shipped default
+  # and the generated template's own value, documented as "no limit" — so it
+  # is accepted here even though `--ai-max-token 0` is not.
+  def self.validate_ai_integer_options!(options : Hash(String, YAML::Any))
+    {"ai_max_token" => 0, "ai_agent_max_steps" => 1}.each do |key, minimum|
+      value = options[key]?
+      next if value.nil?
+
+      raw = value.raw
+      number = raw.is_a?(Int) ? raw.to_i64 : raw.to_s.strip.to_i64?
+      flag = "--#{key.tr("_", "-")}"
+
+      if number.nil?
+        raise Error.new("Invalid #{flag} #{value.to_s.inspect}. Must be an integer.")
+      end
+
+      if number < minimum
+        raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = no limit)" : "a positive integer"}.")
+      end
     end
   end
 

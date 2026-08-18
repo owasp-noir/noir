@@ -5,7 +5,28 @@ require "../utils/utils"
 require "../utils/http_symbols"
 require "../utils/url_origin"
 
+# Max concurrent in-flight probe requests, shared by every class that fires
+# requests at discovered endpoints. Bounds the fiber/socket fan-out so a large
+# endpoint set can't exhaust file descriptors. Backed by the validated
+# --concurrency value (already clamped to a sane ceiling).
+#
+# A module rather than a `Deliver` method because `StatusCodeProbe` is
+# deliberately not a `Deliver` subclass (see its class comment) yet has to
+# bound its fan-out exactly the same way. Keeping the rule in one place is what
+# stops the two from drifting again: the status probe was strictly sequential
+# for exactly as long as this lived on `Deliver` alone.
+module ProbeConcurrency
+  DEFAULT_PROBE_CONCURRENCY = 16
+
+  protected def concurrency_limit : Int32
+    n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
+    n > 0 ? n : DEFAULT_PROBE_CONCURRENCY
+  end
+end
+
 class Deliver
+  include ProbeConcurrency
+
   @logger : NoirLogger
   @options : Hash(String, YAML::Any)
   @is_debug : Bool
@@ -209,8 +230,14 @@ class Deliver
     return endpoint.url unless PROBE_PATH_FILL_METHODS.includes?(request_method.upcase)
 
     url = endpoint.url
-    endpoint.params.each do |param|
-      next unless param.param_type == "path"
+    # Longest name first. The `:name` form has no closing delimiter, so a
+    # param whose name merely *starts with* another's used to be eaten by the
+    # shorter substitution in declaration order: Express `/u/:id/:idx` with
+    # params [id, idx] was probed as `/u/1/1x`, a path the app does not route.
+    path_params = endpoint.params.select { |param| param.param_type == "path" }
+    path_params.sort_by! { |param| -param.name.size }
+
+    path_params.each do |param|
       # A non-empty value means --set-pvalue-path already applied and the
       # optimizer substituted it; nothing left to fill.
       next unless param.value.empty?
@@ -223,9 +250,11 @@ class Deliver
       url = url.gsub("<#{param.name}>", filler)
       # `:name` only counts at a segment boundary. Anchoring to a preceding
       # `/` keeps the scheme/port colon in `http://host:8080` and embedded
-      # example text like `/profiles/celeb_:USERNAME` out of it. No trailing
-      # anchor, so Play-style `/:lang.json` fills correctly.
-      url = url.gsub(/(\A|\/):#{escaped}/) { "#{$1}#{filler}" }
+      # example text like `/profiles/celeb_:USERNAME` out of it. The trailing
+      # lookahead ends the name at the first character that can't be part of
+      # one, so `:id` no longer matches the head of `:idx` while Play-style
+      # `/:lang.json` and `/:id-suffix` still fill.
+      url = url.gsub(/(\A|\/):#{escaped}(?![A-Za-z0-9_])/) { "#{$1}#{filler}" }
     end
 
     url
@@ -345,14 +374,6 @@ class Deliver
 
   protected def export_read_timeout : Time::Span
     EXPORT_READ_TIMEOUT
-  end
-
-  # Max concurrent in-flight probe requests. Bounds the fiber/socket fan-out
-  # so a large endpoint set can't exhaust file descriptors. Backed by the
-  # validated --concurrency value (already clamped to a sane ceiling).
-  protected def concurrency_limit : Int32
-    n = @options["concurrency"]?.try(&.to_s.to_i?) || 0
-    n > 0 ? n : 16
   end
 
   # TLS context for outbound delivery. Verifying (secure) by default; the
