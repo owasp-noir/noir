@@ -108,9 +108,11 @@ describe "run_options_parser" do
     begin
       noir_options = run_options_parser()
       noir_options["base"].as_a.size.should eq(3)
-      noir_options["base"].as_a[0].to_s.should eq("./app1")
-      noir_options["base"].as_a[1].to_s.should eq("./app2")
-      noir_options["base"].as_a[2].to_s.should eq("./app3")
+      # Base paths are normalized at parse time (the leading "./" is
+      # dropped) so the same tree always reports the same code_path.
+      noir_options["base"].as_a[0].to_s.should eq("app1")
+      noir_options["base"].as_a[1].to_s.should eq("app2")
+      noir_options["base"].as_a[2].to_s.should eq("app3")
     ensure
       # Restore original ARGV
       ARGV.clear
@@ -129,7 +131,7 @@ describe "run_options_parser" do
     begin
       noir_options = run_options_parser()
       noir_options["base"].as_a.size.should eq(1)
-      noir_options["base"].as_a[0].to_s.should eq("./single_app")
+      noir_options["base"].as_a[0].to_s.should eq("single_app")
     ensure
       # Restore original ARGV
       ARGV.clear
@@ -207,7 +209,7 @@ describe "run_options_parser" do
     begin
       noir_options = run_options_parser()
       base = noir_options["base"].as_a.map(&.to_s)
-      base.should eq(["./app", "./api"])
+      base.should eq(["app", "api"])
     ensure
       ARGV.clear
       ARGV.concat(original_argv)
@@ -221,7 +223,7 @@ describe "run_options_parser" do
 
     begin
       noir_options = run_options_parser()
-      noir_options["base"].as_a.map(&.to_s).should eq(["./app1", "./app3", "./app2"])
+      noir_options["base"].as_a.map(&.to_s).should eq(["app1", "app3", "app2"])
     ensure
       ARGV.clear
       ARGV.concat(original_argv)
@@ -327,7 +329,7 @@ describe "run_options_parser" do
       noir_options = run_options_parser()
       noir_options["ai_context"].should be_true
       noir_options["ai_context_features"].to_s.should eq("")
-      noir_options["base"].as_a.map(&.to_s).should eq(["./app"])
+      noir_options["base"].as_a.map(&.to_s).should eq(["app"])
     ensure
       ARGV.clear
       ARGV.concat(original_argv)

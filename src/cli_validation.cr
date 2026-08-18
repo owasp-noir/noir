@@ -6,6 +6,7 @@ require "./llm/acp/targets"
 require "./llm/native_tool_calling"
 require "./output_builder/formats"
 require "./passive_scan/severity"
+require "./utils/path_scope"
 
 module Noir::CliValidation
   class Error < Exception
@@ -259,7 +260,11 @@ module Noir::CliValidation
     # Dedupe repeated paths (`noir scan ./app ./app`, or the same dir via
     # both a positional and -b) so the detector doesn't load, parse and
     # analyze the identical tree twice. `uniq` preserves first-seen order.
-    base_paths = options["base"].as_a.map(&.to_s).uniq!
+    # Normalize before deduping so `-b app` and `-b ./app/` collapse into
+    # one entry (and one `code_path` spelling). The CLI parser already
+    # normalized what it saw; this also covers a config-file `base:` list,
+    # and is idempotent.
+    base_paths = options["base"].as_a.map { |p| Noir::PathScope.normalize_base(p.to_s) }.uniq!
     options["base"] = YAML::Any.new(base_paths.map { |p| YAML::Any.new(p) })
     if base_paths.empty?
       raise Error.new(<<-MSG)

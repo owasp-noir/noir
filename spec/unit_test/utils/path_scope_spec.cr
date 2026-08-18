@@ -2,6 +2,56 @@ require "../../spec_helper"
 require "../../../src/utils/path_scope"
 
 describe Noir::PathScope do
+  describe ".normalize_base" do
+    # `-b` is echoed verbatim into every reported `code_path`, so three
+    # spellings of the same tree used to produce three different reports.
+    it "pins the normalization table" do
+      {
+        "rem2"     => "rem2",
+        "rem2/"    => "rem2",
+        "rem2///"  => "rem2",
+        "./rem2"   => "rem2",
+        "././rem2" => "rem2",
+        "rem2/./a" => "rem2/a",
+        "a//b//c/" => "a/b/c",
+        "."        => ".",
+        "./"       => ".",
+        ""         => "",
+        ".."       => "..",
+        "../app/"  => "../app",
+        "/"        => "/",
+        "///"      => "/",
+        "/a//b/"   => "/a/b",
+        "/app"     => "/app",
+      }.each do |input, expected|
+        Noir::PathScope.normalize_base(input).should eq(expected)
+      end
+    end
+
+    it "keeps a relative base relative (never expands it)" do
+      normalized = Noir::PathScope.normalize_base("./app///")
+      normalized.should eq("app")
+      normalized.starts_with?("/").should be_false
+    end
+
+    it "is idempotent" do
+      ["rem2///", "./rem2", "/a//b/", "./", "..", "/"].each do |input|
+        once = Noir::PathScope.normalize_base(input)
+        Noir::PathScope.normalize_base(once).should eq(once)
+      end
+    end
+
+    it "leaves a backslash alone on POSIX" do
+      # Only Windows treats `\\` as a separator; elsewhere it is an
+      # ordinary filename character.
+      {% if flag?(:windows) %}
+        Noir::PathScope.normalize_base("a\\\\b\\\\").should eq("a\\b")
+      {% else %}
+        Noir::PathScope.normalize_base("a\\b\\").should eq("a\\b\\")
+      {% end %}
+    end
+  end
+
   describe ".normalize_root" do
     it "strips a trailing slash from a normalized root" do
       Noir::PathScope.normalize_root("/app/").should eq("/app")
