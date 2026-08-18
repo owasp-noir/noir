@@ -286,6 +286,48 @@ describe Noir::JSRouteExtractor do
       Noir::JSRouteExtractor.minified_content?(content).should be_false
     end
 
+    it "does NOT classify a SMALL route file that carries one fat literal" do
+      # The regime the average check used to get wrong: with only a handful
+      # of lines, one 20 KB inline literal drags the whole-file average over
+      # the threshold and every route in the module was dropped. Averaging
+      # the remaining code lines instead keeps it at ~40 bytes.
+      fat = "const LOGO = 'data:image/png;base64," + ("iVBORw0KGg" * 2000) + "';"
+      routes = Array.new(10) { |i| "app.get('/r#{i}', (req, res) => res.send('#{i}'));" }
+      content = (["const express = require('express');", "const app = express();", fat] + routes).join("\n")
+      # Guard the premise: this is exactly a file the whole-file average
+      # would have called a bundle.
+      (content.bytesize // content.lines.size).should be >= Noir::JSRouteExtractor::MINIFIED_AVG_LINE_THRESHOLD
+      Noir::JSRouteExtractor.minified_content?(content).should be_false
+    end
+
+    it "does NOT classify a three-line module built around a fat literal" do
+      fat = "const KEY = '" + ("k" * 20000) + "';"
+      content = "#{fat}\napp.get('/a', h);\napp.post('/b', h);\n"
+      Noir::JSRouteExtractor.minified_content?(content).should be_false
+    end
+
+    it "is true for a bundle wrapped in a banner and a sourcemap trailer" do
+      # The canonical `*.min.js`: one enormous line between a `/*! … */`
+      # license banner and a `//# sourceMappingURL=` trailer. Neither
+      # decoration is source, so setting the fat line aside must still
+      # leave nothing to average — the file is a bundle.
+      content = "/*! lib v1.2.3 | (c) Example | example.com/license */\n" +
+                "!function(e){var app=e();" + ("var _0x=function(a,b){return a+b};" * 300) + "}(window);\n" +
+                "//# sourceMappingURL=lib.min.js.map\n"
+      Noir::JSRouteExtractor.minified_content?(content).should be_true
+    end
+
+    it "is true for a bundle behind a multi-line license header" do
+      header = Array.new(20) { |i| " * line #{i} of a preserved @license block" }.join("\n")
+      content = "/*\n#{header}\n */\n" + ("a" * 60000) + "\n"
+      Noir::JSRouteExtractor.minified_content?(content).should be_true
+    end
+
+    it "is true for a single enormous line terminated by a newline" do
+      # A trailing newline must not leave an empty line to average over.
+      Noir::JSRouteExtractor.minified_content?(("a" * 6000) + "\n").should be_true
+    end
+
     it "pins the default 5000-byte line boundary" do
       Noir::JSRouteExtractor.minified_content?("a" * 4999).should be_false
       Noir::JSRouteExtractor.minified_content?("a" * 5000).should be_true
