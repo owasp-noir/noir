@@ -303,9 +303,9 @@ describe StatusCodeProbe do
       begin
         redirector = CountingServer.new(302, final.url_for("/final"))
         begin
-          options = base_probe_options
-          options["exclude_codes"] = YAML::Any.new("302")
-          result = probe_for(options).apply([Endpoint.new(redirector.url_for("/redirect"), "GET")])
+          probe_options = base_probe_options
+          probe_options["exclude_codes"] = YAML::Any.new("302")
+          result = probe_for(probe_options).apply([Endpoint.new(redirector.url_for("/redirect"), "GET")])
 
           # Pre-fix `excluded.includes?(response.status_code)` was handed the
           # 200 from the redirect target, so --exclude-codes 302 did nothing.
@@ -340,10 +340,10 @@ describe StatusCodeProbe do
       begin
         endpoints = (1..8).map { |i| Endpoint.new(server.url_for("/hang#{i}"), "GET") }
 
-        options = base_probe_options
-        options["concurrency"] = YAML::Any.new("8")
+        probe_options = base_probe_options
+        probe_options["concurrency"] = YAML::Any.new("8")
         started = Time.instant
-        result = ImpatientStatusCodeProbe.new(options, NoirLogger.new(false, false, false, true)).apply(endpoints)
+        result = ImpatientStatusCodeProbe.new(probe_options, NoirLogger.new(false, false, false, true)).apply(endpoints)
         elapsed = Time.instant - started
 
         # 8 endpoints x a 200ms read timeout is 1.6s sequentially; run eight
@@ -362,9 +362,9 @@ describe StatusCodeProbe do
       begin
         endpoints = (1..12).map { |i| Endpoint.new(server.url_for("/c#{i}"), "GET") }
 
-        options = base_probe_options
-        options["concurrency"] = YAML::Any.new("3")
-        probe_for(options).apply(endpoints)
+        probe_options = base_probe_options
+        probe_options["concurrency"] = YAML::Any.new("3")
+        probe_for(probe_options).apply(endpoints)
 
         server.peak.should be <= 3
       ensure
