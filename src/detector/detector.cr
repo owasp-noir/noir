@@ -4,10 +4,12 @@ require "../models/passive_scan"
 require "../techs/techs.cr" # Added to define NoirTechs
 require "../passive_scan/detect.cr"
 require "wait_group"
+require "../utils/exclude_path"
 require "../utils/media_filter"
 require "../utils/text_file"
 require "yaml"
 require "../models/locator_keys"
+require "../models/skipped_files"
 
 # Reference-typed atomic Boolean. Wrapping `Atomic(Int8)` in a
 # class keeps the underlying byte addressable through an Array
@@ -145,6 +147,20 @@ module Noir::Detection
 
   def mobile_detector?(name : String) : Bool
     MOBILE_DETECTOR_NAMES.includes?(name)
+  end
+
+  # Whether a directory entry names a subtree the walk prunes on purpose
+  # (dependency cache, build output, Crystal's `lib/` next to a `shard.yml`).
+  #
+  # Extracted from the directory branch of the walk so the symlink branch can
+  # ask the same question: a symlink is not a directory to `File.info?` with
+  # `follow_symlinks: false`, so a `node_modules` or `.venv` symlink lands
+  # there instead — and reporting *that* as lost coverage would fire on
+  # every pnpm workspace, which is the opposite of the point.
+  def ignored_dir_entry?(entry : String, dir_has_shard : Bool) : Bool
+    return true if IGNORED_DIR_NAMES.includes?(entry)
+    return true if IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
+    entry == "lib" && dir_has_shard
   end
 
   # Filenames that detectors match by exact basename (often with path
@@ -365,6 +381,11 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # into the next scan in the same process.
   Noir::LocatorKeys.reset(Noir::LocatorKey::Lifecycle::DetectScoped)
 
+  # Same lifecycle, for the coverage gaps this walk (and the delivery pass
+  # that follows it) records. A scan of a new codebase begins here, so the
+  # previous one's unreadable files must not be reported against it.
+  Noir::SkippedFiles.clear(Noir::SkippedFiles::Phase::Scan)
+
   android_source_scope_active = detector_list.any? { |detector| Noir::Detection.mobile_detector?(detector.name) }
   android_source_prefixes = [] of String
   # Built once before the reader starts. Replaces the per-file
@@ -397,26 +418,18 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       total_files = 0
       skipped_ignored_dirs = 0
       unreadable_files = 0
+      # Directories `Dir.each_child` refused to list, and entries that are
+      # neither a directory nor a regular file (symlinks, FIFOs, sockets,
+      # devices). Both used to leave no trace at any verbosity.
+      unlistable_dirs = 0
+      skipped_entries = 0
 
-      # User-supplied --exclude-path patterns (comma-separated globs).
-      # Patterns containing "/" are matched against the relative path;
-      # patterns without "/" are matched against the basename.
-      # Partition once up front so the per-file loop only walks the two
-      # already-classified lists — no substring check per file.
-      # Normalize Windows-style backslashes to '/' before classifying, so a
-      # pattern like `src\legacy` is treated as a path pattern (and matches)
-      # instead of an unmatchable basename.
-      exclude_path_raw = options["exclude_path"]?.to_s
-        .split(",").map(&.strip.gsub('\\', '/')).reject(&.empty?)
-      path_patterns, basename_patterns = exclude_path_raw.partition(&.includes?('/'))
-      exclude_path_active = !exclude_path_raw.empty?
-      # macOS/Windows default filesystems are case-insensitive, so
-      # `--exclude-path MyFile.go` should also exclude `myfile.go` there. Fold
-      # case only on those platforms — folding on Linux would wrongly drop
-      # case-distinct files that legitimately coexist.
-      exclude_case_insensitive = {% if flag?(:darwin) || flag?(:windows) %} true {% else %} false {% end %}
-      exclude_basename_patterns = exclude_case_insensitive ? basename_patterns.map(&.downcase) : basename_patterns
-      exclude_path_patterns = exclude_case_insensitive ? path_patterns.map(&.downcase) : path_patterns
+      # User-supplied --exclude-path patterns (comma-separated globs),
+      # compiled once. `Noir::ExcludePath` owns what a pattern means; the
+      # analyzers that walk the filesystem themselves apply the same type
+      # through `Analyzer#excluded_path?`, so the two cannot drift into
+      # disagreeing about the option.
+      exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
       skipped_exclude_path = 0
 
       base_paths.each do |base_path|
@@ -449,11 +462,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               if info.directory?
                 # Subtree prune happens here. Entry name (not full path)
                 # so the base-as-node_modules case from #912 is safe.
-                if Noir::Detection::IGNORED_DIR_NAMES.includes?(entry) || Noir::Detection::IGNORED_DIR_SUFFIXES.any? { |suffix| entry.ends_with?(suffix) }
-                  skipped_ignored_dirs += 1
-                  next
-                end
-                if entry == "lib" && dir_has_shard
+                if Noir::Detection.ignored_dir_entry?(entry, dir_has_shard)
                   skipped_ignored_dirs += 1
                   next
                 end
@@ -471,37 +480,47 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               # behavior. Non-regular files (FIFOs, sockets, devices) are
               # also dropped here — previously they would reach `File.read`
               # and either hang or error out.
-              next unless info.file?
+              #
+              # Skipping is deliberate; being *silent* about it was not. A
+              # monorepo that symlinks `packages/api -> ../shared` (pnpm
+              # workspaces, Bazel's `bazel-*` links) reported zero endpoints
+              # for that tree and looked exactly like a clean scan. Entries
+              # the walk prunes on purpose, and media files it would have
+              # filtered a step later anyway, are not coverage the user lost.
+              unless info.file?
+                unless Noir::Detection.ignored_dir_entry?(entry, dir_has_shard) || MediaFilter.media_file?(full_path)
+                  skipped_entries += 1
+                  reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
+                  logger.debug "Skipping #{full_path}: #{reason}"
+                  Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, reason,
+                    noun: "entry", phase: Noir::SkippedFiles::Phase::Scan)
+                end
+                next
+              end
 
               total_files += 1
 
-              if exclude_path_active
-                entry_cmp = exclude_case_insensitive ? entry.downcase : entry
-                if exclude_basename_patterns.any? { |pat| File.match?(pat, entry_cmp) }
+              if exclude_path.active?
+                rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
+                if exclude_path.excluded?(rel_path)
                   skipped_exclude_path += 1
                   next
-                end
-                if !exclude_path_patterns.empty?
-                  rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
-                  {% if flag?(:windows) %} rel_path = rel_path.gsub('\\', '/') {% end %}
-                  rel_cmp = exclude_case_insensitive ? rel_path.downcase : rel_path
-                  # File.match? handles glob patterns (`tests/*`, `**/dir/**`);
-                  # the equality / prefix checks add plain-directory exclusion
-                  # so `--exclude-path src/legacy` drops everything under it,
-                  # not just a file literally named `src/legacy`.
-                  if exclude_path_patterns.any? do |pat|
-                       dir_pat = pat.rstrip('/')
-                       File.match?(pat, rel_cmp) || rel_cmp == dir_pat || rel_cmp.starts_with?("#{dir_pat}/")
-                     end
-                    skipped_exclude_path += 1
-                    next
-                  end
                 end
               end
 
               if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
                 logger.debug "Skipping #{full_path}: #{skip_reason}"
                 skipped_files += 1
+                # A media extension is the filter doing its job — a `.png`
+                # was never going to yield an endpoint, so reporting it
+                # would make every scan of a repo with images "degraded".
+                # An oversize file is different: it is a source file the
+                # scan chose not to read, and one 12 MB Flask module is the
+                # difference between two routes and one.
+                unless MediaFilter.media_file?(full_path)
+                  Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, skip_reason,
+                    phase: Noir::SkippedFiles::Phase::Scan)
+                end
                 next
               end
 
@@ -553,11 +572,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               rescue e : IO::Error
                 logger.debug "Skipping #{full_path}: #{e.message}"
                 unreadable_files += 1
+                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path,
+                  e.message.presence || e.class.name, phase: Noir::SkippedFiles::Phase::Scan)
                 next
               end
               if content.to_slice.includes?(0_u8)
-                logger.debug "Skipping #{full_path}: binary content (file is text-extension but bytes look binary)"
+                binary_reason = "binary content (file is text-extension but bytes look binary)"
+                logger.debug "Skipping #{full_path}: #{binary_reason}"
                 skipped_files += 1
+                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, binary_reason,
+                  phase: Noir::SkippedFiles::Phase::Scan)
                 next
               end
 
@@ -589,7 +613,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               # cache the content so analyzers can skip the re-read.
               locator.register_file(full_path, content)
             end
-          rescue File::NotFoundError | File::AccessDeniedError
+          rescue e : File::NotFoundError | File::AccessDeniedError
             # `Dir.each_child` itself failed: the directory vanished between
             # being pushed on the stack and being popped, or it is not
             # listable. Treat the subtree as empty and move on.
@@ -597,6 +621,17 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             # Scope note: this is the *directory* handler. Per-file failures
             # are caught at the read above, so they no longer land here and
             # take the rest of the listing with them.
+            #
+            # "Move on" used to mean an empty rescue body: no counter, no log
+            # line at any verbosity, no entry in `errors`. One `chmod 000`
+            # directory therefore deleted its entire subtree from the scan
+            # and the run still reported `"errors": []` and exit 0 — the
+            # single largest silent-loss path in the walk, because it costs
+            # a whole tree rather than one file.
+            unlistable_dirs += 1
+            Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, dir,
+              e.message.presence || e.class.name,
+              noun: "directory", phase: Noir::SkippedFiles::Phase::Scan)
           end
         end
       end
@@ -609,6 +644,14 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       # not ask for. It was previously invisible at every verbosity.
       if unreadable_files > 0
         logger.warning "Skipped #{unreadable_files} unreadable file#{"s" if unreadable_files != 1} (permissions, or removed during the scan)"
+      end
+      # Same reasoning again, and louder: an unlistable directory costs every
+      # file beneath it, not one file.
+      if unlistable_dirs > 0
+        logger.warning "Skipped #{unlistable_dirs} unlistable director#{unlistable_dirs == 1 ? "y" : "ies"} and everything beneath (permissions, or removed during the scan)"
+      end
+      if skipped_entries > 0
+        logger.warning "Skipped #{skipped_entries} symlinked or non-regular path#{"s" if skipped_entries != 1} (symlinks are not followed)"
       end
       if skipped_ignored_dirs > 0
         logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"

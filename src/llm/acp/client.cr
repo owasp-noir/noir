@@ -169,9 +169,24 @@ module LLM
         session.prompt(final_prompt)
         clean_response(read_response_buffer)
       end
-    rescue Exception
+    rescue e : Exception
+      report_request_failure(e)
       close
       ""
+    end
+
+    # `General` and `Ollama` both report their failures on stderr; the rescue
+    # above used to be bare, so a session that never spawned, an agent that
+    # died mid-turn, a protocol error and a genuinely empty answer were all
+    # the same "" with nothing written anywhere. The caller reads "" as "this
+    # code defines no endpoints", which made a completely dead agent look like
+    # a successful AI-assisted scan.
+    #
+    # Public so the report can be asserted without standing up an agent
+    # process.
+    def report_request_failure(error : Exception) : Nil
+      STDERR.puts "WARNING: ACP agent request failed (#{error.class}: #{error.message})"
+      @event_sink.try(&.call("ACP: request failed (#{error.class}: #{error.message})"))
     end
 
     def close : Nil

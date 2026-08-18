@@ -26,7 +26,17 @@ module NoirPassiveScan
       end
     end
 
-    logger.sub "└── Loaded #{rules.size} valid passive scan rules."
+    if rules.empty?
+      # Not a `sub` line. `initialize_rules` accepts any non-empty directory,
+      # so a half-finished clone or a mis-pointed `--passive-scan-path` loads
+      # nothing — and a passive scan with no rules produces the same empty
+      # `passive_results` as a codebase with nothing to find. A security scan
+      # that ran zero rules is not a clean result; `NoirRunner#detect` also
+      # records it so `--strict` can act on it.
+      logger.warning "Loaded 0 valid passive scan rules from #{path} — no passive findings can be reported."
+    else
+      logger.sub "└── Loaded #{rules.size} valid passive scan rules."
+    end
 
     rules
   end

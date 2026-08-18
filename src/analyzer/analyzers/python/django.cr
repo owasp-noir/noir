@@ -200,59 +200,45 @@ module Analyzer::Python
     # Find all root Django URLs
     def find_root_django_urls : Array(DjangoUrls)
       root_django_urls_list = [] of DjangoUrls
-      channel = Channel(String).new(DEFAULT_CHANNEL_CAPACITY)
 
-      WaitGroup.wait do |wg|
-        # Producer — tracked by the WaitGroup
-        wg.spawn do
-          all_files.each { |file| channel.send(file) }
-          channel.close
-        end
+      # Driven by the shared pool on `Analyzer`. See the note in
+      # `java/armeria.cr`: the inlined pool this replaces closed the channel
+      # outside an `ensure` and caught only `IO::Error`, so a non-IO failure
+      # in a worker killed the worker and hung the whole scan once every
+      # worker was gone.
+      parallel_analyze(all_files) do |file|
+        # No `File.directory?` — `all_files` is `file_map`, which
+        # holds regular files only.
+        next if base_relative_path(file).includes?("/site-packages/")
+        # `django_settings_path?` is pure string work and rejects
+        # all but a handful of files, so it runs before
+        # `base_path_for` / `python_test_path?`. Every gate here
+        # is a pure predicate and all of them must pass, so the
+        # order is free to favour the cheapest, most selective
+        # one — previously each of the tens of thousands of
+        # non-settings files paid the base-path resolution first.
+        next unless django_settings_path?(file)
+        # Skip Python test files: each Django test app under
+        # `tests/<feature>/` carries its own `ROOT_URLCONF`
+        # the analyzer would otherwise treat as a real Django
+        # project root. Django's own repo contributes ~720
+        # such phantom endpoints. Standard test conventions
+        # (`tests/` dir, `tests.py`, `test_*.py`, `*_test.py`)
+        # are unambiguous in Python codebases.
+        current_base_path = base_path_for(file)
+        next if PythonEngine.python_test_path?(file, current_base_path)
+        next unless file.ends_with? ".py"
 
-        worker_count.times do
-          wg.spawn do
-            loop do
-              begin
-                file = channel.receive?
-                break if file.nil?
-                # No `File.directory?` — `all_files` is `file_map`, which
-                # holds regular files only.
-                next if base_relative_path(file).includes?("/site-packages/")
-                # `django_settings_path?` is pure string work and rejects
-                # all but a handful of files, so it runs before
-                # `base_path_for` / `python_test_path?`. Every gate here
-                # is a pure predicate and all of them must pass, so the
-                # order is free to favour the cheapest, most selective
-                # one — previously each of the tens of thousands of
-                # non-settings files paid the base-path resolution first.
-                next unless django_settings_path?(file)
-                # Skip Python test files: each Django test app under
-                # `tests/<feature>/` carries its own `ROOT_URLCONF`
-                # the analyzer would otherwise treat as a real Django
-                # project root. Django's own repo contributes ~720
-                # such phantom endpoints. Standard test conventions
-                # (`tests/` dir, `tests.py`, `test_*.py`, `*_test.py`)
-                # are unambiguous in Python codebases.
-                current_base_path = base_path_for(file)
-                next if PythonEngine.python_test_path?(file, current_base_path)
-                if file.ends_with? ".py"
-                  content = read_file_content(file)
-                  content.each_line do |line|
-                    next if line.lstrip.starts_with?("#")
+        content = read_file_content(file)
+        content.each_line do |line|
+          next if line.lstrip.starts_with?("#")
 
-                    line.scan(REGEX_ROOT_URLCONF) do |match|
-                      next if match.size != 2
-                      dotted_as_urlconf = match[1].split(".")
-                      resolve_root_urlconf_paths(file, dotted_as_urlconf, current_base_path).each do |filepath|
-                        basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
-                        root_django_urls_list << DjangoUrls.new("", filepath, basepath)
-                      end
-                    end
-                  end
-                end
-              rescue e : IO::Error
-                logger.debug "Skipping #{file}: #{e.message}"
-              end
+          line.scan(REGEX_ROOT_URLCONF) do |match|
+            next if match.size != 2
+            dotted_as_urlconf = match[1].split(".")
+            resolve_root_urlconf_paths(file, dotted_as_urlconf, current_base_path).each do |filepath|
+              basepath = filepath.split("/")[..-(dotted_as_urlconf.size + 1)].join("/")
+              root_django_urls_list << DjangoUrls.new("", filepath, basepath)
             end
           end
         end

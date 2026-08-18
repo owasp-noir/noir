@@ -123,7 +123,12 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # Same reasoning: a per-file skip tallied by the previous pass would be
   # reported against this one, and under `--strict` would fail every
   # subsequent build.
-  Noir::SkippedFiles.clear
+  #
+  # Only the analysis phase. The detection walk's gaps belong to the scan
+  # that produced `techs`, are reported in the same `errors` array, and are
+  # cleared by the next `detect_techs` — clearing them here would erase the
+  # walk's findings before anything got to read them.
+  Noir::SkippedFiles.clear(Noir::SkippedFiles::Phase::Analysis)
 
   # Same reasoning, for the locator slots written and read inside one
   # analysis pass (the Express router prefixes). Detector-written keys are
@@ -193,8 +198,13 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   # A file an analyzer opened and could not finish is coverage lost just as
   # surely as an analyzer that never ran, so it joins the same list. Added
   # after the tech-level failures so a dead analyzer still reads first.
+  #
+  # Analysis-phase gaps only: the detection and delivery ones are collected
+  # by `NoirRunner`, which is the layer that knows when those phases are
+  # over. A library caller driving this function directly reads them off
+  # `Noir::SkippedFiles.failures` itself.
   if collected = failures
-    Noir::SkippedFiles.failures.each { |failure| collected << failure }
+    Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Analysis).each { |failure| collected << failure }
   end
 
   # `hooks_count` reports only the hooks that can produce something for

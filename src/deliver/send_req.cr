@@ -2,6 +2,7 @@ require "crest"
 require "wait_group"
 require "../utils/http_symbols"
 require "../models/deliver"
+require "../models/skipped_files"
 
 class SendReq < Deliver
   # Every probe goes out with `handle_errors: false, max_redirects: 0`.
@@ -103,6 +104,15 @@ class SendReq < Deliver
     # delivered probe and no longer lands here.
     failed = failures.get
     self.undeliverable_count = failed
-    @logger.warning "Probe delivery: #{failed} request(s) could not be sent (run with --debug for details)." if failed > 0
+    return if failed == 0
+
+    @logger.warning "Probe delivery: #{failed} request(s) could not be sent (run with --debug for details)."
+    # A probe that never left the machine is delivery the user asked for and
+    # did not get, so it belongs in `errors` next to the analyzer gaps rather
+    # than in a warning line nobody reads on a green CI run.
+    Noir::SkippedFiles.record_gap(
+      Noir::SkippedFiles::DELIVER_SCOPE,
+      "probe delivery: #{failed} request#{"s" if failed != 1} could not be sent (run with --debug for details)"
+    )
   end
 end

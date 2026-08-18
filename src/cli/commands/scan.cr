@@ -262,23 +262,45 @@ module Noir::CLI::ScanCommand
     !options["ai_model"].to_s.empty? || provider.downcase.starts_with?("acp:")
   end
 
-  # Names the analyzers whose coverage was cut short — the analyzer itself
-  # raised, or it skipped files it could not read or parse — so a degraded
-  # scan says so instead of reporting the surviving endpoints as the whole
+  # Names everything the scan did not cover — an analyzer that raised, files
+  # it could not read or parse, a directory the walk could not list, an
+  # export that never landed, a passive rule set that loaded nothing — so a
+  # degraded scan says so instead of reporting what survived as the whole
   # story. Laid out like the detected-techs list above it (`├──` / `└──`),
-  # because it answers the same question: which techs actually processed
-  # what.
-  private def self.report_analyzer_failures(logger : NoirLogger,
-                                            failures : Array(AnalyzerFailure),
-                                            scope : String)
+  # because it answers the same question: which parts of the scan actually
+  # processed what.
+  private def self.report_coverage_gaps(logger : NoirLogger,
+                                        failures : Array(AnalyzerFailure),
+                                        scope : String)
     return if failures.empty?
 
-    plural = failures.size == 1 ? "analyzer" : "analyzers"
-    logger.warning "#{failures.size} #{plural} reported incomplete coverage#{scope}; some endpoints may be missing."
+    plural = failures.size == 1 ? "gap" : "gaps"
+    logger.warning "#{failures.size} coverage #{plural} reported#{scope}; results may be incomplete."
     failures.each_with_index do |failure, index|
       prefix = index < failures.size - 1 ? "├──" : "└──"
       logger.sub "#{prefix} #{failure.tech}: #{failure.message}"
     end
+  end
+
+  # Exit code for a scan that produced its report.
+  #
+  # Exit 2 rather than 1 so a CI gate can tell "scan ran, coverage
+  # incomplete" from the usage/validation errors that already exit 1.
+  #
+  # `degraded` used to read `!app.analyzer_failures.empty?` when that list
+  # held tech-level analyzer failures and nothing else, so `--strict` — whose
+  # documented contract is "exit 2 if any analyzer failed *or skipped a
+  # file*" — reported green on a scan that lost a whole subtree to an
+  # unlistable directory, dropped every symlinked package, exported nothing,
+  # or ran zero passive rules. Every one of those now feeds the same list, so
+  # the test is unchanged and finally means what it says.
+  def self.scan_exit_code(app : NoirRunner, app_diff : NoirRunner?) : Int32
+    degraded = !app.analyzer_failures.empty?
+    if diff_app = app_diff
+      degraded ||= !diff_app.analyzer_failures.empty?
+    end
+
+    degraded && any_to_bool(app.options["strict"]?) ? 2 : 0
   end
 
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
@@ -367,17 +389,25 @@ module Noir::CLI::ScanCommand
         app.logger.info "Falling back to file-based analysis."
       elsif app.passive_results.size > 0
         app.logger.info "Noir found #{app.passive_results.size} passive results."
+        # The detection walk still ran, so it can still have lost a subtree
+        # — and this branch returns without ever reaching the `--strict`
+        # check at the bottom of the method.
+        report_coverage_gaps(app.logger, app.analyzer_failures, "")
         app.report
-        exit(0)
+        exit(scan_exit_code(app, app_diff))
       else
         # Structured formats still get a report call on an empty scan, so
         # downstream consumers receive a valid empty document rather than
         # nothing. Which formats those are is declared on the builder
         # (`structured: true`) — see `Noir::OutputFormats::STRUCTURED_NAMES`.
+        report_coverage_gaps(app.logger, app.analyzer_failures, "")
         if Noir::OutputFormats.structured?(app.options["format"].to_s)
           app.report
         end
-        exit(0)
+        # "No technologies detected" is exactly the shape an unlistable or
+        # unreadable base directory produces, so this is the branch where a
+        # silent loss is most likely and least visible.
+        exit(scan_exit_code(app, app_diff))
       end
     else
       app.logger.success "Detected #{app.techs.size} technologies."
@@ -400,7 +430,7 @@ module Noir::CLI::ScanCommand
       app.analyze
     end
     app.logger.success "Identified #{app.endpoints.size} endpoints in total."
-    report_analyzer_failures(app.logger, app.analyzer_failures, "")
+    report_coverage_gaps(app.logger, app.analyzer_failures, "")
 
     elapsed = Time.instant - start_time
     app.logger.info "Scan completed in #{(elapsed.total_milliseconds / 1000.0).round(4)} s."
@@ -425,21 +455,16 @@ module Noir::CLI::ScanCommand
       # "added" entries. Named separately from the base scan's failures —
       # the two scans have different code, and only one of them is the one
       # the user is about to act on.
-      report_analyzer_failures(app.logger, app_diff.analyzer_failures, " in the --diff-path codebase")
+      report_coverage_gaps(app.logger, app_diff.analyzer_failures, " in the --diff-path codebase")
 
       app.logger.info "Generating Diff Report."
       app.diff_report(app_diff)
     end
 
     # After the report, never before: a degraded scan still has results, and
-    # the point of `--strict` is to flag them, not to withhold them. Exit 2
-    # rather than 1 so a CI gate can tell "scan ran, coverage incomplete"
-    # from the usage/validation errors that already exit 1.
-    degraded = !app.analyzer_failures.empty?
-    if diff_app = app_diff
-      degraded ||= !diff_app.analyzer_failures.empty?
-    end
-    exit(2) if degraded && any_to_bool(app.options["strict"]?)
+    # the point of `--strict` is to flag them, not to withhold them.
+    code = scan_exit_code(app, app_diff)
+    exit(code) if code != 0
   rescue e : Noir::InvalidExcludePathError
     # Raised from the detector's file walk once a malformed --exclude-path
     # glob is actually reached. Without this the process printed a raw

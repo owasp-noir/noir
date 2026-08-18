@@ -8,6 +8,7 @@ require "../optimizer/llm_optimizer.cr"
 require "../ai_context/augmentor.cr"
 require "../mobile/linker.cr"
 require "./analyzer_failure.cr"
+require "./skipped_files.cr"
 require "./endpoint.cr"
 require "./logger.cr"
 require "../utils/*"
@@ -33,12 +34,25 @@ class NoirRunner
   @noir_home : String
   @passive_scans : Array(PassiveScan)
   @passive_results : Array(PassiveScanResult)
-  # Tech analyzers that raised during the last `analyze`. Empty is the
-  # positive statement "every selected analyzer ran to completion", which is
-  # what tells a degraded scan from a clean one.
-  @analyzer_failures = [] of AnalyzerFailure
+  # Tech analyzers that raised during the last `analyze`, plus the files
+  # individual analyzers skipped. Filled by `analysis_endpoints`.
+  @tech_failures = [] of AnalyzerFailure
+  # Coverage the scan lost outside the analysis pass: directories the walk
+  # could not list, files it could not read, exports that never landed, a
+  # passive rule set that loaded nothing. Snapshotted from
+  # `Noir::SkippedFiles` at the end of each phase rather than read live, so
+  # the diff runner's own detect pass cannot wipe this runner's findings.
+  @scan_failures = [] of AnalyzerFailure
 
-  getter options, techs, endpoints, logger, passive_results, analyzer_failures
+  getter options, techs, endpoints, logger, passive_results
+
+  # Everything this scan did not cover, from any phase. Empty is the positive
+  # statement "the scan read what it was pointed at and delivered what it was
+  # asked to", which is what tells a degraded scan from a clean one — and what
+  # `--strict` exits 2 on.
+  def analyzer_failures : Array(AnalyzerFailure)
+    @scan_failures + @tech_failures
+  end
 
   def initialize(options)
     @options = options
@@ -126,6 +140,19 @@ class NoirRunner
     @techs = detected_techs[0]
     @passive_results = detected_techs[1]
 
+    # `-P` with an empty rule set is a guaranteed false negative that is
+    # indistinguishable from a clean scan: zero rules produce zero findings.
+    # Recorded here rather than in `load_rules` because rules are loaded in
+    # the constructor, before `detect_techs` clears the scan-phase gaps.
+    if any_to_bool(@options["passive_scan"]) && @passive_scans.empty?
+      Noir::SkippedFiles.record_gap(
+        Noir::SkippedFiles::PASSIVE_SCAN_SCOPE,
+        "passive scan requested but 0 rules were loaded; no passive findings can be reported"
+      )
+    end
+
+    @scan_failures = Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Scan)
+
     # Build extension index eagerly after file_map is finalized
     # to avoid concurrent lazy-build race in analyzers
     CodeLocator.instance.build_extension_index
@@ -147,8 +174,8 @@ class NoirRunner
     # clean run as degraded (and, under `--strict`, fail the build) forever
     # after. Same class of leak as the options-hash one
     # `apply_cfml_components_only!` documents.
-    @analyzer_failures.clear
-    @endpoints = analysis_endpoints options, @techs, @logger, @analyzer_failures
+    @tech_failures.clear
+    @endpoints = analysis_endpoints options, @techs, @logger, @tech_failures
 
     # Use the new optimizer module
     optimizer = LLMEndpointOptimizer.new(@logger, @options)
@@ -195,6 +222,12 @@ class NoirRunner
 
     # Run deliver
     deliver
+
+    # Deliver runs inside the analysis pass but records into the scan phase,
+    # so re-snapshot now that it is done. A full replace rather than a
+    # concat: `analyze` can be called twice on one runner, and appending
+    # would report the detect-phase gaps once per call.
+    @scan_failures = Noir::SkippedFiles.failures(Noir::SkippedFiles::Phase::Scan)
   end
 
   private def ai_context_enabled? : Bool
@@ -268,12 +301,12 @@ class NoirRunner
   # fourth place a format had to be listed.
   def report
     format = options["format"].to_s
-    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results, @analyzer_failures)
+    return if Noir::OutputFormats.render(format, @options, @endpoints, @passive_results, analyzer_failures)
 
     # `CliValidation` rejects an unknown `-f` before a scan starts, so this
     # only catches a library caller that built the options hash itself:
     # fall back to the default format rather than printing nothing at all.
-    Noir::OutputFormats.render(Noir::OutputFormats::DEFAULT, @options, @endpoints, @passive_results, @analyzer_failures)
+    Noir::OutputFormats.render(Noir::OutputFormats::DEFAULT, @options, @endpoints, @passive_results, analyzer_failures)
   end
 
   def techs=(value : Array(String))

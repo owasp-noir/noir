@@ -1,5 +1,6 @@
 require "../../models/analyzer"
 require "../../models/code_locator"
+require "../../models/skipped_files"
 require "uri"
 require "json"
 require "yaml"
@@ -77,6 +78,12 @@ module Analyzer::Specification
         rescue e
           logger.debug "#{self.class} failed to process #{path}"
           logger.debug_sub e
+          # This walk is the one behind all 45 spec analyzers and it was the
+          # only per-file rescue in the codebase that never told anyone: a
+          # malformed OpenAPI document, a truncated HAR, a Postman export
+          # with a bad `$ref` produced zero endpoints, no warning, and
+          # `"errors": []`.
+          Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
         end
       end
     end

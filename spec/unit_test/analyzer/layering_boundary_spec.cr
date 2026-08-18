@@ -59,16 +59,20 @@ CONTENT_FALLBACK_RE = /CodeLocator\.instance\.content_for\([^)]*\)\s*\|\|/
 # the scan base. Folding them into their language engine (or exposing the
 # lookup on `CodeLocator`, the way `files_by_basename` was added for
 # Django's ROOT_URLCONF) is the fix; none of it belongs in this commit.
+#
+# Being on this list is an exemption from the *walk*, never from what the
+# walk exists to enforce: every entry here applies `--exclude-path` itself
+# via `Analyzer#excluded_path?`, because a file the user excluded must not
+# reach a report through a side door. `java/dropwizard.cr` left the list by
+# resolving its config YAML through `get_files_by_extensions` instead —
+# that is the preferred fix wherever the index can answer the question.
 DIRECTORY_WALK_ALLOWLIST = [
   # Static-resource directories declared in Spring config: the endpoint set
-  # is "every file under this directory", which no per-extension index
-  # answers.
+  # is "every file under this directory", including the media files the
+  # detector's filter keeps out of `file_map`, so no index answers it.
   "src/analyzer/analyzers/kotlin/spring.cr",
-  # Same shape for Quarkus' `META-INF/resources` and Dropwizard's config
-  # YAML, which is located by convention relative to the project root
-  # rather than by extension.
+  # Same shape for Quarkus' `META-INF/resources`.
   "src/analyzer/analyzers/java/quarkus.cr",
-  "src/analyzer/analyzers/java/dropwizard.cr",
   # Android navigation graphs / `buildSrc` / `res/values`: XML resource
   # directories addressed by their role in the project layout.
   "src/analyzer/analyzers/mobile/android.cr",

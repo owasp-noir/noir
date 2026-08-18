@@ -472,8 +472,14 @@ module Analyzer::Go
         full_path = resolve_public_dir_path(p_dir)
 
         next unless File.directory?(full_path)
+        # `Dir.glob`, not a `file_map` lookup: a static directory's
+        # endpoint set is every file in it, including the images and fonts
+        # the media filter keeps out of the index. `--exclude-path` is
+        # therefore re-applied per file — the index-based
+        # `resolve_public_dirs` below gets it for free.
         Dir.glob("#{escape_glob_path(full_path)}/**/*") do |path|
           next if File.directory?(path)
+          next if excluded_path?(path)
           if File.exists?(path)
             static_url = p_dir["static_path"]
             if static_url.ends_with?("/")
@@ -509,16 +515,24 @@ module Analyzer::Go
       end
     end
 
+    # `File.exists?` alongside `Dir.exists?`, in both branches: the same
+    # `public_dirs` list carries single-file static routes
+    # (Echo's `e.File("/robots.txt", "static/robots.txt")`) as well as
+    # directories. Testing only for a directory made the source-relative
+    # branch miss every single-file route, which then fell back to
+    # `base_path + file_path` — a path that only exists when the scan base
+    # happens to be the Go project root. Scanning the same project from one
+    # directory up silently lost the route.
     private def resolve_public_dir_path(p_dir : Hash(String, String)) : String
       file_path = p_dir["file_path"]
-      return Path[file_path].normalize.to_s if file_path.starts_with?("/") && Dir.exists?(file_path)
+      return Path[file_path].normalize.to_s if file_path.starts_with?("/") && static_target_exists?(file_path)
 
       normalized_file_path = file_path.lstrip("/")
       root = base_path
       if source_path = p_dir["source_path"]?
         source_dir = File.dirname(source_path)
         source_relative = Path[(source_dir + "/" + normalized_file_path).gsub_repeatedly("//", "/")].normalize.to_s
-        if Dir.exists?(source_relative)
+        if static_target_exists?(source_relative)
           return preserve_relative_prefix(source_relative, source_path)
         end
 
@@ -533,6 +547,15 @@ module Analyzer::Go
       else
         normalized_full_path
       end
+    end
+
+    # A static route's target on disk, which may be either a directory
+    # (`e.Static`) or a single file (`e.File`). Spelled with both checks
+    # rather than the equivalent bare `File.exists?` so the file half is
+    # not mistaken for a leftover: `Dir.exists?` alone is what dropped
+    # single-file routes.
+    private def static_target_exists?(path : String) : Bool
+      Dir.exists?(path) || File.exists?(path)
     end
 
     private def preserve_relative_prefix(path : String, reference : String) : String

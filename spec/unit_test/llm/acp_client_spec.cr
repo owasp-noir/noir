@@ -120,6 +120,42 @@ describe LLM::ACPClient do
       outcome["optionId"]?.should be_nil
     end
   end
+
+  describe "#report_request_failure" do
+    it "names the exception instead of swallowing it" do
+      # A dead agent, a session that never spawned and a genuinely empty
+      # answer all reach the caller as "". Without this report they are
+      # indistinguishable, and the analyzer reads all three as "this code
+      # defines no endpoints".
+      events = [] of String
+      sink = ->(msg : String) { events << msg; nil }
+      client = LLM::ACPClient.new("acp:gemini", "gemini", sink)
+
+      client.report_request_failure(IO::Error.new("Connection lost"))
+
+      events.size.should eq(1)
+      events[0].should contain("request failed")
+      events[0].should contain("IO::Error")
+      events[0].should contain("Connection lost")
+    end
+
+    it "is reached when the agent binary dies immediately" do
+      # `false` exits before it can speak the protocol, standing in for a
+      # crashed or missing agent. `request` still has to return "" — the
+      # caller has no other contract — but it must not do so silently.
+      ENV["NOIR_ACP_ALLOW_CUSTOM_COMMAND"] = "1"
+      begin
+        events = [] of String
+        sink = ->(msg : String) { events << msg; nil }
+        client = LLM::ACPClient.new("acp:false", "acp", sink)
+
+        client.request("find endpoints").should eq("")
+        events.any?(&.includes?("request failed")).should be_true
+      ensure
+        ENV.delete("NOIR_ACP_ALLOW_CUSTOM_COMMAND")
+      end
+    end
+  end
 end
 
 describe LLM::AdapterFactory do

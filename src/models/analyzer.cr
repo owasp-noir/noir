@@ -4,6 +4,7 @@ require "./file_helper"
 require "./code_locator"
 require "./skipped_files"
 require "wait_group"
+require "../utils/exclude_path"
 require "../utils/media_filter"
 require "../utils/path_scope"
 require "../utils/text_file"
@@ -40,6 +41,7 @@ class Analyzer
   @is_color : Bool
   @is_log : Bool
   @raw_options : Hash(String, YAML::Any)
+  @exclude_path : Noir::ExcludePath
   # path => longest-matching configured base. Populated lazily by
   # `configured_base_for`; only used on multi-base (monorepo) scans.
   @configured_base_cache = {} of String => String
@@ -57,6 +59,7 @@ class Analyzer
     @is_color = any_to_bool(options["color"])
     @is_log = any_to_bool(options["nolog"])
     @raw_options = options
+    @exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
 
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log
   end
@@ -114,6 +117,45 @@ class Analyzer
     cached = CodeLocator.instance.content_for(path)
     return cached if cached
     Noir::TextFile.read(path)
+  end
+
+  # Whether the user's `--exclude-path` covers `path`.
+  #
+  # `CodeLocator` lookups need no such check: the exclusion is applied once,
+  # in the detector's walk, so an excluded file never enters `file_map` in
+  # the first place. This exists for the handful of adapters that enumerate
+  # the filesystem themselves (static-resource directories, convention-
+  # located config, mobile resource bundles) — see the allowlist in
+  # `spec/unit_test/analyzer/layering_boundary_spec.cr`. Every candidate
+  # such a walk produces must pass through here, or the user's exclusion is
+  # silently ignored and the file they excluded for scope or secrecy
+  # reasons lands in the report anyway.
+  #
+  # Matches on the scan-base-relative path, exactly like the detector: the
+  # patterns are written against the project layout, not against wherever
+  # the checkout happens to sit.
+  protected def excluded_path?(path : String) : Bool
+    return false unless @exclude_path.active?
+    @exclude_path.excluded?(base_relative_path(path))
+  end
+
+  # Whether `path` sits inside one of the configured scan bases.
+  #
+  # A walker that resolves a directory out of *project configuration*
+  # (Spring's `spring.web.resources.static-locations`, say) can be handed
+  # an absolute path pointing anywhere on the machine. Globbing it walks
+  # files the user never asked noir to look at and puts the scanning
+  # machine's directory layout into a report that may be shared, so the
+  # resolved directory has to be confirmed in scope first.
+  #
+  # With no configured base there is nothing to be outside of, so the
+  # answer is true — that is the shape specs drive analyzers in.
+  protected def within_scan_base?(path : String) : Bool
+    return true if @normalized_base_paths.empty?
+    expanded = File.expand_path(path)
+    @normalized_base_paths.any? do |_, normalized|
+      Noir::PathScope.under_normalized_root?(expanded, normalized)
+    end
   end
 
   # Whether `content` matches `markers`, skipping PCRE2's per-call UTF-8
@@ -404,6 +446,13 @@ class FileAnalyzer < Analyzer
 
   @@hooks = [] of Hook
 
+  # Not registered through `analyzer_for` — the FileAnalyzer runs outside the
+  # tech registry — but its per-file rescue needs a name to report a skipped
+  # file under, and an empty one renders as `": skipped 1 file…"`.
+  def tech : String
+    "file_analyzer"
+  end
+
   def self.add_hook(func : Proc(String, String, Array(Endpoint)), requires_url : Bool = true)
     @@hooks << Hook.new(func, requires_url)
   end
@@ -472,6 +521,10 @@ class FileAnalyzer < Analyzer
               end
             rescue e
               logger.debug e
+              # Same contract as `parallel_analyze`'s worker rescue: one file
+              # that blows up a hook costs only itself, and the fact that it
+              # did reaches `errors` instead of only `--debug`.
+              Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name) if path
             end
           end
         end

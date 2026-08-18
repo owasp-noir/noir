@@ -4,6 +4,7 @@ require "../../../llm/adapter"
 require "../../../llm/prompt"
 require "../../../llm/prompt_overrides"
 require "../../../llm/cache"
+require "../../../models/skipped_files"
 require "../../../utils/text_file"
 
 module Analyzer::AI
@@ -42,6 +43,13 @@ module Analyzer::AI
       "undefined", "your_endpoint", "your-endpoint", "path/to/endpoint",
       "...", "<url>", "<endpoint>", "<path>",
     }
+    # Every adapter maps a call it could not complete — an HTTP error the
+    # retries did not clear, a provider error body, a dead ACP agent, a reply
+    # that would not parse — to an empty string, and each one already prints
+    # its own WARNING naming the cause. The empty string is what reaches here,
+    # so this is the reason the *analyzer* can attach to the lost coverage.
+    LLM_NO_RESPONSE_REASON = "the AI provider returned no usable response (see the WARNING lines above for the cause)"
+
     IGNORE_EXTENSIONS = [".css", ".xml", ".json", ".yml", ".yaml", ".md", ".jpg", ".jpeg", ".png", ".gif", ".svg", ".ico",
                          ".eot", ".ttf", ".woff", ".woff2", ".otf", ".mp3", ".mp4", ".avi", ".mov", ".webm", ".zip", ".tar",
                          ".gz", ".7z", ".rar", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv",
@@ -163,33 +171,55 @@ module Analyzer::AI
       files
     end
 
-    private def process_bundles_concurrently(bundles : Array(Tuple(String, Int32)), adapter : LLM::Adapter)
+    private def process_bundles_concurrently(bundles : Array(LLM::Bundle), adapter : LLM::Adapter)
       total = bundles.size
       worker_count = bundle_worker_count(total)
       logger.debug_sub "AI::Processing #{total} bundle(s) with #{worker_count} worker(s)"
 
-      queue = Channel(Tuple(Int32, String, Int32)).new(DEFAULT_CHANNEL_CAPACITY)
+      queue = Channel(Tuple(Int32, LLM::Bundle)).new(DEFAULT_CHANNEL_CAPACITY)
 
       WaitGroup.wait do |wg|
+        # `ensure`, not a trailing statement: if the producer raises
+        # mid-send, an unclosed channel leaves every worker parked in
+        # `receive?` forever and `WaitGroup.wait` never returns — a silent
+        # hang with no output and no exit code. Same reason
+        # `Analyzer#parallel_analyze` closes in an `ensure`.
         wg.spawn do
-          bundles.each_with_index do |bundle, index|
-            content, token_count = bundle
-            queue.send({index, content, token_count})
+          begin
+            bundles.each_with_index do |bundle, index|
+              queue.send({index, bundle})
+            end
+          ensure
+            queue.close
           end
-          queue.close
         end
 
         worker_count.times do
           wg.spawn do
             loop do
-              item = queue.receive?
-              break if item.nil?
-              index, content, token_count = item
-              logger.info "Processing bundle #{index + 1}/#{total} (#{token_count} tokens)"
+              # The rescue covers the whole iteration, not just
+              # `process_bundle`: a worker that dies leaves its share of the
+              # bundles unprocessed and, once all of them are gone, parks the
+              # producer on a full channel.
+              #
+              # `item` is hoisted so the rescue can name the files whose
+              # coverage was lost. It stays nil when the failure came out of
+              # `receive?` itself, where there is no bundle to attribute.
+              item = nil
               begin
-                process_bundle(content, adapter)
+                item = queue.receive?
+                break if item.nil?
+                index, bundle = item
+                logger.info "Processing bundle #{index + 1}/#{total} (#{bundle.tokens} tokens)"
+                process_bundle(bundle, adapter)
               rescue ex : Exception
-                logger.debug "Error processing bundle #{index + 1}: #{ex.message}"
+                if failed = item
+                  failed_index, failed_bundle = failed
+                  logger.debug "Error processing bundle #{failed_index + 1}: #{ex.message}"
+                  record_llm_failure(failed_bundle.paths, "bundle #{failed_index + 1}/#{total} could not be analyzed: #{ex.message}")
+                else
+                  logger.debug "Error receiving a bundle to process: #{ex.message}"
+                end
               end
             end
           end
@@ -213,11 +243,11 @@ module Analyzer::AI
       total < limit ? total : limit
     end
 
-    private def process_bundle(bundle_content : String, adapter : LLM::Adapter)
+    private def process_bundle(bundle : LLM::Bundle, adapter : LLM::Adapter)
       response = call_llm_with_cache(
         kind: "BUNDLE_ANALYZE",
         system_prompt: LLM::SYSTEM_BUNDLE,
-        payload: compose_prompt_payload(LLM::PromptOverrides.bundle_analyze_prompt, bundle_content),
+        payload: compose_prompt_payload(LLM::PromptOverrides.bundle_analyze_prompt, bundle.content),
         format: LLM::ANALYZE_FORMAT,
         adapter: adapter
       )
@@ -225,7 +255,11 @@ module Analyzer::AI
       logger.debug "Bundle analysis response:"
       logger.debug_sub response
 
-      parse_and_store_endpoints(response, "#{base_path}/ai_detected")
+      if response.empty?
+        record_llm_failure(bundle.paths, LLM_NO_RESPONSE_REASON)
+      else
+        parse_and_store_endpoints(response, "#{base_path}/ai_detected")
+      end
     end
 
     private def select_target_paths(adapter : LLM::Adapter) : Array(String)
@@ -323,7 +357,27 @@ module Analyzer::AI
       logger.debug "AI response (#{relative_path}):"
       logger.debug_sub response
 
-      parse_and_store_endpoints(response, path)
+      if response.empty?
+        record_llm_failure([relative_path], LLM_NO_RESPONSE_REASON)
+      else
+        parse_and_store_endpoints(response, path)
+      end
+    end
+
+    # A failed LLM call used to end here: the empty response failed to parse,
+    # a debug line was written, and the analyzer returned its (empty) result
+    # through the normal success path. `errors` stayed `[]` and the process
+    # exited 0 even under `--strict`, so a provider that answered HTTP 500 to
+    # every request was indistinguishable from a clean scan of a codebase with
+    # no endpoints — the exact confusion `AnalyzerFailure` exists to prevent.
+    #
+    # Routed through `Noir::SkippedFiles` rather than raising: bundles are
+    # analyzed concurrently and a single failed one must not discard the
+    # endpoints the others found. This reports the files that went unread and
+    # keeps the rest, which is the same "partial coverage, and here is what is
+    # missing" contract the per-file skips already use.
+    private def record_llm_failure(paths : Array(String), reason : String)
+      paths.each { |path| Noir::SkippedFiles.record("ai", path, reason) }
     end
 
     private def parse_and_store_endpoints(response : String, default_path : String)

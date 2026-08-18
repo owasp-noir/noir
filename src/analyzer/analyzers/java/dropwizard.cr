@@ -4,6 +4,7 @@ require "../../../miniparsers/jaxrs_extractor_ts"
 require "../../../miniparsers/import_graph"
 require "yaml"
 require "../../../utils/url_path"
+require "../../../utils/path_scope"
 require "../../../utils/top_level_split"
 
 module Analyzer::Java
@@ -137,14 +138,13 @@ module Analyzer::Java
       roots
     end
 
+    # Directories a Dropwizard app conventionally keeps its server YAML in,
+    # relative to the project root. Non-recursive, as the `Dir.glob` this
+    # replaced was.
+    CONFIG_DIRS = ["", "config", "src/main/resources"]
+
     private def path_config_for(project_root : String) : DropwizardPathConfig
-      config_paths = ([] of String)
-      config_paths.concat(Dir.glob(File.join(project_root, "*.yml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "*.yaml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "config", "*.yml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "config", "*.yaml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "src/main/resources", "*.yml")))
-      config_paths.concat(Dir.glob(File.join(project_root, "src/main/resources", "*.yaml")))
+      config_paths = dropwizard_config_files(project_root)
 
       config_paths.sort.each do |config_path|
         config = read_path_config(config_path)
@@ -152,6 +152,28 @@ module Analyzer::Java
       end
 
       DropwizardPathConfig.new
+    end
+
+    # The server YAML, resolved against the scanned-file index rather than
+    # globbed off disk.
+    #
+    # The config is located by convention (project root, `config/`,
+    # `src/main/resources/`) rather than by extension, which is why this
+    # used to reach for `Dir.glob`. Going through the index instead means
+    # the lookup inherits everything the detector's walk applies: subtree
+    # pruning, `--exclude-path`, the media/oversize filter and the content
+    # cache. The glob form did none of that — it handed an excluded file,
+    # at any size, straight to `read_file_content` + `YAML.parse`.
+    private def dropwizard_config_files(project_root : String) : Array(String)
+      candidates = get_files_by_extensions([".yml", ".yaml"])
+      return candidates if candidates.empty?
+      config_dirs = CONFIG_DIRS.map do |dir|
+        Noir::PathScope.normalize_root(dir.empty? ? project_root : File.join(project_root, dir))
+      end.to_set
+
+      candidates.select do |path|
+        config_dirs.includes?(Noir::PathScope.normalize_root(File.dirname(path)))
+      end
     end
 
     private def read_path_config(path : String) : DropwizardPathConfig

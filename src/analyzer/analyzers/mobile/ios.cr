@@ -192,8 +192,12 @@ module Analyzer::Mobile
       # MAX_PBXPROJ_FILES), so the selection depends on order.
       vars = {} of String => Array(String)
       if all_files.empty?
-        xcconfigs = Dir.glob(File.join(root, "**", "*.xcconfig"))
-        pbxprojs = Dir.glob(File.join(root, "**", "project.pbxproj"))
+        # `--exclude-path` is applied by the detector's walk, which this
+        # branch runs *instead of* — so it has to be re-applied by hand or
+        # the fallback reads build settings out of a file the user
+        # excluded. The index branch below inherits the filter.
+        xcconfigs = Dir.glob(File.join(root, "**", "*.xcconfig")).reject { |path| excluded_path?(path) }
+        pbxprojs = Dir.glob(File.join(root, "**", "project.pbxproj")).reject { |path| excluded_path?(path) }
       else
         xcconfigs = get_files_by_prefix_and_extension(root, ".xcconfig")
         pbxprojs = get_files_by_relative_path("project.pbxproj", root)
@@ -214,14 +218,22 @@ module Analyzer::Mobile
     private def xcode_project_root(plist_path : String) : String?
       dir = File.dirname(File.expand_path(plist_path))
       XCCONFIG_SEARCH_DEPTH.times do
-        has_project = !Dir.glob(File.join(dir, "*.xcodeproj")).empty? ||
-                      !Dir.glob(File.join(dir, "*.xcworkspace")).empty?
+        has_project = xcode_project_bundle?(dir, "*.xcodeproj") ||
+                      xcode_project_bundle?(dir, "*.xcworkspace")
         return dir if has_project
         parent = File.dirname(dir)
         break if parent == dir
         dir = parent
       end
       nil
+    end
+
+    # Whether `dir` holds an Xcode project/workspace bundle. An excluded
+    # one does not count: `--exclude-path MyApp.xcodeproj` says "pretend
+    # this is not here", and letting it still anchor the build-settings
+    # search would read the very tree the user carved out.
+    private def xcode_project_bundle?(dir : String, pattern : String) : Bool
+      Dir.glob(File.join(dir, pattern)).any? { |path| !excluded_path?(path) }
     end
 
     private def parse_xcconfig(path : String, vars : Hash(String, Array(String)))

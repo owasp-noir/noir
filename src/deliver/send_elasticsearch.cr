@@ -1,6 +1,7 @@
 require "crest"
 require "../utils/http_symbols"
 require "../models/deliver"
+require "../models/skipped_files"
 
 class SendElasticSearch < Deliver
   # `http://` with no port means the local/dev cluster shape, where 9200 is
@@ -54,7 +55,14 @@ class SendElasticSearch < Deliver
     # mistaken for a successful export. Reported against the URL the user
     # passed: `URI.parse` itself can raise, and the local `uri` is then nil,
     # which rendered the message as "delivery to  failed".
+    #
+    # Recorded as well as warned: an indexing outage that leaves the SIEM
+    # empty must not exit 0 under `--strict`.
     @logger.warning "Elasticsearch delivery to #{es_endpoint} failed: #{e.message}"
     @logger.debug_sub e
+    Noir::SkippedFiles.record_gap(
+      Noir::SkippedFiles::DELIVER_SCOPE,
+      "Elasticsearch delivery to #{es_endpoint} failed: #{e.message.presence || e.class.name}"
+    )
   end
 end
