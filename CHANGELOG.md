@@ -2,6 +2,29 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v1.3.0
+
+Noir v1.3.0 adds first-class support for the HTTP QUERY method (RFC 10008), 11 new framework analyzers, and scan-integrity reporting, on top of a large internal consolidation and bug sweep.
+
+### Added
+- **HTTP QUERY method (RFC 10008)**: end-to-end support from the core endpoint model through detection in ~24 frameworks (Express, Fastify, Hono, Node `http`/`https`, NestJS, Flask, aiohttp, Rails, Laravel, Phoenix/Plug, Echo, Fiber, Go `net/http`, axum, Ktor, http4k, Micronaut, Vert.x, JAX-RS/Quarkus/Dropwizard, ASP.NET Core, Kemal), plus OAS3 serialization and HTML report rendering.
+- New framework analyzers: Oak (Deno), Feathers.js, Sails.js, LoopBack 4, CherryPy, Masonite, Padrino, Phalcon, Helidon, ServiceStack, and Kratos.
+- Scan-integrity reporting: failed analyzers and skipped files are now reported instead of silently dropped, with `--strict` to exit non-zero when any occur.
+- Recovered iOS deep-link routes that config-only scanning missed.
+
+### Changed
+- Consolidated 44 duplicated top-level splitters into a shared `Noir::TopLevelSplit`, derived the analyzer/detector/tagger/format/tech registries from their classes, and split the largest monolithic extractors by concern.
+
+### Performance
+- Detector and tagger sweeps now run one PCRE2 pass per marker instead of N substring walks, read through the content cache, and split each file into lines once.
+- Go files are parsed once for their declaration tables; JS/TS route pre-filters collapse into precompiled unions; already-valid UTF-8 files skip the iconv decode; failed parses are memoized so N analyzers don't each pay the timeout.
+
+### Fixed
+- Multi-agent bug sweep across analyzer, detector, scan, output, and CLI layers: a single line of source (fat literals, unterminated strings, column-0 comments, escaped quotes) no longer erases a file's routes; scans no longer hang or lose coverage silently; OpenAPI documents are valid and stop dropping parameters; unprotected routes are no longer tagged authenticated.
+- Security fixes: ACP tool-permission auto-approval, AI agent symlink escape from the scan base, `--probe-header` secret leakage to cross-host targets, and world-readable AI cache.
+- Deliver/probe fixes for proxy bypass, credential forwarding, and missing timeouts.
+- Bounded AST walk depth and parse time so one file can't kill a scan.
+
 ## v1.2.1
 
 Noir v1.2.1 is a bug-fix release addressing determinism and cross-framework accuracy regressions introduced in v1.2.0's performance sweep.
