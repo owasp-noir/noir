@@ -26,6 +26,60 @@ module Noir
       expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
     end
 
+    # Canonical form of a user-supplied *base* path, preserving whether it
+    # is relative. `-b rem2`, `-b rem2///` and `-b ./rem2` all name the
+    # same tree, but the raw string is echoed straight into every reported
+    # `code_path`, so the same codebase scanned three ways produced three
+    # different reports — which breaks baseline diffing and any SARIF
+    # consumer that keys on the URI.
+    #
+    # Repeated separators collapse, trailing separators are dropped (the
+    # filesystem root itself stays `/`), and `.` segments are resolved
+    # away (`./rem2` -> `rem2`, a bare `.` stays `.`). `..` segments are
+    # left alone: resolving them textually is wrong across symlinks.
+    #
+    # Deliberately NOT `normalize_root`/`File.expand_path` — expanding a
+    # relative base would bake the machine's checkout location into every
+    # reported path, and an absolute `code_path` was itself a bug fixed in
+    # an earlier sweep. A relative base stays relative.
+    # Separators a base path may legitimately use. Windows accepts both
+    # forms; on POSIX a backslash is an ordinary filename character and
+    # must not be treated as a separator.
+    BASE_SEPARATORS = File::SEPARATOR == '\\' ? {'\\', '/'} : {'/'}
+
+    def normalize_base(base : String) : String
+      return base if base.empty?
+
+      separators = BASE_SEPARATORS
+      rooted = separators.includes?(base[0])
+
+      segments = [] of String
+      segment = String::Builder.new
+      base.each_char do |char|
+        if separators.includes?(char)
+          part = segment.to_s
+          segments << part unless part.empty? || part == "."
+          segment = String::Builder.new
+        else
+          segment << char
+        end
+      end
+      last = segment.to_s
+      segments << last unless last.empty? || last == "."
+
+      joined = segments.join(File::SEPARATOR)
+      return joined.empty? ? File::SEPARATOR.to_s : "#{File::SEPARATOR}#{joined}" if rooted
+      return "." if joined.empty?
+      # A Windows drive root ("C:\\") is the one place a trailing separator
+      # carries meaning — without it "C:" names the current directory on
+      # that drive instead.
+      if File::SEPARATOR == '\\' && segments.size == 1 && joined.size == 2 &&
+         joined[1] == ':' && base.size > 2
+        return "#{joined}#{File::SEPARATOR}"
+      end
+      joined
+    end
+
     # True when `path` is `root` or sits beneath it on a path boundary.
     # `root` is expanded/normalized internally; an empty `root` matches
     # everything (mirrors the historical `starts_with?("")`).

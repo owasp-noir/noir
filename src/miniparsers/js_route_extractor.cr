@@ -371,15 +371,35 @@ module Noir
     # the routes of a normal file that just happens to carry one long
     # line (issue #1903 review):
     #   1. at least one line reaches MINIFIED_LINE_THRESHOLD bytes, and
-    #   2. the file's average line length reaches
-    #      MINIFIED_AVG_LINE_THRESHOLD — long lines dominate, newline
-    #      density is low.
-    # webpack/rollup output and `*.min.js` satisfy both (the whole file
-    # is one or a few enormous lines); a route module with a 7 KB inline
-    # payload amid dozens of short route lines satisfies neither, so its
-    # real endpoints survive. Skipping such a file is purely a parser
-    # optimization — small files lex fast regardless — so there is no
-    # need to skip one merely because it embeds a fat literal.
+    #   2. the *rest* of the file — every code line except that single
+    #      fattest one — still averages MINIFIED_AVG_LINE_THRESHOLD bytes
+    #      or more, i.e. long lines dominate and newline density is low.
+    #
+    # Condition (2) deliberately sets aside the longest line and every
+    # blank/comment-only line before averaging. Averaging over the *whole*
+    # file (the original rule) let one fat literal drag a small module over
+    # the threshold: a 13-line Express server carrying a 20 KB
+    # `const LOGO = 'data:image/png;base64,…'` line averages ~1.5 KB/line
+    # and was classified as a bundle, so all ten of its routes were dropped
+    # silently. Dropping the single fattest line barely moves a real
+    # bundle's average (it has several enormous lines, or nothing else at
+    # all) but collapses such a module's to a few dozen bytes.
+    #
+    # Blank and comment-only lines are excluded for the same reason in the
+    # other direction: the canonical `*.min.js` is one enormous line
+    # wrapped in a `/*! license */` banner and a `//# sourceMappingURL=`
+    # trailer. Those decorations are not source, so a bundle that carries
+    # them must still be recognised as a bundle.
+    #
+    # A file with no code line left over (a single enormous line, with or
+    # without banner/sourcemap decoration) is judged on that line alone —
+    # it is the bundle shape by definition.
+    #
+    # webpack/rollup output and `*.min.js` satisfy both conditions; a route
+    # module with a fat inline payload amid real route lines satisfies
+    # neither, so its endpoints survive. Skipping such a file is purely a
+    # parser optimization — small files lex fast regardless — so there is
+    # no need to skip one merely because it embeds a fat literal.
     def self.minified_content?(content : String,
                                line_threshold : Int32 = MINIFIED_LINE_THRESHOLD,
                                avg_threshold : Int32 = MINIFIED_AVG_LINE_THRESHOLD) : Bool
@@ -388,22 +408,76 @@ module Noir
       # the vast majority of source files for free.
       return false if bytesize < line_threshold
 
+      bytes = content.to_slice
+
       longest = 0
-      run = 0
-      lines = 1
-      content.each_byte do |byte|
-        if byte == 0x0a_u8 # '\n'
-          longest = run if run > longest
-          run = 0
-          lines += 1
-        else
-          run += 1
+      longest_start = 0
+      longest_end = 0
+      line_start = 0
+      index = 0
+      while index < bytesize
+        if bytes[index] == 0x0a_u8 # '\n'
+          if index - line_start > longest
+            longest = index - line_start
+            longest_start = line_start
+            longest_end = index
+          end
+          line_start = index + 1
         end
+        index += 1
       end
-      longest = run if run > longest
+      if bytesize - line_start > longest
+        longest = bytesize - line_start
+        longest_start = line_start
+        longest_end = bytesize
+      end
 
       return false if longest < line_threshold
-      (bytesize // lines) >= avg_threshold
+
+      # Second pass: average the code lines that are NOT the fattest one.
+      # Only files that already cleared the per-line threshold get here, so
+      # this rescan runs on a handful of files per project at most.
+      rest_bytes = 0
+      rest_lines = 0
+      line_start = 0
+      index = 0
+      while index <= bytesize
+        if index == bytesize || bytes[index] == 0x0a_u8
+          unless line_start == longest_start && index == longest_end
+            if code_line?(bytes, line_start, index)
+              rest_bytes += index - line_start
+              rest_lines += 1
+            end
+          end
+          line_start = index + 1
+        end
+        index += 1
+      end
+
+      return longest >= avg_threshold if rest_lines == 0
+      (rest_bytes // rest_lines) >= avg_threshold
+    end
+
+    # True when the byte range [`from`, `to`) carries something other than
+    # whitespace, a `//` line comment or a `/* … */` block-comment line.
+    # Intentionally shallow — it only has to tell a bundle's banner and
+    # sourcemap trailer apart from real source lines, not lex JavaScript.
+    private def self.code_line?(bytes : Bytes, from : Int32, to : Int32) : Bool
+      index = from
+      while index < to
+        byte = bytes[index]
+        break unless byte == 0x20_u8 || byte == 0x09_u8 || byte == 0x0d_u8
+        index += 1
+      end
+      return false if index >= to
+
+      byte = bytes[index]
+      return false if byte == 0x2a_u8      # '*' — a block comment's continuation or its `*/`
+      if byte == 0x2f_u8 && index + 1 < to # '/'
+        following = bytes[index + 1]
+        return false if following == 0x2f_u8 || following == 0x2a_u8 # '//' or '/*'
+      end
+      true
     end
 
     # Test-fixture libraries whose API mimics route registration:

@@ -2,6 +2,7 @@ require "./ai_context/features.cr"
 require "./cli/common.cr"
 require "./completions.cr"
 require "./output_builder/formats.cr"
+require "./utils/path_scope.cr"
 require "./config_initializer.cr"
 require "./banner.cr"
 require "yaml"
@@ -378,7 +379,10 @@ def run_options_parser
 
     parser.separator " BASE:".colorize(:blue)
     parser.on "-b PATH", "--base-path PATH", "Add a base path to scan (positional paths work too; repeatable)" do |v|
-      append_to_yaml_array(noir_options, "base", v)
+      # Normalize once, here: the base string is echoed verbatim into every
+      # reported `code_path`, so `-b rem2`, `-b rem2///` and `-b ./rem2`
+      # otherwise describe the same tree with three different report bodies.
+      append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(v))
     end
     parser.on "-u URL", "--url http://...", "Prepend this base URL to every discovered path; required for --status-codes, --probe, and --probe-via" do |v|
       noir_options["url"] = YAML::Any.new(v)
@@ -688,7 +692,7 @@ def run_options_parser
   # base paths so `noir scan ./a ./b` mirrors `-b ./a -b ./b`.
   extracted_args.each do |positional|
     next if positional.starts_with?("-")
-    append_to_yaml_array(noir_options, "base", positional)
+    append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(positional))
   end
 
   # Validate the *effective* feature list, not just the one `--ai-context`
