@@ -153,4 +153,65 @@ describe "OutputBuilderCommon" do
     output.should contain("guards:")
     output.should contain("sql: User.find_by_sql")
   end
+
+  it "renders multipart file params and other unhandled param types" do
+    options = {
+      "debug"          => YAML::Any.new(false),
+      "verbose"        => YAML::Any.new(false),
+      "color"          => YAML::Any.new(false),
+      "nolog"          => YAML::Any.new(false),
+      "output"         => YAML::Any.new(""),
+      "include_path"   => YAML::Any.new(false),
+      "include_callee" => YAML::Any.new(false),
+      "include_techs"  => YAML::Any.new(false),
+      "ai_context"     => YAML::Any.new(false),
+      "status_codes"   => YAML::Any.new(false),
+      "exclude_codes"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCommon.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/upload", "POST")
+    endpoint.push_param(Param.new("name", "test", "form"))
+    endpoint.push_param(Param.new("avatar", "", "file"))
+    endpoint.push_param(Param.new("resume", "", "file"))
+    endpoint.push_param(Param.new("payload", "<root/>", "xml"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("body:")
+    output.should contain("name=test")
+    output.should contain("file: avatar, resume")
+    output.should contain("xml: payload")
+  end
+
+  it "does not duplicate body-aliased params into a stray bucket" do
+    options = {
+      "debug"          => YAML::Any.new(false),
+      "verbose"        => YAML::Any.new(false),
+      "color"          => YAML::Any.new(false),
+      "nolog"          => YAML::Any.new(false),
+      "output"         => YAML::Any.new(""),
+      "include_path"   => YAML::Any.new(false),
+      "include_callee" => YAML::Any.new(false),
+      "include_techs"  => YAML::Any.new(false),
+      "ai_context"     => YAML::Any.new(false),
+      "status_codes"   => YAML::Any.new(false),
+      "exclude_codes"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCommon.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/api/data", "POST")
+    endpoint.push_param(Param.new("content", "hello", "body"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("body:")
+    output.should contain("\"content\":\"hello\"")
+    # "body" request_type is mapped to json, so it should not render a redundant `○ body: content` line
+    output.scan(/○ body:/).size.should eq(1)
+  end
 end

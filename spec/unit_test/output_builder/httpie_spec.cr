@@ -145,4 +145,26 @@ describe "OutputBuilderHttpie" do
 
     line.should eq("http --form 'QUERY' '/products/search' 'q=widget'")
   end
+
+  it "escapes newlines and carriage returns so commands remain on a single line" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/base/quote\"path?q\"uote=", "GET")
+    endpoint.push_param(Param.new("X-New\nLine", "value\r\nwith\nbreaks", "header"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s.strip
+    lines = output.split("\n")
+
+    lines.size.should eq(1)
+    output.should contain("'X-New\\nLine: value\\r\\nwith\\nbreaks'")
+  end
 end

@@ -185,4 +185,48 @@ describe "OutputBuilderDiff" do
       output.should_not contain(%(path.permissions = "read"))
     end
   end
+
+  describe "machine format output byte 0" do
+    it "does not start json diff with a leading newline" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      endpoints = [Endpoint.new("/test", "GET")]
+      diff_app = NoirRunner.new(create_test_options)
+
+      builder.print_json(endpoints, diff_app)
+      output = builder.io.to_s
+
+      output[0].should eq('{')
+      output.should_not start_with("\n")
+    end
+
+    it "does not start yaml diff with a leading newline" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      endpoints = [Endpoint.new("/test", "GET")]
+      diff_app = NoirRunner.new(create_test_options)
+
+      builder.print_yaml(endpoints, diff_app)
+      output = builder.io.to_s
+
+      output.should_not start_with("\n")
+      (output.starts_with?("---") || output.starts_with?("added:")).should be_true
+    end
+
+    it "does not start toml diff with a leading newline" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      endpoints = [Endpoint.new("/test", "GET")]
+      diff_app = NoirRunner.new(create_test_options)
+
+      builder.print_toml(endpoints, diff_app)
+      output = builder.io.to_s
+
+      output[0].should eq('[')
+      output.should_not start_with("\n")
+    end
+  end
 end

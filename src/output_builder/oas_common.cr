@@ -158,9 +158,90 @@ module OutputBuilderOasCommon
   end
 
   private def path_template_names(path : String) : Array(String)
-    names = path.scan(/\{([^{}\/]+)\}/).map { |match| match[1] }
+    names = path_template_name_sequence(path)
     names.uniq!
     names
+  end
+
+  # Every template variable in the order it appears, duplicates included —
+  # what `canonical_oas_path` needs to line two same-shaped paths up slot by
+  # slot. `path_template_names` de-duplicates and would misalign the two
+  # lists the moment a route repeats a variable.
+  private def path_template_name_sequence(path : String) : Array(String)
+    path.scan(/\{([^{}\/]+)\}/).map { |match| match[1] }
+  end
+
+  # The path with every template variable's *name* erased. Both OAS 2.0 and
+  # OAS 3.x say two templated paths with the same hierarchy but different
+  # variable names are identical and MUST NOT both appear, so `/users/{id}`
+  # and `/users/{userId}` name one path item — keying `paths` on the literal
+  # string made them siblings and Spectral, Swagger Editor and
+  # `openapi-spec-validator` all rejected the document over it. Nine of the
+  # fixture tree's single-framework directories produce such a pair.
+  private def path_template_shape(path : String) : String
+    path.gsub(/\{[^{}\/]+\}/, "{}")
+  end
+
+  # The `paths` key an emitted path belongs under: itself the first time its
+  # shape is seen, the earlier path of that shape afterwards. `paths` keeps
+  # insertion order and endpoints arrive sorted, so the winner is stable
+  # across runs.
+  private def canonical_oas_path(oas_path : String, canonical_paths : Hash(String, String)) : String
+    canonical_paths[path_template_shape(oas_path)] ||= oas_path
+  end
+
+  # Maps the incoming path's variable names onto the canonical path's, slot
+  # by slot. The two share a template shape, so the sequences are the same
+  # length; a name that repeats keeps its first mapping.
+  private def path_template_renames(from : String, to : String) : Hash(String, String)
+    incoming = path_template_name_sequence(from)
+    canonical = path_template_name_sequence(to)
+    renames = {} of String => String
+
+    incoming.each_with_index do |name, index|
+      canonical_name = canonical[index]?
+      next if canonical_name.nil? || canonical_name == name
+
+      renames[name] ||= canonical_name
+    end
+
+    renames
+  end
+
+  # Rewrites path parameters onto the canonical path's variable names.
+  # Without this the merged operation declares `in: path, name: userId`
+  # against a `/users/{id}` template — a path parameter bound to nothing,
+  # which is exactly the validation error the merge exists to remove.
+  private def rename_path_parameters(parameters : Array(Hash(String, JSON::Any)), renames : Hash(String, String))
+    return if renames.empty?
+
+    renamed = [] of Hash(String, JSON::Any)
+    parameters.each do |parameter|
+      if parameter["in"].as_s == "path" && (name = renames[parameter["name"].as_s]?)
+        parameter = parameter.dup
+        parameter["name"] = JSON::Any.new(name)
+      end
+
+      append_unique_parameter(renamed, parameter)
+    end
+
+    parameters.replace(renamed)
+  end
+
+  # The alternate spellings folded into a path item, so merging two routes
+  # that differ only in placeholder name loses no information: the document
+  # says `/users/{id}`, the extension says one of the routes behind it was
+  # written `/users/{userId}`.
+  private def add_path_variant_extension(path_item : Hash(String, JSON::Any), variant : String)
+    variants = [] of String
+    if existing = path_item["x-noir-path-variants"]?
+      variants = existing.as_a.map(&.as_s)
+    end
+
+    return if variants.includes?(variant)
+
+    variants << variant
+    path_item["x-noir-path-variants"] = JSON::Any.new(variants.map { |name| JSON::Any.new(name) })
   end
 
   # The operation fields the emitted version's Path Item Object accepts.
@@ -191,6 +272,26 @@ module OutputBuilderOasCommon
     path_item["x-noir-unsupported-methods"] = JSON::Any.new(methods.map { |m| JSON::Any.new(m) })
   end
 
+  # The operation a verb the emitted version can't express would have had.
+  # Recording only the verb name threw the whole operation away —
+  # parameters, request body, `servers`, `x-noir-callees`,
+  # `x-noir-ai-context` — so every `TRACE`/`QUERY` route on Swagger 2.0 and
+  # every AsyncAPI `SEND`/`PUBLISH`/`SUBSCRIBE`/`RECEIVE` endpoint on both
+  # versions reached the document as a bare verb string with none of its
+  # data. Keyed by the verb as the analyzer spelled it, merged the same way
+  # a real operation is when two endpoints collapse onto one.
+  private def add_unsupported_operation(path_item : Hash(String, JSON::Any), method : String, operation : Hash(String, JSON::Any))
+    operations = path_item["x-noir-unsupported-operations"]?.try(&.as_h?).try(&.dup) || {} of String => JSON::Any
+
+    if existing = operations[method]?
+      operations[method] = merge_operations(existing, operation)
+    else
+      operations[method] = JSON::Any.new(operation)
+    end
+
+    path_item["x-noir-unsupported-operations"] = JSON::Any.new(operations)
+  end
+
   private def parameter_key(parameter : Hash(String, JSON::Any)) : String
     "#{parameter["in"].as_s}\0#{parameter["name"].as_s}"
   end
@@ -215,6 +316,12 @@ module OutputBuilderOasCommon
   # route pins `action` to a value and another accepts anything, the merged
   # operation accepts anything.
   private def merge_parameter(existing : Hash(String, JSON::Any), incoming : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+    # Swagger 2.0 carries the request body as a parameter, and its `schema`
+    # is an object of properties rather than the enum container the rest of
+    # this method reads. Falling through here returned the first operation's
+    # body verbatim and dropped every later one's fields.
+    return merge_body_parameter(existing, incoming) if existing["in"]?.try(&.as_s?) == "body"
+
     existing_values = parameter_enum(existing)
     incoming_values = parameter_enum(incoming)
     return with_parameter_enum(existing, nil) unless existing_values && incoming_values
@@ -310,6 +417,59 @@ module OutputBuilderOasCommon
     merged.map { |parameter| JSON::Any.new(parameter) }
   end
 
+  private def merge_body_parameter(existing : Hash(String, JSON::Any), incoming : Hash(String, JSON::Any)) : Hash(String, JSON::Any)
+    merged = existing.dup
+    if schema = merge_schema(merged["schema"]?, incoming["schema"]?)
+      merged["schema"] = schema
+    end
+
+    merged
+  end
+
+  # Noir addresses many operations on one path with a `#fragment` — GraphQL
+  # resolvers, JSON-RPC methods — so they all legitimately collapse onto one
+  # `POST /graphql`. Keeping the first schema and discarding the rest lost
+  # every later operation's input fields: 62 json parameters vanished from
+  # the specification fixtures' documents alone. `x-noir-operations` was
+  # already unioned so the document *named* operations whose inputs it no
+  # longer described.
+  private def merge_schema(existing : JSON::Any?, incoming : JSON::Any?) : JSON::Any?
+    return incoming unless existing
+    return existing unless incoming
+
+    existing_hash = existing.as_h?
+    incoming_hash = incoming.as_h?
+    return existing unless existing_hash && incoming_hash
+
+    merged = existing_hash.dup
+    existing_properties = merged["properties"]?.try(&.as_h?)
+    incoming_properties = incoming_hash["properties"]?.try(&.as_h?)
+
+    if existing_properties && incoming_properties
+      properties = existing_properties.dup
+      incoming_properties.each do |name, value|
+        properties[name] = value unless properties.has_key?(name)
+      end
+      merged["properties"] = JSON::Any.new(properties)
+    elsif incoming_properties
+      merged["properties"] = JSON::Any.new(incoming_properties)
+    end
+
+    # `required` is a claim about one request. A field only one of the merged
+    # operations demands is not mandatory for the path+method as a whole, so
+    # the merged list is the intersection — the union would make callers of
+    # `Query.users` send `Mutation.createUser`'s fields.
+    existing_required = merged["required"]?.try(&.as_a?)
+    incoming_required = incoming_hash["required"]?.try(&.as_a?)
+    if existing_required && incoming_required
+      merged["required"] = JSON::Any.new(existing_required.select { |name| incoming_required.includes?(name) })
+    elsif existing_required
+      merged.delete("required")
+    end
+
+    JSON::Any.new(merged)
+  end
+
   private def merge_request_body(existing : JSON::Any?, incoming : JSON::Any?) : JSON::Any?
     return incoming unless existing
     return existing unless incoming
@@ -321,7 +481,8 @@ module OutputBuilderOasCommon
       if incoming_content = incoming_hash["content"]?
         content = existing_content.as_h.dup
         incoming_content.as_h.each do |media_type, media_value|
-          content[media_type] = media_value unless content.has_key?(media_type)
+          existing_media = content[media_type]?
+          content[media_type] = existing_media ? merge_media_type(existing_media, media_value) : media_value
         end
         existing_hash["content"] = JSON::Any.new(content)
       end
@@ -330,6 +491,25 @@ module OutputBuilderOasCommon
     end
 
     JSON::Any.new(existing_hash)
+  end
+
+  private def merge_media_type(existing : JSON::Any, incoming : JSON::Any) : JSON::Any
+    existing_hash = existing.as_h?
+    incoming_hash = incoming.as_h?
+    return existing unless existing_hash && incoming_hash
+
+    merged = existing_hash.dup
+    if schema = merge_schema(merged["schema"]?, incoming_hash["schema"]?)
+      merged["schema"] = schema
+    end
+
+    incoming_hash.each do |key, value|
+      next if key == "schema"
+
+      merged[key] = value unless merged.has_key?(key)
+    end
+
+    JSON::Any.new(merged)
   end
 
   private def merge_operations(existing : JSON::Any, incoming : Hash(String, JSON::Any)) : JSON::Any
@@ -416,8 +596,18 @@ module OutputBuilderOasCommon
     parameter
   end
 
-  private def swagger_url_parts(raw_url : String) : NamedTuple(host: String?, base_path: String, schemes: Array(String))
-    return {host: nil, base_path: "/", schemes: %w[http https]} if raw_url.empty?
+  # The authority and scheme list `-u` names.
+  #
+  # No `base_path`: `-u` is prepended to every endpoint URL by the optimizer,
+  # so its path component is already part of every `paths` key. Declaring it
+  # a second time as Swagger's `basePath` (or OAS3's `servers[0].url`) made
+  # every operation resolve to `<base><base><path>` — `-u https://h/v2`
+  # documented `https://h/v2/v2/users` where `-f curl`, on the same run and
+  # the same endpoint, printed `https://h/v2/users`. The per-operation
+  # `servers` entry an absolute endpoint gets carries the authority alone, so
+  # the document-level base has to agree with it and carry no path either.
+  private def swagger_url_parts(raw_url : String) : NamedTuple(host: String?, schemes: Array(String))
+    return {host: nil, schemes: %w[http https]} if raw_url.empty?
 
     # A scheme-less `-u example.com` makes URI.parse read the whole value as a
     # path (host=nil), so the Swagger `host` field was dropped. Prepend a
@@ -425,14 +615,38 @@ module OutputBuilderOasCommon
     # scheme list still defaults to http+https since the user gave none.
     had_scheme = raw_url.includes?("://")
     uri = URI.parse(had_scheme ? raw_url : "http://#{raw_url}")
-    schemes = if had_scheme && (scheme = uri.scheme)
+    scheme = uri.scheme
+    schemes = if had_scheme && scheme
                 [scheme]
               else
                 %w[http https]
               end
-    base_path = uri.path.empty? ? "/" : uri.path
-    base_path = "/" unless base_path.starts_with?("/")
 
-    {host: uri.host, base_path: base_path, schemes: schemes}
+    host = uri.host
+    host = nil if host.try(&.empty?)
+    # Swagger 2.0's `host` is `host[:port]`. Dropping the port sent every
+    # generated client and every Swagger-UI "Try it out" to 443/80 instead of
+    # the port `-u` named, while `-f oas3` and `-f postman` both kept it. A
+    # port that only restates the scheme's default adds nothing, so
+    # `https://x/` stays `x` rather than becoming `x:443`.
+    if host && (port = uri.port) && port != URI.default_port(scheme || "http")
+      host = "#{host}:#{port}"
+    end
+
+    {host: host, schemes: schemes}
+  end
+
+  # The document-level server URL: `-u`'s scheme and authority, with its path
+  # stripped for the reason `swagger_url_parts` explains. Falls back to `/`
+  # when `-u` names no authority to build one from — the path is already in
+  # every `paths` key either way.
+  private def document_server_url(raw_url : String) : String
+    return "http://localhost" if raw_url.empty?
+
+    parts = swagger_url_parts(raw_url)
+    host = parts[:host]
+    return "/" unless host
+
+    "#{parts[:schemes].first}://#{host}"
   end
 end

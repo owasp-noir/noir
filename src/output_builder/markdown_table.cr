@@ -17,7 +17,7 @@ class OutputBuilderMarkdownTable < OutputBuilder
                     else
                       String.build do |cell|
                         endpoint.params.each do |param|
-                          content = "#{sanitize_markdown_cell(param.name)} (#{sanitize_markdown_cell(param.param_type)})"
+                          content = "#{sanitize_code_span_cell(param.name)} (#{sanitize_code_span_cell(param.param_type)})"
                           cell << markdown_code_span(content) << ' '
                         end
                       end
@@ -48,6 +48,17 @@ class OutputBuilderMarkdownTable < OutputBuilder
   # from `sanitize_markdown_cell`.
   private def sanitize_text_cell(content : String) : String
     sanitize_markdown_cell(content).gsub('`', "\\`")
+  end
+
+  # Sanitizer for content rendered inside code spans. CommonMark does not
+  # recognize HTML entity references or backslash escapes inside code spans
+  # (§6.1/§6.3), so `<`, `>`, and `\` must remain literal. Only table column
+  # delimiters (`|`) and line breaks (`\r`, `\n`) are escaped/normalized.
+  private def sanitize_code_span_cell(content : String) : String
+    content.to_s
+      .gsub('|', "\\|") # Escape pipes
+      .gsub("\r", "")   # Remove carriage returns
+      .gsub("\n", " ")  # Replace newlines with space
   end
 
   private def sanitize_markdown_cell(content : String) : String

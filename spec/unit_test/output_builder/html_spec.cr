@@ -828,4 +828,60 @@ describe "OutputBuilderHtml" do
       ENV.delete("NOIR_HOME")
     end
   end
+
+  it "renders probed status code badges when status_codes flag is enabled" do
+    options = {
+      "debug"         => YAML::Any.new(false),
+      "verbose"       => YAML::Any.new(false),
+      "color"         => YAML::Any.new(false),
+      "nolog"         => YAML::Any.new(false),
+      "output"        => YAML::Any.new(""),
+      "status_codes"  => YAML::Any.new(true),
+      "exclude_codes" => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    ep_200 = Endpoint.new("/ok", "GET")
+    ep_200.details.status_code = 200
+
+    ep_404 = Endpoint.new("/missing", "GET")
+    ep_404.details.status_code = 404
+
+    ep_500 = Endpoint.new("/crash", "POST")
+    ep_500.details.status_code = 500
+
+    ep_err = Endpoint.new("/down", "GET")
+    # nil status_code represents probe error
+
+    builder.print([ep_200, ep_404, ep_500, ep_err])
+    output = builder.io.to_s
+
+    output.should contain("<span class=\"status-badge status-2xx\">200</span>")
+    output.should contain("<span class=\"status-badge status-4xx\">404</span>")
+    output.should contain("<span class=\"status-badge status-5xx\">500</span>")
+    output.should contain("<span class=\"status-badge status-error\">error</span>")
+  end
+
+  it "does not render status code badges when status probing is disabled" do
+    options = {
+      "debug"         => YAML::Any.new(false),
+      "verbose"       => YAML::Any.new(false),
+      "color"         => YAML::Any.new(false),
+      "nolog"         => YAML::Any.new(false),
+      "output"        => YAML::Any.new(""),
+      "status_codes"  => YAML::Any.new(false),
+      "exclude_codes" => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHtml.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/test", "GET")
+    endpoint.details.status_code = 200
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should_not contain("<span class=\"status-badge")
+  end
 end

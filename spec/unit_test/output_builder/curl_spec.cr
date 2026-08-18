@@ -90,4 +90,26 @@ describe "OutputBuilderCurl" do
     line.should contain("--data-raw 'q=widget'")
     line.should contain("-H 'Content-Type: application/x-www-form-urlencoded'")
   end
+
+  it "escapes newlines and carriage returns so commands remain on a single line" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/base/quote\"path?q\"uote=", "GET")
+    endpoint.push_param(Param.new("X-New\nLine", "value\r\nwith\nbreaks", "header"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s.strip
+    lines = output.split("\n")
+
+    lines.size.should eq(1)
+    output.should contain("-H 'X-New\\nLine: value\\r\\nwith\\nbreaks'")
+  end
 end

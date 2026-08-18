@@ -2,7 +2,7 @@
 # HTML report's copy-as-curl feature.
 module CurlCommand
   def self.shell_quote(str : String) : String
-    "'#{str.gsub("'", "'\\''")}'"
+    "'#{str.gsub("'", "'\\''").gsub("\r", "\\r").gsub("\n", "\\n")}'"
   end
 
   def self.build(method : String, url : String, body : String, body_type : String,

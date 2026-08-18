@@ -49,6 +49,14 @@ class OutputBuilderCommon < OutputBuilder
     {"env", "env"},
   ]
 
+  # Parameter kinds already covered by the dedicated render sections above
+  # (trees, named lists, query params baked into URL, or body payloads).
+  HANDLED_PARAM_TYPES = Set{
+    "header", "cookie", "query", "path",
+    "extra", "flag", "argument", "env",
+    "form", "json",
+  }
+
   @ai_context_features : Set(String)? = nil
 
   # The plain report is the only format that frames itself — a heading over
@@ -133,7 +141,7 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       PARAM_TREE_FIELDS.each do |param_type, label, separator|
-        entries = endpoint.params.select { |p| p.param_type == param_type }.map do |param|
+        entries = endpoint.params.select { |p| p.request_type == param_type }.map do |param|
           text = param.value.empty? ? param.name : "#{param.name}#{separator}#{param.value}"
           # Only these two rows flag unresolved params; the form-body tree
           # below is drawn the same way but deliberately omits the marker.
@@ -156,19 +164,34 @@ class OutputBuilderCommon < OutputBuilder
       end
 
       PARAM_NAME_FIELDS.each do |param_type, label|
-        selected = endpoint.params.select { |p| p.param_type == param_type }
+        selected = endpoint.params.select { |p| p.request_type == param_type }
         append_field r_buffer, label, selected.map(&.name).join(", "), :cyan unless selected.empty?
       end
 
       if baked[:body_type] == "form"
         # Same tree shape as headers/cookies but cyan, and with no
         # "[unresolved]" marker even on params carrying that tag.
-        form_entries = endpoint.params.select { |p| p.param_type == "form" }.map do |param|
+        form_entries = endpoint.params.select { |p| p.request_type == "form" }.map do |param|
           param.value.empty? ? param.name : "#{param.name}=#{param.value}"
         end
         append_tree_field r_buffer, "body", form_entries, :cyan
       elsif !baked[:body].empty?
         append_field r_buffer, "body", baked[:body], :cyan
+      end
+
+      # Anything left is still a named input the endpoint reads (multipart
+      # `file` fields, `xml` bodies, websocket parameters, etc.) that would
+      # otherwise be silently dropped. Render remaining buckets by type name.
+      remaining_params = endpoint.params.reject { |p| HANDLED_PARAM_TYPES.includes?(p.request_type) }
+      remaining_by_type = Hash(String, Array(String)).new
+      remaining_params.each do |param|
+        type = param.request_type
+        remaining_by_type[type] ||= [] of String
+        remaining_by_type[type] << param.name
+      end
+
+      remaining_by_type.each do |type, names|
+        append_field r_buffer, type, names.join(", "), :cyan unless names.empty?
       end
 
       tags = baked[:tags].reject { |t| t == "unresolved" } # will handle unresolved directly in the logs

@@ -66,12 +66,12 @@ class OutputBuilderDiff < OutputBuilder
 
   def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
     result = diff(endpoints, diff_app.endpoints)
-    ob_puts "\n" + result.to_json
+    ob_puts result.to_json
   end
 
   def print_yaml(endpoints : Array(Endpoint), diff_app : NoirRunner)
     result = diff(endpoints, diff_app.endpoints)
-    ob_puts "\n" + result.to_yaml
+    ob_puts result.to_yaml
   end
 
   def print_toml(endpoints : Array(Endpoint), diff_app : NoirRunner)
@@ -79,7 +79,7 @@ class OutputBuilderDiff < OutputBuilder
     json_str = result.to_json
     json_obj = JSON.parse(json_str)
     toml_output = generate_toml_from_diff(json_obj.as_h)
-    ob_puts "\n" + toml_output
+    ob_puts toml_output
   end
 
   private def generate_toml_from_diff(data : Hash(String, JSON::Any)) : String
