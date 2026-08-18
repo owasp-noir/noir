@@ -96,6 +96,21 @@ fun Application.configureRouting() {
         options("/settings") {
             call.respond(HttpStatusCode.OK)
         }
+
+        // The OpenAPI description DSL: `query("chunk_size")` names a query
+        // parameter of this GET route, it does not declare a QUERY route.
+        get("/stream-bytes") {
+            call.respondText("streaming")
+        }.describe {
+            tag("Dynamic data")
+            summary = "Streams n random bytes at a given chunk size"
+            parameters {
+                query("chunk_size") {
+                    description = "in bytes"
+                }
+                query("seed") { }
+            }
+        }
     }
 }
 

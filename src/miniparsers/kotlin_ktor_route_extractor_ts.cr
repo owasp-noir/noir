@@ -77,6 +77,27 @@ module Noir
       "port",
     }
 
+    # API-documentation DSL blocks. They hang off a route
+    # (`get("/x") { }.describe { ... }`) or nest inside one, and they
+    # describe an endpoint rather than declaring one — no route is ever
+    # registered inside them.
+    #
+    # They have to be skipped because the parameter sub-DSL names a query
+    # parameter with `query("name") { ... }`, which is exactly the shape of
+    # the QUERY verb call (RFC 10008): a name, a trailing lambda, inside the
+    # routing scope. Without this, every documented query parameter became a
+    # QUERY route named after the parameter — `query("chunk_size")` in Ktor's
+    # own httpbin sample surfaced as `QUERY /chunk_size`.
+    #
+    # Only the lambda is skipped, never the receiver: the block is chained
+    # onto the very route it documents, so dropping the whole call would take
+    # the real route with it.
+    DOC_DSL_NAMES = Set{
+      "describe",
+      "documentation",
+      "parameters",
+    }
+
     struct Route
       getter verb : String
       getter path : String
@@ -518,6 +539,17 @@ module Noir
       if ty == "call_expression"
         name = call_name(node, source)
         case
+        when DOC_DSL_NAMES.includes?(name)
+          # Documentation, not routing (see `DOC_DSL_NAMES`). Walk everything
+          # except the call suffix — that is where the trailing lambda lives,
+          # and where a documented `query("name")` would otherwise be read as
+          # a QUERY route. The receiver stays on the walk, so the route the
+          # block documents is still emitted.
+          Noir::TreeSitter.each_named_child(node) do |child|
+            next if Noir::TreeSitter.node_type(child) == "call_suffix"
+            walk(child, source, prefix, routes, string_constants, local_string_constants, depth + 1, include_callees, active, resource_paths)
+          end
+          return
         when active && HTTP_VERB_NAMES.has_key?(name)
           type_name = call_type_argument_name(node, source)
           path_arg = call_string_argument(node, source, string_constants, local_string_constants)

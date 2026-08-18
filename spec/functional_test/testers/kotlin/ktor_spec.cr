@@ -37,6 +37,9 @@ expected_endpoints = [
     Param.new("id", "", "path"),
   ]),
   Endpoint.new("/settings", "OPTIONS"),
+  # Documented with the OpenAPI DSL: one GET route, and no QUERY route per
+  # documented query parameter.
+  Endpoint.new("/stream-bytes", "GET"),
 ]
 
 FunctionalTester.new("fixtures/kotlin/ktor/", {
