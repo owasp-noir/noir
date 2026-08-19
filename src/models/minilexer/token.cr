@@ -17,12 +17,12 @@ class Token
     @type == type
   end
 
-  def to_s
-    if @value == "\n"
-      @value = "\\n"
-    elsif @value == "\t"
-      @value = "\\t"
-    end
-    "#{@type} '#{@value}'"
+  def to_s(io : IO) : Nil
+    display = case @value
+              when "\n" then "\\n"
+              when "\t" then "\\t"
+              else           @value
+              end
+    io << @type << " '" << display << "'"
   end
 end

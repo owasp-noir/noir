@@ -59,6 +59,16 @@ describe "Token" do
       str.should contain("\\t")
       str.should_not contain("\t")
     end
+
+    it "does not mutate the token's value" do
+      ["\n", "\t"].each do |value|
+        token = Token.new(:whitespace, value, 0)
+
+        token.to_s
+
+        token.value.should eq(value)
+      end
+    end
   end
 
   describe "property setters" do
