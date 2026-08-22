@@ -8,16 +8,16 @@
 </div>
 
 <p align="center">
-<a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md">
-<img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black"></a>
-<a href="https://www.bestpractices.dev/projects/14203">
-<img src="https://img.shields.io/badge/OpenSSF-PASS-000000?style=for-the-badge&labelColor=black"></a>
 <a href="https://github.com/owasp-noir/noir/releases">
 <img src="https://img.shields.io/github/v/release/owasp-noir/noir?style=for-the-badge&color=black&labelColor=black&logo=web"></a>
 <a href="https://crystal-lang.org">
 <img src="https://img.shields.io/badge/Crystal-000000?style=for-the-badge&logo=crystal&logoColor=white"></a>
 <a href="https://owasp.org/www-project-noir/">
 <img src="https://img.shields.io/badge/OWASP-000000?style=for-the-badge&logo=owasp&logoColor=white"></a>
+<a href="https://www.bestpractices.dev/projects/14203">
+<img src="https://img.shields.io/badge/OpenSSF-Best%20Practices-000000?style=for-the-badge&labelColor=black"></a>
+<a href="https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md">
+<img src="https://img.shields.io/badge/CONTRIBUTIONS-WELCOME-000000?style=for-the-badge&labelColor=black"></a>
 </p>
 
 <p align="center">
