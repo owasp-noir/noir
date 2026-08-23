@@ -1,0 +1,41 @@
+---
+name: Core team mural
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/coreteam-mural.yml
+      - .github/workflows/mural-coreteam.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: mural-coreteam
+  cancel-in-progress: true
+jobs:
+  mural:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The core team is a curated list, so the wall only moves when
+      # `.github/coreteam-mural.yml` does. Avatar changes happen on GitHub's
+      # side and never reach this repo as a push, so pick those up by running
+      # the workflow by hand.
+      - name: Render the core team mural
+        uses: crystal-actions/contributor-mural@v1
+        with:
+          config: .github/coreteam-mural.yml
+          no_commit: "true"
+      - uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            chore: update the core team mural
+
+            Co-authored-by: ksg97031 <ksg97031@gmail.com>
+          title: "chore: update the core team mural"
+          body: |
+            Automated update of `docs/static/CORETEAM.svg`.
+          branch: chore/update-coreteam-mural
+          delete-branch: true
