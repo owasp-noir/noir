@@ -1,0 +1,37 @@
+---
+name: Contributor mural
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: mural-contributors
+  cancel-in-progress: true
+jobs:
+  mural:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The contributor wall follows the contributors API, so any push to main
+      # can move it. The core team wall is curated and rides in its own
+      # workflow, which only wakes up when that list changes.
+      - name: Render the contributor mural
+        uses: crystal-actions/contributor-mural@v1
+        with:
+          config: .github/contributor-mural.yml
+          no_commit: "true"
+      - uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            chore: update the contributor mural
+
+            Co-authored-by: ksg97031 <ksg97031@gmail.com>
+          title: "chore: update the contributor mural"
+          body: |
+            Automated update of `docs/static/CONTRIBUTORS.svg`.
+          branch: chore/update-contributor-mural
+          delete-branch: true
