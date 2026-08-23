@@ -90,6 +90,10 @@ flowchart LR
 
 Noir is open-source and welcomes contributions. See the [Contributing Guide](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md) for details.
 
+### Core team
+
+![The OWASP Noir co-leads.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CORETEAM.svg)
+
 ### Contributors
 
 ![Avatars of the people who have contributed to OWASP Noir.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)

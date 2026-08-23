@@ -93,6 +93,10 @@ OWASP Noir joined the OWASP Foundation in **June 2024**.
 * November 2023: Moved the Noir repository to the noir-cr GitHub organization.
 * August 2023: Started as [@hahwul](https://github.com/hahwul)'s personal project.
 
+## Core Team
+
+[![](./docs/static/CORETEAM.svg)](https://owasp-noir.github.io/noir/resources/contact/)
+
 ## Contributing
 
 Noir is an open-source project made with ❤️.
