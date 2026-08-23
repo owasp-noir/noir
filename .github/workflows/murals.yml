@@ -1,0 +1,46 @@
+---
+name: Murals
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      logLevel:
+        description: manual run
+        required: false
+        default: ""
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  murals:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Two murals, two configs, one PR. The contributor wall follows the
+      # contributors API; the core team wall is the curated list in
+      # `.github/coreteam-mural.yml` and only moves when that file or an
+      # avatar does.
+      - name: Render the contributor mural
+        uses: crystal-actions/contributor-mural@v1
+        with:
+          config: .github/contributor-mural.yml
+          no_commit: "true"
+      - name: Render the core team mural
+        uses: crystal-actions/contributor-mural@v1
+        with:
+          config: .github/coreteam-mural.yml
+          no_commit: "true"
+      - uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: |
+            chore: update murals
+
+            Co-authored-by: ksg97031 <ksg97031@gmail.com>
+          title: "chore: update murals"
+          body: |
+            Automated update of `docs/static/CONTRIBUTORS.svg` and
+            `docs/static/CORETEAM.svg`.
+          branch: chore/update-murals
+          delete-branch: true

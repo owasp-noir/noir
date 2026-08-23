@@ -90,6 +90,10 @@ flowchart LR
 
 Noir는 오픈 소스이며 모든 기여를 환영합니다. [기여 가이드](https://github.com/owasp-noir/noir/blob/main/.github/CONTRIBUTING.md)를 참고하세요.
 
+### 코어 팀
+
+![OWASP Noir 공동 리더.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CORETEAM.svg)
+
 ### 기여자
 
 ![OWASP Noir 에 기여한 사람들의 프로필 이미지.](https://raw.githubusercontent.com/owasp-noir/noir/refs/heads/main/docs/static/CONTRIBUTORS.svg)

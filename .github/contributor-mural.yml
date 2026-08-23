@@ -8,9 +8,9 @@ contributors:
 
 users:
   - login: hahwul
-    role: "Creator, Leader"
+    role: "Co-Lead, Creator"
   - login: ksg97031
-    role: "Leader"
+    role: "Co-Lead"
 
 exclude:
   - dependabot[bot]
