@@ -2,10 +2,10 @@ require "../../func_spec.cr"
 
 expected_endpoints = [
   Endpoint.new("/before", "ANY"),
-  Endpoint.new("^/after/(.*)", "ANY"),
+  Endpoint.new("/after/(.*)", "ANY"),
   Endpoint.new("/fallback", "ANY"),
   Endpoint.new("/old", "ANY"),
-  Endpoint.new("^/legacy/(.*)", "ANY"),
+  Endpoint.new("/legacy/(.*)", "ANY"),
   Endpoint.new("/(.*)", "ANY"),
 ]
 
