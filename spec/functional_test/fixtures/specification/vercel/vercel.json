@@ -1,0 +1,46 @@
+{
+  "rewrites": {
+    "beforeFiles": [
+      {
+        "source": "/before",
+        "destination": "/before-destination"
+      }
+    ],
+    "afterFiles": [
+      {
+        "source": "^/after/(.*)",
+        "destination": "/after-destination/$1"
+      }
+    ],
+    "fallback": [
+      {
+        "source": "/fallback",
+        "destination": "/fallback-destination"
+      }
+    ]
+  },
+  "redirects": [
+    {
+      "source": "/old",
+      "destination": "/new",
+      "permanent": true
+    }
+  ],
+  "routes": [
+    {
+      "src": "^/legacy/(.*)",
+      "dest": "/api/$1"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "x-test",
+          "value": "1"
+        }
+      ]
+    }
+  ]
+}
