@@ -24,41 +24,39 @@ module Analyzer::Javascript
       resolve_koa_mount_prefixes
 
       parallel_file_scan([".js", ".ts", ".mjs"]) do |path|
-        begin
-          content = read_file_content(path)
-          next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :koa)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee)
-          parser_endpoints.each do |endpoint|
-            if endpoint.details.code_paths.empty?
-              endpoint.details = Details.new(PathInfo.new(path))
-            end
-
-            if endpoint.url.includes?(":")
-              endpoint.url.scan(/:(\w+)/) do |m|
-                if m.size > 0
-                  param = Param.new(m[1], "", "path")
-                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                end
-              end
-            end
-            result << endpoint
+        content = read_file_content(path)
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :koa)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee)
+        parser_endpoints.each do |endpoint|
+          if endpoint.details.code_paths.empty?
+            endpoint.details = Details.new(PathInfo.new(path))
           end
 
-          collect_static_paths(path, content, static_dirs, :koa)
-
-          # Strapi-style declarative routes: `{ method: 'GET',
-          # path: '/foo', handler: '...' }` object literals,
-          # typically exported as an array from
-          # `<plugin>/server/routes/**/*.js`. The verb DSL (`app.get`,
-          # `router.post`) doesn't fire on these — strapi/strapi
-          # parks ~38 such routes per plugin that the shared
-          # JSRouteExtractor would otherwise miss.
-          extract_strapi_routes(path, content, result)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-          analyze_with_regex(path, result, static_dirs)
+          if endpoint.url.includes?(":")
+            endpoint.url.scan(/:(\w+)/) do |m|
+              if m.size > 0
+                param = Param.new(m[1], "", "path")
+                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              end
+            end
+          end
+          result << endpoint
         end
+
+        collect_static_paths(path, content, static_dirs, :koa)
+
+        # Strapi-style declarative routes: `{ method: 'GET',
+        # path: '/foo', handler: '...' }` object literals,
+        # typically exported as an array from
+        # `<plugin>/server/routes/**/*.js`. The verb DSL (`app.get`,
+        # `router.post`) doesn't fire on these — strapi/strapi
+        # parks ~38 such routes per plugin that the shared
+        # JSRouteExtractor would otherwise miss.
+        extract_strapi_routes(path, content, result)
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+        analyze_with_regex(path, result, static_dirs)
       end
 
       # Process static directories to create endpoints for static files

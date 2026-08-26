@@ -31,11 +31,9 @@ module Analyzer::Go
       # twins on `GoCalleeExtractor`.
       file_contents = Hash(String, String).new
       get_files_by_extension(".go").each do |fp|
-        begin
-          file_contents[fp] = read_file_content(fp)
-        rescue IO::Error
-          # skip
-        end
+        file_contents[fp] = read_file_content(fp)
+      rescue IO::Error
+        # skip
       end
       package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents)
 

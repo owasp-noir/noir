@@ -30,13 +30,11 @@ module Analyzer::Specification
       env = collect_v4_environment(resources.as_a)
 
       resources.as_a.each do |resource|
-        begin
-          next unless resource["_type"]?.try(&.as_s?) == "request"
-          process_v4_request(resource, env, source_path)
-        rescue e
-          @logger.debug "Exception processing insomnia v4 resource"
-          @logger.debug_sub e
-        end
+        next unless resource["_type"]?.try(&.as_s?) == "request"
+        process_v4_request(resource, env, source_path)
+      rescue e
+        @logger.debug "Exception processing insomnia v4 resource"
+        @logger.debug_sub e
       end
     end
 
@@ -177,25 +175,23 @@ module Analyzer::Specification
 
     private def walk_v5_items(items : Array(YAML::Any), env : Hash(String, String), source_path : String)
       items.each do |item|
-        begin
-          if children_node = item["children"]?
-            if children = children_node.as_a?
-              walk_v5_items(children, env, source_path)
-              next
-            end
+        if children_node = item["children"]?
+          if children = children_node.as_a?
+            walk_v5_items(children, env, source_path)
+            next
           end
-
-          # v5 also stores WebSocket, Socket.IO, gRPC, and MCP nodes with
-          # URLs but without HTTP methods. Only HTTP request nodes are
-          # endpoints for this analyzer.
-          next unless item["url"]?
-          next unless method = item["method"]?.try(&.as_s?)
-          next unless HTTP_METHODS.includes?(method.upcase)
-          process_v5_request(item, env, source_path)
-        rescue e
-          @logger.debug "Exception processing insomnia v5 item"
-          @logger.debug_sub e
         end
+
+        # v5 also stores WebSocket, Socket.IO, gRPC, and MCP nodes with
+        # URLs but without HTTP methods. Only HTTP request nodes are
+        # endpoints for this analyzer.
+        next unless item["url"]?
+        next unless method = item["method"]?.try(&.as_s?)
+        next unless HTTP_METHODS.includes?(method.upcase)
+        process_v5_request(item, env, source_path)
+      rescue e
+        @logger.debug "Exception processing insomnia v5 item"
+        @logger.debug_sub e
       end
     end
 

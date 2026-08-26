@@ -30,13 +30,11 @@ module Analyzer::Javascript
 
     def analyze
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          next unless yoga_in_file?(content)
-          process_file(path, content)
-        rescue e
-          @logger.debug "GraphQL Yoga analyzer: failed to process #{path}: #{e.message}"
-        end
+        content = read_file_content(path)
+        next unless yoga_in_file?(content)
+        process_file(path, content)
+      rescue e
+        @logger.debug "GraphQL Yoga analyzer: failed to process #{path}: #{e.message}"
       end
       @result
     end

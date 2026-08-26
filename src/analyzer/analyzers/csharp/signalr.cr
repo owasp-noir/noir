@@ -73,18 +73,16 @@ module Analyzer::CSharp
       # custom-base class is a hub. `read_file_content` is cache-backed, so
       # the second read in pass 2 is cheap.
       files.each do |path|
-        begin
-          content = read_file_content(path)
-          next unless content.includes?("MapHub")
-          content.scan(MAP_HUB) do |m|
-            hub_type = m[1].split('.').last
-            map_hub_types << hub_type
-            routes[hub_type] = m[2]
-          end
-        rescue e
-          logger.debug "Error scanning SignalR routes in #{path}: #{e}"
-          next
+        content = read_file_content(path)
+        next unless content.includes?("MapHub")
+        content.scan(MAP_HUB) do |m|
+          hub_type = m[1].split('.').last
+          map_hub_types << hub_type
+          routes[hub_type] = m[2]
         end
+      rescue e
+        logger.debug "Error scanning SignalR routes in #{path}: #{e}"
+        next
       end
 
       # A file is worth lexing only if it declares a hub base or a type named
@@ -95,16 +93,14 @@ module Analyzer::CSharp
 
       # Pass 2 — hub classes and their callable methods.
       files.each do |path|
-        begin
-          content = read_file_content(path)
-          next unless content.includes?("class")
-          next unless content_matches?(content, HUB_CLASS) ||
-                      (mounted_re && content_matches?(content, mounted_re))
-          collect_hubs(content, path, hubs, map_hub_types)
-        rescue e
-          logger.debug "Error analyzing SignalR hub in #{path}: #{e}"
-          next
-        end
+        content = read_file_content(path)
+        next unless content.includes?("class")
+        next unless content_matches?(content, HUB_CLASS) ||
+                    (mounted_re && content_matches?(content, mounted_re))
+        collect_hubs(content, path, hubs, map_hub_types)
+      rescue e
+        logger.debug "Error analyzing SignalR hub in #{path}: #{e}"
+        next
       end
 
       emit(hubs, routes)

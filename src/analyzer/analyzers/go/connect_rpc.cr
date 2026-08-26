@@ -44,14 +44,12 @@ module Analyzer::Go
         service_mounts = discover_service_mounts
 
         proto_files.each do |proto_file|
-          begin
-            content = read_file_content(proto_file)
-            parse_proto(content, proto_file, service_mounts)
-          rescue File::NotFoundError
-            @logger.debug "Proto file not found during analysis, skipping: #{proto_file}"
-          rescue e
-            @logger.debug "ConnectRpc parse error for #{proto_file}: #{e.message}"
-          end
+          content = read_file_content(proto_file)
+          parse_proto(content, proto_file, service_mounts)
+        rescue File::NotFoundError
+          @logger.debug "Proto file not found during analysis, skipping: #{proto_file}"
+        rescue e
+          @logger.debug "ConnectRpc parse error for #{proto_file}: #{e.message}"
         end
       end
 

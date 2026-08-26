@@ -17,36 +17,34 @@ module Analyzer::Javascript
       scan_for_router_mounts
 
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :hono)
-          include_callee = callees_needed?
-          callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee, route_callees: callees_by_route)
-          parser_endpoints.each do |endpoint|
-            extract_path_params(endpoint)
-            result << endpoint
-          end
-
-          # Extract app.on() patterns not handled by JSRouteExtractor.
-          # The primary extractor already gates on `test_stub_only?` and
-          # minified bundles; this auxiliary pass has its own regex
-          # walk, so it has to repeat the same gates — without the stub
-          # gate, `app.on('GET', '/x10', ...)` from hono's own
-          # `*.test.ts` suites slips through, and without the minified
-          # gate a multi-MB bundle pays the full scan (issue #1903).
-          if on_route_candidate?(content) &&
-             !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
-             !Noir::JSRouteExtractor.minified_content?(content)
-            extract_on_routes(path, content, result, callees_by_route, include_callee)
-          end
-
-          collect_static_paths(path, content, static_dirs, :hono)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-          analyze_with_regex(path, result)
+        content = read_file_content(path)
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :hono)
+        include_callee = callees_needed?
+        callees_by_route = include_callee ? Noir::JSCalleeExtractor.callees_for_routes(content, path) : {} of String => Array(Noir::JSCalleeExtractor::Entry)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee, route_callees: callees_by_route)
+        parser_endpoints.each do |endpoint|
+          extract_path_params(endpoint)
+          result << endpoint
         end
+
+        # Extract app.on() patterns not handled by JSRouteExtractor.
+        # The primary extractor already gates on `test_stub_only?` and
+        # minified bundles; this auxiliary pass has its own regex
+        # walk, so it has to repeat the same gates — without the stub
+        # gate, `app.on('GET', '/x10', ...)` from hono's own
+        # `*.test.ts` suites slips through, and without the minified
+        # gate a multi-MB bundle pays the full scan (issue #1903).
+        if on_route_candidate?(content) &&
+           !Noir::JSRouteExtractor.test_stub_only?(path, content) &&
+           !Noir::JSRouteExtractor.minified_content?(content)
+          extract_on_routes(path, content, result, callees_by_route, include_callee)
+        end
+
+        collect_static_paths(path, content, static_dirs, :hono)
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+        analyze_with_regex(path, result)
       end
 
       process_static_dirs(static_dirs, result)

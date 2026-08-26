@@ -330,11 +330,9 @@ module Analyzer::Python
       end
 
       found = candidates.find do |file|
-        begin
-          read_file_content(file).each_line.any?(&.matches?(class_re))
-        rescue
-          false
-        end
+        read_file_content(file).each_line.any?(&.matches?(class_re))
+      rescue
+        false
       end
 
       @controller_file_cache[cache_key] = found

@@ -24,25 +24,23 @@ module Analyzer::Specification
       return unless item_array
 
       item_array.each do |item|
-        begin
-          item_variables = merge_variables(variables, item["variable"]?)
+        item_variables = merge_variables(variables, item["variable"]?)
 
-          # Check if it's a folder (has nested items) or a request
-          if item["item"]?
-            # It's a folder, recurse into it. A folder may declare its own auth,
-            # which overrides the collection/parent auth for everything beneath it.
-            folder_name = item["name"]?.try(&.to_s) || ""
-            new_path = folder_path.empty? ? folder_name : "#{folder_path}/#{folder_name}"
-            folder_auth = item["auth"]? || inherited_auth
-            process_items(item["item"], source_path, item_variables, new_path, folder_auth)
-          elsif item["request"]?
-            # It's a request, process it
-            process_request(item, source_path, item_variables, inherited_auth)
-          end
-        rescue e
-          @logger.debug "Exception processing item"
-          @logger.debug_sub e
+        # Check if it's a folder (has nested items) or a request
+        if item["item"]?
+          # It's a folder, recurse into it. A folder may declare its own auth,
+          # which overrides the collection/parent auth for everything beneath it.
+          folder_name = item["name"]?.try(&.to_s) || ""
+          new_path = folder_path.empty? ? folder_name : "#{folder_path}/#{folder_name}"
+          folder_auth = item["auth"]? || inherited_auth
+          process_items(item["item"], source_path, item_variables, new_path, folder_auth)
+        elsif item["request"]?
+          # It's a request, process it
+          process_request(item, source_path, item_variables, inherited_auth)
         end
+      rescue e
+        @logger.debug "Exception processing item"
+        @logger.debug_sub e
       end
     end
 

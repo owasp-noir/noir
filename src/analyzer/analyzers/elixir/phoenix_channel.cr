@@ -41,30 +41,26 @@ module Analyzer::Elixir
 
       # Pass 1 — topic↔module declarations from socket modules.
       files.each do |path|
-        begin
-          content = read_file_content(path)
-          next unless content.includes?("channel")
-          content.each_line do |line|
-            if m = line.match(CHANNEL_DECL)
-              topics[m[2].split('.').last] = m[1]
-            end
+        content = read_file_content(path)
+        next unless content.includes?("channel")
+        content.each_line do |line|
+          if m = line.match(CHANNEL_DECL)
+            topics[m[2].split('.').last] = m[1]
           end
-        rescue e
-          logger.debug "Error scanning Phoenix channel decls in #{path}: #{e}"
-          next
         end
+      rescue e
+        logger.debug "Error scanning Phoenix channel decls in #{path}: #{e}"
+        next
       end
 
       # Pass 2 — channel modules and their handle_in events.
       files.each do |path|
-        begin
-          content = read_file_content(path)
-          next unless content.matches?(CHANNEL_USE)
-          collect_module(content, path, modules)
-        rescue e
-          logger.debug "Error analyzing Phoenix channel in #{path}: #{e}"
-          next
-        end
+        content = read_file_content(path)
+        next unless content.matches?(CHANNEL_USE)
+        collect_module(content, path, modules)
+      rescue e
+        logger.debug "Error analyzing Phoenix channel in #{path}: #{e}"
+        next
       end
 
       emit(modules, topics)

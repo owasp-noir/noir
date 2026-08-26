@@ -34,12 +34,10 @@ module Analyzer::Specification
     private def process_file(content : String, source_path : String)
       env = collect_variables(content)
       split_blocks(content).each do |block|
-        begin
-          process_block(block, env, source_path)
-        rescue e
-          @logger.debug "Exception processing .http request block"
-          @logger.debug_sub e
-        end
+        process_block(block, env, source_path)
+      rescue e
+        @logger.debug "Exception processing .http request block"
+        @logger.debug_sub e
       end
     end
 

@@ -191,16 +191,14 @@ module LLM
 
     def close : Nil
       @session_lock.synchronize do
-        begin
-          @event_sink.try(&.call("ACP: closing client"))
-          @client.try(&.close)
-          @agent_stderr.try(&.close)
-        rescue Exception
-        ensure
-          @client = nil
-          @session = nil
-          @agent_stderr = nil
-        end
+        @event_sink.try(&.call("ACP: closing client"))
+        @client.try(&.close)
+        @agent_stderr.try(&.close)
+      rescue Exception
+      ensure
+        @client = nil
+        @session = nil
+        @agent_stderr = nil
       end
     end
 

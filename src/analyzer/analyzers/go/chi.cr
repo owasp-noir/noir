@@ -39,42 +39,40 @@ module Analyzer::Go
       chi_dirs = Set(String).new
 
       get_files_by_extension(".go").each do |scan_path|
-        begin
-          dir = File.dirname(scan_path)
-          package_files[dir] ||= [] of String
-          package_files[dir] << scan_path
+        dir = File.dirname(scan_path)
+        package_files[dir] ||= [] of String
+        package_files[dir] << scan_path
 
-          content = read_file_content(scan_path)
-          chi_dirs << dir if content_matches?(content, IMPORT_MARKER_RE)
-          # Cache contents for every Go file in the package — the
-          # cross-file callee map and Mount-expansion walker both
-          # need handler/helper functions that live in non-chi
-          # source files (`handlers.go`, `helpers.go`). The
-          # IMPORT_MARKER gate fires later, in the per-file route
-          # extraction loop, where the savings actually matter.
-          file_contents_cache[scan_path] = content
-          file_lines_cache[scan_path] = content.lines
+        content = read_file_content(scan_path)
+        chi_dirs << dir if content_matches?(content, IMPORT_MARKER_RE)
+        # Cache contents for every Go file in the package — the
+        # cross-file callee map and Mount-expansion walker both
+        # need handler/helper functions that live in non-chi
+        # source files (`handlers.go`, `helpers.go`). The
+        # IMPORT_MARKER gate fires later, in the per-file route
+        # extraction loop, where the savings actually matter.
+        file_contents_cache[scan_path] = content
+        file_lines_cache[scan_path] = content.lines
 
-          # Mount targets still need a regex sweep — the name that appears
-          # in `r.Mount("/admin", adminRouter())` is a *symbol*, not a
-          # route, and it determines which function bodies to exclude from
-          # the free-floating TS extraction pass below. The target may be
-          # a plain function (`adminRouter()`) or a struct value-method
-          # (`todosResource{}.Routes()`); each contributes a *skip key*
-          # (qualified by receiver type for methods, so a same-named
-          # `Routes()` on another type — or a top-level router builder
-          # also named `Routes()` — is not skipped by accident).
-          next unless content_matches?(content, MOUNT_CALL_RE)
-          content.each_line do |scan_line|
-            next unless scan_line.includes?(".Mount(")
-            if target = parse_mount_target(scan_line)
-              package_mounted_functions[dir] ||= Set(String).new
-              package_mounted_functions[dir] << mount_skip_key(target)
-            end
+        # Mount targets still need a regex sweep — the name that appears
+        # in `r.Mount("/admin", adminRouter())` is a *symbol*, not a
+        # route, and it determines which function bodies to exclude from
+        # the free-floating TS extraction pass below. The target may be
+        # a plain function (`adminRouter()`) or a struct value-method
+        # (`todosResource{}.Routes()`); each contributes a *skip key*
+        # (qualified by receiver type for methods, so a same-named
+        # `Routes()` on another type — or a top-level router builder
+        # also named `Routes()` — is not skipped by accident).
+        next unless content_matches?(content, MOUNT_CALL_RE)
+        content.each_line do |scan_line|
+          next unless scan_line.includes?(".Mount(")
+          if target = parse_mount_target(scan_line)
+            package_mounted_functions[dir] ||= Set(String).new
+            package_mounted_functions[dir] << mount_skip_key(target)
           end
-        rescue IO::Error
-          # skip
         end
+      rescue IO::Error
+        # skip
       end
 
       # Pre-pass for cross-file identifier-handler resolution (see Gin).

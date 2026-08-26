@@ -73,23 +73,21 @@ module Analyzer::Swift
       hits.concat(collect_dsl_route_hits(stripped_lines, lines))
 
       hits.each do |hit|
-        begin
-          details = Details.new(PathInfo.new(path, hit.line_index + 1))
-          endpoint = Endpoint.new(hit.path, hit.method, details)
-          extract_path_params(hit.path, endpoint)
+        details = Details.new(PathInfo.new(path, hit.line_index + 1))
+        endpoint = Endpoint.new(hit.path, hit.method, details)
+        extract_path_params(hit.path, endpoint)
 
-          if handler = hit.handler
-            extract_named_handler_params(handler, handler_bodies, endpoint)
-            attach_named_handler_callees(handler, handler_bodies, path, endpoint) if include_callee
-          else
-            extract_function_params(lines, hit.line_index + 1, endpoint)
-            attach_route_callees(lines, hit.line_index, path, endpoint, handler_bodies) if include_callee
-          end
-
-          endpoints << endpoint
-        rescue e
-          logger.debug "Error processing endpoint: #{e.message}"
+        if handler = hit.handler
+          extract_named_handler_params(handler, handler_bodies, endpoint)
+          attach_named_handler_callees(handler, handler_bodies, path, endpoint) if include_callee
+        else
+          extract_function_params(lines, hit.line_index + 1, endpoint)
+          attach_route_callees(lines, hit.line_index, path, endpoint, handler_bodies) if include_callee
         end
+
+        endpoints << endpoint
+      rescue e
+        logger.debug "Error processing endpoint: #{e.message}"
       end
 
       endpoints

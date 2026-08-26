@@ -177,11 +177,9 @@ module NoirTaggers
         local_endpoints = matching_endpoints
 
         wg.spawn do
-          begin
-            local_instance.perform(local_endpoints)
-          rescue ex
-            logger.warning "Framework tagger '#{local_instance.name}' failed: #{ex.message}"
-          end
+          local_instance.perform(local_endpoints)
+        rescue ex
+          logger.warning "Framework tagger '#{local_instance.name}' failed: #{ex.message}"
         end
       end
     end

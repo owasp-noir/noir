@@ -412,269 +412,267 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # Thread for reading files and sending their contents to the channel
   wg.add(1)
   spawn do
-    begin
-      skipped_files = 0
-      skipped_content_reads = 0
-      total_files = 0
-      skipped_ignored_dirs = 0
-      unreadable_files = 0
-      # Directories `Dir.each_child` refused to list, and entries that are
-      # neither a directory nor a regular file (symlinks, FIFOs, sockets,
-      # devices). Both used to leave no trace at any verbosity.
-      unlistable_dirs = 0
-      skipped_entries = 0
+    skipped_files = 0
+    skipped_content_reads = 0
+    total_files = 0
+    skipped_ignored_dirs = 0
+    unreadable_files = 0
+    # Directories `Dir.each_child` refused to list, and entries that are
+    # neither a directory nor a regular file (symlinks, FIFOs, sockets,
+    # devices). Both used to leave no trace at any verbosity.
+    unlistable_dirs = 0
+    skipped_entries = 0
 
-      # User-supplied --exclude-path patterns (comma-separated globs),
-      # compiled once. `Noir::ExcludePath` owns what a pattern means; the
-      # analyzers that walk the filesystem themselves apply the same type
-      # through `Analyzer#excluded_path?`, so the two cannot drift into
-      # disagreeing about the option.
-      exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
-      skipped_exclude_path = 0
+    # User-supplied --exclude-path patterns (comma-separated globs),
+    # compiled once. `Noir::ExcludePath` owns what a pattern means; the
+    # analyzers that walk the filesystem themselves apply the same type
+    # through `Analyzer#excluded_path?`, so the two cannot drift into
+    # disagreeing about the option.
+    exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
+    skipped_exclude_path = 0
 
-      base_paths.each do |base_path|
-        # Pre-compute base path prefix for fast relative path calculation
-        base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
+    base_paths.each do |base_path|
+      # Pre-compute base path prefix for fast relative path calculation
+      base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
 
-        # Iterative DFS. Avoids `Dir.glob("**/**")`, which enumerates every
-        # file under ignored subtrees before any filter runs; on a Node
-        # monorepo with a 100k-entry node_modules this was the dominant
-        # cost of the detect phase.
-        stack = [base_path]
-        until stack.empty?
-          dir = stack.pop
-          # Crystal's vendor convention is `lib/` next to `shard.yml`
-          # (same shape as Node's node_modules / Ruby's vendor/bundle).
-          # The directory name `lib` is too generic to put in the global
-          # ignored set — Rails / Python / many other ecosystems use it
-          # for source. Resolve the ambiguity contextually: skip `lib/`
-          # only when a sibling `shard.yml` is present.
-          dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
-          if android_source_scope_active
-            Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
-          end
-          begin
-            Dir.each_child(dir) do |entry|
-              full_path = File.join(dir, entry)
-              info = File.info?(full_path, follow_symlinks: false)
-              next if info.nil?
+      # Iterative DFS. Avoids `Dir.glob("**/**")`, which enumerates every
+      # file under ignored subtrees before any filter runs; on a Node
+      # monorepo with a 100k-entry node_modules this was the dominant
+      # cost of the detect phase.
+      stack = [base_path]
+      until stack.empty?
+        dir = stack.pop
+        # Crystal's vendor convention is `lib/` next to `shard.yml`
+        # (same shape as Node's node_modules / Ruby's vendor/bundle).
+        # The directory name `lib` is too generic to put in the global
+        # ignored set — Rails / Python / many other ecosystems use it
+        # for source. Resolve the ambiguity contextually: skip `lib/`
+        # only when a sibling `shard.yml` is present.
+        dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
+        if android_source_scope_active
+          Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
+        end
+        begin
+          Dir.each_child(dir) do |entry|
+            full_path = File.join(dir, entry)
+            info = File.info?(full_path, follow_symlinks: false)
+            next if info.nil?
 
-              if info.directory?
-                # Subtree prune happens here. Entry name (not full path)
-                # so the base-as-node_modules case from #912 is safe.
-                if Noir::Detection.ignored_dir_entry?(entry, dir_has_shard)
-                  skipped_ignored_dirs += 1
-                  next
-                end
-                stack << full_path
+            if info.directory?
+              # Subtree prune happens here. Entry name (not full path)
+              # so the base-as-node_modules case from #912 is safe.
+              if Noir::Detection.ignored_dir_entry?(entry, dir_has_shard)
+                skipped_ignored_dirs += 1
                 next
               end
-
-              # `info` was obtained with follow_symlinks: false, so symlinks
-              # land here as type=symlink and `info.file?` is false — they
-              # are skipped entirely. This is a minor behavior change from
-              # the previous `Dir.glob` implementation, which would have
-              # yielded symlinked regular files for scanning. Skipping them
-              # trades coverage of unusual monorepo layouts for a simpler
-              # cycle guard; revisit if a real project needs the old
-              # behavior. Non-regular files (FIFOs, sockets, devices) are
-              # also dropped here — previously they would reach `File.read`
-              # and either hang or error out.
-              #
-              # Skipping is deliberate; being *silent* about it was not. A
-              # monorepo that symlinks `packages/api -> ../shared` (pnpm
-              # workspaces, Bazel's `bazel-*` links) reported zero endpoints
-              # for that tree and looked exactly like a clean scan. Entries
-              # the walk prunes on purpose, and media files it would have
-              # filtered a step later anyway, are not coverage the user lost.
-              unless info.file?
-                unless Noir::Detection.ignored_dir_entry?(entry, dir_has_shard) || MediaFilter.media_file?(full_path)
-                  skipped_entries += 1
-                  reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
-                  logger.debug "Skipping #{full_path}: #{reason}"
-                  Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, reason,
-                    noun: "entry", phase: Noir::SkippedFiles::Phase::Scan)
-                end
-                next
-              end
-
-              total_files += 1
-
-              if exclude_path.active?
-                rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
-                if exclude_path.excluded?(rel_path)
-                  skipped_exclude_path += 1
-                  next
-                end
-              end
-
-              if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
-                logger.debug "Skipping #{full_path}: #{skip_reason}"
-                skipped_files += 1
-                # A media extension is the filter doing its job — a `.png`
-                # was never going to yield an endpoint, so reporting it
-                # would make every scan of a repo with images "degraded".
-                # An oversize file is different: it is a source file the
-                # scan chose not to read, and one 12 MB Flask module is the
-                # difference between two routes and one.
-                unless MediaFilter.media_file?(full_path)
-                  Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, skip_reason,
-                    phase: Noir::SkippedFiles::Phase::Scan)
-                end
-                next
-              end
-
-              candidate_detector_indices = applicable_lookup.call(full_path)
-
-              # An Android source-set file is normally narrowed to the
-              # mobile detectors only (see Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER /
-              # the Android-source scope spec). The exception — a genuine
-              # embedded on-device server — can only be told apart from an
-              # incidental framework import by reading the file, so defer
-              # the narrowing until after the content read below.
-              android_source_file = Noir::Detection.android_source_file?(full_path, android_source_prefixes)
-              if android_source_file && candidate_detector_indices.all? { |idx| Noir::Detection.mobile_detector?(detector_list[idx].name) }
-                # No server detector is even applicable here, so the
-                # marker check cannot change the outcome — keep the
-                # content-free fast path.
-                android_source_file = false
-              end
-
-              if candidate_detector_indices.empty? && active_passive_scans.empty? && !android_source_file
-                # Keep the path visible to analyzers without paying to
-                # read/cache content that neither detection nor passive
-                # scan will inspect. Analyzer reads still fall back to
-                # a disk read when a file was not cached here.
-                locator.register_path(full_path)
-                skipped_content_reads += 1
-                next
-              end
-
-              # Per-file read isolation.
-              #
-              # This read used to sit bare inside `Dir.each_child`, and the
-              # nearest rescue is the *directory*-level one below. So one
-              # unreadable file aborted the whole directory listing and every
-              # remaining sibling went unregistered — no detection, no
-              # analysis, no message, exit 0. Measured on a flat 501-file Gin
-              # project: `chmod 000` on a single `.go` file took the scan from
-              # 501 endpoints to 277. Files deleted mid-walk take the same
-              # path (`File::NotFoundError`), which a live repo hits without
-              # anyone doing anything unusual.
-              #
-              # A file we cannot read must cost only itself.
-              # `IO::Error`, not `File::Error`: it is the supertype
-              # (`File::Error < IO::Error`), so it also covers a read that
-              # fails for a reason the file layer does not name. The point
-              # here is that *nothing* about one file may end the walk.
-              content = begin
-                Noir::TextFile.read(full_path)
-              rescue e : IO::Error
-                logger.debug "Skipping #{full_path}: #{e.message}"
-                unreadable_files += 1
-                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path,
-                  e.message.presence || e.class.name, phase: Noir::SkippedFiles::Phase::Scan)
-                next
-              end
-              if content.to_slice.includes?(0_u8)
-                binary_reason = "binary content (file is text-extension but bytes look binary)"
-                logger.debug "Skipping #{full_path}: #{binary_reason}"
-                skipped_files += 1
-                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, binary_reason,
-                  phase: Noir::SkippedFiles::Phase::Scan)
-                next
-              end
-
-              # Apply the Android-source narrowing now that content is
-              # available: drop the server-framework detectors unless the
-              # file carries a real server-routing construct (an embedded
-              # on-device server).
-              if android_source_file && !content.matches?(Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER)
-                candidate_detector_indices.reject! do |idx|
-                  !Noir::Detection.mobile_detector?(detector_list[idx].name)
-                end
-                if candidate_detector_indices.empty? && active_passive_scans.empty?
-                  # Nothing left to detect and no passive scan to run.
-                  # register_file already records the path in file_map and
-                  # caches the (already-read) content for the analyzers.
-                  locator.register_file(full_path, content)
-                  next
-                end
-              end
-
-              if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)
-                candidate_detector_indices = candidate_detector_indices.reject do |idx|
-                  generic_json_spec_detector_names.includes?(detector_list[idx].name)
-                end
-              end
-
-              channel.send({full_path, content, candidate_detector_indices})
-              # Register the path in file_map and (budget permitting)
-              # cache the content so analyzers can skip the re-read.
-              locator.register_file(full_path, content)
+              stack << full_path
+              next
             end
-          rescue e : File::NotFoundError | File::AccessDeniedError
-            # `Dir.each_child` itself failed: the directory vanished between
-            # being pushed on the stack and being popped, or it is not
-            # listable. Treat the subtree as empty and move on.
+
+            # `info` was obtained with follow_symlinks: false, so symlinks
+            # land here as type=symlink and `info.file?` is false — they
+            # are skipped entirely. This is a minor behavior change from
+            # the previous `Dir.glob` implementation, which would have
+            # yielded symlinked regular files for scanning. Skipping them
+            # trades coverage of unusual monorepo layouts for a simpler
+            # cycle guard; revisit if a real project needs the old
+            # behavior. Non-regular files (FIFOs, sockets, devices) are
+            # also dropped here — previously they would reach `File.read`
+            # and either hang or error out.
             #
-            # Scope note: this is the *directory* handler. Per-file failures
-            # are caught at the read above, so they no longer land here and
-            # take the rest of the listing with them.
+            # Skipping is deliberate; being *silent* about it was not. A
+            # monorepo that symlinks `packages/api -> ../shared` (pnpm
+            # workspaces, Bazel's `bazel-*` links) reported zero endpoints
+            # for that tree and looked exactly like a clean scan. Entries
+            # the walk prunes on purpose, and media files it would have
+            # filtered a step later anyway, are not coverage the user lost.
+            unless info.file?
+              unless Noir::Detection.ignored_dir_entry?(entry, dir_has_shard) || MediaFilter.media_file?(full_path)
+                skipped_entries += 1
+                reason = info.type.symlink? ? "symbolic link (not followed)" : "not a regular file (#{info.type})"
+                logger.debug "Skipping #{full_path}: #{reason}"
+                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, reason,
+                  noun: "entry", phase: Noir::SkippedFiles::Phase::Scan)
+              end
+              next
+            end
+
+            total_files += 1
+
+            if exclude_path.active?
+              rel_path = full_path.starts_with?(base_prefix) ? full_path[base_prefix.size..] : full_path
+              if exclude_path.excluded?(rel_path)
+                skipped_exclude_path += 1
+                next
+              end
+            end
+
+            if skip_reason = MediaFilter.skip_check(full_path, info: info, sniff_binary: false)
+              logger.debug "Skipping #{full_path}: #{skip_reason}"
+              skipped_files += 1
+              # A media extension is the filter doing its job — a `.png`
+              # was never going to yield an endpoint, so reporting it
+              # would make every scan of a repo with images "degraded".
+              # An oversize file is different: it is a source file the
+              # scan chose not to read, and one 12 MB Flask module is the
+              # difference between two routes and one.
+              unless MediaFilter.media_file?(full_path)
+                Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, skip_reason,
+                  phase: Noir::SkippedFiles::Phase::Scan)
+              end
+              next
+            end
+
+            candidate_detector_indices = applicable_lookup.call(full_path)
+
+            # An Android source-set file is normally narrowed to the
+            # mobile detectors only (see Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER /
+            # the Android-source scope spec). The exception — a genuine
+            # embedded on-device server — can only be told apart from an
+            # incidental framework import by reading the file, so defer
+            # the narrowing until after the content read below.
+            android_source_file = Noir::Detection.android_source_file?(full_path, android_source_prefixes)
+            if android_source_file && candidate_detector_indices.all? { |idx| Noir::Detection.mobile_detector?(detector_list[idx].name) }
+              # No server detector is even applicable here, so the
+              # marker check cannot change the outcome — keep the
+              # content-free fast path.
+              android_source_file = false
+            end
+
+            if candidate_detector_indices.empty? && active_passive_scans.empty? && !android_source_file
+              # Keep the path visible to analyzers without paying to
+              # read/cache content that neither detection nor passive
+              # scan will inspect. Analyzer reads still fall back to
+              # a disk read when a file was not cached here.
+              locator.register_path(full_path)
+              skipped_content_reads += 1
+              next
+            end
+
+            # Per-file read isolation.
             #
-            # "Move on" used to mean an empty rescue body: no counter, no log
-            # line at any verbosity, no entry in `errors`. One `chmod 000`
-            # directory therefore deleted its entire subtree from the scan
-            # and the run still reported `"errors": []` and exit 0 — the
-            # single largest silent-loss path in the walk, because it costs
-            # a whole tree rather than one file.
-            unlistable_dirs += 1
-            Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, dir,
-              e.message.presence || e.class.name,
-              noun: "directory", phase: Noir::SkippedFiles::Phase::Scan)
+            # This read used to sit bare inside `Dir.each_child`, and the
+            # nearest rescue is the *directory*-level one below. So one
+            # unreadable file aborted the whole directory listing and every
+            # remaining sibling went unregistered — no detection, no
+            # analysis, no message, exit 0. Measured on a flat 501-file Gin
+            # project: `chmod 000` on a single `.go` file took the scan from
+            # 501 endpoints to 277. Files deleted mid-walk take the same
+            # path (`File::NotFoundError`), which a live repo hits without
+            # anyone doing anything unusual.
+            #
+            # A file we cannot read must cost only itself.
+            # `IO::Error`, not `File::Error`: it is the supertype
+            # (`File::Error < IO::Error`), so it also covers a read that
+            # fails for a reason the file layer does not name. The point
+            # here is that *nothing* about one file may end the walk.
+            content = begin
+              Noir::TextFile.read(full_path)
+            rescue e : IO::Error
+              logger.debug "Skipping #{full_path}: #{e.message}"
+              unreadable_files += 1
+              Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path,
+                e.message.presence || e.class.name, phase: Noir::SkippedFiles::Phase::Scan)
+              next
+            end
+            if content.to_slice.includes?(0_u8)
+              binary_reason = "binary content (file is text-extension but bytes look binary)"
+              logger.debug "Skipping #{full_path}: #{binary_reason}"
+              skipped_files += 1
+              Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, binary_reason,
+                phase: Noir::SkippedFiles::Phase::Scan)
+              next
+            end
+
+            # Apply the Android-source narrowing now that content is
+            # available: drop the server-framework detectors unless the
+            # file carries a real server-routing construct (an embedded
+            # on-device server).
+            if android_source_file && !content.matches?(Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER)
+              candidate_detector_indices.reject! do |idx|
+                !Noir::Detection.mobile_detector?(detector_list[idx].name)
+              end
+              if candidate_detector_indices.empty? && active_passive_scans.empty?
+                # Nothing left to detect and no passive scan to run.
+                # register_file already records the path in file_map and
+                # caches the (already-read) content for the analyzers.
+                locator.register_file(full_path, content)
+                next
+              end
+            end
+
+            if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)
+              candidate_detector_indices = candidate_detector_indices.reject do |idx|
+                generic_json_spec_detector_names.includes?(detector_list[idx].name)
+              end
+            end
+
+            channel.send({full_path, content, candidate_detector_indices})
+            # Register the path in file_map and (budget permitting)
+            # cache the content so analyzers can skip the re-read.
+            locator.register_file(full_path, content)
           end
+        rescue e : File::NotFoundError | File::AccessDeniedError
+          # `Dir.each_child` itself failed: the directory vanished between
+          # being pushed on the stack and being popped, or it is not
+          # listable. Treat the subtree as empty and move on.
+          #
+          # Scope note: this is the *directory* handler. Per-file failures
+          # are caught at the read above, so they no longer land here and
+          # take the rest of the listing with them.
+          #
+          # "Move on" used to mean an empty rescue body: no counter, no log
+          # line at any verbosity, no entry in `errors`. One `chmod 000`
+          # directory therefore deleted its entire subtree from the scan
+          # and the run still reported `"errors": []` and exit 0 — the
+          # single largest silent-loss path in the walk, because it costs
+          # a whole tree rather than one file.
+          unlistable_dirs += 1
+          Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, dir,
+            e.message.presence || e.class.name,
+            noun: "directory", phase: Noir::SkippedFiles::Phase::Scan)
         end
       end
-
-      if skipped_files > 0
-        logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
-      end
-      # Warning, not info: a media/large skip is the filter working as
-      # intended, but an unreadable file is a hole in the scan the user did
-      # not ask for. It was previously invisible at every verbosity.
-      if unreadable_files > 0
-        logger.warning "Skipped #{unreadable_files} unreadable file#{"s" if unreadable_files != 1} (permissions, or removed during the scan)"
-      end
-      # Same reasoning again, and louder: an unlistable directory costs every
-      # file beneath it, not one file.
-      if unlistable_dirs > 0
-        logger.warning "Skipped #{unlistable_dirs} unlistable director#{unlistable_dirs == 1 ? "y" : "ies"} and everything beneath (permissions, or removed during the scan)"
-      end
-      if skipped_entries > 0
-        logger.warning "Skipped #{skipped_entries} symlinked or non-regular path#{"s" if skipped_entries != 1} (symlinks are not followed)"
-      end
-      if skipped_ignored_dirs > 0
-        logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"
-      end
-      if skipped_exclude_path > 0
-        logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
-      end
-      if skipped_content_reads > 0
-        logger.debug "Avoided content reads for #{skipped_content_reads} file(s) with no applicable detectors"
-      end
-
-      stats = locator.content_cache_stats
-      if stats[:budget] > 0
-        cached_mb = (stats[:bytes] / (1024.0 * 1024.0)).round(1)
-        budget_mb = (stats[:budget] / (1024.0 * 1024.0)).round(1)
-        logger.debug "Content cache: #{stats[:files]} files / #{cached_mb} MB (budget #{budget_mb} MB, #{stats[:skipped]} skipped)"
-      end
-    rescue e : File::BadPatternError
-      exclude_pattern_error = e.message || "invalid pattern"
-    ensure
-      channel.close
-      wg.done
     end
+
+    if skipped_files > 0
+      logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
+    end
+    # Warning, not info: a media/large skip is the filter working as
+    # intended, but an unreadable file is a hole in the scan the user did
+    # not ask for. It was previously invisible at every verbosity.
+    if unreadable_files > 0
+      logger.warning "Skipped #{unreadable_files} unreadable file#{"s" if unreadable_files != 1} (permissions, or removed during the scan)"
+    end
+    # Same reasoning again, and louder: an unlistable directory costs every
+    # file beneath it, not one file.
+    if unlistable_dirs > 0
+      logger.warning "Skipped #{unlistable_dirs} unlistable director#{unlistable_dirs == 1 ? "y" : "ies"} and everything beneath (permissions, or removed during the scan)"
+    end
+    if skipped_entries > 0
+      logger.warning "Skipped #{skipped_entries} symlinked or non-regular path#{"s" if skipped_entries != 1} (symlinks are not followed)"
+    end
+    if skipped_ignored_dirs > 0
+      logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"
+    end
+    if skipped_exclude_path > 0
+      logger.info "Skipped #{skipped_exclude_path} files matching --exclude-path patterns"
+    end
+    if skipped_content_reads > 0
+      logger.debug "Avoided content reads for #{skipped_content_reads} file(s) with no applicable detectors"
+    end
+
+    stats = locator.content_cache_stats
+    if stats[:budget] > 0
+      cached_mb = (stats[:bytes] / (1024.0 * 1024.0)).round(1)
+      budget_mb = (stats[:budget] / (1024.0 * 1024.0)).round(1)
+      logger.debug "Content cache: #{stats[:files]} files / #{cached_mb} MB (budget #{budget_mb} MB, #{stats[:skipped]} skipped)"
+    end
+  rescue e : File::BadPatternError
+    exclude_pattern_error = e.message || "invalid pattern"
+  ensure
+    channel.close
+    wg.done
   end
 
   # Threads for receiving and processing the contents from the channel
@@ -693,62 +691,58 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   concurrency.times do
     wg.add(1)
     spawn do
-      begin
-        loop do
-          begin
-            file_content = channel.receive?
-            break if file_content.nil?
-            file, content, candidate_detector_indices = file_content
-            logger.debug "Detecting: #{file}"
+      loop do
+        file_content = channel.receive?
+        break if file_content.nil?
+        file, content, candidate_detector_indices = file_content
+        logger.debug "Detecting: #{file}"
 
-            candidate_detector_indices.each do |idx|
-              detector = detector_list[idx]
-              # Skip detectors that have already matched, unless
-              # the detector signals it has side effects in
-              # `detect` (`idempotent? == false`) — see
-              # `Detector#idempotent?` for the contract.
-              next if detector.idempotent? && detected_flags[idx].get
-              if detector.detect(file, content)
-                detected_flags[idx].set
-                newly_added = false
-                mutex.synchronize do
-                  unless techs.includes?(detector.name)
-                    techs << detector.name
-                    newly_added = true
-                  end
-                end
-                if newly_added
-                  logger.debug_sub "└── Detected: #{detector.name}"
-                  logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
-                end
+        candidate_detector_indices.each do |idx|
+          detector = detector_list[idx]
+          # Skip detectors that have already matched, unless
+          # the detector signals it has side effects in
+          # `detect` (`idempotent? == false`) — see
+          # `Detector#idempotent?` for the contract.
+          next if detector.idempotent? && detected_flags[idx].get
+          if detector.detect(file, content)
+            detected_flags[idx].set
+            newly_added = false
+            mutex.synchronize do
+              unless techs.includes?(detector.name)
+                techs << detector.name
+                newly_added = true
               end
             end
-
-            # Severity is already filtered above; pass the pre-pruned
-            # rule list through and let `detect` short-circuit when
-            # it's empty (passive scan disabled or every rule pruned).
-            if !active_passive_scans.empty?
-              results = NoirPassiveScan.detect(file, content, active_passive_scans, logger)
-              if results.size > 0
-                mutex.synchronize do
-                  passive_result.concat(results)
-                end
-              end
+            if newly_added
+              logger.debug_sub "└── Detected: #{detector.name}"
+              logger.verbose_sub "└── Detected: #{detector.name} in #{file}"
             end
-          rescue File::NotFoundError
-            logger.debug "File not found: #{file}"
-          rescue e : Exception
-            # Mirror `parallel_analyze`'s worker rescue. Without this a
-            # single detector/passive-rule exception unwinds the whole
-            # worker loop; once every worker has died the reader fiber
-            # blocks forever on `channel.send` and the scan hangs with
-            # no output instead of skipping one bad file.
-            logger.debug "Error detecting #{file}: #{e.message}"
           end
         end
-      ensure
-        wg.done
+
+        # Severity is already filtered above; pass the pre-pruned
+        # rule list through and let `detect` short-circuit when
+        # it's empty (passive scan disabled or every rule pruned).
+        if !active_passive_scans.empty?
+          results = NoirPassiveScan.detect(file, content, active_passive_scans, logger)
+          if results.size > 0
+            mutex.synchronize do
+              passive_result.concat(results)
+            end
+          end
+        end
+      rescue File::NotFoundError
+        logger.debug "File not found: #{file}"
+      rescue e : Exception
+        # Mirror `parallel_analyze`'s worker rescue. Without this a
+        # single detector/passive-rule exception unwinds the whole
+        # worker loop; once every worker has died the reader fiber
+        # blocks forever on `channel.send` and the scan hangs with
+        # no output instead of skipping one bad file.
+        logger.debug "Error detecting #{file}: #{e.message}"
       end
+    ensure
+      wg.done
     end
   end
 

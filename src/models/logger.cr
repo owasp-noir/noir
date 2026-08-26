@@ -132,35 +132,34 @@ class NoirLogger
       # block forever on a channel nothing is left alive to send on.
       # Confirmed empirically: an unhandled raise here previously hung a
       # minimal repro of this exact fiber/channel shape indefinitely.
-      begin
-        index = 0
-        while stop.get == 0_i8
-          # Non-blocking lock try
-          _, success = @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)
-          if success
-            begin
-              render_spinner(message, index)
-              index += 1
-            ensure
-              @stdout_busy.set(0_i8)
-            end
-          end
-          sleep SPINNER_INTERVAL
-        end
 
-        # Spin-acquire for final cleanup
-        while @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)[1] == false
-          Fiber.yield
+      index = 0
+      while stop.get == 0_i8
+        # Non-blocking lock try
+        _, success = @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)
+        if success
+          begin
+            render_spinner(message, index)
+            index += 1
+          ensure
+            @stdout_busy.set(0_i8)
+          end
         end
-        begin
-          clear_spinner_line
-          @spinner_active = false
-        ensure
-          @stdout_busy.set(0_i8)
-        end
-      ensure
-        finished.send(nil)
+        sleep SPINNER_INTERVAL
       end
+
+      # Spin-acquire for final cleanup
+      while @stdout_busy.compare_and_set(0_i8, 2_i8, :acquire_release, :acquire)[1] == false
+        Fiber.yield
+      end
+      begin
+        clear_spinner_line
+        @spinner_active = false
+      ensure
+        @stdout_busy.set(0_i8)
+      end
+    ensure
+      finished.send(nil)
     end
 
     begin

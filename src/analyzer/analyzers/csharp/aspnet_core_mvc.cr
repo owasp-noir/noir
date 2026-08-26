@@ -92,12 +92,10 @@ module Analyzer::CSharp
       end
 
       files.each do |file|
-        begin
-          content = read_file_content(file)
-          patterns_by_scope[route_scope_for(file, project_roots)].concat(extract_route_patterns(content))
-        rescue e
-          logger.debug "Failed to read #{file}: #{e.message}"
-        end
+        content = read_file_content(file)
+        patterns_by_scope[route_scope_for(file, project_roots)].concat(extract_route_patterns(content))
+      rescue e
+        logger.debug "Failed to read #{file}: #{e.message}"
       end
 
       @base_paths.each do |base_path|
