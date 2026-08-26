@@ -281,33 +281,29 @@ class Analyzer
       # Nothing in this body can raise today (pure array iteration), so this
       # is defence in depth against the next edit, not a live fix.
       wg.spawn do
-        begin
-          files.each { |file| channel.send(file) }
-        ensure
-          channel.close
-        end
+        files.each { |file| channel.send(file) }
+      ensure
+        channel.close
       end
 
       bounded_worker_count.times do
         wg.spawn do
           loop do
-            begin
-              path = channel.receive?
-              break if path.nil?
-              block.call(path)
-            rescue File::NotFoundError
-              @logger.debug "File not found: #{path}"
-              Noir::SkippedFiles.record(tech, path, "file not found") if path
-            rescue e : Exception
-              if path
-                @logger.debug "Error processing file #{path}: #{e.message}"
-                Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
-              else
-                # No path means the worker itself failed, not a file — there is
-                # nothing to tally, and the tech-level rescue in
-                # `analysis_endpoints` is what reports a dead analyzer.
-                @logger.debug "Error in worker: #{e.message}"
-              end
+            path = channel.receive?
+            break if path.nil?
+            block.call(path)
+          rescue File::NotFoundError
+            @logger.debug "File not found: #{path}"
+            Noir::SkippedFiles.record(tech, path, "file not found") if path
+          rescue e : Exception
+            if path
+              @logger.debug "Error processing file #{path}: #{e.message}"
+              Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name)
+            else
+              # No path means the worker itself failed, not a file — there is
+              # nothing to tally, and the tech-level rescue in
+              # `analysis_endpoints` is what reports a dead analyzer.
+              @logger.debug "Error in worker: #{e.message}"
             end
           end
         end
@@ -491,41 +487,37 @@ class FileAnalyzer < Analyzer
       # Producer — tracked by the WaitGroup. Closes in an `ensure` for the
       # same reason as the overload above.
       wg.spawn do
-        begin
-          all_files.each { |file| channel.send(file) }
-        ensure
-          channel.close
-        end
+        all_files.each { |file| channel.send(file) }
+      ensure
+        channel.close
       end
 
       worker_count.times do
         wg.spawn do
           loop do
-            begin
-              path = channel.receive?
-              break if path.nil?
-              # No `File.directory?` guard — `all_files` comes from
-              # `file_map`, which the detector only fills with regular
-              # files.
-              next if har_paths.includes?(path)
+            path = channel.receive?
+            break if path.nil?
+            # No `File.directory?` guard — `all_files` comes from
+            # `file_map`, which the detector only fills with regular
+            # files.
+            next if har_paths.includes?(path)
 
-              logger.debug "Analyzing: #{path}"
+            logger.debug "Analyzing: #{path}"
 
-              hooks.each do |hook|
-                file_results = hook.func.call(path, @url)
-                unless file_results.nil?
-                  file_results.each do |file_result|
-                    @result << file_result
-                  end
+            hooks.each do |hook|
+              file_results = hook.func.call(path, @url)
+              unless file_results.nil?
+                file_results.each do |file_result|
+                  @result << file_result
                 end
               end
-            rescue e
-              logger.debug e
-              # Same contract as `parallel_analyze`'s worker rescue: one file
-              # that blows up a hook costs only itself, and the fact that it
-              # did reaches `errors` instead of only `--debug`.
-              Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name) if path
             end
+          rescue e
+            logger.debug e
+            # Same contract as `parallel_analyze`'s worker rescue: one file
+            # that blows up a hook costs only itself, and the fact that it
+            # did reaches `errors` instead of only `--debug`.
+            Noir::SkippedFiles.record(tech, path, e.message.presence || e.class.name) if path
           end
         end
       end

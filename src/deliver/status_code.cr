@@ -67,17 +67,15 @@ class StatusCodeProbe
       wg.add(1)
       sem.send(nil) # acquire a slot (blocks once `concurrency_limit` are in flight)
       spawn do
-        begin
-          response = request_for(endpoint, probe_method)
-          endpoint.details.status_code = response.status_code
-          slots[index] = endpoint unless excluded.includes?(response.status_code)
-        rescue e
-          @logger.error "Failed to get status code for #{endpoint.url} (#{e.message})."
-          slots[index] = endpoint
-        ensure
-          sem.receive # release the slot
-          wg.done
-        end
+        response = request_for(endpoint, probe_method)
+        endpoint.details.status_code = response.status_code
+        slots[index] = endpoint unless excluded.includes?(response.status_code)
+      rescue e
+        @logger.error "Failed to get status code for #{endpoint.url} (#{e.message})."
+        slots[index] = endpoint
+      ensure
+        sem.receive # release the slot
+        wg.done
       end
     end
 

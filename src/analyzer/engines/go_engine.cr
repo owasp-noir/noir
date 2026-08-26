@@ -145,11 +145,9 @@ module Analyzer::Go
 
       files_by_dir.each do |_dir, paths|
         paths.each do |path|
-          begin
-            file_contents[path] = read_file_content(path)
-          rescue IO::Error
-            # skip
-          end
+          file_contents[path] = read_file_content(path)
+        rescue IO::Error
+          # skip
         end
       end
 

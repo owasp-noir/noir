@@ -17,12 +17,10 @@ module Analyzer::Specification
         seen = Set(String).new
 
         entries.each do |entry|
-          begin
-            process_entry(entry, details, seen)
-          rescue e
-            @logger.debug "Exception processing caido entry in #{path}"
-            @logger.debug_sub e
-          end
+          process_entry(entry, details, seen)
+        rescue e
+          @logger.debug "Exception processing caido entry in #{path}"
+          @logger.debug_sub e
         end
       end
 

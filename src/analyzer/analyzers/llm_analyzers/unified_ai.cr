@@ -185,13 +185,11 @@ module Analyzer::AI
         # hang with no output and no exit code. Same reason
         # `Analyzer#parallel_analyze` closes in an `ensure`.
         wg.spawn do
-          begin
-            bundles.each_with_index do |bundle, index|
-              queue.send({index, bundle})
-            end
-          ensure
-            queue.close
+          bundles.each_with_index do |bundle, index|
+            queue.send({index, bundle})
           end
+        ensure
+          queue.close
         end
 
         worker_count.times do

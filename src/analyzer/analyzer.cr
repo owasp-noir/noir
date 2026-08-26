@@ -167,29 +167,27 @@ def analysis_endpoints(options : Hash(String, YAML::Any), techs, logger : NoirLo
   WaitGroup.wait do |wg|
     selected_techs.each do |tech|
       wg.spawn do
-        begin
-          logger.debug "Analyzer[#{tech}] start"
-          endpoints = analyzer[tech].call(options)
-          # Set technology on each endpoint using map to handle struct copy
-          endpoints_with_tech = endpoints.map do |ep|
-            details = ep.details
-            details.technology = tech
-            ep.details = details
-            ep
-          end
-          mutex.synchronize { result.concat(endpoints_with_tech) }
-          logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
-        rescue e
-          logger.warning "Analyzer[#{tech}] failed: #{e.message}"
-          if collected = failures
-            # `e.message` is nilable and can be empty (`IndexError.new`,
-            # `raise ""`), and a report that reads `go_gin: ` names no cause
-            # at all — the class name is at least something to search for.
-            reason = e.message.presence || e.class.name
-            # Same mutex as the result concat above, not a second one: this
-            # runs on a spawned fiber and `collected` is shared by all of them.
-            mutex.synchronize { collected << AnalyzerFailure.new(tech, reason) }
-          end
+        logger.debug "Analyzer[#{tech}] start"
+        endpoints = analyzer[tech].call(options)
+        # Set technology on each endpoint using map to handle struct copy
+        endpoints_with_tech = endpoints.map do |ep|
+          details = ep.details
+          details.technology = tech
+          ep.details = details
+          ep
+        end
+        mutex.synchronize { result.concat(endpoints_with_tech) }
+        logger.debug "Analyzer[#{tech}] done (#{endpoints.size})"
+      rescue e
+        logger.warning "Analyzer[#{tech}] failed: #{e.message}"
+        if collected = failures
+          # `e.message` is nilable and can be empty (`IndexError.new`,
+          # `raise ""`), and a report that reads `go_gin: ` names no cause
+          # at all — the class name is at least something to search for.
+          reason = e.message.presence || e.class.name
+          # Same mutex as the result concat above, not a second one: this
+          # runs on a spawned fiber and `collected` is shared by all of them.
+          mutex.synchronize { collected << AnalyzerFailure.new(tech, reason) }
         end
       end
     end

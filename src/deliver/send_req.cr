@@ -45,52 +45,50 @@ class SendReq < Deliver
         wg.add(1)
         sem.send(nil) # acquire a slot (blocks once `concurrency_limit` are in flight)
         spawn do
-          begin
-            if !endpoint.params.empty?
-              endpoint_hash = endpoint.params_to_hash
-              is_json = false
-              body = if !endpoint_hash["json"].empty?
-                       is_json = true
-                       endpoint_hash["json"]
-                     else
-                       endpoint_hash["form"]
-                     end
+          if !endpoint.params.empty?
+            endpoint_hash = endpoint.params_to_hash
+            is_json = false
+            body = if !endpoint_hash["json"].empty?
+                     is_json = true
+                     endpoint_hash["json"]
+                   else
+                     endpoint_hash["form"]
+                   end
 
-              Crest::Request.execute(
-                method: get_symbol(request_method),
-                url: probe_url(endpoint, request_method),
-                tls: tls,
-                user_agent: "Noir/#{Noir::VERSION}",
-                params: endpoint_hash["query"],
-                form: body,
-                headers: request_headers,
-                json: is_json,
-                handle_errors: false,
-                max_redirects: 0,
-                connect_timeout: probe_connect_timeout,
-                read_timeout: probe_read_timeout
-              )
-            else
-              Crest::Request.execute(
-                method: get_symbol(request_method),
-                url: probe_url(endpoint, request_method),
-                headers: request_headers,
-                tls: tls,
-                user_agent: "Noir/#{Noir::VERSION}",
-                handle_errors: false,
-                max_redirects: 0,
-                connect_timeout: probe_connect_timeout,
-                read_timeout: probe_read_timeout
-              )
-            end
-          rescue e
-            failures.add(1)
-            @logger.debug "Exception during request delivery"
-            @logger.debug_sub e
-          ensure
-            sem.receive # release the slot
-            wg.done
+            Crest::Request.execute(
+              method: get_symbol(request_method),
+              url: probe_url(endpoint, request_method),
+              tls: tls,
+              user_agent: "Noir/#{Noir::VERSION}",
+              params: endpoint_hash["query"],
+              form: body,
+              headers: request_headers,
+              json: is_json,
+              handle_errors: false,
+              max_redirects: 0,
+              connect_timeout: probe_connect_timeout,
+              read_timeout: probe_read_timeout
+            )
+          else
+            Crest::Request.execute(
+              method: get_symbol(request_method),
+              url: probe_url(endpoint, request_method),
+              headers: request_headers,
+              tls: tls,
+              user_agent: "Noir/#{Noir::VERSION}",
+              handle_errors: false,
+              max_redirects: 0,
+              connect_timeout: probe_connect_timeout,
+              read_timeout: probe_read_timeout
+            )
           end
+        rescue e
+          failures.add(1)
+          @logger.debug "Exception during request delivery"
+          @logger.debug_sub e
+        ensure
+          sem.receive # release the slot
+          wg.done
         end
       end
     end

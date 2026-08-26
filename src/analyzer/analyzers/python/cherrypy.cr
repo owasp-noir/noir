@@ -146,30 +146,28 @@ module Analyzer::Python
       end
 
       root_calls.each do |origin_file, definition_base_path, root_expr, prefix|
-        begin
-          resolved = resolve_class_ref(root_expr, origin_file, reg)
-          next unless resolved
-          target_file, target_start_line = resolved
+        resolved = resolve_class_ref(root_expr, origin_file, reg)
+        next unless resolved
+        target_file, target_start_line = resolved
 
-          # A common real-world (and official-tutorial) composition style
-          # mounts children onto the root object *after* construction —
-          # `root = HomePage(); root.joke = JokePage()` — rather than as
-          # class-body attributes. That's a plain module-level statement,
-          # outside any class body, so `walk_class`'s own class-body scan
-          # never sees it; seed it in explicitly for the root object when
-          # `root_expr` is a bare variable reference.
-          extra_attr_targets = [] of Tuple(::String, ::String)
-          bare_root_var = root_expr.strip
-          if !bare_root_var.empty? && !bare_root_var.includes?('(') && !bare_root_var.includes?('.')
-            origin_source = reg.source_cache[origin_file]? || read_file_content(origin_file)
-            extra_attr_targets = collect_external_attr_assignments(sanitize_python_lines(origin_source.lines), bare_root_var)
-          end
-
-          visited = Set(::String).new
-          walk_class(reg, target_file, target_start_line, Helper.normalize_path(prefix), 0, definition_base_path, visited, extra_attr_targets)
-        rescue e
-          @logger.debug "Error walking CherryPy root in #{origin_file}: #{e}"
+        # A common real-world (and official-tutorial) composition style
+        # mounts children onto the root object *after* construction —
+        # `root = HomePage(); root.joke = JokePage()` — rather than as
+        # class-body attributes. That's a plain module-level statement,
+        # outside any class body, so `walk_class`'s own class-body scan
+        # never sees it; seed it in explicitly for the root object when
+        # `root_expr` is a bare variable reference.
+        extra_attr_targets = [] of Tuple(::String, ::String)
+        bare_root_var = root_expr.strip
+        if !bare_root_var.empty? && !bare_root_var.includes?('(') && !bare_root_var.includes?('.')
+          origin_source = reg.source_cache[origin_file]? || read_file_content(origin_file)
+          extra_attr_targets = collect_external_attr_assignments(sanitize_python_lines(origin_source.lines), bare_root_var)
         end
+
+        visited = Set(::String).new
+        walk_class(reg, target_file, target_start_line, Helper.normalize_path(prefix), 0, definition_base_path, visited, extra_attr_targets)
+      rescue e
+        @logger.debug "Error walking CherryPy root in #{origin_file}: #{e}"
       end
 
       result

@@ -322,11 +322,9 @@ module Noir::CLI::ScanCommand
     return if exclude_codes.empty?
 
     exclude_codes.split(",").each do |code|
-      begin
-        code.strip.to_i
-      rescue
-        Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
-      end
+      code.strip.to_i
+    rescue
+      Noir::CLI.die("--exclude-codes only accepts comma-separated numbers; got '#{code}'.")
     end
   end
 

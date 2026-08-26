@@ -25,46 +25,44 @@ module Analyzer::Javascript
       scan_for_router_mounts
 
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee)
-          parser_endpoints.each do |endpoint|
-            # Use the line number already set by the extractor; fall back to path-only if missing
-            if endpoint.details.code_paths.empty?
-              endpoint.details = Details.new(PathInfo.new(path))
-            end
-
-            # Parse path parameters from the URL path itself
-            if endpoint.url.includes?(":")
-              endpoint.url.scan(/:(\w+)/) do |m|
-                if m.size > 0
-                  param = Param.new(m[1], "", "path")
-                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                end
-              end
-            end
-
-            result << endpoint
+        content = read_file_content(path)
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee)
+        parser_endpoints.each do |endpoint|
+          # Use the line number already set by the extractor; fall back to path-only if missing
+          if endpoint.details.code_paths.empty?
+            endpoint.details = Details.new(PathInfo.new(path))
           end
 
-          collect_express_static_paths(path, content, static_dirs)
+          # Parse path parameters from the URL path itself
+          if endpoint.url.includes?(":")
+            endpoint.url.scan(/:(\w+)/) do |m|
+              if m.size > 0
+                param = Param.new(m[1], "", "path")
+                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+              end
+            end
+          end
 
-          # Parse Server style `this.route('METHOD', '/path', ...)`
-          # declarations. The framework's PromiseRouter base class
-          # exposes a `route(method, path, ...handlers)` shape that
-          # the standard verb-DSL extractor doesn't recognise.
-          # parse-community/parse-server alone parks ~51 routes in
-          # `src/Routers/*.js` (AudiencesRouter, GlobalConfigRouter,
-          # UsersRouter, ...) via this pattern.
-          extract_parse_server_routes(path, content, result, include_callee)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-
-          # Fallback to the original regex-based approach if parser fails
-          analyze_with_regex(path, result, static_dirs)
+          result << endpoint
         end
+
+        collect_express_static_paths(path, content, static_dirs)
+
+        # Parse Server style `this.route('METHOD', '/path', ...)`
+        # declarations. The framework's PromiseRouter base class
+        # exposes a `route(method, path, ...handlers)` shape that
+        # the standard verb-DSL extractor doesn't recognise.
+        # parse-community/parse-server alone parks ~51 routes in
+        # `src/Routers/*.js` (AudiencesRouter, GlobalConfigRouter,
+        # UsersRouter, ...) via this pattern.
+        extract_parse_server_routes(path, content, result, include_callee)
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+
+        # Fallback to the original regex-based approach if parser fails
+        analyze_with_regex(path, result, static_dirs)
       end
 
       # Process static directories to create endpoints for static files

@@ -83,12 +83,10 @@ end
 private def completes_within?(span : Time::Span, &block : -> Nil) : Bool
   done = Channel(Exception?).new(1)
   spawn do
-    begin
-      block.call
-      done.send(nil)
-    rescue e
-      done.send(e)
-    end
+    block.call
+    done.send(nil)
+  rescue e
+    done.send(e)
   end
 
   select

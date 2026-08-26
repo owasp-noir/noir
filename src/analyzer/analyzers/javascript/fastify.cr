@@ -23,64 +23,62 @@ module Analyzer::Javascript
       autoload_roots = collect_autoload_roots
 
       parallel_file_scan do |path|
-        begin
-          content = read_file_content(path)
-          next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :fastify)
-          autoload_prefix = autoload_prefix_for(path, autoload_roots, content)
-          parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
-            include_callees: include_callee)
-          parser_endpoints.each do |endpoint|
-            # The shared JS parser emits `.query(` shorthand for any receiver
-            # and without the addHttpMethod('QUERY') gate or plugin prefixes.
-            # The Fastify-specific pass below owns all QUERY emission (gated
-            # shorthand plus explicit route configs), so shared-parser QUERY
-            # results would only add phantom or unprefixed duplicates.
-            next if endpoint.method == "QUERY"
+        content = read_file_content(path)
+        next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :fastify)
+        autoload_prefix = autoload_prefix_for(path, autoload_roots, content)
+        parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
+          include_callees: include_callee)
+        parser_endpoints.each do |endpoint|
+          # The shared JS parser emits `.query(` shorthand for any receiver
+          # and without the addHttpMethod('QUERY') gate or plugin prefixes.
+          # The Fastify-specific pass below owns all QUERY emission (gated
+          # shorthand plus explicit route configs), so shared-parser QUERY
+          # results would only add phantom or unprefixed duplicates.
+          next if endpoint.method == "QUERY"
 
-            unless autoload_prefix.empty?
-              endpoint.url = Noir::URLPath.join(autoload_prefix, endpoint.url)
-            end
-            # Preserve the precise route line supplied by the shared extractor.
-            # Falling back to path-only keeps older behavior if a parser result
-            # somehow lacks location metadata.
-            if endpoint.details.code_paths.empty?
-              endpoint.details = Details.new(PathInfo.new(path))
-            end
+          unless autoload_prefix.empty?
+            endpoint.url = Noir::URLPath.join(autoload_prefix, endpoint.url)
+          end
+          # Preserve the precise route line supplied by the shared extractor.
+          # Falling back to path-only keeps older behavior if a parser result
+          # somehow lacks location metadata.
+          if endpoint.details.code_paths.empty?
+            endpoint.details = Details.new(PathInfo.new(path))
+          end
 
-            # Parse path parameters from the URL path itself
-            if endpoint.url.includes?(":")
-              endpoint.url.scan(/:(\w+)/) do |m|
-                if m.size > 0
-                  param = Param.new(m[1], "", "path")
-                  endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-                end
+          # Parse path parameters from the URL path itself
+          if endpoint.url.includes?(":")
+            endpoint.url.scan(/:(\w+)/) do |m|
+              if m.size > 0
+                param = Param.new(m[1], "", "path")
+                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
               end
             end
-
-            result << endpoint
           end
 
-          # Auxiliary pass for `fastify.route({ method, url })` shapes
-          # the parser doesn't yet handle (multi-line config objects
-          # and the `methods: ['GET','POST']` array form). Skip test
-          # stubs (their `.route(` calls aren't registrations) and
-          # minified bundles (a multi-MB single line is pure scan cost,
-          # never a real config — issue #1903).
-          unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
-                 Noir::JSRouteExtractor.minified_content?(content)
-            extract_route_configs(path, content, result, include_callee, autoload_prefix)
-            if has_query_method
-              extract_query_shorthand_routes(path, content, result, include_callee, autoload_prefix)
-            end
-          end
-
-          collect_static_paths(path, content, static_dirs, :fastify)
-        rescue e
-          logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
-
-          # Fallback to the original regex-based approach if parser fails
-          analyze_with_regex(path, result, static_dirs, has_query_method)
+          result << endpoint
         end
+
+        # Auxiliary pass for `fastify.route({ method, url })` shapes
+        # the parser doesn't yet handle (multi-line config objects
+        # and the `methods: ['GET','POST']` array form). Skip test
+        # stubs (their `.route(` calls aren't registrations) and
+        # minified bundles (a multi-MB single line is pure scan cost,
+        # never a real config — issue #1903).
+        unless Noir::JSRouteExtractor.test_stub_only?(path, content) ||
+               Noir::JSRouteExtractor.minified_content?(content)
+          extract_route_configs(path, content, result, include_callee, autoload_prefix)
+          if has_query_method
+            extract_query_shorthand_routes(path, content, result, include_callee, autoload_prefix)
+          end
+        end
+
+        collect_static_paths(path, content, static_dirs, :fastify)
+      rescue e
+        logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
+
+        # Fallback to the original regex-based approach if parser fails
+        analyze_with_regex(path, result, static_dirs, has_query_method)
       end
 
       # Process static directories to create endpoints for static files

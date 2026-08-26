@@ -352,21 +352,19 @@ module Analyzer::Elixir
       end
 
       controller_files.each do |controller_path|
-        begin
-          content = read_file_content(controller_path)
-          # Action heads always bind `conn` (see the signature matcher
-          # below). Controllers that never mention it cannot contribute
-          # params, callees, or code-path attachments — skip them.
-          next unless content.includes?("conn")
+        content = read_file_content(controller_path)
+        # Action heads always bind `conn` (see the signature matcher
+        # below). Controllers that never mention it cannot contribute
+        # params, callees, or code-path attachments — skip them.
+        next unless content.includes?("conn")
 
-          controller_name = File.basename(controller_path, ".ex")
-          controller_module = extract_controller_module(content) || controller_name
+        controller_name = File.basename(controller_path, ".ex")
+        controller_module = extract_controller_module(content) || controller_name
 
-          # Extract parameters from each action in the controller
-          extract_params_from_controller(content, controller_module, controller_path)
-        rescue e
-          logger.debug "Error reading controller file #{controller_path}: #{e}"
-        end
+        # Extract parameters from each action in the controller
+        extract_params_from_controller(content, controller_module, controller_path)
+      rescue e
+        logger.debug "Error reading controller file #{controller_path}: #{e}"
       end
     end
 
@@ -535,60 +533,58 @@ module Analyzer::Elixir
       # Parallelism matters on large Phoenix trees where most files are
       # rejected by the `defmacro` substring gate after a single read.
       parallel_analyze(files) do |path|
-        begin
-          content = read_file_content(path)
-          # Vast majority of `.ex` files never define macros. Cheap
-          # substring gate before line-splitting and signature assembly.
-          next unless content.includes?("defmacro")
+        content = read_file_content(path)
+        # Vast majority of `.ex` files never define macros. Cheap
+        # substring gate before line-splitting and signature assembly.
+        next unless content.includes?("defmacro")
 
-          module_name = extract_module_name(content)
-          lines = content.lines
-          local = [] of Tuple(String, RouteMacro)
+        module_name = extract_module_name(content)
+        lines = content.lines
+        local = [] of Tuple(String, RouteMacro)
 
-          index = 0
-          while index < lines.size
-            line = lines[index]
-            stripped = line.strip
+        index = 0
+        while index < lines.size
+          line = lines[index]
+          stripped = line.strip
 
-            unless stripped.starts_with?("defmacro ")
-              index += 1
-              next
-            end
-
-            signature, body_start = assemble_def_signature(lines, index)
-            name = signature.match(/\bdefmacro\s+(\w+[!?]?)/).try(&.[1])
-            macro_end = find_function_end(lines, body_start)
-            if name.nil? || macro_end == -1
-              index += 1
-              next
-            end
-
-            body_lines = lines[(body_start + 1)...macro_end] || [] of String
-            default_bindings = Hash(String, String).new
-            update_elixir_string_bindings(default_bindings, signature)
-            body_lines.each { |body_line| update_elixir_string_bindings(default_bindings, body_line) }
-            route_macro = RouteMacro.new(
-              name,
-              module_name,
-              parse_macro_param_names(signature),
-              default_bindings,
-              body_lines
-            )
-
-            local << {name, route_macro}
-            local << {"#{module_name}.#{name}", route_macro} if module_name
-
-            index = macro_end + 1
+          unless stripped.starts_with?("defmacro ")
+            index += 1
+            next
           end
 
-          unless local.empty?
-            mutex.synchronize do
-              local.each { |key, mc| @route_macros[key] = mc }
-            end
+          signature, body_start = assemble_def_signature(lines, index)
+          name = signature.match(/\bdefmacro\s+(\w+[!?]?)/).try(&.[1])
+          macro_end = find_function_end(lines, body_start)
+          if name.nil? || macro_end == -1
+            index += 1
+            next
           end
-        rescue e
-          logger.debug "Error collecting Phoenix route macros from #{path}: #{e}"
+
+          body_lines = lines[(body_start + 1)...macro_end] || [] of String
+          default_bindings = Hash(String, String).new
+          update_elixir_string_bindings(default_bindings, signature)
+          body_lines.each { |body_line| update_elixir_string_bindings(default_bindings, body_line) }
+          route_macro = RouteMacro.new(
+            name,
+            module_name,
+            parse_macro_param_names(signature),
+            default_bindings,
+            body_lines
+          )
+
+          local << {name, route_macro}
+          local << {"#{module_name}.#{name}", route_macro} if module_name
+
+          index = macro_end + 1
         end
+
+        unless local.empty?
+          mutex.synchronize do
+            local.each { |key, mc| @route_macros[key] = mc }
+          end
+        end
+      rescue e
+        logger.debug "Error collecting Phoenix route macros from #{path}: #{e}"
       end
     end
 
