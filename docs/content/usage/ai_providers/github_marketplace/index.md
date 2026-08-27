@@ -24,11 +24,6 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-key=github_pat_...
 ```
 
-**Using the Azure Inference API** (for models served through Azure):
-
-```bash
-noir scan ./spec/functional_test/fixtures/hahwul \
-     --ai-provider=azure \
-     --ai-model=gpt-5.5 \
-     --ai-key=github_pat_...
-```
+{% alert_warning() %}
+GitHub Models used to be reachable through the shared Azure Inference endpoint (`--ai-provider=azure`), but that endpoint has been retired and `models.inference.ai.azure.com` no longer resolves in DNS. Use `--ai-provider=github` as shown above.
+{% end %}

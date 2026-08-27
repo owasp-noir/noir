@@ -55,7 +55,7 @@ SCHEME myapp://complex/:id
 
 ## 출력 동작
 
-모바일 엔드포인트는 구조화된 인벤토리(JSON, JSONL, YAML, SARIF, Markdown, mermaid, HTML)와 Elasticsearch / webhook export에는 그대로 포함됩니다. 앱 표면의 일부이기 때문입니다. 반면 HTTP 모양을 가정하는 출력·전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, 능동 프로빙 / 프록시 전송)에서는 **제외**됩니다. 앱 URL은 보내는 HTTP 요청이 아니라 여는 대상이기 때문입니다.
+모바일 엔드포인트는 구조화된 인벤토리(JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML)와 Elasticsearch / webhook export에는 그대로 포함됩니다. 앱 표면의 일부이기 때문입니다. 반면 HTTP 모양을 가정하는 출력·전송(cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, 능동 프로빙 / 프록시 전송)에서는 **제외**됩니다. 앱 URL은 보내는 HTTP 요청이 아니라 여는 대상이기 때문입니다. 대신 `-f adb`(Android)와 `-f simctl`(iOS)로 바로 실행 가능한 기기 명령을 뽑을 수 있습니다.
 
 ## 참고 및 한계
 

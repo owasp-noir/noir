@@ -8,7 +8,7 @@ sort_by = "weight"
 
 엔드포인트와 파라미터에 설명적 태그를 자동으로 추가하여 기능과 잠재적 보안 위험(SQL 인젝션, 인증 엔드포인트 등)을 식별합니다.
 
-<img src="./tagger.png" alt="엔드포인트에 태그가 붙은 Noir 출력. POST /query 와 GET /api/me 는 sqli, GET /token 은 oauth 로 태깅되어 있다." width="769" height="394" loading="lazy" decoding="async">
+<img src="./tagger.png" alt="엔드포인트에 태그가 붙은 Noir 출력. GET /token 은 oauth, GET /api/me 는 sqli 로 태깅되어 있다." width="769" height="172" loading="lazy" decoding="async">
 
 ## 사용법
 
@@ -32,28 +32,22 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
 
 ```json
 {
-  "url": "/query",
-  "method": "POST",
+  "url": "/token",
+  "method": "GET",
   "params": [
     {
-      "name": "query",
+      "name": "redirect_url",
       "value": "",
       "param_type": "form",
       "tags": [
         {
-          "name": "sqli",
-          "description": "This parameter may be vulnerable to SQL Injection attacks.",
+          "name": "ssrf",
+          "description": "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.",
           "tagger": "Hunt"
         }
       ]
     }
   ],
-  "protocol": "http",
-  "tags": []
-},
-{
-  "url": "/token",
-  "method": "GET",
   "protocol": "http",
   "tags": [
     {

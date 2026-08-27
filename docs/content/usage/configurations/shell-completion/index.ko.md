@@ -16,11 +16,18 @@ sort_by = "weight"
 noir completion zsh
 ```
 
-Zsh이 시작할 때 자동으로 로드하려면, 완성 디렉터리에 저장합니다.
+Zsh이 시작할 때 자동으로 로드하려면, 완성 스크립트를 디렉터리에 저장하고 그 디렉터리가 `compinit` 실행 전에 Zsh의 `fpath`에 포함되도록 합니다.
 
 ```bash
 mkdir -p ~/.zsh/completion
 noir completion zsh > ~/.zsh/completion/_noir
+```
+
+그다음 `~/.zshrc`에서 (`compinit` 호출 전에) 해당 디렉터리를 `fpath`에 추가하세요. `site-functions`처럼 이미 `fpath`에 있는 디렉터리에 저장했다면 이 단계는 필요 없습니다.
+
+```bash
+fpath=(~/.zsh/completion $fpath)
+autoload -Uz compinit && compinit
 ```
 
 ## Bash

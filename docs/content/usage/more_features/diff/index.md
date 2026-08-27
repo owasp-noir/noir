@@ -16,14 +16,20 @@ noir scan <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 
 ### Plain Output
 
-The default output marks each change as **Added** (new endpoints), **Removed** (deleted ones), or **Changed** (endpoints whose parameters or methods were modified).
+The default output groups changes into **Added** (new endpoints), **Removed** (deleted ones), and **Changed** (endpoints present in both versions whose parameters or other details were modified — endpoints are matched by URL and method, so a method change shows up as one Added plus one Removed). Each section renders endpoints in the standard plain format:
 
 ```
-[*] ============== DIFF ==============
-[I] Added: / GET
-[I] Added: /update POST
-[I] Removed: /secret.html GET
-[I] Removed: /posts GET
+───────────── ✚ Added (2) ─────────────
+
+GET /
+  ○ headers: 
+    └── x-api-key
+
+POST /update
+
+──────────── ✖ Removed (1) ─────────────
+
+GET /secret.html
 ```
 
 ### JSON and YAML Output

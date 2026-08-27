@@ -65,7 +65,7 @@ docker pull ghcr.io/owasp-noir/noir:latest
 Scan the current directory:
 
 ```bash
-docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
+docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir -b /tmp
 ```
 
 Image tags follow the OCI/Docker convention without the `v` prefix, e.g. `:0.30.0`, `:0.30`, and `:latest`. (Versions up to v0.29.1 used the `:vX.Y.Z` form; update any pinned references.) All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).
@@ -83,7 +83,7 @@ nix profile add github:owasp-noir/noir
 To update:
 
 ```bash
-nix profile upgrade github:owasp-noir/noir
+nix profile upgrade noir
 ```
 
 {% alert_info() %}
@@ -106,7 +106,7 @@ No package manager? Grab a prebuilt binary from [GitHub Releases](https://github
 
 To install or update:
 
-1. Download the binary for your platform (e.g., `noir-v1.1.0-linux-x86_64` on Linux, or `noir-v1.1.0-osx-arm64.tar.gz` on macOS).
+1. Download the binary for your platform (e.g., `noir-v1.3.0-linux-x86_64` on Linux, or `noir-v1.3.0-osx-arm64.tar.gz` on macOS).
 2. **Linux**: make it executable and move it into your `PATH`:
 
     ```bash

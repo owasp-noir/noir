@@ -65,7 +65,7 @@ docker pull ghcr.io/owasp-noir/noir:latest
 현재 디렉토리를 스캔하려면 아래와 같이 실행합니다.
 
 ```bash
-docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest -b /tmp
+docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir -b /tmp
 ```
 
 이미지 태그는 OCI/Docker 컨벤션을 따라 `v` 프리픽스 없이 발행됩니다. 예: `:0.30.0`, `:0.30`, `:latest`. (v0.29.1까지는 `:vX.Y.Z` 형태를 썼으므로, 버전을 고정해 둔 참조가 있다면 업데이트하세요.) 사용 가능한 태그 목록은 [GitHub Packages 페이지](https://github.com/owasp-noir/noir/pkgs/container/noir)에서 확인할 수 있습니다.
@@ -83,7 +83,7 @@ nix profile add github:owasp-noir/noir
 업데이트:
 
 ```bash
-nix profile upgrade github:owasp-noir/noir
+nix profile upgrade noir
 ```
 
 {% alert_info() %}
@@ -106,7 +106,7 @@ nix run github:owasp-noir/noir -- -h
 
 설치 및 업데이트:
 
-1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.1.0-linux-x86_64`, macOS는 `noir-v1.1.0-osx-arm64.tar.gz`).
+1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.3.0-linux-x86_64`, macOS는 `noir-v1.3.0-osx-arm64.tar.gz`).
 2. **Linux**: 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
 
     ```bash
