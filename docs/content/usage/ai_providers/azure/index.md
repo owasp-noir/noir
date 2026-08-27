@@ -6,29 +6,39 @@ sort_by = "weight"
 
 +++
 
-Use [Azure AI](https://azure.microsoft.com/en-us/products/ai-services) language models through the GitHub Models inference endpoint.
+Use [Microsoft Foundry](https://azure.microsoft.com/en-us/products/ai-foundry) (formerly Azure AI Foundry) language models for code analysis.
 
 ## Setup
 
-1.  **API Key**: Get from [Azure AI Inference portal](https://models.inference.ai.azure.com)
-2.  **Model**: Select available Azure AI model
+1.  **API Key**: Create a resource and key in the [Microsoft Foundry portal](https://ai.azure.com)
+2.  **Model**: Deploy a model and note its deployment name
 
 ## Usage
 
-Run Noir with Azure AI:
+Point `--ai-provider` at your Foundry resource's endpoint:
 
 ```bash
 noir scan ./myapp \
-     --ai-provider=azure \
-     --ai-model=YOUR_MODEL_NAME \
+     --ai-provider=https://YOUR-RESOURCE.services.ai.azure.com/models \
+     --ai-model=YOUR_DEPLOYMENT_NAME \
      --ai-key=YOUR_API_KEY
 ```
 
-The `azure` provider uses endpoint: `https://models.inference.ai.azure.com`
+`--ai-provider` accepts any OpenAI-compatible URL, so no prefix is needed.
 
-Using environment variable:
+Using an environment variable for the key:
 
 ```bash
 export NOIR_AI_KEY=YOUR_API_KEY
-noir scan ./myapp --ai-provider=azure --ai-model=YOUR_MODEL_NAME
+noir scan ./myapp \
+     --ai-provider=https://YOUR-RESOURCE.services.ai.azure.com/models \
+     --ai-model=YOUR_DEPLOYMENT_NAME
 ```
+
+## The `azure` prefix
+
+Noir ships an `azure` provider prefix that expands to `https://models.inference.ai.azure.com`.
+
+{% alert_warning() %}
+That shared endpoint has been retired: `models.inference.ai.azure.com` no longer resolves in DNS, so the bare `--ai-provider=azure` form cannot reach it. Foundry now gives each resource its own endpoint. Use the full URL shown above instead.
+{% end %}

@@ -16,10 +16,10 @@ sort_by = "weight"
 noir scan <BASE_PATH> -P
 ```
 
-사용자 정의 룰 사용:
+사용자 정의 룰 사용. `--passive-scan-path` 는 파일 하나가 아니라 **디렉터리**를 받습니다. 그 아래의 모든 `*.yml` / `*.yaml` 을 읽어들이며, 해당 실행에서는 기본 제공 룰을 쓰지 않습니다. 이 플래그는 여러 번 지정할 수 있습니다.
 
 ```bash
-noir scan <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
+noir scan <BASE_PATH> -P --passive-scan-path /path/to/your/rules/
 ```
 
 ### 심각도 필터링
@@ -52,7 +52,7 @@ noir scan <BASE_PATH> -P --passive-scan-severity low
 ★ Passive Results:
 [critical][hahwul-test][secret] use x-api-key
   ├── extract:   env.request.headers["x-api-key"].as(String)
-  └── file: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr:4
+  └── file: ./spec/functional_test/fixtures/crystal/kemal/src/testapp.cr:4
 ```
 
 **출력 구성:**

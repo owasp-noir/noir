@@ -19,8 +19,10 @@ sort_by = "weight"
 
 **Symptom:** Noir takes a long time on large codebases.
 
-- Use `--techs` to limit scanning to specific frameworks: `noir scan . --techs rails`
-- Use `--exclude-techs` to skip known irrelevant frameworks
+- Use `--only-techs` to run just those detectors and skip the rest: `noir scan . --only-techs rails`
+  (`--techs` is different: it adds techs to the analyzer set without narrowing detection)
+- Use `--exclude-techs` to drop known irrelevant frameworks from the result
+- Use `--exclude-path` to skip vendored or generated trees: `--exclude-path "vendor/*,**/node_modules/**"`
 - AI-powered analysis caches responses; subsequent runs on the same codebase will be faster
 
 ## AI Provider Connection Errors

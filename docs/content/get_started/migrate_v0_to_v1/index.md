@@ -88,7 +88,7 @@ These don't change flag names, just what scans emit. Each is documented in detai
 
 * **Default concurrency** scales with the host's CPU count instead of v0's fixed `"20"`. Explicit `--concurrency N` / `concurrency:` in config still take precedence.
 * **String interpolation** in route paths (Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`) is now preserved as a `{name}` placeholder. v0 silently dropped the interpolation segment or leaked the language syntax into the URL. v1 produces a consistent template and registers the placeholder as a path parameter.
-* **`Any` / `All` verbs** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All`, etc.) fan out into the seven canonical HTTP methods instead of emitting a non-HTTP `"ANY"` verb that SARIF and Postman can't ingest.
+* **`Any` / `All` verbs** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All`, etc.) fan out into the concrete HTTP methods (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, TRACE) instead of emitting a non-HTTP `"ANY"` verb that SARIF and Postman can't ingest. `QUERY` is deliberately left out of the fan-out; it is emitted only where a route declares the verb explicitly.
 * **Output to stdout** has color disabled automatically when stdout isn't a terminal, matching `ls` / `git` convention. `--no-color` and `NO_COLOR=1` still force-disable.
 * **`-f json` / `-f sarif`** etc. emit a valid empty document when zero endpoints are found, instead of writing nothing. CI parsers no longer fail on an empty file.
 * **`--diff-path`** disables `--probe` / `--export-*` for the comparison-side scan. Previously, an unchanged URL got probed twice (once per side) and the stale catalog got exported alongside the new one.

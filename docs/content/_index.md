@@ -104,7 +104,7 @@ template = "landing"
         <h3>Semantic tags</h3>
         <p>Seventeen taggers annotate endpoints with the properties that decide where you look first.</p>
         <div class="tag-cloud">
-          <code>cors</code><code>jwt</code><code>oauth</code><code>graphql</code><code>pii</code><code>payment</code><code>file_upload</code><code>webhook</code><code>websocket</code><code>soap</code><code>crypto</code><code>debug</code><code>admin</code><code>account_recovery</code><code>api_docs</code><code>hunt_param</code><code>mcp</code>
+          <code>cors</code><code>jwt</code><code>oauth</code><code>graphql</code><code>pii</code><code>payment</code><code>file_upload</code><code>webhook</code><code>websocket</code><code>soap</code><code>crypto</code><code>debug</code><code>admin</code><code>account_recovery</code><code>api_docs</code><code>hunt</code><code>mcp</code>
         </div>
       </div>
     </article>

@@ -29,7 +29,7 @@ sort_by = "weight"
     just vc
     ```
 
-    13개 추적 파일이 `shard.yml`의 버전과 일치해야 합니다 (모두 ✅ 표시).
+    추적 대상 파일이 모두 `shard.yml`의 버전과 일치해야 하며, 스크립트는 마지막에 `✅ All versions match`를 출력합니다.
 
 3.  **GitHub 릴리스 생성**: [GitHub 릴리스 페이지](https://github.com/owasp-noir/noir/releases)에서 새 릴리스를 생성합니다. 자동화된 워크플로가 트리거됩니다.
 4.  **수동 릴리스**: 자동화되지 않은 채널은 아래 수동 절차를 따릅니다.

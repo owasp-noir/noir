@@ -19,35 +19,46 @@ noir scan . -f yaml --no-log
 The structure mirrors the JSON format: an `endpoints` list with URL, HTTP method, parameters, source code paths, and tags for each entry.
 
 ```yaml
+---
 endpoints:
-  - url: /
-    method: GET
-    params:
-      - name: x-api-key
-        value: ""
-        param_type: header
-        tags: []
-    details:
-      code_paths:
-        - path: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr
-          line: 3
-    protocol: http
+- callees: []
+  url: /
+  method: GET
+  internal: false
+  details:
+    code_paths:
+    - path: spec/functional_test/fixtures/crystal/kemal/src/testapp.cr
+      line: 3
+    technology: crystal_kemal
+  protocol: http
+  kind: ""
+  tags: []
+  params:
+  - name: x-api-key
+    value: ""
+    param_type: header
     tags: []
-  - url: /query
-    method: POST
-    params:
-      - name: my_auth
-        value: ""
-        param_type: cookie
-        tags: []
-      - name: query
-        value: ""
-        param_type: form
-        tags: []
-    details:
-      code_paths:
-        - path: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr
-          line: 8
-    protocol: http
+- callees: []
+  url: /query
+  method: POST
+  internal: false
+  details:
+    code_paths:
+    - path: spec/functional_test/fixtures/crystal/kemal/src/testapp.cr
+      line: 17
+    technology: crystal_kemal
+  protocol: http
+  kind: ""
+  tags: []
+  params:
+  - name: my_auth
+    value: ""
+    param_type: cookie
     tags: []
+  - name: query
+    value: ""
+    param_type: form
+    tags: []
+passive_results: []
+errors: []
 ```

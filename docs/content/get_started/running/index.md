@@ -125,7 +125,7 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 # Attach 1-hop handler callees (function/method calls inside the route body)
 noir scan . --include callee
 
-# Attach an AI-review-ready context (guards, callees, sinks, validators, signals)
+# Attach an AI-review-ready context (guards, callees, sources, sinks, validators, signals)
 noir scan . --ai-context
 
 # Narrow the AI context to a few categories
@@ -144,7 +144,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `-o <file>`           | Write output to a file |
 | `-u <url>`            | Base URL for cURL/HTTPie output |
 | `--include LIST`      | Enrich plain output with `path`, `techs`, `callee` (comma-separated) |
-| `--ai-context [LIST]` | Attach AI review context (`guards`, `sinks`, `validators`, `signals`, `callee`) |
+| `--ai-context [LIST]` | Attach AI review context (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`; or `all`) |
 | `--pvalue TYPE=VAL`   | Fill parameter values in output (TYPE: any / header / cookie / query / form / json / path) |
 | `--only-techs`        | Run only these tech detectors (skip the rest) |
 | `--techs`             | Force-tag these techs without running their detectors |

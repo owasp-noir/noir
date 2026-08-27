@@ -31,10 +31,10 @@ Noir의 결과 전송은 성격이 다른 두 family로 나뉩니다.
 
 POST, PUT, PATCH, DELETE는 template을 그대로 둡니다. 여기서 채우면 무해한 404가 실제 쓰기로 바뀌기 때문입니다 — 살아있는 레코드에 `DELETE /users/1`이 나갑니다. proxy 경유 시 template 그대로 도착하므로, 필요하면 직접 수정해서 replay 하면 됩니다.
 
-값을 직접 지정하려면 `--set-pvalue-path`를 쓰세요. 이쪽은 모든 verb에 적용됩니다.
+값을 직접 지정하려면 `--pvalue path=...`를 쓰세요. 이쪽은 모든 verb에 적용됩니다.
 
 ```bash
-noir scan ./source -u http://localhost:3000 --probe --set-pvalue-path id=42
+noir scan ./source -u http://localhost:3000 --probe --pvalue path=id=42
 ```
 
 리포트 출력은 항상 원래 template을 유지합니다. 실제로 나가는 요청만 구체화됩니다.

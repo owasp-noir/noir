@@ -66,14 +66,15 @@ jobs:
 
 **참고:**
 - 불리언 옵션은 문자열(`'true'`/`'false'`)로 전달
-- `output_file` 지정 시 파일 저장과 출력값 모두 제공
+- `output_file` 을 지정해도 스텝 출력값은 그대로 제공됩니다
+- `endpoints` / `passive_results` 출력값은 `format` 이 `json` 또는 `jsonl` 일 때만 채워집니다. 뒤 스텝에서 이 값을 쓴다면 둘 중 하나를 쓰세요
 
 ## 출력값(Outputs)
 
 | 이름 | 설명 |
 |---|---|
-| `endpoints` | 엔드포인트 분석 결과(JSON) |
-| `passive_results` | 수동(패시브) 점검 결과(JSON, `passive_scan` 활성화 시 제공) |
+| `endpoints` | `format` 이 `json` 또는 `jsonl` 일 때 Noir 결과 문서 전체(`{"endpoints":[...],"passive_results":[...]}`). 다른 형식이면 빈 값 |
+| `passive_results` | `format` 이 `json` 또는 `jsonl` 일 때 패시브 스캔 결과 JSON 배열(패시브 스캔을 껐거나 결과가 없으면 `[]`). 다른 형식이면 빈 값 |
 
 출력값 활용:
 

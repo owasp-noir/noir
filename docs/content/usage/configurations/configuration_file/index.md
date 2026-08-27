@@ -53,7 +53,10 @@ color: true
 # Default output format
 format: "json"
 
-# Exclude certain status codes
+# Base URL for probing; also required by exclude_codes / status_codes
+url: "https://api.example.com"
+
+# Exclude certain status codes (needs a target URL, so it pairs with `url` above)
 exclude_codes: "404,500"
 
 # Enable all taggers by default
@@ -62,7 +65,7 @@ all_taggers: true
 # Attach 1-hop handler callees to each endpoint
 include_callee: true
 
-# Attach AI review context (guards, sinks, validators, signals)
+# Attach AI review context (guards, callee, sources, sinks, validators, signals)
 ai_context: true
 
 # Default AI provider and model
@@ -73,7 +76,7 @@ ai_model: "gpt-5.5"
 This is equivalent to running:
 
 ```bash
-noir scan /path/to/my/project -f json --exclude-codes "404,500" -T \
+noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes "404,500" -T \
   --include callee --ai-context \
   --ai-provider openai --ai-model gpt-5.5
 ```

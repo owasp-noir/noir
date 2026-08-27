@@ -111,6 +111,7 @@ noir scan ./app --ai-provider ollama --ai-model llama3
 noir list techs       # 지원하는 언어, 프레임워크, 스펙
 noir list taggers     # 빌트인 및 프레임워크별 태거
 noir list formats     # 지원하는 모든 출력 형식
+noir list techs -f json   # 기계가 읽는 형식. -f 는 text(기본), json, yaml 을 받습니다
 ```
 
 ## Cache
@@ -204,6 +205,7 @@ Crystal, LLVM, 타깃 트리플 등 빌드 세부 정보를 추가합니다(v0
 | 플래그          | 효과                                                                 |
 |----------------|----------------------------------------------------------------------|
 | `--no-color`   | 모든 명령의 출력에서 ANSI 색상 제거 (`NO_COLOR` 환경변수도 반영)      |
+| `--no-spinner` | 로그는 그대로 두고 로딩 스피너만 비활성화                             |
 | `-v, --version`| Noir 버전 출력 후 종료                                                |
 | `-h, --help`   | 현재 명령의 도움말 표시                                              |
 

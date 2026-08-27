@@ -68,14 +68,15 @@ jobs:
 
 **Notes:**
 - Pass boolean options as strings (`'true'`/`'false'`)
-- `output_file` writes to file and provides outputs
+- `output_file` writes to a file; the step outputs are produced regardless
+- The `endpoints` / `passive_results` outputs are only populated for `format: 'json'` or `'jsonl'`. Pick one of those if a later step consumes them
 
 ## Outputs
 
 | Name | Description |
 |---|---|
-| `endpoints` | JSON‑formatted endpoint analysis |
-| `passive_results` | JSON‑formatted passive scan findings (present when `passive_scan` is enabled) |
+| `endpoints` | The full Noir result document (`{"endpoints":[...],"passive_results":[...]}`) when `format` is `json` or `jsonl`; empty for any other format |
+| `passive_results` | A JSON array of passive-scan findings when `format` is `json` or `jsonl` (`[]` when passive scan is off or found nothing); empty for any other format |
 
 Consuming outputs:
 

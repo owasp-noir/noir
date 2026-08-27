@@ -10,7 +10,7 @@ Turn discovered endpoints into ready-to-run commands for popular HTTP clients. U
 
 ## cURL
 
-[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-X` (HTTP method), `-d` (request body), `-H` (headers), and `--cookie` as appropriate.
+[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-X` (HTTP method), `--data-raw` (request body, with the matching `Content-Type` header), `-H` (headers), and `--cookie` as appropriate.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -18,9 +18,9 @@ noir scan . -f curl -u https://www.example.com
 
 Example output:
 ```bash
-curl -i -X GET https://www.example.com/ -H "x-api-key: "
-curl -i -X POST https://www.example.com/query -d "query=" --cookie "my_auth="
-curl -i -X GET https://www.example.com/token -d "client_id=&redirect_url=&grant_type="
+curl -i -X 'GET' 'https://www.example.com/' -H 'x-api-key: '
+curl -i -X 'POST' 'https://www.example.com/query' --data-raw 'query=' -H 'Content-Type: application/x-www-form-urlencoded' --cookie 'my_auth='
+curl -i -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redirect_url=&grant_type=' -H 'Content-Type: application/x-www-form-urlencoded'
 ```
 
 ## HTTPie
@@ -33,9 +33,9 @@ noir scan . -f httpie -u https://www.example.com
 
 Example output:
 ```bash
-http GET https://www.example.com/ "x-api-key: "
-http POST https://www.example.com/query "query=" "Cookie: my_auth="
-http GET https://www.example.com/token "client_id=&redirect_url=&grant_type="
+http 'GET' 'https://www.example.com/' 'x-api-key: '
+http --form 'POST' 'https://www.example.com/query' 'query=' 'Cookie:my_auth='
+http --form 'GET' 'https://www.example.com/token' 'client_id=' 'redirect_url=' 'grant_type='
 ```
 
 ## PowerShell
@@ -48,9 +48,9 @@ noir scan . -f powershell -u https://www.example.com
 
 Example output:
 ```powershell
-Invoke-WebRequest -Method GET -Uri "https://www.example.com/" -Headers @{"x-api-key"=""}
-Invoke-WebRequest -Method POST -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
-Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
+Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/" -Headers @{"x-api-key"=""}
+Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
+Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
 
 ## ADB (Android)
@@ -79,7 +79,7 @@ The action, category, and package come from the manifest's intent-filter, so eac
 
 ## simctl (iOS)
 
-`-f simctl` is the iOS counterpart to `-f adb`: it turns the iOS custom-scheme deep links and universal links Noir discovers into [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/simulator) commands that open them on a booted iOS Simulator. iOS has no intent or content-provider analog, so every command is a single `openurl`.
+`-f simctl` is the iOS counterpart to `-f adb`: it turns the iOS custom-scheme deep links and universal links Noir discovers into [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices) commands that open them on a booted iOS Simulator. iOS has no intent or content-provider analog, so every command is a single `openurl`.
 
 ```bash
 noir scan ./my-ios-app -f simctl

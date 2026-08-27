@@ -19,8 +19,10 @@ sort_by = "weight"
 
 **증상:** 대규모 코드베이스에서 Noir가 오래 걸립니다.
 
-- `--techs`로 특정 프레임워크만 스캔하세요: `noir scan . --techs rails`
-- `--exclude-techs`로 불필요한 프레임워크를 건너뛰세요
+- `--only-techs`로 지정한 디텍터만 실행하세요: `noir scan . --only-techs rails`
+  (`--techs`는 다릅니다. 탐지 범위를 좁히지 않고 분석 대상에 기술을 추가합니다)
+- `--exclude-techs`로 불필요한 프레임워크를 결과에서 제외하세요
+- `--exclude-path`로 vendor·생성 코드 트리를 건너뛰세요: `--exclude-path "vendor/*,**/node_modules/**"`
 - AI 기반 분석은 응답을 캐시하므로 동일한 코드베이스에 대한 후속 실행은 더 빠릅니다
 
 ## AI 제공업체 연결 오류

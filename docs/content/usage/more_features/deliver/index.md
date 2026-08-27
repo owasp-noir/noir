@@ -31,10 +31,10 @@ A discovered route like `/users/{id}` cannot be requested literally, so noir fil
 
 POST, PUT, PATCH and DELETE keep the literal template. Filling them would turn a harmless 404 into a real write — `DELETE /users/1` against a live record — so noir does not do it for you. Through a proxy the template still arrives, and you can edit and replay it deliberately.
 
-Override the value with `--set-pvalue-path`, which applies to every verb:
+Override the value with `--pvalue path=...`, which applies to every verb:
 
 ```bash
-noir scan ./source -u http://localhost:3000 --probe --set-pvalue-path id=42
+noir scan ./source -u http://localhost:3000 --probe --pvalue path=id=42
 ```
 
 Reported output always keeps the original template; only the outbound request is concretized.

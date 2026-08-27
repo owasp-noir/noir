@@ -1,6 +1,6 @@
 +++
 title = "AI 컨텍스트"
-description = "guards, callees, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다."
+description = "guards, callees, sources, sinks, validators, signals를 모아 엔드포인트별로 제공하는 AI 리뷰 컨텍스트입니다."
 weight = 5
 sort_by = "weight"
 
@@ -23,7 +23,7 @@ noir scan . --ai-context=all                # "전부" 의 명시적 형태
 noir scan . --ai-context                    # bare 형태, 동일하게 "전부"
 ```
 
-유효한 feature 이름: `guards`, `callee`, `sinks`, `validators`, `signals` (그리고 `all`). 대소문자 구분 없음.
+유효한 feature 이름: `guards`, `callee`, `sources`, `sinks`, `validators`, `signals` (그리고 `all`). 대소문자 구분 없음.
 
 plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트마다 `ai_context:` 블록이 추가됩니다. 모델 기반 출력에서는 다음 위치에 동일한 구조가 노출됩니다.
 
@@ -43,6 +43,7 @@ plain 출력에서는 비어있지 않은 컨텍스트를 가진 엔드포인트
 |---|---|
 | `guards` | 라우트에 감지된 인증/인가 게이트 (미들웨어, 데코레이터, `requires_auth`, 역할 체크 등) |
 | `callees` | `--include callee`로 수집되는 1-hop 핸들러 callee를 AI 컨텍스트 구조 안에서 다시 노출 |
+| `sources` | 핸들러에 도달하는 공격자 제어 입력. 요청 파라미터·헤더·쿠키·GraphQL 필드와 모바일 딥링크 페이로드가 여기 들어갑니다. 검토할 만한 서버 측 값 출처(Spring `@Value` 시크릿, WebSocket CORS 정책 등)도 함께 기록됩니다 |
 | `sinks` | 핸들러 본문이나 callee 이름에서 추론된 위험 가능 동작 (SQL, 명령 실행, 역직렬화, 템플릿 렌더링, 파일 I/O, 리다이렉트 등) |
 | `validators` | 입력 검증/정제 신호 (스키마 검증기, 파라미터 형 변환, 허용 목록 패턴). sink 위험을 줄여줄 수 있는 단서 |
 | `signals` | 그 외 라우트 형태 힌트 (가드 없는 상태 변경 메서드, object-level 인가 점검이 필요한 path-id 사용, 파일 업로드 동작 등) |
