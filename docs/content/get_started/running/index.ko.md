@@ -28,7 +28,7 @@ noir scan /path/to/your/app
 noir scan .
 ```
 
-<img src="./running.png" alt="패시브 스캔과 태거를 켜고 noir 를 실행한 터미널. 엔드포인트 6개를 찾아 sqli, oauth, websocket 태그를 붙이고 critical 등급의 개인 키를 발견했다." width="1244" height="963" loading="lazy" decoding="async">
+<img src="./scan.svg" alt="패시브 스캔과 태거를 켜고 noir scan 을 실행한 터미널. 엔드포인트 5개를 파라미터와 태그까지 찾아내고 critical 등급의 개인 키를 발견했다." width="639" height="1258" loading="lazy" decoding="async">
 
 Noir가 소스 파일을 읽고, 사용 중인 프레임워크를 탐지하고, 발견한 모든 엔드포인트를 출력합니다. 메서드, 경로, 파라미터, 헤더, 쿠키까지 함께요.
 
