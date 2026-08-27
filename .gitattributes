@@ -11,3 +11,4 @@ docs/tools/cli-capture/**/*.py linguist-vendored=false
 docs/tools/cli-capture/**/*.py linguist-documentation=false
 docs/tools/cli-capture/**/*.sh linguist-vendored=false
 docs/tools/cli-capture/**/*.sh linguist-documentation=false
+src/ext/tree_sitter/runtime/src/*.c linguist-vendored=false
