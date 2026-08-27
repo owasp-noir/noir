@@ -42,12 +42,12 @@ Every analyzer is composed of three layers. Keeping them separate is a hard rule
 - **Language engines** (in `engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, Elixir.
 - **`FileScanEngine`** sits *under* seven of those (Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) and holds the file-walk skeleton they used to each carry a byte-identical copy of.
 - `java_engine.cr` and `kotlin_engine.cr` are **not** engines despite the filenames — they are modules exposing a shared `self.test_path?`, and no analyzer inherits from them.
-- **Route extractors** (in `miniparsers/`): JavaScript (`js_route_extractor.cr`, used by Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS, Elysia, Hapi and more) plus Tree-sitter extractors for Go, Java, Kotlin and Python. Go and Kotlin ship as directories of part files behind an umbrella `require` (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
+- **Route extractors** (in `miniparsers/`): JavaScript (`js_route_extractor.cr`, used by Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS and more) plus Tree-sitter extractors for Go, Java, Kotlin and Python, and framework-specific Tree-sitter extractors (Elysia, Hapi, Ktor, and others). Go and Kotlin ship as directories of part files behind an umbrella `require` (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
 - **Deliberately outside the engine stack**: languages whose analyzers orchestrate multiple phases or carry self-contained extraction — CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, and Go's Chi/Httprouter/Fasthttp. These inherit from `Analyzer` directly.
 
 ## Two engine shapes
 
-Every engine exposes `parallel_file_scan(&block)` as a protected helper. A framework adapter picks one of two shapes:
+Engines built on `FileScanEngine` (plus the JavaScript and Ruby engines) expose `parallel_file_scan(&block)` as a protected helper; Go, Python, CFML, and Specification analyzers drive the file walk with `Analyzer#parallel_analyze` directly. A framework adapter picks one of two shapes:
 
 **Shape A: `analyze_file`** (simpler, pure per-file):
 
@@ -137,15 +137,17 @@ module Analyzer::Go
     analyzer_for "go_hertz"
 
     HTTP_METHODS_EXPANDED = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
+    IMPORT_MARKER         = "github.com/cloudwego/hertz"
 
     def analyze
       public_dirs = [] of Hash(String, String)
-      package_groups, file_lines_cache = collect_package_groups
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
 
-      parallel_file_scan do |path|
-        lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
-        groups = groups_for_directory(package_groups, File.dirname(path))
-        # ... per-line route + param extraction, delegates to GoRouteExtractor via engine
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        content = file_contents[path]? || read_file_content(path)
+        cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+        routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
+        # ... turn routes into endpoints, then per-line param extraction
       end
 
       resolve_public_dirs(public_dirs)
@@ -157,10 +159,10 @@ end
 
 Key points:
 
-- **Inherit from the language engine** (`GoEngine` here). You get `get_route_path`, `add_param_to_endpoint`, `collect_package_groups`, `resolve_public_dirs` for free.
+- **Inherit from the language engine** (`GoEngine` here). You get `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint`, `resolve_public_dirs` for free.
 - **Declare the tech with `analyzer_for`**. That single line *is* the registration — see step 3.
-- **Override overridable methods** if your framework's parsing differs (`get_static_path`, `get_route_path`; see Mux or GoZero for examples).
-- **Use `parallel_file_scan`** for the file walk; don't re-implement the channel + worker pool.
+- **Delegate route parsing to the shared Tree-sitter extractor** (`Noir::TreeSitterGoRouteExtractor`). If your framework's routing differs, steer the extractor with its arguments (e.g. `handle_method:`) or its specialized entry points instead of re-parsing (see Mux or GoZero for examples).
+- **Use `parallel_analyze(get_files_by_extension(".go"))`** for the file walk (engines built on `FileScanEngine` expose `parallel_file_scan` instead); don't re-implement the channel + worker pool.
 - **Only list verbs the framework actually routes** in your method table. In particular, add `QUERY` (RFC 10008) only when upstream ships explicit support for it — a speculative entry reports endpoints the framework itself answers with 405. The same policy covers wildcard (`ANY`/`ALL`/`*`) routes: neither the shared `WILDCARD_HTTP_METHODS` (`src/utils/http_symbols.cr`) nor any analyzer-local wildcard fan-out list (several analyzers expand `ANY` at analysis time with their own table) should grow `QUERY`.
 
 ### 3. Declare the tech metadata
@@ -324,7 +326,7 @@ See [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split)
 
 Noir is built **single-threaded** (no `preview_mt`). `parallel_analyze` spawns cooperative Crystal fibers, not OS threads, so `result << endpoint` and `result.concat(...)` from multiple fibers are safe because `Array#<<` and `#concat` have no yield points. You'll notice that no per-file analyzer uses a `Mutex` around the result array; that's by design and matches the whole codebase. If noir ever enables MT mode, synchronization belongs at the `parallel_analyze` layer, not scattered across analyzers.
 
-A `@result_mutex` plus `append_endpoint` helpers were added to the engines in #2353 and removed again in #2357: they guarded a race that cannot occur in a single-threaded build, landed in only some engines, and contradicted this note. If you are about to add one, you are re-opening that loop — enable MT first, then synchronize once at the `parallel_analyze` layer.
+A `@result_mutex` plus `append_endpoint` helpers were added to the engines in #2353 and removed again in #2360: they guarded a race that cannot occur in a single-threaded build, landed in only some engines, and contradicted this note. If you are about to add one, you are re-opening that loop — enable MT first, then synchronize once at the `parallel_analyze` layer.
 
 ## Where to look next
 

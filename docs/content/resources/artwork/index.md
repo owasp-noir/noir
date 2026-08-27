@@ -12,7 +12,7 @@ sort_by = "weight"
 
 *   **Official Logos**: Various formats and color schemes
 *   **Mascots**: Official mascot designs and illustrations
-*   **Brand Guidelines**: Proper usage of Noir branding
+*   **Wallpapers**: Desktop wallpapers featuring Noir artwork
 *   **Other Resources**: Visual assets for presentations and documentation
 
 ## Repository
@@ -21,4 +21,4 @@ sort_by = "weight"
 
 ## Contributing
 
-Open an issue or discussion in the artwork repository to suggest new artwork or improvements.
+Open an issue in the artwork repository, or start a thread in the [project discussions](https://github.com/orgs/owasp-noir/discussions), to suggest new artwork or improvements.

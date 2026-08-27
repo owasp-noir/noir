@@ -13,19 +13,19 @@ info:
   author:
     - "List of authors"
     - "Another author"
-  severity: "The severity level of the rule (e.g., critical, high, medium, low)"
+  severity: "The severity level of the rule (one of: critical, high, medium, low)"
   description: "A brief description of the rule"
   reference:
     - "URLs or references related to the rule"
 
 matchers-condition: "The condition to apply between matchers (and/or)"
 matchers:
-  - type: "The type of matcher (e.g., word, regex)"
+  - type: "The type of matcher (one of: word, regex)"
     patterns:
       - "Patterns to match"
     condition: "The condition to apply within the matcher (and/or)"
 
-  - type: "The type of matcher (e.g., word, regex)"
+  - type: "The type of matcher (one of: word, regex)"
     patterns:
       - "Patterns to match"
       - "Another pattern"
@@ -70,3 +70,9 @@ techs:
 ```
 
 <img src="./passive_private_key.png" alt="Passive scan results reporting a critical PRIVATE_KEY finding, quoting the BEGIN PRIVATE KEY line and the file it sits on." width="787" height="286" loading="lazy" decoding="async">
+
+## Notes on rule fields
+
+* `severity` and `matchers[].type` are closed sets. A rule using any other value is invalid and is skipped with a `Skipped invalid passive rule` message, rather than partially applied. `category` is free-form.
+* Findings below the minimum severity are filtered out of the report, and the default minimum is `high`. A `severity: medium` or `severity: low` rule produces nothing until you lower the threshold with `--passive-scan-severity`.
+* `techs` is result metadata copied onto each finding. It does not gate which files a rule runs against — every loaded rule is evaluated against every scanned file.

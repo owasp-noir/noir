@@ -24,11 +24,6 @@ noir scan ./spec/functional_test/fixtures/hahwul \
      --ai-key=github_pat_...
 ```
 
-**Azure Inference API 사용** (Azure를 통해 제공되는 모델):
-
-```bash
-noir scan ./spec/functional_test/fixtures/hahwul \
-     --ai-provider=azure \
-     --ai-model=gpt-5.5 \
-     --ai-key=github_pat_...
-```
+{% alert_warning() %}
+과거에는 공유 Azure Inference 엔드포인트(`--ai-provider=azure`)로도 GitHub Models를 사용할 수 있었지만, 해당 엔드포인트는 폐기되어 `models.inference.ai.azure.com`이 더 이상 DNS에서 해석되지 않습니다. 위 예시처럼 `--ai-provider=github`를 사용하세요.
+{% end %}

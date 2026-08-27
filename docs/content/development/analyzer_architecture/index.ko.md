@@ -42,12 +42,12 @@ Detector 는 manifest 파일(`go.mod`, `package.json`, `Gemfile` 등) 에 대한
 - **Language engines** (`engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, Elixir.
 - **`FileScanEngine`** 은 그중 일곱 개(Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) *아래* 에 있는 공유 베이스입니다. 각 엔진이 바이트 단위로 똑같이 복제해 갖고 있던 파일 순회 스켈레톤을 여기서 소유합니다.
 - `java_engine.cr` 과 `kotlin_engine.cr` 은 파일 이름과 달리 **엔진이 아닙니다.** 공유 `self.test_path?` 하나를 노출하는 module 이고, 상속하는 분석기가 없습니다.
-- **Route extractors** (`miniparsers/`): JavaScript(`js_route_extractor.cr` — Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS, Elysia, Hapi 등에서 사용) 와 Go/Java/Kotlin/Python 용 Tree-sitter 추출기. Go 와 Kotlin 은 umbrella `require` 뒤의 파트 파일 디렉터리로 나뉘어 있습니다 (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
+- **Route extractors** (`miniparsers/`): JavaScript(`js_route_extractor.cr` — Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS 등에서 사용) 와 Go/Java/Kotlin/Python 용 Tree-sitter 추출기, 그리고 프레임워크 전용 Tree-sitter 추출기(Elysia, Hapi, Ktor 등). Go 와 Kotlin 은 umbrella `require` 뒤의 파트 파일 디렉터리로 나뉘어 있습니다 (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
 - **의도적으로 엔진 밖**: 여러 단계를 조율하거나 자체 완결 추출을 가진 언어들 — CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, 그리고 Go 의 Chi/Httprouter/Fasthttp. `Analyzer` 를 직접 상속합니다.
 
 ## 두 가지 엔진 shape
 
-모든 엔진이 `parallel_file_scan(&block)` 를 protected helper 로 노출합니다. 어댑터는 다음 중 하나를 선택합니다.
+`FileScanEngine` 기반 엔진들(과 JavaScript, Ruby 엔진)은 `parallel_file_scan(&block)` 를 protected helper 로 노출하고, Go/Python/CFML/Specification 분석기는 `Analyzer#parallel_analyze` 로 파일 순회를 직접 수행합니다. 어댑터는 다음 중 하나를 선택합니다.
 
 **Shape A. `analyze_file`** (단순, 순수 per-file):
 
@@ -137,15 +137,17 @@ module Analyzer::Go
     analyzer_for "go_hertz"
 
     HTTP_METHODS_EXPANDED = %w[GET POST PUT DELETE PATCH OPTIONS HEAD]
+    IMPORT_MARKER         = "github.com/cloudwego/hertz"
 
     def analyze
       public_dirs = [] of Hash(String, String)
-      package_groups, file_lines_cache = collect_package_groups
+      package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
 
-      parallel_file_scan do |path|
-        lines = file_lines_cache[path]? || File.read_lines(path, encoding: "utf-8", invalid: :skip)
-        groups = groups_for_directory(package_groups, File.dirname(path))
-        # ... 라인별 라우트 + 파라미터 추출. 엔진을 거쳐 GoRouteExtractor 로 위임.
+      parallel_analyze(get_files_by_extension(".go")) do |path|
+        content = file_contents[path]? || read_file_content(path)
+        cross_file_groups = ts_groups_for_directory(package_groups, File.dirname(path))
+        routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content, cross_file_groups, handle_method: "Handle")
+        # ... 라우트를 엔드포인트로 변환한 뒤 라인별 파라미터 추출
       end
 
       resolve_public_dirs(public_dirs)
@@ -157,10 +159,10 @@ end
 
 핵심 포인트:
 
-- **언어 엔진을 상속**. `get_route_path`, `add_param_to_endpoint`, `collect_package_groups`, `resolve_public_dirs` 등을 별도 구현 없이 그대로 사용.
+- **언어 엔진을 상속**. `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint`, `resolve_public_dirs` 등을 별도 구현 없이 그대로 사용.
 - **`analyzer_for` 로 tech 선언**. 이 한 줄이 등록의 전부입니다 — 3단계 참조.
-- **재정의 가능한 메서드 오버라이드**. 프레임워크 파싱이 다르면 `get_static_path`, `get_route_path` 등 재정의 (Mux, GoZero 참조).
-- **`parallel_file_scan` 사용**. 채널 + worker pool 을 재구현하지 말 것.
+- **라우트 파싱은 공용 Tree-sitter 추출기에 위임** (`Noir::TreeSitterGoRouteExtractor`). 프레임워크 라우팅이 다르면 직접 재파싱하지 말고 추출기의 인자(예: `handle_method:`)나 전용 진입점으로 조정 (Mux, GoZero 참조).
+- **파일 순회는 `parallel_analyze(get_files_by_extension(".go"))` 사용** (`FileScanEngine` 기반 엔진에서는 `parallel_file_scan`). 채널 + worker pool 을 재구현하지 말 것.
 - **프레임워크가 실제 라우팅하는 verb만** 메서드 테이블에 나열. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가 — 추측성 항목은 프레임워크가 405로 응답할 엔드포인트를 보고하게 됩니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트에도 같은 정책이 적용됩니다: 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)든, 분석 시점에 자체 테이블로 `ANY`를 확장하는 analyzer 로컬 목록이든 `QUERY`를 추가하지 않습니다.
 
 ### 3. tech 메타데이터 선언
@@ -324,7 +326,7 @@ end
 
 Noir 는 **single-threaded** 로 빌드됩니다 (`preview_mt` 미사용). `parallel_analyze` 는 OS 스레드가 아니라 cooperative Crystal fiber 를 spawn 합니다. 따라서 여러 fiber 에서 `result << endpoint`, `result.concat(...)` 는 안전한데, `Array#<<` 와 `#concat` 에 yield 지점이 없기 때문입니다. 모든 per-file 분석기가 result 배열에 Mutex 를 쓰지 않는 이유가 여기에 있고, 코드베이스 전반이 그렇게 일관되게 작성되어 있습니다. 나중에 MT 모드를 켜게 되면 동기화는 `parallel_analyze` 레이어에 한 번 추가하면 되는 일이지, 분석기마다 흩어 둘 일이 아닙니다.
 
-#2353 에서 엔진들에 `@result_mutex` 와 `append_endpoint` 헬퍼가 추가되었다가 #2357 에서 다시 제거되었습니다. single-threaded 빌드에서는 발생할 수 없는 race 를 막고 있었고, 일부 엔진에만 적용되어 있었으며, 이 문서와 정면으로 어긋났기 때문입니다. Mutex 를 다시 넣으려 한다면 그 반복을 여는 셈입니다. MT 를 먼저 켜고, 동기화는 `parallel_analyze` 레이어에 한 번만 추가하세요.
+#2353 에서 엔진들에 `@result_mutex` 와 `append_endpoint` 헬퍼가 추가되었다가 #2360 에서 다시 제거되었습니다. single-threaded 빌드에서는 발생할 수 없는 race 를 막고 있었고, 일부 엔진에만 적용되어 있었으며, 이 문서와 정면으로 어긋났기 때문입니다. Mutex 를 다시 넣으려 한다면 그 반복을 여는 셈입니다. MT 를 먼저 켜고, 동기화는 `parallel_analyze` 레이어에 한 번만 추가하세요.
 
 ## 다음에 볼 것
 

@@ -55,7 +55,7 @@ With `--ai-context`, the handler body feeds Noir's source / sink / guard inferen
 
 ## Output behavior
 
-Mobile endpoints stay in the structured inventory (JSON, JSONL, YAML, SARIF, Markdown, mermaid, HTML) and in the Elasticsearch / webhook exports, because they are part of the app's surface. They are **excluded** from HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, and active probe / proxy delivery) because an app URL is something you open, not an HTTP request you send.
+Mobile endpoints stay in the structured inventory (JSON, JSONL, YAML, TOML, SARIF, Markdown, mermaid, HTML) and in the Elasticsearch / webhook exports, because they are part of the app's surface. They are **excluded** from HTTP-shaped output and delivery (cURL, HTTPie, PowerShell, OpenAPI 2.0 / 3.0, Postman, and active probe / proxy delivery) because an app URL is something you open, not an HTTP request you send. To launch them instead, `-f adb` (Android) and `-f simctl` (iOS) emit ready-to-run device commands.
 
 ## Notes and limitations
 

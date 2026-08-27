@@ -44,27 +44,27 @@ Noir detects the built-in argv / flag / environment mechanisms of each language 
 
 | Language | Built-in | Libraries |
 |---|---|---|
-| Go | `os.Args`, `flag`, `os.Getenv`/`LookupEnv` | cobra (+ viper env), urfave/cli, pflag, go-arg, go-flags |
-| Python | `sys.argv`, `argparse`, `getopt`, `os.environ`/`getenv` | click, typer, fire, docopt |
-| Rust | `std::env::args`/`var` | clap (derive), structopt, argh |
-| JavaScript / TypeScript | `process.argv`, `util.parseArgs`, `Deno.args`, `Bun.argv`, `process.env` | commander, yargs, cac, meow, minimist |
-| Ruby | `ARGV`, `OptionParser`, `ENV` | Thor, GLI, Slop, TTY::Option, commander |
-| C# / F# | `Main(string[])`, `GetCommandLineArgs`, `GetEnvironmentVariable` | System.CommandLine, CommandLineParser, CliFx, Spectre.Console.Cli |
-| Java | `main(String[])`, `System.getenv` | picocli, args4j, JCommander, commons-cli, airline |
-| Kotlin | `main(Array<String>)`, `System.getenv` | clikt (+ envvar), kotlinx-cli |
-| PHP | `$argv`, `getopt()`, `$_ENV`, `getenv()` | Symfony Console, CLImate, Minicli |
-| C++ | `main(argc, argv)`, `getenv` | CLI11, getopt/getopt_long, cxxopts, boost::program_options, gflags |
-| Swift | `CommandLine.arguments`, `ProcessInfo.environment` | swift-argument-parser |
+| Go | `os.Args`, `flag`, `os.Getenv`/`LookupEnv` | cobra (+ viper env), urfave/cli, pflag, go-arg, go-flags, kong, kingpin, mitchellh/cli |
+| Python | `sys.argv`, `argparse`, `getopt`, `os.environ`/`getenv` | click, typer, fire, docopt, Abseil (absl-py), Cleo |
+| Rust | `std::env::args`/`var` | clap (derive), structopt, argh, getopts |
+| JavaScript / TypeScript | `process.argv`, `util.parseArgs`, `Deno.args`, `Bun.argv`, `process.env` | commander, yargs, cac, sade, meow, minimist, arg, command-line-args, getopts, citty |
+| Ruby | `ARGV`, `OptionParser`, `ENV` | Thor, GLI, Slop, TTY::Option, commander, Optimist, Clamp, dry-cli |
+| C# | `Main(string[])`, `GetCommandLineArgs`, `GetEnvironmentVariable` | System.CommandLine, CommandLineParser, CliFx, Spectre.Console.Cli, McMaster.Extensions.CommandLineUtils, Cocona |
+| Java | `main(String[])`, `System.getenv` | picocli, args4j, JCommander, commons-cli, airline, JOpt Simple |
+| Kotlin | `main(Array<String>)`, `System.getenv` | clikt (+ envvar), kotlinx-cli, picocli |
+| PHP | `$argv`, `getopt()`, `$_ENV`, `getenv()` | Symfony Console, Laravel Artisan (`$signature`), Robo, WP-CLI |
+| C++ | `main(argc, argv)`, `getenv` | CLI11, getopt/getopt_long, cxxopts, boost::program_options, gflags, Abseil Flags, p-ranav/argparse |
+| Swift | `CommandLine.arguments`, `ProcessInfo.environment` | swift-argument-parser, SwiftCLI |
 | Crystal | `ARGV`, `OptionParser`, `ENV` | clim, admiral, commander |
-| Elixir | `System.argv`, `OptionParser`, `System.get_env` | (stdlib) |
+| Elixir | `System.argv`, `OptionParser`, `System.get_env` | Optimus |
 | Dart | `main(List<String>)`, `Platform.environment` | args (ArgParser / CommandRunner), dcli |
-| Haskell | `getArgs`, `getEnv`/`lookupEnv` | optparse-applicative |
-| Scala | `args`, `sys.env` | scopt, decline |
-| Zig | `std.process.args`, `getEnvVarOwned` | zig-clap, zig-cli |
-| Clojure | `*command-line-args*`, `System/getenv` | clojure.tools.cli, cli-matic |
-| Lua | `arg`, `os.getenv` | argparse |
-| Perl | `@ARGV`, `Getopt::Long`/`Getopt::Std`, `%ENV` | (stdlib) |
-| Groovy | `args`, `System.getenv` | CliBuilder, picocli |
+| Haskell | `getArgs`, `getEnv`/`lookupEnv` | optparse-applicative, cmdargs, System.Console.GetOpt, turtle |
+| Scala | `args`, `sys.env` | scopt, decline, mainargs, Scallop, twitter-util |
+| Zig | `std.process.args`, `getEnvVarOwned` | zig-clap, zig-cli, zig-args, yazap |
+| Clojure | `*command-line-args*`, `System/getenv` | clojure.tools.cli, cli-matic, babashka.cli, environ |
+| Lua | `arg`, `os.getenv` | argparse, lua_cliargs |
+| Perl | `@ARGV`, `Getopt::Long`/`Getopt::Std`, `%ENV` | App::Cmd, Getopt::Long::Descriptive, MooX::Options |
+| Groovy | `args`, `System.getenv` | CliBuilder, picocli, commons-cli, JCommander |
 
 ## Output behavior
 

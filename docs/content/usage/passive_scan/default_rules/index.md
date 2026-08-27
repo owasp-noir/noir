@@ -29,7 +29,7 @@ Repository: https://github.com/owasp-noir/noir-passive-rules
 ## CLI Options
 
 - `--passive-scan-auto-update`: Auto-update rules on startup
-- `--passive-scan-no-update-check`: Skip update checks (useful for air-gapped environments)
+- `--passive-scan-no-update-check`: Skip update checks (useful for air-gapped environments). This also skips first-run rule initialization, so on a machine that has never downloaded the rules, place them in `~/.config/noir/passive_rules/` manually (or pass `--passive-scan-path`) first.
 
 Both options are also configurable via `~/.config/noir/config.yaml`.
 
@@ -53,14 +53,13 @@ First run (auto-initialization):
 ⚬ Passive scanner enabled.
 ⚬ Initializing passive rules directory...
 ✔ Passive rules initialized successfully.
-  ├── Using default passive rules.
-  └── Loaded 15 valid passive scan rules.
+  ├── Using default passive rules (/home/user/.config/noir/passive_rules).
+  └── Loaded 27 valid passive scan rules.
 ```
 
 When updates are available:
 ```
 ⚬ Passive scanner enabled.
-❏ Checking for passive rules updates...
 ▲ Passive rules are 3 commits behind the latest version.
   ├── Run 'git pull' in ~/.config/noir/passive_rules/ to update
   ├── Or use 'git clone https://github.com/owasp-noir/noir-passive-rules.git ~/.config/noir/passive_rules/' to get the latest rules
@@ -70,7 +69,6 @@ When updates are available:
 With auto-update enabled:
 ```
 ⚬ Passive scanner enabled.
-❏ Checking for passive rules updates...
 ⚬ Updating passive rules (3 commits behind)...
 ✔ Passive rules updated successfully.
 ```

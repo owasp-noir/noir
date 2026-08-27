@@ -8,7 +8,7 @@ sort_by = "weight"
 
 Automatically add descriptive tags to endpoints and parameters to flag functionality and potential security risks (e.g., SQL injection, authentication endpoints).
 
-<img src="./tagger.png" alt="Noir output where endpoints carry tags: POST /query and GET /api/me are tagged sqli, and GET /token is tagged oauth." width="769" height="394" loading="lazy" decoding="async">
+<img src="./tagger.png" alt="Noir output where endpoints carry tags: GET /token is tagged oauth, and GET /api/me is tagged sqli." width="769" height="172" loading="lazy" decoding="async">
 
 ## Usage
 
@@ -32,28 +32,22 @@ Tags appear in the `tags` array at both the endpoint level and the parameter lev
 
 ```json
 {
-  "url": "/query",
-  "method": "POST",
+  "url": "/token",
+  "method": "GET",
   "params": [
     {
-      "name": "query",
+      "name": "redirect_url",
       "value": "",
       "param_type": "form",
       "tags": [
         {
-          "name": "sqli",
-          "description": "This parameter may be vulnerable to SQL Injection attacks.",
+          "name": "ssrf",
+          "description": "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.",
           "tagger": "Hunt"
         }
       ]
     }
   ],
-  "protocol": "http",
-  "tags": []
-},
-{
-  "url": "/token",
-  "method": "GET",
   "protocol": "http",
   "tags": [
     {
