@@ -29,7 +29,7 @@ Release process for project maintainers.
     just vc
     ```
 
-    All 13 tracked files must match the version in `shard.yml` (all checks show ✅).
+    Every tracked file must report the same version as `shard.yml`; the script ends with `✅ All versions match`.
 
 3.  **Create GitHub Release**: Publish a new release on the [GitHub releases page](https://github.com/owasp-noir/noir/releases). This triggers automated workflows.
 4.  **Manual Releases**: Complete the manual steps below for non-automated channels.

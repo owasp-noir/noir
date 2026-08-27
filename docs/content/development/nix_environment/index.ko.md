@@ -26,7 +26,7 @@ sh <(curl -L https://nixos.org/nix/install) --no-daemon
 
 ### Flakes 활성화
 
-[Flakes](https://nixos.wiki/wiki/Flakes)는 Nix의 재현 가능한 프로젝트 정의 방식입니다. `~/.config/nix/nix.conf`(또는 `/etc/nix/nix.conf`)에 아래 줄을 추가하여 활성화합니다.
+[Flakes](https://wiki.nixos.org/wiki/Flakes)는 Nix의 재현 가능한 프로젝트 정의 방식입니다. `~/.config/nix/nix.conf`(또는 `/etc/nix/nix.conf`)에 아래 줄을 추가하여 활성화합니다.
 
 ```
 experimental-features = nix-command flakes

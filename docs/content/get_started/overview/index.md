@@ -17,7 +17,7 @@ Noir is an open-source SAST tool. It reads source code and extracts the endpoint
 That inventory feeds three audiences:
 
 - **Human reviewers.** Security engineers and code auditors get a focused list of attacker-reachable entrypoints and the files, parameters, and tags around them, instead of having to skim the whole repository.
-- **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include callee` for 1-hop callees, `--ai-context` for guards, sinks, validators, and signals).
+- **AI auditors.** LLM-based SAST agents get the same focused list, plus per-endpoint review context (`--include callee` for 1-hop callees, `--ai-context` for guards, sources, sinks, validators, and signals).
 - **DAST tools.** ZAP, Burp Suite, and Caido get a real route list to scan, including paths they would never have reached by crawling.
 
 <img src="./noir-usage.jpg" alt="noir-usage" width="1920" height="1167" loading="lazy" decoding="async">
@@ -26,13 +26,13 @@ That inventory feeds three audiences:
 
 **Extract endpoints.** Static analysis pulls endpoints, parameters, headers, and cookies out of source, including the ones nobody documented.
 
-**Cover the stack.** A single binary supports 193 frameworks across 29 languages, including Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, and Swift. No plugins or per-language setup.
+**Cover the stack.** A single binary supports 205 frameworks across 29 languages, including Crystal, Go, Java, JavaScript, Kotlin, PHP, Python, Ruby, Rust, and Swift. No plugins or per-language setup.
 
 **Fall back to an LLM.** When a framework isn't natively supported (or when routing is custom enough that static rules don't apply), point Noir at an LLM (OpenAI, Ollama, and so on) and let it fill the gap.
 
 **Feed DAST scanners.** Pipe endpoints straight into ZAP, Burp Suite, or Caido as a proxy target, or export OpenAPI for them to import. The scanner stops missing routes that were never linked from a page.
 
-**Give AI SAST useful context.** The inventory of entrypoints, source files, parameters, and tags (plus, with `--include callee`, the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. `--ai-context` goes further and attaches review context per endpoint (guards, callees, sinks, validators, and signals) so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
+**Give AI SAST useful context.** The inventory of entrypoints, source files, parameters, and tags (plus, with `--include callee`, the 1-hop functions each handler invokes) is the focused context an LLM-based SAST tool, code auditor, or security agent needs to find attacker-reachable bugs. `--ai-context` goes further and attaches review context per endpoint (guards, callees, sources, sinks, validators, and signals) so the model doesn't have to rediscover them. Hand it the surface Noir mapped instead of asking the model to scan the whole repository.
 
 **Export to whatever reads next.** JSON, YAML, OpenAPI specs, SARIF for CI/CD, cURL, HTTPie, HTML reports, Postman collections, and similar formats that the next tool in the pipeline expects.
 

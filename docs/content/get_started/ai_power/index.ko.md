@@ -78,6 +78,8 @@ Noir는 다음 AI 제공업체 프리셋을 지원합니다:
 
 사용자 정의 제공업체는 전체 API URL을 사용합니다: `--ai-provider=http://my-custom-api:9000`.
 
+`azure` 프리셋이 쓰던 공용 호스트는 상위에서 종료되었습니다. 대신 사용할 리소스별 URL은 [Azure AI](@/usage/ai_providers/azure/index.md) 문서를 참고하세요.
+
 원본 ACP/에이전트 stderr 로그가 필요하면 `NOIR_ACP_RAW_LOG=1`을 설정합니다.
 
 ### 환경 변수
@@ -191,7 +193,7 @@ flowchart TB
 파일을 토큰 제한 내의 번들로 묶어 동시에 처리해, 대규모 코드베이스에서도 처리 속도를 유지합니다.
 
 #### 응답 캐싱
-LLM 응답은 디스크에 캐시됩니다 (SHA256 키). 위치: `~/.local/share/noir/cache/ai/`. `--cache-disable` 또는 `--cache-clear`로 제어합니다.
+LLM 응답은 디스크에 캐시됩니다 (SHA256 키). 위치는 `~/.config/noir/cache/ai/`(또는 `$NOIR_HOME/cache/ai/`, Windows 는 `%APPDATA%\noir\cache\ai\`)이며 `noir cache info` 로 확인할 수 있습니다. `--cache-disable` 또는 `--cache-clear`로 제어합니다.
 
 #### LLM 옵티마이저
 URL과 파라미터 이름을 정규화하고 RESTful 규칙을 적용하여 엔드포인트 품질을 개선하는 선택적 후처리 단계입니다.

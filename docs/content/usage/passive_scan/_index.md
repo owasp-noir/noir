@@ -16,10 +16,10 @@ Run passive scan:
 noir scan <BASE_PATH> -P
 ```
 
-Use custom rules:
+Use custom rules. `--passive-scan-path` takes a **directory**, not a single file: Noir loads every `*.yml` / `*.yaml` below it, and the bundled rules are skipped for that run. The flag is repeatable.
 
 ```bash
-noir scan <BASE_PATH> --passive-scan --passive-scan-path /path/to/your/rules.yml
+noir scan <BASE_PATH> -P --passive-scan-path /path/to/your/rules/
 ```
 
 ### Filtering by Severity
@@ -52,7 +52,7 @@ Example output:
 ★ Passive Results:
 [critical][hahwul-test][secret] use x-api-key
   ├── extract:   env.request.headers["x-api-key"].as(String)
-  └── file: ./spec/functional_test/fixtures/crystal_kemal/src/testapp.cr:4
+  └── file: ./spec/functional_test/fixtures/crystal/kemal/src/testapp.cr:4
 ```
 
 **Output components:**

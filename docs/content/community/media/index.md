@@ -19,6 +19,6 @@ Community-written articles about OWASP Noir. Want yours listed here? Let us know
 * [API Attack Surface Detection using Noir](https://danaepp.com/api-attack-surface-detection-using-noir) by Dana Epp
 * [Exploring OWASP Noir's PassiveScan](https://www.hahwul.com/2024/11/03/passivescan-in-owasp-noir/) by Hahwul
 * [Powering Up DAST with ZAP and Noir](https://www.zaproxy.org/blog/2024-11-11-powering-up-dast-with-zap-and-noir/) by the ZAP Blog
-* [Enhancing OWASP Noir with AI](https://www.hahwul.com/2025/01/31/owasp-noir-x-llm/) by Hahwul
+* [Enhancing OWASP Noir with AI](https://www.hahwul.com/blog/2025/owasp-noir-x-llm/) by Hahwul
 * [Awesome Crystal](https://github.com/veelenga/awesome-crystal#security)
 * [Analysis Tools - Static Analysis](https://github.com/analysis-tools-dev/static-analysis#securitysast)

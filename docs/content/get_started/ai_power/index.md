@@ -78,6 +78,8 @@ Noir has built-in presets for several popular AI providers:
 
 For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:9000`.
 
+The `azure` preset's shared host has been retired upstream; see [Azure AI](@/usage/ai_providers/azure/index.md) for the per-resource URL to use instead.
+
 For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 
 ### Environment Variables
@@ -191,7 +193,7 @@ For projects with more than 10 files, the LLM filters the file list to identify 
 Groups files into token-limited bundles and processes them concurrently to maximize throughput on large codebases.
 
 #### Response Caching
-LLM responses are cached on disk (SHA256-keyed) at `~/.local/share/noir/cache/ai/`. Use `--cache-disable` or `--cache-clear` to control caching.
+LLM responses are cached on disk (SHA256-keyed) at `~/.config/noir/cache/ai/` (or `$NOIR_HOME/cache/ai/`; `%APPDATA%\noir\cache\ai\` on Windows). `noir cache info` prints the resolved path. Use `--cache-disable` or `--cache-clear` to control caching.
 
 #### LLM Optimizer
 Optional post-processing that normalizes URLs, parameter names, and applies RESTful conventions to improve endpoint quality.

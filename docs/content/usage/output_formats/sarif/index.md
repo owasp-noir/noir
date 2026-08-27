@@ -31,18 +31,18 @@ noir scan . -f sarif -o results.sarif --no-log
 
 ## Example Output
 
-A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, and the `results`: one entry per discovered endpoint with its source file location and line number.
+A SARIF file has a `runs` array. Each run describes the tool (`driver` with name and version), the analysis rules, the `results` (one entry per discovered endpoint with its source file location and line number), and an `invocations` entry whose `executionSuccessful` mirrors the `errors` key of the [JSON output](../json/): `false` when any analyzer failed or skipped a file.
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
   "version": "2.1.0",
   "runs": [
     {
       "tool": {
         "driver": {
           "name": "OWASP Noir",
-          "version": "0.28.0",
+          "version": "1.3.0",
           "informationUri": "https://github.com/owasp-noir/noir",
           "rules": [
             {
@@ -65,6 +65,7 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
       "results": [
         {
           "ruleId": "endpoint-discovery",
+          "ruleIndex": 0,
           "level": "note",
           "message": {
             "text": "GET /api/users/:id (Parameters: path: id)"
@@ -84,6 +85,7 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
         },
         {
           "ruleId": "endpoint-discovery",
+          "ruleIndex": 0,
           "level": "note",
           "message": {
             "text": "POST /api/users (Parameters: json: username, json: email)"
@@ -100,6 +102,11 @@ A SARIF file has a `runs` array. Each run describes the tool (`driver` with name
               }
             }
           ]
+        }
+      ],
+      "invocations": [
+        {
+          "executionSuccessful": true
         }
       ]
     }

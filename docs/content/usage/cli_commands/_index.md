@@ -110,6 +110,7 @@ actions, so they live as static subjects under one namespace.
 noir list techs       # supported languages, frameworks, and specs
 noir list taggers     # built-in and framework-specific tagger plugins
 noir list formats     # every supported output format
+noir list techs -f json   # machine-readable; -f accepts text (default), json, yaml
 ```
 
 ## Cache
@@ -201,6 +202,7 @@ A small set of flags work on every subcommand, not just `scan`:
 | Flag           | Effect                                                                |
 |----------------|----------------------------------------------------------------------|
 | `--no-color`   | Strip ANSI color from every command's output (also honors `NO_COLOR`) |
+| `--no-spinner` | Disable the loading spinner while keeping normal logs                 |
 | `-v, --version`| Print the noir version and exit                                       |
 | `-h, --help`   | Show help for the current command                                     |
 

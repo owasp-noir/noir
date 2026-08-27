@@ -128,7 +128,7 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 # 라우트 본문 안의 1-hop 핸들러 callee 첨부
 noir scan . --include callee
 
-# AI 리뷰용 컨텍스트 첨부 (guards, callees, sinks, validators, signals)
+# AI 리뷰용 컨텍스트 첨부 (guards, callees, sources, sinks, validators, signals)
 noir scan . --ai-context
 
 # AI 컨텍스트 범위 좁히기
@@ -147,7 +147,7 @@ noir scan . --ai-context guards,sinks
 | `-o <파일>`           | 출력을 파일로 저장 |
 | `-u <URL>`            | cURL/HTTPie 출력의 기본 URL |
 | `--include LIST`      | plain 출력에 `path`, `techs`, `callee` 추가 (쉼표 구분) |
-| `--ai-context [LIST]` | AI 리뷰 컨텍스트 첨부 (`guards`, `sinks`, `validators`, `signals`, `callee`) |
+| `--ai-context [LIST]` | AI 리뷰 컨텍스트 첨부 (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`, 또는 `all`) |
 | `--pvalue TYPE=VAL`   | 출력에 파라미터 값 채우기 (TYPE: any / header / cookie / query / form / json / path) |
 | `--only-techs`        | 이 디텍터만 실행 (나머지 건너뜀) |
 | `--techs`             | 디텍터는 건너뛰고 결과에 기술 태그만 강제 추가 |

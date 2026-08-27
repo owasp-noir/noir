@@ -26,7 +26,7 @@ See the [official Nix installation guide](https://nixos.org/download.html) for d
 
 ### Enable Flakes
 
-[Flakes](https://nixos.wiki/wiki/Flakes) are Nix's modern approach to reproducible project definitions. Enable them by adding this line to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`).
+[Flakes](https://wiki.nixos.org/wiki/Flakes) are Nix's modern approach to reproducible project definitions. Enable them by adding this line to `~/.config/nix/nix.conf` (or `/etc/nix/nix.conf`).
 
 ```
 experimental-features = nix-command flakes

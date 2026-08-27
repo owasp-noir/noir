@@ -88,7 +88,7 @@ Flag 이름은 그대로지만 scan 결과가 달라지는 항목들입니다. �
 
 * **Default concurrency** 가 v0 의 고정 `"20"` 대신 host CPU 수에 비례합니다. `--concurrency N` 이나 config 의 `concurrency:` 가 있으면 그쪽이 우선.
 * **Route path 의 string interpolation** (Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`) 이 `{name}` placeholder 로 보존됩니다. v0 는 interpolation segment 를 조용히 버리거나 언어 문법을 URL 에 그대로 노출했습니다. v1 은 일관된 template 을 만들고 placeholder 를 path parameter 로 등록합니다.
-* **`Any` / `All` verb** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All` 등) 가 단일 비표준 `"ANY"` verb 대신 7개 표준 HTTP method 로 fan out 됩니다. SARIF, Postman 등 downstream 도구가 받아들일 수 있습니다.
+* **`Any` / `All` verb** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All` 등) 가 단일 비표준 `"ANY"` verb 대신 실제 HTTP method (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, TRACE) 로 fan out 됩니다. SARIF, Postman 등 downstream 도구가 받아들일 수 있습니다. `QUERY` 는 의도적으로 fan-out 대상에서 빠져 있으며, 라우트가 해당 verb 를 명시적으로 선언한 경우에만 나옵니다.
 * **Stdout 출력** 이 터미널이 아닐 때 자동으로 컬러 비활성. `ls` / `git` 컨벤션과 일치. `--no-color` 와 `NO_COLOR=1` 도 그대로 동작.
 * **`-f json` / `-f sarif`** 등이 endpoint 0 일 때 빈 문자열 대신 valid empty document 출력. CI 파서가 빈 파일에서 실패하지 않음.
 * **`--diff-path`** 가 비교 측 scan 에서 `--probe` 와 `--export-*` 를 끕니다. v0 는 변경 없는 URL 을 양쪽에서 두 번 probe 했고, 옛 catalog 도 ES 로 push 했습니다.

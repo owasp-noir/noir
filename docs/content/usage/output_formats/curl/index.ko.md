@@ -10,7 +10,7 @@ sort_by = "weight"
 
 ## cURL
 
-[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령어에는 `-i`(응답 헤더 포함), `-X`(HTTP 메서드), `-d`(요청 바디), `-H`(헤더), `--cookie`(쿠키) 등의 플래그가 적절히 들어갑니다.
+[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령어에는 `-i`(응답 헤더 포함), `-X`(HTTP 메서드), `--data-raw`(요청 바디, 해당 `Content-Type` 헤더와 함께), `-H`(헤더), `--cookie`(쿠키) 등의 플래그가 적절히 들어갑니다.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -18,9 +18,9 @@ noir scan . -f curl -u https://www.example.com
 
 출력 예시
 ```bash
-curl -i -X GET https://www.example.com/ -H "x-api-key: "
-curl -i -X POST https://www.example.com/query -d "query=" --cookie "my_auth="
-curl -i -X GET https://www.example.com/token -d "client_id=&redirect_url=&grant_type="
+curl -i -X 'GET' 'https://www.example.com/' -H 'x-api-key: '
+curl -i -X 'POST' 'https://www.example.com/query' --data-raw 'query=' -H 'Content-Type: application/x-www-form-urlencoded' --cookie 'my_auth='
+curl -i -X 'GET' 'https://www.example.com/token' --data-raw 'client_id=&redirect_url=&grant_type=' -H 'Content-Type: application/x-www-form-urlencoded'
 ```
 
 ## HTTPie
@@ -33,9 +33,9 @@ noir scan . -f httpie -u https://www.example.com
 
 출력 예시
 ```bash
-http GET https://www.example.com/ "x-api-key: "
-http POST https://www.example.com/query "query=" "Cookie: my_auth="
-http GET https://www.example.com/token "client_id=&redirect_url=&grant_type="
+http 'GET' 'https://www.example.com/' 'x-api-key: '
+http --form 'POST' 'https://www.example.com/query' 'query=' 'Cookie:my_auth='
+http --form 'GET' 'https://www.example.com/token' 'client_id=' 'redirect_url=' 'grant_type='
 ```
 
 ## PowerShell
@@ -48,9 +48,9 @@ noir scan . -f powershell -u https://www.example.com
 
 출력 예시
 ```powershell
-Invoke-WebRequest -Method GET -Uri "https://www.example.com/" -Headers @{"x-api-key"=""}
-Invoke-WebRequest -Method POST -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
-Invoke-WebRequest -Method GET -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
+Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/" -Headers @{"x-api-key"=""}
+Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
+Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
 
 ## ADB (Android)
@@ -79,7 +79,7 @@ adb shell content query --uri 'content://com.example.app.provider'
 
 ## simctl (iOS)
 
-`-f simctl` 은 `-f adb` 의 iOS 짝입니다. Noir가 찾아낸 iOS 커스텀 스킴 딥링크와 유니버설 링크를 부팅된 iOS 시뮬레이터에서 열 수 있는 [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/simulator) 명령어로 변환합니다. iOS에는 인텐트나 콘텐츠 프로바이더에 해당하는 개념이 없어, 모든 명령은 단일 `openurl` 입니다.
+`-f simctl` 은 `-f adb` 의 iOS 짝입니다. Noir가 찾아낸 iOS 커스텀 스킴 딥링크와 유니버설 링크를 부팅된 iOS 시뮬레이터에서 열 수 있는 [`xcrun simctl openurl`](https://developer.apple.com/documentation/xcode/running-your-app-on-simulated-or-physical-devices) 명령어로 변환합니다. iOS에는 인텐트나 콘텐츠 프로바이더에 해당하는 개념이 없어, 모든 명령은 단일 `openurl` 입니다.
 
 ```bash
 noir scan ./my-ios-app -f simctl

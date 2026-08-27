@@ -19,14 +19,28 @@ Use `-f json` to get JSON. Adding `--no-log` suppresses log messages so only the
 noir scan . -f json --no-log
 ```
 
-The result is an object with an `endpoints` array. Each endpoint has the URL, HTTP method, parameters (typed as `cookie`, `form`, `header`, `json`, etc.), source code location in `details.code_paths`, and any security tags from taggers.
+The result is an object with an `endpoints` array, a `passive_results` array, and an `errors` array. Each endpoint has the URL, HTTP method, parameters (typed as `cookie`, `form`, `header`, `json`, etc.), source code location in `details.code_paths`, the analyzer that produced it in `details.technology`, and any security tags from taggers. The sample below was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.
 
 ```json
 {
   "endpoints": [
     {
-      "url": "https://testapp.internal.domains/query",
+      "callees": [],
+      "url": "/query",
       "method": "POST",
+      "internal": false,
+      "details": {
+        "code_paths": [
+          {
+            "path": "spec/functional_test/fixtures/crystal/kemal/src/testapp.cr",
+            "line": 17
+          }
+        ],
+        "technology": "crystal_kemal"
+      },
+      "protocol": "http",
+      "kind": "",
+      "tags": [],
       "params": [
         {
           "name": "my_auth",
@@ -38,27 +52,62 @@ The result is an object with an `endpoints` array. Each endpoint has the URL, HT
           "name": "query",
           "value": "",
           "param_type": "form",
-          "tags": [
-            {
-              "name": "sqli",
-              "description": "This parameter may be vulnerable to SQL Injection attacks.",
-              "tagger": "Hunt"
-            }
-          ]
+          "tags": []
         }
-      ],
+      ]
+    },
+    {
+      "callees": [],
+      "url": "/token",
+      "method": "GET",
+      "internal": false,
       "details": {
         "code_paths": [
           {
-            "path": "spec/functional_test/fixtures/crystal_kemal/src/testapp.cr",
-            "line": 8
+            "path": "spec/functional_test/fixtures/crystal/kemal/src/testapp.cr",
+            "line": 22
           }
-        ]
+        ],
+        "technology": "crystal_kemal"
       },
       "protocol": "http",
-      "tags": []
+      "kind": "",
+      "tags": [
+        {
+          "name": "oauth",
+          "description": "Suspected OAuth endpoint for granting 3rd party access.",
+          "tagger": "Oauth"
+        }
+      ],
+      "params": [
+        {
+          "name": "client_id",
+          "value": "",
+          "param_type": "form",
+          "tags": []
+        },
+        {
+          "name": "redirect_url",
+          "value": "",
+          "param_type": "form",
+          "tags": [
+            {
+              "name": "ssrf",
+              "description": "This parameter may be vulnerable to Server Side Request Forgery (SSRF) attacks.",
+              "tagger": "Hunt"
+            }
+          ]
+        },
+        {
+          "name": "grant_type",
+          "value": "",
+          "param_type": "form",
+          "tags": []
+        }
+      ]
     }
   ],
+  "passive_results": [],
   "errors": []
 }
 ```
@@ -98,8 +147,7 @@ noir scan . -f jsonl --no-log
 
 Each line is a self-contained endpoint object:
 
-```json
-{"url":"/","method":"GET","params":[...],"details":{...},"protocol":"http","tags":[]}
-{"url":"/query","method":"POST","params":[...],"details":{...},"protocol":"http","tags":[]}
-{"url":"/token","method":"GET","params":[...],"details":{...},"protocol":"http","tags":[]}
+```jsonl
+{"callees":[],"url":"/","method":"GET","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":3}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"x-api-key","value":"","param_type":"header","tags":[]}]}
+{"callees":[],"url":"/query","method":"POST","internal":false,"details":{"code_paths":[{"path":"src/testapp.cr","line":17}],"technology":"crystal_kemal"},"protocol":"http","kind":"","tags":[],"params":[{"name":"my_auth","value":"","param_type":"cookie","tags":[]},{"name":"query","value":"","param_type":"form","tags":[]}]}
 ```

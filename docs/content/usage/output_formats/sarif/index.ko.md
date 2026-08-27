@@ -31,18 +31,18 @@ noir scan . -f sarif -o results.sarif --no-log
 
 ## 출력 예제
 
-SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`driver`의 이름, 버전), 분석 규칙, 그리고 `results`(엔드포인트별 소스 파일 위치와 줄 번호)가 들어갑니다.
+SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`driver`의 이름, 버전), 분석 규칙, `results`(엔드포인트별 소스 파일 위치와 줄 번호), 그리고 `invocations`가 들어갑니다. `invocations`의 `executionSuccessful`은 [JSON 출력](../json/)의 `errors` 키와 같은 사실을 알려 주며, 분석기가 실패했거나 건너뛴 파일이 있으면 `false`가 됩니다.
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
   "version": "2.1.0",
   "runs": [
     {
       "tool": {
         "driver": {
           "name": "OWASP Noir",
-          "version": "0.28.0",
+          "version": "1.3.0",
           "informationUri": "https://github.com/owasp-noir/noir",
           "rules": [
             {
@@ -65,6 +65,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
       "results": [
         {
           "ruleId": "endpoint-discovery",
+          "ruleIndex": 0,
           "level": "note",
           "message": {
             "text": "GET /api/users/:id (매개변수: path: id)"
@@ -84,6 +85,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
         },
         {
           "ruleId": "endpoint-discovery",
+          "ruleIndex": 0,
           "level": "note",
           "message": {
             "text": "POST /api/users (매개변수: json: username, json: email)"
@@ -100,6 +102,11 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
               }
             }
           ]
+        }
+      ],
+      "invocations": [
+        {
+          "executionSuccessful": true
         }
       ]
     }

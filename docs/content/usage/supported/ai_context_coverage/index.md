@@ -1,6 +1,6 @@
 +++
 title = "AI Context"
-description = "Per-endpoint AI review context that aggregates guards, callees, sinks, validators, and signals."
+description = "Per-endpoint AI review context that aggregates guards, callees, sources, sinks, validators, and signals."
 weight = 5
 sort_by = "weight"
 
@@ -23,7 +23,7 @@ noir scan . --ai-context=all                # explicit form of "everything"
 noir scan . --ai-context                    # bare form: also "everything"
 ```
 
-Valid feature names: `guards`, `callee`, `sinks`, `validators`, `signals` (plus `all`). Names are case-insensitive.
+Valid feature names: `guards`, `callee`, `sources`, `sinks`, `validators`, `signals` (plus `all`). Names are case-insensitive.
 
 In plain output, every endpoint with non-empty context grows an `ai_context:` block. Model-based formats expose the same structure under standard locations:
 
@@ -43,6 +43,7 @@ Every context bucket is a list of entries with `kind`, `name`, optional `source`
 |---|---|
 | `guards` | Authentication / authorization gates detected on the route (middleware, decorators, `requires_auth`, role checks, etc.) |
 | `callees` | The 1-hop handler callees Noir already collects with `--include callee`, re-emitted under the AI context structure for one-stop consumption |
+| `sources` | Attacker-controlled inputs that reach the handler: each request parameter, header, cookie, and GraphQL field, plus mobile deep-link payloads. A few server-side value sources worth reviewing (a Spring `@Value` secret, a WebSocket CORS policy) land here too |
 | `sinks` | Likely dangerous operations inferred from the handler body or callee names (SQL, command execution, deserialization, template rendering, file I/O, redirects, etc.) |
 | `validators` | Input-validation and sanitization signals (schema validators, parameter coercion, allow-listing patterns) that mitigate sink risk |
 | `signals` | Other route-shape hints worth surfacing (state-changing methods without a detected guard, path-id usage suggesting object-level authorization concerns, file-upload behavior, etc.) |

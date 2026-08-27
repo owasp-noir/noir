@@ -53,7 +53,10 @@ color: true
 # 기본 출력 형식
 format: "json"
 
-# 특정 상태 코드 제외
+# 프로브 대상 기본 URL. exclude_codes / status_codes 에도 필요합니다
+url: "https://api.example.com"
+
+# 특정 상태 코드 제외 (대상 URL이 있어야 하므로 위 `url`과 함께 씁니다)
 exclude_codes: "404,500"
 
 # 기본적으로 모든 태거 활성화
@@ -62,7 +65,7 @@ all_taggers: true
 # 엔드포인트마다 1-hop 핸들러 callee 첨부
 include_callee: true
 
-# AI 리뷰 컨텍스트(guards, sinks, validators, signals) 첨부
+# AI 리뷰 컨텍스트(guards, callee, sources, sinks, validators, signals) 첨부
 ai_context: true
 
 # 기본 AI 제공자 및 모델
@@ -73,7 +76,7 @@ ai_model: "gpt-5.5"
 위 설정은 다음 명령과 동일합니다:
 
 ```bash
-noir scan /path/to/my/project -f json --exclude-codes "404,500" -T \
+noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes "404,500" -T \
   --include callee --ai-context \
   --ai-provider openai --ai-model gpt-5.5
 ```
