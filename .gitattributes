@@ -5,3 +5,9 @@
 *.cr linguist-vendored=false
 *.nix linguist-vendored=false
 justfile linguist-vendored=false
+
+github-action/**/*.sh linguist-vendored=false
+docs/tools/cli-capture/**/*.py linguist-vendored=false
+docs/tools/cli-capture/**/*.py linguist-documentation=false
+docs/tools/cli-capture/**/*.sh linguist-vendored=false
+docs/tools/cli-capture/**/*.sh linguist-documentation=false
