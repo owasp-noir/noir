@@ -21,5 +21,8 @@ src/ext/tree_sitter/**/*.o
 # Ignore for Hwaro
 /docs/public/
 
+# Byte-cache from the docs CLI-screenshot renderer
+__pycache__/
+
 # Nix
 # /flake.lock

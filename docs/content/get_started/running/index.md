@@ -28,7 +28,7 @@ Or if you're already inside the project:
 noir scan .
 ```
 
-<img src="./running.png" alt="A terminal running noir with passive scanning and taggers enabled: six endpoints found, tagged sqli, oauth, and websocket, plus a critical private-key finding." width="1244" height="963" loading="lazy" decoding="async">
+<img src="./scan.svg" alt="A terminal running noir scan with passive scanning and taggers enabled: five endpoints found with their parameters and tags, plus a critical private-key finding." width="639" height="1258" loading="lazy" decoding="async">
 
 Noir reads the source files, detects which frameworks are in use, and prints every endpoint it finds: methods, paths, parameters, headers, and cookies.
 

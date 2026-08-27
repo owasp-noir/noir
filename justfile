@@ -50,6 +50,11 @@ docs-supported:
 [group('documents')]
 docs-serve-supported: docs-supported docs-serve
 
+# Regenerate the CLI screenshots in the docs (needs a release binary).
+[group('documents')]
+docs-capture: build-release
+    docs/tools/cli-capture/capture.sh
+
 # Check for missing i18n documentation files.
 [group('documents')]
 docs-i18n-check:
