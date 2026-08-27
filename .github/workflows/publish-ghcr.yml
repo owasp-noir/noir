@@ -7,6 +7,18 @@ name: GHCR Publish
 on:
   push:
     branches: [main]
+    # Only republish :main when something that actually lands in the image
+    # changes. `.dockerignore` excludes spec/, docs/, .github/ and *.md, so a
+    # docs or CI push produces a byte-identical image and used to rebuild and
+    # repush it anyway. Releases and manual dispatches stay unconditional.
+    paths:
+      - .github/workflows/publish-ghcr.yml
+      - Dockerfile
+      - .dockerignore
+      - shard.yml
+      - shard.lock
+      - src/**
+      - github-action/entrypoint.sh
   release:
     types: [published]
   workflow_dispatch:

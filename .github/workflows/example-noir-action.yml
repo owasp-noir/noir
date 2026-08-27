@@ -3,6 +3,14 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    # A demo run of the composite action against a checked-in fixture. It can
+    # only change behaviour when the action wiring, the entrypoint, or the
+    # fixture it scans changes — not on every push to main.
+    paths:
+      - .github/workflows/example-noir-action.yml
+      - action.yml
+      - github-action/**
+      - spec/functional_test/fixtures/crystal/**
 
 jobs:
   noir-analysis:

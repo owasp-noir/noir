@@ -1,19 +1,15 @@
 ---
 name: CI
+# Every job below is gated on the `changes` job's path filters rather than on a
+# workflow-level `paths:` list. A workflow-level filter can only answer "run the
+# whole thing or none of it", which was wrong in both directions here: a
+# docs-only push to main still paid for two Docker builds and a 10-minute
+# snapcraft build, while a non-Crystal fixture change (`spec/**` is mostly .py /
+# .java / .ts) or a hand-edit to a generated table in README.md matched nothing
+# and silently ran no CI at all.
 on:
   pull_request:
     branches: [main]
-    paths:
-      - .github/workflows/ci.yml
-      - shard.yml
-      - shard.lock
-      - Dockerfile
-      - "**/*.cr"
-      # The GitHub Action runtime (composite wrapper + container entrypoint)
-      # ships from this repo too, so changes to it must exercise the
-      # test-action job below.
-      - action.yml
-      - github-action/**
   push:
     branches: [main]
   workflow_dispatch:
@@ -22,8 +18,108 @@ on:
         description: manual run
         required: false
         default: ""
+
+# Rapid pushes to a PR branch used to leave every superseded Docker build
+# running to completion. Pushes to main are never cancelled — publish-ghcr and
+# the murals key off them.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nothing here publishes: the images are built with `push: false` and the
+# snapcraft job already asked for this explicitly. Stating it at the workflow
+# level also covers dorny/paths-filter, which reads the pull request's file
+# list through the API.
+permissions:
+  contents: read
+
 jobs:
+  changes:
+    # Per-job path filtering: GitHub has no per-job `paths:`, so resolve the
+    # changed-file buckets once and let every other job gate on the result.
+    # `.github/workflows/ci.yml` is in every bucket on purpose — a change to the
+    # pipeline itself has to re-prove the whole pipeline.
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      crystal: ${{ steps.gate.outputs.crystal }}
+      spec: ${{ steps.gate.outputs.spec }}
+      lint: ${{ steps.gate.outputs.lint }}
+      docker: ${{ steps.gate.outputs.docker }}
+      action: ${{ steps.gate.outputs.action }}
+      generated_docs: ${{ steps.gate.outputs.generated_docs }}
+      snap: ${{ steps.gate.outputs.snap }}
+    steps:
+      # `push` events resolve the base from `github.event.before`, which needs
+      # the git history present; `pull_request` events use the API and would not
+      # need this. Checking out unconditionally keeps both paths working.
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            crystal: &crystal
+              - .github/workflows/ci.yml
+              - shard.yml
+              - shard.lock
+              - src/**
+            spec:
+              - *crystal
+              - spec/**
+            lint:
+              - *crystal
+              - .ameba.yml
+            docker: &docker
+              - .github/workflows/ci.yml
+              - Dockerfile
+              - .dockerignore
+              - shard.yml
+              - shard.lock
+              - src/**
+              - github-action/entrypoint.sh
+            action:
+              - *docker
+              - action.yml
+              - github-action/**
+            generated_docs:
+              # Mirrors what scripts/generate_supported_docs.cr writes — see the
+              # TARGETS table and `docs_dir` in that script. Kept slightly wide
+              # (the whole supported/ tree) because the job costs ~20s and a
+              # missed output file would reopen the silent-staleness hole.
+              - .github/workflows/ci.yml
+              - scripts/generate_supported_docs.cr
+              - src/techs/**
+              - README.md
+              - docs/content/_index.md
+              - docs/content/_index.ko.md
+              - docs/content/usage/supported/**
+            snap:
+              - *crystal
+              - snap/**
+      - name: Resolve job gates
+        id: gate
+        # A manual run has no "before" commit to diff against, so the filter
+        # step sees an empty change set and would skip every job. Running the
+        # workflow by hand is an explicit request for a full run, so force all
+        # gates open — this is also what makes the `workflow_dispatch` entry
+        # point (and build-snapcraft's dispatch path) still mean something.
+        env:
+          MATCHED: ${{ steps.filter.outputs.changes }}
+          FORCE_ALL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          for gate in crystal spec lint docker action generated_docs snap; do
+            if [ "$FORCE_ALL" = "true" ]; then
+              value=true
+            else
+              value=$(jq -r --arg g "$gate" 'index($g) != null' <<<"$MATCHED")
+            fi
+            echo "$gate=$value" >> "$GITHUB_OUTPUT"
+            echo "$gate=$value"
+          done
+
   build-crystal:
+    needs: changes
+    if: needs.changes.outputs.crystal == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -74,20 +170,28 @@ jobs:
       - name: Build
         run: shards build
   build-docker:
-    runs-on: ubuntu-latest
+    # Pull requests only. A push to main builds and *publishes* the very same
+    # Dockerfile for both architectures in publish-ghcr.yml, so running this
+    # here as well bought nothing but a second full image build.
+    needs: changes
+    if: github.event_name != 'push' && needs.changes.outputs.docker == 'true'
+    # linux/arm64 used to cross-build under QEMU on an x86 runner, which took
+    # 58 minutes on a cold cache and dominated the whole pipeline. Building on
+    # a native arm runner — the arrangement publish-ghcr.yml already uses — is
+    # the same image in a few minutes, so there is no QEMU step any more.
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        arch: [linux/amd64, linux/arm64]
+        include:
+          - arch: linux/amd64
+            slug: linux-amd64
+            runner: ubuntu-latest
+          - arch: linux/arm64
+            slug: linux-arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-      - name: Install cosign
-        if: github.event_name != 'pull_request'
-        uses: sigstore/cosign-installer@v4.1.2
-        with:
-          cosign-release: v2.1.1
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
       - name: Setup Docker buildx
         uses: docker/setup-buildx-action@v4
       - name: Extract Docker metadata
@@ -104,8 +208,17 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ matrix.arch }}
-          cache-from: type=gha,scope=${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+          # Read publish-ghcr.yml's scope as well as this job's own. GitHub
+          # scopes its Actions cache per ref, so a pull request can only read
+          # entries written on its own branch or on main — and now that this
+          # job no longer runs on pushes to main, its own scope is never
+          # populated there. publish-ghcr.yml builds the identical Dockerfile
+          # on every main push, so its layers are what keep pull requests off
+          # a cold cache.
+          cache-from: |
+            type=gha,scope=ci-${{ matrix.slug }}
+            type=gha,scope=ghcr-${{ matrix.slug }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.slug }}
   test-action:
     # End-to-end coverage for the GitHub Action runtime. The composite
     # action `docker pull`s a pre-built published image and build-docker
@@ -113,6 +226,8 @@ jobs:
     # untested. Build the image from the current tree and drive the
     # entrypoint exactly as action.yml does, asserting the output contract.
     name: GitHub Action entrypoint (e2e)
+    needs: changes
+    if: needs.changes.outputs.action == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -129,7 +244,9 @@ jobs:
           load: true
           platforms: linux/amd64
           tags: noir-action:ci
-          cache-from: type=gha,scope=action-ci
+          cache-from: |
+            type=gha,scope=action-ci
+            type=gha,scope=ghcr-linux-amd64
           cache-to: type=gha,mode=max,scope=action-ci
       - name: Run entrypoint end-to-end
         run: bash github-action/test-entrypoint.sh noir-action:ci
@@ -145,6 +262,8 @@ jobs:
     # is what preserves that property — if it ever needs `shards install`,
     # something has pulled the analyzers into the techs module.
     name: Generated docs are current
+    needs: changes
+    if: needs.changes.outputs.generated_docs == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -165,6 +284,8 @@ jobs:
           fi
           echo "Generated docs match the catalog."
   lint:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -198,6 +319,8 @@ jobs:
         # reproducible with local `ameba` runs.
         run: crystal run lib/ameba/bin/ameba.cr
   tests:
+    needs: changes
+    if: needs.changes.outputs.spec == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -259,7 +382,14 @@ jobs:
       - name: Run functional tests in randomized order
         run: crystal spec spec/functional_test --order random
   build-snapcraft:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    # ~10 minutes, and it only ever proves that snap/snapcraft.yaml still builds
+    # the current source — so it needs neither pull requests nor pushes that
+    # leave both untouched.
+    needs: changes
+    if: >-
+      needs.changes.outputs.snap == 'true' &&
+      (github.event_name == 'push' && github.ref == 'refs/heads/main' ||
+      github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read
