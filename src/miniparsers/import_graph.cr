@@ -619,10 +619,10 @@ module Noir::ImportGraph::Python
 
         package_type = File.exists?(File.join(package_path, "#{import}.py")) ? PackageType::FILE : PackageType::CODE
 
-        if !alias_name.nil?
-          package_map << {alias_name, py_path, package_type}
-        else
+        if alias_name.nil?
           package_map << {import, py_path, package_type}
+        else
+          package_map << {alias_name, py_path, package_type}
         end
       end
     end

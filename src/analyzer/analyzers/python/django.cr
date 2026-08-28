@@ -1288,7 +1288,7 @@ module Analyzer::Python
               current_http_methods = nil
             end
 
-            if !method_function_match.nil?
+            if method_function_match
               method_name = method_function_match[1].upcase
               current_http_methods = [method_name]
               suspicious_http_methods << method_name
@@ -1765,14 +1765,14 @@ module Analyzer::Python
       params.each do |param|
         is_supported_param = false
         support_methods = REQUEST_PARAM_TYPE_MAP.fetch(param.param_type, nil)
-        if !support_methods.nil?
+        if support_methods.nil?
+          is_supported_param = true
+        else
           support_methods.each do |support_method|
             if upper_method == support_method.upcase
               is_supported_param = true
             end
           end
-        else
-          is_supported_param = true
         end
 
         filtered_params.each do |filtered_param|

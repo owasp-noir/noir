@@ -808,12 +808,12 @@ module Analyzer::Python
       params.each do |param|
         is_support_param = false
         support_methods = REQUEST_PARAM_TYPES.fetch(param.param_type, nil)
-        if !support_methods.nil?
+        if support_methods.nil?
+          is_support_param = true
+        else
           support_methods.each do |support_method|
             is_support_param = true if upper_method == support_method.upcase
           end
-        else
-          is_support_param = true
         end
 
         filtered_params.each do |filtered_param|
