@@ -16,8 +16,15 @@ module PrefixScope
   # True when `prefix` guards `url` on a segment boundary, so `/web` covers
   # `/web` and `/web/x` but not `/website`. The root prefix `/` covers every
   # endpoint.
+  #
+  # A trailing slash on the prefix is not a boundary of its own: `app.use(
+  # '/admin/', requireAuth)` mounts exactly what `'/admin'` does, and Express
+  # hands that string over verbatim. Without stripping it, `/admin/` matched
+  # neither `/admin` nor `/admin/users` and every endpoint behind that
+  # middleware was reported as unguarded.
   def prefix_covers?(prefix : String, url : String) : Bool
-    return true if prefix == "/"
-    url == prefix || url.starts_with?("#{prefix}/")
+    normalized = prefix.rstrip('/')
+    return true if normalized.empty?
+    url == normalized || url.starts_with?("#{normalized}/")
   end
 end
