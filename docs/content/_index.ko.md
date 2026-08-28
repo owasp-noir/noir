@@ -117,22 +117,29 @@ template = "landing"
   <header class="section-head" data-reveal>
     <h2 class="section-title">어떻게 동작하나요</h2>
   </header>
-  <div class="flow">
-    <div class="flow-step" data-reveal>
-      <h3>코드베이스를 가리키세요</h3>
-      <p>Noir가 언어와 프레임워크, 라우팅 방식을 스스로 알아냅니다. 미리 설정할 것은 없습니다.</p>
-      <code class="flow-cmd">noir scan ./your-project</code>
+  <div class="flow-grid">
+    <div class="flow">
+      <div class="flow-step" data-reveal>
+        <h3>코드베이스를 가리키세요</h3>
+        <p>Noir가 언어와 프레임워크, 라우팅 방식을 스스로 알아냅니다. 미리 설정할 것은 없습니다.</p>
+        <code class="flow-cmd">noir scan ./your-project</code>
+      </div>
+      <div class="flow-step" data-reveal>
+        <h3>찾아낸 결과를 읽으세요</h3>
+        <p>모든 엔드포인트는 출처가 된 파일과 줄 번호를 함께 갖고 있어, 결과에서 코드까지 한 번에 이동합니다.</p>
+        <code class="flow-cmd">noir scan ./your-project --include path,techs -f json -o endpoints.json</code>
+      </div>
+      <div class="flow-step" data-reveal>
+        <h3>다음 도구로 넘기세요</h3>
+        <p>스캐너에는 OpenAPI를, 코드 스캐닝 대시보드에는 SARIF를 내보내거나, 인터셉트 프록시로 요청을 바로 흘려보내세요.</p>
+        <code class="flow-cmd">noir scan ./your-project -f oas3 --probe-via http://127.0.0.1:8080</code>
+      </div>
     </div>
-    <div class="flow-step" data-reveal>
-      <h3>찾아낸 결과를 읽으세요</h3>
-      <p>모든 엔드포인트는 출처가 된 파일과 줄 번호를 함께 갖고 있어, 결과에서 코드까지 한 번에 이동합니다.</p>
-      <code class="flow-cmd">noir scan ./your-project --include path,techs -f json -o endpoints.json</code>
-    </div>
-    <div class="flow-step" data-reveal>
-      <h3>다음 도구로 넘기세요</h3>
-      <p>스캐너에는 OpenAPI를, 코드 스캐닝 대시보드에는 SARIF를 내보내거나, 인터셉트 프록시로 요청을 바로 흘려보내세요.</p>
-      <code class="flow-cmd">noir scan ./your-project -f oas3 --probe-via http://127.0.0.1:8080</code>
-    </div>
+    <figure class="flow-shot" data-reveal style="--reveal-delay: 90ms">
+      <img src="../images/landing/scan-terminal.svg"
+           alt="패시브 스캔과 태거를 켜고 noir scan을 실행한 터미널. 엔드포인트가 파라미터, 태그와 함께 나열되고 크리티컬 등급의 개인 키 노출이 보고된다."
+           width="639" height="1258" loading="lazy" decoding="async">
+    </figure>
   </div>
 </section>
 

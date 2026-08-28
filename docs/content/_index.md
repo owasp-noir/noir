@@ -115,22 +115,29 @@ template = "landing"
   <header class="section-head" data-reveal>
     <h2 class="section-title">How it runs</h2>
   </header>
-  <div class="flow">
-    <div class="flow-step" data-reveal>
-      <h3>Point it at a codebase</h3>
-      <p>Noir detects the language, the framework, and the routing convention on its own. There is nothing to configure first.</p>
-      <code class="flow-cmd">noir scan ./your-project</code>
+  <div class="flow-grid">
+    <div class="flow">
+      <div class="flow-step" data-reveal>
+        <h3>Point it at a codebase</h3>
+        <p>Noir detects the language, the framework, and the routing convention on its own. There is nothing to configure first.</p>
+        <code class="flow-cmd">noir scan ./your-project</code>
+      </div>
+      <div class="flow-step" data-reveal>
+        <h3>Read what it found</h3>
+        <p>Every endpoint carries the file and line it came from, so a finding is one click away from the code that produced it.</p>
+        <code class="flow-cmd">noir scan ./your-project --include path,techs -f json -o endpoints.json</code>
+      </div>
+      <div class="flow-step" data-reveal>
+        <h3>Hand it to the next tool</h3>
+        <p>Export OpenAPI for a scanner, SARIF for your code-scanning dashboard, or route probes straight through an intercepting proxy.</p>
+        <code class="flow-cmd">noir scan ./your-project -f oas3 --probe-via http://127.0.0.1:8080</code>
+      </div>
     </div>
-    <div class="flow-step" data-reveal>
-      <h3>Read what it found</h3>
-      <p>Every endpoint carries the file and line it came from, so a finding is one click away from the code that produced it.</p>
-      <code class="flow-cmd">noir scan ./your-project --include path,techs -f json -o endpoints.json</code>
-    </div>
-    <div class="flow-step" data-reveal>
-      <h3>Hand it to the next tool</h3>
-      <p>Export OpenAPI for a scanner, SARIF for your code-scanning dashboard, or route probes straight through an intercepting proxy.</p>
-      <code class="flow-cmd">noir scan ./your-project -f oas3 --probe-via http://127.0.0.1:8080</code>
-    </div>
+    <figure class="flow-shot" data-reveal style="--reveal-delay: 90ms">
+      <img src="./images/landing/scan-terminal.svg"
+           alt="A terminal running noir scan with passive scanning and taggers enabled: endpoints listed with their parameters and tags, plus a critical private-key finding."
+           width="639" height="1258" loading="lazy" decoding="async">
+    </figure>
   </div>
 </section>
 
