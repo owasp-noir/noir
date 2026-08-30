@@ -15,8 +15,9 @@ class Analyzer
 
   DEFAULT_CHANNEL_CAPACITY = 128
   # Detector reader → worker content channel. Each buffered entry holds a
-  # full file's content (up to MAX_FILE_SIZE), so this bounds worst-case
-  # unreclaimable memory as capacity * MAX_FILE_SIZE.
+  # full file's content (up to the size budget the media filter applied —
+  # MAX_FILE_SIZE, or MAX_SPEC_FILE_SIZE for specification documents), so
+  # this bounds worst-case unreclaimable memory as capacity * that budget.
   #
   # Was raised 16 -> 64 under the theory that the single reader fiber was
   # blocking on send and stalling disk I/O. Re-measured (#2362) on a

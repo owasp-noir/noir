@@ -6,6 +6,17 @@ require "../../../src/utils/media_filter"
 #   is_file_too_large? -> file_too_large?
 # Tests updated accordingly.
 
+# A file that reports `size` bytes without writing them: `truncate` leaves a
+# hole, so the size gate can be exercised at 10MB+ without a 10MB write per
+# example. The bytes it reads back are NUL, which is why the callers below
+# pass `sniff_binary: false` — the same way the detector walk calls
+# `skip_check`.
+private def sparse_file(extension : String, size : Int64) : String
+  path = File.tempname("noir_size_budget", extension)
+  File.open(path, "w", &.truncate(size))
+  path
+end
+
 describe MediaFilter do
   describe ".media_file?" do
     it "should detect image files" do
@@ -207,6 +218,99 @@ describe MediaFilter do
         MediaFilter.skip_check(temp).should be_nil
       ensure
         File.delete(temp) if File.exists?(temp)
+      end
+    end
+  end
+
+  describe ".spec_document?" do
+    it "recognizes specification and structured document extensions" do
+      MediaFilter.spec_document?("openapi.json").should be_true
+      MediaFilter.spec_document?("swagger.YAML").should be_true # Case insensitive
+      MediaFilter.spec_document?("service.wsdl").should be_true
+      MediaFilter.spec_document?("burp-export.xml").should be_true
+      MediaFilter.spec_document?("schema.graphql").should be_true
+    end
+
+    it "does not treat source code or media as a specification document" do
+      MediaFilter.spec_document?("bundle.js").should be_false
+      MediaFilter.spec_document?("views.py").should be_false
+      MediaFilter.spec_document?("logo.png").should be_false
+    end
+  end
+
+  describe ".max_size_for" do
+    it "gives specification documents the larger budget" do
+      MediaFilter::MAX_SPEC_FILE_SIZE.should be >= MediaFilter::MAX_FILE_SIZE
+      MediaFilter.max_size_for("openapi.json").should eq(MediaFilter::MAX_SPEC_FILE_SIZE)
+      MediaFilter.max_size_for("k8s/ingress.yaml").should eq(MediaFilter::MAX_SPEC_FILE_SIZE)
+    end
+
+    it "keeps everything else on the media cap" do
+      MediaFilter.max_size_for("app.py").should eq(MediaFilter::MAX_FILE_SIZE)
+      MediaFilter.max_size_for("logo.png").should eq(MediaFilter::MAX_FILE_SIZE)
+    end
+  end
+
+  describe "specification document budget" do
+    it "reads a specification document past the media cap" do
+      # The NetBox case: a 12MB generated `openapi.json` describing 308
+      # paths was dropped by a filter meant to keep PNGs out of the scan.
+      path = sparse_file(".json", MediaFilter::MAX_FILE_SIZE.to_i64 + 1)
+      begin
+        MediaFilter.skip_check(path, sniff_binary: false).should be_nil
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "still applies the media cap to source files of the same size" do
+      path = sparse_file(".py", MediaFilter::MAX_FILE_SIZE.to_i64 + 1)
+      begin
+        reason = MediaFilter.skip_check(path, sniff_binary: false)
+        reason.should_not be_nil
+        reason.as(String).should contain("file too large")
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+
+    it "reports the budget that was actually applied" do
+      path = sparse_file(".json", MediaFilter::MAX_SPEC_FILE_SIZE.to_i64 + 1)
+      begin
+        reason = MediaFilter.skip_check(path, sniff_binary: false)
+        reason.should_not be_nil
+        expected_mb = (MediaFilter::MAX_SPEC_FILE_SIZE / (1024.0 * 1024.0)).round(2)
+        reason.as(String).should contain("file too large")
+        reason.as(String).should contain("> #{expected_mb}MB")
+      ensure
+        File.delete(path) if File.exists?(path)
+      end
+    end
+  end
+
+  describe ".env_size" do
+    it "returns the default when the variable is unset" do
+      ENV.delete("NOIR_SPEC_ENV_SIZE_TEST")
+      MediaFilter.env_size("NOIR_SPEC_ENV_SIZE_TEST", 1234).should eq(1234)
+    end
+
+    it "parses the same value syntax as NOIR_MAX_FILE_SIZE" do
+      ENV["NOIR_SPEC_ENV_SIZE_TEST"] = "16MB"
+      begin
+        MediaFilter.env_size("NOIR_SPEC_ENV_SIZE_TEST", 1234).should eq(16 * 1024 * 1024)
+      ensure
+        ENV.delete("NOIR_SPEC_ENV_SIZE_TEST")
+      end
+    end
+
+    it "falls back to the default on unparsable or non-positive values" do
+      ["not-a-size", "0", "-5"].each do |value|
+        ENV["NOIR_SPEC_ENV_SIZE_TEST"] = value
+        begin
+          MediaFilter.env_size("NOIR_SPEC_ENV_SIZE_TEST", 1234).should eq(1234)
+        ensure
+          ENV.delete("NOIR_SPEC_ENV_SIZE_TEST")
+        end
       end
     end
   end

@@ -220,8 +220,10 @@ module Noir::TreeSitter
   # spends minutes inside `ts_parser__recover` before returning. Nothing
   # in noir can interrupt that — the parse is one blocking C call, so the
   # scan simply stops, with no output and no way to tell which file did
-  # it. Files are capped at `MediaFilter::MAX_FILE_SIZE` (10 MB) and a
-  # well-formed file that size parses in well under a second, so ten
+  # it. Source files are capped at `MediaFilter::MAX_FILE_SIZE` (10 MB) —
+  # the larger `MAX_SPEC_FILE_SIZE` covers only specification documents,
+  # which no vendored grammar parses — and a well-formed file that size
+  # parses in well under a second, so ten
   # seconds is ~100x headroom over any legitimate input while still
   # bounding the pathological case.
   #

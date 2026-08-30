@@ -3,6 +3,7 @@ require "../../spec_helper"
 require "../../../src/detector/detector"
 require "../../../src/models/analyzer"
 require "../../../src/models/code_locator"
+require "../../../src/models/locator_keys"
 require "../../../src/models/logger"
 require "../../../src/models/skipped_files"
 require "../../../src/utils/media_filter"
@@ -120,6 +121,36 @@ describe "detection walk coverage reporting" do
       gaps.first.tech.should eq(Noir::SkippedFiles::DETECT_SCOPE)
       gaps.first.message.should contain(huge)
       gaps.first.message.should contain("file too large")
+    ensure
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+
+  # The other side of that ceiling. An oversize `.py` is a generated blob and
+  # skipping it is the filter working; an oversize `openapi.json` is the
+  # document the scan exists to read. NetBox ships a 12.35MB
+  # `contrib/openapi.json` with 308 paths in it, and the media cap dropped
+  # every one of them.
+  it "reads an oversize specification document instead of reporting it as a gap" do
+    temp_dir = File.tempname("noir_oversize_spec")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      spec_path = File.join(temp_dir, "openapi.json")
+      # Padded in the description of a real path, so the document stays valid
+      # OpenAPI at more than MAX_FILE_SIZE bytes — the shape a generated spec
+      # with thousands of schemas arrives in.
+      padding = "generated schema documentation. " * 512
+      File.open(spec_path, "w") do |io|
+        io << %({"openapi":"3.0.3","info":{"title":"Big","version":"1"},"paths":{"/oversize":{"get":{"description":")
+        ((MediaFilter::MAX_FILE_SIZE // padding.bytesize) + 1).times { io << padding }
+        io << %(","responses":{"200":{"description":"ok"}}}}}})
+      end
+
+      gaps = scan_gaps(temp_dir)
+
+      gaps.should be_empty
+      CodeLocator.instance.all(Noir::LocatorKeys::OAS3_JSON).should contain(spec_path)
     ensure
       FileUtils.rm_rf(temp_dir)
     end
