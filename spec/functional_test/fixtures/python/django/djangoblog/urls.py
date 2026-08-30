@@ -40,9 +40,19 @@ sitemaps = {
 handler404 = 'blog.views.page_not_found_view'
 handler500 = 'blog.views.server_error_view'
 handle403 = 'blog.views.permission_denied_view'
+
+# The REST API is assembled in its own list and mounted through a single entry
+# whose prefix is a settings value rather than a literal — the shape NetBox's
+# root urlconf uses so the whole site can be served under a deployment
+# sub-path. Everything below hangs off that one `path()` call.
+api_patterns = [
+    path('api/core/', include('core.api.urls')),
+]
+
 urlpatterns = [
                   re_path(r'', include('blog.urls', namespace='blog')),
                   path('shop/', include(apps.get_app_config('fixture_shop').urls[0])),
+                  path(settings.BASE_PATH, include(api_patterns)),
                   # [REDACTED]
               ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 if settings.DEBUG:
