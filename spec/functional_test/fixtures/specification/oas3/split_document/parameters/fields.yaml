@@ -1,0 +1,6 @@
+name: fields
+in: query
+required: false
+description: Fields to return.
+schema:
+  type: string

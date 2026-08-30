@@ -5,8 +5,28 @@ require "uri"
 require "json"
 require "yaml"
 require "../../models/locator_keys"
+require "../../utils/media_filter"
+require "../../utils/yaml"
 
 module Analyzer::Specification
+  # A parsed specification document together with the path it was read from.
+  #
+  # A `$ref` is relative to the file that writes it, not to the document the
+  # scan started from: once an operation has been pulled in from
+  # `paths/activity/activities.yaml`, its
+  # `../../openapi.yaml#/components/parameters/Fields` has to resolve from
+  # *that* file's directory. A node carried across a file boundary therefore
+  # has to carry its origin with it, which is precisely what passing the entry
+  # root alone — all the analyzers needed while every ref was same-document —
+  # cannot express.
+  struct SpecDoc(T)
+    getter root : T
+    getter path : String
+
+    def initialize(@root : T, @path : String)
+    end
+  end
+
   # Base for the specification-format analyzers (OpenAPI, Postman, HAR,
   # Terraform, k8s manifests, proxy exports, …).
   #
@@ -34,6 +54,20 @@ module Analyzer::Specification
   # the log wording differed everywhere. `each_spec_file` is that drain,
   # once.
   abstract class SpecificationEngine < Analyzer
+    # `scheme://host/…` and protocol-relative `//host/…` ref targets.
+    REMOTE_REF = /\A(?:[A-Za-z][A-Za-z0-9+.\-]*:)?\/\//
+
+    # Documents pulled in by a file `$ref`, keyed by expanded path. Directus's
+    # 70 split path files hold 640 refs back into the entry document; without
+    # this it would be parsed 640 times.
+    #
+    # A nil entry is a negative cache: a target that was missing, out of scope
+    # or unparsable stays that way for the rest of the run, so a broken ref
+    # costs one failed read rather than one per occurrence.
+    @external_json_docs = {} of String => SpecDoc(JSON::Any)?
+    @external_yaml_docs = {} of String => SpecDoc(YAML::Any)?
+    @reported_refs = Set(String).new
+
     # Yield every registered path for `key`, skipping paths that no longer
     # resolve and containing per-file failures.
     #
@@ -175,31 +209,15 @@ module Analyzer::Specification
       end
     end
 
-    # Follows a local JSON Pointer — OAS2's `#/definitions/Name`, OAS3's
-    # `#/components/schemas/Name`, AsyncAPI's `#/components/messages/Name`
-    # — against the document root.
+    # Same-document `$ref` resolution, for the analyzers that have only a
+    # document root to resolve against.
     #
-    # Only same-document refs are resolved: a ref that does not start with
-    # `#/` points at another file (or an external URL) that the analyzer
-    # never loaded, so it returns nil rather than guessing.
-    #
-    # `~1` and `~0` are unescaped per RFC 6901, in that order — `~0` must be
-    # decoded last or a literal `~1` in a key would be corrupted by the `~`
-    # produced from `~0`.
-    #
-    # Returns nil at the first segment that is not a mapping or is absent,
-    # which is what lets callers treat a dangling ref as "no schema" instead
-    # of raising mid-walk.
+    # A ref that names a file is not resolved here: the caller has to say
+    # *which* file wrote the ref before a relative path means anything, and
+    # that is the `SpecDoc` overload below.
     protected def resolve_ref_json(root : JSON::Any, ref : String) : JSON::Any?
       return unless ref.starts_with?("#/")
-      node = root
-      ref[2..].split('/').each do |segment|
-        decoded = segment.gsub("~1", "/").gsub("~0", "~")
-        return unless hash = node.as_h?
-        return unless next_node = hash[decoded]?
-        node = next_node
-      end
-      node
+      resolve_pointer_json(root, ref[1..])
     end
 
     # `resolve_ref_json` for the YAML parse of the same formats. Kept
@@ -208,14 +226,225 @@ module Analyzer::Specification
     # keyed by `YAML::Any`, not by `String`.
     protected def resolve_ref_yaml(root : YAML::Any, ref : String) : YAML::Any?
       return unless ref.starts_with?("#/")
+      resolve_pointer_yaml(root, ref[1..])
+    end
+
+    # Walks a JSON Pointer (RFC 6901) from a document root — OAS2's
+    # `/definitions/Name`, OAS3's `/components/schemas/Name`, AsyncAPI's
+    # `/components/messages/Name`.
+    #
+    # `~1` and `~0` are unescaped in that order — `~0` must be decoded last
+    # or a literal `~1` in a key would be corrupted by the `~` produced from
+    # `~0`.
+    #
+    # An empty pointer is the whole document, which is what a bare
+    # `./paths/pets.yaml` ref resolves to. Returns nil at the first segment
+    # that is not a mapping or is absent, which is what lets callers treat a
+    # dangling ref as "no schema" instead of raising mid-walk.
+    protected def resolve_pointer_json(root : JSON::Any, pointer : String) : JSON::Any?
+      return root if pointer.empty?
+      return unless pointer.starts_with?('/')
       node = root
-      ref[2..].split('/').each do |segment|
+      pointer[1..].split('/').each do |segment|
+        decoded = segment.gsub("~1", "/").gsub("~0", "~")
+        return unless hash = node.as_h?
+        return unless next_node = hash[decoded]?
+        node = next_node
+      end
+      node
+    end
+
+    protected def resolve_pointer_yaml(root : YAML::Any, pointer : String) : YAML::Any?
+      return root if pointer.empty?
+      return unless pointer.starts_with?('/')
+      node = root
+      pointer[1..].split('/').each do |segment|
         decoded = segment.gsub("~1", "/").gsub("~0", "~")
         return unless hash = node.as_h?
         return unless next_node = hash[YAML::Any.new(decoded)]?
         node = next_node
       end
       node
+    end
+
+    # Follows a `$ref` written in `doc`, across a local file boundary when it
+    # names one. Three forms occur and all three land here:
+    #
+    #     $ref: '#/components/schemas/Pet'                   same document
+    #     $ref: './paths/activity/activities.yaml'           another file, whole
+    #     $ref: '../../openapi.yaml#/components/parameters/Fields'
+    #
+    # Splitting a large specification across files is the maintained shape
+    # every OpenAPI toolchain recommends, and the third form is how the parts
+    # reach back into the shared components — Directus's 70 path files write
+    # it 640 times between them. Declining the fragment would read the
+    # operations but lose every parameter they declare.
+    #
+    # Returns the node *together with the document it lives in*, because a
+    # ref nested inside that node resolves against the file it was read from,
+    # not against the caller's.
+    protected def resolve_ref_json(doc : SpecDoc(JSON::Any), ref : String) : Tuple(JSON::Any, SpecDoc(JSON::Any))?
+      file, pointer = split_ref(ref)
+
+      if file.empty?
+        node = resolve_pointer_json(doc.root, pointer)
+        return node.nil? ? nil : {node, doc}
+      end
+
+      return unless target = external_json_doc(doc.path, file)
+      node = resolve_pointer_json(target.root, pointer)
+      node.nil? ? nil : {node, target}
+    end
+
+    protected def resolve_ref_yaml(doc : SpecDoc(YAML::Any), ref : String) : Tuple(YAML::Any, SpecDoc(YAML::Any))?
+      file, pointer = split_ref(ref)
+
+      if file.empty?
+        node = resolve_pointer_yaml(doc.root, pointer)
+        return node.nil? ? nil : {node, doc}
+      end
+
+      return unless target = external_yaml_doc(doc.path, file)
+      node = resolve_pointer_yaml(target.root, pointer)
+      node.nil? ? nil : {node, target}
+    end
+
+    # Splits a `$ref` into its file part and its JSON Pointer; either may be
+    # empty.
+    protected def split_ref(ref : String) : Tuple(String, String)
+      if index = ref.index('#')
+        {ref[0, index], ref[(index + 1)..]}
+      else
+        {ref, ""}
+      end
+    end
+
+    # Cycle-breaking identity for a ref. The ref string on its own stopped
+    # being one the moment refs could cross files: `./common.yaml` names a
+    # different file in every directory, and `#/components/schemas/Pet` a
+    # different node in every document. Two files that ref each other
+    # therefore terminate on the second visit rather than recursing until the
+    # stack runs out.
+    protected def ref_key(doc : SpecDoc, ref : String) : String
+      "#{doc.path}\u0000#{ref}"
+    end
+
+    private def external_json_doc(from_path : String, file_ref : String) : SpecDoc(JSON::Any)?
+      return unless path = external_ref_path(from_path, file_ref)
+      return @external_json_docs[path] if @external_json_docs.has_key?(path)
+
+      # A JSON document's refs are parsed as JSON, even when they name a
+      # `.yaml` file: grafting a `YAML::Any` subtree onto a `JSON::Any`
+      # document is not something the two unrelated `Any` types allow, so a
+      # cross-format target is reported unresolved rather than silently
+      # dropped. The YAML side needs no such rule — YAML is a superset of
+      # JSON, so a YAML document may ref a `.json` file and get it parsed.
+      @external_json_docs[path] = begin
+        if content = read_ref_file(from_path, path, file_ref)
+          SpecDoc.new(JSON.parse(content), path)
+        end
+      rescue e
+        record_ref_gap(from_path, file_ref, e.message.presence || e.class.name)
+      end
+    end
+
+    private def external_yaml_doc(from_path : String, file_ref : String) : SpecDoc(YAML::Any)?
+      return unless path = external_ref_path(from_path, file_ref)
+      return @external_yaml_docs[path] if @external_yaml_docs.has_key?(path)
+
+      @external_yaml_docs[path] = begin
+        if content = read_ref_file(from_path, path, file_ref)
+          SpecDoc.new(parse_yaml(content), path)
+        end
+      rescue e
+        record_ref_gap(from_path, file_ref, e.message.presence || e.class.name)
+      end
+    end
+
+    # The local file a `$ref` names, or nil when it names one this scan will
+    # not read.
+    private def external_ref_path(from_path : String, file_ref : String) : String?
+      if file_ref.matches?(REMOTE_REF)
+        # noir makes no network requests during a scan. A document that hangs
+        # its operations off an `https://` ref is reported as unread rather
+        # than fetched behind the user's back.
+        return record_ref_gap(from_path, file_ref, "remote target is not fetched")
+      end
+
+      target = File.expand_path(file_ref, File.dirname(File.expand_path(from_path)))
+
+      # Containment rule: a ref target must resolve inside one of the scan
+      # bases the user passed, and must not be a path they excluded. A
+      # specification document is untrusted input — `../../../../etc/passwd`
+      # is a well-formed ref — and a scan has no business reading, still less
+      # reporting, a file outside the tree it was pointed at. The comparison
+      # runs on expanded paths, so no arrangement of `..` segments or
+      # trailing separators walks around it.
+      #
+      # `..` *within* the tree stays legal, and has to: every one of
+      # Directus's path files reaches back to `../../openapi.yaml`, so a
+      # blanket "no parent segments" rule would decline the very layout this
+      # exists to read.
+      #
+      # Expansion is textual, which leaves one way out of the tree that this
+      # check cannot see: a link inside it. `read_ref_file` closes that by
+      # refusing to follow symlinks at all, as the detector walk does.
+      unless within_scan_base?(target)
+        return record_ref_gap(from_path, file_ref, "target is outside the scan base")
+      end
+
+      if excluded_path?(target)
+        return record_ref_gap(from_path, file_ref, "target is excluded by --exclude-path")
+      end
+
+      target
+    end
+
+    # Reads a ref target, or records why it could not be read.
+    private def read_ref_file(from_path : String, target : String, file_ref : String) : String?
+      # `follow_symlinks: false`, the same stat the detector walk makes: it
+      # skips symlinked and non-regular entries outright, so following one
+      # here would diverge from the rest of the scan *and* hand a document a
+      # way around containment, since a link inside the tree can point
+      # anywhere. A FIFO is the sharper case — reading one never returns.
+      info = File.info?(target, follow_symlinks: false)
+      return record_ref_gap(from_path, file_ref, "target not found") unless info
+      unless info.file?
+        reason = info.type.symlink? ? "target is a symbolic link (not followed)" : "target is not a regular file (#{info.type})"
+        return record_ref_gap(from_path, file_ref, reason)
+      end
+
+      # The size and binary budget the detector walk applies to a document it
+      # finds itself. A ref is a second way into the file tree, not a way
+      # around that budget.
+      if reason = MediaFilter.skip_check(target, info: info)
+        return record_ref_gap(from_path, file_ref, reason)
+      end
+
+      read_file_content(target)
+    end
+
+    # Reports a ref that was declined or could not be read, once per distinct
+    # ref. A split document repeats the same ref in operation after operation,
+    # so recording per occurrence would tally one broken target hundreds of
+    # times.
+    #
+    # What gets recorded is the referring document, not the resolved target:
+    # the document is a path inside the scan, reported the way the scan
+    # reports every other path, while the resolved target is expanded and
+    # would put the scanning machine's directory layout into a report that may
+    # be shared. The ref goes into the message exactly as the document wrote
+    # it, which is also the string a reader has to go and fix.
+    #
+    # It lands in `errors` — and in `--strict`'s exit code — like every other
+    # coverage gap, because the operations behind an unread ref are endpoints
+    # the scan did not find, and a silently shorter list is exactly what
+    # `SkippedFiles` exists to prevent.
+    private def record_ref_gap(from_path : String, file_ref : String, reason : String) : Nil
+      message = "unresolved $ref '#{file_ref}': #{reason}"
+      return unless @reported_refs.add?("#{from_path}\u0000#{message}")
+      logger.debug "#{from_path}: #{message}"
+      Noir::SkippedFiles.record(tech, from_path, message, noun: "referenced file")
     end
 
     # Appends a valueless `Param` unless an equal one is already present.
