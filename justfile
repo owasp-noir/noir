@@ -23,10 +23,20 @@ build:
 build-release:
     shards build --release --no-debug --production
 
-# Update shards.nix.
+# Regenerate shards.nix from shard.lock (run after changing dependencies).
 [group('build')]
 nix-update:
     nix-shell -p crystal2nix --run crystal2nix
+
+# Verify shards.nix still pins exactly what shard.lock resolves.
+[group('build')]
+nix-check:
+    crystal run scripts/check_shards_nix.cr
+
+# Build the Nix package the way `nix profile add github:owasp-noir/noir` does.
+[group('build')]
+nix-build:
+    nix build .#default --print-build-logs
 
 # Clean build artifacts (tree-sitter objects, bin/, lib/).
 [group('build')]

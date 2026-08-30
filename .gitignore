@@ -24,5 +24,6 @@ src/ext/tree_sitter/**/*.o
 # Byte-cache from the docs CLI-screenshot renderer
 __pycache__/
 
-# Nix
-# /flake.lock
+# Nix build result symlinks
+/result
+/result-*
