@@ -104,6 +104,37 @@ FunctionalTester.new("fixtures/specification/oas3/param_in_path/", {
   ]),
 ]).perform_tests
 
+# A document split across files: the path strings stay in `openapi.yaml` and
+# each operation lives one `$ref` away, which is the layout Redocly, Stoplight
+# and swagger-cli all recommend for anything large. The parameters ride a
+# second hop — path file back into the entry document, entry document out to
+# the parameter's own file — so each ref has to resolve from the file that
+# wrote it rather than from the document the scan started at.
+#
+# The fixture also carries the four refs noir does not follow (remote,
+# escaping the scan base, missing, and a two-file cycle). None of them may cost
+# the paths around them, which is what the count asserts.
+FunctionalTester.new("fixtures/specification/oas3/split_document/", {
+  :techs     => 1,
+  :endpoints => 4,
+}, [
+  Endpoint.new("/api/pets", "GET", [
+    Param.new("fields", "", "query"),
+    Param.new("limit", "", "query"),
+  ]),
+  Endpoint.new("/api/pets", "POST", [
+    Param.new("name", "", "json"),
+    Param.new("tag", "", "json"),
+  ]),
+  Endpoint.new("/api/pets/{petId}", "GET", [
+    Param.new("petId", "", "path"),
+  ]),
+  Endpoint.new("/api/pets/{petId}", "DELETE", [
+    Param.new("petId", "", "path"),
+    Param.new("X-Reason", "", "header"),
+  ]),
+]).perform_tests
+
 FunctionalTester.new("fixtures/specification/oas3/security_schemes/", {
   :techs     => 1,
   :endpoints => 4,

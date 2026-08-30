@@ -1,0 +1,25 @@
+get:
+  operationId: listPets
+  summary: List pets
+  parameters:
+    # Back into the entry document, which refs a third file for the parameter
+    # itself: each hop resolves from the file that wrote it.
+    - $ref: '../openapi.yaml#/components/parameters/Fields'
+    - name: limit
+      in: query
+      schema:
+        type: integer
+  responses:
+    '200':
+      description: OK
+post:
+  operationId: createPet
+  summary: Create a pet
+  requestBody:
+    content:
+      application/json:
+        schema:
+          $ref: '../openapi.yaml#/components/schemas/Pet'
+  responses:
+    '201':
+      description: Created

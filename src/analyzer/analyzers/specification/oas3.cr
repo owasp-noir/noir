@@ -63,21 +63,21 @@ module Analyzer::Specification
     # Walks an OAS3 schema, emitting one Param per top-level property.
     # Follows `$ref` and flattens `allOf` so referenced/composed schemas
     # surface their members.
-    private def collect_schema_props_json(root : JSON::Any, schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+    private def collect_schema_props_json(doc : SpecDoc(JSON::Any), schema : JSON::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
       # JSON Schema allows boolean `items` etc.; a scalar node makes the
       # `["..."]?` subscripts below raise "Expected Hash".
       return unless schema.as_h?
       if ref = schema["$ref"]?.try(&.as_s?)
-        return if seen.includes?(ref)
-        seen << ref
-        if resolved = resolve_ref_json(root, ref)
-          collect_schema_props_json(root, resolved, param_type, params, seen)
+        return unless seen.add?(ref_key(doc, ref))
+        if resolved = resolve_ref_json(doc, ref)
+          node, ref_doc = resolved
+          collect_schema_props_json(ref_doc, node, param_type, params, seen)
         end
         return
       end
 
       if items = schema["items"]?
-        collect_schema_props_json(root, items, param_type, params, seen)
+        collect_schema_props_json(doc, items, param_type, params, seen)
       end
 
       if props = schema["properties"]?.try(&.as_h?)
@@ -87,35 +87,35 @@ module Analyzer::Specification
       end
 
       if all_of = schema["allOf"]?.try(&.as_a?)
-        all_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
+        all_of.each { |s| collect_schema_props_json(doc, s, param_type, params, seen) }
       end
 
       if one_of = schema["oneOf"]?.try(&.as_a?)
-        one_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
+        one_of.each { |s| collect_schema_props_json(doc, s, param_type, params, seen) }
       end
 
       if any_of = schema["anyOf"]?.try(&.as_a?)
-        any_of.each { |s| collect_schema_props_json(root, s, param_type, params, seen) }
+        any_of.each { |s| collect_schema_props_json(doc, s, param_type, params, seen) }
       end
     end
 
-    private def collect_schema_props_yaml(root : YAML::Any, schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
+    private def collect_schema_props_yaml(doc : SpecDoc(YAML::Any), schema : YAML::Any, param_type : String, params : Array(Param), seen : Set(String) = Set(String).new)
       # JSON Schema allows boolean `items` etc.; a scalar node makes the
       # `[...]?` subscripts below raise "Expected Hash".
       return unless schema.as_h?
       if ref_node = schema[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
-          return if seen.includes?(ref)
-          seen << ref
-          if resolved = resolve_ref_yaml(root, ref)
-            collect_schema_props_yaml(root, resolved, param_type, params, seen)
+          return unless seen.add?(ref_key(doc, ref))
+          if resolved = resolve_ref_yaml(doc, ref)
+            node, ref_doc = resolved
+            collect_schema_props_yaml(ref_doc, node, param_type, params, seen)
           end
         end
         return
       end
 
       if items_node = schema[YAML::Any.new("items")]?
-        collect_schema_props_yaml(root, items_node, param_type, params, seen)
+        collect_schema_props_yaml(doc, items_node, param_type, params, seen)
       end
 
       if props_node = schema[YAML::Any.new("properties")]?
@@ -128,27 +128,32 @@ module Analyzer::Specification
 
       if all_of_node = schema[YAML::Any.new("allOf")]?
         if all_of = all_of_node.as_a?
-          all_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
+          all_of.each { |s| collect_schema_props_yaml(doc, s, param_type, params, seen) }
         end
       end
 
       if one_of_node = schema[YAML::Any.new("oneOf")]?
         if one_of = one_of_node.as_a?
-          one_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
+          one_of.each { |s| collect_schema_props_yaml(doc, s, param_type, params, seen) }
         end
       end
 
       if any_of_node = schema[YAML::Any.new("anyOf")]?
         if any_of = any_of_node.as_a?
-          any_of.each { |s| collect_schema_props_yaml(root, s, param_type, params, seen) }
+          any_of.each { |s| collect_schema_props_yaml(doc, s, param_type, params, seen) }
         end
       end
     end
 
-    private def extract_param_json(root : JSON::Any, param_obj : JSON::Any, params : Array(Param))
+    # `seen` is not optional bookkeeping here: a parameter may be a `$ref` to
+    # a parameter that is itself a `$ref`, and two documents that name each
+    # other would otherwise recurse until the stack ran out.
+    private def extract_param_json(doc : SpecDoc(JSON::Any), param_obj : JSON::Any, params : Array(Param), seen : Set(String) = Set(String).new)
       if ref = param_obj["$ref"]?.try(&.as_s?)
-        if resolved = resolve_ref_json(root, ref)
-          extract_param_json(root, resolved, params)
+        return unless seen.add?(ref_key(doc, ref))
+        if resolved = resolve_ref_json(doc, ref)
+          node, ref_doc = resolved
+          extract_param_json(ref_doc, node, params, seen)
         end
         return
       end
@@ -166,11 +171,13 @@ module Analyzer::Specification
       end
     end
 
-    private def extract_param_yaml(root : YAML::Any, param_obj : YAML::Any, params : Array(Param))
+    private def extract_param_yaml(doc : SpecDoc(YAML::Any), param_obj : YAML::Any, params : Array(Param), seen : Set(String) = Set(String).new)
       if ref_node = param_obj[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
-          if resolved = resolve_ref_yaml(root, ref)
-            extract_param_yaml(root, resolved, params)
+          return unless seen.add?(ref_key(doc, ref))
+          if resolved = resolve_ref_yaml(doc, ref)
+            node, ref_doc = resolved
+            extract_param_yaml(ref_doc, node, params, seen)
           end
         end
         return
@@ -194,25 +201,25 @@ module Analyzer::Specification
     # token schemes (`http` bearer/basic, `oauth2`, `openIdConnect`) ride on the
     # `Authorization` header. This mirrors how the Insomnia analyzer turns auth
     # config into params, so a documented requirement isn't a false negative.
-    private def security_schemes_json(root : JSON::Any) : Hash(String, Param)
+    private def security_schemes_json(doc : SpecDoc(JSON::Any)) : Hash(String, Param)
       result = {} of String => Param
-      return result unless components = root["components"]?.try(&.as_h?)
+      return result unless components = doc.root["components"]?.try(&.as_h?)
       return result unless schemes = components["securitySchemes"]?.try(&.as_h?)
       schemes.each do |name, obj|
-        if param = security_scheme_param_json(root, obj)
+        if param = security_scheme_param_json(doc, obj)
           result[name.to_s] = param
         end
       end
       result
     end
 
-    private def security_scheme_param_json(root : JSON::Any, obj : JSON::Any, seen : Set(String) = Set(String).new) : Param?
+    private def security_scheme_param_json(doc : SpecDoc(JSON::Any), obj : JSON::Any, seen : Set(String) = Set(String).new) : Param?
       return unless obj_h = obj.as_h?
       if ref = obj_h["$ref"]?.try(&.as_s?)
-        return if seen.includes?(ref)
-        seen << ref
-        if resolved = resolve_ref_json(root, ref)
-          return security_scheme_param_json(root, resolved, seen)
+        return unless seen.add?(ref_key(doc, ref))
+        if resolved = resolve_ref_json(doc, ref)
+          node, ref_doc = resolved
+          return security_scheme_param_json(ref_doc, node, seen)
         end
         return
       end
@@ -248,26 +255,26 @@ module Analyzer::Specification
       end
     end
 
-    private def security_schemes_yaml(root : YAML::Any) : Hash(String, Param)
+    private def security_schemes_yaml(doc : SpecDoc(YAML::Any)) : Hash(String, Param)
       result = {} of String => Param
-      return result unless components = root[YAML::Any.new("components")]?.try(&.as_h?)
+      return result unless components = doc.root[YAML::Any.new("components")]?.try(&.as_h?)
       return result unless schemes = components[YAML::Any.new("securitySchemes")]?.try(&.as_h?)
       schemes.each do |name, obj|
-        if param = security_scheme_param_yaml(root, obj)
+        if param = security_scheme_param_yaml(doc, obj)
           result[name.to_s] = param
         end
       end
       result
     end
 
-    private def security_scheme_param_yaml(root : YAML::Any, obj : YAML::Any, seen : Set(String) = Set(String).new) : Param?
+    private def security_scheme_param_yaml(doc : SpecDoc(YAML::Any), obj : YAML::Any, seen : Set(String) = Set(String).new) : Param?
       return unless obj_h = obj.as_h?
       if ref_node = obj_h[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
-          return if seen.includes?(ref)
-          seen << ref
-          if resolved = resolve_ref_yaml(root, ref)
-            return security_scheme_param_yaml(root, resolved, seen)
+          return unless seen.add?(ref_key(doc, ref))
+          if resolved = resolve_ref_yaml(doc, ref)
+            node, ref_doc = resolved
+            return security_scheme_param_yaml(ref_doc, node, seen)
           end
         end
         return
@@ -301,30 +308,42 @@ module Analyzer::Specification
       end
     end
 
-    private def resolve_path_item_json(root : JSON::Any, path_obj : JSON::Any, seen : Set(String) = Set(String).new) : JSON::Any
-      return path_obj unless path_obj_h = path_obj.as_h?
-      return path_obj unless ref = path_obj_h["$ref"]?.try(&.as_s?)
-      return path_obj if seen.includes?(ref)
-      seen << ref
-      resolved = resolve_ref_json(root, ref)
-      resolved ? resolve_path_item_json(root, resolved, seen) : path_obj
+    # Resolves the `$ref` a Path Item may stand in for, and reports which
+    # document the result came from: with the operations in
+    # `./paths/activity/activities.yaml`, every ref inside them resolves from
+    # that file, not from the entry document that named it.
+    private def resolve_path_item_json(doc : SpecDoc(JSON::Any), path_obj : JSON::Any, seen : Set(String) = Set(String).new) : Tuple(JSON::Any, SpecDoc(JSON::Any))
+      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
+      return {path_obj, doc} unless ref = path_obj_h["$ref"]?.try(&.as_s?)
+      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      if resolved = resolve_ref_json(doc, ref)
+        node, ref_doc = resolved
+        resolve_path_item_json(ref_doc, node, seen)
+      else
+        {path_obj, doc}
+      end
     end
 
-    private def resolve_path_item_yaml(root : YAML::Any, path_obj : YAML::Any, seen : Set(String) = Set(String).new) : YAML::Any
-      return path_obj unless path_obj_h = path_obj.as_h?
-      return path_obj unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
-      return path_obj unless ref = ref_node.as_s?
-      return path_obj if seen.includes?(ref)
-      seen << ref
-      resolved = resolve_ref_yaml(root, ref)
-      resolved ? resolve_path_item_yaml(root, resolved, seen) : path_obj
+    private def resolve_path_item_yaml(doc : SpecDoc(YAML::Any), path_obj : YAML::Any, seen : Set(String) = Set(String).new) : Tuple(YAML::Any, SpecDoc(YAML::Any))
+      return {path_obj, doc} unless path_obj_h = path_obj.as_h?
+      return {path_obj, doc} unless ref_node = path_obj_h[YAML::Any.new("$ref")]?
+      return {path_obj, doc} unless ref = ref_node.as_s?
+      return {path_obj, doc} unless seen.add?(ref_key(doc, ref))
+      if resolved = resolve_ref_yaml(doc, ref)
+        node, ref_doc = resolved
+        resolve_path_item_yaml(ref_doc, node, seen)
+      else
+        {path_obj, doc}
+      end
     end
 
-    private def extract_request_body_json(root : JSON::Any, request_body : JSON::Any, params : Array(Param))
+    private def extract_request_body_json(doc : SpecDoc(JSON::Any), request_body : JSON::Any, params : Array(Param), seen : Set(String) = Set(String).new)
       # The requestBody object itself can be $ref'd to components.requestBodies.
       if ref = request_body["$ref"]?.try(&.as_s?)
-        if resolved = resolve_ref_json(root, ref)
-          extract_request_body_json(root, resolved, params)
+        return unless seen.add?(ref_key(doc, ref))
+        if resolved = resolve_ref_json(doc, ref)
+          node, ref_doc = resolved
+          extract_request_body_json(ref_doc, node, params, seen)
         end
         return
       end
@@ -332,16 +351,18 @@ module Analyzer::Specification
       content.each do |content_type, content_obj|
         next unless param_type = param_type_for_content(content_type.to_s)
         if schema = content_obj["schema"]?
-          collect_schema_props_json(root, schema, param_type, params)
+          collect_schema_props_json(doc, schema, param_type, params)
         end
       end
     end
 
-    private def extract_request_body_yaml(root : YAML::Any, request_body : YAML::Any, params : Array(Param))
+    private def extract_request_body_yaml(doc : SpecDoc(YAML::Any), request_body : YAML::Any, params : Array(Param), seen : Set(String) = Set(String).new)
       if ref_node = request_body[YAML::Any.new("$ref")]?
         if ref = ref_node.as_s?
-          if resolved = resolve_ref_yaml(root, ref)
-            extract_request_body_yaml(root, resolved, params)
+          return unless seen.add?(ref_key(doc, ref))
+          if resolved = resolve_ref_yaml(doc, ref)
+            node, ref_doc = resolved
+            extract_request_body_yaml(ref_doc, node, params, seen)
           end
         end
         return
@@ -351,7 +372,7 @@ module Analyzer::Specification
       content.each do |content_type, content_obj|
         next unless param_type = param_type_for_content(content_type.to_s)
         if schema_node = content_obj[YAML::Any.new("schema")]?
-          collect_schema_props_yaml(root, schema_node, param_type, params)
+          collect_schema_props_yaml(doc, schema_node, param_type, params)
         end
       end
     end
@@ -369,7 +390,7 @@ module Analyzer::Specification
           @logger.debug_sub e
         end
 
-        process_paths_json(json_obj, base_path, details, oas3_json)
+        process_paths_json(SpecDoc.new(json_obj, oas3_json), base_path, details)
       end
 
       each_spec_file_with_details(Noir::LocatorKeys::OAS3_YAML) do |oas3_yaml, details|
@@ -384,28 +405,33 @@ module Analyzer::Specification
           @logger.debug_sub e
         end
 
-        process_paths_yaml(yaml_obj, base_path, details, oas3_yaml)
+        process_paths_yaml(SpecDoc.new(yaml_obj, oas3_yaml), base_path, details)
       end
 
       @result
     end
 
-    private def process_paths_json(json_obj : JSON::Any, base_path : String, details : Details, source : String)
-      schemes = security_schemes_json(json_obj)
-      global_security = json_obj["security"]?
-      paths = json_obj["paths"].as_h
+    private def process_paths_json(doc : SpecDoc(JSON::Any), base_path : String, details : Details)
+      schemes = security_schemes_json(doc)
+      global_security = doc.root["security"]?
+      paths = doc.root["paths"].as_h
       paths.each do |path, path_obj|
-        path_item = resolve_path_item_json(json_obj, path_obj)
+        path_item, item_doc = resolve_path_item_json(doc, path_obj)
+        # A Path Item that did not resolve to a mapping — a ref to a scalar,
+        # a `null` entry — costs itself and nothing else. Calling `as_h` on
+        # it below would raise past the loop and take every path after it,
+        # which is precisely how one unreadable ref used to lose a whole
+        # document.
+        next unless path_item_h = path_item.as_h?
+
         path_level_params = [] of Param
-        if path_obj_h = path_item.as_h?
-          if shared = path_obj_h["parameters"]?.try(&.as_a?)
-            shared.each do |param_obj|
-              extract_param_json(json_obj, param_obj, path_level_params)
-            end
+        if shared = path_item_h["parameters"]?.try(&.as_a?)
+          shared.each do |param_obj|
+            extract_param_json(item_doc, param_obj, path_level_params)
           end
         end
 
-        path_item.as_h.each do |method, method_obj|
+        path_item_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
           effective_security = global_security
@@ -414,18 +440,18 @@ module Analyzer::Specification
             if method_obj_h = method_obj.as_h?
               if method_params = method_obj_h["parameters"]?.try(&.as_a?)
                 method_params.each do |param_obj|
-                  extract_param_json(json_obj, param_obj, params)
+                  extract_param_json(item_doc, param_obj, params)
                 end
               end
 
               if request_body = method_obj_h["requestBody"]?
-                extract_request_body_json(json_obj, request_body, params)
+                extract_request_body_json(item_doc, request_body, params)
               end
 
               effective_security = method_obj_h["security"] if method_obj_h.has_key?("security")
             end
           rescue e
-            @logger.debug "Exception of #{source}/paths/method/parameters"
+            @logger.debug "Exception of #{item_doc.path}/paths/method/parameters"
             @logger.debug_sub e
           end
 
@@ -437,33 +463,35 @@ module Analyzer::Specification
             @result << Endpoint.new(base_path + path, method.upcase, details)
           end
         rescue e
-          @logger.debug "Exception of #{source}/paths/endpoint"
+          @logger.debug "Exception of #{doc.path}/paths/endpoint"
           @logger.debug_sub e
         end
       end
     rescue e
-      @logger.debug "Exception of #{source}/paths"
+      @logger.debug "Exception of #{doc.path}/paths"
       @logger.debug_sub e
     end
 
-    private def process_paths_yaml(yaml_obj : YAML::Any, base_path : String, details : Details, source : String)
-      schemes = security_schemes_yaml(yaml_obj)
-      global_security = yaml_obj[YAML::Any.new("security")]?
-      paths = yaml_obj["paths"].as_h
+    private def process_paths_yaml(doc : SpecDoc(YAML::Any), base_path : String, details : Details)
+      schemes = security_schemes_yaml(doc)
+      global_security = doc.root[YAML::Any.new("security")]?
+      paths = doc.root["paths"].as_h
       paths.each do |path, path_obj|
-        path_item = resolve_path_item_yaml(yaml_obj, path_obj)
+        path_item, item_doc = resolve_path_item_yaml(doc, path_obj)
+        # See `process_paths_json`: a Path Item that is not a mapping must
+        # not take the paths after it down with it.
+        next unless path_item_h = path_item.as_h?
+
         path_level_params = [] of Param
-        if path_obj_h = path_item.as_h?
-          if shared_node = path_obj_h[YAML::Any.new("parameters")]?
-            if shared = shared_node.as_a?
-              shared.each do |param_obj|
-                extract_param_yaml(yaml_obj, param_obj, path_level_params)
-              end
+        if shared_node = path_item_h[YAML::Any.new("parameters")]?
+          if shared = shared_node.as_a?
+            shared.each do |param_obj|
+              extract_param_yaml(item_doc, param_obj, path_level_params)
             end
           end
         end
 
-        path_item.as_h.each do |method, method_obj|
+        path_item_h.each do |method, method_obj|
           next unless HTTP_METHODS.includes?(method.to_s.downcase)
           params = path_level_params.dup
           effective_security = global_security
@@ -473,19 +501,19 @@ module Analyzer::Specification
               if method_params_node = method_obj_h[YAML::Any.new("parameters")]?
                 if method_params = method_params_node.as_a?
                   method_params.each do |param_obj|
-                    extract_param_yaml(yaml_obj, param_obj, params)
+                    extract_param_yaml(item_doc, param_obj, params)
                   end
                 end
               end
 
               if request_body = method_obj_h[YAML::Any.new("requestBody")]?
-                extract_request_body_yaml(yaml_obj, request_body, params)
+                extract_request_body_yaml(item_doc, request_body, params)
               end
 
               effective_security = method_obj_h[YAML::Any.new("security")] if method_obj_h.has_key?(YAML::Any.new("security"))
             end
           rescue e
-            @logger.debug "Exception of #{source}/paths/method/parameters"
+            @logger.debug "Exception of #{item_doc.path}/paths/method/parameters"
             @logger.debug_sub e
           end
 
@@ -497,12 +525,12 @@ module Analyzer::Specification
             @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, details)
           end
         rescue e
-          @logger.debug "Exception of #{source}/paths/endpoint"
+          @logger.debug "Exception of #{doc.path}/paths/endpoint"
           @logger.debug_sub e
         end
       end
     rescue e
-      @logger.debug "Exception of #{source}/paths"
+      @logger.debug "Exception of #{doc.path}/paths"
       @logger.debug_sub e
     end
   end

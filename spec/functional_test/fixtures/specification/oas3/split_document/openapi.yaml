@@ -1,0 +1,42 @@
+openapi: 3.0.1
+info:
+  title: Split Document API
+  version: '1'
+servers:
+  - url: /api
+paths:
+  # The standard split shape: the path string stays here, the operations live
+  # one file away.
+  /pets:
+    $ref: './paths/pets.yaml'
+  # File plus JSON Pointer, for a file that holds more than one path item.
+  /pets/{petId}:
+    $ref: './paths/shared.yaml#/PetById'
+  # Refs noir declines to follow. None of them may cost the paths around it.
+  /remote:
+    $ref: 'https://specs.example.com/paths/remote.yaml'
+  /escape:
+    $ref: '../../../../../../../../etc/passwd'
+  /missing:
+    $ref: './paths/missing.yaml'
+  # Two files that name each other. Resolution has to stop, not recurse.
+  /loop:
+    $ref: './paths/loop_a.yaml'
+components:
+  parameters:
+    Fields:
+      $ref: './parameters/fields.yaml'
+    PetId:
+      name: petId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    Pet:
+      type: object
+      properties:
+        name:
+          type: string
+        tag:
+          type: string
