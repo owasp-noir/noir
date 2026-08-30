@@ -724,11 +724,6 @@ module Analyzer::Python
         args = split_python_arguments(call_match[1])
         next if args.size < 2
 
-        route = Helper.extract_python_string(args[0])
-        route ||= extract_python_keyword_string(args, "route")
-        route ||= extract_python_keyword_string(args, "regex")
-        next unless route
-
         view_expr = extract_python_keyword_expression(args, "view")
         view_expr ||= args[1]?.try do |candidate|
           if keyword_view = candidate.match(/^\s*view\s*=\s*(.+)$/m)
@@ -738,6 +733,33 @@ module Analyzer::Python
           end
         end
         view_expr ||= ""
+
+        route = Helper.extract_python_string(args[0])
+        route ||= extract_python_keyword_string(args, "route")
+        route ||= extract_python_keyword_string(args, "regex")
+
+        # A route prefix that isn't a string literal — the canonical shape is
+        # a deployment sub-path pulled from settings, e.g. NetBox's root
+        # urlconf, which is nothing but
+        # `urlpatterns = [path(settings.BASE_PATH, include(_patterns))]`.
+        # Skipping the whole entry threw away not just the prefix but every
+        # route the `include()` mounts: NetBox's entire URL tree hung off
+        # that one line, so the ROOT_URLCONF pass returned zero and the
+        # orphan-urlconf fallback re-derived each app's routes app-relative,
+        # dropping the `/api/<app>/` mount that distinguishes the REST API
+        # from the web UI.
+        #
+        # Mounting the subtree at the empty prefix is the right recovery:
+        # these settings-driven prefixes are empty in the default deployment
+        # (BASE_PATH is `''` unless the operator serves NetBox under a
+        # sub-path), so the paths are exactly right far more often than not,
+        # and a missing leading segment is a much smaller error than a
+        # missing API. The tolerance is deliberately limited to `include()`
+        # views: for a leaf `path(some_var, view)` there is no subtree to
+        # rescue, and guessing `/` for it would invent an endpoint.
+        route ||= "" if view_expr.matches?(/\binclude\s*\(/)
+        next unless route
+
         mappings << {route, view_expr}
 
         if line.includes?("include([")
@@ -890,6 +912,18 @@ module Analyzer::Python
       include_match ? include_match[1] : nil
     end
 
+    # Resolve `include("app.sub.urls")` — the dotted-module form — against
+    # the project root, returning the urlconf file it names.
+    private def resolve_dotted_include_target(view : ::String) : ::String?
+      view.scan(REGEX_INCLUDE_URLS) do |match|
+        next if match.size != 2
+        candidate = "#{@django_base_path}/#{match[1].gsub(".", "/")}.py"
+        return candidate if File.exists?(candidate)
+      end
+
+      nil
+    end
+
     private def extract_imported_include_target(view : ::String, package_map) : ::String?
       include_match = view.match(/\binclude\s*\(\s*(?:\(\s*)?([A-Za-z_][A-Za-z0-9_]*)\b/)
       return unless include_match
@@ -920,6 +954,24 @@ module Analyzer::Python
         route, view = route_mapping
         route = normalize_django_route(route)
         nested_mount = join_url_parts(mount_route, route).lchop("/")
+
+        # `include("app.urls")` — the dotted-module form. `extract_endpoints`
+        # has always followed it, but this sibling loop (a urlpatterns list
+        # held in a local variable rather than assigned to `urlpatterns`) did
+        # not, so a project that assembles its routes in a `_patterns` list
+        # lost every app it mounts that way: the dotted include fell through
+        # to view resolution and emitted a bare GET on the mount point
+        # instead of the app's routes.
+        if dotted_urlconf_path = resolve_dotted_include_target(view)
+          new_django_urls = DjangoUrls.new(join_url_parts(django_urls.prefix, nested_mount).lchop("/"), dotted_urlconf_path, django_urls.basepath)
+          unless @visited_url_paths.has_key? new_django_urls.filepath
+            extract_endpoints(new_django_urls).each do |endpoint|
+              append_code_path(endpoint.details, PathInfo.new(dotted_urlconf_path))
+              endpoints << endpoint
+            end
+          end
+          next
+        end
 
         if local_patterns = extract_local_include_target(view)
           if nested_pattern_content = urlpattern_lists[local_patterns]?
@@ -1659,6 +1711,17 @@ module Analyzer::Python
         next unless package_map.has_key?(name)
 
         filepath, package_type = package_map[name]
+        # The import graph records a package *directory* import with an
+        # empty file path (`find_imported_package` only ever fills `py_path`
+        # for a module file). Handing that back as a resolution made the
+        # callers read `""` and abort the entire analyzer with "Error opening
+        # file with mode 'r': ''" — one unresolvable view in one urlconf took
+        # every Django endpoint in the project down with it. The sibling
+        # `resolve_django_view_target` has always guarded this; treat an
+        # empty path as "not resolved" here too and let the caller fall back
+        # to the plain GET endpoint.
+        next if filepath.empty?
+
         function_or_class_name = name
         if package_type == PackageType::FILE && index + 1 < dotted_as_names_split.size
           function_or_class_name = dotted_as_names_split[index + 1]

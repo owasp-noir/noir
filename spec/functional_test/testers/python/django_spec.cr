@@ -165,6 +165,23 @@ expected_endpoints = [
   ]),
   Endpoint.new("/shop/orders/", "POST", [Param.new("token", "", "form")]),
   Endpoint.new("/shop/reports/daily/", "GET", [Param.new("period", "", "query")]),
+  # `core/api/urls.py` is reached only through
+  # `path(settings.BASE_PATH, include(api_patterns))` in the root urlconf, so
+  # these two endpoints exercise the whole chain that used to break:
+  #
+  #   1. the mount prefix is a settings attribute, not a string literal — the
+  #      entry used to be discarded outright, taking every route it mounts
+  #      with it (NetBox hangs its entire URL tree off exactly this line);
+  #   2. `include('core.api.urls')` sits inside a urlpatterns list held in a
+  #      local variable, a branch that did not follow the dotted-module form
+  #      and emitted a bare GET on the mount point instead;
+  #   3. the app itself publishes `urlpatterns = router.urls` off a
+  #      `DefaultRouter` subclass declared in another module.
+  #
+  # The `/api/core/` prefix is the assertion that matters: it is what
+  # separates a REST route from the identically-named web UI one.
+  Endpoint.new("/api/core/nodes/", "GET", [Param.new("region", "", "query")]),
+  Endpoint.new("/api/core/nodes/{pk}/", "GET", [Param.new("pk", "", "path")]),
 ]
 
 FunctionalTester.new("fixtures/python/django/", {
