@@ -19,7 +19,7 @@ module MediaFilter
   # the highest-value input noir has, and generated ones routinely pass
   # 10MB. NetBox ships a 12.35MB `contrib/openapi.json` describing 308
   # paths, and every one of them was dropped — not because the document
-  # was unreadable, but because a filter aimed at PNGs measured it.
+  # was unreadable, but because a filter aimed at image files measured it.
   #
   # The budget still has to be bounded, because the document is read whole,
   # held in the content cache, and parsed into a JSON/YAML tree that peaks

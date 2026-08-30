@@ -254,7 +254,7 @@ describe MediaFilter do
   describe "specification document budget" do
     it "reads a specification document past the media cap" do
       # The NetBox case: a 12MB generated `openapi.json` describing 308
-      # paths was dropped by a filter meant to keep PNGs out of the scan.
+      # paths was dropped by a filter meant to keep image files out of the scan.
       path = sparse_file(".json", MediaFilter::MAX_FILE_SIZE.to_i64 + 1)
       begin
         MediaFilter.skip_check(path, sniff_binary: false).should be_nil
