@@ -20,9 +20,14 @@ actioncable_endpoints = [
   build.call("ws://cable/NotificationChannel"),
 ]
 
+# The fixture is a Rails app -- `config/routes.rb` opens with
+# `Rails.application.routes.draw` -- so it detects as Rails as well as Action
+# Cable, and the Rails analyzer reads the `mount ActionCable.server =>
+# "/cable"` line the channels hang off. That mount is a real HTTP route: it is
+# the path the WebSocket handshake is made to, and `rails routes` lists it.
 actioncable_tester = FunctionalTester.new("fixtures/ruby/actioncable/", {
-  :techs     => 1,
-  :endpoints => actioncable_endpoints.size,
+  :techs     => 2,
+  :endpoints => actioncable_endpoints.size + 1,
 }, actioncable_endpoints)
 actioncable_tester.perform_tests
 
