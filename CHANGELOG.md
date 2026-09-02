@@ -2,10 +2,32 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
-## Unreleased
+## v1.3.1
+
+Noir v1.3.1 is a bug-fix release. It adds source line numbers to several analyzers, recovers whole route surfaces that detection or size limits were dropping, and fixes a class of scan-wide bugs where one application's endpoints overwrote another's.
+
+### Added
+- Route declaration lines for Rails `config/routes.rb`, OpenAPI/Swagger operations, Symfony (`#[Route]` and `routes.yaml`), Vert.x, and Spring reactive `RouterFunction` routes (#2686).
+- Split OpenAPI/Swagger documents: `paths` entries that `$ref` another local file are now resolved, with containment, cycle, and network restrictions (#2673).
+- The plain report now shows the protocol (`kafka`, `mqtt`, `amqp`, …) and an `[internal]` badge, matching the structured formats (#2683).
 
 ### Fixed
-- macOS release tarballs are re-signed ad hoc after `install_name_tool` rewrites their dylib load paths. The bundled OpenSSL dylibs were left with a stale signature, and Apple Silicon SIGKILLs any process that maps one, so `noir-v1.3.0-osx-arm64.tar.gz` could not run at all on Apple Silicon (`zsh: killed noir`, exit 137). Clearing quarantine did not help: it is a signature check, not Gatekeeper. Packaging now verifies every signature and runs the extracted tarball before publishing it (#2691).
+- macOS release tarballs are re-signed ad hoc after `install_name_tool` rewrites their dylib load paths. The bundled OpenSSL dylibs were left with a stale signature, and Apple Silicon SIGKILLs any process that maps one, so `noir-v1.3.0-osx-arm64.tar.gz` could not run at all on Apple Silicon (`zsh: killed noir`, exit 137). Packaging now verifies every signature and runs the extracted tarball before publishing it (#2691).
+- Recovered route surfaces that were missing entirely: DRF-only Django projects (detection plus three urlconf resolution defects; NetBox 987 → 1150 endpoints), Rails apps scanned without a Gemfile, the `minio/mux` gorilla fork (MinIO's whole S3 data plane), and OpenAPI documents over 10MB, which now get their own 64MB budget (#2672, #2676, #2681, #2671).
+- Fixed scan-wide endpoint tables that let one application overwrite another's routes under a shared scan base: Express, NestJS `setGlobalPrefix`, Nitro, C# `HttpListener`, and the Fastify/Hono/Koa/Oak auxiliary passes (#2684, #2685, #2678, #2689).
+- JS verb calls now require a handler argument to count as a route, removing HTTP *client* calls in test trees (NodeBB 361 → 121 `js_express` endpoints, all 240 removals verified false positives) (#2688).
+- Third-party and stdlib logging no longer lands in the middle of `-f json` / `-f sarif` / `-f yaml` output (#2687, #2677).
+- Seven passive-scan defects: base64 padding read as an empty assignment, multi-document rule files silently truncated, duplicate rule ids double-reporting, uncompilable and empty patterns, and `--passive-scan-path` still downloading the bundled ruleset (#2677).
+- CLI surface: global flags typed before the verb, broken pipes (`noir list techs | head`), the POSIX `--` marker, an unreadable `--config-file`, and a blank base path (#2679).
+- Scope and filter flags: `--exclude-techs` matching by substring (`go_httprouter` also dropped `go_http`), unstripped comma-separated tech lists, empty tech values silently scanning everything, and `--exclude-path` globs validated by parsing rather than probing. `--exclude-path` now also applies to the AI agent's filesystem tools (#2680).
+- Output fidelity: escape sequences from scanned source are neutralized before reaching the terminal, `-f toml` escapes every control character, and the plain report no longer drops form params, path param values, or a callee's file (#2683, #2682).
+- `--probe` fills typed path placeholders (`<int:pk>`, `{sha:[a-f0-9]{7,64}}`, `{file_path:path}`, `{*slug}`), and a route `?` is no longer baked in as the query delimiter (#2681, #2689).
+- Ktor placeholder and param-name extraction, fetch-mock recognized as a test stub, guarded prefixes with a trailing slash (`app.use('/admin/', …)`), and skipped paths reported in a stable order (#2681, #2667, #2690).
+
+### Changed
+- The Nix flake builds a release binary through `buildCrystalPackage` instead of overriding its phases, and `just nix-check` keeps `shards.nix` in sync with `shard.lock` (#2675).
+- CI gates each job on the files it validates; worst-case Docker leg 58 min → ~8 min (#2665).
+- Documentation CLI screenshots are generated from real runs with `just docs-capture` (#2664).
 
 ## v1.3.0
 
