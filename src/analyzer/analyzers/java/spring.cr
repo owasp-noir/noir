@@ -345,7 +345,10 @@ module Analyzer::Java
           # Reactive routes declared via `router().route(...).andRoute(...)`
           # — regex-scoped because the builder-pattern shape isn't
           # worth a dedicated tree-sitter walk yet.
-          route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String)), Array(Tuple(Int32, Int32, String)))
+          # {verb calls, nest prefixes, offset of the block in `content`}.
+          # The first two hold positions relative to the block, so the block's
+          # own offset is what turns a call position into a file line.
+          route_blocks = [] of Tuple(Array(Tuple(Int32, String, String, String, Int32)), Array(Tuple(Int32, Int32, String)), Int32)
           reactive_callees = {} of String => Array(Callee)
 
           # Single tree-sitter parse for the whole reactive file: the
@@ -365,21 +368,23 @@ module Analyzer::Java
               # `route().nest(path("/product"), builder ->
               # builder.GET("/name/{name}", ...))` surfaced as
               # `GET /name/{name}` instead of `GET /product/name/{name}`.
-              route_blocks << {collect_router_route_calls(method_code, constants), collect_nest_prefixes(method_code, constants)}
+              route_blocks << {collect_router_route_calls(method_code, constants),
+                               collect_nest_prefixes(method_code, constants),
+                               route_code.begin(0) || 0}
             end
 
             # Resolve same-file `this::handler` method bodies to 1-hop
             # callees so reactive endpoints carry handler context too.
             if include_callee
               wanted = Set(String).new
-              route_blocks.each { |calls, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
+              route_blocks.each { |calls, _, _| calls.each { |call| wanted << call[3] unless call[3].empty? } }
               reactive_callees = build_reactive_method_callees(root, content, path, wanted)
             end
           end
 
-          route_blocks.each do |calls, nest_prefixes|
+          route_blocks.each do |calls, nest_prefixes, block_offset|
             calls.each do |call|
-              pos, method, endpoint, handler_ref = call
+              pos, method, endpoint, handler_ref, verb_pos = call
               nest_prefix = ""
               nest_prefixes.each do |start_b, end_b, prefix|
                 if pos >= start_b && pos < end_b
@@ -387,7 +392,7 @@ module Analyzer::Java
                 end
               end
               composed = nest_prefix.empty? ? endpoint : Noir::URLPath.join_rooted(nest_prefix, endpoint)
-              details = Details.new(PathInfo.new(path))
+              details = Details.new(PathInfo.new(path, line_at_offset(content, block_offset + verb_pos)))
               reactive_endpoint = Endpoint.new(
                 resolve_endpoint_path(Noir::URLPath.join_rooted(configured_base_path, composed), spring_properties),
                 method, details
@@ -849,8 +854,8 @@ module Analyzer::Java
     # whose match position falls inside `[start, end)` should have
     # `prefix` prepended.
     private def collect_router_route_calls(code : String,
-                                           constants : Hash(String, String)) : Array(Tuple(Int32, String, String, String))
-      calls = [] of Tuple(Int32, String, String, String)
+                                           constants : Hash(String, String)) : Array(Tuple(Int32, String, String, String, Int32))
+      calls = [] of Tuple(Int32, String, String, String, Int32)
 
       code.scan(REGEX_ROUTE_CALL) do |match|
         open_idx = (match.end || 0) - 1
@@ -870,7 +875,11 @@ module Analyzer::Java
         # RouterFunction handlers carry the real behaviour worth surfacing
         # for ai-context).
         handler_ref = arg_list.size >= 2 ? handler_method_reference(arg_list[1]) : ""
-        calls << {match.begin || 0, match[2], path.gsub(/\n/, ""), handler_ref}
+        # Two positions: the match start decides which `nest(...)` range the
+        # call sits in, while the verb is where the route itself is written —
+        # `.route(\n  GET("/hello")` declares the route on the `GET` line, not
+        # on the `route(` line that opens the statement.
+        calls << {match.begin || 0, match[2], path.gsub(/\n/, ""), handler_ref, match.begin(2) || match.begin || 0}
       end
 
       calls

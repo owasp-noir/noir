@@ -107,21 +107,42 @@ module Analyzer::Ruby
     # `use_doorkeeper` block closes, so those two are reassignable.
     class RouteFileState
       getter framework_root : String
-      getter details : Details
+      getter routes_path : String
       getter parsed_route_files : Set(String)
       getter stack : Array(Frame)
       getter concern_resources : Hash(String, Array(ConcernResource))
+      # 1-based line of the `config/routes.rb` directive currently being
+      # handled, so every endpoint the handlers emit can point at the line
+      # the route is declared on rather than at the bare file.
+      property current_line : Int32?
       # `use_doorkeeper do ... end` config accumulated while the block
       # is on top of the stack: `skip_controllers :foo` drops a group,
       # `controllers foo: 'bar'` remaps the implementing controller.
       property doorkeeper_skip : Set(String)
       property doorkeeper_controllers : Hash(String, String)
 
-      def initialize(@framework_root : String, @details : Details,
+      def initialize(@framework_root : String, @routes_path : String,
                      @parsed_route_files : Set(String), @stack : Array(Frame),
                      @concern_resources : Hash(String, Array(ConcernResource)))
+        @current_line = nil
         @doorkeeper_skip = Set(String).new
         @doorkeeper_controllers = Hash(String, String).new
+      end
+
+      # A fresh `Details` for the directive being handled. Deliberately not
+      # memoized: every endpoint needs its own so the routes.rb line differs
+      # per route, and a shared `Details` would also share the `code_paths`
+      # array by reference across every endpoint of the file.
+      def details : Details
+        Details.new(PathInfo.new(@routes_path, @current_line))
+      end
+    end
+
+    # One logical routing directive: the joined text of a (possibly
+    # multi-line) statement plus the 1-based line its first token sits on.
+    record RouteLine, text : String, line : Int32 do
+      def with_text(new_text : String) : RouteLine
+        RouteLine.new(new_text, @line)
       end
     end
 
@@ -265,13 +286,14 @@ module Analyzer::Ruby
       return if parsed_route_files.includes?(parse_key)
       parsed_route_files << parse_key
 
-      scan = RouteFileState.new(framework_root, Details.new(PathInfo.new(routes_path)),
+      scan = RouteFileState.new(framework_root, routes_path,
         parsed_route_files, inherited_stack.dup, concern_resources)
       local_string_vars = Hash(String, String).new
 
-      expand_inline_route_blocks(expand_static_loops(logical_route_lines(routes_path))).each do |raw_line|
-        line = raw_line.strip
+      expand_inline_route_blocks(expand_static_loops(logical_route_lines(routes_path))).each do |route_line|
+        line = route_line.text.strip
         next if line.empty?
+        scan.current_line = route_line.line
         line = resolve_local_string_vars(line, local_string_vars)
 
         # Handle `end` (top of stack pops one).
@@ -773,29 +795,32 @@ module Analyzer::Ruby
     MAX_LOOP_VALUES =    100
     MAX_LOOP_OUTPUT = 20_000
 
-    private def expand_static_loops(lines : Array(String), depth : Int32 = 0) : Array(String)
+    # Unrolled copies keep the line of the body statement they came from:
+    # a route written once inside `%w[a b].each do |x|` really is declared
+    # on that one line, whichever value the copy carries.
+    private def expand_static_loops(lines : Array(RouteLine), depth : Int32 = 0) : Array(RouteLine)
       return lines if depth > MAX_LOOP_DEPTH
-      return lines unless lines.any?(&.matches?(LOOP_OPENER))
+      return lines unless lines.any?(&.text.matches?(LOOP_OPENER))
 
-      result = [] of String
+      result = [] of RouteLine
       index = 0
       while index < lines.size
         line = lines[index]
-        if m = line.match(LOOP_OPENER)
+        if m = line.text.match(LOOP_OPENER)
           var = m[3]
           values = m[2].split(/\s+/).reject(&.empty?)
 
           # Walk to the `end` that closes this `.each do`, mirroring the main
           # parser's one-block-open-per-line / `end`-pops-one model.
           block_depth = 1
-          body = [] of String
+          body = [] of RouteLine
           cursor = index + 1
           while cursor < lines.size && block_depth > 0
             body_line = lines[cursor]
-            if end_line?(body_line)
+            if end_line?(body_line.text)
               block_depth -= 1
               break if block_depth == 0
-            elsif opens_do_block?(body_line) || opens_keyword_block?(body_line)
+            elsif opens_do_block?(body_line.text) || opens_keyword_block?(body_line.text)
               block_depth += 1
             end
             body << body_line
@@ -813,7 +838,7 @@ module Analyzer::Ruby
             pattern = Regex.new("\\#\\{\\s*#{Regex.escape(var)}\\s*\\}")
             values.each do |value|
               break if result.size > MAX_LOOP_OUTPUT
-              expanded_body.each { |unrolled| result << unrolled.gsub(pattern, value) }
+              expanded_body.each { |unrolled| result << unrolled.with_text(unrolled.text.gsub(pattern, value)) }
             end
           end
           index = cursor + 1 # skip the closing `end`
@@ -832,13 +857,15 @@ module Analyzer::Ruby
     # structure before route extraction.
     INLINE_ROUTE_BLOCK = /^(member|collection|new)\s*\{\s*(.+?)\s*\}\s*$/
 
-    private def expand_inline_route_blocks(lines : Array(String)) : Array(String)
-      result = [] of String
+    private def expand_inline_route_blocks(lines : Array(RouteLine)) : Array(RouteLine)
+      result = [] of RouteLine
       lines.each do |line|
-        if m = line.match(INLINE_ROUTE_BLOCK)
-          result << "#{m[1]} do"
-          result << m[2].strip
-          result << "end"
+        if m = line.text.match(INLINE_ROUTE_BLOCK)
+          # All three synthesized statements come from the one source line,
+          # so they all report it.
+          result << line.with_text("#{m[1]} do")
+          result << line.with_text(m[2].strip)
+          result << line.with_text("end")
         else
           result << line
         end
@@ -883,18 +910,27 @@ module Analyzer::Ruby
       prefix.lchop('/')
     end
 
-    private def logical_route_lines(routes_path : String) : Array(String)
-      lines = [] of String
+    # Joins continuation lines into one logical directive, keeping the
+    # 1-based line the directive *starts* on — `get "/x",\n  to: "y#z"` is
+    # declared on the `get` line, not on the `to:` line that closes it.
+    private def logical_route_lines(routes_path : String) : Array(RouteLine)
+      lines = [] of RouteLine
       buffer = ""
+      buffer_line = 0
       paren_depth = 0
       bracket_depth = 0
       brace_depth = 0
 
-      read_file_content(routes_path).each_line do |raw_line|
+      read_file_content(routes_path).each_line.with_index(1) do |raw_line, line_number|
         stripped = strip_inline_comment(raw_line).strip
         next if stripped.empty?
 
-        buffer = buffer.empty? ? stripped : "#{buffer} #{stripped}"
+        if buffer.empty?
+          buffer = stripped
+          buffer_line = line_number
+        else
+          buffer = "#{buffer} #{stripped}"
+        end
         delta = delimiter_delta(stripped)
         paren_depth += delta[0]
         bracket_depth += delta[1]
@@ -903,14 +939,14 @@ module Analyzer::Ruby
         next if paren_depth > 0 || bracket_depth > 0 || brace_depth > 0
         next if stripped.ends_with?(",")
 
-        lines << buffer
+        lines << RouteLine.new(buffer, buffer_line)
         buffer = ""
         paren_depth = 0
         bracket_depth = 0
         brace_depth = 0
       end
 
-      lines << buffer unless buffer.empty?
+      lines << RouteLine.new(buffer, buffer_line) unless buffer.empty?
       lines
     end
 

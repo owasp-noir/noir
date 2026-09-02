@@ -120,6 +120,30 @@ class Analyzer
     Noir::TextFile.read(path)
   end
 
+  # 1-based line the character at `offset` sits on.
+  #
+  # The `content[0...offset].count('\n') + 1` this names is open-coded in a
+  # couple of dozen analyzers; naming it keeps the off-by-one in one place
+  # (a 0 offset is line 1, not line 0 — `PathInfo` drops a 0 as "no line").
+  # Callers that need a line for many offsets in the same file should build
+  # their own newline table instead: this is linear in `offset`.
+  def line_at_offset(content : String, offset : Int32) : Int32
+    return 1 if offset <= 0
+    offset = content.size if offset > content.size
+    content[0...offset].count('\n') + 1
+  end
+
+  # `line_at_offset` for a *byte* offset — what `Regex::MatchData#byte_begin`
+  # and the byte-wise scanners hand back. Counting newline bytes over a slice
+  # is both correct for multibyte content (a UTF-8 continuation byte never
+  # collides with an ASCII value) and free of the per-call string allocation
+  # the char form pays.
+  def line_at_byte_offset(content : String, byte_offset : Int32) : Int32
+    return 1 if byte_offset <= 0
+    byte_offset = content.bytesize if byte_offset > content.bytesize
+    content.to_slice[0, byte_offset].count(0x0a_u8) + 1
+  end
+
   # Whether the user's `--exclude-path` covers `path`.
   #
   # `CodeLocator` lookups need no such check: the exclusion is applied once,

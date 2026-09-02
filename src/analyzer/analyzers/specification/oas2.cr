@@ -314,6 +314,7 @@ module Analyzer::Specification
       details = Details.new(PathInfo.new(swagger_json))
       content = read_file_content(swagger_json)
       json_obj = JSON.parse(content)
+      line_index = Noir::SpecLineIndex.json(content, "paths")
       base_path = ""
       begin
         unless json_obj["basePath"].to_s.empty?
@@ -365,10 +366,11 @@ module Analyzer::Specification
             end
             apply_security_json(effective_security, schemes, params)
 
+            op_details = operation_details(details, line_index, ["paths", path, method])
             if params.size > 0
-              @result << Endpoint.new(base_path + path, method.upcase, params, details)
+              @result << Endpoint.new(base_path + path, method.upcase, params, op_details)
             else
-              @result << Endpoint.new(base_path + path, method.upcase, details)
+              @result << Endpoint.new(base_path + path, method.upcase, op_details)
             end
           rescue e
             @logger.debug "Exception of #{swagger_json}/paths/path/method"
@@ -389,6 +391,7 @@ module Analyzer::Specification
       details = Details.new(PathInfo.new(swagger_yaml))
       content = read_file_content(swagger_yaml)
       yaml_obj = parse_yaml(content)
+      line_index = Noir::SpecLineIndex.yaml(content, "paths")
       base_path = ""
       begin
         unless yaml_obj["basePath"].to_s.empty?
@@ -441,10 +444,11 @@ module Analyzer::Specification
             end
             apply_security_yaml(effective_security, schemes, params)
 
+            op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
             if params.size > 0
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, details)
+              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, op_details)
             else
-              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, details)
+              @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, op_details)
             end
           rescue e
             @logger.debug "Exception of #{swagger_yaml}/paths/path/method"

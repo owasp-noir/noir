@@ -390,7 +390,8 @@ module Analyzer::Specification
           @logger.debug_sub e
         end
 
-        process_paths_json(SpecDoc.new(json_obj, oas3_json), base_path, details)
+        process_paths_json(SpecDoc.new(json_obj, oas3_json), base_path, details,
+          Noir::SpecLineIndex.json(content, "paths"))
       end
 
       each_spec_file_with_details(Noir::LocatorKeys::OAS3_YAML) do |oas3_yaml, details|
@@ -405,13 +406,15 @@ module Analyzer::Specification
           @logger.debug_sub e
         end
 
-        process_paths_yaml(SpecDoc.new(yaml_obj, oas3_yaml), base_path, details)
+        process_paths_yaml(SpecDoc.new(yaml_obj, oas3_yaml), base_path, details,
+          Noir::SpecLineIndex.yaml(content, "paths"))
       end
 
       @result
     end
 
-    private def process_paths_json(doc : SpecDoc(JSON::Any), base_path : String, details : Details)
+    private def process_paths_json(doc : SpecDoc(JSON::Any), base_path : String, details : Details,
+                                   line_index : Noir::SpecLineIndex)
       schemes = security_schemes_json(doc)
       global_security = doc.root["security"]?
       paths = doc.root["paths"].as_h
@@ -457,10 +460,11 @@ module Analyzer::Specification
 
           apply_security_json(effective_security, schemes, params)
 
+          op_details = operation_details(details, line_index, ["paths", path, method])
           if params.size > 0
-            @result << Endpoint.new(base_path + path, method.upcase, params, details)
+            @result << Endpoint.new(base_path + path, method.upcase, params, op_details)
           else
-            @result << Endpoint.new(base_path + path, method.upcase, details)
+            @result << Endpoint.new(base_path + path, method.upcase, op_details)
           end
         rescue e
           @logger.debug "Exception of #{doc.path}/paths/endpoint"
@@ -472,7 +476,8 @@ module Analyzer::Specification
       @logger.debug_sub e
     end
 
-    private def process_paths_yaml(doc : SpecDoc(YAML::Any), base_path : String, details : Details)
+    private def process_paths_yaml(doc : SpecDoc(YAML::Any), base_path : String, details : Details,
+                                   line_index : Noir::SpecLineIndex)
       schemes = security_schemes_yaml(doc)
       global_security = doc.root[YAML::Any.new("security")]?
       paths = doc.root["paths"].as_h
@@ -519,10 +524,11 @@ module Analyzer::Specification
 
           apply_security_yaml(effective_security, schemes, params)
 
+          op_details = operation_details(details, line_index, ["paths", path.to_s, method.to_s])
           if params.size > 0
-            @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, details)
+            @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, params, op_details)
           else
-            @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, details)
+            @result << Endpoint.new(base_path + path.to_s, method.to_s.upcase, op_details)
           end
         rescue e
           @logger.debug "Exception of #{doc.path}/paths/endpoint"

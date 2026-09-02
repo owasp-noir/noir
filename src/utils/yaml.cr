@@ -37,7 +37,11 @@ end
 # the original newline characters. A blank line is legal anywhere in YAML
 # (including inside a block scalar) regardless of indentation, so this is a
 # structurally safe normalization.
-private def blank_whitespace_only_lines(content : String) : String
+#
+# Line *count* is preserved exactly — only the characters before each newline
+# are dropped — so a position-aware second pass over the recovered text
+# (`Noir::SpecLineIndex`) reports the same line numbers as the original.
+def blank_whitespace_only_lines(content : String) : String
   String.build do |io|
     content.each_line(chomp: false) do |line|
       stripped = line.rstrip("\r\n")
