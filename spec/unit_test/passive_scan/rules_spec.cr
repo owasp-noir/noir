@@ -284,7 +284,7 @@ describe NoirPassiveScan do
         logger = NoirLogger.new(false, false, false, true)
         rules = NoirPassiveScan.load_rules(temp_dir, logger)
 
-        rules.map(&.id).sort.should eq(["doc-one", "doc-two"])
+        rules.map(&.id).sort!.should eq(["doc-one", "doc-two"])
       ensure
         FileUtils.rm_rf(temp_dir)
       end
