@@ -5,6 +5,7 @@ require "../../../../utils/top_level_split"
 require "../../../../utils/url_path"
 require "../express_constants"
 require "../../../../utils/text_file"
+require "../../../../miniparsers/js_route_extractor"
 
 module Analyzer::Javascript
   # RouterMountScanner handles the two-pass scanning process for Express router mounts.
@@ -38,11 +39,20 @@ module Analyzer::Javascript
       var_to_function: Hash(String, String),
       var_prefix: Hash(String, Array(String)))
 
+    # `framework` is the analyzer that owns this scan — the same Symbol its
+    # route pass hands to `JSRouteExtractor.other_shared_extractor_framework?`.
+    # Both Express and Hono run a scanner over *every* JS/TS file in the tree,
+    # and every prefix they resolve lands in one process-wide `CodeLocator`
+    # table keyed by file. Without the symbol there is no way to tell "this
+    # file is mine" from "this file belongs to Koa", so a koa-router module
+    # picked up a `/` mount from the Express scanner and its routes were
+    # emitted a second time at the bare path.
     def initialize(
       @all_files : Array(String),
       @base_paths : Array(String),
       @base_path : String,
       @logger : NoirLogger,
+      @framework : Symbol = :express,
     )
     end
 
@@ -72,6 +82,17 @@ module Analyzer::Javascript
       global_deferred_mounts : Array(Tuple(String, String, String, String)),
     )
       content = CodeLocator.instance.content_for(main_file) || Noir::TextFile.read(main_file)
+
+      # A file that imports a *different* shared-extractor framework is not
+      # ours to mount. Its own analyzer resolves its prefixes (koa.cr's
+      # `resolve_koa_mount_prefixes`, oak.cr's equivalent) and writes them to
+      # the same locator table this scanner writes to, so processing it here
+      # does not merely waste work — it adds a competing prefix. The route
+      # pass already refuses these files (`other_shared_extractor_framework?`
+      # guards every `extract_routes` call); the mount pass has to refuse them
+      # for the same reason, or the prefix it invents resurfaces as a whole
+      # second copy of the other framework's routes.
+      return if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, @framework)
 
       # Cheap pre-filter: every code path in this scanner is downstream
       # of a `.use(...)` or `.route(...)` call (literal mount, no-prefix

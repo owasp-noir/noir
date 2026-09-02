@@ -412,4 +412,32 @@ describe "OutputBuilderOas3" do
     operations["SUBSCRIBE"]["requestBody"]["content"]["application/json"]["schema"]["properties"]
       .as_h.keys.should eq(["displayName"])
   end
+
+  it "declares a templated path's parameters on the Path Item when every verb is unsupported" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # A STOMP `SEND` route. Its whole operation lands under
+    # `x-noir-unsupported-operations`, an extension no validator reads
+    # parameters out of, so without the Path Item copy `{roomId}` is a
+    # template expression with nothing declaring it — an invalid document.
+    send = Endpoint.new("/app/chat/send/{roomId}", "SEND")
+    send.push_param(Param.new("roomId", "", "path"))
+    send.push_param(Param.new("text", "", "json"))
+
+    builder.print([send])
+    path_item = JSON.parse(builder.io.to_s)["paths"]["/app/chat/send/{roomId}"]
+
+    path_item["parameters"].as_a
+      .map { |p| {p["in"].as_s, p["name"].as_s, p["required"].as_bool} }
+      .should eq([{"path", "roomId", true}])
+  end
 end

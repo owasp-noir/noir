@@ -773,7 +773,44 @@ module Analyzer::Python
 
     private def normalize_django_route(route : ::String) : ::String
       normalized = route.gsub(/^\^/, "").gsub(/\$$/, "")
-      normalize_django_named_regex_groups(normalized)
+      normalized = normalize_django_named_regex_groups(normalized)
+      strip_django_optional_quantifiers(normalized)
+    end
+
+    # `re_path(r'^tags/?$')` is the Django idiom for "trailing slash
+    # optional", and `?` there is a regex quantifier on the preceding `/`,
+    # not a character of the path. Carried through, it lands in the URL as
+    # the query delimiter: `/tags/?` rendered with query params came out as
+    # `/tags/??q=&page=`, so the first parameter reached the server named
+    # `?q`. The anchors, the named groups and the `\.` escapes of a
+    # `re_path` pattern are already translated out; this finishes the job
+    # for the one quantifier that changes what the URL means.
+    #
+    # Only quantifiers whose target is a path token this method can keep
+    # are dropped: `/?` keeps the slash (one of the two paths the pattern
+    # matches), and `{name}?` keeps the parameter, since noir's URL shape
+    # has no way to spell an optional segment. A `?` anywhere else belongs
+    # to regex syntax the normalizer does not claim to translate (`(?:`,
+    # `(?P<`, a lazy `+?`) and is left alone.
+    private def strip_django_optional_quantifiers(route : ::String) : ::String
+      return route unless route.includes?('?')
+
+      String.build do |io|
+        index = 0
+        while index < route.size
+          ch = route[index]
+          if ch == '?' && index > 0 && optional_quantifier_target?(route[index - 1])
+            index += 1
+            next
+          end
+          io << ch
+          index += 1
+        end
+      end
+    end
+
+    private def optional_quantifier_target?(previous : Char) : Bool
+      previous == '/' || previous == '}'
     end
 
     private def normalize_django_named_regex_groups(route : ::String) : ::String

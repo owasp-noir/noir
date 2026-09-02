@@ -243,11 +243,26 @@ describe "OutputBuilder#bake_endpoint" do
 
   it "treats route-syntax ? as part of the path, not as a query string" do
     # Express optional segments (`/geo/:ip?`) and regex routes (`(?:a|b)`)
-    # both spell a `?` that opens no query string.
+    # both spell a `?` that opens no query string. Appending the query with
+    # a second `?` said so only to noir: RFC 3986 gives the query to the
+    # *first* `?`, so `/geo/:ip??q=1` reached the server as one parameter
+    # named `?q`. Percent-encoding keeps the route's `?` in the path, which
+    # is what this case has always claimed to do.
     builder.bake_endpoint("/geo/:ip?", [Param.new("q", "1", "query")])[:url]
-      .should eq("/geo/:ip??q=1")
+      .should eq("/geo/:ip%3F?q=1")
     builder.bake_endpoint("/grp/(?:a|b)", [Param.new("q", "1", "query")])[:url]
-      .should eq("/grp/(?:a|b)?q=1")
+      .should eq("/grp/(%3F:a|b)?q=1")
+  end
+
+  it "leaves a route-syntax ? alone when there is no query to append" do
+    builder.bake_endpoint("/geo/:ip?", [] of Param)[:url].should eq("/geo/:ip?")
+    builder.bake_endpoint("/geo/:ip?", [Param.new("X-Trace", "1", "header")])[:url]
+      .should eq("/geo/:ip?")
+  end
+
+  it "encodes a route-syntax ? that precedes the route's own query string" do
+    builder.bake_endpoint("/geo/:ip?/lookup.php?action=go", [] of Param)[:url]
+      .should eq("/geo/:ip%3F/lookup.php?action=go")
   end
 
   it "keeps tags from a query param that was skipped as redundant" do

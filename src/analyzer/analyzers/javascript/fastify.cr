@@ -277,7 +277,7 @@ module Analyzer::Javascript
         url = plugin_prefix.empty? ? raw_url : Noir::URLPath.join(plugin_prefix, raw_url)
         url = Noir::URLPath.join(autoload_prefix, url) unless autoload_prefix.empty?
 
-        next if result.any? { |e| e.url == url && e.method == "QUERY" }
+        next if route_recorded_for_file?(result, path, url, "QUERY")
 
         line_no = content[0...call_start].count('\n') + 1
 
@@ -376,7 +376,7 @@ module Analyzer::Javascript
 
         methods.each do |http_method|
           method_up = http_method.upcase
-          next if result.any? { |e| e.url == url && e.method == method_up }
+          next if route_recorded_for_file?(result, path, url, method_up)
 
           endpoint = Endpoint.new(url, method_up)
           endpoint.details = Details.new(PathInfo.new(path, line_no))
