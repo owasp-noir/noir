@@ -1,7 +1,9 @@
 require "./logger"
 require "./code_locator"
+require "./skipped_files"
 require "../utils/text_file"
 require "../utils/utils"
+require "json"
 require "yaml"
 
 module Noir
@@ -237,6 +239,31 @@ class Detector
       @@gemspec_dependency_res[gem_name] ||= /\badd(?:_runtime)?_dependency\s*\(?\s*['"]#{Regex.escape(gem_name)}['"]/
     end
     content_matches?(file_contents, re)
+  end
+
+  # A document that matched this format's content marker but could not be
+  # parsed at all.
+  #
+  # The spec detectors wrap "parse, then check the root key" in one
+  # `rescue`, and the two halves fail for very different reasons.
+  # `data["openapi"].as_s` raising `KeyError` / `TypeCastError` means "this
+  # JSON is simply not my format" — the gate doing its job, and reporting it
+  # would flag every document that merely mentions the word. A
+  # `JSON::ParseException` / `YAML::ParseException` is the other case: the
+  # file is not readable as JSON/YAML by anything, so it is never registered,
+  # no analyzer ever opens it, and every endpoint it declares is lost.
+  #
+  # That half used to leave a `--debug` line and nothing else. An OpenAPI
+  # document nested deeper than Crystal's 512-level `JSON.parse` ceiling —
+  # or one truncated by a failed download — reported zero endpoints,
+  # `"errors": []`, and exit 0 under `--strict`, which is indistinguishable
+  # from a repository that declares no API at all.
+  def record_unparsable_document(filename : String, error : Exception) : Nil
+    return unless error.is_a?(JSON::ParseException) || error.is_a?(YAML::ParseException)
+
+    Noir::SkippedFiles.record(@name, filename,
+      error.message.presence || error.class.name,
+      noun: "unparsable document", phase: Noir::SkippedFiles::Phase::Scan)
   end
 
   getter name, logger

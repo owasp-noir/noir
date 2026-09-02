@@ -27,6 +27,7 @@ module Detector::Specification
           end
         rescue e
           logger.debug "AsyncAPI JSON detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         begin
@@ -39,6 +40,7 @@ module Detector::Specification
           end
         rescue e
           logger.debug "AsyncAPI YAML detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       end
 

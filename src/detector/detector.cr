@@ -422,6 +422,8 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     # devices). Both used to leave no trace at any verbosity.
     unlistable_dirs = 0
     skipped_entries = 0
+    # Entries `Dir.each_child` named but `File.info?` would not stat.
+    unstattable_entries = 0
 
     # User-supplied --exclude-path patterns (comma-separated globs),
     # compiled once. `Noir::ExcludePath` owns what a pattern means; the
@@ -456,7 +458,32 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           Dir.each_child(dir) do |entry|
             full_path = File.join(dir, entry)
             info = File.info?(full_path, follow_symlinks: false)
-            next if info.nil?
+            if info.nil?
+              # `File.info?` turns every `stat(2)` failure into `nil`, and
+              # the walk used to `next` on it without a word. The entry is
+              # not imaginary — `Dir.each_child` just handed it over — so
+              # this is a directory or file the scan drops, and when it is a
+              # directory it takes the entire subtree with it.
+              #
+              # The reachable case is a path longer than `PATH_MAX`: a deep
+              # generated tree crosses 1024 bytes around 80 levels down on
+              # macOS, and from there every entry stats `ENAMETOOLONG`. A
+              # 1000-level fixture reported zero endpoints, `"errors": []`
+              # and exit 0 under `--strict` — the same output as a clean
+              # scan of an empty directory. Re-stat once (only on this
+              # path, which is off the hot loop) to name the real errno.
+              reason = begin
+                File.info(full_path, follow_symlinks: false)
+                "stat returned no information"
+              rescue e : File::Error
+                e.message.presence || e.class.name
+              end
+              unstattable_entries += 1
+              logger.debug "Skipping #{full_path}: #{reason}"
+              Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, reason,
+                noun: "unreadable entry", phase: Noir::SkippedFiles::Phase::Scan)
+              next
+            end
 
             if info.directory?
               # Subtree prune happens here. Entry name (not full path)
@@ -612,10 +639,19 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             # cache the content so analyzers can skip the re-read.
             locator.register_file(full_path, content)
           end
-        rescue e : File::NotFoundError | File::AccessDeniedError
+        rescue e : File::Error
           # `Dir.each_child` itself failed: the directory vanished between
           # being pushed on the stack and being popped, or it is not
           # listable. Treat the subtree as empty and move on.
+          #
+          # `File::Error`, not the `NotFoundError | AccessDeniedError` pair
+          # this used to name: those two cover ENOENT and EACCES, and every
+          # other errno `opendir(3)` can return — ENAMETOOLONG, ENOTDIR,
+          # EMFILE once a big scan runs out of descriptors — escaped as a
+          # bare `File::Error`, killed the reader fiber mid-walk and left
+          # every remaining base path unscanned. `File::BadPatternError` is
+          # not a `File::Error` (it descends straight from `Exception`), so
+          # the `--exclude-path` handler below still sees its own raise.
           #
           # Scope note: this is the *directory* handler. Per-file failures
           # are caught at the read above, so they no longer land here and
@@ -651,6 +687,9 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     end
     if skipped_entries > 0
       logger.warning "Skipped #{skipped_entries} symlinked or non-regular path#{"s" if skipped_entries != 1} (symlinks are not followed)"
+    end
+    if unstattable_entries > 0
+      logger.warning "Skipped #{unstattable_entries} entr#{unstattable_entries == 1 ? "y" : "ies"} that could not be stat'd (path too long, or removed during the scan)"
     end
     if skipped_ignored_dirs > 0
       logger.debug "Pruned #{skipped_ignored_dirs} ignored directory tree(s)"

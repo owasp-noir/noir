@@ -44,6 +44,52 @@ rescue File::Error
   false
 end
 
+# One segment of the over-PATH_MAX tree below. 200 chars is under NAME_MAX
+# (255) on every filesystem the CI runs on, so 30 of them clear the 4096-byte
+# Linux limit with room to spare.
+private DEEP_SEGMENT = "d" * 200
+
+private DEEP_TREE_LEVELS = 30
+
+# Builds `levels` nested directories under `root` and writes `leaf` at the
+# bottom, stepping the working directory down as it goes: a single
+# `Dir.mkdir_p` of the full path would hit the very wall this exercises.
+private def build_deep_tree(root : String, levels : Int32, leaf : String, contents : String) : String
+  Dir.mkdir_p(root)
+  previous = Dir.current
+  begin
+    Dir.cd(root)
+    levels.times do
+      Dir.mkdir(DEEP_SEGMENT)
+      Dir.cd(DEEP_SEGMENT)
+    end
+    File.write(leaf, contents)
+    File.join(Dir.current, leaf)
+  ensure
+    Dir.cd(previous)
+  end
+end
+
+# `FileUtils.rm_rf` walks with absolute paths and so cannot reach past
+# `PATH_MAX` either; unwind the same way it was built.
+private def remove_deep_tree(root : String, levels : Int32, leaf : String) : Nil
+  return unless Dir.exists?(root)
+  previous = Dir.current
+  begin
+    Dir.cd(root)
+    levels.times { Dir.cd(DEEP_SEGMENT) }
+    File.delete?(leaf)
+    levels.times do
+      Dir.cd("..")
+      Dir.delete(DEEP_SEGMENT)
+    end
+  rescue File::Error
+    # Best effort: a partially built tree leaves the rest to the tmp reaper.
+  ensure
+    Dir.cd(previous)
+  end
+end
+
 describe "detection walk coverage reporting" do
   before_each { Noir::SkippedFiles.clear }
   after_each do
@@ -199,6 +245,97 @@ describe "detection walk coverage reporting" do
       gaps.size.should eq(1)
       gaps.first.message.should contain("skipped 2 entries")
       gaps.first.message.should contain("symbolic link (not followed)")
+    ensure
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+
+  # `File.info?` answers `nil` for every `stat(2)` failure, and the walk used
+  # to `next` on that without a word — no counter, no log line, no `errors`
+  # entry. The reachable case is a path longer than `PATH_MAX`: a generated
+  # or vendored tree crosses the limit (4096 bytes on Linux, 1024 on macOS)
+  # a few dozen levels down, and from there every entry stats
+  # `ENAMETOOLONG`. A 1000-level tree therefore reported zero endpoints,
+  # `"errors": []` and exit 0 under `--strict` — the same output as a clean
+  # scan of an empty directory, for a subtree that was never looked at.
+  it "reports an entry it could not stat, and everything under it" do
+    temp_dir = File.tempname("noir_unstattable_entry")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      File.write(File.join(temp_dir, "Gemfile"), "gem 'sinatra'\n")
+      File.write(File.join(temp_dir, "app.rb"), "require 'sinatra'\nget '/root' do\nend\n")
+
+      deep_root = File.join(temp_dir, "deep")
+      leaf = build_deep_tree(deep_root, DEEP_TREE_LEVELS,
+        "buried.rb", "require 'sinatra'\nget '/buried' do\nend\n")
+      # A filesystem or platform that resolves the whole path is not the
+      # condition under test.
+      pending! "path longer than PATH_MAX is still resolvable here" unless File.info?(leaf, follow_symlinks: false).nil?
+
+      gaps = scan_gaps(temp_dir)
+
+      gaps.size.should eq(1)
+      gaps.first.tech.should eq(Noir::SkippedFiles::DETECT_SCOPE)
+      gaps.first.message.should contain("skipped 1 unreadable entry")
+    ensure
+      remove_deep_tree(File.join(temp_dir, "deep"), DEEP_TREE_LEVELS, "buried.rb")
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+
+  # A spec document the detector could not parse at all.
+  #
+  # The spec detectors wrap "parse, then check the root key" in one `rescue`
+  # and used to log both halves at `--debug` and nothing more. The shape
+  # check failing is the gate working — the file is simply not an OpenAPI
+  # document — but a `JSON::ParseException` means nothing can read the file,
+  # so it is never registered, no analyzer ever opens it, and every endpoint
+  # it declares is lost. Crystal's `JSON.parse` refuses at 512 levels of
+  # nesting, and a truncated download fails far sooner than that.
+  it "reports a specification document it could not parse" do
+    temp_dir = File.tempname("noir_unparsable_spec")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      spec_path = File.join(temp_dir, "openapi.json")
+      # Valid OpenAPI apart from one sibling key nested past the parser's
+      # ceiling, so the marker matches and the parse is what fails.
+      File.write(spec_path, String.build do |io|
+        io << %({"openapi":"3.0.3","info":{"title":"Deep","version":"1"},)
+        io << %("paths":{"/deep":{"get":{"responses":{"200":{"description":"ok"}}}}},)
+        io << %("x-deep":)
+        600.times { io << %({"a":) }
+        io << "1"
+        600.times { io << "}" }
+        io << "}"
+      end)
+
+      gaps = scan_gaps(temp_dir)
+
+      gaps.size.should eq(1)
+      gaps.first.tech.should eq("oas3")
+      gaps.first.message.should contain("skipped 1 unparsable document")
+      gaps.first.message.should contain(spec_path)
+    ensure
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+
+  # And the other half: a document that parses but is not the format must
+  # stay silent. `"openapi": "3.0.0"` nested inside a wrapper document makes
+  # the marker match and `data["openapi"]` raise `KeyError` — the gate doing
+  # its job. Reporting that would put an entry in `errors` for every file
+  # that mentions OpenAPI in passing.
+  it "stays silent on a parsable document that is not the format" do
+    temp_dir = File.tempname("noir_wrong_shape_spec")
+    Dir.mkdir_p(temp_dir)
+
+    begin
+      File.write(File.join(temp_dir, "meta.json"),
+        %({"upstream":{"openapi":"3.0.0"},"note":"not a spec document"}))
+
+      scan_gaps(temp_dir).should be_empty
     ensure
       FileUtils.rm_rf(temp_dir)
     end
