@@ -26,6 +26,8 @@ require "./commands/help"
 # Dockerfile entrypoint, and shell alias from v0.x.
 module Noir::CLI::Router
   def self.dispatch(argv : Array(String) = ARGV)
+    # First, before any code can log: stdout belongs to the report.
+    Noir::CLI.route_library_logs_to_stderr!
     Noir::CLI.apply_global_color_flag!(argv)
     argv = Legacy.rewrite(argv)
 

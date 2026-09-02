@@ -13,10 +13,36 @@ require "digest/sha256"
 require "file_utils"
 require "time"
 require "../utils/home"
-require "log"
+require "../models/logger"
 
 module LLM
   module Cache
+    # Where the swallowed cache failures below are reported.
+    #
+    # They used to go to Crystal's global `Log` at debug level, which was
+    # wrong twice over: that logger's default backend writes to **STDOUT**,
+    # the stream carrying the `-f json` / `-f sarif` report, and nothing in
+    # Noir ever lowers its `Info` threshold, so the messages could not
+    # surface at all. A diagnostic that is simultaneously invisible and
+    # aimed at the report stream is the worst of both.
+    #
+    # `NoirLogger` (STDERR, gated on `--debug`) is where every other Noir
+    # diagnostic goes. Nil until a run installs one, so a library caller
+    # constructing no logger stays silent exactly as before.
+    @@logger : NoirLogger? = nil
+
+    def self.logger=(logger : NoirLogger?) : Nil
+      @@logger = logger
+    end
+
+    def self.logger : NoirLogger?
+      @@logger
+    end
+
+    private def self.debug(message : String) : Nil
+      @@logger.try &.debug(message)
+    end
+
     # All cache entries are stored as `<sha256>.json` flat in
     # `cache_dir`. The bulk operations below (`clear`, `purge_older_than`,
     # `stats`) filter on this suffix so a stray `.lock` or user-dropped
@@ -104,7 +130,7 @@ module LLM
       return unless File.exists?(path)
       File.read(path)
     rescue e
-      Log.debug { "Cache fetch failed for #{key}: #{e.message}" }
+      debug("Cache fetch failed for #{key}: #{e.message}")
       nil
     end
 
@@ -124,7 +150,7 @@ module LLM
       File.rename(tmp, final)
       true
     rescue e
-      Log.debug { "Cache store failed for #{key}: #{e.message}" }
+      debug("Cache store failed for #{key}: #{e.message}")
       begin
         File.delete(tmp) if tmp && File.exists?(tmp)
       rescue
@@ -139,7 +165,7 @@ module LLM
       File.delete(path)
       true
     rescue e
-      Log.debug { "Cache delete failed for #{key}: #{e.message}" }
+      debug("Cache delete failed for #{key}: #{e.message}")
       false
     end
 
@@ -188,7 +214,7 @@ module LLM
           File.delete(fp)
           tmp ? (orphans += 1) : (deleted += 1)
         rescue e
-          Log.debug { "Cache delete failed for #{fp}: #{e.message}" }
+          debug("Cache delete failed for #{fp}: #{e.message}")
           failed += 1
         end
       end
@@ -234,7 +260,7 @@ module LLM
             oldest = oldest ? (mtime < oldest ? mtime : oldest) : mtime
             newest = newest ? (mtime > newest ? mtime : newest) : mtime
           rescue e
-            Log.debug { "Cache stats: failed to read #{fp}: #{e.message}" }
+            debug("Cache stats: failed to read #{fp}: #{e.message}")
           end
         end
       end

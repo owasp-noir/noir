@@ -5,6 +5,7 @@ require "../passive_scan/rules.cr"
 require "../deliver/*"
 require "../output_builder/*"
 require "../optimizer/llm_optimizer.cr"
+require "../llm/cache.cr"
 require "../ai_context/augmentor.cr"
 require "../mobile/linker.cr"
 require "./analyzer_failure.cr"
@@ -91,6 +92,13 @@ class NoirRunner
 
     @logger = NoirLogger.new @is_debug, @is_verbose, @is_color, @is_log, @no_spinner
 
+    # The LLM disk cache swallows its own IO failures and has no logger of
+    # its own (it is a module of class methods reached from several
+    # layers). Hand it this run's logger so those failures follow `--debug`
+    # onto STDERR like every other Noir diagnostic — they used to be
+    # written to Crystal's global `Log`, whose backend is STDOUT.
+    LLM::Cache.logger = @logger
+
     if ai_context_enabled?
       @options["include_callee"] = YAML::Any.new(true)
     end
@@ -141,10 +149,6 @@ class NoirRunner
         @passive_scans = NoirPassiveScan.load_rules rules_dir, @logger
       end
     end
-  end
-
-  def run
-    puts @techs
   end
 
   def detect

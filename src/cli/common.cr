@@ -1,10 +1,51 @@
 require "colorize"
+require "log"
 require "./catalog"
 
 module Noir::CLI
   # Known top-level verbs. The router falls back to `scan` when ARGV[0]
   # is not one of these (preserving the `noir -b ./app` v0 usage pattern).
   KNOWN_COMMANDS = Catalog::NAMES
+
+  # Point Crystal's global `Log` at STDERR.
+  #
+  # The stdlib configures that logger, at the bottom of its own `log.cr`,
+  # with a `Log::IOBackend` whose IO defaults to **STDOUT** — and stdout is
+  # where Noir's report goes. So anything logged through the global `Log`,
+  # by Noir or by a shard Noir pulls in, lands in the middle of the
+  # `-f json` / `-f sarif` / `-f yaml` document and breaks every downstream
+  # parser.
+  #
+  # Not hypothetical, and not limited to code this repo owns:
+  #
+  #   * the `har` shard warns through the global `Log` for an unparsable
+  #     `startedDateTime` or cookie `expires`, so a browser capture whose
+  #     timestamps are not ISO-8601 printed a WARN line *and a full Crystal
+  #     backtrace* ahead of the JSON — `noir scan ./captures -f json | jq .`
+  #     died with `Invalid numeric literal at line 1, column 14`;
+  #   * `NOIR_ACP_RAW_LOG=1` deliberately un-mutes the `acp` shard's
+  #     `acp.client` / `acp.transport` sources, which then wrote their
+  #     protocol diagnostics to the same stdout.
+  #
+  # Every diagnostic Noir writes itself already goes to STDERR through
+  # `NoirLogger`. This makes the same invariant hold for the code Noir does
+  # not own, once, at the process entry point.
+  #
+  # The severity threshold is left exactly where the stdlib default puts it
+  # (`Info`) — this changes the stream, not what gets logged — and is
+  # deliberately *not* wired to `LOG_LEVEL`, so a variable that happens to
+  # be exported for some other tool cannot start adding lines to a Noir run.
+  #
+  # `Sync` rather than the default async dispatcher: these are rare
+  # diagnostics, and an async backend flushes from its own fiber, which can
+  # reorder them against — or lose them behind — `NoirLogger`'s STDERR
+  # writes and the process exiting.
+  def self.route_library_logs_to_stderr! : Nil
+    ::Log.setup(
+      ::Log::Severity::Info,
+      ::Log::IOBackend.new(STDERR, dispatcher: ::Log::DispatchMode::Sync)
+    )
+  end
 
   # Disable Crystal's Colorize globally when the user asks for plain
   # output via `--no-color` or the `NO_COLOR` env var. Applied at the
