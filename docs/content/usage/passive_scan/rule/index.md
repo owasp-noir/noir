@@ -80,3 +80,4 @@ techs:
 * `id` must be unique across the whole rule set. A second rule reusing an id is skipped with a `Skipped duplicate passive rule id` message, because the id is what the JSON output and the SARIF `ruleId` identify a finding by.
 * A rule file may hold several `---` separated YAML documents; every document is loaded as its own rule.
 * A rule whose matchers all fail to compile — a broken `regex` pattern — can never fire, so it is rejected like any other invalid rule instead of being counted as loaded.
+* Every entry of `patterns` must be non-empty. An empty pattern (an explicit `''`, or a `- ` list item with nothing after it, which YAML reads as null) matches every line of every scanned file, so a rule carrying one is rejected instead of flooding the report.

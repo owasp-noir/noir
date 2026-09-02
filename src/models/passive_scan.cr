@@ -109,6 +109,16 @@ struct PassiveScan
       errors << "invalid type #{@type.inspect} (expected 'word' or 'regex')" unless ALLOWED_TYPES.includes?(@type)
       errors << "invalid condition #{@condition.inspect} (expected 'and' or 'or')" unless ALLOWED_CONDITIONS.includes?(@condition)
       errors << "missing or empty 'patterns'" if @patterns.empty? || @string_patterns.empty?
+      # An empty pattern string matches every line of every scanned file —
+      # `"".includes?("")` is true and `Regex.new("")` matches anywhere — so
+      # one stray list entry (`- ` with nothing after it, which YAML reads
+      # as null, or an explicit `''`) turns the rule into a finding per
+      # source line. Reject it rather than let it flood the report.
+      blank = [] of Int32
+      @string_patterns.each_with_index { |pattern, idx| blank << idx if pattern.empty? }
+      unless blank.empty?
+        errors << "empty pattern at #{blank.size > 1 ? "indexes" : "index"} #{blank.join(", ")} (an empty pattern matches every line)"
+      end
       errors
     end
 
