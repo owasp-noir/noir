@@ -58,6 +58,28 @@ private def scan_config_file_override(args : Array(String)) : String?
   found
 end
 
+# POSIX end-of-options marker. Removes the first `--` and everything after
+# it from `args`, returning the tail — the tokens the user declared to be
+# positionals no matter what they look like.
+#
+# Crystal's OptionParser handles `--` by dropping the marker and leaving the
+# tail in place, which erases the boundary: scan's positional loop then skips
+# every leftover starting with `-`, so `noir scan -- -old-api` silently
+# scanned nothing ("No path to scan was given") and `noir scan -- ./app -f
+# json` reported "Base path does not exist: json" — the `-f` had been thrown
+# away and its value promoted to a path. Splitting the tail off before any
+# parsing keeps the marker's meaning: a directory whose name starts with `-`
+# has a way in, and a flag typed after `--` is reported as the path it now is
+# instead of vanishing.
+private def split_end_of_options!(args : Array(String)) : Array(String)
+  index = args.index("--")
+  return [] of String if index.nil?
+
+  tail = args[(index + 1)..]
+  args.delete_at(index, args.size - index)
+  tail
+end
+
 # Validate a CLI flag value that needs to be a positive (>=1)
 # integer. `String#to_i` raises ArgumentError on non-numeric input
 # and silently produces 0 for "" — both surface as Crystal stack
@@ -356,6 +378,11 @@ module Noir::OptionsParsing
 end
 
 def run_options_parser
+  # Split off a POSIX `--` tail before anything reads ARGV: those tokens are
+  # positionals by the user's explicit declaration, so neither the
+  # `--config-file` pre-scan nor the flag rewrites below may interpret them.
+  end_of_options = split_end_of_options!(ARGV)
+
   # Resolve `--config-file PATH` (if present in ARGV) before
   # ConfigInitializer reads the file, so the user-supplied path
   # becomes the source ConfigInitializer parses. Defaults < file <
@@ -690,8 +717,10 @@ def run_options_parser
   # Anything left in `extracted_args` after OptionParser ran is a
   # positional argument. In v1 scan, those are treated as additional
   # base paths so `noir scan ./a ./b` mirrors `-b ./a -b ./b`.
-  extracted_args.each do |positional|
-    next if positional.starts_with?("-")
+  #
+  # Everything after `--` joins them verbatim — no `starts_with?("-")` skip,
+  # because that is exactly what the marker exists to switch off.
+  (extracted_args.reject(&.starts_with?("-")) + end_of_options).each do |positional|
     append_to_yaml_array(noir_options, "base", Noir::PathScope.normalize_base(positional))
   end
 

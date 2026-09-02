@@ -221,6 +221,29 @@ describe "noir CLI surface (built binary)" do
       end
     end
 
+    it "treats everything after `--` as a path, flag-shaped or not" do
+      # Crystal's OptionParser drops the `--` and leaves the tail in place,
+      # which erased the boundary: the positional loop skipped every
+      # leftover starting with `-`, so a flag typed after `--` vanished and
+      # its value was promoted to a base path.
+      result = run_noir(["scan", "--", FIXTURE, "-f", "json"])
+      result.stdout.should be_empty
+      result.stderr.should contain("Base path does not exist: -f")
+      result.exit_code.should eq(1)
+    end
+
+    it "scans a directory whose name starts with a dash when given after `--`" do
+      dir = File.join(Dir.tempdir, "-noir-dash-#{Random.rand(100_000)}")
+      Dir.mkdir_p(dir)
+      begin
+        result = run_noir(["scan", "-f", "json", "--no-log", "--", dir])
+        result.exit_code.should eq(0)
+        JSON.parse(result.stdout)["endpoints"].as_a.empty?.should be_true
+      ensure
+        Dir.delete(dir) if Dir.exists?(dir)
+      end
+    end
+
     it "leaves a well-formed scan untouched" do
       result = run_noir(["scan", FIXTURE, "-u", "http://localhost:3000", "-f", "json", "--no-log"])
       result.stderr.should be_empty
