@@ -230,4 +230,28 @@ describe "noir CLI surface (built binary)" do
       urls.all?(&.starts_with?("http://localhost:3000/")).should be_true
     end
   end
+
+  describe "broken pipe" do
+    # `noir list techs` writes far more than a pipe buffer holds, so a
+    # reader that stops early (`| head`) closes the pipe mid-write. Scan's
+    # own stdout writes have been guarded for a while, but the thin
+    # subcommands write straight to STDOUT — this painted a full Crystal
+    # backtrace over the terminal and exited non-zero.
+    it "exits quietly when the reader closes the pipe" do
+      log = File.tempname("noir-epipe-", ".log")
+      begin
+        # The brace group sends both noir's stderr and its exit status to
+        # `log`, because `$?` after a pipeline in `sh` belongs to `head`.
+        Process.run("/bin/sh", args: [
+          "-c", "{ \"$0\" list techs; echo \"rc=$?\" >&2; } 2>\"$1\" | head -1 >/dev/null",
+          BINARY, log,
+        ])
+        captured = File.read(log)
+        captured.should_not contain("Unhandled exception")
+        captured.should contain("rc=0")
+      ensure
+        File.delete?(log)
+      end
+    end
+  end
 end

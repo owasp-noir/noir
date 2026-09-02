@@ -1,5 +1,6 @@
 require "./common"
 require "./legacy"
+require "../models/logger"
 require "./commands/scan"
 require "./commands/list"
 require "./commands/cache"
@@ -70,6 +71,17 @@ module Noir::CLI::Router
       # v0 compat: bare flags or an existing positional path → default to scan.
       ScanCommand.run(argv)
     end
+  rescue ex : IO::Error
+    # A downstream reader closed the pipe (`noir list techs | head`, `noir
+    # completion zsh | grep -m1 ...`). The scan path has guarded its own
+    # stdout writes for a while (`NoirLogger#puts`, `OutputBuilder#ob_puts`),
+    # but the thin subcommands write straight to STDOUT, so `noir list techs
+    # | head` printed a full Crystal backtrace over the user's terminal and
+    # exited non-zero. Exit quietly, the same way the logger does — and only
+    # for a broken pipe: a real write failure (disk full, bad fd) must still
+    # surface rather than be laundered into a lying exit(0).
+    raise ex unless NoirLogger.broken_pipe?(ex)
+    exit(0)
   end
 
   # True for a first token that looks like a mistyped subcommand: not a flag,
