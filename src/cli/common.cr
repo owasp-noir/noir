@@ -26,6 +26,25 @@ module Noir::CLI
     value != "0"
   end
 
+  # Flags the router itself owns, valid anywhere on the command line —
+  # including *before* the verb, which is where `noir help` documents them
+  # ("Strip ANSI color from every command's output"). `verb_index` is what
+  # lets that placement work: without it the router only ever looked at
+  # `argv.first`, so `noir --no-color scan ./app` fell through to the v0
+  # bare-flag path and died with `Base path does not exist: scan`.
+  GLOBAL_FLAGS = ["--no-color", "--no-spinner"]
+
+  # Index of the first token that is not one of the leading global flags,
+  # i.e. where the subcommand verb would be. Returns `argv.size` when argv
+  # holds nothing but global flags.
+  def self.verb_index(argv : Array(String)) : Int32
+    index = 0
+    while index < argv.size && GLOBAL_FLAGS.includes?(argv[index])
+      index += 1
+    end
+    index
+  end
+
   def self.die(message : String, code : Int32 = 1) : NoReturn
     STDERR.puts "ERROR: #{message}".colorize(:red)
     exit(code)

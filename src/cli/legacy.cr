@@ -48,8 +48,14 @@ module Noir::CLI::Legacy
   # router dispatches to a subcommand (`head` must be in
   # `KNOWN_COMMANDS`). Everything after that verb is that subcommand's
   # own argv and must reach its own parser untouched.
+  #
+  # Leading global flags are skipped for the same reason the router skips
+  # them: `noir --no-color rules update -v` is a v1 subcommand invocation,
+  # and testing `argv.first` alone let the `-v => version` rewrite hijack
+  # `rules update`'s own `-v` — printing the version and exiting 0 while
+  # the rules were never updated.
   def self.subcommand_invocation?(argv : Array(String)) : Bool
-    head = argv.first?
+    head = argv[Noir::CLI.verb_index(argv)]?
     return false if head.nil?
     Noir::CLI::KNOWN_COMMANDS.includes?(head)
   end

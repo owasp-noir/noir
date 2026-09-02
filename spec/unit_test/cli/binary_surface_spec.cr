@@ -77,6 +77,55 @@ describe "noir CLI surface (built binary)" do
     end
   end
 
+  describe "global flags before the verb" do
+    # `noir help` documents `--no-color` / `--no-spinner` as working on
+    # "every command's output", but the router only ever tested `argv[0]`
+    # for a verb — so a global flag typed first pushed the whole invocation
+    # down the v0 bare-flag path and every one of these died with
+    # `Base path does not exist: <verb>`.
+    it "dispatches a verb that follows a leading global flag" do
+      result = run_noir(["--no-color", "version"])
+      result.stdout.strip.should match(/\A\d+\.\d+\.\d+/)
+      result.exit_code.should eq(0)
+    end
+
+    it "accepts several leading global flags at once" do
+      result = run_noir(["--no-color", "--no-spinner", "list", "formats"])
+      result.stdout.should contain("json")
+      result.exit_code.should eq(0)
+    end
+
+    it "still reaches scan, with the flag applied" do
+      result = run_noir(["--no-color", "scan", FIXTURE, "-f", "json", "--no-log"])
+      result.exit_code.should eq(0)
+      result.stdout.should_not contain("\e[")
+      JSON.parse(result.stdout)["endpoints"].as_a.empty?.should be_false
+    end
+
+    it "shows the top-level overview for `--no-color -h`, not scan's flag dump" do
+      result = run_noir(["--no-color", "-h"])
+      result.stdout.should contain("COMMANDS:")
+      result.stdout.should_not contain("--passive-scan-severity")
+      result.exit_code.should eq(0)
+    end
+
+    it "does not let the v0 rewrite hijack a subcommand's own -v" do
+      # Same exposure as `noir rules path -v` above, reached through the
+      # leading-global-flag path: `subcommand_invocation?` looked at
+      # `argv[0]`, saw `--no-color`, and let `-v => version` win.
+      result = run_noir(["--no-color", "rules", "path", "-v"])
+      result.stdout.should contain("passive_rules")
+      result.stdout.strip.should_not match(/\A\d+\.\d+\.\d+\z/)
+      result.exit_code.should eq(0)
+    end
+
+    it "keeps a globals-only argv on the v0 scan path" do
+      result = run_noir(["--no-color"])
+      result.stderr.should contain("No path to scan was given")
+      result.exit_code.should eq(1)
+    end
+  end
+
   describe "config" do
     it "rejects --config-file with no value instead of using the default file" do
       result = run_noir(["config", "path", "--config-file"])
