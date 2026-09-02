@@ -2,6 +2,11 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- macOS release tarballs are re-signed ad hoc after `install_name_tool` rewrites their dylib load paths. The bundled OpenSSL dylibs were left with a stale signature, and Apple Silicon SIGKILLs any process that maps one, so `noir-v1.3.0-osx-arm64.tar.gz` could not run at all on Apple Silicon (`zsh: killed noir`, exit 137). Clearing quarantine did not help: it is a signature check, not Gatekeeper. Packaging now verifies every signature and runs the extracted tarball before publishing it (#2691).
+
 ## v1.3.0
 
 Noir v1.3.0 adds first-class support for the HTTP QUERY method (RFC 10008), 11 new framework analyzers, and scan-integrity reporting, on top of a large internal consolidation and bug sweep.
