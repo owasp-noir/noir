@@ -249,6 +249,23 @@ describe "OutputBuilderCommon" do
 
     output.should contain("○ path: userId=Integer, bare, int")
   end
+
+  it "prints one row per distinct tag name" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    # Same name, different tagger: `add_tag` keeps both, and this row shows
+    # names only, so without a dedup it reads "graphql-return graphql-return".
+    endpoint = Endpoint.new("/graphql", "POST")
+    endpoint.add_tag(Tag.new("graphql-return", "User", "js_apollo_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-return", "User", "graphql_sdl_analyzer"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("○ tags: graphql-return")
+    output.scan(/graphql-return/).size.should eq(1)
+  end
 end
 
 # Every flag off: the plain builder reads each of these with `[]?`, but the

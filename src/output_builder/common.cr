@@ -212,6 +212,14 @@ class OutputBuilderCommon < OutputBuilder
         tags << tag.name.to_s
       end
 
+      # Deduped by name, the way `-f only-tag` already does it. `add_tag`
+      # dedupes by (name, tagger), so one endpoint legitimately carries three
+      # distinct `graphql-return` tags from three analyzers — and this row,
+      # which prints names only, rendered them as "graphql-return
+      # graphql-return graphql-return". 45 rows in the fixture tree repeated a
+      # name they had nothing left to tell apart by.
+      tags = tags.uniq
+
       # Space-joined, unlike every other multi-value row above, which uses ", ".
       append_field r_buffer, "tags", tags.join(" "), :light_magenta unless tags.empty?
 
