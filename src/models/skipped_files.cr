@@ -72,6 +72,38 @@ module Noir::SkippedFiles
     property count = 0
     property reason = ""
     getter paths = [] of String
+
+    # Remember one skip, keeping the examples sorted and the tally capped.
+    #
+    # Arrival order is not something to report on. The detection walk and the
+    # analysis pass both record from concurrent fibers, so appending until the
+    # cap was hit made both halves of the message depend on which fiber
+    # finished first: three unparsable documents under one base came out as
+    # `t/b, t/c, t/a`, and the paths a repository over the cap *shows* were
+    # whichever five happened to arrive. `errors` is part of the `-f json` /
+    # `-f sarif` document — output a consumer diffs between runs and between
+    # machines — and everything else that reaches it is ordered on purpose
+    # (`EndpointOptimizer#endpoint_order_key`, the passive rule glob's
+    # `sort!`). This is the same commitment for the one surface that was
+    # still reporting in scheduler order.
+    #
+    # Sorted insertion rather than a sort at render time, because the cap has
+    # to bite deterministically too: the five kept are the five smallest
+    # paths, not the first five to arrive. The list is `MAX_PATHS_PER_TECH`
+    # long, so the scan is cheaper than the allocation a sorted set would add.
+    def remember(path : String, reason : String) : Nil
+      index = paths.index { |seen| seen > path } || paths.size
+      # Sorts after every example already kept, and there is no room: only
+      # the count grows.
+      return if index >= MAX_PATHS_PER_TECH
+
+      paths.insert(index, path)
+      paths.pop if paths.size > MAX_PATHS_PER_TECH
+      # "first error" now names the first path listed, which is what the
+      # message has always read as. Keyed on arrival it named neither the
+      # first path shown nor a predictable one.
+      @reason = reason if index.zero?
+    end
   end
 
   # A gap with no per-item granularity — an export that never landed, a rule
@@ -108,8 +140,7 @@ module Noir::SkippedFiles
         fresh
       end
       tally.count += 1
-      tally.reason = reason if tally.reason.empty?
-      tally.paths << path if tally.paths.size < MAX_PATHS_PER_TECH
+      tally.remember(path, reason)
     end
   end
 
@@ -170,6 +201,9 @@ module Noir::SkippedFiles
     "#{tech}/#{noun}"
   end
 
+  # `Tally#remember` keeps `paths` sorted and `reason` pinned to `paths`
+  # first, so the same skips produce the same line whatever order the fibers
+  # recorded them in.
   private def message_for(tally : Tally) : String
     noun = pluralize(tally.noun, tally.count)
     examples = tally.paths.join(", ")

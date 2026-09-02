@@ -44,6 +44,45 @@ describe Noir::SkippedFiles do
     message.should_not contain("Src#{Noir::SkippedFiles::MAX_PATHS_PER_TECH}.java")
   end
 
+  # `errors` is part of the `-f json` / `-f sarif` document, so the same skips
+  # have to produce the same line. Both halves of the message used to follow
+  # arrival order, which for the detection walk and the analysis pass is fiber
+  # completion order: three unparsable documents under one base reported
+  # `t/b, t/c, t/a`, and a rerun on a machine with a different core count had
+  # no reason to agree.
+  it "lists example paths in a stable order whatever order they arrive in" do
+    %w[src/c.rs src/a.rs src/b.rs].each do |path|
+      Noir::SkippedFiles.record("rust_axum", path, "reason for #{path}")
+    end
+
+    Noir::SkippedFiles.failures.first.message.should contain("src/a.rs, src/b.rs, src/c.rs")
+  end
+
+  # The line reads "<paths>; first error: <reason>", so the reason has to be
+  # the first path's. Keyed on arrival it named neither the first path shown
+  # nor a predictable one.
+  it "reports the reason belonging to the first path it lists" do
+    Noir::SkippedFiles.record("rust_axum", "src/z.rs", "arrived first")
+    Noir::SkippedFiles.record("rust_axum", "src/a.rs", "sorts first")
+
+    message = Noir::SkippedFiles.failures.first.message
+    message.should contain("src/a.rs, src/z.rs")
+    message.should contain("first error: sorts first")
+  end
+
+  # The cap has to bite deterministically too, or the examples a repository
+  # over the limit shows are whichever ones won the race.
+  it "keeps the smallest paths when more arrive than it can show" do
+    %w[9 8 7 6 5 4 3 2 1 0].each do |n|
+      Noir::SkippedFiles.record("java_spring", "Src#{n}.java", "reason #{n}")
+    end
+
+    message = Noir::SkippedFiles.failures.first.message
+    message.should contain("Src0.java, Src1.java, Src2.java, Src3.java, Src4.java")
+    message.should contain("(+5 more)")
+    message.should contain("first error: reason 0")
+  end
+
   it "forgets everything on clear, so a second pass starts clean" do
     Noir::SkippedFiles.record("go_gin", "main.go", "boom")
     Noir::SkippedFiles.clear
