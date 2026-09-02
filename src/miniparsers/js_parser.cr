@@ -482,6 +482,117 @@ module Noir
       [] of PathEntry
     end
 
+    # True when the verb call whose `(` sits at `lparen_idx` carries an
+    # argument that could be a request handler.
+    #
+    # Every JS HTTP framework this parser covers registers a route as
+    # `verb(path, ...middleware, handler)` and the handler is mandatory —
+    # Express, Koa, Fastify, Restify, Hono and Oak all ignore (or reject) a
+    # verb call that passes nothing but a path. HTTP *client* calls have the
+    # opposite shape: the URL is the whole call, optionally followed by a
+    # plain options bag. That difference is the only structural thing
+    # separating the two in a file the extractor cannot type-check:
+    #
+    #   request.get(`${nconf.get('url')}/api/config`)        // client call
+    #   request.del(`${nconf.get('url')}/api/x`, { jar })    // client call
+    #   container.get('./index')                             // webpack MF
+    #   app.get('view engine')                               // Express getter
+    #
+    #   app.get(`${relativePath}/ping`, pingController.ping) // route
+    #   fastify.get('/x', { schema }, async (rq, rp) => {})  // route
+    #   fastify.get('/x', { schema, handler })               // route
+    #
+    # Both NodeBB shapes above live in the same repository — `app.use(
+    # `${nconf.get('relative_path')}/debug`, router)` is a real mount while
+    # `request.get(`${nconf.get('url')}/api/...`)` is a test client call — so
+    # neither the receiver name nor the leading `${...}` placeholder can tell
+    # them apart. The handler argument can.
+    #
+    # Bias is toward keeping routes: anything that is not a bare literal or a
+    # handler-less object literal counts as a handler, and an argument list
+    # this walk cannot finish (unbalanced tokens) is accepted.
+    private def route_handler_arg?(lparen_idx : Int32) : Bool
+      return true unless lparen_idx < @tokens.size && @tokens[lparen_idx].type == :lparen
+
+      idx = lparen_idx + 1
+      depth = 0
+      arg_index = 0
+      arg_start = idx
+
+      while idx < @tokens.size
+        case @tokens[idx].type
+        when :lparen, :lbracket, :lbrace
+          depth += 1
+        when :rbracket, :rbrace
+          return true if depth == 0 # unbalanced — do not drop the route
+          depth -= 1
+        when :rparen
+          if depth == 0
+            return arg_index > 0 && handler_shaped_arg?(arg_start, idx)
+          end
+          depth -= 1
+        when :comma
+          if depth == 0
+            return true if arg_index > 0 && handler_shaped_arg?(arg_start, idx)
+            arg_index += 1
+            arg_start = idx + 1
+            # A non-literal, non-object argument is handler-shaped on its
+            # first token alone, so answer here instead of walking its body:
+            # an arrow-function handler is routinely hundreds of tokens.
+            if arg_start < @tokens.size
+              case @tokens[arg_start].type
+              when :lbrace, :string, :template_literal, :number, :regex, :literal, :rparen
+                # Needs the full-argument check below.
+              else
+                return true
+              end
+            end
+          end
+        else
+          # Not a delimiter.
+        end
+        idx += 1
+      end
+
+      true
+    end
+
+    # Classify one argument (tokens `start_idx...end_idx`) as handler-shaped.
+    private def handler_shaped_arg?(start_idx : Int32, end_idx : Int32) : Bool
+      return false if start_idx >= end_idx || start_idx >= @tokens.size
+
+      case @tokens[start_idx].type
+      when :string, :template_literal, :number, :regex, :literal
+        # A bare literal is a route name (Koa's `router.get("users.show",
+        # "/users/:id", handler)`) or a client payload — never a handler.
+        # The Koa shape still registers because the handler is a later
+        # argument and every argument after the path is inspected.
+        false
+      when :lbrace
+        # Options object. Fastify's shorthand lets the handler live inside
+        # it (`fastify.get('/x', { schema, handler })`); a plain options bag
+        # (`request.del(url, { jar })`) registers nothing.
+        object_declares_handler?(start_idx, end_idx)
+      else
+        true
+      end
+    end
+
+    # True when the object literal spanning `start_idx...end_idx` names a
+    # handler property (Fastify/Restify route-options shorthand).
+    private def object_declares_handler?(start_idx : Int32, end_idx : Int32) : Bool
+      idx = start_idx
+      while idx < end_idx && idx < @tokens.size
+        token = @tokens[idx]
+        if token.type == :identifier &&
+           (token.value == "handler" || token.value == "wsHandler" || token.value == "onRequest")
+          return true
+        end
+        idx += 1
+      end
+      false
+    end
+
     private def next_top_level_arg_index(start_idx : Int32) : Int32?
       idx = start_idx
       paren_depth = 0
@@ -698,6 +809,10 @@ module Noir
            @tokens[idx + 1].type == :dot &&
            http_method?(@tokens[idx + 2]) &&
            @tokens[idx + 3].type == :lparen
+          unless route_handler_arg?(idx + 3)
+            idx += 1
+            next
+          end
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
           paths = route_path_entries_from_args(idx + 4, allow_named_route: named_route_receiver?(router_var))
@@ -719,6 +834,10 @@ module Noir
            http_method_name?(@tokens[idx + 2].value) &&
            @tokens[idx + 3].type == :rbracket &&
            @tokens[idx + 4].type == :lparen
+          unless route_handler_arg?(idx + 4)
+            idx += 1
+            next
+          end
           router_var = @tokens[idx].value
           method = @tokens[idx + 2].value
           paths = route_path_entries_from_args(idx + 5, allow_named_route: named_route_receiver?(router_var))
@@ -816,7 +935,8 @@ module Noir
         path_idx = idx + 3
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size
+           path_idx + 1 < @tokens.size &&
+           route_handler_arg?(path_idx)
           router_var = @tokens[idx].value
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
           @position = path_idx + 2 unless path_entries.empty?
@@ -969,7 +1089,8 @@ module Noir
         path_idx = idx + 2
         if path_idx < @tokens.size &&
            @tokens[path_idx].type == :lparen &&
-           path_idx + 1 < @tokens.size
+           path_idx + 1 < @tokens.size &&
+           route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
           @position = path_idx + 2 unless path_entries.empty?
@@ -1325,6 +1446,13 @@ module Noir
       return false if path.empty?
       return false if path.includes?("://")
       return false if path.each_char.any?(&.whitespace?)
+      # Relative module specifiers. An HTTP route path is always rooted;
+      # `./x` / `../x` is a filesystem-or-bundler path, and the shape reaches
+      # this parser through calls that merely look like a verb-DSL — webpack
+      # Module Federation's `container.get('./index')` (Superset's
+      # `ExtensionsLoader.ts`) is the canonical case. `/.well-known/...` is
+      # unaffected: it starts at the root.
+      return false if path.starts_with?("./") || path.starts_with?("../")
       # Filter bare identifiers that leak in via `resolve_dynamic_path`
       # when an unresolved variable name is used as a `.get`/`.all`
       # argument — e.g. `Promise.all(Object.values(...).map(...))` would

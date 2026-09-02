@@ -245,6 +245,108 @@ describe Noir::JSParser do
     end
   end
 
+  describe "handler-argument gate" do
+    it "drops HTTP client calls that pass only a URL" do
+      # NodeBB's test suite: `request` is an HTTP client, and the leading
+      # `${nconf.get('url')}` is the server origin, not a mount prefix.
+      code = <<-JS
+        const nconf = require('nconf');
+        const request = require('../src/request');
+
+        describe('controllers', () => {
+          it('loads config', async () => {
+            const { body } = await request.get(`${nconf.get('url')}/api/config`);
+            assert(body);
+          });
+        });
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      routes.should be_empty
+    end
+
+    it "drops HTTP client calls whose only extra argument is an options bag" do
+      code = <<-JS
+        const request = require('../src/request');
+        await request.del(`${nconf.get('url')}/api/user/revokeme/session`, { jar });
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      routes.should be_empty
+    end
+
+    it "drops the Express settings getter" do
+      code = <<-JS
+        const express = require('express');
+        const app = express();
+        const engine = app.get('view engine');
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      routes.should be_empty
+    end
+
+    it "drops Map and cache lookups that borrow the verb shape" do
+      code = <<-JS
+        const cardName = PUBLIC_CARD_ASSET_NAMES.get(`${type}/${file}`);
+        await lock.delete(machineKey);
+        await serveCache.del(`/post/${pid}`);
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      routes.should be_empty
+    end
+
+    it "keeps a route whose path is a template literal with a mount prefix" do
+      # The counterpart of the first example, from the same repository:
+      # `${relativePath}` here IS a real Express mount prefix. Only the
+      # handler argument tells the two apart.
+      code = <<-JS
+        const express = require('express');
+        const app = express();
+        app.get(`${relativePath}/ping`, pingController.ping);
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      routes.map { |r| "#{r.method} #{r.path}" }.should contain("GET /${relativePath}/ping")
+    end
+
+    it "keeps a Fastify route whose handler lives in the options object" do
+      code = <<-JS
+        const fastify = require('fastify')();
+        fastify.get('/shorthand', { schema, handler });
+        fastify.post('/opts-then-handler', { schema }, async (req, reply) => {});
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      pairs = routes.map { |r| "#{r.method} #{r.path}" }
+      pairs.should contain("GET /shorthand")
+      pairs.should contain("POST /opts-then-handler")
+    end
+
+    it "keeps a Koa named route whose handler follows the path" do
+      code = <<-JS
+        const Router = require('@koa/router');
+        const router = new Router();
+        router.get('users.show', '/users/:id', ctx => { ctx.body = {}; });
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      routes.map { |r| "#{r.method} #{r.path}" }.should contain("GET /users/:id")
+    end
+
+    it "rejects relative module specifiers as route paths" do
+      # webpack Module Federation: `container.get('./index')` (Superset).
+      code = <<-JS
+        const factory = await container.get('./index');
+        $.post('../jserror', { errorInfo });
+        JS
+      routes = Noir::JSParser.new(code).parse_routes
+
+      routes.should be_empty
+    end
+  end
+
   describe "JSRoutePattern" do
     it "stores method and path" do
       pattern = Noir::JSRoutePattern.new("GET", "/users")
