@@ -1097,6 +1097,19 @@ describe "EndpointOptimizer" do
       result = optimizer.apply_pvalue("query", "unknown", "original")
       result.should eq("original")
     end
+
+    it "applies a json rule to a param the analyzer spelled `body`" do
+      options["set_pvalue_json"] = YAML::Any.new([YAML::Any.new("id=FUZZ")])
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      # `body` is the alias fourteen analyzers use for a request-body field.
+      # Rules are keyed by the canonical bucket, so the lookup has to be too.
+      endpoint = Endpoint.new("/deleteUser", "POST")
+      endpoint.push_param(Param.new("id", "", "body"))
+
+      result = optimizer.optimize([endpoint])
+      result[0].params[0].value.should eq("FUZZ")
+    end
   end
 
   describe "full optimization workflow" do

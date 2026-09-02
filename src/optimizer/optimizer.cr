@@ -138,7 +138,12 @@ class EndpointOptimizer
         endpoint.params.each do |param|
           next if param.name.includes?(" ") || param.name.blank?
           next unless seen_params.add?({param.name, param.param_type})
-          param.value = apply_pvalue(param.param_type, param.name, param.value).to_s
+          # `request_type`, not `param_type`: the fourteen analyzers that
+          # spell a request body `body` rather than `json` produce params no
+          # `--pvalue json=` (or `--pvalue any=`) rule ever matched, so their
+          # fields stayed empty in every output and in the probe payload.
+          # Every other consumer already dispatches on the canonical bucket.
+          param.value = apply_pvalue(param.request_type, param.name, param.value).to_s
           tiny_tmp.params << param
         end
       end

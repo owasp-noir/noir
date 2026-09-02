@@ -214,4 +214,154 @@ describe "OutputBuilderCommon" do
     # "body" request_type is mapped to json, so it should not render a redundant `○ body: content` line
     output.scan(/○ body:/).size.should eq(1)
   end
+
+  it "keeps form params when the same endpoint also carries a JSON body" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    # A handler that reads both (`c.Request.PostFormValue` next to
+    # `c.BindJSON`). `bake_endpoint` has one body slot and JSON takes it, so
+    # the form fields have to be rendered on their own row or they vanish.
+    endpoint = Endpoint.new("/api/submit", "POST")
+    endpoint.push_param(Param.new("username", "", "form"))
+    endpoint.push_param(Param.new("password", "", "json"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("○ body: {\"password\":\"\"}")
+    output.should contain("○ form:")
+    output.should contain("username")
+  end
+
+  it "renders the value of a path param" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/v1/users/:userId", "GET")
+    endpoint.push_param(Param.new("userId", "Integer", "path"))
+    endpoint.push_param(Param.new("bare", "", "path"))
+    # Giraffe's `%i` names a segment after its own type; "int=int" adds nothing.
+    endpoint.push_param(Param.new("int", "int", "path"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("○ path: userId=Integer, bare, int")
+  end
+
+  it "prints one row per distinct tag name" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    # Same name, different tagger: `add_tag` keeps both, and this row shows
+    # names only, so without a dedup it reads "graphql-return graphql-return".
+    endpoint = Endpoint.new("/graphql", "POST")
+    endpoint.add_tag(Tag.new("graphql-return", "User", "js_apollo_analyzer"))
+    endpoint.add_tag(Tag.new("graphql-return", "User", "graphql_sdl_analyzer"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("○ tags: graphql-return")
+    output.scan(/graphql-return/).size.should eq(1)
+  end
+
+  it "shows the file a callee lives in, not a bare line number" do
+    options = plain_options
+    options["include_callee"] = YAML::Any.new(true)
+    builder = OutputBuilderCommon.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/", "GET")
+    endpoint.push_callee(Callee.new("HomeService.build", "src/handlers/home_handler.cr", 7))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("HomeService.build (src/handlers/home_handler.cr:7)")
+  end
+
+  it "escapes control characters that came out of the scanned source" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/x\e]8;;http://evil.example\aclick\e]8;;\a", "GET")
+    endpoint.push_param(Param.new("head\ner", "v", "header"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should_not contain("\e")
+    output.should_not contain("\a")
+    output.should contain("\\x1b]8;;http://evil.example\\x07click")
+    output.should contain("head\\x0aer: v")
+  end
+
+  it "leaves non-ASCII text alone" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/사용자/naïve/£cost", "GET")
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("/사용자/naïve/£cost")
+  end
+
+  it "badges a protocol nothing else on the line shows" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    kafka = Endpoint.new("/user/signedup", "PUBLISH")
+    kafka.protocol = "kafka"
+    websocket = Endpoint.new("/chat", "SEND")
+    websocket.protocol = "ws"
+    # `http` is the default and the `cli://` URL already spells out `cli`.
+    plain = Endpoint.new("/健康", "GET")
+    cli = Endpoint.new("cli://tool/run", "CLI")
+    cli.protocol = "cli"
+
+    builder.print([kafka, websocket, plain, cli])
+    output = builder.io.to_s
+
+    output.should contain("PUBLISH /user/signedup [kafka]")
+    output.should contain("SEND /chat [websocket]")
+    output.should contain("GET /健康\n")
+    output.should contain("CLI cli://tool/run\n")
+  end
+
+  it "marks an endpoint the app calls rather than serves" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    # A Spring Feign / @HttpExchange declarative client, not attack surface.
+    client = Endpoint.new("/orders", "GET")
+    client.internal = true
+
+    builder.print([client])
+    output = builder.io.to_s
+
+    output.should contain("GET /orders [internal]")
+  end
+end
+
+# Every flag off: the plain builder reads each of these with `[]?`, but the
+# specs above spell the full hash out so a new option defaulting to "on"
+# cannot silently change what a case is asserting.
+private def plain_options
+  {
+    "debug"          => YAML::Any.new(false),
+    "verbose"        => YAML::Any.new(false),
+    "color"          => YAML::Any.new(false),
+    "nolog"          => YAML::Any.new(false),
+    "output"         => YAML::Any.new(""),
+    "include_path"   => YAML::Any.new(false),
+    "include_callee" => YAML::Any.new(false),
+    "include_techs"  => YAML::Any.new(false),
+    "ai_context"     => YAML::Any.new(false),
+    "status_codes"   => YAML::Any.new(false),
+    "exclude_codes"  => YAML::Any.new(""),
+  }
 end

@@ -190,11 +190,12 @@ class OutputBuilder
   # saved report is plain text whether the color came from `Colorize` or
   # from the scanned repo.
   #
-  # Scope note: this covers the file only. The stdout copy is written raw,
-  # because the color codes there are the point and stripping them would
-  # have to happen before each builder colorizes rather than after. Escapes
-  # that originate in scanned source therefore still reach a terminal —
-  # unchanged from before, and true of `NoirLogger`'s output as well.
+  # Scope note: this covers the file only, and only as a backstop. The
+  # stdout copy is written raw, because the color codes there are the point
+  # and stripping them would have to happen before each builder colorizes
+  # rather than after — which is exactly what `escape_control_chars` does
+  # for the plain report, so scanned source no longer reaches a terminal
+  # (or this function) carrying live escapes.
   private def strip_ansi(message : String) : String
     return message unless message.includes?('\e')
 
@@ -289,7 +290,17 @@ class OutputBuilder
         end
 
         if param.request_type == "path"
-          final_path_params << "#{param.name}"
+          # `name=value`, like the cookie row and the form body below. The
+          # value was dropped here, so the plain report printed a bare
+          # `path: userId` while `-f json` carried `"value": "Integer"` —
+          # 42 path params across the fixture tree lost the only thing the
+          # analyzer knew about them beyond the name.
+          #
+          # A value equal to the name is skipped: Giraffe's `%i`/`%s` route
+          # format names a segment after its own type, and `path: int=int`
+          # says nothing the name did not.
+          redundant_value = param.value.empty? || param.value == param.name
+          final_path_params << (redundant_value ? param.name : "#{param.name}=#{param.value}")
         end
 
         if param.request_type == "header"
@@ -510,6 +521,52 @@ class OutputBuilder
     return "(line #{line})" if line
 
     nil
+  end
+
+  # Renders C0/C1 control characters — the escape sequences a terminal
+  # acts on — as visible `\xNN` text.
+  #
+  # Everything a report prints comes out of the repo being scanned, which is
+  # the one thing Noir never trusts: a route literal
+  # `"/x\e]8;;http://evil.example\aclick\e]8;;\a"` was replayed verbatim into
+  # the terminal, where it rendered as a clickable link to the attacker's
+  # host instead of as the string the source actually contains. `\e[2J`,
+  # `\ec` and a bare newline in a param name are the same problem with a
+  # different payload: the report stops describing the code and starts
+  # obeying it.
+  #
+  # Escaped rather than stripped so the report still says what is there —
+  # `-f json` shows the byte as `\u001b`, and this is that fact in plain
+  # text. Only the control blocks are touched, so a CJK route or a `£` in a
+  # param value passes through unchanged.
+  protected def escape_control_chars(text : String) : String
+    return text unless may_contain_control_char?(text)
+
+    String.build do |io|
+      text.each_char do |char|
+        if control_char?(char)
+          io << "\\x" << char.ord.to_s(16).rjust(2, '0')
+        else
+          io << char
+        end
+      end
+    end
+  end
+
+  # Byte-level prefilter so the common (clean) string never pays for a
+  # char-by-char walk. C1 controls are two bytes in UTF-8 and always start
+  # with 0xC2, which also introduces `\u00a0`-`\u00bf`; those fall through to
+  # `control_char?` and are left alone.
+  private def may_contain_control_char?(text : String) : Bool
+    text.each_byte do |byte|
+      return true if byte < 0x20 || byte == 0x7f || byte == 0xc2
+    end
+    false
+  end
+
+  private def control_char?(char : Char) : Bool
+    ord = char.ord
+    ord < 0x20 || ord == 0x7f || (0x80 <= ord <= 0x9f)
   end
 
   private def format_noir_callee(callee : Callee) : String

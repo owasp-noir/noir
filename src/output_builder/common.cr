@@ -57,6 +57,12 @@ class OutputBuilderCommon < OutputBuilder
     "form", "json",
   }
 
+  # Protocols the rest of the line already tells the reader about, so a badge
+  # would only repeat it: `http` is the default and says nothing, the mobile
+  # protocols drive the SCHEME/INTENT/UNIVERSAL/PROVIDER prefix, and `cli` is
+  # spelled out by the `cli://` URL.
+  SILENT_PROTOCOLS = Endpoint::MOBILE_PROTOCOLS | Endpoint::CLI_PROTOCOLS | Set{"http"}
+
   @ai_context_features : Set(String)? = nil
 
   # The plain report is the only format that frames itself — a heading over
@@ -97,22 +103,28 @@ class OutputBuilderCommon < OutputBuilder
                        else               :default
                        end
 
-      r_method = endpoint.method.colorize(r_method_color).toggle(@is_color)
+      # Every string below is repo-derived and passes through
+      # `escape_control_chars` before it is colorized, so an escape sequence
+      # embedded in a route or a param name is shown rather than executed by
+      # the reader's terminal. Colorize's own codes are added afterwards and
+      # so are never touched.
+      r_method = escape_control_chars(endpoint.method).colorize(r_method_color).toggle(@is_color)
+      safe_url = escape_control_chars(baked[:url])
 
       r_buffer = String::Builder.new
       if mobile_label = MOBILE_PROTOCOL_LABELS[endpoint.protocol]?
         # intent:// is a synthetic scheme used so the optimizer treats
         # component names as absolute URLs; hide it in the text output.
-        display_url = baked[:url].lchop("intent://")
+        display_url = safe_url.lchop("intent://")
         r_label = mobile_label.colorize(:light_blue).toggle(@is_color)
         r_url = display_url.colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_label} #{r_url}"
       elsif endpoint.kind.empty?
-        r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
+        r_url = safe_url.colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_method} #{r_url}"
       else
-        r_kind = "[#{endpoint.kind}]".colorize(:light_magenta).toggle(@is_color)
-        r_name = baked[:url].lstrip('/').colorize(:light_yellow).toggle(@is_color)
+        r_kind = "[#{escape_control_chars(endpoint.kind)}]".colorize(:light_magenta).toggle(@is_color)
+        r_name = safe_url.lstrip('/').colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_method} #{r_kind} #{r_name}"
       end
 
@@ -139,9 +151,22 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << " [#{status_code}]".to_s.colorize(status_color).toggle(@is_color).to_s
       end
 
-      if endpoint.protocol == "ws"
-        r_ws = "[websocket]".colorize(:light_red).toggle(@is_color)
-        r_buffer << " #{r_ws}"
+      # The protocol was visible for websockets only, so an AsyncAPI Kafka
+      # topic, an MQTT channel, an AMQP queue, a gRPC/Connect method and an
+      # nginx `listen 443 ssl` route all printed as if they were plain HTTP —
+      # a distinction `-f json` and `-f markdown-table` both carry.
+      if badge = protocol_badge(endpoint)
+        r_protocol = "[#{escape_control_chars(badge)}]".colorize(:light_red).toggle(@is_color)
+        r_buffer << " #{r_protocol}"
+      end
+
+      # `internal` marks an endpoint the application *calls* — a Spring Feign
+      # or `@HttpExchange` declarative client — rather than one it serves.
+      # Only the structured formats said so, so a client stub read here as
+      # attack surface.
+      if endpoint.internal
+        r_internal = "[internal]".colorize(:dark_gray).toggle(@is_color)
+        r_buffer << " #{r_internal}"
       end
 
       PARAM_TREE_FIELDS.each do |param_type, label, separator|
@@ -172,15 +197,24 @@ class OutputBuilderCommon < OutputBuilder
         append_field r_buffer, label, selected.map(&.name).join(", "), :cyan unless selected.empty?
       end
 
+      # Same tree shape as headers/cookies but cyan, and with no
+      # "[unresolved]" marker even on params carrying that tag.
+      form_entries = endpoint.params.select { |p| p.request_type == "form" }.map do |param|
+        param.value.empty? ? param.name : "#{param.name}=#{param.value}"
+      end
+
       if baked[:body_type] == "form"
-        # Same tree shape as headers/cookies but cyan, and with no
-        # "[unresolved]" marker even on params carrying that tag.
-        form_entries = endpoint.params.select { |p| p.request_type == "form" }.map do |param|
-          param.value.empty? ? param.name : "#{param.name}=#{param.value}"
-        end
         append_tree_field r_buffer, "body", form_entries, :cyan
-      elsif !baked[:body].empty?
-        append_field r_buffer, "body", baked[:body], :cyan
+      else
+        append_field r_buffer, "body", baked[:body], :cyan unless baked[:body].empty?
+        # An endpoint whose handler reads both a JSON body and form fields
+        # (`c.Request.PostFormValue` next to `c.BindJSON`, say) has params of
+        # both kinds, but `bake_endpoint` has one `body` slot and JSON wins
+        # it — so every form param on such an endpoint was dropped from this
+        # report while `-f json` and `-f markdown-table` still listed it.
+        # Render them under their own type name, the same convention the
+        # leftover-bucket rows below use, rather than a second "body" row.
+        append_tree_field r_buffer, "form", form_entries, :cyan
       end
 
       # Anything left is still a named input the endpoint reads (multipart
@@ -202,6 +236,14 @@ class OutputBuilderCommon < OutputBuilder
       endpoint.tags.each do |tag|
         tags << tag.name.to_s
       end
+
+      # Deduped by name, the way `-f only-tag` already does it. `add_tag`
+      # dedupes by (name, tagger), so one endpoint legitimately carries three
+      # distinct `graphql-return` tags from three analyzers — and this row,
+      # which prints names only, rendered them as "graphql-return
+      # graphql-return graphql-return". 45 rows in the fixture tree repeated a
+      # name they had nothing left to tell apart by.
+      tags = tags.uniq
 
       # Space-joined, unlike every other multi-value row above, which uses ", ".
       append_field r_buffer, "tags", tags.join(" "), :light_magenta unless tags.empty?
@@ -248,9 +290,13 @@ class OutputBuilderCommon < OutputBuilder
           end
         end
       elsif any_to_bool(@options["include_callee"]?) && !endpoint.callees.empty?
-        callee_entries = endpoint.callees.map do |callee|
-          callee.line ? "#{callee.name} (line #{callee.line})" : callee.name
-        end
+        # `format_noir_callee`, the same renderer the OpenAPI/Postman
+        # descriptions use, so the location is spelled one way everywhere.
+        # This row used to build its own `name (line N)` and drop
+        # `callee.path` — and a callee almost always lives in the handler
+        # file, not the route file printed on the `file:` row just above, so
+        # a bare line number pointed the reader at the wrong file.
+        callee_entries = endpoint.callees.map { |callee| format_noir_callee(callee) }
         append_tree_field r_buffer, "callees", callee_entries, :light_cyan
       end
 
@@ -258,10 +304,20 @@ class OutputBuilderCommon < OutputBuilder
     end
   end
 
+  # The badge to print after the endpoint line, or nil when the protocol adds
+  # nothing. `ws` keeps the spelled-out "websocket" it has always had.
+  private def protocol_badge(endpoint : Endpoint) : String?
+    protocol = endpoint.protocol
+    return if SILENT_PROTOCOLS.includes?(protocol)
+
+    protocol == "ws" ? "websocket" : protocol
+  end
+
   # One `○ <label>: <value>` row under the endpoint line. `color` is nil for
   # the one row that is printed uncolorized.
   private def append_field(r_buffer : String::Builder, label : String, value : String, color : Symbol?)
-    r_buffer << "\n  ○ " << label << ": "
+    value = escape_control_chars(value)
+    r_buffer << "\n  ○ " << escape_control_chars(label) << ": "
     if color
       r_buffer << value.colorize(color).toggle(@is_color)
     else
@@ -275,10 +331,10 @@ class OutputBuilderCommon < OutputBuilder
   private def append_tree_field(r_buffer : String::Builder, label : String, entries : Array(String), color : Symbol)
     return if entries.empty?
 
-    r_buffer << "\n  ○ " << label << ": "
+    r_buffer << "\n  ○ " << escape_control_chars(label) << ": "
     entries.each_with_index do |entry, index|
       prefix = index == entries.size - 1 ? "└── " : "├── "
-      r_buffer << "\n    " << "#{prefix}#{entry}".colorize(color).toggle(@is_color)
+      r_buffer << "\n    " << "#{prefix}#{escape_control_chars(entry)}".colorize(color).toggle(@is_color)
     end
   end
 
@@ -297,7 +353,7 @@ class OutputBuilderCommon < OutputBuilder
 
     r_buffer << "\n    - #{label}:"
     entries.each do |entry|
-      r_entry = format_ai_context_entry(entry).colorize(:light_cyan).toggle(@is_color)
+      r_entry = escape_control_chars(format_ai_context_entry(entry)).colorize(:light_cyan).toggle(@is_color)
       r_buffer << "\n      * #{r_entry}"
     end
   end
