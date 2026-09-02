@@ -233,6 +233,22 @@ describe "OutputBuilderCommon" do
     output.should contain("○ form:")
     output.should contain("username")
   end
+
+  it "renders the value of a path param" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/v1/users/:userId", "GET")
+    endpoint.push_param(Param.new("userId", "Integer", "path"))
+    endpoint.push_param(Param.new("bare", "", "path"))
+    # Giraffe's `%i` names a segment after its own type; "int=int" adds nothing.
+    endpoint.push_param(Param.new("int", "int", "path"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("○ path: userId=Integer, bare, int")
+  end
 end
 
 # Every flag off: the plain builder reads each of these with `[]?`, but the

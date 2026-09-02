@@ -289,7 +289,17 @@ class OutputBuilder
         end
 
         if param.request_type == "path"
-          final_path_params << "#{param.name}"
+          # `name=value`, like the cookie row and the form body below. The
+          # value was dropped here, so the plain report printed a bare
+          # `path: userId` while `-f json` carried `"value": "Integer"` —
+          # 42 path params across the fixture tree lost the only thing the
+          # analyzer knew about them beyond the name.
+          #
+          # A value equal to the name is skipped: Giraffe's `%i`/`%s` route
+          # format names a segment after its own type, and `path: int=int`
+          # says nothing the name did not.
+          redundant_value = param.value.empty? || param.value == param.name
+          final_path_params << (redundant_value ? param.name : "#{param.name}=#{param.value}")
         end
 
         if param.request_type == "header"
