@@ -573,17 +573,20 @@ module Noir::CLI::ScanCommand
     else
       app.logger.success "Detected #{app.techs.size} technologies."
 
-      exclude_techs = app.options["exclude_techs"].to_s.split(",")
+      # Alias-resolved once, then matched by identity. `--exclude-techs`
+      # used to ask `similar_to_tech(entry).includes?(tech)`, a substring
+      # test that also dropped every tech whose name is a prefix of the
+      # excluded one — `--exclude-techs python_django_ninja` took
+      # `python_django` with it. See `NoirTechs.resolve_tech_list`.
+      exclude_techs = NoirTechs.resolve_tech_list(app.options["exclude_techs"].to_s).to_set
       app.techs.each_with_index do |tech, index|
-        is_excluded = exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
+        is_excluded = exclude_techs.includes?(tech)
         prefix = index < app.techs.size - 1 ? "├──" : "└──"
         status = is_excluded ? " (skip)" : ""
         app.logger.sub "#{prefix} #{tech}#{status}"
       end
 
-      app.techs = app.techs.reject do |tech|
-        exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
-      end
+      app.techs = app.techs.reject { |tech| exclude_techs.includes?(tech) }
       analysis_message = "Starting code analysis based on the detected technologies."
     end
 

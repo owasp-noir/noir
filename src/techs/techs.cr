@@ -238,6 +238,34 @@ module NoirTechs
     ""
   end
 
+  # The canonical tech keys named by a comma-separated flag value
+  # (`-t/--techs`, `--only-techs`, `--exclude-techs`). Entries are stripped
+  # before resolution and unresolvable ones drop out.
+  #
+  # Both halves of that used to be re-typed at each call site, and two of
+  # the three got them wrong:
+  #
+  #   * `--exclude-techs` and `-t` split on `,` without stripping, so
+  #     `--exclude-techs "js_express, python_flask"` resolved `" python_flask"`
+  #     — with the leading space — against the alias table, found nothing,
+  #     and silently excluded only the first entry. `--only-techs` stripped,
+  #     and so did the validator, so the typo passed validation and then did
+  #     nothing.
+  #   * `--exclude-techs` compared with
+  #     `similar_to_tech(entry).includes?(tech)` — a *substring* test on the
+  #     canonical name. `--exclude-techs python_django_ninja` therefore also
+  #     dropped `python_django`, `--exclude-techs go_httprouter` dropped
+  #     `go_http`, and so on for every key that is a prefix of another.
+  #
+  # Returning resolved keys lets callers compare with `==` / a Set, which is
+  # what "exclude this tech" has always meant.
+  def self.resolve_tech_list(raw : String) : Array(String)
+    raw.split(',').compact_map do |entry|
+      resolved = similar_to_tech(entry.strip)
+      resolved.empty? ? nil : resolved
+    end
+  end
+
   def self.context_supported?(tech : String, feature : String) : Bool
     case feature
     when "callee"
