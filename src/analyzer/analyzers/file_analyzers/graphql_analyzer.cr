@@ -1,7 +1,7 @@
 require "../../../models/analyzer"
 require "../../../models/endpoint"
+require "../../../models/skipped_files"
 require "json"
-require "log"
 require "../../../utils/text_file"
 
 # Parses GraphQL *operation documents* (`query Foo { ... }`,
@@ -187,7 +187,19 @@ FileAnalyzer.add_hook(->(path : String, _url : String) : Array(Endpoint) {
   begin
     file_content = Noir::TextFile.read(path)
   rescue ex
-    Log.debug { "GraphQL Analyzer: Error reading file #{path}: #{ex.message} (#{ex.class})" }
+    # The hook's own rescue is what keeps one unreadable `.graphql` file
+    # from costing the whole analysis pass, but it also hides the loss
+    # from `FileAnalyzer`'s per-file rescue, which is what normally
+    # records a skipped file. Record it here instead, so the drop shows up
+    # in `errors` and under `--strict` like every other skipped file.
+    #
+    # This was a `Log.debug` on Crystal's global `Log`, whose default
+    # backend writes to STDOUT — the stream the `-f json` / `-f sarif`
+    # report goes out on. Nothing in Noir lowers that logger's `Info`
+    # threshold either, so the line could never actually appear: a
+    # diagnostic pointed at the report stream that also reported nothing.
+    Noir::SkippedFiles.record(
+      "file_analyzer", path, "#{ex.message.presence || ex.class.name} (#{ex.class})")
     return [] of Endpoint # Return empty if read fails
   end
 

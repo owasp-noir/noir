@@ -1,4 +1,5 @@
 require "../../spec_helper"
+require "file_utils"
 require "json"
 
 # End-to-end specs for the CLI front door, driven through the *built
@@ -15,6 +16,51 @@ private BINARY    = File.join(REPO_ROOT, "bin", "noir")
 private FIXTURE   = File.join(REPO_ROOT, "spec", "functional_test", "fixtures", "ruby", "sinatra")
 
 private record CliRun, stdout : String, stderr : String, exit_code : Int32
+
+# A HAR whose `startedDateTime` and cookie `expires` are not ISO-8601.
+# Browsers and capture proxies do emit such files, and the `har` shard reports
+# each one through Crystal's *global* `Log` — whose default backend writes to
+# STDOUT. So `noir scan ./captures -f json` printed a WARN line *and a full
+# Crystal backtrace* ahead of the JSON document, and `| jq .` died with
+# `Invalid numeric literal at line 1, column 14`.
+#
+# Neither the warning nor the shard is Noir's to change, which is the point:
+# the fix is the process-entry redirect in `Router.dispatch`
+# (`Noir::CLI.route_library_logs_to_stderr!`), so third-party logging cannot
+# reach the report stream no matter who does it. Driven through the built
+# binary because that redirect is a real-stream property — the spec runner's
+# own `Log` is set to `:none`, so nothing in-process can observe it.
+private BAD_TIMESTAMP_HAR = <<-HAR
+  {
+    "log": {
+      "version": "1.2",
+      "creator": { "name": "spec", "version": "1" },
+      "entries": [
+        {
+          "startedDateTime": "not-a-timestamp",
+          "request": {
+            "bodySize": 0, "method": "GET",
+            "url": "https://www.example.com/api/users",
+            "httpVersion": "HTTP/1.1",
+            "headers": [{ "name": "Host", "value": "www.example.com" }],
+            "cookies": [{ "name": "sid", "value": "abc",
+                          "expires": "Wed, 21 Oct 2015 07:28:00 GMT" }],
+            "queryString": [{ "name": "page", "value": "1" }],
+            "headersSize": -1
+          },
+          "response": {
+            "status": 200, "statusText": "OK", "httpVersion": "HTTP/1.1",
+            "headers": [], "cookies": [],
+            "content": { "size": 0, "mimeType": "application/json" },
+            "redirectURL": "", "headersSize": -1, "bodySize": 0
+          },
+          "cache": {}, "timings": { "send": 0, "wait": 0, "receive": 0 },
+          "time": 0
+        }
+      ]
+    }
+  }
+  HAR
 
 private def run_noir(args : Array(String)) : CliRun
   stdout = IO::Memory.new
@@ -309,6 +355,27 @@ describe "noir CLI surface (built binary)" do
       urls = JSON.parse(result.stdout)["endpoints"].as_a.map(&.["url"].as_s)
       urls.empty?.should be_false
       urls.all?(&.starts_with?("http://localhost:3000/")).should be_true
+    end
+  end
+
+  describe "stdout purity" do
+    it "keeps a third-party warning out of the report stream" do
+      dir = File.join(Dir.tempdir, "noir-stdout-purity-#{Random.rand(100_000)}")
+      Dir.mkdir_p(dir)
+      begin
+        File.write(File.join(dir, "capture.har"), BAD_TIMESTAMP_HAR)
+        result = run_noir(["scan", dir, "-f", "json", "--no-log"])
+
+        result.exit_code.should eq(0)
+        # The whole point: stdout parses, and it is the report.
+        JSON.parse(result.stdout)["endpoints"].as_a
+          .map(&.["url"].as_s)
+          .should contain("https://www.example.com/api/users")
+        # ...and the diagnostic is not lost, it moved to the other stream.
+        result.stderr.should contain("Unable to parse timestamp")
+      ensure
+        FileUtils.rm_rf(dir)
+      end
     end
   end
 

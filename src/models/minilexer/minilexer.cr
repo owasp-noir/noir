@@ -67,18 +67,23 @@ class MiniLexer
     @tokens.select { |token| token.type == token_type }
   end
 
-  def trace
+  # Token dump for debugging a lexer by hand. Written to STDERR, like every
+  # other Noir diagnostic: STDOUT carries the report, so a `puts` here would
+  # land in the middle of a `-f json` / `-f sarif` document the moment anyone
+  # called this from inside a scan. Nothing calls it today, which is exactly
+  # why the stream it writes to has to be right before someone does.
+  def trace(io : IO = STDERR)
     line_number = -1
     lines = @input.split "\n"
-    puts "Line Size: #{lines.size}, Token Count: #{tokens.size}"
+    io.puts "Line Size: #{lines.size}, Token Count: #{tokens.size}"
     @tokens.each do |token|
       if line_number != token.line
         line_number = token.line
-        puts "\nLine #{token.line}: " + lines[line_number - 1]
+        io.puts "\nLine #{token.line}: " + lines[line_number - 1]
         next if token.type == :NEWLINE # Skip newline token
       end
 
-      puts token.to_s
+      io.puts token.to_s
     end
   end
 end
