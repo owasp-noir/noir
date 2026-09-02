@@ -133,6 +133,15 @@ version-check:
 version-update VERSION="":
     @if [ -z "{{VERSION}}" ]; then crystal run scripts/version_update.cr; else crystal run scripts/version_update.cr -- {{VERSION}}; fi
 
+# The release workflow does this automatically; run it by hand to backfill an
+# older tag or retry a failed run. Extra flags are passed through, so
+# `just www-release v1.3.1 --dry-run` previews the edit without pushing.
+#
+# Add a release to the OWASP project page version list and open a PR upstream.
+[group('development')]
+www-release VERSION *ARGS:
+    scripts/update_www_release.sh {{VERSION}} {{ARGS}}
+
 # Run benchmarks to compare global and local noir binaries on a large mock codebase.
 [group('development')]
 benchmark: build-release

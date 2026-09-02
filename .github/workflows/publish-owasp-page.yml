@@ -1,0 +1,43 @@
+---
+name: OWASP Project Page Publish
+# The version list on https://owasp.org/www-project-noir/ lives in
+# _data/release.yml of OWASP/www-project-noir. After every stable release this
+# adds the new tag through the owasp-noir fork and opens a pull request upstream.
+#
+# Re-running is safe: a tag that is already listed produces no second PR.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to add (e.g. v1.3.1)"
+        required: true
+        type: string
+      keep:
+        description: "How many versions the list keeps"
+        required: false
+        default: "5"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  update-project-page:
+    name: Add the release to the project page
+    # Pre-releases are not announced on the project page.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Add the version and open a pull request
+        env:
+          # Needs push access to owasp-noir/www-project-noir; opening the PR
+          # against the public upstream repository needs nothing beyond that.
+          GH_TOKEN: ${{ secrets.NOIR_PUBLISH_TOKEN }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          KEEP: ${{ inputs.keep || '5' }}
+        run: scripts/update_www_release.sh "$TAG" --keep "$KEEP"
