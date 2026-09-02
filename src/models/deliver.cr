@@ -229,25 +229,27 @@ class Deliver
   protected def probe_url(endpoint : Endpoint, request_method : String) : String
     return endpoint.url unless PROBE_PATH_FILL_METHODS.includes?(request_method.upcase)
 
-    url = endpoint.url
-    # Longest name first. The `:name` form has no closing delimiter, so a
-    # param whose name merely *starts with* another's used to be eaten by the
-    # shorter substitution in declaration order: Express `/u/:id/:idx` with
-    # params [id, idx] was probed as `/u/1/1x`, a path the app does not route.
-    path_params = endpoint.params.select { |param| param.param_type == "path" }
-    path_params.sort_by! { |param| -param.name.size }
-
-    path_params.each do |param|
+    fillers = {} of String => String
+    endpoint.params.each do |param|
+      next unless param.param_type == "path"
       # A non-empty value means --set-pvalue-path already applied and the
       # optimizer substituted it; nothing left to fill.
       next unless param.value.empty?
       next if param.name.empty?
 
-      filler = NUMERIC_PATH_PARAM_RE.matches?(param.name) ? "1" : "noir"
-      escaped = Regex.escape(param.name)
-      # `{name}` and `<name>` are delimited, so a plain replace is safe.
-      url = url.gsub("{#{param.name}}", filler)
-      url = url.gsub("<#{param.name}>", filler)
+      fillers[param.name] = NUMERIC_PATH_PARAM_RE.matches?(param.name) ? "1" : "noir"
+    end
+    return endpoint.url if fillers.empty?
+
+    url = fill_delimited_path_params(endpoint.url, fillers)
+
+    # Longest name first. The `:name` form has no closing delimiter, so a
+    # param whose name merely *starts with* another's used to be eaten by the
+    # shorter substitution in declaration order: Express `/u/:id/:idx` with
+    # params [id, idx] was probed as `/u/1/1x`, a path the app does not route.
+    fillers.keys.sort_by! { |name| -name.size }.each do |name|
+      filler = fillers[name]
+      escaped = Regex.escape(name)
       # `:name` only counts at a segment boundary. Anchoring to a preceding
       # `/` keeps the scheme/port colon in `http://host:8080` and embedded
       # example text like `/profiles/celeb_:USERNAME` out of it. The trailing
@@ -258,6 +260,87 @@ class Deliver
     end
 
     url
+  end
+
+  # Replaces every `{...}` / `<...>` placeholder whose name is a fillable path
+  # param. A plain `gsub("{#{name}}")` only ever matched the bare form, so the
+  # typed and constrained spellings frameworks put *around* the name survived
+  # into the request and the probe hit a literal template:
+  #
+  #   Django / Flask  `<int:pk>`, `<str:module>`, `<path:subpath>`
+  #   chi / gorilla   `{sha:[a-f0-9]{7,64}}`
+  #   FastAPI         `{file_path:path}`
+  #   Ktor            `{segments...}`
+  #   ASP.NET / Rails `{*slug}`, `{slug*}`
+  #
+  # A brace constraint can itself contain braces (`{7,64}`), so the closing
+  # delimiter is found by depth counting rather than by a regex.
+  private def fill_delimited_path_params(url : String, fillers : Hash(String, String)) : String
+    return url unless url.includes?('{') || url.includes?('<')
+
+    chars = url.chars
+    filled = String::Builder.new(url.bytesize)
+    index = 0
+    while index < chars.size
+      open = chars[index]
+      close = case open
+              when '{' then '}'
+              when '<' then '>'
+              end
+      if close.nil?
+        filled << open
+        index += 1
+        next
+      end
+
+      depth = 1
+      cursor = index + 1
+      while cursor < chars.size
+        char = chars[cursor]
+        if char == open
+          depth += 1
+        elsif char == close
+          depth -= 1
+          break if depth.zero?
+        end
+        cursor += 1
+      end
+
+      if depth.zero?
+        body = chars[(index + 1)...cursor].join
+        # The raw body first: an analyzer that reports the decorated
+        # spelling as the param name (Ktor's `segments...`) still gets
+        # its placeholder filled, exactly as the old literal replace did.
+        name = fillers.has_key?(body) ? body : placeholder_param_name(body, open == '{')
+        if name && (filler = fillers[name]?)
+          filled << filler
+          index = cursor + 1
+          next
+        end
+      end
+
+      filled << open
+      index += 1
+    end
+
+    filled.to_s
+  end
+
+  # The param name inside one placeholder body, or nil when there is none.
+  # A colon separates the name from a type or a regex constraint, but the two
+  # families put it on opposite sides: `<int:pk>` names the converter first,
+  # `{sha:[a-f0-9]+}` names the param first.
+  private def placeholder_param_name(body : String, braces : Bool) : String?
+    return if body.empty?
+
+    name = body
+    if colon = name.index(':')
+      name = braces ? name[0, colon] : name[(colon + 1)..]
+    end
+    # Tail-card, catch-all and optional markers decorate the bare name.
+    name = name.rchop("...")
+    name = name.strip("*?")
+    name.empty? ? nil : name
   end
 
   # Headers for one probe: the analyzer-discovered `header` and `cookie`

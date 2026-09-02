@@ -80,6 +80,53 @@ describe "Deliver#probe_url" do
       angles = path_endpoint("http://h/u/<id>/<idx>", "id", "idx")
       probe.url_for(angles).should eq("http://h/u/1/1")
     end
+
+    # The bug: only the bare `{name}` / `<name>` spellings were filled, so
+    # every framework that types or constrains the placeholder was probed as
+    # a literal template. NetBox alone reports 165 such routes.
+    it "fills a Django/Flask converter placeholder" do
+      probe.url_for(path_endpoint("http://h/dcim/devices/<int:pk>/", "pk"))
+        .should eq("http://h/dcim/devices/1/")
+      probe.url_for(path_endpoint("http://h/media/<path:path>", "path"))
+        .should eq("http://h/media/noir")
+    end
+
+    it "fills two converter placeholders sharing one segment" do
+      endpoint = path_endpoint("http://h/extras/scripts/<str:module>.<str:name>/", "module", "name")
+      probe.url_for(endpoint).should eq("http://h/extras/scripts/noir.noir/")
+    end
+
+    # The constraint carries its own braces, so the closing delimiter cannot
+    # be found by scanning to the first `}`.
+    it "fills a chi/gorilla regex-constrained placeholder" do
+      endpoint = path_endpoint("http://h/{user}/repo/commit/{sha:[a-f0-9]{7,64}}", "user", "sha")
+      probe.url_for(endpoint).should eq("http://h/noir/repo/commit/noir")
+    end
+
+    it "fills a FastAPI typed placeholder" do
+      probe.url_for(path_endpoint("http://h/files/{file_path:path}", "file_path"))
+        .should eq("http://h/files/noir")
+    end
+
+    it "fills tail-card and catch-all decorations" do
+      probe.url_for(path_endpoint("http://h/static/{segments...}", "segments"))
+        .should eq("http://h/static/noir")
+      probe.url_for(path_endpoint("http://h/blob/{*slug}", "slug"))
+        .should eq("http://h/blob/noir")
+      probe.url_for(path_endpoint("http://h/blob/{slug*}", "slug"))
+        .should eq("http://h/blob/noir")
+    end
+
+    it "leaves a typed placeholder naming an undeclared param alone" do
+      # Only `pk` is a real param, so the neighbouring converter is not a
+      # placeholder this endpoint knows about and must survive untouched.
+      endpoint = path_endpoint("http://h/a/<int:pk>/<slug:other>/", "pk")
+      probe.url_for(endpoint).should eq("http://h/a/1/<slug:other>/")
+    end
+
+    it "leaves an unbalanced brace alone" do
+      probe.url_for(path_endpoint("http://h/u/{id", "id")).should eq("http://h/u/{id")
+    end
   end
 
   it "leaves the template alone for destructive verbs" do
