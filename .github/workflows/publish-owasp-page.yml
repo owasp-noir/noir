@@ -35,9 +35,13 @@ jobs:
 
       - name: Add the version and open a pull request
         env:
-          # Needs push access to owasp-noir/www-project-noir; opening the PR
-          # against the public upstream repository needs nothing beyond that.
-          GH_TOKEN: ${{ secrets.NOIR_PUBLISH_TOKEN }}
+          # Needs push access to owasp-noir/www-project-noir and the ability to
+          # open a pull request against OWASP/www-project-noir. The OWASP
+          # Foundation enterprise rejects fine-grained tokens with a lifetime
+          # over 366 days, and a fine-grained token cannot open a pull request
+          # on a repository outside its own owner, so this prefers a dedicated
+          # token and falls back to the shared publish token.
+          GH_TOKEN: ${{ secrets.NOIR_WWW_TOKEN || secrets.NOIR_PUBLISH_TOKEN }}
           TAG: ${{ inputs.tag || github.event.release.tag_name }}
           KEEP: ${{ inputs.keep || '5' }}
         run: scripts/update_www_release.sh "$TAG" --keep "$KEEP"

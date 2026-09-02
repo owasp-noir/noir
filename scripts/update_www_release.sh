@@ -90,6 +90,17 @@ if [[ "$can_push" != "true" ]]; then
   needs no extra permission beyond that."
 fi
 
+# Opening the pull request writes to a repository the OWASP Foundation
+# enterprise owns, and that enterprise applies its own token policy on top of
+# the token's own permissions. Probe it here so the log says up front whether
+# the last step can work; the edit and the push to the fork are worth doing
+# either way, since the pull request can then be opened from a browser.
+upstream_probe="$(gh api "repos/$UPSTREAM_REPO" --jq '.id' 2>&1 >/dev/null || true)"
+if [[ -n "$upstream_probe" ]]; then
+  echo "warning: the token cannot read $UPSTREAM_REPO, so opening the pull request will likely fail:" >&2
+  echo "  $upstream_probe" >&2
+fi
+
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
@@ -107,7 +118,12 @@ if [[ -n "$open_prs" ]]; then
 fi
 
 echo "==> Cloning $FORK_REPO"
-gh repo clone "$FORK_REPO" "$WORKDIR/repo" -- --depth 1 --branch "$BASE_BRANCH" --quiet
+# Plain git rather than `gh repo clone`: gh resolves the fork's parent over
+# GraphQL to attach an upstream remote, and the OWASP Foundation enterprise
+# rejects that lookup for tokens its policy does not accept. The fork is
+# public, so an unauthenticated shallow clone is all this step needs.
+git clone --quiet --depth 1 --branch "$BASE_BRANCH" \
+  "https://github.com/${FORK_REPO}.git" "$WORKDIR/repo"
 cd "$WORKDIR/repo"
 
 [[ -f "$DATA_FILE" ]] || die "$DATA_FILE not found in $FORK_REPO"
@@ -201,7 +217,15 @@ else
   if [[ -n "$existing_pr" ]]; then
     echo "==> Pull request already open: $existing_pr"
   else
+    # The commit is already on the fork, so the work is not lost: opening the
+    # pull request by hand is one click away. Creating it through the API needs
+    # pull-request write access to a repository the token's owner does not own,
+    # which a fine-grained token cannot hold - that is a token choice, not
+    # something this script can retry its way out of.
     echo "$pr_url" >&2
+    echo "" >&2
+    echo "The branch is pushed. Open the pull request here:" >&2
+    echo "  https://github.com/$UPSTREAM_REPO/compare/$BASE_BRANCH...$FORK_OWNER:$BRANCH?expand=1" >&2
     die "failed to open the pull request"
   fi
 fi
