@@ -6,6 +6,7 @@ require "json"
 require "yaml"
 require "../../models/locator_keys"
 require "../../utils/media_filter"
+require "../../utils/spec_line_index"
 require "../../utils/yaml"
 
 module Analyzer::Specification
@@ -128,6 +129,26 @@ module Analyzer::Specification
       each_spec_file(key) do |path|
         block.call(path, Details.new(PathInfo.new(path)))
       end
+    end
+
+    # `Details` for one operation of a specification document: the same
+    # document `details` names, plus the line the operation is declared on.
+    #
+    # Falls back to `details` untouched when the index has no line for the
+    # key path — an operation reached through a `$ref` is declared in the
+    # file the ref points at, not at `paths/<path>/<method>` of this one, and
+    # a wrong line a reviewer would trust is worse than no line at all.
+    #
+    # A fresh `Details` per operation also stops every endpoint of a document
+    # sharing one `code_paths` array by reference.
+    protected def operation_details(details : Details,
+                                    index : Noir::SpecLineIndex,
+                                    keys : Array(String)) : Details
+      path_info = details.code_paths.first?
+      return details unless path_info
+      line = index.line(keys)
+      return details unless line
+      Details.new(PathInfo.new(path_info.path, line))
     end
 
     # `scheme://` prefix of an absolute URL. `//host/path` is deliberately not
