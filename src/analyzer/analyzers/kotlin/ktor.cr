@@ -75,6 +75,18 @@ module Analyzer::Kotlin
       name.count('.') >= 2
     end
 
+    # The parameter name inside one Ktor placeholder. Ktor spells the
+    # tailcard as `{name...}` and the optional as `{name?}`, but the
+    # handler still reads `call.parameters["name"]` — the decoration
+    # describes the segment, not the parameter. Emitting the raw body
+    # produced params literally named `segments...` and `name?`, which
+    # no probe or spec fill could ever match. `{...}` is the anonymous
+    # tailcard and names nothing.
+    private def ktor_path_param_name(body : String) : String?
+      name = body.rchop("...").rchop("?")
+      name.empty? ? nil : name
+    end
+
     private def build_endpoint(route : Noir::TreeSitterKotlinKtorRouteExtractor::Route, path : String) : Endpoint
       details = Details.new(PathInfo.new(path, route.line + 1))
       params = [] of Param
@@ -85,8 +97,10 @@ module Analyzer::Kotlin
       # URL string, but emitting here keeps parity with the legacy
       # analyzer.
       route.path.scan(/\{([^}]+)\}/) do |match|
-        path_param_names << match[1]
-        params << Param.new(match[1], "", "path")
+        name = ktor_path_param_name(match[1])
+        next unless name
+        path_param_names << name
+        params << Param.new(name, "", "path")
       end
 
       if rt = route.receive_type

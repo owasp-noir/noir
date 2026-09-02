@@ -976,23 +976,43 @@ module Noir
       #
       # Wrap the interpolated identifier/expression in `{…}` so the
       # placeholder is preserved and the downstream path-param
-      # extractor picks it up.
+      # extractor picks it up — unless the literal already opened a
+      # Ktor placeholder around it. `get("{$name...}")` names its own
+      # path param through a variable, so the surrounding text supplies
+      # the braces; wrapping unconditionally doubled them and produced
+      # the URL `/{{name}...}` with the path param `{name`.
       buf = String.build do |io|
+        in_placeholder = false
         Noir::TreeSitter.each_named_child(node) do |child|
           case Noir::TreeSitter.node_type(child)
           when "string_content"
-            io << Noir::TreeSitter.node_text(child, source)
+            text = Noir::TreeSitter.node_text(child, source)
+            io << text
+            in_placeholder = trailing_placeholder_open?(in_placeholder, text)
           when "interpolated_identifier", "interpolated_expression"
             # node_text for these children is the identifier / inner
             # expression with the leading `$` (and `{…}` for the
             # expression form) already stripped by the grammar.
-            io << '{'
+            io << '{' unless in_placeholder
             io << Noir::TreeSitter.node_text(child, source).strip
-            io << '}'
+            io << '}' unless in_placeholder
           end
         end
       end
       buf
+    end
+
+    # Whether a `{` opened by the literal's own text is still unclosed
+    # after `text`. Ktor placeholders never nest, so the last delimiter
+    # seen decides.
+    private def trailing_placeholder_open?(open : Bool, text : String) : Bool
+      text.each_char do |char|
+        case char
+        when '{' then open = true
+        when '}' then open = false
+        end
+      end
+      open
     end
 
     # ---- handler-body scan -------------------------------------------

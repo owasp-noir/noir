@@ -40,6 +40,21 @@ expected_endpoints = [
   # Documented with the OpenAPI DSL: one GET route, and no QUERY route per
   # documented query parameter.
   Endpoint.new("/stream-bytes", "GET"),
+  # Ktor's placeholder decorations describe the segment, not the parameter:
+  # the handler reads `call.parameters["segments"]`, so `segments...` was
+  # never a name anything could match. `{...}` is anonymous and names none.
+  Endpoint.new("/listing/{segments...}", "GET", [
+    Param.new("segments", "", "path"),
+  ]),
+  Endpoint.new("/optional/{slug?}", "GET", [
+    Param.new("slug", "", "path"),
+  ]),
+  Endpoint.new("/anonymous/{...}", "GET"),
+  # The literal opens the placeholder itself and interpolates only the name,
+  # so the interpolation must not add a second pair of braces.
+  Endpoint.new("/interpolated/{tail...}", "GET", [
+    Param.new("tail", "", "path"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/kotlin/ktor/", {
