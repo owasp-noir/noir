@@ -440,6 +440,24 @@ describe Noir::JSRouteExtractor do
       ).should be_false
     end
 
+    it "skips files importing fetch-mock without an HTTP server lib" do
+      # `fetchMock.get(pattern, response)` is the same shape as a route
+      # registration, so Superset's client test setup reported its glob
+      # patterns as Express routes: `GET /glob:*api/v1/security/csrf_token/*`.
+      content = <<-JS
+        import fetchMock from 'fetch-mock';
+        import { SupersetClient } from '@superset-ui/core';
+
+        export default function setupClientForTest() {
+          fetchMock.get('glob:*api/v1/security/csrf_token/*', { result: '1234' });
+        }
+        JS
+      Noir::JSRouteExtractor.test_stub_only?(
+        "/app/packages/core/test/query/api/setupClientForTest.ts",
+        content
+      ).should be_true
+    end
+
     it "skips strict-filename test markers unconditionally" do
       # Filenames like `foo.test.ts` / `bar.e2e-spec.ts` never
       # define real routes — even when the file imports an HTTP
