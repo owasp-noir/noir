@@ -146,6 +146,30 @@ describe "noir CLI surface (built binary)" do
       end
     end
 
+    # A tech flag given nothing is stored as `""` — indistinguishable, in
+    # the options hash, from the flag never being typed. `--only-techs ""`
+    # therefore asked to restrict the scan and silently widened it back to
+    # every technology, which is what a CI job passing `--only-techs
+    # "$TECHS"` gets when `$TECHS` is unset. `--only-techs ,` went the other
+    # way: no detector ran, zero endpoints, exit 0, no word about why.
+    it "rejects a tech flag that names no technology" do
+      {
+        {"--only-techs", ""}, {"--only-techs", "  "}, {"--only-techs", ","},
+        {"--exclude-techs", ""}, {"--exclude-techs", ",,"},
+        {"-t", ""}, {"--techs", " "},
+      }.each do |(flag, value)|
+        result = run_noir(["scan", FIXTURE, flag, value, "-f", "json", "--no-log"])
+        result.stdout.should be_empty
+        result.stderr.should contain(flag == "-t" ? "--techs" : flag)
+        result.exit_code.should eq(1)
+      end
+
+      result = run_noir(["scan", FIXTURE, "--only-techs=", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("--only-techs")
+      result.exit_code.should eq(1)
+    end
+
     it "still fails a CLI-typed --status-codes without a URL" do
       result = run_noir(["scan", FIXTURE, "--status-codes", "-f", "json", "--no-log"])
       result.stdout.should be_empty

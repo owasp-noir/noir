@@ -72,6 +72,7 @@ module Noir::CLI::ScanCommand
     normalize_probe_via!(noir_options)
     validate_url_dependent_flags(noir_options, cli_flags)
     validate_exclude_path!(noir_options, argv)
+    validate_blank_tech_flags!(argv)
     validate_options!(noir_options)
 
     if noir_options["nolog"] == false
@@ -337,7 +338,7 @@ module Noir::CLI::ScanCommand
   # list at parse time instead, before a single file is read.
   private def self.validate_exclude_path!(noir_options : Hash(String, YAML::Any),
                                           argv : Array(String))
-    if blank_exclude_path_arg?(argv)
+    if blank_flag_value?(argv, ["--exclude-path"])
       Noir::CLI.die("--exclude-path needs a glob pattern; the value given is empty.")
     end
 
@@ -358,21 +359,50 @@ module Noir::CLI::ScanCommand
     end
   end
 
-  # `--exclude-path ''` and `--exclude-path=` both collapse to the same
-  # empty string the option carries when it was never passed at all (and
-  # `exclude_path: ""` is in the generated config template), so the fully
-  # blank case can only be read off argv.
-  private def self.blank_exclude_path_arg?(argv : Array(String)) : Bool
+  # Every spelling of each tech-selection flag. They all store a
+  # comma-separated string whose "never passed" value is `""` — the same
+  # string `--flag ''` produces, and the same one the generated config
+  # template ships — so the blank case can only be read off argv.
+  #
+  # `--only-techs ''` was the sharpest of these: it asked to *restrict* the
+  # scan and silently widened it back to everything, which is what a CI job
+  # doing `--only-techs "$TECHS"` gets when `$TECHS` is unset.
+  TECH_FLAG_SPELLINGS = {
+    "-t/--techs"      => ["-t", "--techs"],
+    "--only-techs"    => ["--only-techs"],
+    "--exclude-techs" => ["--exclude-techs"],
+  }
+
+  # True when any spelling in `names` appears on the command line carrying a
+  # value that is empty or whitespace only. The `--flag=value` form is only
+  # recognised for long spellings: `-t=x` is a value of `"=x"` to
+  # OptionParser, not an empty one.
+  private def self.blank_flag_value?(argv : Array(String), names : Array(String)) : Bool
     argv.each_with_index do |arg, i|
-      if arg == "--exclude-path"
+      if names.includes?(arg)
         value = argv[i + 1]?
         # A missing value is OptionParser's error to report, not ours.
         return true if value && value.strip.empty?
-      elsif arg.starts_with?("--exclude-path=")
-        return true if arg.split("=", 2)[1].strip.empty?
+      else
+        names.each do |name|
+          next unless name.starts_with?("--") && arg.starts_with?("#{name}=")
+          return true if arg.split("=", 2)[1].strip.empty?
+        end
       end
     end
     false
+  end
+
+  # `-t`, `--only-techs` and `--exclude-techs` given a value that names no
+  # tech at all. `CliValidation.validate_tech_names!` rejects a *wrong*
+  # name; this rejects no name, which the options hash cannot tell apart
+  # from the flag never being typed.
+  private def self.validate_blank_tech_flags!(argv : Array(String))
+    TECH_FLAG_SPELLINGS.each do |flag, names|
+      next unless blank_flag_value?(argv, names)
+      Noir::CLI.die("#{flag} needs at least one tech name; the value given is empty. " \
+                    "List supported names with `noir list techs`.")
+    end
   end
 
   # Returns nil for a usable glob, otherwise the reason it is broken.
