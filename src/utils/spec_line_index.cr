@@ -44,22 +44,28 @@ module Noir
       new
     end
 
-    # Index a JSON document.
-    def self.json(content : String, root : String, max_depth : Int32 = 2) : SpecLineIndex
+    # Index a JSON document. `root` names the single top-level key whose
+    # subtree is indexed; `nil` indexes the document mapping itself, which is
+    # what a document keyed directly by route name needs.
+    def self.json(content : String, root : String? = nil, max_depth : Int32 = 2) : SpecLineIndex
       return empty if content.bytesize > MAX_CONTENT_BYTES
       entries = Hash(String, Int32).new
       begin
         pull = JSON::PullParser.new(content)
         if pull.kind.begin_object?
-          pull.read_begin_object
-          until pull.kind.end_object?
-            key_line = pull.line_number
-            key = pull.read_object_key
-            if key == root
-              entries[key] = key_line
-              walk_json(pull, key, entries, 1, max_depth)
-            else
-              pull.skip
+          if root.nil?
+            walk_json(pull, "", entries, 1, max_depth)
+          else
+            pull.read_begin_object
+            until pull.kind.end_object?
+              key_line = pull.line_number
+              key = pull.read_object_key
+              if key == root
+                entries[key] = key_line
+                walk_json(pull, key, entries, 1, max_depth)
+              else
+                pull.skip
+              end
             end
           end
         end
@@ -70,8 +76,9 @@ module Noir
       new(entries)
     end
 
-    # Index a YAML document (first document of the stream).
-    def self.yaml(content : String, root : String, max_depth : Int32 = 2) : SpecLineIndex
+    # Index a YAML document (first document of the stream). See `json` for
+    # what `root` means.
+    def self.yaml(content : String, root : String? = nil, max_depth : Int32 = 2) : SpecLineIndex
       return empty if content.bytesize > MAX_CONTENT_BYTES
 
       entries, complete = build_yaml(content, root, max_depth)
@@ -90,7 +97,7 @@ module Noir
     # `{entries, no exception was raised}`. Entries recorded before a failure
     # are still correct, just incomplete, so the caller decides whether to
     # keep them or prefer a recovered pass.
-    private def self.build_yaml(content : String, root : String,
+    private def self.build_yaml(content : String, root : String?,
                                 max_depth : Int32) : Tuple(Hash(String, Int32), Bool)
       entries = Hash(String, Int32).new
       begin
@@ -98,16 +105,20 @@ module Noir
         parser.read_stream_start
         parser.read_document_start
         if parser.kind.mapping_start?
-          parser.read_mapping_start
-          until parser.kind.mapping_end?
-            key_line = parser.start_line
-            break unless parser.kind.scalar?
-            key = parser.read_scalar
-            if key == root
-              entries[key] = key_line
-              walk_yaml(parser, key, entries, 1, max_depth)
-            else
-              parser.skip
+          if root.nil?
+            walk_yaml(parser, "", entries, 1, max_depth)
+          else
+            parser.read_mapping_start
+            until parser.kind.mapping_end?
+              key_line = parser.start_line
+              break unless parser.kind.scalar?
+              key = parser.read_scalar
+              if key == root
+                entries[key] = key_line
+                walk_yaml(parser, key, entries, 1, max_depth)
+              else
+                parser.skip
+              end
             end
           end
         end
@@ -130,7 +141,7 @@ module Noir
       until pull.kind.end_object?
         key_line = pull.line_number
         key = pull.read_object_key
-        child = "#{prefix}#{SEPARATOR}#{key}"
+        child = prefix.empty? ? key : "#{prefix}#{SEPARATOR}#{key}"
         entries[child] = key_line
         if depth >= max_depth
           pull.skip
@@ -156,7 +167,7 @@ module Noir
         key_line = parser.start_line
         break unless parser.kind.scalar?
         key = parser.read_scalar
-        child = "#{prefix}#{SEPARATOR}#{key}"
+        child = prefix.empty? ? key : "#{prefix}#{SEPARATOR}#{key}"
         entries[child] = key_line
         if depth >= max_depth
           parser.skip

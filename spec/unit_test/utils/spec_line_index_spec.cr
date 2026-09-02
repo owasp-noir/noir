@@ -73,6 +73,16 @@ describe Noir::SpecLineIndex do
     it "returns an empty index for text that is not a mapping" do
       Noir::SpecLineIndex.yaml("- 1\n- 2\n", "paths").empty?.should be_true
     end
+
+    # A Symfony routing file is keyed directly by route name, with no
+    # wrapping root.
+    it "indexes the document mapping itself when no root is given" do
+      index = Noir::SpecLineIndex.yaml(YAML_DOC, max_depth: 1)
+      index.line("openapi").should eq 2
+      index.line("paths").should eq 5
+      index.line("components").should eq 14
+      index.line("paths", "/pets").should be_nil
+    end
   end
 
   describe ".json" do
@@ -96,6 +106,13 @@ describe Noir::SpecLineIndex do
 
     it "returns an empty index for malformed JSON" do
       Noir::SpecLineIndex.json("{oops", "paths").empty?.should be_true
+    end
+
+    it "indexes the document mapping itself when no root is given" do
+      index = Noir::SpecLineIndex.json(JSON_DOC, max_depth: 1)
+      index.line("openapi").should eq 2
+      index.line("paths").should eq 3
+      index.line("paths", "/pets").should be_nil
     end
   end
 end

@@ -1,4 +1,5 @@
 require "../../engines/php_engine"
+require "../../../utils/spec_line_index"
 
 module Analyzer::Php
   class Symfony < PhpEngine
@@ -76,9 +77,10 @@ module Analyzer::Php
           # Extract additional parameters from method body
           params.concat(extract_method_params(method_body[0])) if method_body
 
-          details = Details.new(PathInfo.new(path))
+          route_line = line_at_offset(content, route_start)
 
           methods.each do |method|
+            details = Details.new(PathInfo.new(path, route_line))
             endpoint = Endpoint.new(full_path, method.upcase, params, details)
             attach_method_callees(endpoint, method_body, path) if include_callee
             endpoints << endpoint
@@ -112,9 +114,10 @@ module Analyzer::Php
           # Extract additional parameters from method body
           params.concat(extract_method_params(method_body[0])) if method_body
 
-          details = Details.new(PathInfo.new(path))
+          route_line = line_at_offset(content, route_start)
 
           methods.each do |method|
+            details = Details.new(PathInfo.new(path, route_line))
             endpoint = Endpoint.new(full_path, method.upcase, params, details)
             attach_method_callees(endpoint, method_body, path) if include_callee
             endpoints << endpoint
@@ -231,8 +234,11 @@ module Analyzer::Php
         #   methods: [GET, POST]
 
         yaml = YAML.parse(content)
+        # A route in a Symfony YAML routing file is declared by its name key,
+        # so that key's line is where a reviewer has to look.
+        line_index = Noir::SpecLineIndex.yaml(content, max_depth: 1)
         if routes = yaml.as_h?
-          routes.each_value do |route|
+          routes.each do |route_name, route|
             route_h = route.as_h?
             next unless route_h
 
@@ -243,9 +249,10 @@ module Analyzer::Php
             methods = ["GET"] if methods.empty?
 
             params = extract_brace_path_params(route_path)
-            details = Details.new(PathInfo.new(path))
+            route_line = route_name.as_s?.try { |name| line_index.line(name) }
 
             methods.each do |method|
+              details = Details.new(PathInfo.new(path, route_line))
               endpoints << Endpoint.new(route_path, method.upcase, params, details)
             end
           end

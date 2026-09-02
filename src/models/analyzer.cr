@@ -120,6 +120,19 @@ class Analyzer
     Noir::TextFile.read(path)
   end
 
+  # 1-based line the character at `offset` sits on.
+  #
+  # The `content[0...offset].count('\n') + 1` this names is open-coded in a
+  # couple of dozen analyzers; naming it keeps the off-by-one in one place
+  # (a 0 offset is line 1, not line 0 — `PathInfo` drops a 0 as "no line").
+  # Callers that need a line for many offsets in the same file should build
+  # their own newline table instead: this is linear in `offset`.
+  def line_at_offset(content : String, offset : Int32) : Int32
+    return 1 if offset <= 0
+    offset = content.size if offset > content.size
+    content[0...offset].count('\n') + 1
+  end
+
   # Whether the user's `--exclude-path` covers `path`.
   #
   # `CodeLocator` lookups need no such check: the exclusion is applied once,
