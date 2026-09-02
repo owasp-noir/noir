@@ -2,7 +2,6 @@ require "./logger"
 require "../passive_scan/severity"
 require "yaml"
 require "json"
-require "log"
 
 struct PassiveScan
   struct Info
@@ -52,10 +51,14 @@ struct PassiveScan
     property condition : String
     property compiled_regex : Regex?
     property compiled_regexes : Array(Regex)?
-    # Sticky flag: true when this matcher's regexes failed to compile.
-    # detect.cr checks it to short-circuit instead of retrying the
-    # (already-broken) compilation on every line.
-    property? regex_compile_failed : Bool
+    # Why this matcher's regexes failed to compile, or nil when they
+    # compiled. Held as the message rather than a bare flag so the
+    # loader can name the pattern in the warning it prints — the
+    # previous shape wrote the reason straight to Crystal's global
+    # `Log`, whose default backend is STDOUT, so it landed in the
+    # middle of `-f json` / `-f sarif` output and broke every
+    # downstream parser.
+    getter regex_error : String?
 
     def initialize(yaml : YAML::Any)
       raw_type = yaml["type"]?.try(&.as_s?) || yaml["type"]?.try(&.to_s) || ""
@@ -68,27 +71,37 @@ struct PassiveScan
       @string_patterns = @patterns.map(&.to_s)
       raw_condition = yaml["condition"]?.try(&.as_s?) || yaml["condition"]?.try(&.to_s) || "or"
       @condition = raw_condition.downcase
-      @regex_compile_failed = false
 
       if @type == "regex" && ALLOWED_CONDITIONS.includes?(@condition)
         if @condition == "or"
           begin
             @compiled_regex = Regex.union(@string_patterns.map { |p| Regex.new(p) })
           rescue ex
-            Log.warn { "Passive scan matcher regex compilation (or-union) failed: #{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}" }
             @compiled_regex = nil
-            @regex_compile_failed = true
+            @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
           end
         elsif @condition == "and"
           begin
             @compiled_regexes = @string_patterns.map { |p| Regex.new(p) }
           rescue ex
-            Log.warn { "Passive scan matcher regex compilation (and-case) failed: #{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}" }
             @compiled_regexes = nil
-            @regex_compile_failed = true
+            @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
           end
         end
       end
+    end
+
+    # True when this matcher's regexes failed to compile. detect.cr
+    # checks it to short-circuit instead of retrying the
+    # (already-broken) compilation on every line.
+    def regex_compile_failed? : Bool
+      !@regex_error.nil?
+    end
+
+    # True when this matcher can never produce a hit: its regexes did
+    # not compile, so `match_content?` returns false for every input.
+    def dead? : Bool
+      regex_compile_failed?
     end
 
     def validation_errors : Array(String)
@@ -151,22 +164,53 @@ struct PassiveScan
         errors << "matcher[#{idx}]: #{err}"
       end
     end
+    # A rule whose matchers cannot compile is not "loaded but quiet" —
+    # it is a rule that can never fire, which reads to the user exactly
+    # like a clean scan. Counting it among the "Loaded N valid passive
+    # scan rules" is the invisible-zero-coverage case `rules.cr` already
+    # guards against for a mis-pointed rules directory.
+    errors << "no matcher can ever fire: #{dead_matcher_reasons.join("; ")}" if never_matches?
     errors
+  end
+
+  # Non-fatal load problems: a broken matcher the rule can still fire
+  # without (an `or` rule with one good matcher left). Reported so the
+  # rule's reduced coverage is visible instead of silent.
+  def load_warnings : Array(String)
+    return [] of String if never_matches?
+    @matchers.each_with_index.compact_map do |matcher, idx|
+      if err = matcher.regex_error
+        "matcher[#{idx}] regex did not compile and will never match: #{err}"
+      end
+    end.to_a
+  end
+
+  # True when no input can satisfy the rule because of dead matchers:
+  # under `and` every matcher must hit, so one dead matcher is fatal;
+  # under `or` the rule survives while a single matcher still compiles.
+  private def never_matches? : Bool
+    return false if @matchers.empty?
+    if @matchers_condition == "and"
+      @matchers.any?(&.dead?)
+    else
+      @matchers.all?(&.dead?)
+    end
+  end
+
+  private def dead_matcher_reasons : Array(String)
+    @matchers.each_with_index.compact_map do |matcher, idx|
+      if err = matcher.regex_error
+        "matcher[#{idx}]: #{err}"
+      end
+    end.to_a
   end
 
   # A rule is usable when it has an id, a non-empty info name, at
   # least one matcher, all matchers are valid (allowed type, condition,
-  # non-empty patterns), valid severity, and matchers_condition is 'and' or 'or'.
+  # non-empty patterns), valid severity, matchers_condition is 'and' or
+  # 'or', and at least one matcher can actually fire.
   def valid? : Bool
-    errors = validation_errors
-    if !errors.empty?
-      rule_label = @id.empty? ? "<unknown id>" : "rule '#{@id}'"
-      errors.each do |err|
-        Log.warn { "Passive scan #{rule_label} is invalid: #{err}" }
-      end
-      return false
-    end
-    true
+    validation_errors.empty?
   end
 end
 
