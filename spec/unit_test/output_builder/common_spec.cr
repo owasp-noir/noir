@@ -309,6 +309,42 @@ describe "OutputBuilderCommon" do
 
     output.should contain("/사용자/naïve/£cost")
   end
+
+  it "badges a protocol nothing else on the line shows" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    kafka = Endpoint.new("/user/signedup", "PUBLISH")
+    kafka.protocol = "kafka"
+    websocket = Endpoint.new("/chat", "SEND")
+    websocket.protocol = "ws"
+    # `http` is the default and the `cli://` URL already spells out `cli`.
+    plain = Endpoint.new("/健康", "GET")
+    cli = Endpoint.new("cli://tool/run", "CLI")
+    cli.protocol = "cli"
+
+    builder.print([kafka, websocket, plain, cli])
+    output = builder.io.to_s
+
+    output.should contain("PUBLISH /user/signedup [kafka]")
+    output.should contain("SEND /chat [websocket]")
+    output.should contain("GET /健康\n")
+    output.should contain("CLI cli://tool/run\n")
+  end
+
+  it "marks an endpoint the app calls rather than serves" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    # A Spring Feign / @HttpExchange declarative client, not attack surface.
+    client = Endpoint.new("/orders", "GET")
+    client.internal = true
+
+    builder.print([client])
+    output = builder.io.to_s
+
+    output.should contain("GET /orders [internal]")
+  end
 end
 
 # Every flag off: the plain builder reads each of these with `[]?`, but the

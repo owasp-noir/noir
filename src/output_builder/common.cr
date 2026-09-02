@@ -57,6 +57,12 @@ class OutputBuilderCommon < OutputBuilder
     "form", "json",
   }
 
+  # Protocols the rest of the line already tells the reader about, so a badge
+  # would only repeat it: `http` is the default and says nothing, the mobile
+  # protocols drive the SCHEME/INTENT/UNIVERSAL/PROVIDER prefix, and `cli` is
+  # spelled out by the `cli://` URL.
+  SILENT_PROTOCOLS = Endpoint::MOBILE_PROTOCOLS | Endpoint::CLI_PROTOCOLS | Set{"http"}
+
   @ai_context_features : Set(String)? = nil
 
   # The plain report is the only format that frames itself — a heading over
@@ -145,9 +151,22 @@ class OutputBuilderCommon < OutputBuilder
         r_buffer << " [#{status_code}]".to_s.colorize(status_color).toggle(@is_color).to_s
       end
 
-      if endpoint.protocol == "ws"
-        r_ws = "[websocket]".colorize(:light_red).toggle(@is_color)
-        r_buffer << " #{r_ws}"
+      # The protocol was visible for websockets only, so an AsyncAPI Kafka
+      # topic, an MQTT channel, an AMQP queue, a gRPC/Connect method and an
+      # nginx `listen 443 ssl` route all printed as if they were plain HTTP —
+      # a distinction `-f json` and `-f markdown-table` both carry.
+      if badge = protocol_badge(endpoint)
+        r_protocol = "[#{escape_control_chars(badge)}]".colorize(:light_red).toggle(@is_color)
+        r_buffer << " #{r_protocol}"
+      end
+
+      # `internal` marks an endpoint the application *calls* — a Spring Feign
+      # or `@HttpExchange` declarative client — rather than one it serves.
+      # Only the structured formats said so, so a client stub read here as
+      # attack surface.
+      if endpoint.internal
+        r_internal = "[internal]".colorize(:dark_gray).toggle(@is_color)
+        r_buffer << " #{r_internal}"
       end
 
       PARAM_TREE_FIELDS.each do |param_type, label, separator|
@@ -283,6 +302,15 @@ class OutputBuilderCommon < OutputBuilder
 
       ob_puts r_buffer.to_s
     end
+  end
+
+  # The badge to print after the endpoint line, or nil when the protocol adds
+  # nothing. `ws` keeps the spelled-out "websocket" it has always had.
+  private def protocol_badge(endpoint : Endpoint) : String?
+    protocol = endpoint.protocol
+    return if SILENT_PROTOCOLS.includes?(protocol)
+
+    protocol == "ws" ? "websocket" : protocol
   end
 
   # One `○ <label>: <value>` row under the endpoint line. `color` is nil for
