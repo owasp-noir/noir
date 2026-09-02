@@ -266,6 +266,21 @@ describe "OutputBuilderCommon" do
     output.should contain("○ tags: graphql-return")
     output.scan(/graphql-return/).size.should eq(1)
   end
+
+  it "shows the file a callee lives in, not a bare line number" do
+    options = plain_options
+    options["include_callee"] = YAML::Any.new(true)
+    builder = OutputBuilderCommon.new(options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/", "GET")
+    endpoint.push_callee(Callee.new("HomeService.build", "src/handlers/home_handler.cr", 7))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("HomeService.build (src/handlers/home_handler.cr:7)")
+  end
 end
 
 # Every flag off: the plain builder reads each of these with `[]?`, but the

@@ -265,9 +265,13 @@ class OutputBuilderCommon < OutputBuilder
           end
         end
       elsif any_to_bool(@options["include_callee"]?) && !endpoint.callees.empty?
-        callee_entries = endpoint.callees.map do |callee|
-          callee.line ? "#{callee.name} (line #{callee.line})" : callee.name
-        end
+        # `format_noir_callee`, the same renderer the OpenAPI/Postman
+        # descriptions use, so the location is spelled one way everywhere.
+        # This row used to build its own `name (line N)` and drop
+        # `callee.path` — and a callee almost always lives in the handler
+        # file, not the route file printed on the `file:` row just above, so
+        # a bare line number pointed the reader at the wrong file.
+        callee_entries = endpoint.callees.map { |callee| format_noir_callee(callee) }
         append_tree_field r_buffer, "callees", callee_entries, :light_cyan
       end
 
