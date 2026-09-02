@@ -166,6 +166,16 @@ describe NoirPassiveScan::FalsePositive do
       NoirPassiveScan::FalsePositive.secret_reference?("AWS_ACCESS_KEY_ID=").should be_true
       NoirPassiveScan::FalsePositive.secret_reference?("AWS_SECRET_ACCESS_KEY=  ").should be_true
       NoirPassiveScan::FalsePositive.secret_reference?("GITHUB_TOKEN:").should be_true
+      NoirPassiveScan::FalsePositive.secret_reference?("SHOPIFY_API_SECRET =>").should be_true
+    end
+
+    it "keeps a base64 value whose padding ends the line" do
+      # The empty-assignment check used to be unanchored, so it matched any
+      # line merely *ending* in `=` — which is what every padded base64
+      # value does. Real secrets were dropped for having padding.
+      NoirPassiveScan::FalsePositive.secret_reference?("AZURE_STORAGE_KEY=Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MA==").should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?("NPM_TOKEN: bnBtX3Rva2VuXzEyMzQ1Ng==").should be_false
+      NoirPassiveScan::FalsePositive.secret_reference?("export VAULT_TOKEN=cy5hYmNkZWZnaGlqa2xtbm9w=").should be_false
     end
 
     it "suppresses single-argument env() helper calls (Laravel/Symfony/Rails)" do

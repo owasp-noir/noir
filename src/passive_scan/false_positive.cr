@@ -51,7 +51,14 @@ module NoirPassiveScan
     # `AWS_ACCESS_KEY_ID=` / `password:` in a `.env.example` or config
     # template. An empty value cannot carry a secret, so a keyword match
     # on such a line is always a false positive.
-    EMPTY_ASSIGNMENT = /(?::|=>?)\s*$/
+    #
+    # Anchored on the *first* separator, exactly like ASSIGNMENT_VALUE.
+    # Unanchored (`/(?::|=>?)\s*$/`) it matched any line merely *ending*
+    # in `=` — which is what every base64 value with padding does, so
+    # `AZURE_STORAGE_KEY=Zm9vYmFy...==` was read as "assignment with no
+    # value" and the real secret was dropped. The same secret without the
+    # padding character was reported.
+    EMPTY_ASSIGNMENT = /\A[^:=]*(?::|=>?)\s*\z/
 
     # A secret *variable name*. The bundled secret rules carry two kinds
     # of `word` pattern: environment-variable names (`GITHUB_TOKEN`,
