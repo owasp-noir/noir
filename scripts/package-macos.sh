@@ -64,9 +64,6 @@ while true; do
       fi
       if [[ ! -f "$STAGING/lib/$base" ]]; then
         cp "$dep" "$STAGING/lib/$base"
-        # Homebrew ships dylibs read-only; install_name_tool and codesign
-        # both rewrite them in place.
-        chmod u+w "$STAGING/lib/$base"
         added=1
       fi
     done < <(homebrew_deps "$target")
@@ -118,20 +115,35 @@ for target in "$STAGING/noir" "$STAGING"/lib/*.dylib; do
 done
 
 mkdir -p "$(dirname "$OUTPUT")"
-tar -czf "$OUTPUT" -C "$STAGING" noir lib
+
+# Archive to a scratch path first. A tarball only becomes $OUTPUT once it has
+# proven it runs, so a failed smoke test cannot leave a finished-looking but
+# unrunnable artifact for a later step to upload.
+STAGED_OUTPUT="$VERIFY_DIR/$(basename "$OUTPUT")"
+tar -czf "$STAGED_OUTPUT" -C "$STAGING" noir lib
 
 # Smoke-test the packaged artifact rather than the staged tree: this is the
 # exact layout a user unpacks, and a stale signature is fatal only at exec
 # time. Guarding this behind `if` hid exactly the breakage it existed to catch.
-tar -xzf "$OUTPUT" -C "$VERIFY_DIR"
+EXTRACT_DIR="$VERIFY_DIR/extracted"
+mkdir -p "$EXTRACT_DIR"
+tar -xzf "$STAGED_OUTPUT" -C "$EXTRACT_DIR"
 smoke_status=0
-VERSION_OUTPUT="$("$VERIFY_DIR/noir" --version)" || smoke_status=$?
+VERSION_OUTPUT="$("$EXTRACT_DIR/noir" --version)" || smoke_status=$?
 if [[ "$smoke_status" -ne 0 ]]; then
-  echo "error: packaged binary failed to run (exit $smoke_status): $OUTPUT" >&2
+  echo "error: packaged binary failed to run (exit $smoke_status)" >&2
   echo "       arm64 SIGKILLs binaries and dylibs with an invalid signature;" >&2
   echo "       check the codesign step above." >&2
   exit 1
 fi
+# Exit 0 alone is not evidence: a binary that prints nothing has not
+# demonstrated it loaded its dylibs and reached its own CLI.
+if [[ -z "${VERSION_OUTPUT//[[:space:]]/}" ]]; then
+  echo "error: packaged binary ran but printed no version" >&2
+  exit 1
+fi
+
+mv "$STAGED_OUTPUT" "$OUTPUT"
 
 echo "Created $OUTPUT"
 echo "$VERSION_OUTPUT"
