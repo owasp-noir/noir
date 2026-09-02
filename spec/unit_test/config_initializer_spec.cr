@@ -396,6 +396,35 @@ describe ConfigInitializer do
       end
     end
 
+    it "falls back to defaults when the override path is a directory" do
+      # `File.exists?` is true for a directory, and the `File.read` that
+      # followed it sat *outside* the YAML rescue below — so
+      # `noir scan ./app --config-file /some/dir` died with a raw Crystal
+      # backtrace (`read (...): Is a directory`) before CliValidation could
+      # print its one-line "--config-file is not a file".
+      dir = File.tempname("noir-config-dir-")
+      Dir.mkdir(dir)
+      begin
+        options = ConfigInitializer.new(dir).read_config
+        options["format"].to_s.should eq("plain")
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+    end
+
+    it "falls back to defaults when the override path cannot be read" do
+      path = File.tempname("noir-config-noperm-", ".yaml")
+      File.write(path, "format: json\n")
+      File.chmod(path, 0o000)
+      begin
+        options = ConfigInitializer.new(path).read_config
+        options["format"].to_s.should eq("plain")
+      ensure
+        File.chmod(path, 0o600)
+        File.delete?(path)
+      end
+    end
+
     it "does NOT auto-create the file when the override path is missing" do
       # Default config path auto-creates a template on first run, but
       # a missing user-supplied --config-file path is a typo — should

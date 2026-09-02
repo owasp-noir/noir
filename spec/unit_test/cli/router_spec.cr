@@ -97,6 +97,22 @@ describe "Noir::CLI::Legacy.rewrite" do
     Noir::CLI::Legacy.subcommand_invocation?(["-b", "scan"]).should be_false
   end
 
+  it "looks past leading global flags for the verb" do
+    # The router dispatches `noir --no-color rules update`, so the rewrite
+    # layer has to agree that it is a subcommand invocation — otherwise
+    # `-v => version` hijacks `rules update`'s own `-v` again, this time
+    # only when a global flag leads.
+    Noir::CLI::Legacy.subcommand_invocation?(["--no-color", "rules", "update"]).should be_true
+    Noir::CLI::Legacy.subcommand_invocation?(["--no-color", "--no-spinner", "list"]).should be_true
+    Noir::CLI::Legacy.subcommand_invocation?(["--no-color"]).should be_false
+    Noir::CLI::Legacy.subcommand_invocation?(["--no-color", "-b", "./app"]).should be_false
+  end
+
+  it "leaves a global-flag-led subcommand's own flags alone" do
+    argv = ["--no-color", "rules", "update", "-v"]
+    Noir::CLI::Legacy.rewrite(argv).should eq(argv)
+  end
+
   it "is idempotent on already-rewritten input" do
     # `rewrite` consumes the original v0 form and emits the v1 form,
     # which contains no terminal flags by construction — passing it
@@ -196,6 +212,32 @@ describe "Noir::CLI::Router.strip_global_flags" do
   it "leaves argv without global flags untouched" do
     argv = ["purge", "7"]
     Noir::CLI::Router.strip_global_flags(argv).should eq(argv)
+  end
+end
+
+describe "Noir::CLI.verb_index" do
+  # The router only inspected `argv[0]`, so `noir --no-color scan ./app`
+  # fell through to the v0 bare-flag path and died with
+  # `Base path does not exist: scan` — for a flag `noir help` documents as
+  # applying to "every command's output".
+  it "returns 0 when no global flag leads" do
+    Noir::CLI.verb_index(["scan", "./app"]).should eq(0)
+    Noir::CLI.verb_index(["-b", "./app"]).should eq(0)
+    Noir::CLI.verb_index([] of String).should eq(0)
+  end
+
+  it "skips the leading run of global flags" do
+    Noir::CLI.verb_index(["--no-color", "scan"]).should eq(1)
+    Noir::CLI.verb_index(["--no-color", "--no-spinner", "list", "techs"]).should eq(2)
+  end
+
+  it "stops at the first non-global token" do
+    # A `--no-color` further along belongs to the subcommand's own argv.
+    Noir::CLI.verb_index(["cache", "--no-color", "info"]).should eq(0)
+  end
+
+  it "returns argv.size when argv is nothing but global flags" do
+    Noir::CLI.verb_index(["--no-color", "--no-spinner"]).should eq(2)
   end
 end
 

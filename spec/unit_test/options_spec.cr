@@ -67,6 +67,46 @@ describe "default_options" do
 end
 
 describe "run_options_parser" do
+  # POSIX `--`: everything after it is a positional, never a flag. Crystal's
+  # OptionParser drops the marker and leaves the tail in place, which erased
+  # the boundary — the positional loop then skipped every leftover starting
+  # with `-`, so `noir scan -- -old-api` scanned nothing at all and
+  # `noir scan -- ./app -f json` promoted `json` to a base path.
+  it "treats every token after -- as a base path, flag-shaped included" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["--", "./app", "-f", "json"])
+
+    begin
+      noir_options = run_options_parser()
+      # `normalize_base` drops the leading `./`, as it does for any positional.
+      noir_options["base"].as_a.map(&.to_s).should eq(["app", "-f", "json"])
+      # `-f` after the marker is a path, so the format stays at its default.
+      noir_options["format"].to_s.should eq("plain")
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
+  it "still parses the flags typed before --" do
+    original_argv = ARGV.dup
+
+    ARGV.clear
+    ARGV.concat(["-f", "json", "--no-log", "--", "-dash-dir"])
+
+    begin
+      noir_options = run_options_parser()
+      noir_options["format"].to_s.should eq("json")
+      noir_options["nolog"].should be_true
+      noir_options["base"].as_a.map(&.to_s).should eq(["-dash-dir"])
+    ensure
+      ARGV.clear
+      ARGV.concat(original_argv)
+    end
+  end
+
   it "supports --no-spinner" do
     original_argv = ARGV.dup
 

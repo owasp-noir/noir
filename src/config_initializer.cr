@@ -175,6 +175,30 @@ class ConfigInitializer
     STDERR.puts "WARNING: could not initialize noir config at #{@config_file} (#{e.message}); continuing with defaults.".colorize(:yellow)
   end
 
+  # The config file's bytes, or "" when there is nothing readable there.
+  #
+  # `File.exists?` is true for a directory and for a file the process can't
+  # open, and the `File.read` that followed it sat *outside* the YAML
+  # `begin/rescue` below — so `noir scan ./app --config-file /some/dir` (and
+  # a config file with no read permission) killed the process with a raw
+  # Crystal backtrace before `CliValidation` could print either of the
+  # one-line messages it already has for both cases. Read defensively and let
+  # that validator do the reporting.
+  private def read_raw_config : String
+    return "" unless File.file?(@config_file)
+    File.read(@config_file)
+  rescue e : IO::Error
+    # Stay quiet for an explicit `--config-file`: `CliValidation` reports
+    # that one as a hard error moments later, and printing both turns one
+    # problem into two paragraphs. The default config has no such follow-up,
+    # so an unreadable one has to say so here or it silently reverts to
+    # defaults.
+    unless @is_override
+      STDERR.puts "WARNING: could not read config #{@config_file} (#{e.message}); using defaults.".colorize(:yellow)
+    end
+    ""
+  end
+
   def read_config
     # Ensure the config file is set up
     setup
@@ -183,7 +207,7 @@ class ConfigInitializer
     # didn't scaffold) or an empty one is a legitimate "no overrides"
     # state — fall back to defaults quietly. Only a file with real but
     # unparsable content is worth warning about below.
-    raw = File.exists?(@config_file) ? File.read(@config_file) : ""
+    raw = read_raw_config
     return default_options if raw.strip.empty?
 
     # Read the config file, or use the default config if reading fails

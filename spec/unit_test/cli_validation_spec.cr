@@ -19,6 +19,19 @@ describe Noir::CliValidation do
     end
   end
 
+  it "names an empty base path rather than reporting a blank one as missing" do
+    # `noir scan "$TARGET"` with `TARGET` unset. The entry is present, so
+    # the "No path to scan was given" branch above doesn't fire, and the
+    # existence check printed `Base path does not exist: ` — a message with
+    # nothing after the colon.
+    options = create_test_options
+    options["base"] = YAML::Any.new([YAML::Any.new("")])
+
+    expect_raises(Noir::CliValidation::Error, /Base path is empty/) do
+      Noir::CliValidation.validate_base_paths!(options)
+    end
+  end
+
   it "rejects invalid output formats" do
     options = create_test_options
     options["format"] = YAML::Any.new("madeup")

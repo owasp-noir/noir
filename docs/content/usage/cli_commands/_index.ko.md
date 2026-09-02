@@ -209,6 +209,9 @@ Crystal, LLVM, 타깃 트리플 등 빌드 세부 정보를 추가합니다(v0
 | `-v, --version`| Noir 버전 출력 후 종료                                                |
 | `-h, --help`   | 현재 명령의 도움말 표시                                              |
 
+동사 앞뒤 어디에 놓아도 동일합니다 — `noir --no-color list techs` 와
+`noir list techs --no-color` 는 같은 명령입니다.
+
 명령어별 플래그(출력 형식, 동시성, passive scan, AI provider 등)는
 `noir scan` 아래에 있습니다. `noir help scan` 으로 전체 목록을 볼 수
 있습니다.
@@ -224,9 +227,9 @@ noir scan ./app              # v1 형식
 noir scan -b ./app           # v1 동사 + v0 스타일 플래그
 ```
 
-`ARGV[0]` 가 알려진 동사가 아니면 라우터가 `scan` 으로 폴백합니다. CI
-파이프라인, GitHub Action, Dockerfile entrypoint, 쉘 alias 가 수정
-없이 그대로 동작합니다.
+글로벌 플래그를 지나친 첫 인자가 알려진 동사가 아니면 라우터가 `scan`
+으로 폴백합니다. CI 파이프라인, GitHub Action, Dockerfile entrypoint,
+쉘 alias 가 수정 없이 그대로 동작합니다.
 
 deprecation 경고는 추후 v1.x 시리즈에서 추가됩니다. 동사 형식이
 의무가 되는 시점은 v2.x 입니다.

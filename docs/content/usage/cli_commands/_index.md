@@ -206,6 +206,9 @@ A small set of flags work on every subcommand, not just `scan`:
 | `-v, --version`| Print the noir version and exit                                       |
 | `-h, --help`   | Show help for the current command                                     |
 
+These may sit on either side of the verb — `noir --no-color list techs`
+and `noir list techs --no-color` are the same command.
+
 Per-command flags (output format, concurrency, passive scan, AI
 provider, and so on) live under `noir scan`. See `noir help scan` for
 the full list.
@@ -221,7 +224,8 @@ noir scan ./app              # v1 form
 noir scan -b ./app           # v1 verb with v0-style flags
 ```
 
-When `ARGV[0]` is not a known verb, the router falls back to `scan`.
+When the first argument (past any global flag) is not a known verb, the
+router falls back to `scan`.
 CI pipelines, GitHub Actions, Dockerfile entrypoints, and shell aliases
 all keep working without edits.
 

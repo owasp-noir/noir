@@ -277,6 +277,17 @@ module Noir::CliValidation
     end
 
     base_paths.each do |base_path|
+      # An empty entry is `noir scan "$TARGET"` with `TARGET` unset, or
+      # `-b ""`. It reached the check below and produced `Base path does not
+      # exist: ` — a message with nothing after the colon, which names
+      # neither the flag nor the fact that the value was blank. Dropping it
+      # silently would be worse: the scan would then run against whatever
+      # other paths were given, or report "No path to scan was given" for a
+      # command line that plainly had one.
+      if base_path.empty?
+        raise Error.new("Base path is empty. Check the value passed to a positional path or -b/--base-path — an unset shell variable expands to nothing.")
+      end
+
       unless File.exists?(base_path)
         raise Error.new("Base path does not exist: #{base_path}")
       end
