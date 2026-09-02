@@ -399,11 +399,29 @@ module Analyzer::CSharp
       merge_endpoint(endpoint)
     end
 
+    # `@result` spans the whole scan, so the endpoint this folds into may
+    # well have been emitted by a different file: two services under one
+    # scan base that both answer `GET /health` land on the same entry.
+    # Folding their params and callees together is fine — the optimizer
+    # would union those anyway — but the second file's `code_path` used to
+    # be dropped on the floor, and because the fold happens here the
+    # optimizer never saw it either. The report then named one of the two
+    # files that serve the route and silently omitted the other. Carry the
+    # code paths across too.
+    #
+    # `Endpoint` and `Details` are structs, so `existing` is a copy; the
+    # merge lands because `params`, `callees` and `code_paths` are all
+    # Arrays, and an Array is a reference the copy shares with the entry in
+    # `@result`.
     private def merge_endpoint(endpoint : Endpoint)
       existing = @result.find { |candidate| candidate.url == endpoint.url && candidate.method == endpoint.method }
       if existing
         endpoint.params.each { |param| existing.push_param(param) }
         endpoint.callees.each { |callee| existing.push_callee(callee) }
+        endpoint.details.code_paths.each do |code_path|
+          next if existing.details.code_paths.any? { |seen| seen == code_path }
+          existing.details.add_path(code_path)
+        end
       else
         @result << endpoint
       end
