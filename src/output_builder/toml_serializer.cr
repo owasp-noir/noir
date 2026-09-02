@@ -36,7 +36,39 @@ module OutputBuilderTomlSerializer
   # [config].file) and corrupt the document, so quote anything non-bare.
   private def toml_key(key : String) : String
     return key if key.matches?(/\A[A-Za-z0-9_-]+\z/)
-    %("#{key.gsub("\\", "\\\\").gsub("\"", "\\\"")}")
+    %("#{toml_escape(key)}")
+  end
+
+  # TOML basic strings admit no raw control character: U+0000-U+0008,
+  # U+000A-U+001F and U+007F all have to be escaped, and only `\b \t \n \f
+  # \r` have a short form — everything else needs `\uXXXX`.
+  #
+  # The `gsub` chain this replaces covered exactly those five and left every
+  # other control byte raw, so a single ANSI escape in a route literal
+  # (`@app.route("/ctrl\e[31m")`), a NUL, or a DEL in a filename — which
+  # reaches the document through `code_paths` — emitted a TOML document no
+  # parser will read: `Illegal character '\x01'`. Chained `gsub` also walked
+  # the string seven times; this walks it once.
+  private def toml_escape(raw : String) : String
+    String.build do |io|
+      raw.each_char do |char|
+        case char
+        when '\\' then io << "\\\\"
+        when '"'  then io << "\\\""
+        when '\b' then io << "\\b"
+        when '\t' then io << "\\t"
+        when '\n' then io << "\\n"
+        when '\f' then io << "\\f"
+        when '\r' then io << "\\r"
+        else
+          if char.ord < 0x20 || char.ord == 0x7F
+            io << "\\u" << char.ord.to_s(16, upcase: true).rjust(4, '0')
+          else
+            io << char
+          end
+        end
+      end
+    end
   end
 
   private def toml_value(value : JSON::Any) : String
@@ -44,7 +76,7 @@ module OutputBuilderTomlSerializer
     when String
       # TOML basic strings can't contain raw newlines/control chars — escape
       # them so a multi-line snippet/description doesn't break the document.
-      %("#{raw.gsub("\\", "\\\\").gsub("\"", "\\\"").gsub("\b", "\\b").gsub("\t", "\\t").gsub("\n", "\\n").gsub("\f", "\\f").gsub("\r", "\\r")}")
+      %("#{toml_escape(raw)}")
     when Int64, Float64
       raw.to_s
     when Bool
