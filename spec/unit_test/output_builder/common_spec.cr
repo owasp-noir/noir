@@ -214,4 +214,42 @@ describe "OutputBuilderCommon" do
     # "body" request_type is mapped to json, so it should not render a redundant `○ body: content` line
     output.scan(/○ body:/).size.should eq(1)
   end
+
+  it "keeps form params when the same endpoint also carries a JSON body" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    # A handler that reads both (`c.Request.PostFormValue` next to
+    # `c.BindJSON`). `bake_endpoint` has one body slot and JSON takes it, so
+    # the form fields have to be rendered on their own row or they vanish.
+    endpoint = Endpoint.new("/api/submit", "POST")
+    endpoint.push_param(Param.new("username", "", "form"))
+    endpoint.push_param(Param.new("password", "", "json"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("○ body: {\"password\":\"\"}")
+    output.should contain("○ form:")
+    output.should contain("username")
+  end
+end
+
+# Every flag off: the plain builder reads each of these with `[]?`, but the
+# specs above spell the full hash out so a new option defaulting to "on"
+# cannot silently change what a case is asserting.
+private def plain_options
+  {
+    "debug"          => YAML::Any.new(false),
+    "verbose"        => YAML::Any.new(false),
+    "color"          => YAML::Any.new(false),
+    "nolog"          => YAML::Any.new(false),
+    "output"         => YAML::Any.new(""),
+    "include_path"   => YAML::Any.new(false),
+    "include_callee" => YAML::Any.new(false),
+    "include_techs"  => YAML::Any.new(false),
+    "ai_context"     => YAML::Any.new(false),
+    "status_codes"   => YAML::Any.new(false),
+    "exclude_codes"  => YAML::Any.new(""),
+  }
 end

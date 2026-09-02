@@ -172,15 +172,24 @@ class OutputBuilderCommon < OutputBuilder
         append_field r_buffer, label, selected.map(&.name).join(", "), :cyan unless selected.empty?
       end
 
+      # Same tree shape as headers/cookies but cyan, and with no
+      # "[unresolved]" marker even on params carrying that tag.
+      form_entries = endpoint.params.select { |p| p.request_type == "form" }.map do |param|
+        param.value.empty? ? param.name : "#{param.name}=#{param.value}"
+      end
+
       if baked[:body_type] == "form"
-        # Same tree shape as headers/cookies but cyan, and with no
-        # "[unresolved]" marker even on params carrying that tag.
-        form_entries = endpoint.params.select { |p| p.request_type == "form" }.map do |param|
-          param.value.empty? ? param.name : "#{param.name}=#{param.value}"
-        end
         append_tree_field r_buffer, "body", form_entries, :cyan
-      elsif !baked[:body].empty?
-        append_field r_buffer, "body", baked[:body], :cyan
+      else
+        append_field r_buffer, "body", baked[:body], :cyan unless baked[:body].empty?
+        # An endpoint whose handler reads both a JSON body and form fields
+        # (`c.Request.PostFormValue` next to `c.BindJSON`, say) has params of
+        # both kinds, but `bake_endpoint` has one `body` slot and JSON wins
+        # it — so every form param on such an endpoint was dropped from this
+        # report while `-f json` and `-f markdown-table` still listed it.
+        # Render them under their own type name, the same convention the
+        # leftover-bucket rows below use, rather than a second "body" row.
+        append_tree_field r_buffer, "form", form_entries, :cyan
       end
 
       # Anything left is still a named input the endpoint reads (multipart
