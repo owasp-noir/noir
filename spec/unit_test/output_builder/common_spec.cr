@@ -281,6 +281,34 @@ describe "OutputBuilderCommon" do
 
     output.should contain("HomeService.build (src/handlers/home_handler.cr:7)")
   end
+
+  it "escapes control characters that came out of the scanned source" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/x\e]8;;http://evil.example\aclick\e]8;;\a", "GET")
+    endpoint.push_param(Param.new("head\ner", "v", "header"))
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should_not contain("\e")
+    output.should_not contain("\a")
+    output.should contain("\\x1b]8;;http://evil.example\\x07click")
+    output.should contain("head\\x0aer: v")
+  end
+
+  it "leaves non-ASCII text alone" do
+    builder = OutputBuilderCommon.new(plain_options)
+    builder.io = IO::Memory.new
+
+    endpoint = Endpoint.new("/사용자/naïve/£cost", "GET")
+
+    builder.print([endpoint])
+    output = builder.io.to_s
+
+    output.should contain("/사용자/naïve/£cost")
+  end
 end
 
 # Every flag off: the plain builder reads each of these with `[]?`, but the

@@ -97,22 +97,28 @@ class OutputBuilderCommon < OutputBuilder
                        else               :default
                        end
 
-      r_method = endpoint.method.colorize(r_method_color).toggle(@is_color)
+      # Every string below is repo-derived and passes through
+      # `escape_control_chars` before it is colorized, so an escape sequence
+      # embedded in a route or a param name is shown rather than executed by
+      # the reader's terminal. Colorize's own codes are added afterwards and
+      # so are never touched.
+      r_method = escape_control_chars(endpoint.method).colorize(r_method_color).toggle(@is_color)
+      safe_url = escape_control_chars(baked[:url])
 
       r_buffer = String::Builder.new
       if mobile_label = MOBILE_PROTOCOL_LABELS[endpoint.protocol]?
         # intent:// is a synthetic scheme used so the optimizer treats
         # component names as absolute URLs; hide it in the text output.
-        display_url = baked[:url].lchop("intent://")
+        display_url = safe_url.lchop("intent://")
         r_label = mobile_label.colorize(:light_blue).toggle(@is_color)
         r_url = display_url.colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_label} #{r_url}"
       elsif endpoint.kind.empty?
-        r_url = baked[:url].colorize(:light_yellow).toggle(@is_color)
+        r_url = safe_url.colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_method} #{r_url}"
       else
-        r_kind = "[#{endpoint.kind}]".colorize(:light_magenta).toggle(@is_color)
-        r_name = baked[:url].lstrip('/').colorize(:light_yellow).toggle(@is_color)
+        r_kind = "[#{escape_control_chars(endpoint.kind)}]".colorize(:light_magenta).toggle(@is_color)
+        r_name = safe_url.lstrip('/').colorize(:light_yellow).toggle(@is_color)
         r_buffer << "\n#{r_method} #{r_kind} #{r_name}"
       end
 
@@ -282,7 +288,8 @@ class OutputBuilderCommon < OutputBuilder
   # One `○ <label>: <value>` row under the endpoint line. `color` is nil for
   # the one row that is printed uncolorized.
   private def append_field(r_buffer : String::Builder, label : String, value : String, color : Symbol?)
-    r_buffer << "\n  ○ " << label << ": "
+    value = escape_control_chars(value)
+    r_buffer << "\n  ○ " << escape_control_chars(label) << ": "
     if color
       r_buffer << value.colorize(color).toggle(@is_color)
     else
@@ -296,10 +303,10 @@ class OutputBuilderCommon < OutputBuilder
   private def append_tree_field(r_buffer : String::Builder, label : String, entries : Array(String), color : Symbol)
     return if entries.empty?
 
-    r_buffer << "\n  ○ " << label << ": "
+    r_buffer << "\n  ○ " << escape_control_chars(label) << ": "
     entries.each_with_index do |entry, index|
       prefix = index == entries.size - 1 ? "└── " : "├── "
-      r_buffer << "\n    " << "#{prefix}#{entry}".colorize(color).toggle(@is_color)
+      r_buffer << "\n    " << "#{prefix}#{escape_control_chars(entry)}".colorize(color).toggle(@is_color)
     end
   end
 
@@ -318,7 +325,7 @@ class OutputBuilderCommon < OutputBuilder
 
     r_buffer << "\n    - #{label}:"
     entries.each do |entry|
-      r_entry = format_ai_context_entry(entry).colorize(:light_cyan).toggle(@is_color)
+      r_entry = escape_control_chars(format_ai_context_entry(entry)).colorize(:light_cyan).toggle(@is_color)
       r_buffer << "\n      * #{r_entry}"
     end
   end
