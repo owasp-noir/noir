@@ -216,16 +216,24 @@ module Noir::CliValidation
     {"techs", "only_techs", "exclude_techs"}.each do |key|
       raw = options[key]?.try(&.to_s) || ""
       next if raw.empty?
-      unknown = raw.split(",").map(&.strip).reject(&.empty?).reject do |tech|
-        !NoirTechs.similar_to_tech(tech).empty?
-      end
-      next if unknown.empty?
       cli_flag = case key
                  when "techs"         then "-t/--techs"
                  when "only_techs"    then "--only-techs"
                  when "exclude_techs" then "--exclude-techs"
                  else                      key
                  end
+      names = raw.split(",").map(&.strip).reject(&.empty?)
+      # A value made only of separators or whitespace (`--only-techs ,`,
+      # `--only-techs " "`) names nothing. `--only-techs` then cleared its
+      # detector list and the scan reported zero endpoints with exit 0 and,
+      # under `--no-log`, not one word about why.
+      if names.empty?
+        raise Error.new("#{cli_flag}: #{raw.inspect} names no technology. List supported names with `noir list techs`.")
+      end
+      unknown = names.reject do |tech|
+        !NoirTechs.similar_to_tech(tech).empty?
+      end
+      next if unknown.empty?
       raise Error.new("#{cli_flag}: unknown tech#{"es" if unknown.size > 1} #{unknown.map(&.inspect).join(", ")}. List supported names with `noir list techs`.")
     end
   end

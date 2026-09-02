@@ -72,6 +72,7 @@ module Noir::CLI::ScanCommand
     normalize_probe_via!(noir_options)
     validate_url_dependent_flags(noir_options, cli_flags)
     validate_exclude_path!(noir_options, argv)
+    validate_blank_tech_flags!(argv)
     validate_options!(noir_options)
 
     if noir_options["nolog"] == false
@@ -337,7 +338,7 @@ module Noir::CLI::ScanCommand
   # list at parse time instead, before a single file is read.
   private def self.validate_exclude_path!(noir_options : Hash(String, YAML::Any),
                                           argv : Array(String))
-    if blank_exclude_path_arg?(argv)
+    if blank_flag_value?(argv, ["--exclude-path"])
       Noir::CLI.die("--exclude-path needs a glob pattern; the value given is empty.")
     end
 
@@ -358,38 +359,87 @@ module Noir::CLI::ScanCommand
     end
   end
 
-  # `--exclude-path ''` and `--exclude-path=` both collapse to the same
-  # empty string the option carries when it was never passed at all (and
-  # `exclude_path: ""` is in the generated config template), so the fully
-  # blank case can only be read off argv.
-  private def self.blank_exclude_path_arg?(argv : Array(String)) : Bool
+  # Every spelling of each tech-selection flag. They all store a
+  # comma-separated string whose "never passed" value is `""` — the same
+  # string `--flag ''` produces, and the same one the generated config
+  # template ships — so the blank case can only be read off argv.
+  #
+  # `--only-techs ''` was the sharpest of these: it asked to *restrict* the
+  # scan and silently widened it back to everything, which is what a CI job
+  # doing `--only-techs "$TECHS"` gets when `$TECHS` is unset.
+  TECH_FLAG_SPELLINGS = {
+    "-t/--techs"      => ["-t", "--techs"],
+    "--only-techs"    => ["--only-techs"],
+    "--exclude-techs" => ["--exclude-techs"],
+  }
+
+  # True when any spelling in `names` appears on the command line carrying a
+  # value that is empty or whitespace only. The `--flag=value` form is only
+  # recognised for long spellings: `-t=x` is a value of `"=x"` to
+  # OptionParser, not an empty one.
+  private def self.blank_flag_value?(argv : Array(String), names : Array(String)) : Bool
     argv.each_with_index do |arg, i|
-      if arg == "--exclude-path"
+      if names.includes?(arg)
         value = argv[i + 1]?
         # A missing value is OptionParser's error to report, not ours.
         return true if value && value.strip.empty?
-      elsif arg.starts_with?("--exclude-path=")
-        return true if arg.split("=", 2)[1].strip.empty?
+      else
+        names.each do |name|
+          next unless name.starts_with?("--") && arg.starts_with?("#{name}=")
+          return true if arg.split("=", 2)[1].strip.empty?
+        end
       end
     end
     false
   end
 
+  # `-t`, `--only-techs` and `--exclude-techs` given a value that names no
+  # tech at all. `CliValidation.validate_tech_names!` rejects a *wrong*
+  # name; this rejects no name, which the options hash cannot tell apart
+  # from the flag never being typed.
+  private def self.validate_blank_tech_flags!(argv : Array(String))
+    TECH_FLAG_SPELLINGS.each do |flag, names|
+      next unless blank_flag_value?(argv, names)
+      Noir::CLI.die("#{flag} needs at least one tech name; the value given is empty. " \
+                    "List supported names with `noir list techs`.")
+    end
+  end
+
   # Returns nil for a usable glob, otherwise the reason it is broken.
   #
-  # `File.match?` parses the pattern itself, so character-class errors
-  # come back from Crystal with its own wording. Brace groups it accepts
-  # and then never matches (`*.{rb` matches nothing at all), so the
-  # `{`/`}` balance is checked here — skipping over character classes,
-  # inside which a brace is an ordinary character.
+  # Both malformations are found by walking the pattern rather than by
+  # asking `File.match?`. Crystal's matcher is lazy: it only raises
+  # `BadPatternError` for an unterminated `[` once it actually *reaches*
+  # that `[`, and it stops at the first literal that does not match the
+  # subject. Probing with one fixed string therefore reported an
+  # unterminated character set for `a[b` (whose `a` happens to be a prefix
+  # of nothing in particular) and passed `z[b` — the identical
+  # malformation — straight through, where it then excluded nothing and
+  # matched no file loudly enough to raise either. Which of the two a user
+  # got depended on the first character of their pattern.
+  #
+  # Brace groups have the same problem in the other direction: `*.{rb` is
+  # accepted by the matcher and then never matches anything.
+  #
+  # Inside a character class a brace is an ordinary character, and the
+  # first character of a class is a literal member — `[]]` is the class
+  # containing `]`, exactly as Crystal's matcher reads it.
   def self.glob_error(pattern : String) : String?
     depth = 0
     in_class = false
+    class_first = false
     pattern.each_char do |char|
       if in_class
+        if class_first
+          # `^` marks the class negated and does not consume the
+          # literal-member slot, so `[^]]` is still a valid class.
+          class_first = false unless char == '^'
+          next
+        end
         in_class = false if char == ']'
       elsif char == '['
         in_class = true
+        class_first = true
       elsif char == '{'
         depth += 1
       elsif char == '}'
@@ -398,7 +448,10 @@ module Noir::CLI::ScanCommand
       end
     end
     return "unterminated `{` group" if depth > 0
+    return "unterminated character set" if in_class
 
+    # Backstop for anything the walk above does not model (brace nesting
+    # deeper than Crystal's ten levels, say).
     begin
       File.match?(pattern, "noir")
       nil
@@ -573,17 +626,20 @@ module Noir::CLI::ScanCommand
     else
       app.logger.success "Detected #{app.techs.size} technologies."
 
-      exclude_techs = app.options["exclude_techs"].to_s.split(",")
+      # Alias-resolved once, then matched by identity. `--exclude-techs`
+      # used to ask `similar_to_tech(entry).includes?(tech)`, a substring
+      # test that also dropped every tech whose name is a prefix of the
+      # excluded one — `--exclude-techs python_django_ninja` took
+      # `python_django` with it. See `NoirTechs.resolve_tech_list`.
+      exclude_techs = NoirTechs.resolve_tech_list(app.options["exclude_techs"].to_s).to_set
       app.techs.each_with_index do |tech, index|
-        is_excluded = exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
+        is_excluded = exclude_techs.includes?(tech)
         prefix = index < app.techs.size - 1 ? "├──" : "└──"
         status = is_excluded ? " (skip)" : ""
         app.logger.sub "#{prefix} #{tech}#{status}"
       end
 
-      app.techs = app.techs.reject do |tech|
-        exclude_techs.any? { |t| NoirTechs.similar_to_tech(t).includes?(tech) }
-      end
+      app.techs = app.techs.reject { |tech| exclude_techs.includes?(tech) }
       analysis_message = "Starting code analysis based on the detected technologies."
     end
 

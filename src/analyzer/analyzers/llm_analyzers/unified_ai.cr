@@ -673,6 +673,10 @@ module Analyzer::AI
 
         begin
           next if File.symlink?(full_path)
+          # A directory is tested too, so `--exclude-path secrets/` hides the
+          # subtree rather than listing it and then filtering each file out
+          # of it one by one.
+          next if excluded_path?(full_path)
 
           if File.directory?(full_path)
             lines << "#{indent}[D] #{agent_relative_path(full_path)}/"
@@ -693,6 +697,7 @@ module Analyzer::AI
 
       resolved = resolve_agent_single_path(path)
       return "ERROR: file '#{path}' is outside base paths or does not exist." if resolved.nil?
+      return "ERROR: file '#{path}' is excluded by --exclude-path." if excluded_path?(resolved)
       return "ERROR: '#{path}' is a directory. Use list_directory instead." if File.directory?(resolved)
 
       content = Noir::TextFile.read(resolved)
@@ -759,6 +764,7 @@ module Analyzer::AI
           next if File.directory?(file_path) || File.symlink?(file_path)
           next if ignore_extensions.includes?(File.extname(file_path))
           next unless path_within_base?(file_path)
+          next if excluded_path?(file_path)
 
           begin
             line_number = 0

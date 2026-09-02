@@ -73,6 +73,42 @@ describe Analyzer::AI::Unified do
       end
     end
 
+    # The agent tools walk the filesystem themselves, which is why
+    # `unified_ai.cr` sits on the directory-walk allowlist in
+    # `spec/unit_test/analyzer/layering_boundary_spec.cr`. That exemption is
+    # from the walk, never from what the walk enforces: an excluded file
+    # reached the provider through read_file, showed up in list_directory
+    # and was greppable, so `--exclude-path secrets/` kept a tree out of the
+    # report and shipped it to the LLM anyway.
+    it "applies --exclude-path to every agent tool that walks the tree" do
+      temp_dir = File.tempname
+      Dir.mkdir(temp_dir)
+      begin
+        Dir.mkdir(File.join(temp_dir, "secrets"))
+        File.write(File.join(temp_dir, "secrets", "keys.py"), "AWS_SECRET = 'redacted'")
+        File.write(File.join(temp_dir, "app.py"), "AWS_SECRET = 'in-scope'")
+
+        options = build_ai_options(temp_dir)
+        options["exclude_path"] = YAML::Any.new("secrets/")
+        analyzer = Analyzer::AI::Unified.new(options)
+
+        read = analyzer.__test_run_agent_tool("read_file", %({"path":"secrets/keys.py"}))
+        read.should contain("--exclude-path")
+        read.should_not contain("redacted")
+
+        listing = analyzer.__test_run_agent_tool("list_directory", %({"path":"."}))
+        listing.should_not contain("secrets")
+        listing.should contain("app.py")
+
+        grep = analyzer.__test_run_agent_tool("grep",
+          %({"pattern":"AWS_SECRET","path":".","file_pattern":"*.py"}))
+        grep.should_not contain("secrets/keys.py")
+        grep.should contain("app.py")
+      ensure
+        FileUtils.rm_rf(temp_dir)
+      end
+    end
+
     it "truncates large files in read_file tool" do
       temp_dir = File.tempname
       Dir.mkdir(temp_dir)

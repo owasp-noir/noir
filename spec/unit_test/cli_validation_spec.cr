@@ -308,6 +308,26 @@ describe Noir::CliValidation do
       options["techs"] = YAML::Any.new("")
       Noir::CliValidation.validate_tech_names!(options)
     end
+
+    # A value that is nothing but separators or whitespace names no tech,
+    # and every name in it is "valid" only because the list is empty after
+    # stripping. `--only-techs ,` then cleared the detector list and the
+    # scan reported zero endpoints with exit 0 — under --no-log, silently.
+    it "rejects a value that names no technology at all" do
+      {",", " ", ",,", " , "}.each do |value|
+        options = create_test_options
+        options["only_techs"] = YAML::Any.new(value)
+        expect_raises(Noir::CliValidation::Error, /names no technology/) do
+          Noir::CliValidation.validate_tech_names!(options)
+        end
+      end
+    end
+
+    it "still accepts a trailing comma next to a real name" do
+      options = create_test_options
+      options["only_techs"] = YAML::Any.new("flask,")
+      Noir::CliValidation.validate_tech_names!(options)
+    end
   end
 
   # `--passive-scan-severity` is validated by its flag handler in options.cr,

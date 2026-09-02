@@ -317,9 +317,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   # Handle --only-techs: filter detector_list to only specified techs
   only_techs_value = options["only_techs"]?.to_s
   if only_techs_value.size > 0
-    only_techs_list = only_techs_value.split(",").map do |tech|
-      NoirTechs.similar_to_tech(tech.strip)
-    end.reject(&.empty?)
+    only_techs_list = NoirTechs.resolve_tech_list(only_techs_value)
 
     if only_techs_list.empty?
       logger.error "No valid technologies specified in --only-techs. No detectors will be run."
@@ -335,7 +333,11 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
   # Handle -t/--techs: add techs directly (without detection validation)
   if options["techs"].to_s.size > 0
-    techs_tmp = options["techs"].to_s.split(",")
+    # Stripped, like `--only-techs` and like the CLI validator: without it
+    # `-t "js_express, python_flask"` resolved `" python_flask"` against the
+    # alias table, found nothing, and added only the first tech — while the
+    # count printed here still claimed two.
+    techs_tmp = options["techs"].to_s.split(",").map(&.strip).reject(&.empty?)
     logger.success "Setting #{techs_tmp.size} techs from command line."
     techs_tmp.each do |tech|
       similar_tech = NoirTechs.similar_to_tech(tech)

@@ -187,12 +187,53 @@ describe "noir CLI surface (built binary)" do
     end
 
     it "rejects an --exclude-path glob that would silently match nothing" do
-      {"*.{rb", "{", "", "  "}.each do |pattern|
+      # `z[b` and `a[b` are the same malformation. The validator used to
+      # probe them with `File.match?(pattern, "noir")`, and Crystal's
+      # matcher stops at the first literal that does not match its subject:
+      # `a[b` reached the unterminated `[` and raised, `z[b` did not and
+      # sailed through to exclude nothing at all. Which one a user got
+      # depended on the first character of their pattern.
+      {"*.{rb", "{", "", "  ", "a[b", "z[b", "[", "src/[a-z"}.each do |pattern|
         result = run_noir(["scan", FIXTURE, "--exclude-path", pattern, "-f", "json", "--no-log"])
         result.stdout.should be_empty
         result.stderr.should contain("--exclude-path")
         result.exit_code.should eq(1)
       end
+    end
+
+    # A brace group with a comma in it (`*.{rb,py}`) is not expressible
+    # here — the flag splits its value on `,` before a pattern is parsed —
+    # so the single-branch form is what these assert.
+    it "still accepts the character classes and brace groups that are valid" do
+      {"[]]", "[^a-z]*.rb", "src/[a-z]*.go", "*.{rb}", "**/vendor/**"}.each do |pattern|
+        result = run_noir(["scan", FIXTURE, "--exclude-path", pattern, "-f", "json", "--no-log"])
+        result.stderr.should_not contain("invalid glob pattern")
+        result.exit_code.should eq(0)
+      end
+    end
+
+    # A tech flag given nothing is stored as `""` — indistinguishable, in
+    # the options hash, from the flag never being typed. `--only-techs ""`
+    # therefore asked to restrict the scan and silently widened it back to
+    # every technology, which is what a CI job passing `--only-techs
+    # "$TECHS"` gets when `$TECHS` is unset. `--only-techs ,` went the other
+    # way: no detector ran, zero endpoints, exit 0, no word about why.
+    it "rejects a tech flag that names no technology" do
+      {
+        {"--only-techs", ""}, {"--only-techs", "  "}, {"--only-techs", ","},
+        {"--exclude-techs", ""}, {"--exclude-techs", ",,"},
+        {"-t", ""}, {"--techs", " "},
+      }.each do |(flag, value)|
+        result = run_noir(["scan", FIXTURE, flag, value, "-f", "json", "--no-log"])
+        result.stdout.should be_empty
+        result.stderr.should contain(flag == "-t" ? "--techs" : flag)
+        result.exit_code.should eq(1)
+      end
+
+      result = run_noir(["scan", FIXTURE, "--only-techs=", "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should contain("--only-techs")
+      result.exit_code.should eq(1)
     end
 
     it "still fails a CLI-typed --status-codes without a URL" do
