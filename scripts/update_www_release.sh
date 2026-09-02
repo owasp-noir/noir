@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
-# Add a released version to the OWASP project page's version list and open a
-# pull request against the upstream OWASP repository.
+# Add a released version to the OWASP project page's version list.
 #
-# The page at https://owasp.org/www-project-noir/ renders the download tab from
-# _data/release.yml, a plain list of the most recent tags. Keeping it current
-# used to be a manual web-UI edit after every release; this script does the same
-# edit through the owasp-noir fork so the change arrives as a reviewable PR.
+# The page at https://owasp.org/www-project-noir/ renders its download tab from
+# _data/release.yml in OWASP/www-project-noir, a plain list of the most recent
+# tags. This commits the new tag to the owasp-noir fork and prints the compare
+# URL for the upstream pull request, which stays a manual click: creating that
+# pull request from CI would need a token with write access to a repository the
+# OWASP Foundation enterprise owns, and its policy does not hand one out.
 #
 # Usage: scripts/update_www_release.sh <tag> [--keep N] [--dry-run]
 #
 #   <tag>       Release tag, with or without the leading "v" (e.g. v1.3.1).
 #   --keep N    How many versions the list keeps; older ones are dropped from
 #               the bottom (default: 5, matching the list as it stands today).
-#   --dry-run   Print the resulting diff and stop before pushing or opening a PR.
+#   --dry-run   Print the resulting diff and stop before committing.
 #
 # Re-running for a tag that is already listed is a no-op, so a re-published
-# release or a retried workflow will not produce a second pull request.
+# release or a retried workflow will not commit twice.
 #
 # Requires: gh (authenticated with push access to the fork), git.
 set -euo pipefail
@@ -86,36 +87,26 @@ can_push="$(gh api "repos/$FORK_REPO" --jq '.permissions.push' 2>/dev/null || ec
 if [[ "$can_push" != "true" ]]; then
   die "the current GitHub token cannot push to $FORK_REPO.
   A fine-grained token must list that repository (Contents: read and write);
-  a classic token needs the 'repo' scope. Opening the PR against $UPSTREAM_REPO
-  needs no extra permission beyond that."
+  a classic token needs the 'repo' scope. Nothing here touches $UPSTREAM_REPO,
+  so no access to the OWASP Foundation's repositories is needed."
 fi
 
-# Opening the pull request writes to a repository the OWASP Foundation
-# enterprise owns, and that enterprise applies its own token policy on top of
-# the token's own permissions. Probe it here so the log says up front whether
-# the last step can work; the edit and the push to the fork are worth doing
-# either way, since the pull request can then be opened from a browser.
-upstream_probe="$(gh api "repos/$UPSTREAM_REPO" --jq '.id' 2>&1 >/dev/null || true)"
-if [[ -n "$upstream_probe" ]]; then
-  echo "warning: the token cannot read $UPSTREAM_REPO, so opening the pull request will likely fail:" >&2
-  echo "  $upstream_probe" >&2
+# Pick up whatever upstream has merged since the last release. This runs on the
+# fork through the merge-upstream API, so it needs no access to $UPSTREAM_REPO.
+# It fails when the two have diverged - typically an earlier pull request that
+# upstream has not merged yet - and the edit below is still correct in that
+# case, since it appends to the list the fork already carries.
+echo "==> Syncing $FORK_REPO from $UPSTREAM_REPO"
+if ! sync_output="$(gh repo sync "$FORK_REPO" --source "$UPSTREAM_REPO" --branch "$BASE_BRANCH" 2>&1)"; then
+  echo "warning: could not sync the fork, continuing on its current $BASE_BRANCH:" >&2
+  echo "  $sync_output" >&2
+else
+  echo "$sync_output"
 fi
 
 WORKDIR="$(mktemp -d)"
 cleanup() { rm -rf "$WORKDIR"; }
 trap cleanup EXIT
-
-echo "==> Syncing $FORK_REPO from $UPSTREAM_REPO"
-gh repo sync "$FORK_REPO" --source "$UPSTREAM_REPO" --branch "$BASE_BRANCH"
-
-# A still-open PR from an earlier release means the fork's main does not yet
-# carry that version, so this run would silently drop it from the list.
-open_prs="$(gh pr list --repo "$UPSTREAM_REPO" --state open --json headRefName,url \
-  --jq ".[] | select(.headRefName | startswith(\"release/\")) | .url" 2>/dev/null || echo "")"
-if [[ -n "$open_prs" ]]; then
-  echo "warning: release PRs are still open upstream; their versions are not in the base yet:" >&2
-  while IFS= read -r pr; do echo "  $pr" >&2; done <<<"$open_prs"
-fi
 
 echo "==> Cloning $FORK_REPO"
 # Plain git rather than `gh repo clone`: gh resolves the fork's parent over
@@ -176,15 +167,13 @@ echo "==> Adding $TAG (keeping ${#kept[@]} of $((${#versions[@]} + 1)), dropping
 git --no-pager diff -- "$DATA_FILE"
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "==> Dry run: stopping before push and pull request."
+  echo "==> Dry run: stopping before commit and push."
   exit 0
 fi
 
 git config user.email >/dev/null 2>&1 || git config user.email "$DEFAULT_COMMIT_EMAIL"
 git config user.name >/dev/null 2>&1 || git config user.name "$DEFAULT_COMMIT_NAME"
 
-BRANCH="release/$TAG"
-git checkout -q -b "$BRANCH"
 git add "$DATA_FILE"
 git commit -q -m "Add $TAG to release.yml" -m "Co-authored-by: $COAUTHOR"
 
@@ -193,39 +182,21 @@ git commit -q -m "Add $TAG to release.yml" -m "Co-authored-by: $COAUTHOR"
 token="$(gh auth token)"
 git remote set-url --push origin "https://x-access-token:${token}@github.com/${FORK_REPO}.git"
 
-echo "==> Pushing $BRANCH to $FORK_REPO"
-git push -q --force-with-lease origin "$BRANCH"
+echo "==> Pushing to $FORK_REPO $BASE_BRANCH"
+git push -q origin "$BASE_BRANCH"
 
-echo "==> Opening pull request against $UPSTREAM_REPO"
-pr_body="Adds \`$TAG\` to the version list rendered on the project page.
+compare_url="https://github.com/$UPSTREAM_REPO/compare/$BASE_BRANCH...$FORK_OWNER:$BASE_BRANCH?expand=1"
 
-Released at https://github.com/owasp-noir/noir/releases/tag/$TAG
+echo ""
+echo "==> Done. Open the pull request against $UPSTREAM_REPO here:"
+echo "  $compare_url"
 
-Opened automatically from the noir release workflow."
-
-if pr_url="$(gh pr create \
-  --repo "$UPSTREAM_REPO" \
-  --base "$BASE_BRANCH" \
-  --head "$FORK_OWNER:$BRANCH" \
-  --title "Add $TAG to release.yml" \
-  --body "$pr_body" 2>&1)"; then
-  echo "$pr_url"
-else
-  # A retry after a partial failure finds the pull request already open.
-  existing_pr="$(gh pr list --repo "$UPSTREAM_REPO" --state open \
-    --head "$FORK_OWNER:$BRANCH" --json url --jq '.[0].url' 2>/dev/null || echo "")"
-  if [[ -n "$existing_pr" ]]; then
-    echo "==> Pull request already open: $existing_pr"
-  else
-    # The commit is already on the fork, so the work is not lost: opening the
-    # pull request by hand is one click away. Creating it through the API needs
-    # pull-request write access to a repository the token's owner does not own,
-    # which a fine-grained token cannot hold - that is a token choice, not
-    # something this script can retry its way out of.
-    echo "$pr_url" >&2
-    echo "" >&2
-    echo "The branch is pushed. Open the pull request here:" >&2
-    echo "  https://github.com/$UPSTREAM_REPO/compare/$BASE_BRANCH...$FORK_OWNER:$BRANCH?expand=1" >&2
-    die "failed to open the pull request"
-  fi
+# Under Actions the link is the whole point of the run, so put it on the run
+# page instead of leaving it buried in the step log.
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+  {
+    echo "### $TAG added to the project page fork"
+    echo ""
+    echo "[Open the pull request against $UPSTREAM_REPO]($compare_url)"
+  } >>"$GITHUB_STEP_SUMMARY"
 fi
