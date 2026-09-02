@@ -244,6 +244,12 @@ describe "noir CLI surface (built binary)" do
       end
     end
 
+    it "names an empty base path instead of reporting a blank one as missing" do
+      result = run_noir(["scan", ""])
+      result.stderr.should contain("Base path is empty")
+      result.exit_code.should eq(1)
+    end
+
     it "reports a --config-file that is a directory instead of crashing" do
       # `File.exists?` is true for a directory and the `File.read` that
       # followed it sat outside ConfigInitializer's YAML rescue, so this
