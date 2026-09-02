@@ -4,7 +4,14 @@ module Analyzer::Go
   class Mux < GoEngine
     analyzer_for "go_mux"
 
-    IMPORT_MARKER = "github.com/gorilla/mux"
+    # `github.com/minio/mux` is a maintained hard fork of gorilla/mux with
+    # the same `Methods(...).Path(...).HandlerFunc(...)` / `Subrouter()`
+    # API, so the same extraction applies. MinIO itself imports only the
+    # fork: the detector still fired (gorilla/mux is an indirect entry in
+    # its go.mod) but every file failed this gate, so the whole S3 data
+    # plane — `HEAD/GET/PUT/POST/DELETE /{object}` and the `_MINIO_*`
+    # internal routes — reported zero endpoints.
+    IMPORT_MARKER = ["github.com/gorilla/mux", "github.com/minio/mux"]
 
     def analyze
       # Source Analysis

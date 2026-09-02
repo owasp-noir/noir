@@ -131,7 +131,7 @@ module Analyzer::Go
     # repos (e.g. an example monorepo where most dirs use other routers).
     # `file_contents` is still populated for every file so the per-file
     # route pass and callee pre-pass keep their read cache.
-    def collect_package_groups_ts(group_method : String = "Group", import_marker : String? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
+    def collect_package_groups_ts(group_method : String = "Group", import_marker : (String | Array(String))? = nil) : Tuple(Hash(String, Hash(String, String)), Hash(String, String))
       package_groups = Hash(String, Hash(String, String)).new
       files_by_dir = Hash(String, Array(String)).new
       file_contents = Hash(String, String).new
@@ -153,7 +153,10 @@ module Analyzer::Go
 
       files_by_dir.each do |dir, paths|
         relevant = if import_marker
-                     paths.select { |p| (c = file_contents[p]?) && c.includes?(import_marker) }
+                     markers = import_markers(import_marker)
+                     paths.select do |p|
+                       (c = file_contents[p]?) && markers.any? { |marker| c.includes?(marker) }
+                     end
                    else
                      paths
                    end
@@ -245,19 +248,29 @@ module Analyzer::Go
     # instead of rebuilding them for every candidate file.
     @extra_method_regexes = Hash(String, Regex).new
 
-    # One compiled matcher per framework import marker. Each analyzer
+    # One compiled matcher per framework import marker set. Each analyzer
     # passes a single `IMPORT_MARKER` constant, so the cardinality here is
     # one entry; the Hash just keeps the memo honest if that changes.
     @import_marker_regexes = Hash(String, Regex).new
 
-    private def import_marker_regex(import_marker : String) : Regex
-      @import_marker_regexes[import_marker] ||= Regex.union(import_marker)
+    # An analyzer may name more than one import path when a framework is
+    # shipped under several of them — a maintained hard fork exposing the
+    # same routing API, for instance. Callers keep passing a plain String.
+    private def import_markers(import_marker : String | Array(String)) : Array(String)
+      import_marker.is_a?(String) ? [import_marker] : import_marker
+    end
+
+    # Called once per candidate file, so the single-marker case reuses the
+    # constant itself as the memo key rather than allocating a joined one.
+    private def import_marker_regex(import_marker : String | Array(String)) : Regex
+      key = import_marker.is_a?(String) ? import_marker : import_marker.join('\n')
+      @import_marker_regexes[key] ||= Regex.union(import_markers(import_marker))
     end
 
     # Per-package directories that import a target framework. Some real
     # projects hide the concrete framework type behind a local interface, so
     # the file that calls `router.GET(...)` may not import Gin/Echo itself.
-    def framework_package_dirs(file_contents : Hash(String, String), import_marker : String) : Set(String)
+    def framework_package_dirs(file_contents : Hash(String, String), import_marker : String | Array(String)) : Set(String)
       dirs = Set(String).new
       marker = import_marker_regex(import_marker)
       file_contents.each do |path, content|
@@ -280,7 +293,7 @@ module Analyzer::Go
     def framework_route_source_candidate?(content : String,
                                           dir : String,
                                           framework_dirs : Set(String),
-                                          import_marker : String,
+                                          import_marker : String | Array(String),
                                           extra_methods : Array(String)) : Bool
       return false unless content_matches?(content, import_marker_regex(import_marker)) || framework_dirs.includes?(dir)
       go_route_source_candidate?(content, extra_methods)

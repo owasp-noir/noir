@@ -496,6 +496,14 @@ module Noir
       "require(\"msw\")", "require('msw')",
       "from \"nock\"", "from 'nock'",
       "require(\"nock\")", "require('nock')",
+      # fetch-mock: the same job as msw/nock for the `fetch` API, and the
+      # same call shape — `fetchMock.get('glob:*/api/v1/token/*', body)`.
+      # Superset's `setupClientForTest.ts` / `setupSupersetClient.js`
+      # registered its glob patterns as Express routes, so the catalog
+      # reported `GET /glob:*api/v1/security/csrf_token/*`.
+      "from \"fetch-mock\"", "from 'fetch-mock'",
+      "from \"fetch-mock/", "from 'fetch-mock/",
+      "require(\"fetch-mock\")", "require('fetch-mock')",
       "setupApplicationTest",
       "setupRenderingTest",
       # Cypress: e2e suites use `cy.request(...)` / `cy.get(...)`
