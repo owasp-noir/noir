@@ -98,8 +98,16 @@ class NoirRunner
     if any_to_bool(@options["passive_scan"])
       @logger.info "Passive scanner enabled."
 
-      # Check for passive rules updates unless disabled
-      unless any_to_bool(@options["passive_scan_no_update_check"])
+      custom_rule_paths = @options["passive_scan_path"].as_a
+
+      # Only bootstrap/refresh the bundled ruleset when this run will
+      # actually read it. With `--passive-scan-path` the very next log line
+      # says the bundled rules are skipped, yet this used to `git clone`
+      # the upstream rules repository into $NOIR_HOME and then `git fetch`
+      # it over the network — an unasked-for download, and a hang in an
+      # air-gapped or credential-less environment, for rules the run then
+      # threw away.
+      if custom_rule_paths.empty? && !any_to_bool(@options["passive_scan_no_update_check"])
         # Initialize rules if they don't exist
         PassiveRulesUpdater.initialize_rules(@logger)
 
@@ -108,16 +116,20 @@ class NoirRunner
         PassiveRulesUpdater.check_for_updates(@logger, auto_update)
       end
 
-      if !@options["passive_scan_path"].as_a.empty?
+      if !custom_rule_paths.empty?
         @logger.sub "├── Using custom passive rules only (bundled rules skipped)."
         # Concatenate rules from every passive_scan_path. The previous
         # assignment (`@passive_scans = NoirPassiveScan.load_rules …`)
         # inside the loop silently dropped every path except the last
         # one whenever the user passed multiple --passive-scan-path
         # entries.
-        @options["passive_scan_path"].as_a.each do |rule_path|
+        custom_rule_paths.each do |rule_path|
           @passive_scans.concat(NoirPassiveScan.load_rules(rule_path.to_s, @logger))
         end
+        # `load_rules` deduplicates within one directory; the same rule id
+        # arriving from two different `--passive-scan-path` entries has to
+        # be caught here or every one of its findings is reported twice.
+        @passive_scans = NoirPassiveScan.reject_duplicate_ids(@passive_scans, @logger)
       else
         # Resolve the effective rules path — prefers the user-managed
         # `$NOIR_HOME/passive_rules` when populated, falls back to the

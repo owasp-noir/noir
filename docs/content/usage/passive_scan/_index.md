@@ -16,7 +16,7 @@ Run passive scan:
 noir scan <BASE_PATH> -P
 ```
 
-Use custom rules. `--passive-scan-path` takes a **directory**, not a single file: Noir loads every `*.yml` / `*.yaml` below it, and the bundled rules are skipped for that run. The flag is repeatable.
+Use custom rules. `--passive-scan-path` takes a **directory**, not a single file: Noir loads every `*.yml` / `*.yaml` below it, and the bundled rules are skipped for that run — including their download, so a run with `--passive-scan-path` needs neither git nor network. The flag is repeatable; a rule id that arrives from two directories is loaded once.
 
 ```bash
 noir scan <BASE_PATH> -P --passive-scan-path /path/to/your/rules/

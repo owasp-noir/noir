@@ -76,3 +76,8 @@ techs:
 * `severity` and `matchers[].type` are closed sets. A rule using any other value is invalid and is skipped with a `Skipped invalid passive rule` message, rather than partially applied. `category` is free-form.
 * Findings below the minimum severity are filtered out of the report, and the default minimum is `high`. A `severity: medium` or `severity: low` rule produces nothing until you lower the threshold with `--passive-scan-severity`.
 * `techs` is result metadata copied onto each finding. It does not gate which files a rule runs against — every loaded rule is evaluated against every scanned file.
+* Matchers are evaluated **line by line**: a finding is a single line, and every matcher (and every pattern inside it) has to be satisfied by that one line. A `regex` pattern written to span several lines — `-----BEGIN PRIVATE KEY-----[\s\S]*?-----END PRIVATE KEY-----`, for example — therefore never produces a finding on its own; pair it with a `word` matcher on the opening marker.
+* `id` must be unique across the whole rule set. A second rule reusing an id is skipped with a `Skipped duplicate passive rule id` message, because the id is what the JSON output and the SARIF `ruleId` identify a finding by.
+* A rule file may hold several `---` separated YAML documents; every document is loaded as its own rule.
+* A rule whose matchers all fail to compile — a broken `regex` pattern — can never fire, so it is rejected like any other invalid rule instead of being counted as loaded.
+* Every entry of `patterns` must be non-empty. An empty pattern (an explicit `''`, or a `- ` list item with nothing after it, which YAML reads as null) matches every line of every scanned file, so a rule carrying one is rejected instead of flooding the report.

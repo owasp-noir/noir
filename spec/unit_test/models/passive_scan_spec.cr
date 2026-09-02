@@ -137,6 +137,36 @@ describe "PassiveScan" do
       matcher.validation_errors.should contain("missing or empty 'patterns'")
     end
 
+    it "rejects a blank pattern entry, which would match every line" do
+      # `- ` with nothing after it is YAML null, which stringifies to "" —
+      # and `line.includes?("")` is true for every line of every file.
+      yaml_str = <<-YAML
+        type: "word"
+        patterns:
+          - MARKER
+          -
+        condition: "or"
+        YAML
+      yaml = YAML.parse(yaml_str)
+      matcher = PassiveScan::Matcher.new(yaml)
+
+      matcher.valid?.should be_false
+      matcher.validation_errors.should contain("empty pattern at index 1 (an empty pattern matches every line)")
+    end
+
+    it "rejects an explicitly empty regex pattern" do
+      yaml_str = <<-YAML
+        type: "regex"
+        patterns: ['']
+        condition: "or"
+        YAML
+      yaml = YAML.parse(yaml_str)
+      matcher = PassiveScan::Matcher.new(yaml)
+
+      matcher.valid?.should be_false
+      matcher.validation_errors.should contain("empty pattern at index 0 (an empty pattern matches every line)")
+    end
+
     it "sets regex_compile_failed for invalid regex patterns" do
       yaml_str = <<-YAML
         type: "regex"

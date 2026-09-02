@@ -16,7 +16,7 @@ sort_by = "weight"
 noir scan <BASE_PATH> -P
 ```
 
-사용자 정의 룰 사용. `--passive-scan-path` 는 파일 하나가 아니라 **디렉터리**를 받습니다. 그 아래의 모든 `*.yml` / `*.yaml` 을 읽어들이며, 해당 실행에서는 기본 제공 룰을 쓰지 않습니다. 이 플래그는 여러 번 지정할 수 있습니다.
+사용자 정의 룰 사용. `--passive-scan-path` 는 파일 하나가 아니라 **디렉터리**를 받습니다. 그 아래의 모든 `*.yml` / `*.yaml` 을 읽어들이며, 해당 실행에서는 기본 제공 룰을 내려받지도, 사용하지도 않습니다. 따라서 `--passive-scan-path` 를 쓰는 실행에는 git 도 네트워크도 필요하지 않습니다. 이 플래그는 여러 번 지정할 수 있고, 두 디렉터리에서 같은 룰 id 가 들어오면 한 번만 로드됩니다.
 
 ```bash
 noir scan <BASE_PATH> -P --passive-scan-path /path/to/your/rules/
