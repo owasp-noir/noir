@@ -281,6 +281,7 @@ module OutputBuilderOasCommon
   # data. Keyed by the verb as the analyzer spelled it, merged the same way
   # a real operation is when two endpoints collapse onto one.
   private def add_unsupported_operation(path_item : Hash(String, JSON::Any), method : String, operation : Hash(String, JSON::Any))
+    promote_path_parameters_to_item(path_item, operation)
     operations = path_item["x-noir-unsupported-operations"]?.try(&.as_h?).try(&.dup) || {} of String => JSON::Any
 
     if existing = operations[method]?
@@ -290,6 +291,37 @@ module OutputBuilderOasCommon
     end
 
     path_item["x-noir-unsupported-operations"] = JSON::Any.new(operations)
+  end
+
+  # Path templating requires every `{name}` in the path to be declared "in the
+  # Path Item Object itself and/or in each Operation's parameters". An
+  # operation parked under `x-noir-unsupported-operations` is an extension —
+  # no validator reads parameters out of it — so a path whose only verbs are
+  # unsupported ones declared none at all: `/app/chat/send/{roomId}`, a STOMP
+  # `SEND` route, left `{roomId}` dangling and the document invalid. The Path
+  # Item is where a parameter shared by every operation belongs, and putting
+  # it there satisfies the rule without inventing an operation the verb
+  # cannot have.
+  private def promote_path_parameters_to_item(path_item : Hash(String, JSON::Any), operation : Hash(String, JSON::Any))
+    operation_parameters = operation["parameters"]?.try(&.as_a?)
+    return unless operation_parameters
+
+    parameters = path_item["parameters"]?.try(&.as_a?).try(&.compact_map(&.as_h?)) || [] of Hash(String, JSON::Any)
+    added = false
+
+    operation_parameters.each do |raw|
+      parameter = raw.as_h?
+      next unless parameter
+      next unless parameter["in"]?.try(&.as_s?) == "path"
+      next if parameters.any? { |existing| parameter_key(existing) == parameter_key(parameter) }
+
+      parameters << parameter
+      added = true
+    end
+
+    return unless added
+
+    path_item["parameters"] = JSON::Any.new(parameters.map { |parameter| JSON::Any.new(parameter) })
   end
 
   private def parameter_key(parameter : Hash(String, JSON::Any)) : String

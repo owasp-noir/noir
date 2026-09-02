@@ -246,7 +246,7 @@ module Analyzer::Javascript
 
         extract_oak_params_from_content(file_content, router_var || "app", match[2], route_path, endpoint)
 
-        unless result.any? { |e| e.url == full_path && e.method == http_method }
+        unless route_recorded_for_file?(result, path, full_path, http_method)
           result << endpoint
         end
       end

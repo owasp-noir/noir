@@ -99,6 +99,31 @@ module Analyzer::Javascript
       end
     end
 
+    # True when this file has already contributed `method url` to `result`.
+    #
+    # The auxiliary passes each analyzer runs after the shared extractor
+    # (Fastify's `route({…})` config objects, Hono's `app.on(…)`, the
+    # regex fallbacks) re-read routes the extractor may have emitted for the
+    # same file, so they need a "did I already record this?" guard. Written
+    # as a bare `result.any? { |e| e.url == url && e.method == method }` that
+    # guard reaches across the *whole run*: `result` accumulates every file's
+    # endpoints, so a route was dropped because a different file happened to
+    # declare the same address first. Two services in one repo both serving
+    # `GET /items/:id` reported a single endpoint carrying one of the two
+    # source locations, and which one survived depended on the order the
+    # worker pool handed the files over — the same scan named a different
+    # file between runs.
+    #
+    # Matching the file as well keeps the intra-file de-duplication the
+    # guard exists for and lets a genuine second declaration through, where
+    # the optimizer merges the two into one endpoint with both code paths.
+    protected def route_recorded_for_file?(result : Array(Endpoint), path : String, url : String, method : String) : Bool
+      result.any? do |endpoint|
+        endpoint.url == url && endpoint.method == method &&
+          endpoint.details.code_paths.any? { |code_path| code_path.path == path }
+      end
+    end
+
     protected def discover_js_project_roots(package_markers : Array(String), config_basenames : Array(String)) : Array(String)
       roots = [] of String
 

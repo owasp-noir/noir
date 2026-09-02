@@ -508,7 +508,7 @@ module Analyzer::Javascript
               extract_handler_params_from_content(content, router_prefix_router_name, method, route_path, endpoint)
 
               # Add endpoint to results if it's not already there with same method and path
-              unless result.any? { |e| e.url == full_path && e.method == method_upper }
+              unless route_recorded_for_file?(result, path, full_path, method_upper)
                 result << endpoint
               end
             end
@@ -595,7 +595,7 @@ module Analyzer::Javascript
             end
 
             # Add endpoint to results if it's not already there with same method and path
-            unless result.any? { |e| e.url == full_path && e.method == method_upper }
+            unless route_recorded_for_file?(result, path, full_path, method_upper)
               result << endpoint
             end
           end
@@ -982,7 +982,7 @@ module Analyzer::Javascript
     # Scan for router mount patterns and store them in CodeLocator
     # This enables cross-file router prefix tracking
     private def scan_for_router_mounts
-      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger)
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :express)
       scanner.scan
     end
   end

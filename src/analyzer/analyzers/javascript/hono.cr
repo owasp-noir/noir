@@ -116,7 +116,7 @@ module Analyzer::Javascript
         direct_callees = include_callee && call_start ? on_route_callees(content, path, call_start) : [] of Noir::JSCalleeExtractor::Entry
 
         methods.each do |http_method|
-          next if result.any? { |e| e.url == url && e.method == http_method.upcase }
+          next if route_recorded_for_file?(result, path, url, http_method.upcase)
 
           endpoint = Endpoint.new(url, http_method.upcase)
           details = Details.new(PathInfo.new(path, index + 1))
@@ -322,7 +322,7 @@ module Analyzer::Javascript
     end
 
     private def scan_for_router_mounts
-      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger)
+      scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :hono)
       scanner.scan
     end
   end

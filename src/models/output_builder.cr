@@ -214,6 +214,25 @@ class OutputBuilder
     print(endpoints)
   end
 
+  # `?` is a reserved delimiter: whatever parser reads the baked URL takes the
+  # first one as the start of the query string. A route that spells a `?` as
+  # syntax — Express's optional `/posts/:id?`, Ktor's `{slug?}`, a regex route
+  # `/grp/(?:a|b)` — therefore cannot also carry query params: `/posts/:id?`
+  # plus a `filter` param baked to `/posts/:id??filter=`, and the server read
+  # the first parameter's name as `?filter`. Percent-encode the route's own
+  # `?` (everything before `before`) so it stays in the path and the query
+  # begins where `INLINE_QUERY` says it does.
+  #
+  # Only called on a URL that has, or is about to gain, a query string. A
+  # route with no params to append is unambiguous as written and keeps its
+  # literal spelling.
+  private def escape_route_question_marks(url : String, before : Int32) : String
+    head = url[0, before]
+    return url unless head.includes?('?')
+
+    "#{head.gsub('?', "%3F")}#{url[before..]}"
+  end
+
   # The block form of `NoirLogger#debug`, not the String one: `bake_endpoint`
   # runs once per endpoint for most builders, and the String overload would
   # build all seven of these messages on every call only for the logger to
@@ -248,10 +267,19 @@ class OutputBuilder
     # `?` here does not always open a query string — it is also route syntax
     # (Express `/geo/:ip?`, regex routes `/grp/(?:a|b)`). Only a `?` that
     # introduces a `key=value` pair before the next path separator does.
-    existing_query = final_url.match(INLINE_QUERY).try(&.[1])
+    existing_match = final_url.match(INLINE_QUERY)
+    existing_query = existing_match.try(&.[1])
     existing_pairs = existing_query.try(&.split('&')) || [] of String
     existing_names = existing_pairs.map { |pair| pair.split('=', 2)[0] }
     first_query = existing_query.nil?
+
+    # Knowing which `?` opens the query is only half the job: the reader of
+    # the baked URL does not get this regex, it gets RFC 3986, where the
+    # *first* `?` wins. A route `?` standing ahead of the real query has to
+    # be encoded or the two disagree.
+    if query_start = existing_match.try(&.begin(0))
+      final_url = escape_route_question_marks(final_url, query_start)
+    end
 
     unless params.nil?
       params.each do |param|
@@ -272,6 +300,10 @@ class OutputBuilder
                       (param.value.empty? && existing_names.includes?(param.name))
           unless redundant
             if first_query
+              # No inline query, so every `?` left in the URL is route
+              # syntax and all of it has to be encoded before this pair
+              # opens the real one.
+              final_url = escape_route_question_marks(final_url, final_url.size)
               final_url += "?#{pair}"
               first_query = false
             else
