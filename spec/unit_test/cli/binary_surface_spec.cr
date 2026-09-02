@@ -244,6 +244,17 @@ describe "noir CLI surface (built binary)" do
       end
     end
 
+    it "reports a --config-file that is a directory instead of crashing" do
+      # `File.exists?` is true for a directory and the `File.read` that
+      # followed it sat outside ConfigInitializer's YAML rescue, so this
+      # printed a raw Crystal backtrace before CliValidation's one-liner.
+      result = run_noir(["scan", FIXTURE, "--config-file", Dir.tempdir, "-f", "json", "--no-log"])
+      result.stdout.should be_empty
+      result.stderr.should_not contain("Unhandled exception")
+      result.stderr.should contain("--config-file is not a file")
+      result.exit_code.should eq(1)
+    end
+
     it "leaves a well-formed scan untouched" do
       result = run_noir(["scan", FIXTURE, "-u", "http://localhost:3000", "-f", "json", "--no-log"])
       result.stderr.should be_empty
