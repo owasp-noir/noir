@@ -66,7 +66,11 @@ module Analyzer::Javascript
       result = [] of Endpoint
       static_dirs = [] of Hash(String, String)
       include_callee = callees_needed?
-      global_prefix_holder = [] of GlobalPrefixConfig
+      # `(bootstrap file, config)` for every `setGlobalPrefix` in the scan,
+      # not just the first one seen. Two NestJS apps under one scan base each
+      # set their own prefix, and only the file they live beside tells them
+      # apart.
+      global_prefix_holder = [] of Tuple(String, GlobalPrefixConfig)
       global_prefix_mutex = Mutex.new
 
       # Resolve enum/object constants used cross-file as `@Controller(...)`
@@ -84,9 +88,9 @@ module Analyzer::Javascript
       # Process static directories to create endpoints for static files
       process_static_dirs(static_dirs, result)
 
-      # Apply discovered global prefix (`app.setGlobalPrefix('api')`)
+      # Apply discovered global prefixes (`app.setGlobalPrefix('api')`)
       # — the bootstrap call mounts every controller under that prefix.
-      apply_global_prefix(result, global_prefix_holder.first?)
+      apply_global_prefixes(result, global_prefix_holder)
 
       result
     end
@@ -100,6 +104,70 @@ module Analyzer::Javascript
         relative.includes?("/test/fixtures/") || relative.includes?("/tests/fixtures/")
     end
 
+    # Markers that identify a NestJS application root, so a prefix set in
+    # one app's bootstrap is not stamped onto another app's controllers.
+    NEST_PACKAGE_MARKERS  = ["@nestjs/core", "@nestjs/common"]
+    NEST_CONFIG_BASENAMES = ["nest-cli.json"]
+
+    # Route each discovered `setGlobalPrefix` to the endpoints it actually
+    # governs.
+    #
+    # This used to be `apply_global_prefix(result, holder.first?)` over a
+    # holder that kept only the first prefix found anywhere in the scan. Two
+    # NestJS apps under one scan base — an ordinary monorepo — therefore had
+    # one app's prefix stamped on both: `appB` with `setGlobalPrefix('internal')`
+    # was reported at `/apiv1/appB/ping` because `appA` happened to be read
+    # first. The URL reported did not exist and the real one was missing, so
+    # anything consuming the output (a DAST target list, an OAS export,
+    # `--probe`) was aimed at a 404. Worse, "first" was decided by which
+    # `parallel_file_scan` fiber finished first, so the same input could
+    # report different URLs between runs.
+    private def apply_global_prefixes(result : Array(Endpoint),
+                                      entries : Array(Tuple(String, GlobalPrefixConfig)))
+      return if entries.empty?
+
+      # Sort before anything picks a winner: the collection order is fiber
+      # completion order, which is not stable across runs.
+      sorted = entries.sort_by { |(path, _)| path }
+      roots = discover_js_project_roots(NEST_PACKAGE_MARKERS, NEST_CONFIG_BASENAMES)
+
+      by_root = {} of String => GlobalPrefixConfig
+      sorted.each do |(path, config)|
+        root = nest_app_root_for(path, roots)
+        by_root[root] = config unless by_root.has_key?(root)
+      end
+
+      # One app (the overwhelmingly common case, and every project without a
+      # discoverable root) keeps the original whole-scan behaviour, including
+      # for endpoints that carry no source file such as static-directory ones.
+      if by_root.size <= 1
+        apply_global_prefix(result, sorted.first[1])
+        return
+      end
+
+      result.each_with_index do |endpoint, idx|
+        file = endpoint.details.code_paths.first?.try(&.path)
+        next if file.nil?
+        config = by_root[nest_app_root_for(file, roots)]?
+        next if config.nil?
+        prefixed = prefix_endpoint(endpoint, config)
+        result[idx] = prefixed if prefixed
+      end
+    end
+
+    # The deepest discovered project root containing `path`, or `""` when the
+    # scan found no root for it. Deepest, not first: a nested app inside a
+    # workspace root must win over the workspace.
+    private def nest_app_root_for(path : String, roots : Array(String)) : String
+      expanded = File.expand_path(path)
+      best = ""
+      roots.each do |root|
+        next unless Noir::PathScope.under_normalized_root?(expanded, root)
+        best = root if root.size > best.size
+      end
+      best
+    end
+
     # Prepend the discovered `app.setGlobalPrefix('api')` value to
     # every endpoint URL. Endpoints whose URL already starts with the
     # normalized prefix (e.g. controllers that hard-coded `/api/...`)
@@ -107,22 +175,36 @@ module Analyzer::Javascript
     private def apply_global_prefix(result : Array(Endpoint), config : GlobalPrefixConfig?)
       return unless config
 
+      # `Endpoint` is a struct (value type), so the block-local
+      # binding is a copy — write back through the index to make the
+      # URL change visible to callers.
+      result.each_with_index do |endpoint, idx|
+        prefixed = prefix_endpoint(endpoint, config)
+        result[idx] = prefixed if prefixed
+      end
+    end
+
+    # The prefixed endpoint, or `nil` when this config leaves it alone.
+    # Shared by the single-app and per-app paths so the two cannot drift.
+    private def prefix_endpoint(endpoint : Endpoint, config : GlobalPrefixConfig) : Endpoint?
+      normalized = normalized_global_prefix(config)
+      return if normalized.nil?
+      return if global_prefix_excluded?(endpoint, config.excludes)
+      # Controllers that hard-coded `/api/...` are already where the prefix
+      # would put them; prefixing again would double it.
+      return if endpoint.url.starts_with?(normalized + "/") || endpoint.url == normalized
+
+      endpoint.url = endpoint.url.starts_with?("/") ? "#{normalized}#{endpoint.url}" : "#{normalized}/#{endpoint.url}"
+      endpoint
+    end
+
+    private def normalized_global_prefix(config : GlobalPrefixConfig) : String?
       prefix = config.prefix
       return if prefix.empty?
 
       normalized = prefix.starts_with?("/") ? prefix : "/#{prefix}"
       normalized = normalized.chomp("/")
-      return if normalized.empty?
-
-      # `Endpoint` is a struct (value type), so the block-local
-      # binding is a copy — write back through the index to make the
-      # URL change visible to callers.
-      result.each_with_index do |endpoint, idx|
-        next if global_prefix_excluded?(endpoint, config.excludes)
-        next if endpoint.url.starts_with?(normalized + "/") || endpoint.url == normalized
-        endpoint.url = endpoint.url.starts_with?("/") ? "#{normalized}#{endpoint.url}" : "#{normalized}/#{endpoint.url}"
-        result[idx] = endpoint
-      end
+      normalized.empty? ? nil : normalized
     end
 
     private def global_prefix_excluded?(endpoint : Endpoint, excludes : Array(GlobalPrefixExclude)) : Bool
@@ -156,7 +238,7 @@ module Analyzer::Javascript
       process_js_static_dirs(static_dirs, result)
     end
 
-    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(GlobalPrefixConfig), global_prefix_mutex : Mutex)
+    private def analyze_nestjs_file(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)), include_callee : Bool, global_prefix_holder : Array(Tuple(String, GlobalPrefixConfig)), global_prefix_mutex : Mutex)
       content = read_file_content(path)
 
       collect_static_paths(path, content, static_dirs, :nestjs)
@@ -171,7 +253,7 @@ module Analyzer::Javascript
       # all files have been parsed.
       if prefix = extract_global_prefix_config(sanitized)
         global_prefix_mutex.synchronize do
-          global_prefix_holder << prefix if global_prefix_holder.empty?
+          global_prefix_holder << {path, prefix}
         end
       end
 
