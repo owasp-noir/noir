@@ -407,19 +407,39 @@ module Noir::CLI::ScanCommand
 
   # Returns nil for a usable glob, otherwise the reason it is broken.
   #
-  # `File.match?` parses the pattern itself, so character-class errors
-  # come back from Crystal with its own wording. Brace groups it accepts
-  # and then never matches (`*.{rb` matches nothing at all), so the
-  # `{`/`}` balance is checked here — skipping over character classes,
-  # inside which a brace is an ordinary character.
+  # Both malformations are found by walking the pattern rather than by
+  # asking `File.match?`. Crystal's matcher is lazy: it only raises
+  # `BadPatternError` for an unterminated `[` once it actually *reaches*
+  # that `[`, and it stops at the first literal that does not match the
+  # subject. Probing with one fixed string therefore reported an
+  # unterminated character set for `a[b` (whose `a` happens to be a prefix
+  # of nothing in particular) and passed `z[b` — the identical
+  # malformation — straight through, where it then excluded nothing and
+  # matched no file loudly enough to raise either. Which of the two a user
+  # got depended on the first character of their pattern.
+  #
+  # Brace groups have the same problem in the other direction: `*.{rb` is
+  # accepted by the matcher and then never matches anything.
+  #
+  # Inside a character class a brace is an ordinary character, and the
+  # first character of a class is a literal member — `[]]` is the class
+  # containing `]`, exactly as Crystal's matcher reads it.
   def self.glob_error(pattern : String) : String?
     depth = 0
     in_class = false
+    class_first = false
     pattern.each_char do |char|
       if in_class
+        if class_first
+          # `^` marks the class negated and does not consume the
+          # literal-member slot, so `[^]]` is still a valid class.
+          class_first = false unless char == '^'
+          next
+        end
         in_class = false if char == ']'
       elsif char == '['
         in_class = true
+        class_first = true
       elsif char == '{'
         depth += 1
       elsif char == '}'
@@ -428,7 +448,10 @@ module Noir::CLI::ScanCommand
       end
     end
     return "unterminated `{` group" if depth > 0
+    return "unterminated character set" if in_class
 
+    # Backstop for anything the walk above does not model (brace nesting
+    # deeper than Crystal's ten levels, say).
     begin
       File.match?(pattern, "noir")
       nil
