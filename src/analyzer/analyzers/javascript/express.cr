@@ -194,16 +194,32 @@ module Analyzer::Javascript
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
       # Original regex-based analysis as a fallback
       file_content = read_file_content(path)
+      # Every pass below reasons about one file, and two of them *edit* what
+      # earlier passes emitted: `scan_for_nested_router_endpoints` replaces
+      # the un-prefixed route with the router-mounted one, and
+      # `handle_v1_router_pattern` drops the un-prefixed `/status` and
+      # `/settings` before re-adding them under the router prefix. Handed the
+      # scan-wide array, those edits reach across files: the lookups match on
+      # url and method alone, so the endpoint they replace or drop is just as
+      # likely to belong to another Express app under the same scan base, and
+      # it disappears from the report along with its params and its
+      # `code_path`. Twelve one-file apps each declaring `app.post('/users')`
+      # plus twelve declaring it behind `router.use('/api', usersRouter)` came
+      # out with ten of the twelve plain apps erased. Collect into a per-file
+      # array so a fix-up can only touch this file's own endpoints, and hand
+      # the whole batch to `result` at the end; duplicates across files are
+      # the optimizer's job to merge.
+      file_endpoints = [] of Endpoint
       last_endpoint = Endpoint.new("", "")
       current_router_base = ""
       router_detected = false
       nested_routers = {} of String => String
 
       # First, handle the specific v1Router pattern directly
-      handle_v1_router_pattern(file_content, result, path)
+      handle_v1_router_pattern(file_content, file_endpoints, path)
 
       # Handle app.route('/path').method1().method2() patterns
-      handle_app_route_chaining(file_content, result, path)
+      handle_app_route_chaining(file_content, file_endpoints, path)
 
       collect_express_static_paths(path, file_content, static_dirs)
 
@@ -277,7 +293,7 @@ module Analyzer::Javascript
 
               details = Details.new(PathInfo.new(path, index + 1))
               expanded_endpoint.details = details
-              result << expanded_endpoint
+              file_endpoints << expanded_endpoint
             end
           else
             # Apply nested router prefix if applicable
@@ -293,7 +309,7 @@ module Analyzer::Javascript
 
             details = Details.new(PathInfo.new(path, index + 1))
             endpoint.details = details
-            result << endpoint
+            file_endpoints << endpoint
             last_endpoint = endpoint
           end
         end
@@ -308,7 +324,9 @@ module Analyzer::Javascript
       end
 
       # After processing all lines, look for any nested router patterns we might have missed
-      scan_for_nested_router_endpoints(file_content, result, path)
+      scan_for_nested_router_endpoints(file_content, file_endpoints, path)
+
+      result.concat(file_endpoints)
     end
 
     # Enhanced method to detect nested router patterns that might be missed in the regular line-by-line analysis
