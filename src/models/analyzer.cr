@@ -133,6 +133,17 @@ class Analyzer
     content[0...offset].count('\n') + 1
   end
 
+  # `line_at_offset` for a *byte* offset — what `Regex::MatchData#byte_begin`
+  # and the byte-wise scanners hand back. Counting newline bytes over a slice
+  # is both correct for multibyte content (a UTF-8 continuation byte never
+  # collides with an ASCII value) and free of the per-call string allocation
+  # the char form pays.
+  def line_at_byte_offset(content : String, byte_offset : Int32) : Int32
+    return 1 if byte_offset <= 0
+    byte_offset = content.bytesize if byte_offset > content.bytesize
+    content.to_slice[0, byte_offset].count(0x0a_u8) + 1
+  end
+
   # Whether the user's `--exclude-path` covers `path`.
   #
   # `CodeLocator` lookups need no such check: the exclusion is applied once,

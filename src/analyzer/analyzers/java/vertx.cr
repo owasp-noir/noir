@@ -39,8 +39,13 @@ module Analyzer::Java
       getter router_name : String
       getter method : String
       getter endpoint : String
+      # 1-based line of the call that declares the route. Part of the
+      # struct's identity on purpose: the same path registered twice is
+      # two declarations, and the optimizer merges them into one endpoint
+      # carrying both lines.
+      getter line : Int32
 
-      def initialize(@router_name, @method, @endpoint)
+      def initialize(@router_name, @method, @endpoint, @line = 0)
       end
     end
 
@@ -48,8 +53,9 @@ module Analyzer::Java
       getter router_name : String
       getter route_arg : String
       getter chain : String
+      getter offset : Int32
 
-      def initialize(@router_name, @route_arg, @chain)
+      def initialize(@router_name, @route_arg, @chain, @offset = 0)
       end
     end
 
@@ -74,7 +80,6 @@ module Analyzer::Java
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
 
-        details = Details.new(PathInfo.new(path))
         content = read_file_content(path)
 
         # Skip if no Vert.x related content
@@ -98,7 +103,7 @@ module Analyzer::Java
         route_candidates.each do |route|
           next if mounted_routers.includes?(route.router_name)
 
-          found = build_endpoint(route.endpoint, route.method, details)
+          found = build_endpoint(route.endpoint, route.method, Details.new(PathInfo.new(path, route.line)))
           attach_query_params(found, query_params_by_route, route.method, route.endpoint)
           attach_callees(found, callees_by_route, route.method, route.endpoint)
           @result << found
@@ -111,7 +116,9 @@ module Analyzer::Java
 
           child_routes.each do |child|
             endpoint = Noir::URLPath.join_trimmed(mount.endpoint, child.endpoint)
-            found = build_endpoint(endpoint, child.method, details)
+            # The mounted route is declared on the child router's own line;
+            # the `mountSubRouter` only says where it hangs.
+            found = build_endpoint(endpoint, child.method, Details.new(PathInfo.new(path, child.line)))
             attach_query_params(found, query_params_by_route, child.method, child.endpoint)
             attach_callees(found, callees_by_route, child.method, child.endpoint)
             @result << found
@@ -139,7 +146,7 @@ module Analyzer::Java
         next if !method.in?(HTTP_METHODS)
         next if endpoint.nil? || endpoint.empty?
 
-        candidates << RouteCandidate.new(router_name, method, endpoint)
+        candidates << RouteCandidate.new(router_name, method, endpoint, route_line(content, match))
       end
 
       # Find route().method() pattern calls
@@ -154,7 +161,7 @@ module Analyzer::Java
         next if !method.in?(HTTP_METHODS)
         next if endpoint.nil? || endpoint.empty?
 
-        candidates << RouteCandidate.new(router_name, method, endpoint)
+        candidates << RouteCandidate.new(router_name, method, endpoint, route_line(content, match))
       end
 
       # Find route(HttpMethod.METHOD, "/path") pattern calls
@@ -172,7 +179,7 @@ module Analyzer::Java
         next if method.nil? || !method.in?(HTTP_METHODS)
         next if endpoint.nil? || endpoint.empty?
 
-        candidates << RouteCandidate.new(router_name, method, endpoint)
+        candidates << RouteCandidate.new(router_name, method, endpoint, route_line(content, match))
       end
 
       # A Vert.x Route without `.method(...)` or `route(HttpMethod, ...)`
@@ -191,7 +198,7 @@ module Analyzer::Java
         endpoint = resolve_route_path_arg(args[0], constants)
         next if endpoint.nil? || endpoint.empty?
 
-        candidates << RouteCandidate.new(router_name, "ANY", endpoint)
+        candidates << RouteCandidate.new(router_name, "ANY", endpoint, route_line(content, match))
       end
 
       content.scan(REGEX_ROUTE_HANDLER_OPEN) do |match|
@@ -218,7 +225,7 @@ module Analyzer::Java
         body = lambda_body_of(handler_arg)
         next unless body && terminal_handler_body?(body)
 
-        candidates << RouteCandidate.new(router_name, "ANY", endpoint)
+        candidates << RouteCandidate.new(router_name, "ANY", endpoint, route_line(content, match))
       end
 
       # `router.route("/prefix/*").subRouter(child)` exposes the child
@@ -234,7 +241,7 @@ module Analyzer::Java
         endpoint = resolve_route_path_arg(args[0], constants)
         next if endpoint.nil? || endpoint.empty?
 
-        candidates << RouteCandidate.new(router_name, "ANY", endpoint)
+        candidates << RouteCandidate.new(router_name, "ANY", endpoint, route_line(content, match))
       end
 
       # Find fluent Route API chains like
@@ -260,9 +267,10 @@ module Analyzer::Java
         endpoints.uniq!
         next if endpoints.empty?
 
+        chain_line = line_at_byte_offset(content, chain_info.offset)
         methods.each do |method|
           endpoints.each do |endpoint|
-            candidates << RouteCandidate.new(router_name, method, endpoint)
+            candidates << RouteCandidate.new(router_name, method, endpoint, chain_line)
           end
         end
       end
@@ -278,7 +286,7 @@ module Analyzer::Java
         endpoint = resolve_route_path_arg(first_top_level_arg(match[2]), constants)
         next if endpoint.nil? || endpoint.empty?
 
-        candidates << RouteCandidate.new(router_name, "GET", endpoint)
+        candidates << RouteCandidate.new(router_name, "GET", endpoint, route_line(content, match))
       end
 
       # A Vert.x Web route path is always anchored at the router root, so
@@ -679,7 +687,8 @@ module Analyzer::Java
         route_arg = match[2].strip
         start = match.byte_end(0)
         statement_end = find_statement_end(content, start)
-        chains << FluentRouteChain.new(router_name, route_arg, content.byte_slice(start, statement_end - start))
+        chains << FluentRouteChain.new(router_name, route_arg, content.byte_slice(start, statement_end - start),
+          match.byte_begin(0))
       end
       chains
     end
@@ -782,6 +791,11 @@ module Analyzer::Java
       value.size >= 2 &&
         ((value.starts_with?('"') && value.ends_with?('"')) ||
           (value.starts_with?("'") && value.ends_with?("'")))
+    end
+
+    # 1-based line of a scanned route call.
+    private def route_line(content : String, match : Regex::MatchData) : Int32
+      line_at_byte_offset(content, match.byte_begin(0) || 0)
     end
 
     private def build_endpoint(path : String, method : String, details : Details) : Endpoint
