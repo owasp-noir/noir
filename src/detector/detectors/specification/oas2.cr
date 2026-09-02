@@ -28,6 +28,7 @@ module Detector::Specification
           end
         rescue e
           logger.debug "OAS2 JSON detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         if content_matches?(file_contents, SWAGGER2_YAML_MARKER)

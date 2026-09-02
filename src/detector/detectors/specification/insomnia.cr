@@ -30,6 +30,7 @@ module Detector::Specification
           end
         rescue e
           logger.debug "Insomnia JSON detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         return false unless content_matches?(file_contents, INSOMNIA_HOST_MARKER)
@@ -49,6 +50,7 @@ module Detector::Specification
           end
         rescue e
           logger.debug "Insomnia YAML detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       end
 

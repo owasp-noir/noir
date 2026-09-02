@@ -41,6 +41,7 @@ module Detector::Specification
           end
         rescue e
           logger.debug "OAS3 JSON detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       elsif filename.ends_with?(".yaml") || filename.ends_with?(".yml")
         if content_matches?(file_contents, OPENAPI3_YAML_MARKER)

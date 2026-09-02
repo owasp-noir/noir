@@ -656,7 +656,7 @@ module Analyzer::Typescript
                   i = close + 1
                   literal
                 else
-                  i = skip_top_level_to_comma(chars, i)
+                  i = skip_value(chars, i)
                   ""
                 end
               else
@@ -670,7 +670,7 @@ module Analyzer::Typescript
                   i = j
                   literal
                 else
-                  i = skip_top_level_to_comma(chars, i)
+                  i = skip_value(chars, i)
                   ""
                 end
               end
@@ -693,7 +693,7 @@ module Analyzer::Typescript
 
         unless chars[i] == ':'
           # Spread, method shorthand, or other construct we don't handle.
-          i = skip_top_level_to_comma(chars, i)
+          i = skip_value(chars, i)
           next
         end
 
@@ -743,6 +743,25 @@ module Analyzer::Typescript
 
     private def split_top_level(text : String, delimiter : Char) : Array(String)
       Noir::TopLevelSplit.split(text, delimiter, SPLIT_TOP_LEVEL_RULES)
+    end
+
+    # `skip_top_level_to_comma` that is guaranteed to move.
+    #
+    # The helper stops *on* the character that ended the value: a top-level
+    # comma, or an unmatched closing bracket (`depth < 0`). When `start`
+    # already sits on such a closer it returns `start`, and the
+    # `while i < n` loop in `each_top_level_kv` — which assigns the result
+    # straight back to `i` and `next`s — spins on that one character
+    # forever.
+    #
+    # Reaching it takes nothing exotic: `createRouter().mutation('add', {
+    # input: x},});` — a 55-byte file with one brace too many, the shape a
+    # half-saved editor buffer or a truncated generated file has — hung the
+    # scan indefinitely, no output, no timeout, no exit code. A malformed
+    # source file must cost the file, not the run.
+    private def skip_value(chars : Array(Char), start : Int32) : Int32
+      stop = skip_top_level_to_comma(chars, start)
+      stop > start ? stop : start + 1
     end
 
     private def skip_top_level_to_comma(chars : Array(Char), start : Int32) : Int32

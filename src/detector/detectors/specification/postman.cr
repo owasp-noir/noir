@@ -33,6 +33,7 @@ module Detector::Specification
           end
         rescue e
           logger.debug "Postman detection failed for #{filename}: #{e}"
+          record_unparsable_document(filename, e)
         end
       end
 

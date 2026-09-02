@@ -6,6 +6,20 @@ module Analyzer::Javascript
 
     def analyze
       result = [] of Endpoint
+      # `(routes root, url, method)` -> index into `result`.
+      #
+      # The dedup this backs used to be `result.index { |e| e.url == url &&
+      # e.method == method }` — a lookup across the whole scan, with no
+      # notion of which Nitro app the route belonged to. Two Nitro projects
+      # under one scan base (a monorepo, or a repo that keeps an example app
+      # beside the real one) both define `routes/users.post.ts`, and the
+      # second one to be read overwrote the first: its params, its callees
+      # and its `code_path` all disappeared, and the survivor was whichever
+      # worker fiber finished last. Same input, different report between
+      # runs. Keying on the routes root keeps each app's route separate and
+      # lets the optimizer merge them, which is where duplicate endpoints
+      # are supposed to be resolved.
+      seen = {} of Tuple(String, String, String) => Int32
       mutex = Mutex.new
       include_callee = callees_needed?
       # `routes/` on its own is not a Nitro signal — it is the conventional
@@ -27,13 +41,15 @@ module Analyzer::Javascript
         # Focus on routes/ directory for Nitro
         next unless path.includes?("/routes/")
         next unless path_under_project_roots?(path, project_roots)
-        analyze_nitro_file(path, result, mutex, include_callee)
+        analyze_nitro_file(path, result, seen, mutex, include_callee)
       end
 
       result
     end
 
-    private def analyze_nitro_file(path : String, result : Array(Endpoint), mutex : Mutex, include_callee : Bool)
+    private def analyze_nitro_file(path : String, result : Array(Endpoint),
+                                   seen : Hash(Tuple(String, String, String), Int32),
+                                   mutex : Mutex, include_callee : Bool)
       # Extract endpoint from file path
       # routes/hello.ts -> /hello
       # routes/users/[id].ts -> /users/:id
@@ -46,6 +62,10 @@ module Analyzer::Javascript
       scoped = base_relative_path(path)
       base_path_idx = scoped.index("/routes/")
       return if base_path_idx.nil?
+
+      # Everything above `routes/` identifies the Nitro app this file
+      # belongs to — the dedup scope below.
+      routes_root = scoped[0...base_path_idx]
 
       # Get the path after /routes/
       relative_path = scoped[(base_path_idx + "/routes/".size)..-1]
@@ -147,13 +167,14 @@ module Analyzer::Javascript
           attach_js_callees(endpoint, callees) if include_callee
 
           mutex.synchronize do
-            existing_idx = result.index { |e| e.url == url && e.method == method }
-            if existing_idx
+            key = {routes_root, url, method}
+            if existing_idx = seen[key]?
               # Method-specific files take precedence over generic handlers
-              if specific_method
-                result[existing_idx] = endpoint
-              end
+              # *within the same app*: `routes/users.post.ts` wins over the
+              # POST that `routes/users.ts` implies.
+              result[existing_idx] = endpoint if specific_method
             else
+              seen[key] = result.size
               result << endpoint
             end
           end

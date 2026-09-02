@@ -23,6 +23,7 @@ module Detector::Specification
         end
       rescue e
         logger.debug "OpenRPC JSON detection failed for #{filename}: #{e}"
+        record_unparsable_document(filename, e)
       end
 
       check
