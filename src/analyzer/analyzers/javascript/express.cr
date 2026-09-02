@@ -194,21 +194,18 @@ module Analyzer::Javascript
     private def analyze_with_regex(path : String, result : Array(Endpoint), static_dirs : Array(Hash(String, String)) = [] of Hash(String, String))
       # Original regex-based analysis as a fallback
       file_content = read_file_content(path)
-      # Every pass below reasons about one file, and two of them *edit* what
-      # earlier passes emitted: `scan_for_nested_router_endpoints` replaces
-      # the un-prefixed route with the router-mounted one, and
-      # `handle_v1_router_pattern` drops the un-prefixed `/status` and
-      # `/settings` before re-adding them under the router prefix. Handed the
-      # scan-wide array, those edits reach across files: the lookups match on
-      # url and method alone, so the endpoint they replace or drop is just as
-      # likely to belong to another Express app under the same scan base, and
-      # it disappears from the report along with its params and its
-      # `code_path`. Twelve one-file apps each declaring `app.post('/users')`
-      # plus twelve declaring it behind `router.use('/api', usersRouter)` came
-      # out with ten of the twelve plain apps erased. Collect into a per-file
-      # array so a fix-up can only touch this file's own endpoints, and hand
-      # the whole batch to `result` at the end; duplicates across files are
-      # the optimizer's job to merge.
+      # Every pass below reasons about one file, and `scan_for_nested_router_endpoints`
+      # *edits* what earlier passes emitted: it replaces the un-prefixed route
+      # with the router-mounted one. Handed the scan-wide array that edit
+      # reaches across files — the lookup matches on url and method alone, so
+      # the endpoint it replaces is just as likely to belong to another
+      # Express app under the same scan base, and it disappears from the
+      # report along with its params and its `code_path`. Twelve one-file apps
+      # each declaring `app.post('/users')` plus twelve declaring it behind
+      # `router.use('/api', usersRouter)` came out with ten of the twelve
+      # plain apps erased. Collect into a per-file array so a fix-up can only
+      # touch this file's own endpoints, and hand the whole batch to `result`
+      # at the end; duplicates across files are the optimizer's job to merge.
       file_endpoints = [] of Endpoint
       last_endpoint = Endpoint.new("", "")
       current_router_base = ""
@@ -820,6 +817,11 @@ module Analyzer::Javascript
     end
 
     # Direct handler for the v1Router pattern in the test fixture
+    # Emits the two routes of the `vNRouter` fixture shape under their mount
+    # prefix. Runs first, on a `result` that is this file's own (empty) batch,
+    # so there is nothing here to de-duplicate against: the line loop below
+    # resolves the same routes through `nested_routers` and the optimizer
+    # merges whatever it emits with these.
     private def handle_v1_router_pattern(content : String, result : Array(Endpoint), path : String)
       # Look for the exact pattern used in the test fixture
       v1_pattern = /const\s+(v\d+Router)\s*=\s*express\.Router\(\);\s*router\.use\s*\(\s*['"]([^'"]+)['"]\s*,\s*\1\);/m
@@ -835,9 +837,6 @@ module Analyzer::Javascript
 
           # Add the status endpoint with correct prefix
           if content.match(status_route)
-            # Remove any existing /status endpoint
-            result.reject! { |e| e.url == "/status" && e.method == "GET" }
-
             # Create a new endpoint with the correct prefix
             endpoint = Endpoint.new("#{prefix}/status", "GET")
             details = Details.new(PathInfo.new(path, 1))
@@ -852,9 +851,6 @@ module Analyzer::Javascript
 
           # Add the settings endpoint with correct prefix
           if content.match(settings_route)
-            # Remove any existing /settings endpoint
-            result.reject! { |e| e.url == "/settings" && e.method == "PUT" }
-
             # Create a new endpoint with the correct prefix
             endpoint = Endpoint.new("#{prefix}/settings", "PUT")
             details = Details.new(PathInfo.new(path, 1))
