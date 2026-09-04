@@ -8,6 +8,10 @@ sort_by = "weight"
 
 Noir를 DAST 파이프라인에 통합하여 애플리케이션의 모든 엔드포인트를 테스트할 수 있습니다.
 
+{% mascot(mood="call") %}
+라우트는 내가 찾았으니 스캔은 DAST 도구 몫이야. OpenAPI로 넘기거나 프록시로 바로 밀어 넣으면 돼.
+{% end %}
+
 ## 프록시 도구와의 통합
 
 Noir의 `deliver` 기능으로 발견된 엔드포인트를 [OWASP ZAP](https://www.zaproxy.org/), [Burp Suite](https://portswigger.net/burp), [Caido](https://caido.io/) 등의 프록시로 전송합니다.

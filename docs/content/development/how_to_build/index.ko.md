@@ -8,6 +8,10 @@ sort_by = "weight"
 
 버그 수정, 새 기능, 문서 개선 등 모든 기여를 환영합니다.
 
+{% mascot(mood="good") %}
+버그 수정, 기능, 문서, 픽스처. 어떤 기여든 Noir를 앞으로 밀어줘. 와줘서 고마워.
+{% end %}
+
 ## 기여 방법
 
 1.  [Noir 저장소](https://github.com/owasp-noir/noir)를 **포크**합니다.

@@ -11,6 +11,10 @@ Noir splits "delivering results" into two distinct families:
 - **PROBE**: fire HTTP requests at the endpoints noir just discovered (active replay, optionally through a proxy like Burp Suite or ZAP).
 - **EXPORT**: ship the endpoint catalog to an external data store (Elasticsearch, OpenSearch, or any webhook receiver) as data, with no HTTP traffic to the endpoints themselves.
 
+{% mascot(mood="run") %}
+Probe replays, export ships. Pick the one that matches where the results should end up.
+{% end %}
+
 ## Probe
 
 Relevant flags:

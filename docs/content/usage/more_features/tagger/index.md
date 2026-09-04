@@ -8,6 +8,10 @@ sort_by = "weight"
 
 Automatically add descriptive tags to endpoints and parameters to flag functionality and potential security risks (e.g., SQL injection, authentication endpoints).
 
+{% mascot(mood="inspect") %}
+Tags are my magnifying glass. A parameter named `redirect_url` gets flagged as ssrf before anyone reads the handler.
+{% end %}
+
 <img src="./tagger.png" alt="Noir output where endpoints carry tags: GET /token is tagged oauth, and GET /api/me is tagged sqli." width="769" height="172" loading="lazy" decoding="async">
 
 ## Usage

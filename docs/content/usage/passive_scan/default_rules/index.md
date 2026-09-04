@@ -8,6 +8,10 @@ sort_by = "weight"
 
 Noir includes curated default rules for detecting common security vulnerabilities. When passive scanning is enabled (`-P`), Noir automatically initializes rules on first run, checks for updates, and optionally auto-updates them.
 
+{% mascot(mood="hacker") %}
+Passive scan runs in the same pass as the endpoint scan. Secrets and dangerous calls in the code come back with a file and line.
+{% end %}
+
 ## Rule Locations
 
 | OS      | Path                               |

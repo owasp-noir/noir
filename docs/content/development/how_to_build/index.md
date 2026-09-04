@@ -8,6 +8,10 @@ sort_by = "weight"
 
 All contributions are welcome: bug fixes, features, and documentation improvements.
 
+{% mascot(mood="good") %}
+Fixes, features, docs, fixtures: every kind of contribution moves Noir forward. Thanks for being here.
+{% end %}
+
 ## How to Contribute
 
 1.  **Fork** the [Noir repository](https://github.com/owasp-noir/noir)

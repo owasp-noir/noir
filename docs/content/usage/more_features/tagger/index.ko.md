@@ -8,6 +8,10 @@ sort_by = "weight"
 
 엔드포인트와 파라미터에 설명적 태그를 자동으로 추가하여 기능과 잠재적 보안 위험(SQL 인젝션, 인증 엔드포인트 등)을 식별합니다.
 
+{% mascot(mood="inspect") %}
+태그는 내 돋보기야. `redirect_url` 같은 파라미터는 핸들러를 읽기도 전에 ssrf로 표시돼.
+{% end %}
+
 <img src="./tagger.png" alt="엔드포인트에 태그가 붙은 Noir 출력. GET /token 은 oauth, GET /api/me 는 sqli 로 태깅되어 있다." width="769" height="172" loading="lazy" decoding="async">
 
 ## 사용법
