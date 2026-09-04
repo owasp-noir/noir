@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-{% mascot(mood="think") %}
+{% mascot(mood="question") %}
 Almost every v0 invocation still runs on v1 unchanged. This page is a single place to look up the renames, behavior changes, and the few things that explicitly broke.
 {% end %}
 

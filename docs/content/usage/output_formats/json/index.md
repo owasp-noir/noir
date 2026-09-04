@@ -11,6 +11,10 @@ Noir supports two JSON-flavored output modes:
 *   **JSON**: Single JSON object containing all results
 *   **JSONL**: One JSON object per line, good for streaming and large datasets
 
+{% mascot(mood="dev") %}
+JSON is the format every next stage reads. Pipe it into jq, a script, or an AI auditor's context.
+{% end %}
+
 ## JSON Output
 
 Use `-f json` to get JSON. Adding `--no-log` suppresses log messages so only the JSON hits stdout, which keeps things clean when piping into other tools.

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-{% mascot(mood="think") %}
+{% mascot(mood="question") %}
 거의 모든 v0 호출은 v1 에서 그대로 굴러가. 이 페이지는 이름이 바뀐 것, 동작이 달라진 것, 명시적으로 깨진 항목 몇 가지를 한 곳에 모아둔 정리야.
 {% end %}
 

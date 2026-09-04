@@ -6,6 +6,10 @@ sort_by = "weight"
 
 +++
 
+{% mascot(mood="dev") %}
+규칙은 YAML 파일 하나야. id, info, 그리고 매칭할 패턴. 규칙 디렉터리에 넣으면 다음 `-P` 스캔부터 바로 적용돼.
+{% end %}
+
 ```yaml
 id: rule-id
 info:

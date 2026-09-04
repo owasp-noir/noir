@@ -6,6 +6,10 @@ sort_by = "weight"
 
 +++
 
+{% mascot(mood="dev") %}
+A rule is one YAML file: an id, some info, and the patterns to match. Drop it in the rules directory and the next `-P` scan picks it up.
+{% end %}
+
 ```yaml
 id: rule-id
 info:

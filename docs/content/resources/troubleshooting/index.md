@@ -6,6 +6,10 @@ sort_by = "weight"
 
 +++
 
+{% mascot(mood="anger") %}
+Something on fire? Start with the symptom below that matches. Most of these have a one-flag fix.
+{% end %}
+
 ## No Endpoints Found
 
 **Symptom:** Noir runs but reports 0 endpoints.

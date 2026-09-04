@@ -8,6 +8,12 @@ sort_by = "weight"
 
 <img src="banner.jpg" alt="리브 무늬의 어두운 표면에 금박으로 새겨진 OWASP Noir 워드마크. 블라인드 사이로 들어온 빛이 비친다." width="1168" height="784" loading="lazy" decoding="async">
 
+{% mascot(mood="peace") %}
+내 모든 포즈는 아트워크 저장소에 있어. 아래는 이 문서에서 쓰는 세트야.
+{% end %}
+
+{% mascot_gallery() %}{% end %}
+
 ## 제공되는 자료
 
 *   **공식 로고**: 다양한 형식과 색상 조합

@@ -8,7 +8,7 @@ prev_page_label = "Noir 설치"
 
 +++
 
-{% mascot(mood="walk") %}
+{% mascot(mood="run") %}
 Noir가 설치됐으니 바로 써보자! 프로젝트를 분석하고, 무엇을 찾았는지 확인하고, 출력을 다루는 방법을 배워보자.
 {% end %}
 

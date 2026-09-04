@@ -11,6 +11,10 @@ Noir의 결과 전송은 성격이 다른 두 family로 나뉩니다.
 - **PROBE**: discovered endpoint를 실제 HTTP 요청으로 쏴봅니다 (active replay, 필요 시 Burp Suite나 ZAP 같은 proxy를 경유).
 - **EXPORT**: endpoint 카탈로그를 외부 스토어(Elasticsearch, OpenSearch, 또는 임의의 webhook 리시버)로 data 형태로 적재합니다. endpoint 자체에는 HTTP 트래픽이 가지 않습니다.
 
+{% mascot(mood="run") %}
+Probe는 재전송, Export는 적재. 결과가 어디로 가야 하는지에 맞춰 고르면 돼.
+{% end %}
+
 ## Probe
 
 관련 플래그:

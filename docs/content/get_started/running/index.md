@@ -8,7 +8,7 @@ prev_page_label = "Install Noir"
 
 +++
 
-{% mascot(mood="walk") %}
+{% mascot(mood="run") %}
 Noir is installed. Let's take it for a spin! Point it at a project, see what it finds, and learn how to shape the output.
 {% end %}
 

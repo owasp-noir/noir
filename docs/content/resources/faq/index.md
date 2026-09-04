@@ -6,6 +6,10 @@ sort_by = "weight"
 
 +++
 
+{% mascot(mood="question") %}
+Got a question that isn't here? Open a discussion and I'll add it.
+{% end %}
+
 ### What is OWASP Noir?
 
 An open-source static analysis tool that discovers API endpoints, web pages, and other attack surface entry points from source code.
