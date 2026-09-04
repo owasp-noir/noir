@@ -1195,7 +1195,7 @@ pre.mermaid svg { max-width: 100%; height: auto; margin-inline: auto; }
       var(--surface) 38%,
       color-mix(in srgb, var(--surface) 82%, transparent) 60%,
       color-mix(in srgb, var(--surface) 26%, transparent) 100%),
-    url("../images/hak-poster.webp") 24% 18% / 165% auto no-repeat;
+    url("../images/hak-poster.webp") 100% 40% / 70% auto no-repeat;
 }
 .cta > * { position: relative; }
 /* On a narrow panel the sized crop no longer covers, and copy sits over the
