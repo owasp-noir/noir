@@ -150,6 +150,6 @@ body{{font-family:"SF Mono",Menlo,"DejaVu Sans Mono",monospace;color:#c8c8cc;pos
 <pre>{JSON}</pre></div>
 <div class="win term"><div class=bar><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class=t>$ noir scan ./demo-app <b>-P -T</b></span><span class=tag>endpoints</span></div>
 <pre>{term}</pre></div>
-<img class=hak src="{IMAGES}/mascot/hak-hi.webp" alt="">
+<img class=hak src="{IMAGES}/mascot/hak-binoculars.webp" alt="">
 </body></html>'''
 open(out_path, "w", encoding="utf-8").write(page)
