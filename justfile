@@ -65,6 +65,11 @@ docs-serve-supported: docs-supported docs-serve
 docs-capture: build-release
     docs/tools/cli-capture/capture.sh
 
+# Regenerate the README / overview hero image (needs Chrome + ImageMagick).
+[group('documents')]
+docs-hero: build-release
+    docs/tools/readme-hero/build.sh
+
 # Check for missing i18n documentation files.
 [group('documents')]
 docs-i18n-check:
