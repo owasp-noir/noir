@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir (한국어)</title>
+    <link>https://owasp-noir.github.io/noir/ko/</link>
+    <description>Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 193 frameworks, exposing shadow APIs and mapping the attack surface.</description>
+    <language>ko</language>
+    <atom:link href="https://owasp-noir.github.io/noir/ko/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>alibi: 알리바이를 대지 못하는 엔드포인트</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/introducing-alibi/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/introducing-alibi/</guid>
+      <description>Noir를 관점별로 한 번씩 돌려 code, doc, traffic, gateway, infra를 서로 대질시키는 동반 도구.</description>
+      <content:encoded><![CDATA[<p>alibi를 공개합니다. Noir를 공격 표면의 관점별로 한 번씩 돌리고, 그 결과들을 서로 대질시키는 동반 도구입니다. <a href="https://github.com/owasp-noir/alibi">owasp-noir/alibi</a>에 있습니다.</p>
+<p>전제는 한 문단이면 충분합니다. Noir는 같은 표면을 다섯 방향에서 읽습니다.</p>
+<table>
+<thead>
+<tr>
+<th>관점</th>
+<th>읽는 대상</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>code</strong></td>
+<td>33개 언어, 200개 이상의 분석기</td>
+</tr>
+<tr>
+<td><strong>doc</strong></td>
+<td>OpenAPI, RAML, WSDL, GraphQL SDL, AsyncAPI, gRPC, Smithy, TypeSpec, OData, OpenRPC</td>
+</tr>
+<tr>
+<td><strong>traffic</strong></td>
+<td>HAR, mitmproxy, Burp, Caido, ZAP, Postman, Insomnia, Bruno, <code>.http</code></td>
+</tr>
+<tr>
+<td><strong>gateway</strong></td>
+<td>nginx, Apache, Envoy, Kong, Traefik, APISIX, Caddy, Istio, 쿠버네티스 Ingress/Gateway API</td>
+</tr>
+<tr>
+<td><strong>infra</strong></td>
+<td>Terraform, CloudFormation, CDK, Serverless, Vercel, Netlify, Wrangler, Azure Functions, Kamal</td>
+</tr>
+</tbody>
+</table>
+<p>각 관점은 &quot;무엇이 존재하는가&quot;에 대한 하나의 진술입니다. 코드는 &quot;이 라우트는 구현되어 있다&quot;고 말하고, 계약은 &quot;이 엔드포인트는 약속되어 있다&quot;고 말하고, 캡처 파일은 &quot;이 URL은 실제 요청을 받았다&quot;고 말합니다. 한 관점에 나타난 엔드포인트라면 다른 관점에서도 자기 존재를 해명할 수 있어야 하고, 못 한다면 누군가 들여다봐야 합니다. 그 간극이 shadow API고, phantom 계약이고, 아무 데도 닿지 않는 게이트웨이 룰이죠. Noir는 다섯 진술을 수집하는 데서 멈춥니다. 의도된 설계입니다. alibi는 그 진술들이 서로 맞는지를 묻습니다.</p>
+<h2 id="한-번-스캔하면-될-줄-알았다">한 번 스캔하면 될 줄 알았다</h2>
+<p>처음 계획은 스캔 한 번이었습니다. Noir가 어차피 모든 엔드포인트에 찾아낸 기술을 붙여주니, JSON 하나에서 다섯 관점이 공짜로 갈라져 나올 거라 생각했거든요.</p>
+<p>안 갈라집니다. Noir는 모든 분석기에 걸쳐 <code>(method, url)</code>로 중복을 제거하는데, 탐지 도구로서는 맞는 설계입니다. 같은 표기의 Flask 라우트와 OpenAPI 경로는 실제로 하나의 엔드포인트니까요. 그런데 대조에는 치명적이고, 하필 최악의 방향으로 치명적입니다. 두 관점이 잘 일치할수록 더 많은 엔드포인트가 하나의 레코드로 합쳐지고, 그만큼 교차 검증의 근거가 사라집니다. casdoor를 통째로 스캔하면 코드 372개에 문서 9개. <code>swagger/</code> 디렉터리만 스캔하면 스펙에 235개가 들어 있습니다.</p>
+<p>그래서 alibi는 <code>--only-techs</code>로 관점당 한 번씩 Noir를 돌리고, 조인은 직접 합니다. 이걸 위해 Noir를 고칠 일은 없었고, alibi가 직접 파싱하는 API 포맷도 없습니다. 입력은 오직 Noir의 JSON입니다.</p>
+<p>별도 저장소인 이유, 그리고 Python인 이유도 여기 있습니다. Noir는 1년 남짓 사이 19k줄에서 198k줄이 됐습니다. 바이너리를 계속 키우는 것보다 생태계를 옆으로 넓히는 편이 낫고, 대조 도구의 기여 장벽은 낮을수록 좋으니까요.</p>
+<h2 id="돌리면-이렇게-나옵니다">돌리면 이렇게 나옵니다</h2>
+<pre><code class="language-console hljs">$ alibi scan ./casdoor
+alibi  ·  1 source  ·  377 endpoints
+
+  code 372   doc 235
+
+  230 corroborated -- vouched for by more than one view
+
+  19 endpoints nearly matched another view -- these may be matching failures, not real gaps
+
+SHADOW  Shadow API -- Implemented, but no contract describes it
+  134 findings  ·  4 critical, 57 high, 62 medium, 11 low
+
+  critical POST    /api/upload-groups        router.go:87
+           upload paths carry more consequence than reads
+  critical POST    /api/upload-permissions   router.go:208
+</code></pre>
+<p>규칙은 여덟 개입니다. <code>SHADOW</code>, <code>PHANTOM</code>, <code>ORPHAN</code>, <code>LIVE_UNDOC</code>, <code>DANGLING</code>, <code>DRIFT</code>, <code>UNEXPOSED</code>, <code>COLD</code>. 심각도는 Noir의 tagger가 그 엔드포인트에서 본 것에 따라 움직입니다. 파일 업로드, 개인정보, 상태를 바꾸는 메서드, 인증의 흔적 같은 것들이요.</p>
+<h2 id="대부분의-작업은-대조가-아니었다">대부분의 작업은 대조가 아니었다</h2>
+<p>엔드포인트 목록 다섯 개를 조인하는 건 주말 프로젝트입니다. 진짜 작업은 리포트가 거짓말을 못 하게 만드는 쪽이었고, alibi의 가드 하나하나는 전부 실제 저장소가 먼저 틀린 답을 자신 있게 내놓아서 생겼습니다.</p>
+<p>casdoor 첫 전체 실행에서는 finding의 절반 가까이가 critical로 떴습니다. 승격 조건이 &quot;인증의 흔적 없음&quot;이었는데, Noir의 인증 tagger가 400개 가까운 엔드포인트 중 9개에만 태그를 달았으니 &quot;흔적 없음&quot;은 거의 어디서나 참이었고, 그래서 아무 의미도 없었습니다. 지금은 규칙이 반대로 돕니다. 신호의 존재가 심각도를 움직이고, 태그 부재에 반응하는 조정은 그 태그가 스캔 어딘가에 존재할 때만 적용됩니다.</p>
+<p>Argo CD는 shadow API 58개에 phantom 계약 198개로 나왔는데 전부 허상이었습니다. Go 코드는 <code>/api</code> 하나를 등록하고, OpenAPI는 그 아래 198개 경로를 기술합니다. 같은 표면, 두 개의 입도, 겹치는 엔드포인트는 0. 인구가 있는 두 관점의 겹침이 0이면 이제 &quot;대조가 실패했다&quot;로 읽습니다. 규칙을 보류하고, finding을 쏟아내는 대신 이유를 출력합니다.</p>
+<p>NetBox는 하마터면 최악의 답을 내보낼 뻔했습니다. API 문서가 12.35MB짜리 OpenAPI 파일 하나에 들어 있는데 Noir가 파일 크기 상한 때문에 건너뛰었고, 초기 리포트는 &quot;이 프로젝트는 아무것도 문서화하지 않았다&quot;고 결론 내렸습니다. 불완전한 게 아니라 그냥 틀렸고, 심지어 확신에 차 있었죠. 지금은 Noir가 스펙 문서에 별도의 크기 예산을 주고(<a href="https://github.com/owasp-noir/noir/pull/2671">#2671</a>), alibi는 Noir가 못 읽었다고 보고한 것을 finding 위에 출력합니다. 관점이 없는 것과 비어 있는 것은 정반대의 의미거든요.</p>
+<p>나머지도 같은 결입니다. 다른 관점과 아슬아슬하게 어긋난 엔드포인트(같은 경로에 다른 verb, 한쪽은 파라미터인데 한쪽은 리터럴)의 finding은 강등하고 검토 표시를 답니다. &quot;코드엔 있고 문서엔 없다&quot;와 &quot;둘 다 있는데 alibi가 짝을 못 맞췄다&quot;는 겉보기에 구분이 안 되니까요. 스냅샷에는 어떤 규칙이 실제로 평가됐는지를 기록합니다. 한 번의 실행에서 계약 디렉터리를 빼먹으면 <code>SHADOW</code>가 아무것도 평가하지 않는데, 단순 비교에는 그게 모든 shadow API가 닫힌 것과 똑같이 보이기 때문입니다.</p>
+<p>이 모든 것 아래에 정규화 규칙 하나가 깔려 있습니다. 경로 파라미터의 이름은 그 정체성의 일부가 아니다. <code>/users/&lt;int:user_id&gt;</code>와 <code>/users/{id}</code>와 <code>/users/:id</code>는 같은 자리를 가리키고, 중요한 건 위치와 <code>/</code>를 건너는지 여부뿐입니다. 이 규칙은 믿기 전에 Noir 테스트 트리의 라우트 픽스처 전체, 33개 언어 3,195개 URL에 돌려봤습니다.</p>
+<h2 id="멈추는-지점">멈추는 지점</h2>
+<p>alibi는 Noir가 읽을 수 있는 것만 대조하고, 잘못된 입도로 읽힌 관점은 아예 안 읽힌 관점보다 나쁩니다. Argo CD가 위에서 본 그 천장에 걸려 있고요. authentik은 설치된 앱들의 <code>urls</code> 모듈을 런타임에 import해 URLconf를 조립하는데, 정적 분석으로는 따라갈 수 없습니다. flipt는 gRPC 게이트웨이를 마운트해서 Go 소스에 라우트가 정확히 하나입니다. 셋 다 겹침 가드에 걸려 보류되고, 리포트는 finding을 지어내는 대신 이유를 적습니다.</p>
+<p>대신 NetBox가 의도한 워크플로를 보여주는 사례입니다. 저장소 하나에 표면이 둘. 서버 렌더링 웹 UI와 DRF REST API가 있고 계약은 후자만 기술합니다. 통째로 스캔하면 746건이 나오는데, 대부분은 &quot;웹 UI는 API 스펙에 없다&quot;는 사실이지만 쓸모없는 관찰입니다. 계약이 다루는 범위로 좁히면:</p>
+<pre><code class="language-console hljs">$ alibi scan ./netbox --ignore '^/(?!api/)'
+</code></pre>
+<p>shadow API 세 건이 남습니다(<code>/api/plugins</code>, <code>/api/schema/redoc</code>, <code>/api/schema/swagger-ui</code>). 셋 다 실제로 서비스되고, 셋 다 스키마에는 정말로 없습니다.</p>
+<p>만드는 과정에서 Noir 쪽으로도 수정이 흘러갔습니다. 오퍼레이션을 <code>$ref</code>로 다른 파일에 분할해 둔 OpenAPI 문서(<a href="https://github.com/owasp-noir/noir/pull/2673">#2673</a>), Django 프로젝트가 실제로 노출하는 DRF 표면(<a href="https://github.com/owasp-noir/noir/pull/2672">#2672</a>), 그리고 위의 스펙 크기 예산. 동반 도구가 스캐너를 스트레스 테스트하는 이 루프가 alibi의 두 번째 역할이 될지도 모르겠습니다.</p>
+<h2 id="써보기">써보기</h2>
+<pre><code class="language-bash hljs">uv tool install noir-alibi   # 또는: pipx install noir-alibi
+alibi scan ./service ./contracts ./prod.har
+</code></pre>
+<p><code>PATH</code>에 noir 1.0.0 이상이 필요합니다. <code>-f sarif</code>는 code scanning에 올라가고, <code>--fail-on high</code>는 빌드를 막고, 소스 옆의 <code>.alibi.yml</code>은 의도된 간극을 억제합니다.</p>
+<p>아직 초기입니다. alibi가 사실이 아닌 말을 한다면 그게 정확히 이 도구가 스스로에게서 잡아내려 만든 종류의 버그이니, <a href="https://github.com/owasp-noir/alibi/issues">이슈로 알려주세요</a>. 즐거운 hunting 되세요 :D</p>
+]]></content:encoded>
+      <pubDate>Sun, 30 Aug 2026 00:00:00 +0000</pubDate>
+      <category>alibi</category>
+      <category>release</category>
+      <category>tooling</category>
+    </item>
+    <item>
+      <title>--ai-context와 --include-callee: AI 코드 리뷰의 hint이자 sink</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/ai-context-and-callee-hints/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/ai-context-and-callee-hints/</guid>
+      <description>AI 기반 소스 코드 분석에서 구조화된 보안 context를 흘려보내는 Noir의 두 플래그 이야기.</description>
+      <content:encoded><![CDATA[<p>2025년 11월쯤부터 AI가 개발 방식을 크게 바꿔놓았듯, 소스코드 취약점 분석도 같은 시점부터 빠르게 AI 중심으로 옮겨가고 있습니다.</p>
+<p>많은 AI 기반 소스코드 분석 도구들이 코드를 LLM에 던지고 결과를 받는 패턴을 따릅니다. 그런데 이게 실제로 잘 동작하려면 LLM에게 &quot;무엇을 봐야 하는지&quot;를 알려주는 게 중요합니다. 그냥 codebase를 통째로 던지면 token만 태우고, 정작 봐야 할 지점은 놓치는 경우가 많거든요.</p>
+<p>Noir v1에는 그 hint를 미리 추출해서 출력에 실어주는 두 플래그가 있습니다.</p>
+<ul>
+<li><code>--include-callee</code>: 각 endpoint 핸들러의 1-hop 호출 그래프를 <code>callees</code> 배열로 추가</li>
+<li><code>--ai-context</code>: 같은 callee 정보를 포함해서 5개 보안 카테고리로 분류된 <code>ai_context</code> 구조로 추가</li>
+</ul>
+<h2 id="include-callee-누가-누구를-호출하나">--include-callee: 누가 누구를 호출하나</h2>
+<p>가장 단순한 형태입니다. Endpoint 본문을 tree-sitter로 파싱해서 1-hop callee의 <code>{name, path, line}</code>을 뽑습니다.</p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --include callee -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;callees&quot;: [
+    { &quot;name&quot;: &quot;get_hash&quot;,          &quot;path&quot;: &quot;app/utils.py&quot;, &quot;line&quot;: 3 },
+    { &quot;name&quot;: &quot;User.query.filter&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 21 },
+    { &quot;name&quot;: &quot;User&quot;,              &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 24 },
+    { &quot;name&quot;: &quot;db_session.add&quot;,    &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 25 },
+    { &quot;name&quot;: &quot;db_session.commit&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 26 }
+  ]
+}
+</code></pre>
+<p>LLM 입장에서는 &quot;이 endpoint를 보려면 <code>utils.py:3</code>과 <code>app.py:21,24,25,26</code>을 같이 봐야 한다&quot;는 hint가 됩니다. token 효율도 좋습니다. codebase 전체를 던질 게 아니라 이 다섯 줄과 그 주변만 추가로 띄우면 되니까요.</p>
+<h2 id="ai-context-같은-데이터를-보안-카테고리로-분류">--ai-context: 같은 데이터를 보안 카테고리로 분류</h2>
+<p><code>--ai-context</code>는 같은 callee 정보를 가져다가 추가 분석을 거쳐 5가지 카테고리로 분류합니다.</p>
+<ul>
+<li><strong>guards</strong>: 인증 미들웨어 / 데코레이터 등 접근 제어</li>
+<li><strong>callees</strong>: 위 callee와 동일하지만 snippet과 confidence가 함께 붙음</li>
+<li><strong>sinks</strong>: SQL / command exec / file I/O / redirect / template render 같은 잠재적 sink</li>
+<li><strong>validators</strong>: 입력 검증 호출</li>
+<li><strong>signals</strong>: <code>state_change</code>, <code>credential_input</code>, <code>guard_absence</code> 같은 휴리스틱 신호</li>
+</ul>
+<p>같은 Flask <code>/sign</code> POST endpoint를 <code>--ai-context</code>로 돌리면</p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --ai-context -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;ai_context&quot;: {
+    &quot;sinks&quot;: [
+      {
+        &quot;kind&quot;: &quot;sql&quot;,
+        &quot;name&quot;: &quot;query&quot;,
+        &quot;description&quot;: &quot;Potential SQL/data-store sink inferred from code or callee name&quot;,
+        &quot;path&quot;: &quot;app/app.py&quot;, &quot;line&quot;: 21, &quot;confidence&quot;: 78,
+        &quot;snippet&quot;: &quot;20: password = get_hash(request.form['password'], ...) | 21: if User.query.filter(...).first(): | 22: return render_template('error.html')&quot;
+      }
+    ],
+    &quot;signals&quot;: [
+      { &quot;kind&quot;: &quot;state_change&quot;,     &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 88 },
+      { &quot;kind&quot;: &quot;credential_input&quot;, &quot;name&quot;: &quot;form.password&quot;, &quot;confidence&quot;: 86 },
+      { &quot;kind&quot;: &quot;guard_absence&quot;,    &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 28,
+        &quot;description&quot;: &quot;No auth guard was detected for this state-changing endpoint.&quot; }
+    ]
+  }
+}
+</code></pre>
+<p>이 endpoint 하나로 LLM이 받는 정보를 정리하면</p>
+<ol>
+<li><code>credential_input</code>이 있다 (password를 form으로 받음)</li>
+<li><code>state_change</code>다 (POST)</li>
+<li><code>guard_absence</code>다 (auth 데코레이터 안 보임)</li>
+<li><code>sql</code> sink가 있다 (<code>User.query.filter</code>)</li>
+</ol>
+<p>사람 리뷰어든 LLM이든 이 네 신호가 한곳에 모여 있다면 자연스럽게 &quot;이 핸들러 먼저 보세요&quot;라는 결론이 나옵니다. 회원가입처럼 credential을 다루는 경로에 auth까지 없다면 당연히 1순위죠.</p>
+<p>반대로 auth가 잡힌 케이스도 봅니다 (flask_auth fixture 출력)</p>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/profile&quot;,
+  &quot;method&quot;: &quot;GET&quot;,
+  &quot;ai_context&quot;: {
+    &quot;guards&quot;: [{
+      &quot;kind&quot;: &quot;auth_guard&quot;,
+      &quot;name&quot;: &quot;flask-login login_required&quot;,
+      &quot;description&quot;: &quot;Protected by flask-login login_required&quot;,
+      &quot;confidence&quot;: 86,
+      &quot;snippet&quot;: &quot;12: | 13: @login_required | 14: @app.route('/profile') | 15: def profile():&quot;
+    }]
+  }
+}
+</code></pre>
+<p><code>@login_required</code> 데코레이터가 잡혀서 <code>guards</code>에 채워졌습니다. 이건 LLM에게 &quot;이 endpoint는 auth가 걸려있으니 다른 류의 취약점에 집중하라&quot;는 negative signal로도 쓰입니다.</p>
+<h2 id="동시에-hint이자-sink">동시에 hint이자 sink</h2>
+<p>이 두 플래그를 동시에 hint이자 sink로 쓸 수 있다는 게 핵심입니다.</p>
+<ul>
+<li><strong>Hint</strong>로: endpoint 단위로 1-hop context를 미리 추려 LLM의 attention을 좁혀줍니다. &quot;전체 코드베이스&quot; 대신 &quot;이 핸들러 + 이 파일들&quot;만 보면 됩니다.</li>
+<li><strong>Sink</strong>로: <code>sinks</code> 카테고리는 데이터 흐름의 종착점 후보를 framework-aware하게 알려줍니다. 일반 LLM도 <code>User.query.filter</code>가 SQL이라는 것 정도는 추론할 수 있지만, 매번 token을 태워야 합니다. Noir가 미리 라벨링해주면 그 추론 단계를 건너뛸 수 있습니다.</li>
+</ul>
+<p>특히 framework-aware라는 점이 큽니다. 같은 <code>query</code>라는 callee 이름이라도 컨텍스트에 따라 의미가 다릅니다.</p>
+<ul>
+<li>Flask + SQLAlchemy: <code>User.query.filter</code> → SQL sink</li>
+<li>Express + MongoDB: <code>User.find</code> → NoSQL sink</li>
+<li>그냥 generic LLM은 이 차이를 모르거나 매번 reasoning을 다시 합니다</li>
+</ul>
+<p>Noir는 detector 단계에서 framework를 식별하고, augmentor가 그 framework의 idiom에 맞춰 sink / guard 패턴을 적용합니다. LLM이 받는 건 raw 코드가 아니라 이미 framework-aware하게 정리된 context입니다.</p>
+<h2 id="권장-사용법">권장 사용법</h2>
+<p>AI 기반 코드 리뷰 파이프라인을 짠다면</p>
+<pre><code class="language-bash hljs"># 모든 카테고리
+noir -b ./app --ai-context -f json
+
+# 필요한 카테고리만 (token 절약)
+noir -b ./app --ai-context=guards,sinks,signals -f json
+
+# callee만 (가벼운 hint)
+noir -b ./app --include callee -f json
+</code></pre>
+<p>전체 카테고리는 첫 audit 때 한 번 돌리는 정도가 적당합니다. 이후 incremental review나 PR 단위에서는 <code>guards,sinks,signals</code>만 띄워도 충분한 경우가 많습니다.</p>
+<h2 id="다음-계획">다음 계획</h2>
+<p><code>--ai-context</code>의 sink / guard 패턴은 현재 정규식 기반 휴리스틱입니다. 데이터 흐름 자체를 따라가지는 않고, callee 이름과 코드 패턴으로 &quot;여기 sink 같은데&quot; 정도까지만 표시합니다. 이건 의도된 trade-off예요. 정확한 taint analysis는 분리된 도구가 더 잘하고, Noir는 그 도구나 LLM에게 focus point를 빠르게 던지는 역할에 충실하려고 합니다.</p>
+<p>앞으로는 패턴 카탈로그를 더 framework-aware하게 확장하고, signal 종류를 추가하는 방향으로 진행할 예정입니다. 피드백이나 새 패턴 제안은 언제나 환영합니다.</p>
+]]></content:encoded>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <category>v1</category>
+      <category>ai-context</category>
+      <category>callee</category>
+      <category>design</category>
+    </item>
+    <item>
+      <title>Noir v1.0: 메이저 버전, v0은 그대로</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/noir-v1-release/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/noir-v1-release/</guid>
+      <description>왜 1.x로 갔는지, 그리고 호환을 어떻게 지켰는지.</description>
+      <content:encoded><![CDATA[<p>Noir v1.0이 나왔습니다.</p>
+<p>제 개인 저장소에서 첫 커밋 이후 약 4년 만에 공식 버전으로 릴리스합니다.</p>
+<p>0.x 버전을 계속 이어나갈 수 있었지만, 메이저 버전을 올린 이유는 두 가지입니다.</p>
+<ol>
+<li>안정성: v0.30 즈음부터 새 framework가 들어와도 기존 분석 결과가 깨지지 않는 단계에 도달했다고 판단했습니다. 분석기 contract, 출력 스키마, 디스크 경로 등 핵심 인터페이스들이 자리를 잡았고, 이제는 1.x라고 부를 만한 시점이라 생각했습니다.</li>
+<li>sub-commands: v0의 CLI는 flag-only였습니다. 캐시, 룰, 설정 같은 부가 기능이 더 늘어날 게 보이는 상황에서 flag만으로는 표현이 한계에 부딪혔습니다. v1에서는 <code>noir scan / list / cache / config / rules / completion / version / help</code> 형태로 verb 기반 구조를 도입했습니다.</li>
+</ol>
+<p>이 두 결정 외에는 거의 모든 변화를 <strong>v0 호환 위주로 설계</strong>했습니다. <code>noir -b ./app -P -f json</code> 같은 v0 호출은 router가 자동으로 <code>scan</code>으로 라우팅하고, 정리된 옛 flag 이름들은 silent alias로 살아있습니다. 명시적으로 깨지는 건 2024년부터 deprecation 안내가 떠 있던 <code>--ollama</code> / <code>--ollama-model</code> 둘뿐입니다.</p>
+<p>대부분의 v0 스크립트는 수정하지 않아도 v1에서 그대로 돌아갑니다. 그게 이번 릴리스의 핵심이죠.</p>
+<p>전체 변경 목록과 마이그레이션이 필요한 항목은 <a href="https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100">CHANGELOG v1.0.0</a>에 정리해두었습니다.</p>
+<p>업그레이드는 기존 방식으로 동일하게 가능합니다.</p>
+<pre><code class="language-bash hljs">brew upgrade noir
+# 또는
+docker pull ghcr.io/owasp-noir/noir:1.0.0
+# 또는
+gh release download v1.0.0 -R owasp-noir/noir
+</code></pre>
+<p>피드백이나 버그 발견 시 <a href="https://github.com/owasp-noir/noir/issues">GitHub Issues</a>로 올려주세요. 그럼 즐거운 hunting 되세요 :D</p>
+]]></content:encoded>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <category>release</category>
+      <category>v1</category>
+    </item>
+    <item>
+      <title>Noir 블로그를 시작합니다</title>
+      <link>https://owasp-noir.github.io/noir/ko/blog/welcome-to-the-noir-blog/</link>
+      <guid>https://owasp-noir.github.io/noir/ko/blog/welcome-to-the-noir-blog/</guid>
+      <description>릴리스 딥다이브, 성능 개선기, 설계 결정의 배경 그리고 릴리스 노트에 담기 어려운 이야기들을 위한 공간.</description>
+      <content:encoded><![CDATA[<p>안녕하세요, 하훌입니다. 종종 Noir에 대한 팁이나 정보 등을 개인 블로그에 작성했었는데요. 개인 채널보단 공식적인 채널을 가지는 게 좋을 것 같아서 문서 안에 블로그 공간을 마련했습니다.</p>
+<p>문서와 나란히 두는 작은 실험 공간으로, 릴리스 노트나 레퍼런스에 담기 애매한 글들을 한곳에 모으려고 만들었습니다. PR 설명 여기저기에 흩어져 있는 것보단 여기에 적어두는 편이 낫겠다 싶었습니다.</p>
+<h2 id="무엇을-다루나요">무엇을 다루나요</h2>
+<ul>
+<li><strong>릴리스 딥다이브</strong>: 최근 버전들에 들어간 변경사항과 그 배경, 선택한 트레이드오프.</li>
+<li><strong>성능·정확도 개선기</strong>: 벤치마크나 오탐 정리 작업 중에 이야기로 풀 만한 게 나오면 정리해서 올립니다.</li>
+<li><strong>프레임워크 커버리지 노트</strong>: 새 Rust/Python/JVM 프레임워크를 지원할 때 만나는 파싱 엣지 케이스들.</li>
+<li><strong>설계 결정의 배경</strong>: 분석기 파이프라인, 옵티마이저 패스, AI 컨텍스트 구조 같은 결정들의 이유.</li>
+<li><strong>팁</strong>: 일상적으로 Noir를 더 잘 쓰기 위한 실전 노하우.</li>
+</ul>
+<h2 id="문서와의-관계">문서와의 관계</h2>
+<ul>
+<li><a href="https://owasp-noir.github.io/noir/ko/get_started/">시작하기</a> 가이드는 그대로 도구 학습의 정식 경로입니다.</li>
+<li><a href="https://owasp-noir.github.io/noir/ko/usage/">사용 가이드</a> 섹션은 플래그·지원 프레임워크·출력 형식 같은 레퍼런스를 담습니다.</li>
+<li>블로그는 이 둘을 보완하는 읽을거리 공간입니다. 모든 사용자가 알면 좋은 주제로 발전하면 그때 정식 문서로 옮깁니다.</li>
+</ul>
+<h2 id="발행-주기">발행 주기</h2>
+<p>정해진 일정은 없습니다. 쓸 만한 이야깃거리가 생기면 올라옵니다. 정기적인 소식은 GitHub <a href="https://github.com/owasp-noir/noir/releases">릴리스</a>에서 따라가시고, 긴 글이 궁금할 때 가끔 여기에 들러주세요.</p>
+<p>Noir 사용기, CI 통합 사례, 특정 프레임워크의 라우팅 모델 분석 같은 글을 기고하고 싶다면 초안과 함께 PR을 열어주세요. 글 옆에 작성자 카드가 함께 표시됩니다.</p>
+]]></content:encoded>
+      <pubDate>Sun, 17 May 2026 00:00:00 +0000</pubDate>
+      <category>meta</category>
+      <category>announcements</category>
+    </item>
+  </channel>
+</rss>
