@@ -206,7 +206,7 @@ A small set of flags work on every subcommand, not just `scan`:
 | `-v, --version`| Print the noir version and exit                                       |
 | `-h, --help`   | Show help for the current command                                     |
 
-These may sit on either side of the verb — `noir --no-color list techs`
+These may sit on either side of the verb: `noir --no-color list techs`
 and `noir list techs --no-color` are the same command.
 
 Per-command flags (output format, concurrency, passive scan, AI

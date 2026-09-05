@@ -70,7 +70,7 @@ template = "landing"
     <article class="cell cell-a" data-reveal>
       <div class="cell-body">
         <h3>엔드포인트 추출</h3>
-        <p>정적 분석으로 코드에서 경로와 메서드, 파라미터, 헤더, 쿠키를 뽑아냅니다. 섀도우 API와 잊혀진 핸들러도 별도 모드가 아니라 같은 패스에서 함께 드러납니다.</p>
+        <p>정적 분석으로 코드에서 경로와 메서드, 파라미터, 헤더, 쿠키를 뽑아냅니다. 섀도우 API와 잊힌 핸들러도 별도 모드가 아니라 같은 패스에서 함께 드러납니다.</p>
       </div>
       <div class="cell-shot">
         <img src="../images/landing/bento-endpoints.webp" alt="코드베이스에서 추출한 HTTP 메서드와 경로, 헤더, idor 태그가 소스 트리와 나란히 표시된 Noir 출력." width="1420" height="564" loading="lazy" decoding="async">

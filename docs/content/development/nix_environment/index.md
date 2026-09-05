@@ -80,7 +80,7 @@ just nix-check
 
 CI runs the same check, so a forgotten regeneration surfaces in review instead of in the first Nix install after release.
 
-To move the pinned nixpkgs forward — and with it the Crystal toolchain the package builds against:
+To move the pinned nixpkgs forward, and with it the Crystal toolchain the package builds against:
 
 ```sh
 nix flake update

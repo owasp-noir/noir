@@ -16,7 +16,7 @@ noir scan . -f mermaid
 
 ## Example Output
 
-The mindmap is a tree: the root node is the API, branches are URL path segments, and each HTTP method hangs off the path it serves. Parameters under a method are grouped by where they travel in the request — `query`, `body`, `headers`, `cookies`, and `path`. Path parameters also surface as `param_*` branches (so `/users/{user_id}` becomes a `param_user_id` segment), and WebSocket routes are tagged `websocket`.
+The mindmap is a tree: the root node is the API, branches are URL path segments, and each HTTP method hangs off the path it serves. Parameters under a method are grouped by where they travel in the request: `query`, `body`, `headers`, `cookies`, and `path`. Path parameters also surface as `param_*` branches (so `/users/{user_id}` becomes a `param_user_id` segment), and WebSocket routes are tagged `websocket`.
 
 <details>
     <summary>Mermaid Output</summary>

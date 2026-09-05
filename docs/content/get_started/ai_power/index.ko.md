@@ -1,12 +1,12 @@
 +++
 title = "AI 기반 분석"
-description = "Noir를 LLM 제공업체에 연결하여 심층 코드 분석과 엔드포인트 탐지를 수행합니다."
+description = "Noir를 LLM 제공업체에 연결해 정적 규칙이 놓친 엔드포인트까지 찾아내는 방법입니다."
 weight = 4
 sort_by = "weight"
 
 +++
 
-Noir를 대규모 언어 모델(LLM, 클라우드/로컬/ACP 에이전트)에 연결하여 심층 코드 분석을 수행합니다. 미지원 언어와 프레임워크에서도 엔드포인트를 식별할 수 있습니다.
+Noir를 대규모 언어 모델(클라우드 API, 로컬 런타임, ACP 에이전트)에 연결하면 정적 분석기가 지원하지 않는 언어와 프레임워크에서도 엔드포인트를 찾아낼 수 있습니다.
 
 {% mascot(mood="idea") %}
 정적 규칙이 모르는 프레임워크라도 괜찮아. 코드를 LLM에 넘기면 엔드포인트를 찾아낼 수 있어.
@@ -58,7 +58,7 @@ noir scan . --ai-provider acp:codex
 | `--ai-agent` | 에이전트 기반 AI 워크플로우 활성화 (반복적 도구 호출 루프) |
 | `--ai-agent-max-steps` | AI 에이전트 루프 최대 단계 수 (기본값: `20`) |
 | `--ai-native-tools-allowlist` | 네이티브 도구 호출 허용 제공업체 목록 (쉼표 구분, 기본값: `openai,xai,github`) |
-| `--ai-max-token` | AI 요청 최대 토큰 수 (선택사항) |
+| `--ai-max-token` | AI 요청 최대 토큰 수 (선택 사항) |
 | `--cache-disable` | LLM 응답 캐시 비활성화 |
 | `--cache-clear` | 실행 전 LLM 캐시 삭제 |
 

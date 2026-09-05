@@ -1,12 +1,12 @@
 +++
-title = "상황별 분석을 위한 Tagger 사용하기"
-description = "엔드포인트와 매개변수에 자동으로 태그를 추가하여 잠재적 보안 위험을 식별합니다."
+title = "컨텍스트 분석을 위한 Tagger 사용하기"
+description = "엔드포인트와 파라미터에 자동으로 태그를 붙여 잠재적 보안 위험을 식별합니다."
 weight = 3
 sort_by = "weight"
 
 +++
 
-엔드포인트와 파라미터에 설명적 태그를 자동으로 추가하여 기능과 잠재적 보안 위험(SQL 인젝션, 인증 엔드포인트 등)을 식별합니다.
+엔드포인트와 파라미터에 태그를 자동으로 붙여 기능과 잠재적 보안 위험(SQL 인젝션, 인증 엔드포인트 등)을 식별합니다.
 
 {% mascot(mood="inspect") %}
 태그는 내 돋보기야. `redirect_url` 같은 파라미터는 핸들러를 읽기도 전에 ssrf로 표시돼.
@@ -106,4 +106,4 @@ noir scan <BASE_PATH> --use-taggers hunt,oauth
   - `cors`: CORS 미들웨어(Echo `middleware.CORS`, Fiber/gin-contrib/go-chi/rs `cors`, gorilla `handlers.CORS`). 알려진 permissive 생성자(`cors.Default()`, `cors.AllowAll()`)는 모든 origin 허용으로 플래깅. 헤더 파라미터 기반 `cors` 태거를 보완.
   - `secure-cookies`: 쿠키 기밀성/무결성 미들웨어(Fiber `encryptcookie`).
 
-엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 사용하는 엔드포인트별 요약을 더욱 풍부하게 만듭니다.
+엔드포인트 레벨 태그는 AI 컨텍스트에도 신호로 전달되어, AI 리뷰어가 읽는 엔드포인트별 요약에 함께 실립니다.

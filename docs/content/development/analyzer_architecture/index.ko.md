@@ -31,7 +31,7 @@ Detector 는 manifest 파일(`go.mod`, `package.json`, `Gemfile` 등) 에 대한
 
 | Layer | 위치 | 책임 |
 |---|---|---|
-| **L0 Language Engine** | `src/analyzer/engines/{lang}_engine.cr` | 그 언어의 소스 파일 집합과 경로별 필터. 언어당 하나. 순회 자체는 대부분 `FileScanEngine` 에서 옵니다 — `analyze` + `parallel_file_scan` 을 소유하며, 동시성은 `Analyzer#parallel_analyze` 가 담당합니다. |
+| **L0 Language Engine** | `src/analyzer/engines/{lang}_engine.cr` | 그 언어의 소스 파일 집합과 경로별 필터. 언어당 하나. 순회 자체는 대부분 `FileScanEngine` 에서 옵니다. `analyze` + `parallel_file_scan` 을 소유하며, 동시성은 `Analyzer#parallel_analyze` 가 담당합니다. |
 | **L1 Route Extractor** | `src/miniparsers/{lang}_route_extractor*.cr` | 소스 내용을 파싱. 문자열(파일 내용) 을 받아 라우트 선언(method, path, location) 을 yield. 파일 I/O 없음, 프레임워크 특화 로직 없음. |
 | **L2 Framework Adapter** | `src/analyzer/analyzers/{lang}/{framework}.cr` | 프레임워크별 얇은 클래스. Extractor 에서 받은 라우트에 프레임워크별 파라미터 매핑, 필터, 특수 케이스를 적용. |
 
@@ -42,8 +42,8 @@ Detector 는 manifest 파일(`go.mod`, `package.json`, `Gemfile` 등) 에 대한
 - **Language engines** (`engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, Elixir.
 - **`FileScanEngine`** 은 그중 일곱 개(Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) *아래* 에 있는 공유 베이스입니다. 각 엔진이 바이트 단위로 똑같이 복제해 갖고 있던 파일 순회 스켈레톤을 여기서 소유합니다.
 - `java_engine.cr` 과 `kotlin_engine.cr` 은 파일 이름과 달리 **엔진이 아닙니다.** 공유 `self.test_path?` 하나를 노출하는 module 이고, 상속하는 분석기가 없습니다.
-- **Route extractors** (`miniparsers/`): JavaScript(`js_route_extractor.cr` — Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS 등에서 사용) 와 Go/Java/Kotlin/Python 용 Tree-sitter 추출기, 그리고 프레임워크 전용 Tree-sitter 추출기(Elysia, Hapi, Ktor 등). Go 와 Kotlin 은 umbrella `require` 뒤의 파트 파일 디렉터리로 나뉘어 있습니다 (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
-- **의도적으로 엔진 밖**: 여러 단계를 조율하거나 자체 완결 추출을 가진 언어들 — CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, 그리고 Go 의 Chi/Httprouter/Fasthttp. `Analyzer` 를 직접 상속합니다.
+- **Route extractors** (`miniparsers/`): JavaScript(`js_route_extractor.cr`, Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS 등에서 사용) 와 Go/Java/Kotlin/Python 용 Tree-sitter 추출기, 그리고 프레임워크 전용 Tree-sitter 추출기(Elysia, Hapi, Ktor 등). Go 와 Kotlin 은 umbrella `require` 뒤의 파트 파일 디렉터리로 나뉘어 있습니다 (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
+- **의도적으로 엔진 밖**: 여러 단계를 조율하거나 자체 완결 추출을 가진 언어들: CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, 그리고 Go 의 Chi/Httprouter/Fasthttp. `Analyzer` 를 직접 상속합니다.
 
 ## 두 가지 엔진 shape
 
@@ -99,7 +99,7 @@ module Detector::Go
 end
 ```
 
-`detector_for` 는 tech 이름을 한 번만 선언하고, `detect` 에 어떤 파일을 넘길지 결정하는 값싼 파일 게이트(`applicable?`) 를 생성합니다. 게이트 키는 `extensions:`, `basenames:`, `path_segments:` 입니다. `detect` 가 부수효과를 가진다면 — 예를 들어 `CodeLocator` 에 스펙 경로를 등록한다면 — `idempotent: false` 도 함께 넘겨야 첫 매칭 이후에도 계속 호출됩니다.
+`detector_for` 는 tech 이름을 한 번만 선언하고, `detect` 에 어떤 파일을 넘길지 결정하는 값싼 파일 게이트(`applicable?`) 를 생성합니다. 게이트 키는 `extensions:`, `basenames:`, `path_segments:` 입니다. `detect` 가 부수효과를 가진다면(예를 들어 `CodeLocator` 에 스펙 경로를 등록한다면) `idempotent: false` 도 함께 넘겨야 첫 매칭 이후에도 계속 호출됩니다.
 
 Detector 는 프로젝트의 후보 파일별로 한 번씩 실행됩니다. `true` 를 반환하면 해당 프레임워크가 존재한다고 표시되고 파이프라인이 매칭되는 분석기를 실행합니다.
 
@@ -160,10 +160,10 @@ end
 핵심 포인트:
 
 - **언어 엔진을 상속**. `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint`, `resolve_public_dirs` 등을 별도 구현 없이 그대로 사용.
-- **`analyzer_for` 로 tech 선언**. 이 한 줄이 등록의 전부입니다 — 3단계 참조.
+- **`analyzer_for` 로 tech 선언**. 이 한 줄이 등록의 전부입니다. 3단계 참조.
 - **라우트 파싱은 공용 Tree-sitter 추출기에 위임** (`Noir::TreeSitterGoRouteExtractor`). 프레임워크 라우팅이 다르면 직접 재파싱하지 말고 추출기의 인자(예: `handle_method:`)나 전용 진입점으로 조정 (Mux, GoZero 참조).
 - **파일 순회는 `parallel_analyze(get_files_by_extension(".go"))` 사용** (`FileScanEngine` 기반 엔진에서는 `parallel_file_scan`). 채널 + worker pool 을 재구현하지 말 것.
-- **프레임워크가 실제 라우팅하는 verb만** 메서드 테이블에 나열. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가 — 추측성 항목은 프레임워크가 405로 응답할 엔드포인트를 보고하게 됩니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트에도 같은 정책이 적용됩니다: 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)든, 분석 시점에 자체 테이블로 `ANY`를 확장하는 analyzer 로컬 목록이든 `QUERY`를 추가하지 않습니다.
+- **프레임워크가 실제 라우팅하는 verb만** 메서드 테이블에 나열. 특히 `QUERY`(RFC 10008)는 업스트림이 명시적으로 지원할 때만 추가합니다. 추측성 항목은 프레임워크가 405로 응답할 엔드포인트를 보고하게 됩니다. 와일드카드(`ANY`/`ALL`/`*`) 라우트에도 같은 정책이 적용됩니다: 공용 `WILDCARD_HTTP_METHODS`(`src/utils/http_symbols.cr`)든, 분석 시점에 자체 테이블로 `ANY`를 확장하는 analyzer 로컬 목록이든 `QUERY`를 추가하지 않습니다.
 
 ### 3. tech 메타데이터 선언
 
@@ -262,7 +262,7 @@ just check                 # crystal tool format --check + ameba
 
 ## 새 언어 엔진 추가하기
 
-같은 언어에서 2개 이상의 분석기가 파일 순회 패턴을 공유할 때 엔진을 추출합니다. **`FileScanEngine` 을 상속하세요** — 순회는 이미 거기에 있습니다. 새 엔진은 언어에 특화된 것만 선언합니다. 어떤 파일을 스캔할지, 무엇을 건너뛸지, 그리고 공유하는 라우트 합성 헬퍼입니다.
+같은 언어에서 2개 이상의 분석기가 파일 순회 패턴을 공유할 때 엔진을 추출합니다. **`FileScanEngine` 을 상속하세요.** 순회는 이미 거기에 있습니다. 새 엔진은 언어에 특화된 것만 선언합니다. 어떤 파일을 스캔할지, 무엇을 건너뛸지, 그리고 공유하는 라우트 합성 헬퍼입니다.
 
 ```crystal
 # src/analyzer/engines/swift_engine.cr
@@ -320,7 +320,7 @@ class MyLangEngine < Analyzer
 end
 ```
 
-정식 예시: [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split). 추출기가 한 파일을 넘어서면 그대로 키우지 말고 umbrella `require` 뒤의 파트 파일 디렉터리로 나누세요 — [`go_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/go_route_extractor_ts) 는 프레임워크 계열별로, [`kotlin_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/kotlin_route_extractor_ts) 는 관심사별로 나뉘어 있습니다.
+정식 예시: [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split). 추출기가 한 파일을 넘어서면 그대로 키우지 말고 umbrella `require` 뒤의 파트 파일 디렉터리로 나누세요. [`go_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/go_route_extractor_ts) 는 프레임워크 계열별로, [`kotlin_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/kotlin_route_extractor_ts) 는 관심사별로 나뉘어 있습니다.
 
 ## 실행 모델 참고
 

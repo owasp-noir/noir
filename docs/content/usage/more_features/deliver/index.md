@@ -27,13 +27,13 @@ Relevant flags:
 | `--probe-match VAL` | Only probe endpoints matching the pattern (URL, method, or `method:URL`) |
 | `--probe-skip VAL` | Skip endpoints matching the pattern |
 
-`--probe` and `--probe-via` are independent. Passing both sends every endpoint twice — once through the proxy and once directly — which doubles the load on the target. Pass only `--probe-via` if you just want the traffic in your proxy.
+`--probe` and `--probe-via` are independent. Passing both sends every endpoint twice, once through the proxy and once directly, which doubles the load on the target. Pass only `--probe-via` if you just want the traffic in your proxy.
 
 ### Path templates
 
 A discovered route like `/users/{id}` cannot be requested literally, so noir fills the placeholder before probing **read-only verbs only** (GET, HEAD, OPTIONS). Numeric-looking names (`id`, `page`, `*_id`, …) get `1`; everything else gets `noir`.
 
-POST, PUT, PATCH and DELETE keep the literal template. Filling them would turn a harmless 404 into a real write — `DELETE /users/1` against a live record — so noir does not do it for you. Through a proxy the template still arrives, and you can edit and replay it deliberately.
+POST, PUT, PATCH and DELETE keep the literal template. Filling them would turn a harmless 404 into a real write (`DELETE /users/1` against a live record), so noir does not do it for you. Through a proxy the template still arrives, and you can edit and replay it deliberately.
 
 Override the value with `--pvalue path=...`, which applies to every verb:
 
@@ -67,13 +67,13 @@ noir scan ./source -u http://localhost:3000 \
 
 <img src="./deliver-header.png" alt="A proxied request in the intercepting proxy, carrying the custom Abcd and X-API-Key headers Noir was told to add." width="1136" height="460" loading="lazy" decoding="async">
 
-These headers go to the `-u` target and nowhere else. Most endpoints are paths that noir joined onto `-u`, but an endpoint that already carried its own scheme and host in the source — an OAS `servers:` entry, a HAR capture, a hosted-backend URL — keeps that host, and the host came from the code you are scanning. Those endpoints are still probed; your headers are not attached, and noir names the host once so you can see what was withheld:
+These headers go to the `-u` target and nowhere else. Most endpoints are paths that noir joined onto `-u`, but an endpoint that already carried its own scheme and host in the source (an OAS `servers:` entry, a HAR capture, a hosted-backend URL) keeps that host, and the host came from the code you are scanning. Those endpoints are still probed; your headers are not attached, and noir names the host once so you can see what was withheld:
 
 ```
 ▲ Probe: --probe-header values withheld from https://collector.example.com — it is not the --url target.
 ```
 
-Export destinations (`--export-es`, `--export-webhook`) are unaffected — you named those hosts yourself, so `--probe-header` still authenticates them.
+Export destinations (`--export-es`, `--export-webhook`) are unaffected: you named those hosts yourself, so `--probe-header` still authenticates them.
 
 ### Match / skip
 
@@ -128,7 +128,7 @@ noir scan ./source --export-es http://localhost:9200/noir/_doc
 
 A portless `http://` URL defaults to port 9200. A portless `https://` URL keeps the scheme default instead, because managed clusters (AWS OpenSearch Service, Elastic Cloud) and TLS reverse proxies listen on 443.
 
-Authentication reuses `--probe-header` — despite the name, those headers are attached to export requests too:
+Authentication reuses `--probe-header`. Despite the name, those headers are attached to export requests too:
 
 ```bash
 noir scan ./source --export-es https://my.cloud.es.io/noir/_doc \

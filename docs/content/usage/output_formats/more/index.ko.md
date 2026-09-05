@@ -25,7 +25,7 @@ noir scan . -f only-url
 /2.html
 ```
 
-### 매개변수만
+### 파라미터만
 
 ```bash
 noir scan . -f only-param
@@ -128,7 +128,7 @@ JSONL(`-f jsonl`)은 [JSON 및 JSONL](../json/) 페이지에서 JSON과 함께 �
 noir scan . -f postman -u https://api.example.com
 ```
 
-Postman Collection v2.1 형식의 JSON 파일을 생성합니다. 출력을 저장하고 Postman에 가져와서 대화형 API 테스트를 수행할 수 있습니다.
+Postman Collection v2.1 형식의 JSON 파일을 생성합니다. 출력을 저장한 뒤 Postman에 가져오면 바로 API를 테스트할 수 있습니다.
 
 ```json
 {

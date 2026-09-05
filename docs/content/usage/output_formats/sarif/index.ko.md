@@ -49,10 +49,10 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
               "id": "endpoint-discovery",
               "name": "Endpoint Discovery",
               "shortDescription": {
-                "text": "정적 분석을 통해 발견된 API 엔드포인트"
+                "text": "Discovered API endpoints through static analysis"
               },
               "fullDescription": {
-                "text": "이 규칙은 정적 코드 분석을 통해 발견된 API 엔드포인트, HTTP 메서드 및 매개변수를 식별합니다"
+                "text": "This rule identifies API endpoints, their HTTP methods, and parameters discovered through static code analysis"
               },
               "defaultConfiguration": {
                 "level": "note"
@@ -68,7 +68,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
           "ruleIndex": 0,
           "level": "note",
           "message": {
-            "text": "GET /api/users/:id (매개변수: path: id)"
+            "text": "GET /api/users/:id (Parameters: path: id)"
           },
           "locations": [
             {
@@ -88,7 +88,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
           "ruleIndex": 0,
           "level": "note",
           "message": {
-            "text": "POST /api/users (매개변수: json: username, json: email)"
+            "text": "POST /api/users (Parameters: json: username, json: email)"
           },
           "locations": [
             {
@@ -171,7 +171,7 @@ Azure Pipelines에서 SARIF 파일을 빌드 아티팩트로 게시하면 SARIF 
 
 ```yaml
 - script: noir scan . -f sarif -o noir.sarif --no-log
-  displayName: 'Noir 스캔 실행'
+  displayName: 'Run Noir Scan'
 
 - task: PublishBuildArtifacts@1
   inputs:

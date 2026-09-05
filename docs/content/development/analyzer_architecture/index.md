@@ -41,9 +41,9 @@ Every analyzer is composed of three layers. Keeping them separate is a hard rule
 
 - **Language engines** (in `engines/`): Specification, JavaScript/TypeScript, Go, Python, PHP, Rust, Ruby, Crystal, CFML, Scala, Swift, Perl, Elixir.
 - **`FileScanEngine`** sits *under* seven of those (Crystal, Elixir, Perl, PHP, Rust, Scala, Swift) and holds the file-walk skeleton they used to each carry a byte-identical copy of.
-- `java_engine.cr` and `kotlin_engine.cr` are **not** engines despite the filenames — they are modules exposing a shared `self.test_path?`, and no analyzer inherits from them.
+- `java_engine.cr` and `kotlin_engine.cr` are **not** engines despite the filenames. They are modules exposing a shared `self.test_path?`, and no analyzer inherits from them.
 - **Route extractors** (in `miniparsers/`): JavaScript (`js_route_extractor.cr`, used by Hono, Express, Fastify, Koa, NestJS, Restify, AdonisJS and more) plus Tree-sitter extractors for Go, Java, Kotlin and Python, and framework-specific Tree-sitter extractors (Elysia, Hapi, Ktor, and others). Go and Kotlin ship as directories of part files behind an umbrella `require` (`go_route_extractor_ts/`, `kotlin_route_extractor_ts/`).
-- **Deliberately outside the engine stack**: languages whose analyzers orchestrate multiple phases or carry self-contained extraction — CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, and Go's Chi/Httprouter/Fasthttp. These inherit from `Analyzer` directly.
+- **Deliberately outside the engine stack**: languages whose analyzers orchestrate multiple phases or carry self-contained extraction: CSharp, Java, Kotlin, Dart, Zig, C++, Clojure, Haskell, Lua, Groovy, Scala Play, and Go's Chi/Httprouter/Fasthttp. These inherit from `Analyzer` directly.
 
 ## Two engine shapes
 
@@ -99,7 +99,7 @@ module Detector::Go
 end
 ```
 
-`detector_for` declares the tech name once and generates the cheap file gate (`applicable?`) that decides which files `detect` is even offered. The gate keys are `extensions:`, `basenames:` and `path_segments:`; a detector whose `detect` has side effects — registering spec paths in `CodeLocator`, say — must also pass `idempotent: false` so the pass keeps calling it after its first match.
+`detector_for` declares the tech name once and generates the cheap file gate (`applicable?`) that decides which files `detect` is even offered. The gate keys are `extensions:`, `basenames:` and `path_segments:`; a detector whose `detect` has side effects (registering spec paths in `CodeLocator`, say) must also pass `idempotent: false` so the pass keeps calling it after its first match.
 
 The detector runs once per candidate file in the project. Returning `true` marks the framework as present and tells the pipeline to run the matching analyzer.
 
@@ -160,16 +160,16 @@ end
 Key points:
 
 - **Inherit from the language engine** (`GoEngine` here). You get `collect_package_groups_ts`, `ts_groups_for_directory`, `add_param_to_endpoint`, `resolve_public_dirs` for free.
-- **Declare the tech with `analyzer_for`**. That single line *is* the registration — see step 3.
+- **Declare the tech with `analyzer_for`**. That single line *is* the registration; see step 3.
 - **Delegate route parsing to the shared Tree-sitter extractor** (`Noir::TreeSitterGoRouteExtractor`). If your framework's routing differs, steer the extractor with its arguments (e.g. `handle_method:`) or its specialized entry points instead of re-parsing (see Mux or GoZero for examples).
 - **Use `parallel_analyze(get_files_by_extension(".go"))`** for the file walk (engines built on `FileScanEngine` expose `parallel_file_scan` instead); don't re-implement the channel + worker pool.
-- **Only list verbs the framework actually routes** in your method table. In particular, add `QUERY` (RFC 10008) only when upstream ships explicit support for it — a speculative entry reports endpoints the framework itself answers with 405. The same policy covers wildcard (`ANY`/`ALL`/`*`) routes: neither the shared `WILDCARD_HTTP_METHODS` (`src/utils/http_symbols.cr`) nor any analyzer-local wildcard fan-out list (several analyzers expand `ANY` at analysis time with their own table) should grow `QUERY`.
+- **Only list verbs the framework actually routes** in your method table. In particular, add `QUERY` (RFC 10008) only when upstream ships explicit support for it. A speculative entry reports endpoints the framework itself answers with 405. The same policy covers wildcard (`ANY`/`ALL`/`*`) routes: neither the shared `WILDCARD_HTTP_METHODS` (`src/utils/http_symbols.cr`) nor any analyzer-local wildcard fan-out list (several analyzers expand `ANY` at analysis time with their own table) should grow `QUERY`.
 
 ### 3. Declare the tech metadata
 
-There is **no registration list to edit**. The analyzer and detector registries are derived from the classes themselves: `initialize_analyzers` (`src/analyzer/analyzer.cr`) and `build_detector_list` (`src/detector/detector.cr`) each sweep `all_subclasses` and read the name off `analyzer_for` / `detector_for`. Both lists used to be hand-maintained, and forgetting an entry produced no error and no failing spec — just a component that silently never ran.
+There is **no registration list to edit**. The analyzer and detector registries are derived from the classes themselves: `initialize_analyzers` (`src/analyzer/analyzer.cr`) and `build_detector_list` (`src/detector/detector.cr`) each sweep `all_subclasses` and read the name off `analyzer_for` / `detector_for`. Both lists used to be hand-maintained, and forgetting an entry produced no error and no failing spec, just a component that silently never ran.
 
-So the only thing left to add is the catalog entry — a new file, at the same relative path as the analyzer and the detector:
+So the only thing left to add is the catalog entry: a new file, at the same relative path as the analyzer and the detector:
 
 ```crystal
 # src/techs/catalog/go/hertz.cr
@@ -261,7 +261,7 @@ just check                 # crystal tool format --check + ameba
 
 ## Adding a new language engine
 
-When a language has 2+ analyzers that share a file-walk pattern, extract an engine. **Inherit from `FileScanEngine`** — it already owns the walk. Your engine declares only what is language-specific: which files to scan, which to skip, and any shared route-composition helpers.
+When a language has 2+ analyzers that share a file-walk pattern, extract an engine. **Inherit from `FileScanEngine`**; it already owns the walk. Your engine declares only what is language-specific: which files to scan, which to skip, and any shared route-composition helpers.
 
 ```crystal
 # src/analyzer/engines/swift_engine.cr
@@ -272,7 +272,7 @@ require "./file_scan_engine"
 module Analyzer::Swift
   abstract class SwiftEngine < FileScanEngine
     # Candidate files. Prefer the detector-built extension index over
-    # walking the whole `file_map` — these are registered regular files,
+    # walking the whole `file_map`: these are registered regular files,
     # so no per-path `File.exists?` / `File.directory?` is needed.
     protected def scan_target_files : Array(String)
       get_files_by_extension(".swift")
@@ -320,13 +320,13 @@ class MyLangEngine < Analyzer
 end
 ```
 
-See [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split) for the canonical example. Once an extractor outgrows one file, split it into a directory of part files behind an umbrella `require` rather than letting it grow — [`go_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/go_route_extractor_ts) is split by framework family, [`kotlin_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/kotlin_route_extractor_ts) by concern.
+See [#1243](https://github.com/owasp-noir/noir/pull/1243) (Go `common.cr` split) for the canonical example. Once an extractor outgrows one file, split it into a directory of part files behind an umbrella `require` rather than letting it grow: [`go_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/go_route_extractor_ts) is split by framework family, [`kotlin_route_extractor_ts/`](https://github.com/owasp-noir/noir/tree/main/src/miniparsers/kotlin_route_extractor_ts) by concern.
 
 ## Execution model note
 
 Noir is built **single-threaded** (no `preview_mt`). `parallel_analyze` spawns cooperative Crystal fibers, not OS threads, so `result << endpoint` and `result.concat(...)` from multiple fibers are safe because `Array#<<` and `#concat` have no yield points. You'll notice that no per-file analyzer uses a `Mutex` around the result array; that's by design and matches the whole codebase. If noir ever enables MT mode, synchronization belongs at the `parallel_analyze` layer, not scattered across analyzers.
 
-A `@result_mutex` plus `append_endpoint` helpers were added to the engines in #2353 and removed again in #2360: they guarded a race that cannot occur in a single-threaded build, landed in only some engines, and contradicted this note. If you are about to add one, you are re-opening that loop — enable MT first, then synchronize once at the `parallel_analyze` layer.
+A `@result_mutex` plus `append_endpoint` helpers were added to the engines in #2353 and removed again in #2360: they guarded a race that cannot occur in a single-threaded build, landed in only some engines, and contradicted this note. If you are about to add one, you are re-opening that loop. Enable MT first, then synchronize once at the `parallel_analyze` layer.
 
 ## Where to look next
 
