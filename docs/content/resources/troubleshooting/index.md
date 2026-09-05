@@ -43,7 +43,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 - Requests fail after `NOIR_AI_CONNECT_TIMEOUT` (default 10s) if the host is unreachable, and after `NOIR_AI_TIMEOUT` (default 300s) if the provider accepts the request but never answers
 - Raise `NOIR_AI_TIMEOUT` when a slow local model legitimately needs longer to generate; lower `--ai-max-token` to send smaller bundles instead
-- Rate limits (HTTP 429) are retried three times with backoff — if warnings persist, reduce `--concurrency`
+- Rate limits (HTTP 429) are retried three times with backoff. If warnings persist, reduce `--concurrency`
 
 ## Docker Permission Issues
 

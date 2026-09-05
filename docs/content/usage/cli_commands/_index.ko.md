@@ -209,7 +209,7 @@ Crystal, LLVM, 타깃 트리플 등 빌드 세부 정보를 추가합니다(v0
 | `-v, --version`| Noir 버전 출력 후 종료                                                |
 | `-h, --help`   | 현재 명령의 도움말 표시                                              |
 
-동사 앞뒤 어디에 놓아도 동일합니다 — `noir --no-color list techs` 와
+동사 앞뒤 어디에 놓아도 동일합니다. `noir --no-color list techs` 와
 `noir list techs --no-color` 는 같은 명령입니다.
 
 명령어별 플래그(출력 형식, 동시성, passive scan, AI provider 등)는

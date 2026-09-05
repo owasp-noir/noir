@@ -118,7 +118,7 @@ The result is an object with an `endpoints` array, a `passive_results` array, an
 
 ## Analyzer Failures
 
-A tech analyzer that raises is logged and skipped, and the scan continues with the rest. So is a single file the analyzer cannot read or parse — a file over the parse-time ceiling, for instance — which costs only itself rather than the run. `errors` records both, so an empty result for a framework can be told apart from a framework that was never analyzed, and a complete scan from one that quietly dropped files:
+A tech analyzer that raises is logged and skipped, and the scan continues with the rest. So is a single file the analyzer cannot read or parse (a file over the parse-time ceiling, for instance), which costs only itself rather than the run. `errors` records both, so an empty result for a framework can be told apart from a framework that was never analyzed, and a complete scan from one that quietly dropped files:
 
 ```json
 {

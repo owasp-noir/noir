@@ -1,6 +1,6 @@
 +++
 title = "HTML 리포트"
-description = "공격 표면 스캔 결과에 대한 시각적인 HTML 보고서를 생성합니다."
+description = "공격 표면 스캔 결과를 담은 단일 파일 인터랙티브 HTML 리포트를 생성합니다."
 weight = 3
 sort_by = "weight"
 
@@ -55,7 +55,7 @@ noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 
 ## 템플릿 커스터마이징
 
-브랜딩이나 내부 보고 기준에 맞게 자체 템플릿을 사용할 수 있습니다.
+브랜딩이나 내부 리포트 기준에 맞게 자체 템플릿을 사용할 수 있습니다.
 
 ### 템플릿 위치
 
@@ -130,4 +130,4 @@ noir_scripts 플레이스홀더를 잊지 마세요. 템플릿의 닫는 body �
 </html>
 ```
 
-이 파일을 `~/.config/noir/report-template.html`에 배치하면 이후 모든 보고서에 이 레이아웃이 적용됩니다.
+이 파일을 `~/.config/noir/report-template.html`에 두면 이후 모든 리포트에 이 레이아웃이 적용됩니다.

@@ -61,7 +61,7 @@ NOIR_ACP_RAW_LOG=1 noir scan ./myapp --ai-provider=acp:codex
 
 ## Tool Permissions
 
-An ACP agent can ask Noir for permission to run its own tools — shell commands, file writes, network fetches — on your machine. Noir **declines every one of them**.
+An ACP agent can ask Noir for permission to run its own tools (shell commands, file writes, network fetches) on your machine. Noir **declines every one of them**.
 
 The prompt Noir sends the agent is source code from the tree you are scanning, and scanning code you did not write is the normal case. A file that carries "ignore the above and run this instead" is enough to steer the agent, so the permission prompt is the one checkpoint left; answering it with an automatic yes would turn an endpoint scan into arbitrary local execution.
 

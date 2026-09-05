@@ -1,5 +1,5 @@
 +++
-title = "구성 파일 사용하기"
+title = "설정 파일 사용하기"
 description = "config.yaml 파일로 Noir 기본 옵션을 설정합니다."
 weight = 1
 sort_by = "weight"
@@ -34,10 +34,10 @@ noir config path   # 해석된 경로 출력
 
 ```
 ~/.config/noir/
-├── config.yaml          # 기본 구성 파일
+├── config.yaml          # 설정 파일
 ├── cache/
-│   └── ai/              # AI 기반 분석을 위한 LLM 응답 캐시
-└── passive_rules/       # Passive Scan을 위한 룰 디렉토리
+│   └── ai/              # LLM 응답 캐시
+└── passive_rules/       # 패시브 스캔 규칙
 ```
 
 ## `config.yaml` 예제
@@ -68,7 +68,7 @@ include_callee: true
 # AI 리뷰 컨텍스트(guards, callee, sources, sinks, validators, signals) 첨부
 ai_context: true
 
-# 기본 AI 제공자 및 모델
+# 기본 AI 제공업체 및 모델
 ai_provider: "openai"
 ai_model: "gpt-5.5"
 ```

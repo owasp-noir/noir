@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Use [xAI](https://x.ai) Grok models for advanced code analysis and endpoint discovery.
+Use [xAI](https://x.ai) Grok models for code analysis and endpoint discovery.
 
 ## Setup
 

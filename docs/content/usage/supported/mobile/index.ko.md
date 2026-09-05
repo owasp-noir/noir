@@ -48,7 +48,7 @@ SCHEME myapp://complex/:id
 
 스캔에 핸들러 소스가 포함되어 있으면, Noir는 각 딥링크 엔드포인트를 이를 처리하는 코드와 연결합니다.
 
-* **Android**: 매니페스트의 컴포넌트(예: `.DeepLinkActivity`)를 해당 `.kt` / `.java` 파일로 해석합니다. 인텐트 처리 메서드(`onCreate`, `onNewIntent`, `onReceive`, …)에서 1-hop callee를 수집하고, 그 안에서 읽는 입력을 파라미터로 만듭니다. `uri.getQueryParameter("q")` → `query` 파라미터(URL에 baking), `get*Extra` 계열 → `extra` 파라미터.
+* **Android**: 매니페스트의 컴포넌트(예: `.DeepLinkActivity`)를 해당 `.kt` / `.java` 파일로 해석합니다. 인텐트 처리 메서드(`onCreate`, `onNewIntent`, `onReceive`, …)에서 1-hop callee를 수집하고, 그 안에서 읽는 입력을 파라미터로 만듭니다. `uri.getQueryParameter("q")` → `query` 파라미터(URL에 포함), `get*Extra` 계열 → `extra` 파라미터.
 * **iOS**: 딥링크는 중앙에서 디스패치되므로, Noir는 핸들러를 탐색해 종류별로 연결합니다. `.onOpenURL` / `application(_:open:)` / `scene(_:openURLContexts:)`는 커스텀 스킴에, `userActivity` 핸들러는 유니버설 링크에 붙입니다. `URLQueryItem` 읽기는 `query` 파라미터가 됩니다.
 
 `--ai-context`를 사용하면 핸들러 본문이 Noir의 source / sink / guard 추론에 입력되어, WebView 로드 같은 싱크로 흘러가는 딥링크가 taint 경로와 함께 드러납니다.

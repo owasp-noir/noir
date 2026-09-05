@@ -169,6 +169,6 @@ You've completed the Getting Started guide! Here's what to explore next:
 
 - **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time
-- **[Output Formats](@/usage/output_formats/_index.md)**: Dive deeper into all output formats
+- **[Output Formats](@/usage/output_formats/_index.md)**: Every output format in detail
 - **[Passive Scan](@/usage/passive_scan/_index.md)**: Scan for security issues like hardcoded secrets and misconfigurations
 - **[AI Power](@/get_started/ai_power/index.md)**: Use AI to detect endpoints in unsupported frameworks

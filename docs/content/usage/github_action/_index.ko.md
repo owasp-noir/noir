@@ -43,8 +43,8 @@ jobs:
 | `output_file` | 결과를 파일로 저장 (`-o/--output`) | 아니오 | `` |
 | `techs` | 포함할 기술 스택 지정 (`-t/--techs`) | 아니오 | `` |
 | `exclude_techs` | 제외할 기술 스택 지정 (`--exclude-techs`) | 아니오 | `` |
-| `passive_scan` | 수동(패시브) 보안 점검 활성화 (`-P/--passive-scan`) | 아니오 | `false` |
-| `passive_scan_severity` | 수동 점검 최소 심각도 (`critical`, `high`, `medium`, `low`) | 아니오 | `high` |
+| `passive_scan` | 패시브 보안 점검 활성화 (`-P/--passive-scan`) | 아니오 | `false` |
+| `passive_scan_severity` | 패시브 점검 최소 심각도 (`critical`, `high`, `medium`, `low`) | 아니오 | `high` |
 | `use_all_taggers` | 모든 태거 활성화 (`-T/--use-all-taggers`) | 아니오 | `false` |
 | `use_taggers` | 특정 태거만 활성화 (`--use-taggers`) | 아니오 | `` |
 | `include_path` | 결과에 소스 파일 경로 포함 (`--include-path`) | 아니오 | `false` |
@@ -53,7 +53,7 @@ jobs:
 | `concurrency` | 동시성 수준 (`--concurrency`) | 아니오 | `` |
 | `exclude_codes` | 제외할 HTTP 상태코드(쉼표 구분) (`--exclude-codes`) | 아니오 | `` |
 | `status_codes` | 발견된 엔드포인트에 HTTP 상태코드 표시 (`--status-codes`) | 아니오 | `false` |
-| `ai_provider` | AI 제공자 접두사 또는 전체 커스텀 URL (`--ai-provider`) | 아니오 | `` |
+| `ai_provider` | AI 제공업체 접두사 또는 전체 커스텀 URL (`--ai-provider`) | 아니오 | `` |
 | `ai_model` | AI 모델명 (`--ai-model`) | 아니오 | `` |
 | `ai_key` | AI API 키 (`--ai-key`) | 아니오 | `` |
 | `ai_agent` | 에이전틱 AI 워크플로 활성화 (`--ai-agent`) | 아니오 | `false` |
@@ -227,6 +227,6 @@ jobs:
 
 ## 구현 참고 사항
 
-- Docker 컨테이너에서 실행되어 일관된 동작 보장
+- Docker 컨테이너에서 실행되므로 환경에 관계없이 같은 결과를 냅니다
 - 입력값은 CLI 플래그와 1:1 매핑
 - 지원 기술 목록: `noir list techs`

@@ -106,4 +106,4 @@ Taggers span several kinds of security-relevant signal. Run `noir list taggers` 
   - `cors`: CORS middleware (Echo `middleware.CORS`, Fiber/gin-contrib/go-chi/rs `cors`, gorilla `handlers.CORS`); known-permissive constructors (`cors.Default()`, `cors.AllowAll()`) are flagged as allowing all origins. Complements the header-param-based `cors` tagger.
   - `secure-cookies`: cookie confidentiality/integrity middleware (Fiber `encryptcookie`).
 
-Endpoint-level tags also feed the AI context as signals, enriching the per-endpoint summary that AI reviewers consume.
+Endpoint-level tags also feed the AI context as signals, so they appear in the per-endpoint summary an AI reviewer reads.

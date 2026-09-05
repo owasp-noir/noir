@@ -6,10 +6,10 @@ sort_by = "weight"
 
 +++
 
-Noir의 결과 전송은 성격이 다른 두 family로 나뉩니다.
+Noir의 결과 전송은 성격이 다른 두 갈래로 나뉩니다.
 
-- **PROBE**: discovered endpoint를 실제 HTTP 요청으로 쏴봅니다 (active replay, 필요 시 Burp Suite나 ZAP 같은 proxy를 경유).
-- **EXPORT**: endpoint 카탈로그를 외부 스토어(Elasticsearch, OpenSearch, 또는 임의의 webhook 리시버)로 data 형태로 적재합니다. endpoint 자체에는 HTTP 트래픽이 가지 않습니다.
+- **PROBE**: 발견한 endpoint에 실제 HTTP 요청을 보냅니다 (능동 재전송, 필요 시 Burp Suite나 ZAP 같은 proxy를 경유).
+- **EXPORT**: endpoint 카탈로그를 외부 저장소(Elasticsearch, OpenSearch, 또는 임의의 webhook 리시버)에 데이터로 적재합니다. endpoint 자체에는 HTTP 트래픽이 가지 않습니다.
 
 {% mascot(mood="run") %}
 Probe는 재전송, Export는 적재. 결과가 어디로 가야 하는지에 맞춰 고르면 돼.
@@ -21,7 +21,7 @@ Probe는 재전송, Export는 적재. 결과가 어디로 가야 하는지에 �
 
 | Flag | 용도 |
 | --- | --- |
-| `--probe` | 각 endpoint에 HTTP 요청을 발사 (`-u` 필요) |
+| `--probe` | 각 endpoint에 HTTP 요청 전송 (`-u` 필요) |
 | `--probe-via URL` | proxy URL을 거쳐 probe |
 | `--probe-header VAL` | probe마다 헤더 추가 (반복 가능) |
 | `--probe-match VAL` | 패턴에 매칭되는 endpoint만 probe (URL / method / `method:URL`) |
@@ -33,7 +33,7 @@ Probe는 재전송, Export는 적재. 결과가 어디로 가야 하는지에 �
 
 `/users/{id}` 같은 route는 그대로 요청할 수 없으므로, noir가 probe 전에 placeholder를 채웁니다. 단 **read-only verb에만** 적용합니다(GET, HEAD, OPTIONS). 숫자로 보이는 이름(`id`, `page`, `*_id` 등)은 `1`, 나머지는 `noir`가 들어갑니다.
 
-POST, PUT, PATCH, DELETE는 template을 그대로 둡니다. 여기서 채우면 무해한 404가 실제 쓰기로 바뀌기 때문입니다 — 살아있는 레코드에 `DELETE /users/1`이 나갑니다. proxy 경유 시 template 그대로 도착하므로, 필요하면 직접 수정해서 replay 하면 됩니다.
+POST, PUT, PATCH, DELETE는 template을 그대로 둡니다. 여기서 채우면 무해한 404가 실제 쓰기로 바뀌기 때문입니다. 살아있는 레코드에 `DELETE /users/1`이 나가게 됩니다. proxy 경유 시 template 그대로 도착하므로, 필요하면 직접 수정해서 replay 하면 됩니다.
 
 값을 직접 지정하려면 `--pvalue path=...`를 쓰세요. 이쪽은 모든 verb에 적용됩니다.
 
@@ -110,7 +110,7 @@ noir scan ./source -u http://localhost:3000 \
 
 ## Export
 
-Endpoint 카탈로그를 외부 스토어로 push 합니다. probe와는 성격이 다르므로 endpoint 자체에 트래픽이 가지 않습니다.
+Endpoint 카탈로그를 외부 저장소로 보냅니다. probe와는 성격이 다르므로 endpoint 자체에 트래픽이 가지 않습니다.
 
 | Flag | 용도 |
 | --- | --- |

@@ -6,7 +6,7 @@ sort_by = "weight"
 
 +++
 
-Passive scan rules — both the defaults and community contributions — live in a single repository:
+Passive scan rules, both the defaults and community contributions, live in a single repository:
 
 *   **[owasp-noir/noir-passive-rules](https://github.com/owasp-noir/noir-passive-rules)**
 
@@ -24,4 +24,4 @@ To run a rule set from somewhere else (a private repository, a local directory),
 noir scan /app -P --passive-scan-path ./my-rules/
 ```
 
-This replaces the bundled rules for that run. The flag can be repeated to load multiple directories or files. Alternatively, drop extra `.yml`/`.yaml` files into `~/.config/noir/passive_rules/` — everything in that directory is loaded recursively.
+This replaces the bundled rules for that run. The flag can be repeated to load multiple directories or files. Alternatively, drop extra `.yml`/`.yaml` files into `~/.config/noir/passive_rules/`. Everything in that directory is loaded recursively.

@@ -16,7 +16,7 @@ noir scan <NEW_VERSION_PATH> --diff-path <OLD_VERSION_PATH>
 
 ### Plain Output
 
-The default output groups changes into **Added** (new endpoints), **Removed** (deleted ones), and **Changed** (endpoints present in both versions whose parameters or other details were modified — endpoints are matched by URL and method, so a method change shows up as one Added plus one Removed). Each section renders endpoints in the standard plain format:
+The default output groups changes into **Added** (new endpoints), **Removed** (deleted ones), and **Changed** (endpoints present in both versions whose parameters or other details were modified). Endpoints are matched by URL and method, so a method change shows up as one Added plus one Removed. Each section renders endpoints in the standard plain format:
 
 ```
 ───────────── ✚ Added (2) ─────────────
