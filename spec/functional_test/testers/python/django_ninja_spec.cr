@@ -17,6 +17,14 @@ expected_endpoints = [
     Param.new("price", "", "json"),
     Param.new("quantity", "1", "json"),
   ]),
+  Endpoint.new("/api/aliased", "GET", [
+    Param.new("X-Custom", "", "header"),
+    Param.new("q-n", "", "query"),
+  ]),
+  Endpoint.new("/api/aliased_body", "POST", [
+    Param.new("userName", "", "json"),
+    Param.new("age", "", "json"),
+  ]),
   Endpoint.new("/api/search", "GET", [Param.new("q", "", "query"), Param.new("limit", "10", "query")]),
   Endpoint.new("/api/upload", "POST", [Param.new("note", "", "form"), Param.new("attachment", "", "form")]),
   Endpoint.new("/api/whoami", "GET", [Param.new("x_api_key", "", "header"), Param.new("session", "", "cookie")]),

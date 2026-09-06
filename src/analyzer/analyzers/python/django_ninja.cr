@@ -1,5 +1,6 @@
 require "../../engines/python_engine"
 require "../../../utils/top_level_split"
+require "./python_helper"
 
 module Analyzer::Python
   # Django Ninja is a FastAPI-inspired REST framework that plugs into
@@ -271,7 +272,7 @@ module Analyzer::Python
 
         if param_type = infer_ninja_param_type(param)
           default_value = return_literal_value(param.default)
-          params << Param.new(param.name, default_value, param_type)
+          params << Param.new(ninja_wire_name(param), default_value, param_type)
           next
         end
 
@@ -287,6 +288,30 @@ module Analyzer::Python
       end
 
       dedupe_params(params)
+    end
+
+    # django-ninja builds its parameter name as `Header(alias=...) or
+    # <identifier>` (`ninja/signature/details.py`), so an alias replaces the
+    # identifier outright — `renamed: str = Header(None, alias="X-Custom")`
+    # is only ever populated from an `X-Custom` header, never from
+    # `renamed`. Unlike FastAPI there is no underscore-to-hyphen rule here:
+    # the lookup goes through Django's `HttpHeaders`, which resolves
+    # `x_token` and `x-token` to the same header, so the identifier stays as
+    # written when no alias is given.
+    NINJA_PARAM_CLASS_RE = /\b(?:Header|Query|Cookie|Path|Body|Form|File)\s*\(/
+
+    # A `ninja.Schema` is a Pydantic model, so a body field renames the same
+    # way a FastAPI one does.
+    NINJA_FIELD_CALL_RE = /\bField\s*\(/
+
+    private def ninja_wire_name(param : FunctionParameter) : ::String
+      {param.default, param.type}.each do |declaration|
+        next unless declaration.matches?(NINJA_PARAM_CLASS_RE)
+        if explicit = Helper.declared_alias(declaration)
+          return explicit
+        end
+      end
+      param.name
     end
 
     private def infer_ninja_param_type(param : FunctionParameter) : ::String?
@@ -364,7 +389,8 @@ module Analyzer::Python
           default = assignment[1].strip if assignment.size == 2
         end
 
-        params << Param.new(field_name, return_literal_value(default), "json")
+        wire_name = default.matches?(NINJA_FIELD_CALL_RE) ? (Helper.declared_alias(default) || field_name) : field_name
+        params << Param.new(wire_name, return_literal_value(default), "json")
       end
 
       params.empty? ? nil : params

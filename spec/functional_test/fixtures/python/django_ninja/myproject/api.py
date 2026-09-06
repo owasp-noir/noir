@@ -1,4 +1,4 @@
-from ninja import NinjaAPI, Schema, Form, File, Header, Cookie
+from ninja import NinjaAPI, Schema, Form, File, Header, Cookie, Query, Field
 from ninja.files import UploadedFile
 
 from events.api import router as events_router
@@ -12,6 +12,26 @@ class ItemIn(Schema):
     name: str
     price: float
     quantity: int = 1
+
+
+class AliasedIn(Schema):
+    user_name: str = Field(..., alias="userName")
+    age: int
+
+
+# django-ninja names a parameter `alias or <identifier>`, so an alias
+# replaces the identifier outright — `renamed` is never populated from a
+# `renamed` header. There is no underscore rule here (Django's HttpHeaders
+# resolves `x_api_key` and `x-api-key` to the same header), which is why
+# `/api/whoami` above still expects `x_api_key`.
+@api.get("/aliased")
+def aliased(request, renamed: str = Header(None, alias="X-Custom"), q_n: str = Query(None, alias="q-n")):
+    return {}
+
+
+@api.post("/aliased_body")
+def aliased_body(request, payload: AliasedIn):
+    return payload
 
 
 @api.get("/add")

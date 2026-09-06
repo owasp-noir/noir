@@ -3,7 +3,27 @@ require "../../func_spec.cr"
 expected_endpoints = [
   Endpoint.new("/api/query/param-required/int", "GET", [Param.new("query", "", "query")]),
   Endpoint.new("/api/items/{item_id}", "PUT", [Param.new("item_id", "", "path"), Param.new("name", "", "form"), Param.new("size", "", "form")]),
-  Endpoint.new("/api/hidden_header", "GET", [Param.new("hidden_header", "", "header")]),
+  # `Header` maps `_` to `-` unless `convert_underscores=False`, so the name
+  # a client actually sends is `hidden-header`, not the Python identifier.
+  Endpoint.new("/api/hidden_header", "GET", [Param.new("hidden-header", "", "header")]),
+  Endpoint.new("/api/wire_names", "GET", [
+    Param.new("x-token", "", "header"),
+    Param.new("X-Custom-Auth", "", "header"),
+    Param.new("keep_underscores", "", "header"),
+    Param.new("q-name", "", "query"),
+    Param.new("sess-id", "", "cookie"),
+  ]),
+  Endpoint.new("/api/aliased_body", "POST", [
+    Param.new("userName", "", "form"),
+    Param.new("v2Name", "", "form"),
+    Param.new("age", "", "form"),
+    Param.new("note", "plain", "form"),
+  ]),
+  Endpoint.new("/api/wire_names/annotated", "GET", [
+    Param.new("x-api-key", "", "header"),
+    Param.new("X-Tok", "", "header"),
+    Param.new("q-x", "", "query"),
+  ]),
   Endpoint.new("/api/cookie_examples/", "GET", [Param.new("data", "", "cookie")]),
   Endpoint.new("/api/dummypath", "POST", [Param.new("dummy", "", "json")]),
   Endpoint.new("/api/constant/concat", "GET"),

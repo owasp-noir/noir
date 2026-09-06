@@ -5,6 +5,7 @@ from fastapi_utils.cbv import cbv
 from typing_extensions import Annotated
 from fastapi.responses import JSONResponse
 from fastapi import FastAPI, Path, Query, status, Body, Header, Cookie, Depends, Security, Request, Response, APIRouter, WebSocket
+from pydantic import BaseModel, Field
 
 api : APIRouter = APIRouter()
 tenant_api = APIRouter(prefix="/tenants/{tenant_id}")
@@ -39,6 +40,29 @@ async def hidden_header(
     return {"hidden_header": hidden_header}
 
 
+# The name a client sends is not always the Python identifier: `alias=`
+# overrides it outright, and `Header` maps `_` to `-` unless it is told
+# `convert_underscores=False`.
+@api.get("/wire_names")
+async def wire_names(
+    x_token: Optional[str] = Header(default=None),
+    renamed: Optional[str] = Header(default=None, alias="X-Custom-Auth"),
+    keep_underscores: Optional[str] = Header(default=None, convert_underscores=False),
+    q_name: Optional[str] = Query(default=None, alias="q-name"),
+    sess_id: Optional[str] = Cookie(default=None, alias="sess-id"),
+):
+    return {}
+
+
+@api.get("/wire_names/annotated")
+async def wire_names_annotated(
+    x_api_key: Annotated[Optional[str], Header()] = None,
+    tok: Annotated[Optional[str], Header(alias="X-Tok")] = None,
+    q_x: Annotated[Optional[str], Query(alias="q-x")] = None,
+):
+    return {}
+
+
 @api.get("/cookie_examples/")
 def cookie_examples(
     data: Union[str, None] = Cookie(
@@ -57,6 +81,22 @@ def cookie_examples(
     ),
 ):
     return data
+
+# A Pydantic model describes the body, and `Field(alias=...)` /
+# `validation_alias=...` rename the key the client has to send. `note`
+# guards the other direction: a default that merely contains the text
+# `alias=` is not a rename.
+class AliasedPayload(BaseModel):
+    user_name: str = Field(..., alias="userName")
+    v2_name: str = Field(..., validation_alias="v2Name")
+    age: int
+    note: str = "plain"
+
+
+@api.post("/aliased_body")
+async def aliased_body(payload: AliasedPayload):
+    return payload
+
 
 @api.post("/dummypath")
 async def get_body(request: Request):

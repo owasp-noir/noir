@@ -1,5 +1,6 @@
 require "../../engines/python_engine"
 require "../../../utils/top_level_split"
+require "./python_helper"
 
 module Analyzer::Python
   class FastAPI < PythonEngine
@@ -250,7 +251,7 @@ module Analyzer::Python
                           end
                         else
                           # Add endpoint param
-                          params << Param.new(param.name, default_value, param_type)
+                          params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
                         end
                       end
                     end
@@ -1113,7 +1114,7 @@ module Analyzer::Python
             new_params.each { |model_param| params << model_param }
           end
         else
-          params << Param.new(param.name, default_value, param_type)
+          params << Param.new(fastapi_wire_name(param, param_type), default_value, param_type)
         end
       end
 
@@ -1185,6 +1186,64 @@ module Analyzer::Python
       normalized == "/" ? "/*" : "#{normalized}/*"
     end
 
+    # The Python identifier a FastAPI handler declares is not always the name
+    # the client sends. Two rules rewrite it, and Noir honored neither:
+    #
+    #   * `alias=` overrides the name outright, for every parameter class
+    #     (`Header`, `Query`, `Cookie`, `Form`, `File`, `Body`, `Path`).
+    #   * `Header` — and only `Header` — additionally maps `_` to `-`, because
+    #     an HTTP header name can't carry an underscore in most stacks. That
+    #     is `convert_underscores`, and it defaults to **True**; passing
+    #     `convert_underscores=False` is what opts back out.
+    #
+    # Reporting the identifier verbatim is not a cosmetic mismatch: it is the
+    # name Noir hands to the next stage. `-f curl` emitted `-H 'x_token: '`
+    # for `x_token: str = Header(None)`, a header the app reads as nothing,
+    # and a DAST tool importing the OpenAPI doc probed `?q_name=` for a
+    # parameter the app only accepts as `q-name`.
+    FASTAPI_PARAM_CLASS_RE    = /\b(?:Header|Query|Cookie|Path|Body|Form|File)\s*\(/
+    NO_CONVERT_UNDERSCORES_RE = /\bconvert_underscores\s*=\s*False\b/
+
+    # The same rename, one layer down. A request body is described by a
+    # Pydantic model, and `Field(alias=...)` renames the key there too —
+    # with `populate_by_name` off (the default) the alias is the *only* key
+    # the model accepts, so the attribute name is a body field the app
+    # rejects outright.
+    MODEL_FIELD_CALL_RE = /\bField\s*\(/
+
+    # `param_type` is Noir's resolved slot ("header", "query", ...), which is
+    # what decides whether the underscore rule applies; the declaration text
+    # is whichever of the default value or the annotation actually carries the
+    # `Header(...)` / `Query(...)` call, since `Annotated[str, Header()]` puts
+    # it in the annotation and `= Header()` puts it in the default.
+    private def fastapi_wire_name(param : FunctionParameter, param_type : ::String) : ::String
+      declaration = fastapi_param_declaration(param)
+      return param.name if declaration.empty?
+
+      if explicit = Helper.declared_alias(declaration)
+        return explicit
+      end
+
+      return param.name unless param_type == "header"
+      return param.name if declaration.matches?(NO_CONVERT_UNDERSCORES_RE)
+      param.name.tr("_", "-")
+    end
+
+    # Gated on an actual parameter-class call so a plain default that merely
+    # contains the text `alias=` (`mode: str = "alias=1"`) is left alone.
+    private def fastapi_param_declaration(param : FunctionParameter) : ::String
+      return param.default if param.default.matches?(FASTAPI_PARAM_CLASS_RE)
+      return param.type if param.type.matches?(FASTAPI_PARAM_CLASS_RE)
+      ""
+    end
+
+    # Same gate as `fastapi_param_declaration`: only a real `Field(...)`
+    # call renames anything, so `note: str = "alias=x"` keeps its name.
+    private def model_field_wire_name(attribute : ::String, default : ::String) : ::String
+      return attribute unless default.matches?(MODEL_FIELD_CALL_RE)
+      Helper.declared_alias(default) || attribute
+    end
+
     # Infers the type of the parameter based on its default value or type annotation
     def infer_parameter_type(data : ::String, is_param_type = false) : ::String?
       if data.matches?(/Cookie/)
@@ -1234,7 +1293,7 @@ module Analyzer::Python
 
           if !param_name.empty? && !param_type.empty?
             default_value = return_literal_value(param_default.strip)
-            params << Param.new(param_name.strip, default_value, "form")
+            params << Param.new(model_field_wire_name(param_name.strip, param_default), default_value, "form")
           end
         end
       end
