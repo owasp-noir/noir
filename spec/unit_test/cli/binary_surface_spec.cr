@@ -14,6 +14,9 @@ require "json"
 private REPO_ROOT = File.expand_path(File.join(__DIR__, "..", "..", ".."))
 private BINARY    = File.join(REPO_ROOT, "bin", "noir")
 private FIXTURE   = File.join(REPO_ROOT, "spec", "functional_test", "fixtures", "ruby", "sinatra")
+# A second, deliberately different codebase, so `--diff-path` has something
+# to report as added/removed rather than an empty diff.
+private DIFF_FIXTURE = File.join(REPO_ROOT, "spec", "functional_test", "fixtures", "ruby", "rails")
 
 private record CliRun, stdout : String, stderr : String, exit_code : Int32
 
@@ -376,6 +379,29 @@ describe "noir CLI surface (built binary)" do
       ensure
         FileUtils.rm_rf(dir)
       end
+    end
+  end
+
+  describe "diff mode with a format it cannot render" do
+    # Diff mode only implements plain/json/yaml/toml. Any other `-f` falls
+    # back to the decorated text diff, and the notice saying so used to go
+    # through the progress logger — which `--no-log` silences wholesale.
+    # That is exactly backwards: `--no-log -f sarif -o report.sarif` in CI
+    # is the run that most needs to hear it, and it was the one run that
+    # could not. The warning now takes the same always-visible STDERR path
+    # as the other "your flag was ignored" notices.
+    it "warns on stderr even under --no-log" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
+                         "--no-color", "--no-log", "-f", "sarif"])
+      result.stderr.should contain("diff mode does not support -f sarif")
+      result.stdout.should_not contain("\"$schema\"")
+    end
+
+    it "stays quiet for a format diff mode does implement" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
+                         "--no-color", "--no-log", "-f", "json"])
+      result.stderr.should_not contain("does not support")
+      JSON.parse(result.stdout)["added"].as_a.should_not be_nil
     end
   end
 

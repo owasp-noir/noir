@@ -65,7 +65,15 @@ class NoirLogger
   end
 
   def log(level : LogLevel, message : String)
-    return if @no_log
+    # `--no-log` suppresses the *message*, never the termination. The early
+    # return used to cover the whole method, so `fatal` under `--no-log`
+    # printed nothing AND skipped the `exit(1)` below — the one log level
+    # whose entire contract is that the process stops. The caller then ran
+    # on past an unrecoverable state with no trace of it.
+    if @no_log
+      exit(1) if level == LogLevel::FATAL
+      return
+    end
 
     prefix = case level
              when LogLevel::DEBUG

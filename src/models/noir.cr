@@ -307,10 +307,19 @@ class NoirRunner
       # Diff mode only implements plain/json/yaml/toml. Any other explicit
       # format (only-url, curl, sarif, oas3, …) was silently rendered as the
       # decorated text diff, corrupting automation pipelines that expected the
-      # requested format. Warn (to STDERR) so the mismatch is visible.
+      # requested format.
       fmt = options["format"].to_s
       unless fmt.empty? || fmt == "plain"
-        @logger.warning "Diff mode does not support -f #{fmt}; showing the text diff instead. Supported diff formats: plain, json, yaml, toml."
+        # Straight to STDERR rather than through `@logger.warning`, which
+        # `--no-log` silences wholesale — and `--no-log` is exactly the run
+        # that needs to hear this. `noir scan new --diff-path old -f sarif
+        # --no-log -o report.sarif` in CI otherwise writes the text diff
+        # into a `.sarif` file with nothing on either stream saying the
+        # format request was dropped. A "your flag was ignored" notice about
+        # the result stream itself belongs with the `--concurrency` clamp
+        # and the other always-visible CliValidation warnings, not with the
+        # progress log.
+        STDERR.puts "WARNING: diff mode does not support -f #{fmt}; showing the text diff instead. Supported diff formats: plain, json, yaml, toml.".colorize(:yellow)
       end
       builder.print @endpoints, diff_app
     end
