@@ -16,11 +16,11 @@ sort_by = "weight"
 
 ### Noir를 어떻게 설치하나요?
 
-Homebrew, Snapcraft, Docker 등을 통해 설치할 수 있습니다. [설치](@/get_started/installation/index.md) 페이지를 참조하세요.
+Homebrew, Snapcraft, Docker 등을 통해 설치할 수 있습니다. [설치](@/get_started/installation/index.ko.md) 페이지를 참조하세요.
 
 ### Noir는 어떤 언어와 프레임워크를 지원하나요?
 
-[지원되는 언어 및 프레임워크](@/usage/supported/language_and_frameworks/index.md) 페이지에서 전체 목록을 확인하세요.
+[지원되는 언어 및 프레임워크](@/usage/supported/language_and_frameworks/index.ko.md) 페이지에서 전체 목록을 확인하세요.
 
 ### Noir에 어떻게 기여할 수 있나요?
 
@@ -32,11 +32,11 @@ Homebrew, Snapcraft, Docker 등을 통해 설치할 수 있습니다. [설치](@
 
 ### 다른 보안 도구와 어떻게 통합하나요?
 
-ZAP, Burp Suite, Caido 등과 통합할 수 있습니다. [DAST 파이프라인](@/usage/more_features/pipeline-for-dast/index.md) 가이드를 참조하세요.
+ZAP, Burp Suite, Caido 등과 통합할 수 있습니다. [DAST 파이프라인](@/usage/more_features/pipeline-for-dast/index.ko.md) 가이드를 참조하세요.
 
 ### 결과를 어떻게 내보내나요?
 
-JSON, YAML, OpenAPI 명세, cURL 등 다양한 형식을 지원합니다. [출력 형식](@/usage/output_formats/_index.md) 섹션을 참조하세요.
+JSON, YAML, OpenAPI 명세, cURL 등 다양한 형식을 지원합니다. [출력 형식](@/usage/output_formats/_index.ko.md) 섹션을 참조하세요.
 
 ### 버그 보고나 기능 요청은 어떻게 하나요?
 

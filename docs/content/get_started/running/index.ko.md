@@ -50,7 +50,7 @@ Noir가 분석할 수 있는 모든 기술을 보려면:
 noir list techs
 ```
 
-목록에 없는 프레임워크라면 [AI 기반 분석](@/get_started/ai_power/index.md)으로 엔드포인트를 탐지할 수 있습니다.
+목록에 없는 프레임워크라면 [AI 기반 분석](@/get_started/ai_power/index.ko.md)으로 엔드포인트를 탐지할 수 있습니다.
 
 ## 다양한 출력 형식 사용
 
@@ -70,7 +70,7 @@ noir scan . -f oas3
 noir scan . -f curl -u https://your-target.com
 ```
 
-사용 가능한 모든 형식은 `noir list formats` 또는 [출력 형식](@/usage/output_formats/_index.md) 섹션을 참조하세요.
+사용 가능한 모든 형식은 `noir list formats` 또는 [출력 형식](@/usage/output_formats/_index.ko.md) 섹션을 참조하세요.
 
 ## 결과를 파일로 저장
 
@@ -135,7 +135,7 @@ noir scan . --ai-context
 noir scan . --ai-context guards,sinks
 ```
 
-데이터 모양과 프레임워크별 지원은 [Callee 커버리지](@/usage/supported/callee_coverage/index.md)와 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.md)를 참고하세요.
+데이터 모양과 프레임워크별 지원은 [Callee 커버리지](@/usage/supported/callee_coverage/index.ko.md)와 [AI 컨텍스트](@/usage/supported/ai_context_coverage/index.ko.md)를 참고하세요.
 
 ## 주요 플래그 정리
 
@@ -170,8 +170,8 @@ noir scan . --ai-context guards,sinks
 
 시작하기 가이드를 완료했습니다! 다음으로 살펴볼 내용:
 
-- **[CLI 명령어](@/usage/cli_commands/_index.md)**: v1 서브커맨드(scan, list, cache, config, rules 등) 전체 레퍼런스
-- **[설정](@/usage/configurations/configuration_file/index.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정
-- **[출력 형식](@/usage/output_formats/_index.md)**: 모든 출력 형식 자세히 알아보기
-- **[패시브 스캔](@/usage/passive_scan/_index.md)**: 하드코딩된 비밀키, 잘못된 설정 등 보안 이슈 스캔
-- **[AI 기반 분석](@/get_started/ai_power/index.md)**: AI로 미지원 프레임워크의 엔드포인트 탐지
+- **[CLI 명령어](@/usage/cli_commands/_index.ko.md)**: v1 서브커맨드(scan, list, cache, config, rules 등) 전체 레퍼런스
+- **[설정](@/usage/configurations/configuration_file/index.ko.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정
+- **[출력 형식](@/usage/output_formats/_index.ko.md)**: 모든 출력 형식 자세히 알아보기
+- **[패시브 스캔](@/usage/passive_scan/_index.ko.md)**: 하드코딩된 비밀키, 잘못된 설정 등 보안 이슈 스캔
+- **[AI 기반 분석](@/get_started/ai_power/index.ko.md)**: AI로 미지원 프레임워크의 엔드포인트 탐지

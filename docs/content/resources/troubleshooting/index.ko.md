@@ -17,7 +17,7 @@ sort_by = "weight"
 - 올바른 디렉토리를 지정했는지 확인하세요: `noir scan ./your-app`
 - 프레임워크가 지원되는지 확인하세요: `noir list techs`
 - `--verbose`를 사용하여 어떤 기술이 감지되었는지 확인하세요
-- 프레임워크가 지원되지 않는 경우 [AI 기반 분석](@/get_started/ai_power/index.md)을 사용하세요
+- 프레임워크가 지원되지 않는 경우 [AI 기반 분석](@/get_started/ai_power/index.ko.md)을 사용하세요
 
 ## 스캔이 너무 오래 걸림
 
@@ -35,7 +35,7 @@ sort_by = "weight"
 
 - API 키가 올바른지 확인하세요: `--ai-key <KEY>` 또는 `NOIR_AI_KEY` 환경 변수 설정
 - 로컬 제공업체(Ollama, vLLM, LM Studio)의 경우 서버가 실행 중인지 확인하세요
-- [AI 제공업체](@/usage/ai_providers/_index.md) 비교표에서 기본 호스트를 확인하세요
+- [AI 제공업체](@/usage/ai_providers/_index.ko.md) 비교표에서 기본 호스트를 확인하세요
 - 사용자 정의 엔드포인트의 경우 전체 URL을 사용하세요: `--ai-provider=http://your-server:port`
 - ACP 제공업체의 경우 `NOIR_ACP_RAW_LOG=1`로 디버그 로그를 활성화하세요
 
@@ -57,10 +57,10 @@ sort_by = "weight"
 **증상:** 설치 후 탭 자동완성이 작동하지 않습니다.
 
 - Homebrew로 설치한 경우 자동완성이 자동으로 설치됩니다
-- 수동 설정은 [셸 자동완성](@/usage/configurations/shell-completion/index.md)을 참조하세요
+- 수동 설정은 [셸 자동완성](@/usage/configurations/shell-completion/index.ko.md)을 참조하세요
 - 설정 후 셸을 재시작하거나 `source ~/.zshrc` (또는 해당 셸의 동등한 명령)를 실행하세요
 
 ## 추가 도움이 필요하신가요?
 
 - [GitHub 이슈](https://github.com/owasp-noir/noir/issues)를 열어주세요
-- [연락처](@/resources/contact/index.md) 페이지에서 팀에 연락하는 다른 방법을 확인하세요
+- [연락처](@/resources/contact/index.ko.md) 페이지에서 팀에 연락하는 다른 방법을 확인하세요

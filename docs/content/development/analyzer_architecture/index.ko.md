@@ -109,7 +109,7 @@ Detector 는 프로젝트의 후보 파일별로 한 번씩 실행됩니다. `tr
 
 ### 1. Detector
 
-`src/detector/detectors/{언어}/{프레임워크}.cr` 생성:
+`src/detector/detectors/{lang}/{framework}.cr` 생성:
 
 ```crystal
 require "../../../models/detector"
@@ -127,7 +127,7 @@ end
 
 ### 2. Analyzer
 
-`src/analyzer/analyzers/{언어}/{프레임워크}.cr` 생성. 언어 엔진을 상속:
+`src/analyzer/analyzers/{lang}/{framework}.cr` 생성. 언어 엔진을 상속:
 
 ```crystal
 require "../../engines/go_engine"
@@ -204,7 +204,7 @@ end
 
 ### 4. Fixture
 
-`spec/functional_test/fixtures/{언어}/{프레임워크}/` 에 최소 앱 생성:
+`spec/functional_test/fixtures/{lang}/{framework}/` 에 최소 앱 생성:
 
 ```
 spec/functional_test/fixtures/go/hertz/
@@ -218,7 +218,7 @@ Fixture 는 현실적 패턴(path param, query/form/header/cookie, 라우트 그
 
 ### 5. Spec
 
-`spec/functional_test/testers/{언어}/{프레임워크}_spec.cr` 생성:
+`spec/functional_test/testers/{lang}/{framework}_spec.cr` 생성:
 
 ```crystal
 require "../../func_spec.cr"
@@ -257,7 +257,7 @@ just test                  # unit + functional spec 통과
 just check                 # crystal tool format --check + ameba
 
 # 수동 확인
-./bin/noir -b spec/functional_test/fixtures/{언어}/{프레임워크}
+./bin/noir -b spec/functional_test/fixtures/{lang}/{framework}
 ```
 
 ## 새 언어 엔진 추가하기

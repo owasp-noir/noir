@@ -34,7 +34,7 @@ Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케
 
 **AI SAST에 쓸 만한 컨텍스트 제공.** Noir가 추출한 엔드포인트 인벤토리는 진입점, 소스 파일, 파라미터, 태그로 구성되며, `--include callee`를 쓰면 각 핸들러가 호출하는 1-hop 함수까지 담깁니다. LLM 기반 SAST, 코드 감사자, 보안 에이전트가 공격자 도달 가능한 버그를 찾는 데 필요한 바로 그 컨텍스트입니다. `--ai-context`를 켜면 한 단계 더 나아가, 엔드포인트별로 집약된 리뷰 컨텍스트(guards, callees, sources, sinks, validators, signals)까지 함께 붙어서 모델이 다시 찾아낼 필요가 없습니다. 모델에게 저장소 전체를 훑게 하는 대신, Noir가 매핑해 둔 표면을 그대로 넘기세요.
 
-**다음 도구가 읽을 형식으로 출력.** JSON, YAML, OpenAPI 명세, CI/CD용 SARIF, cURL, HTTPie, HTML 보고서, Postman 컬렉션 등 파이프라인의 다음 도구가 기대하는 형식으로 결과가 나옵니다.
+**다음 도구가 읽을 형식으로 출력.** JSON, YAML, OpenAPI 명세, CI/CD용 SARIF, cURL, HTTPie, HTML 리포트, Postman 컬렉션 등 파이프라인의 다음 도구가 기대하는 형식으로 결과가 나옵니다.
 
 ## 어떻게 작동하나요?
 
@@ -100,4 +100,4 @@ Noir는 오픈 소스이며 모든 기여를 환영합니다. [기여 가이드]
 
 ---
 
-**다음**: [Noir 설치](@/get_started/installation/index.md)
+**다음**: [Noir 설치](@/get_started/installation/index.ko.md)
