@@ -44,9 +44,17 @@ r$handle("DELETE", "/resource/<resource_id>", function(resource_id) {
 
 #* The shape the official plumber template ships with: `req` and `res` are
 #* injected by plumber, not sent by the client, and `...` is R's variadic
-#* marker rather than a parameter name.
+#* marker rather than a parameter name. The apostrophe in "plumber's" below
+#* is load-bearing: it used to open a string literal that ran to the end of
+#* the file, so nothing after it was comment-stripped.
 #* @param term Search term
+#* @param ... plumber's passthrough arguments, not a parameter name
+#* @param req The request object
 #* @get /search
 function(req, res, term = "", ...) {
   list(term = term)
 }
+
+# Commented-out route. Must not be reported -- it is the assertion that the
+# roxygen block above did not swallow the rest of the file.
+# r$get("/internal-only", function() "secret")

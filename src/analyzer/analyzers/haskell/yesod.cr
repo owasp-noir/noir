@@ -99,7 +99,9 @@ module Analyzer::Haskell
       content.scan(/\[(?:parseRoutes|parseRoutesNoCheck)\|([\s\S]*?)\|\]/) do |match|
         next if match.size < 2
         body_start = match.begin(1) || 0
-        blocks << {text: match[1], line_offset: content[0...body_start].count('\n')}
+        # `line_number_for_index` walks the byte buffer; `content[0...i]` would
+        # copy the whole prefix per block.
+        blocks << {text: match[1], line_offset: line_number_for_index(content, body_start) - 1}
       end
 
       blocks

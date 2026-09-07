@@ -254,6 +254,13 @@ module Analyzer::Javascript
         next unless js_source_file?(file)
         next unless file.starts_with?("#{models_prefix}/")
         rel = file[(models_prefix.size + 1)..]
+        # Top-level only, deliberately — unlike the controllers above. A
+        # controller announces itself with the `*Controller.js` suffix, so
+        # descending is safe; a model is any capitalised filename, and
+        # `MODEL_FILE_RE` would claim every nested helper under `api/models/`
+        # and publish five blueprint routes for each. Nested models are a real
+        # (rarer) Sails layout, so this trades a known false negative for a
+        # much noisier false positive; revisit with a stronger model signal.
         next if rel.empty? || rel.includes?("/")
         base = File.basename(rel)
         next unless md = base.match(MODEL_FILE_RE)
