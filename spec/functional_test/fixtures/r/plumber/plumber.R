@@ -41,3 +41,12 @@ r$get("/direct", function() {
 r$handle("DELETE", "/resource/<resource_id>", function(resource_id) {
   # resource_id is path param
 })
+
+#* The shape the official plumber template ships with: `req` and `res` are
+#* injected by plumber, not sent by the client, and `...` is R's variadic
+#* marker rather than a parameter name.
+#* @param term Search term
+#* @get /search
+function(req, res, term = "", ...) {
+  list(term = term)
+}

@@ -92,7 +92,11 @@ module Analyzer::Zig
         method, suffix, has_id = spec
 
         url = build_url(resource, suffix)
-        line = Noir::ZigCalleeExtractor.line_at(stripped, match.begin(0) || 0)
+        # The action name, not `match.begin(0)`: the regex opens with
+        # `(?:^|[^A-Za-z0-9_.])`, so offset 0 of a match at the start of a line
+        # is the newline that ended the PREVIOUS line — every resourceful
+        # route was reported one line above its `pub fn`.
+        line = Noir::ZigCalleeExtractor.line_at(stripped, match.begin(1) || match.begin(0) || 0)
         details = Details.new(PathInfo.new(path, line))
 
         params = [] of Param

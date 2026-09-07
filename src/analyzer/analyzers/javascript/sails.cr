@@ -232,8 +232,17 @@ module Analyzer::Javascript
         base = File.basename(rel)
         next if base.starts_with?(".")
 
-        if !rel.includes?("/") && (md = base.match(CONTROLLER_FILE_RE))
+        # A classic controller keeps its blueprint identity wherever it sits:
+        # Sails prefixes the identity with the path below `api/controllers`,
+        # so `api/controllers/admin/ReportController.js` is `admin/report` and
+        # serves `/admin/report`. Requiring a top-level file sent every nested
+        # controller down the actions2 branch instead, which published seven
+        # verbs on the literal filename (`/admin/ReportController`) and lost
+        # the five REST routes the app really exposes.
+        if md = base.match(CONTROLLER_FILE_RE)
+          dir = File.dirname(rel)
           identity = md[1].downcase
+          identity = "#{dir.downcase}/#{identity}" unless dir == "."
           identities[identity] ||= file
           next
         end

@@ -16,6 +16,20 @@ module Analyzer::R
     # Matches R function declaration: function(...)
     FUNCTION_DECLARATION = /\bfunction\s*\(([^)]*)\)/
 
+    # Arguments plumber injects into a handler rather than reading off the
+    # request. `function(req, res, msg = "")` is the shape the official
+    # plumber template ships with, so reporting `req`/`res` as client-supplied
+    # parameters put two phantom entries on almost every real endpoint — and,
+    # for a POST, two phantom JSON body fields in the rendered request.
+    INJECTED_ARGS = Set{"req", "res"}
+
+    # An R formal that names something a client can actually send. Rules out
+    # the variadic `...` (and `..1`, `..2`), which the previous
+    # `[A-Za-z0-9_.-]+` check accepted and emitted verbatim as a parameter
+    # named `...`, and leading-digit/dash tokens that are not identifiers at
+    # all — what those really signal is that the argument list did not parse.
+    R_ARGUMENT_NAME_RE = /\A(?:[A-Za-z][A-Za-z0-9._]*|\.(?![0-9.])[A-Za-z0-9._]*)\z/
+
     # Programmatic routes:
     # pr_get("/path", handler)
     PROGRAMMATIC_PIPELINE = /\bpr_(get|post|put|delete|patch|head|options)\s*\(\s*["']([^"']+)["']/i
@@ -167,7 +181,8 @@ module Analyzer::R
         end
 
         # 2. Function/annotation parameters next
-        all_other_param_names = (func_params + param_descriptions.keys).uniq
+        all_other_param_names = (func_params.reject { |name| INJECTED_ARGS.includes?(name) } +
+                                 param_descriptions.keys).uniq
         all_other_param_names.each do |p_name|
           next if seen_params.includes?(p_name)
           seen_params.add(p_name)
@@ -224,7 +239,7 @@ module Analyzer::R
           if !arg.empty?
             # Extract param name (before '=')
             name = arg.split('=').first.strip
-            if name.matches?(/\A[A-Za-z0-9_.-]+\z/)
+            if name.matches?(R_ARGUMENT_NAME_RE)
               names << name
             end
           end
@@ -239,7 +254,7 @@ module Analyzer::R
       arg = current.to_s.strip
       if !arg.empty?
         name = arg.split('=').first.strip
-        if name.matches?(/\A[A-Za-z0-9_.-]+\z/)
+        if name.matches?(R_ARGUMENT_NAME_RE)
           names << name
         end
       end

@@ -470,7 +470,12 @@ module Analyzer::Groovy
 
         url_pattern = prefix + match[2]
         body_args = match[3]
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
+        # `match.begin(0)` is the newline that ENDS the previous line —
+        # `(?:^|\n)\s*` consumes it, and greedy `\s*` keeps consuming every
+        # blank and comment-blanked line after it — so it named the line
+        # before the mapping, or several lines before it. The opening quote
+        # of the URL literal is on the mapping's own line.
+        line = line_for_offset(content, base_offset + (match.begin(1) || match.begin(0) || 0))
 
         if body_args.match(/\bresources:\s*['"]/)
           RESOURCES_ENDPOINTS.each do |ep|
@@ -521,7 +526,8 @@ module Analyzer::Groovy
         url_pattern = prefix + match[2]
         body_block = match[3]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
+        # Same leading-`(?:^|\n)\s*` offset skew as the paren form above.
+        line = line_for_offset(content, base_offset + (match.begin(1) || match.begin(0) || 0))
         verb = extract_method_assignment(body_block) || "GET"
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
