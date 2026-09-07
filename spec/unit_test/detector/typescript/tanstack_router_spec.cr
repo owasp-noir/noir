@@ -45,12 +45,55 @@ describe "Detect TypeScript TanStack Router" do
     instance.detect("root.tsx", "export const rootRoute = createRootRoute({})").should be_true
   end
 
-  it "createRoute" do
-    instance.detect("routes.ts", "const postsRoute = createRoute({ path: '/posts' })").should be_true
+  it "import_tanstack_solid_router" do
+    instance.detect("routes.ts", "import { createRoute } from '@tanstack/solid-router'").should be_true
   end
 
-  it "createRouter" do
-    instance.detect("router.ts", "const router = createRouter({ routeTree })").should be_true
+  it "ignores the devtools package on its own" do
+    instance.detect("app.ts", "import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'").should be_false
+  end
+
+  it "createRootRouteWithContext" do
+    instance.detect("root.tsx", "const rootRoute = createRootRouteWithContext<Ctx>()({})").should be_true
+  end
+
+  it "matches a formatter-wrapped multi-line import" do
+    src = <<-TS
+      import {
+        createRoute,
+        createRouter,
+      } from '@tanstack/react-router'
+
+      const postsRoute = createRoute({ path: '/posts' })
+      TS
+    instance.detect("routes.ts", src).should be_true
+  end
+
+  it "does not claim Vue Router's createRouter" do
+    src = <<-TS
+      import { createRouter, createWebHistory } from 'vue-router'
+
+      export default createRouter({
+        history: createWebHistory(),
+        routes: [{ path: '/', component: Home }],
+      })
+      TS
+    instance.detect("router.ts", src).should be_false
+  end
+
+  it "does not claim a tRPC v9 createRouter helper" do
+    src = <<-TS
+      import * as trpc from '@trpc/server'
+
+      export function createRouter() {
+        return trpc.router<Context>()
+      }
+      TS
+    instance.detect("createRouter.ts", src).should be_false
+  end
+
+  it "does not claim a bare createRoute call from another router" do
+    instance.detect("routes.ts", "const postsRoute = createRoute({ path: '/posts' })").should be_false
   end
 
   it "tsx_file" do
