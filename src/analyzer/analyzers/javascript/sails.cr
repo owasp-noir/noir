@@ -232,8 +232,17 @@ module Analyzer::Javascript
         base = File.basename(rel)
         next if base.starts_with?(".")
 
-        if !rel.includes?("/") && (md = base.match(CONTROLLER_FILE_RE))
+        # A classic controller keeps its blueprint identity wherever it sits:
+        # Sails prefixes the identity with the path below `api/controllers`,
+        # so `api/controllers/admin/ReportController.js` is `admin/report` and
+        # serves `/admin/report`. Requiring a top-level file sent every nested
+        # controller down the actions2 branch instead, which published seven
+        # verbs on the literal filename (`/admin/ReportController`) and lost
+        # the five REST routes the app really exposes.
+        if md = base.match(CONTROLLER_FILE_RE)
+          dir = File.dirname(rel)
           identity = md[1].downcase
+          identity = "#{dir.downcase}/#{identity}" unless dir == "."
           identities[identity] ||= file
           next
         end
@@ -245,6 +254,13 @@ module Analyzer::Javascript
         next unless js_source_file?(file)
         next unless file.starts_with?("#{models_prefix}/")
         rel = file[(models_prefix.size + 1)..]
+        # Top-level only, deliberately — unlike the controllers above. A
+        # controller announces itself with the `*Controller.js` suffix, so
+        # descending is safe; a model is any capitalised filename, and
+        # `MODEL_FILE_RE` would claim every nested helper under `api/models/`
+        # and publish five blueprint routes for each. Nested models are a real
+        # (rarer) Sails layout, so this trades a known false negative for a
+        # much noisier false positive; revisit with a stronger model signal.
         next if rel.empty? || rel.includes?("/")
         base = File.basename(rel)
         next unless md = base.match(MODEL_FILE_RE)

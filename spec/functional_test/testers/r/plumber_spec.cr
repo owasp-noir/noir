@@ -27,6 +27,11 @@ expected_endpoints = [
   Endpoint.new("/resource/:resource_id", "DELETE", [
     Param.new("resource_id", "", "path"),
   ]),
+  # `req`/`res` are handed to the handler by plumber and `...` is R's
+  # variadic marker, so `term` is the only thing a client actually sends.
+  Endpoint.new("/search", "GET", [
+    Param.new("term", "", "query"),
+  ]),
 ]
 
 FunctionalTester.new("fixtures/r/plumber/", {

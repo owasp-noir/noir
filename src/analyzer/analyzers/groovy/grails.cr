@@ -451,7 +451,12 @@ module Analyzer::Groovy
       remaining.scan(pattern) do |match|
         verb = match[1].upcase
         url_pattern = prefix + match[3]
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
+        # Every form below takes its line from the opening quote of the URL
+        # literal, which is the one token guaranteed to sit on the mapping's
+        # own line. `match.begin(0)` does not: the optional `name <id>:` prefix
+        # is separated by `\s*`, so `name reports:` on the line above pulls the
+        # reported line up with it.
+        line = line_for_offset(content, base_offset + (match.begin(2) || 0))
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),
           Details.new(PathInfo.new(path, line)))
@@ -461,7 +466,11 @@ module Analyzer::Groovy
       # method: 'POST')`, the `(resources: 'name')` / `(resource: 'name')`
       # REST shortcut, and `'/path'(uri: '/some/where')` redirect-style
       # mappings.
-      simple_pattern = /(?:^|\n)\s*(?:name\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
+      # `^` is already line-anchored (`/m`), so the `(?:^|\n)\s*` this
+      # replaces only added a consumed leading newline — which made
+      # `match.begin(0)` the END of the previous line, with greedy `\s*` then
+      # swallowing every blank and comment-blanked line after it.
+      simple_pattern = /^[ \t]*(?:name\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*)?(['"])([^'"]+)\1\s*\(([^)]*?)\)/m
       remaining.scan(simple_pattern) do |match|
         # Response-code mappings (`"404"(...)`, `"500"(...)`) reuse the same
         # paren-form syntax but the "path" is an HTTP status code, not a URL.
@@ -470,7 +479,7 @@ module Analyzer::Groovy
 
         url_pattern = prefix + match[2]
         body_args = match[3]
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
+        line = line_for_offset(content, base_offset + (match.begin(1) || 0))
 
         if body_args.match(/\bresources:\s*['"]/)
           RESOURCES_ENDPOINTS.each do |ep|
@@ -515,13 +524,13 @@ module Analyzer::Groovy
       end
 
       # Closure-form mapping: `'/path' { controller = 'foo'; method = 'POST' }`.
-      closure_pattern = /(?:^|\n)\s*(['"])([^'"]+)\1\s*\{([^}]*)\}/m
+      closure_pattern = /^[ \t]*(['"])([^'"]+)\1\s*\{([^}]*)\}/m
       remaining.scan(closure_pattern) do |match|
         next if status_code_mapping?(match[2])
         url_pattern = prefix + match[2]
         body_block = match[3]
         next unless body_block.match(/\b(controller|action|method|view)\s*=/)
-        line = line_for_offset(content, base_offset + (match.begin(0) || 0))
+        line = line_for_offset(content, base_offset + (match.begin(1) || 0))
         verb = extract_method_assignment(body_block) || "GET"
         @result << Endpoint.new(translate_pattern(url_pattern), verb,
           extract_path_params(url_pattern),

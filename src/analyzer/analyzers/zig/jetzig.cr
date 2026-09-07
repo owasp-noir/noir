@@ -36,7 +36,11 @@ module Analyzer::Zig
       "delete" => {"DELETE", "/:id", true},
     }
 
-    ACTION_FN_RE = /(?:^|[^A-Za-z0-9_.])pub\s+fn\s+(index|get|new|edit|post|put|patch|delete)\s*\(/
+    # Zero-width lookbehind rather than `(?:^|[^A-Za-z0-9_.])`: the consuming
+    # form made `match.begin(0)` the previous line's newline for every action
+    # written at the start of a line, so each route was reported one line above
+    # its `pub fn`. A lookbehind is the same predicate with the offset intact.
+    ACTION_FN_RE = /(?<![A-Za-z0-9_.])pub\s+fn\s+(index|get|new|edit|post|put|patch|delete)\s*\(/
     PARAM_GET_RE = /\b(?:params|query)\s*\.\s*get\s*\(\s*"([^"]+)"/
 
     # Explicit custom route registered in the app's startup hook, e.g.

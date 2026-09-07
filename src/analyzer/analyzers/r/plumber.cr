@@ -16,6 +16,21 @@ module Analyzer::R
     # Matches R function declaration: function(...)
     FUNCTION_DECLARATION = /\bfunction\s*\(([^)]*)\)/
 
+    # Arguments plumber injects into a handler rather than reading off the
+    # request. `function(req, res, msg = "")` is the shape the official
+    # plumber template ships with, so reporting `req`/`res` as client-supplied
+    # parameters put two phantom entries on almost every real endpoint — and,
+    # for a POST, two phantom JSON body fields in the rendered request.
+    INJECTED_ARGS = Set{"req", "res"}
+
+    # A name that can stand for something a client actually sends. Rules out
+    # the variadic `...` (and `..1`, `..2`), which both the formals parser and
+    # `PARAM_ANNOTATION` accept and which used to be emitted verbatim as a
+    # parameter named `...`, plus leading-digit/dash tokens that are not
+    # identifiers at all — what those really signal is that the argument list
+    # did not parse.
+    CLIENT_PARAM_NAME_RE = /\A(?:[A-Za-z][A-Za-z0-9._]*|\.(?![0-9.])[A-Za-z0-9._]*)\z/
+
     # Programmatic routes:
     # pr_get("/path", handler)
     PROGRAMMATIC_PIPELINE = /\bpr_(get|post|put|delete|patch|head|options)\s*\(\s*["']([^"']+)["']/i
@@ -72,16 +87,25 @@ module Analyzer::R
 
         if c == '#'
           if i + 1 < size && chars[i + 1] == '*'
-            result << '#'
-            result << '*'
-            i += 2
-            next
-          else
+            # A roxygen block is kept verbatim — it carries the `@get`/`@param`
+            # annotations `process_file` reads — but it is PROSE, not code, so
+            # the scan must not fall back into the literal branch inside it. It
+            # used to: `#* Returns the user's profile` opened a string at the
+            # apostrophe that ran to the next quote or to EOF, and everything it
+            # swallowed stopped being comment-stripped, so a commented-out
+            # `# r$get("/internal-only", ...)` below it was reported as a real
+            # endpoint.
             while i < size && chars[i] != '\n'
+              result << chars[i]
               i += 1
             end
             next
           end
+
+          while i < size && chars[i] != '\n'
+            i += 1
+          end
+          next
         end
 
         result << c
@@ -166,9 +190,15 @@ module Analyzer::R
           params << Param.new(p_name, "", "path")
         end
 
-        # 2. Function/annotation parameters next
+        # 2. Function/annotation parameters next. Both guards run over the
+        # merged list rather than over the formals alone: `#* @param req The
+        # request object` and `#* @param ... passed through` are documentation
+        # authors do write, and they name exactly the two things a client
+        # cannot send.
         all_other_param_names = (func_params + param_descriptions.keys).uniq
         all_other_param_names.each do |p_name|
+          next if INJECTED_ARGS.includes?(p_name)
+          next unless p_name.matches?(CLIENT_PARAM_NAME_RE)
           next if seen_params.includes?(p_name)
           seen_params.add(p_name)
 
@@ -224,7 +254,7 @@ module Analyzer::R
           if !arg.empty?
             # Extract param name (before '=')
             name = arg.split('=').first.strip
-            if name.matches?(/\A[A-Za-z0-9_.-]+\z/)
+            if name.matches?(CLIENT_PARAM_NAME_RE)
               names << name
             end
           end
@@ -239,7 +269,7 @@ module Analyzer::R
       arg = current.to_s.strip
       if !arg.empty?
         name = arg.split('=').first.strip
-        if name.matches?(/\A[A-Za-z0-9_.-]+\z/)
+        if name.matches?(CLIENT_PARAM_NAME_RE)
           names << name
         end
       end
