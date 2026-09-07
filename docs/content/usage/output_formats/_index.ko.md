@@ -20,7 +20,7 @@ sort_by = "weight"
 | 사람이 읽기 쉬운 검토 | [YAML](yaml/) | `-f yaml` |
 | 설정 스타일 출력 | [기타](more/) (TOML) | `-f toml` |
 | Postman으로 가져오기 | [기타](more/) (Postman Collection) | `-f postman` |
-| 시각적 보고서 공유 | [HTML](html/) | `-f html` |
+| 시각적 리포트 공유 | [HTML](html/) | `-f html` |
 | API 구조 시각화 | [Mermaid](mermaid/) | `-f mermaid` |
 | URL이나 파라미터만 추출 | [기타](more/) (필터) | `-f only-url` |
 
@@ -31,6 +31,6 @@ sort_by = "weight"
 *   **[YAML](yaml/)**: 사람이 직접 훑어볼 때 JSON보다 읽기 편한 형식.
 *   **[OpenAPI 명세(OAS)](openapi/)**: 코드에서 생성한 OpenAPI 문서. API 문서화나 보안 도구 임포트에 사용.
 *   **[SARIF](sarif/)**: CI/CD 보안 대시보드가 받아들이는 표준 형식.
-*   **[HTML 보고서](html/)**: 단일 파일로 완결되는 인터랙티브 HTML 리포트.
+*   **[HTML 리포트](html/)**: 단일 파일로 완결되는 인터랙티브 HTML 리포트.
 *   **[Mermaid 차트](mermaid/)**: API 구조 다이어그램.
 *   **[추가 형식](more/)**: TOML, JSONL, Postman 컬렉션, 마크다운 테이블, 출력 필터.

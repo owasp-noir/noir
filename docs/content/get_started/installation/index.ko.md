@@ -303,4 +303,4 @@ noir --version
 
 ---
 
-**다음**: [첫 번째 스캔](@/get_started/running/index.md)
+**다음**: [첫 번째 스캔](@/get_started/running/index.ko.md)
