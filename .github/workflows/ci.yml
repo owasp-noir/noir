@@ -368,7 +368,18 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/crystal
-          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr', 'spec/**/*.cr') }}
+          # `spec/**/*.cr` is deliberately not in the key. Nearly every pull
+          # request that reaches this job touches a spec file, so including it
+          # meant the primary key essentially never hit and every run came in
+          # through the restore-keys ladder below. Crystal fingerprints its own
+          # cache entries by content, so restoring an entry set that is partly
+          # stale for the spec half is safe: it only ever means those entries
+          # recompile, which they were going to do anyway. Keying on
+          # `shard.lock` plus `src/**/*.cr` lets a run whose src/ is unchanged
+          # hit the primary key instead. Note that a primary-key hit also means
+          # actions/cache does not re-save, so the entry ages until src/ moves.
+          # Watch the `--stats` lines on the build step for the effect.
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
           restore-keys: |
             crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-
             crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
