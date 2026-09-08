@@ -95,7 +95,7 @@ check:
 # Compiling src/ is nearly the whole cost of a spec run, and that cost does not
 # grow when both suites go into one program: unit alone compiles in ~20s and
 # unit+functional together compiles in the same ~20s. Building once gives a
-# binary that runs all 30,357 examples in 18s on 0.3GB, so re-running in
+# binary that runs all 20,807 examples in 17.5s on 0.3GB, so re-running in
 # randomized order or under a filter costs nothing more.
 #
 # Build the whole suite as one binary at bin/noir_spec.
@@ -106,7 +106,7 @@ spec-build:
 
 # Run all tests, as two processes split on the `functional` tag. The run is
 # single-threaded and takes only ~0.3GB, so the halves are ~18s together and
-# ~10s in parallel. Each writes to its own log because two spec runners sharing
+# ~10s in parallel (the unit half is the slower of the two, at 9.7s). Each writes to its own log because two spec runners sharing
 # a terminal interleave their progress dots and their failure reports.
 [group('development')]
 test: spec-build

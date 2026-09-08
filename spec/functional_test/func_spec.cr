@@ -122,10 +122,13 @@ class FunctionalTester
   # failure inside the example rather than a branch taken while registering
   # examples.
   #
-  # Every example for a missing endpoint fails with the same greppable line, so
-  # one absent endpoint is noisy (~1 failure per detail checked) but always names
-  # the tester and the endpoint. The previous shape produced exactly one failure
-  # here — and zero for a raising analyzer, which is the trade this makes.
+  # Every example in the endpoint's group calls through here, so one absent
+  # endpoint still fails once per detail the tester declared, all of them with
+  # the same greppable `MISSING ENDPOINT [...]` line naming the tester and the
+  # endpoint. Registering examples for details that are not asserted anywhere
+  # else is what this trades away: the group carries one presence example plus
+  # the examples for the protocol, params, values and callees the tester
+  # actually declared, and nothing that only restates the lookup key.
   private def actual_endpoint(expected : Endpoint) : Endpoint
     key = "#{expected.method}::#{expected.url}"
     endpoints.find { |e| e.method == expected.method && e.url == expected.url } ||
@@ -184,12 +187,13 @@ class FunctionalTester
       key = expected.method.to_s + "::" + expected.url.to_s
 
       describe "endpoint check [#{key}]", tags: "functional" do
-        it "check - url [K: #{key}]" do
-          actual_endpoint(expected).url.should eq expected.url
-        end
-
-        it "check - method [K: #{key}]" do
-          actual_endpoint(expected).method.should eq expected.method
+        # `actual_endpoint` looks the endpoint up *by* method and url, so
+        # asserting those two back is a tautology: the only way either could
+        # fail was the `MISSING ENDPOINT` path, which every other example in
+        # this group takes as well. Two examples per endpoint said nothing that
+        # this one does not.
+        it "is detected [K: #{key}]" do
+          actual_endpoint(expected)
         end
 
         if expected.protocol != "http"
@@ -201,10 +205,10 @@ class FunctionalTester
         if expected.params.size > 0
           describe "check - params" do
             expected.params.each do |param|
-              it "check '#{param.name}' name " do
-                actual_params(expected, param.name)[0].name.should eq param.name
-              end
-
+              # No separate name check, for the same reason: `actual_params`
+              # selects by name and fails with `MISSING PARAM` when nothing
+              # matches, so the param_type example below already forces the
+              # param to be present under the expected name.
               it "check '#{param.name}' param_type '#{param.param_type}'" do
                 actual_params(expected, param.name)
                   .any? { |found| found.param_type == param.param_type }

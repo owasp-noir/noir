@@ -57,8 +57,8 @@ just test-uncovered    # Run uncovered tests only (not in CI)
 ```
 
 `spec/suite.cr` requires `unit_test/**` plus `functional_test/testers/**` and
-nothing else, so `bin/noir_spec` holds exactly the 30,357 examples CI runs
-(5,698 unit and 24,659 functional). `uncovered_test/` is deliberately outside
+nothing else, so `bin/noir_spec` holds exactly the 20,807 examples CI runs
+(5,698 unit and 15,109 functional). `uncovered_test/` is deliberately outside
 it, which is also why `crystal spec` with no arguments is the wrong command
 here: its default glob sweeps up `uncovered_test/` too, and those examples are
 expected to fail.
@@ -81,9 +81,9 @@ Two constraints come with the binary:
 ### Tags
 
 `functional` marks every example that drives a real scan over a fixture: the
-24,659 registered under `spec/functional_test/testers/`. The remaining 5,698
+15,109 registered under `spec/functional_test/testers/`. The remaining 5,698
 are the unit half. `just test` runs the two as parallel processes, which is
-why the run drops from 18.6s to 9.7s.
+why the run drops from 17.5s to 9.7s.
 
 `FunctionalTester` tags what it registers. **A hand-written `describe`,
 `context` or `it` in a tester file has to spell the tag itself:**
@@ -106,11 +106,16 @@ grow when the suites are combined. Measured locally on a warm compiler cache:
 
 | Command | wall | running examples | peak RSS |
 |---|---|---|---|
-| `crystal spec spec/unit_test` (5,697 ex) | 28.7s | 9.1s | 6.1 GB |
-| `crystal spec spec/functional_test` (24,659 ex) | 23.5s | 8.3s | 5.2 GB |
+| `crystal spec spec/unit_test` | 28.7s | 9.1s | 6.1 GB |
+| `crystal spec spec/functional_test` | 23.5s | 8.3s | 5.2 GB |
 | both suites compiled together | 20.9s | - | 6.1 GB |
 | `crystal build spec/suite.cr -o bin/noir_spec` | 20.0s | - | 6.6 GB |
-| `./bin/noir_spec` (30,357 ex) | 18.9s | 18.0s | 0.3 GB |
+| `./bin/noir_spec` (20,807 ex) | 17.5s | 17.4s | 0.3 GB |
+
+The two `crystal spec` rows were timed before the tautological url/method/name
+examples came out, when the same work registered 30,357 examples rather than
+20,807. The wall times did not move: the fixture scans dominate, and dropping
+9,550 examples took ~0.3s off the functional half.
 
 So the compile is paid once and every re-run after that is 18s on 0.3GB. Runs
 of the binary are single-threaded and cheap enough in memory to go in parallel:
