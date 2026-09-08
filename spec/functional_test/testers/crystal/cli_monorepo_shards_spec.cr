@@ -23,7 +23,7 @@ tester = FunctionalTester.new("fixtures/crystal/cli_monorepo_shards/", {
 })
 tester.perform_tests
 
-it "does not merge two shards that infer the same binary name" do
+it "does not merge two shards that infer the same binary name", tags: "functional" do
   svc_a = tester.endpoints.find! { |endpoint| endpoint.url == "cli://svc-a/tool" }
   svc_a.params.map(&.name).should_not contain("only-b")
   svc_a.details.code_paths.map(&.path).each(&.should(contain("svc-a")))

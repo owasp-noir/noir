@@ -23,7 +23,7 @@ tester = FunctionalTester.new("fixtures/crystal/cli_monorepo/", {
 })
 tester.perform_tests
 
-it "keeps each binary's flags on its own command" do
+it "keeps each binary's flags on its own command", tags: "functional" do
   alpha = tester.endpoints.find! { |endpoint| endpoint.url == "cli://alpha" }
   alpha.params.map(&.name).should_not contain("beta-only")
 

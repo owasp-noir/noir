@@ -22,7 +22,7 @@ buildsrc_baseline = FunctionalTester.new("fixtures/mobile/android_gradle_const/"
 buildsrc_excluded = FunctionalTester.new("fixtures/mobile/android_gradle_const/",
   empty_count, no_endpoints, buildsrc_overrides)
 
-describe "Android resource walks with --exclude-path" do
+describe "Android resource walks with --exclude-path", tags: "functional" do
   it "reads navigation graphs and every values file by default" do
     urls = baseline.endpoints.map(&.url)
     urls.should contain("myapp://users/:userId") # res/navigation/nav_graph.xml

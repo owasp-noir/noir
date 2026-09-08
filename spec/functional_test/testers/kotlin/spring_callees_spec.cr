@@ -119,7 +119,7 @@ FunctionalTester.new("fixtures/kotlin/spring_callees/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "--ai-context on Kotlin Spring constructor-injected callee expansion" do
+describe "--ai-context on Kotlin Spring constructor-injected callee expansion", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

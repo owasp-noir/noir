@@ -26,12 +26,12 @@ tester = FunctionalTester.new("fixtures/javascript/express_koa_foreign_mount/", 
 }, expected_endpoints)
 tester.perform_tests
 
-it "does not report koa routes at the un-prefixed path" do
+it "does not report koa routes at the un-prefixed path", tags: "functional" do
   phantom = tester.app.endpoints.select { |endpoint| endpoint.url == "/users" || endpoint.url == "/users/login" }
   phantom.should be_empty
 end
 
-it "keeps the koa mount prefix on the koa analyzer's endpoints" do
+it "keeps the koa mount prefix on the koa analyzer's endpoints", tags: "functional" do
   koa_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/api/users" && endpoint.method == "GET" }
   koa_route.should_not be_nil
   koa_route.try(&.details.technology).should eq("js_koa")

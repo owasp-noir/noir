@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Ktor auth fixtures" do
+describe "--ai-context on Ktor auth fixtures", tags: "functional" do
   fixture_path = "fixtures/kotlin/ktor_auth/"
   app_suffix = "spec/functional_test/fixtures/kotlin/ktor_auth/src/Application.kt"
 

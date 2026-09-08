@@ -33,7 +33,7 @@ actioncable_tester.perform_tests
 
 # Regression: lifecycle callbacks and private helpers must not surface as
 # actions.
-it "excludes Action Cable lifecycle callbacks and private helpers" do
+it "excludes Action Cable lifecycle callbacks and private helpers", tags: "functional" do
   urls = actioncable_tester.app.endpoints.map(&.url)
   urls.should_not contain("ws://cable/ChatChannel/subscribed")
   urls.should_not contain("ws://cable/ChatChannel/unsubscribed")

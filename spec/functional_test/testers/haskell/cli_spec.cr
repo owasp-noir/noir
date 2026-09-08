@@ -49,7 +49,7 @@ turtle_fp_endpoints = [
 turtle_fp_tester = FunctionalTester.new("fixtures/haskell/cli_turtle_fp/", {:techs => 1, :endpoints => turtle_fp_endpoints.size}, turtle_fp_endpoints)
 turtle_fp_tester.perform_tests
 
-it "does not leak bogus params from adjacent non-Turtle code into the Turtle CLI endpoint" do
+it "does not leak bogus params from adjacent non-Turtle code into the Turtle CLI endpoint", tags: "functional" do
   endpoint = turtle_fp_tester.app.endpoints.find! { |e| e.method == "CLI" && e.url == "cli://tool" }
   endpoint.params.map(&.name).sort!.should eq ["GREETING_TOKEN", "count", "name", "retries", "target", "verbose"]
 end

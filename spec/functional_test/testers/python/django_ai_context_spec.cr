@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Django auth fixtures" do
+describe "--ai-context on Django auth fixtures", tags: "functional" do
   fixture_path = "fixtures/python/django_auth/"
   views_suffix = "spec/functional_test/fixtures/python/django_auth/blog/views.py"
 

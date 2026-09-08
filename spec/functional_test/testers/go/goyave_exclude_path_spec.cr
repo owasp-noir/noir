@@ -13,7 +13,7 @@ overrides["exclude_path"] = YAML::Any.new("index.html")
 baseline = FunctionalTester.new("fixtures/go/goyave/", empty_count, no_endpoints)
 excluded = FunctionalTester.new("fixtures/go/goyave/", empty_count, no_endpoints, overrides)
 
-describe "Go static directories with --exclude-path" do
+describe "Go static directories with --exclude-path", tags: "functional" do
   it "reports files under a registered static directory" do
     baseline.endpoints.map(&.url).should contain("/static/index.html")
   end

@@ -53,7 +53,7 @@ tester = FunctionalTester.new("fixtures/csharp/aspnet_core_minimal_api_methodgro
 
 tester.perform_tests
 
-describe "ASP.NET Core Minimal API method-group analyzer edge cases" do
+describe "ASP.NET Core Minimal API method-group analyzer edge cases", tags: "functional" do
   it "drops DI services injected into a lambda handler" do
     inv = tester.app.endpoints.find { |e| e.url == "/inventory" && e.method == "GET" }
     inv.should_not be_nil

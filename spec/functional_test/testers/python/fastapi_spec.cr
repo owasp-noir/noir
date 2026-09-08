@@ -75,7 +75,7 @@ tester = FunctionalTester.new("fixtures/python/fastapi/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "marks FastAPI websocket endpoints with ws protocol" do
+it "marks FastAPI websocket endpoints with ws protocol", tags: "functional" do
   websocket_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/api/ws/{room_id}" }
   websocket_route.should_not be_nil
   websocket_route.try(&.protocol).should eq("ws")

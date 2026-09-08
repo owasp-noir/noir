@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context Hunt signals on Fastify fixtures" do
+describe "--ai-context Hunt signals on Fastify fixtures", tags: "functional" do
   fixture_path = "fixtures/javascript/fastify/"
 
   before_each do

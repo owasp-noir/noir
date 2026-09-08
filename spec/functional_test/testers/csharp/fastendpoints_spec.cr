@@ -44,7 +44,7 @@ tester = FunctionalTester.new("fixtures/csharp/fastendpoints/", {
 
 tester.perform_tests
 
-describe "FastEndpoints analyzer edge cases" do
+describe "FastEndpoints analyzer edge cases", tags: "functional" do
   it "treats EndpointWithoutRequest<TResponse> as response-only — no DTO leakage" do
     status = tester.app.endpoints.find { |e| e.url == "/status" && e.method == "GET" }
     status.should_not be_nil
@@ -64,7 +64,7 @@ describe "FastEndpoints analyzer edge cases" do
   end
 end
 
-describe "FastEndpoints auth tagger" do
+describe "FastEndpoints auth tagger", tags: "functional" do
   fixture_path = "fixtures/csharp/fastendpoints/"
 
   it "tags endpoints behind Roles/Permissions and skips AllowAnonymous ones" do

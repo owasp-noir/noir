@@ -18,7 +18,7 @@ FunctionalTester.new("fixtures/python/flask_multivalue/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "Flask multi-value accessor negatives" do
+describe "Flask multi-value accessor negatives", tags: "functional" do
   it "does not report dynamic keys or dict-API methods as params" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/python/flask_multivalue/")])

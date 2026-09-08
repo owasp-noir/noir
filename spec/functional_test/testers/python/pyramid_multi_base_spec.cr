@@ -23,7 +23,7 @@ tester = FunctionalTester.new("fixtures/python/pyramid_multi_base/", {
 })
 tester.perform_tests
 
-it "keeps Pyramid route names inside each base path" do
+it "keeps Pyramid route names inside each base path", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.method == "GET" && endpoint.url == "/a-home" }
   service_a.params.map(&.name).sort!.should eq(["a"])
 

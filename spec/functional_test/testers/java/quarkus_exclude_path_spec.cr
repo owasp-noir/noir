@@ -15,7 +15,7 @@ overrides["exclude_path"] = YAML::Any.new("app.js")
 baseline = FunctionalTester.new("fixtures/java/quarkus/", empty_count, no_endpoints)
 excluded = FunctionalTester.new("fixtures/java/quarkus/", empty_count, no_endpoints, overrides)
 
-describe "Quarkus static resources with --exclude-path" do
+describe "Quarkus static resources with --exclude-path", tags: "functional" do
   it "reports a META-INF/resources file when nothing is excluded" do
     baseline.endpoints.map(&.url).should contain("/platform/assets/app.js")
   end

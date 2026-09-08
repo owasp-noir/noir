@@ -39,7 +39,7 @@ tester = FunctionalTester.new("fixtures/perl/dancer2_callees/", {
 })
 tester.perform_tests
 
-it "reports exact Dancer2 inline-handler callees" do
+it "reports exact Dancer2 inline-handler callees", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/hello" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -47,7 +47,7 @@ it "reports exact Dancer2 inline-handler callees" do
   end
 end
 
-it "resolves Dancer2 code-ref (`=> \\&handler`) callees via the named-sub index" do
+it "resolves Dancer2 code-ref (`=> \\&handler`) callees via the named-sub index", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/status" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -55,7 +55,7 @@ it "resolves Dancer2 code-ref (`=> \\&handler`) callees via the named-sub index"
   end
 end
 
-it "attaches callees to prefix-nested Dancer2 routes" do
+it "attaches callees to prefix-nested Dancer2 routes", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/api/login" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -63,7 +63,7 @@ it "attaches callees to prefix-nested Dancer2 routes" do
   end
 end
 
-it "populates Dancer2 callee source paths" do
+it "populates Dancer2 callee source paths", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/hello" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -75,7 +75,7 @@ it "populates Dancer2 callee source paths" do
   end
 end
 
-it "does not populate Dancer2 callees by default" do
+it "does not populate Dancer2 callees by default", tags: "functional" do
   config_init = ConfigInitializer.new
   noir_options = config_init.default_options
   noir_options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/perl/dancer2_callees/")])

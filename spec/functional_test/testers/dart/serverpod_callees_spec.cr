@@ -39,7 +39,7 @@ tester = FunctionalTester.new("fixtures/dart/serverpod_callees/", {
 })
 tester.perform_tests
 
-it "reports the exact Serverpod callees after comments before endpoint classes" do
+it "reports the exact Serverpod callees after comments before endpoint classes", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/example/hello" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|

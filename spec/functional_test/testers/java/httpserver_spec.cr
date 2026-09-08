@@ -40,7 +40,7 @@ tester = FunctionalTester.new("fixtures/java/httpserver/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "does not surface a body param on the GET branch of a method-dispatching handler" do
+it "does not surface a body param on the GET branch of a method-dispatching handler", tags: "functional" do
   users_get = tester.app.endpoints.find { |e| e.url == "/users" && e.method == "GET" }
   users_get.should_not be_nil
   users_get.try do |endpoint|
@@ -48,6 +48,6 @@ it "does not surface a body param on the GET branch of a method-dispatching hand
   end
 end
 
-it "excludes createContext routes declared under src/test/" do
+it "excludes createContext routes declared under src/test/", tags: "functional" do
   tester.app.endpoints.any? { |e| e.url == "/should-not-appear" }.should be_false
 end

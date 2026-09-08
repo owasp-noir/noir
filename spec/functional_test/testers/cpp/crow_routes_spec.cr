@@ -43,7 +43,7 @@ tester = FunctionalTester.new("fixtures/cpp/crow_routes/", {
 
 tester.perform_tests
 
-describe "Crow route discovery edge cases" do
+describe "Crow route discovery edge cases", tags: "functional" do
   it "does not leak route_dynamic params into the preceding static route" do
     static = tester.app.endpoints.find { |e| e.url == "/static" && e.method == "GET" }
     static.should_not be_nil

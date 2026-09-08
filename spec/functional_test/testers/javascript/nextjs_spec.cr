@@ -143,7 +143,7 @@ FunctionalTester.new("fixtures/javascript/nextjs/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "Next.js variable header keys" do
+describe "Next.js variable header keys", tags: "functional" do
   it "surfaces identifier names for req.headers[CONST] and request.headers.get(CONST)" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
@@ -162,7 +162,7 @@ describe "Next.js variable header keys" do
   end
 end
 
-describe "Next.js comment filtering" do
+describe "Next.js comment filtering", tags: "functional" do
   it "does not emit endpoints for commented-out exports (// and /* */)" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
@@ -178,7 +178,7 @@ describe "Next.js comment filtering" do
   end
 end
 
-describe "Next.js App Router method-local params" do
+describe "Next.js App Router method-local params", tags: "functional" do
   it "does not leak GET query params onto POST handlers in the same route file" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])
@@ -195,7 +195,7 @@ describe "Next.js App Router method-local params" do
   end
 end
 
-describe "Next.js source attribution" do
+describe "Next.js source attribution", tags: "functional" do
   it "uses handler and server-action lines instead of the file start" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/javascript/nextjs/")])

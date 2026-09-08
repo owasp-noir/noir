@@ -37,10 +37,10 @@ tester = FunctionalTester.new("fixtures/dart/get_server/", {
 })
 tester.perform_tests
 
-it "resolves GetPage name constants declared in a separate file" do
+it "resolves GetPage name constants declared in a separate file", tags: "functional" do
   tester.app.endpoints.any? { |e| e.url == "/user/{id}" }.should be_true
 end
 
-it "skips GetPage entries declared under test/" do
+it "skips GetPage entries declared under test/", tags: "functional" do
   tester.app.endpoints.any? { |e| e.url == "/test-only" }.should be_false
 end

@@ -41,7 +41,7 @@ FunctionalTester.new("fixtures/ruby/padrino/", {
   :endpoints => 8,
 }, expected_endpoints).perform_tests
 
-describe "Padrino analyzer filter" do
+describe "Padrino analyzer filter", tags: "functional" do
   it "drops ruby_sinatra when ruby_padrino is detected so the redundant pass is skipped" do
     filter_redundant_generic_techs(["ruby_padrino", "ruby_sinatra"]).should eq ["ruby_padrino"]
   end

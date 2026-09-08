@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context JS framework callee coverage" do
+describe "--ai-context JS framework callee coverage", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

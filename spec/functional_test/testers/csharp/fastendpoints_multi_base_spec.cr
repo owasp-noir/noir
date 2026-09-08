@@ -24,7 +24,7 @@ tester = FunctionalTester.new("fixtures/csharp/fastendpoints_multi_base/", {
 
 tester.perform_tests
 
-describe "FastEndpoints multi-base DTO scoping" do
+describe "FastEndpoints multi-base DTO scoping", tags: "functional" do
   it "keeps request DTO params inside the endpoint's base path" do
     service_a = tester.app.endpoints.find! { |endpoint| endpoint.method == "POST" && endpoint.url == "/a/users" }
     service_a.params.map(&.name).sort!.should eq(["Name"])

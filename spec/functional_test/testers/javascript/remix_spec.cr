@@ -28,7 +28,7 @@ FunctionalTester.new("fixtures/javascript/remix/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "Remix route source attribution" do
+describe "Remix route source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

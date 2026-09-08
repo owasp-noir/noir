@@ -62,7 +62,7 @@ FunctionalTester.new("fixtures/kotlin/spring_functional/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "--ai-context on Kotlin Spring functional router fixtures" do
+describe "--ai-context on Kotlin Spring functional router fixtures", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

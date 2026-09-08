@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Kemal auth fixtures" do
+describe "--ai-context on Kemal auth fixtures", tags: "functional" do
   fixture_path = "fixtures/crystal/kemal_auth/"
   app_suffix = "spec/functional_test/fixtures/crystal/kemal_auth/app.cr"
 

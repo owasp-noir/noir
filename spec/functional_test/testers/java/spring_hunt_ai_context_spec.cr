@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context Hunt signals on Spring fixtures" do
+describe "--ai-context Hunt signals on Spring fixtures", tags: "functional" do
   fixture_path = "fixtures/java/spring/"
 
   before_each do

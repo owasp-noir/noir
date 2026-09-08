@@ -17,13 +17,13 @@ tester = FunctionalTester.new("fixtures/javascript/express_hono_foreign/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "tags Hono handler-file routes js_hono, not js_express" do
+it "tags Hono handler-file routes js_hono, not js_express", tags: "functional" do
   hono_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/hono-items" && endpoint.method == "POST" }
   hono_route.should_not be_nil
   hono_route.try(&.details.technology).should eq("js_hono")
 end
 
-it "still tags Express's own routes js_express" do
+it "still tags Express's own routes js_express", tags: "functional" do
   express_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/express-home" && endpoint.method == "GET" }
   express_route.should_not be_nil
   express_route.try(&.details.technology).should eq("js_express")

@@ -20,7 +20,7 @@ tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_solution/", {
 
 tester.perform_tests
 
-describe "ASP.NET Core MVC conventional-route project scoping" do
+describe "ASP.NET Core MVC conventional-route project scoping", tags: "functional" do
   it "does not apply one project's route template to another project's controller" do
     tester.app.endpoints.any? { |e| e.url == "/a/Beta/Show" }.should be_false
     tester.app.endpoints.any? { |e| e.url == "/b/Alpha/Index" }.should be_false

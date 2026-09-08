@@ -322,8 +322,25 @@ jobs:
           key: crystal-${{ runner.os }}-1.21.0-lint-${{ hashFiles('shard.lock') }}
           restore-keys: |
             crystal-${{ runner.os }}-1.21.0-lint-
+      - name: Cache the compiled Ameba binary
+        id: ameba-cache
+        uses: actions/cache@v6
+        with:
+          # 126s of this job's 155s was compiling Ameba, and it recompiled the
+          # same source on every run. The shard ships only
+          # lib/ameba/bin/ameba.cr, no prebuilt binary, so something has to
+          # compile it once. `shard.lock` pins the Ameba version, and the
+          # Crystal version is in the key too, so a hit means the binary was
+          # built from exactly this source by exactly this compiler.
+          path: bin/ameba
+          key: ameba-${{ runner.os }}-1.21.0-${{ hashFiles('shard.lock') }}
       - name: Install dependencies
         run: shards install
+      - name: Build Ameba
+        if: steps.ameba-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p bin
+          crystal build lib/ameba/bin/ameba.cr -o bin/ameba
       - name: Run Ameba linter
         # Run the Ameba pinned in shard.lock rather than
         # crystal-ameba/github-action@master, whose image tracks an
@@ -331,7 +348,7 @@ jobs:
         # (and tightened Lint/UselessAssign), failing CI on unrelated,
         # already-merged code. shard.lock keeps the rule set stable and
         # reproducible with local `ameba` runs.
-        run: crystal run lib/ameba/bin/ameba.cr
+        run: ./bin/ameba
   tests:
     needs: changes
     if: needs.changes.outputs.spec == 'true'
@@ -368,33 +385,94 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.cache/crystal
-          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr', 'spec/**/*.cr') }}
+          # `spec/**/*.cr` is deliberately not in the key. Nearly every pull
+          # request that reaches this job touches a spec file, so including it
+          # meant the primary key essentially never hit and every run came in
+          # through the restore-keys ladder below. Crystal fingerprints its own
+          # cache entries by content, so restoring an entry set that is partly
+          # stale for the spec half is safe: it only ever means those entries
+          # recompile, which they were going to do anyway. Keying on
+          # `shard.lock` plus `src/**/*.cr` lets a run whose src/ is unchanged
+          # hit the primary key instead. Note that a primary-key hit also means
+          # actions/cache does not re-save, so the entry ages until src/ moves.
+          # Watch the `--stats` lines on the build step for the effect.
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
           restore-keys: |
             crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-
             crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
-      - name: Run unit tests
-        run: crystal spec spec/unit_test
-      - name: Run functional tests
-        run: crystal spec spec/functional_test
+      # This job used to run four `crystal spec` steps (unit, functional, and
+      # both again in randomized order) and so compiled the same program four
+      # times: measured at 92s, 87s, 91s and 86s, of which only 17.7s, 21.0s,
+      # 17.8s and 20.4s was actually running examples. Compiling both suites
+      # into one binary costs no more than compiling the unit suite alone, so
+      # build once here and re-run the binary below as many times as the
+      # ordering fences need.
+      #
+      # `--stats` prints the per-phase compile times, which costs nothing and
+      # is what makes a regression in the Crystal cache below visible in the
+      # log rather than only in the job's total.
+      #
+      # `--no-debug` is CI-only. Measured locally on this program: a cold build
+      # goes from 23.2s to 19.9s and 6.84GB to 6.59GB, and a warm one from 10.1s
+      # to 8.4s. It also takes the ~/.cache/crystal payload from 236MB to 195MB,
+      # though only on the runs where the step above re-saves it, which after
+      # the src-only key means the runs that changed src/. What it costs is
+      # file:line in the backtrace when an analyzer raises during a scan, so a
+      # raise here names the exception but not where it came from. Spec assertion failures are unaffected, because
+      # the spec DSL passes its own file and line. Reproduce such a failure with
+      # `just spec-build`, which keeps debug info on purpose.
+      - name: Build the spec binary
+        run: |
+          mkdir -p bin
+          crystal build spec/suite.cr -o bin/noir_spec --stats --no-debug
       # Spec files load in directory order, which differs between macOS and
-      # Linux — so an example that depends on state another example left
-      # behind passes locally and fails here, on an unrelated PR. Four such
-      # couplings had accumulated. Randomizing on purpose turns "flaky CI"
-      # into a named failure: crystal prints the seed, and
-      # `crystal spec spec/unit_test --order <seed>` reproduces it exactly.
-      - name: Run unit tests in randomized order
-        run: crystal spec spec/unit_test --order random
-      # The functional suite passes randomized today, which is worth fencing
-      # even though the property is currently cheap to hold: `FunctionalTester`
-      # runs each scan at *collection* time and the examples only assert over
-      # already-materialized structs, so shuffling examples shuffles no work.
-      # The fence matters for what comes next — moving those scans inside the
-      # examples is what makes ordering load-bearing, and this step is what
-      # will catch it if that change introduces an order dependency.
-      - name: Run functional tests in randomized order
-        run: crystal spec spec/functional_test --order random
+      # Linux, so an example that depends on state another example left behind
+      # passes locally and fails here, on an unrelated PR. Four such couplings
+      # had accumulated. Randomizing on purpose turns "flaky CI" into a named
+      # failure: the runner prints the seed, and `bin/noir_spec --order <seed>`
+      # reproduces it exactly.
+      #
+      # The randomized run is a real fence rather than a formality now that
+      # `FunctionalTester` scans lazily from inside the first example that
+      # needs it: which example runs first decides which tester pays for the
+      # scan, so ordering is load-bearing and this step is what catches a new
+      # order dependency.
+      #
+      # The randomized run stays over the *whole* suite rather than the tagged
+      # halves below. Before both suites shared a binary they were separate
+      # processes, so a unit example could not possibly depend on state a
+      # functional one left behind; now it can, and this is the only run that
+      # would notice.
+      #
+      # The two tagged halves fence what the tags claim: that each half stands
+      # alone. `just test` runs them as its two parallel processes, so a
+      # cross-half dependency has to fail here rather than only on a
+      # contributor's machine.
+      #
+      # Every run is single-threaded and takes ~0.3GB, so all four go at once
+      # and the full randomized run (~18s) sets the wall time. Each writes to
+      # its own file, replayed in a collapsed group afterwards, because runners
+      # sharing a stdout interleave their progress dots and their failure
+      # reports.
+      - name: Run the suite
+        run: |
+          ./bin/noir_spec > /tmp/spec-default.log 2>&1 & pid_default=$!
+          ./bin/noir_spec --order random > /tmp/spec-random.log 2>&1 & pid_random=$!
+          ./bin/noir_spec --tag functional > /tmp/spec-functional.log 2>&1 & pid_functional=$!
+          ./bin/noir_spec --tag '~functional' > /tmp/spec-unit.log 2>&1 & pid_unit=$!
+          failed=0
+          for name in default random functional unit; do
+            pid_var="pid_$name"
+            wait "${!pid_var}" || failed=1
+          done
+          for name in default random functional unit; do
+            echo "::group::bin/noir_spec ($name)"
+            cat "/tmp/spec-$name.log"
+            echo "::endgroup::"
+          done
+          exit $failed
   nix:
     # Nix is one of the documented install paths (`nix profile add
     # github:owasp-noir/noir`), and nothing in CI ever looked at it — so the

@@ -22,7 +22,7 @@ FunctionalTester.new("fixtures/javascript/sveltekit_nonascii/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "SvelteKit line numbers with multi-byte source" do
+describe "SvelteKit line numbers with multi-byte source", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

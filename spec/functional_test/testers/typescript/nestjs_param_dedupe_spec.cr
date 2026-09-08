@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "nestjs param dedupe" do
+describe "nestjs param dedupe", tags: "functional" do
   tester = FunctionalTester.new("fixtures/typescript/nestjs/", {
     :techs => 1,
   }, [] of Endpoint)

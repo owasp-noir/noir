@@ -58,7 +58,7 @@ tester = FunctionalTester.new("fixtures/dart/dart_frog_callees/", {
 })
 tester.perform_tests
 
-it "reports the exact Dart Frog callee list for method-routed files" do
+it "reports the exact Dart Frog callee list for method-routed files", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/users/{id}" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|

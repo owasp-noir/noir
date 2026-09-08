@@ -53,7 +53,7 @@ tester = FunctionalTester.new("fixtures/dart/alfred/", {
 })
 tester.perform_tests
 
-it "extracts callees from an Alfred lambda handler body" do
+it "extracts callees from an Alfred lambda handler body", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/users" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -64,7 +64,7 @@ it "extracts callees from an Alfred lambda handler body" do
   end
 end
 
-it "skips the handler's trailing middleware argument when scanning callees" do
+it "skips the handler's trailing middleware argument when scanning callees", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/users/{id}" && found.method == "DELETE" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -72,7 +72,7 @@ it "skips the handler's trailing middleware argument when scanning callees" do
   end
 end
 
-it "composes Alfred nested route() base paths with cascade sub-paths" do
+it "composes Alfred nested route() base paths with cascade sub-paths", tags: "functional" do
   urls = tester.app.endpoints.map(&.url).to_set
   urls.should contain("/admin/")
   urls.should contain("/admin/users")

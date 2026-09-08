@@ -37,7 +37,7 @@ tester = FunctionalTester.new("fixtures/haskell/servant_callees_applied/", {
 })
 tester.perform_tests
 
-it "resolves Servant callees through a non-conventional server name and applied leaves" do
+it "resolves Servant callees through a non-conventional server name and applied leaves", tags: "functional" do
   info = tester.app.endpoints.find { |found| found.url == "/info" && found.method == "GET" }
   info.should_not be_nil
   info.try do |actual|

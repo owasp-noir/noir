@@ -9,7 +9,7 @@ FunctionalTester.new("fixtures/typescript/tanstack_router_i18n/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "TanStack Router non-ASCII source attribution" do
+describe "TanStack Router non-ASCII source attribution", tags: "functional" do
   it "byte-counts line numbers and masks template-literal fakes past multi-byte chars" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/typescript/tanstack_router_i18n/")])

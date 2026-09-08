@@ -28,7 +28,7 @@ tester.perform_tests
 # Blanking the HTML has to preserve its newlines: analyzers report `code_path`
 # lines from these offsets, so collapsing a 20-line header would slide every
 # reported line in the file.
-it "reports source lines below a 20-line HTML header unshifted" do
+it "reports source lines below a 20-line HTML header unshifted", tags: "functional" do
   endpoints = tester.app.endpoints
   endpoints.find! { |e| e.url == "/from-first-block" }.details.code_paths.first.line.should eq(25)
   endpoints.find! { |e| e.url == "/after-html" }.details.code_paths.first.line.should eq(33)

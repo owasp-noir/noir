@@ -26,7 +26,7 @@ FunctionalTester.new("fixtures/typescript/trpc/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "tRPC source filtering" do
+describe "tRPC source filtering", tags: "functional" do
   it "skips test route fixtures and route-like docs strings" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/typescript/trpc/")])

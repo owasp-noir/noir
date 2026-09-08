@@ -1,10 +1,14 @@
 Metrics/CyclomaticComplexity:
   Enabled: false
 
-# Disable spec filename check for fixture files (they represent real code)
+# Disable spec filename check for fixture files (they represent real code).
+# spec/suite.cr is also exempt, and its name is load-bearing: it is the entry
+# point that requires both suites into one binary, so it must NOT match the
+# `*_spec.cr` glob that `crystal spec` picks up on its own.
 Lint/SpecFilename:
   Excluded:
     - "spec/functional_test/fixtures/**/*"
+    - "spec/suite.cr"
 
 # Disable useless assign warnings for fixture files
 Lint/UselessAssign:

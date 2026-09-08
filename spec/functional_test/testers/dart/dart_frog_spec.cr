@@ -47,13 +47,13 @@ tester.perform_tests
 # `routes/dashboard_route.dart` is a Flutter UI widget (no `onRequest`
 # handler) that happens to live under `routes/`. It must not be reported
 # as an HTTP endpoint.
-it "ignores routes/ files without an onRequest handler" do
+it "ignores routes/ files without an onRequest handler", tags: "functional" do
   tester.app.endpoints.any? { |e| e.url == "/dashboard_route" }.should be_false
 end
 
 # A `webSocketHandler` route is a single GET with the `ws` protocol, not a
 # 5-verb fall-back.
-it "narrows a WebSocket route to GET and marks the ws protocol" do
+it "narrows a WebSocket route to GET and marks the ws protocol", tags: "functional" do
   ws = tester.app.endpoints.select { |e| e.url == "/ws" }
   ws.map(&.method).should eq(["GET"])
   ws.first.protocol.should eq("ws")

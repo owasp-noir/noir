@@ -84,7 +84,7 @@ tester = FunctionalTester.new("fixtures/php/cakephp_callees/", {
 })
 tester.perform_tests
 
-describe "CakePHP callee extraction" do
+describe "CakePHP callee extraction", tags: "functional" do
   it "keeps unsupported route targets callee-empty" do
     legacy_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/legacy" }
     computed_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/computed" }

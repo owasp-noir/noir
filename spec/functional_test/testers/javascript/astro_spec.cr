@@ -34,7 +34,7 @@ FunctionalTester.new("fixtures/javascript/astro/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "Astro route source attribution" do
+describe "Astro route source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

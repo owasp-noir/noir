@@ -43,7 +43,7 @@ signalr_tester.perform_tests
 # Regression: the trailing CancellationToken on StreamData is a framework
 # type, not a client-supplied message field, so it must not surface as a
 # param on the analyzed endpoint.
-it "drops framework/DI params (CancellationToken) from SignalR events" do
+it "drops framework/DI params (CancellationToken) from SignalR events", tags: "functional" do
   stream = signalr_tester.app.endpoints.find { |e| e.url == "ws://chat/StreamData" }
   stream.should_not be_nil
   if stream

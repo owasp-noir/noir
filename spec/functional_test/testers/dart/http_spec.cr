@@ -27,7 +27,7 @@ tester = FunctionalTester.new("fixtures/dart/http/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "does not leak pre-route body reads into previous endpoints" do
+it "does not leak pre-route body reads into previous endpoints", tags: "functional" do
   reports = tester.app.endpoints.find { |found| found.url == "/reports" && found.method == "DELETE" }
   reports.should_not be_nil
   reports.try do |endpoint|

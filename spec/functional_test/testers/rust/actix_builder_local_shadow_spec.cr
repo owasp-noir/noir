@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "actix builder local handler shadowing" do
+describe "actix builder local handler shadowing", tags: "functional" do
   it "does not attach params from a same-named handler in another file" do
     config_init = ConfigInitializer.new
     options = config_init.default_options

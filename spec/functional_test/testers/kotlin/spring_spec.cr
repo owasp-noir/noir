@@ -40,7 +40,7 @@ FunctionalTester.new("fixtures/kotlin/spring/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "--ai-context on Kotlin Spring security annotations" do
+describe "--ai-context on Kotlin Spring security annotations", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

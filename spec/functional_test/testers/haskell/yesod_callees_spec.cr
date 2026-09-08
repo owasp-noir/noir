@@ -62,7 +62,7 @@ tester = FunctionalTester.new("fixtures/haskell/yesod_callees/", {
 })
 tester.perform_tests
 
-it "reports exact Yesod callees by handler convention" do
+it "reports exact Yesod callees by handler convention", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -70,7 +70,7 @@ it "reports exact Yesod callees by handler convention" do
   end
 end
 
-it "uses handle-prefixed Yesod handlers for methodless routes" do
+it "uses handle-prefixed Yesod handlers for methodless routes", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/faq" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -78,7 +78,7 @@ it "uses handle-prefixed Yesod handlers for methodless routes" do
   end
 end
 
-it "does not attach unrelated top-level functions to Yesod endpoints" do
+it "does not attach unrelated top-level functions to Yesod endpoints", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/api/health" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -86,7 +86,7 @@ it "does not attach unrelated top-level functions to Yesod endpoints" do
   end
 end
 
-it "populates Yesod callee source paths" do
+it "populates Yesod callee source paths", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/blog/:text" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|

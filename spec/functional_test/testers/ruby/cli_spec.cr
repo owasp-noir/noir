@@ -78,7 +78,7 @@ clamp_tester.perform_tests
 # bare word "option" followed eventually by a quoted "--flag"-looking string
 # as a DSL declaration, or it would attribute a phantom "json"/"text" flag
 # to the root command.
-it "does not attribute a bogus flag from a stray 'option' local variable (Clamp FP regression)" do
+it "does not attribute a bogus flag from a stray 'option' local variable (Clamp FP regression)", tags: "functional" do
   root = clamp_tester.app.endpoints.find { |e| e.url == "cli://clamp_app" }
   root.should_not be_nil
   if root

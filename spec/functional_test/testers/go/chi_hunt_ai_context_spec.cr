@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context Hunt signals on Chi fixtures" do
+describe "--ai-context Hunt signals on Chi fixtures", tags: "functional" do
   fixture_path = "fixtures/go/chi/"
 
   before_each do

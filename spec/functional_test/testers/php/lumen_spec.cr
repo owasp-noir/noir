@@ -24,7 +24,7 @@ FunctionalTester.new("fixtures/php/lumen/", {
   :endpoints => 13, # Analysis drops the redundant Laravel run and php_pure file endpoint
 }, expected_endpoints).perform_tests
 
-describe "Lumen analyzer filter" do
+describe "Lumen analyzer filter", tags: "functional" do
   it "drops php_laravel when php_lumen is detected so the redundant pass is skipped" do
     techs = ["php_lumen", "php_laravel", "php_pure"]
     # php_pure is deliberately kept: it resolves URLs against the document

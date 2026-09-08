@@ -20,7 +20,7 @@ tester = FunctionalTester.new("fixtures/haskell/scotty_multi_base_callees/", {
 })
 tester.perform_tests
 
-it "keeps Scotty handler bodies inside each base path" do
+it "keeps Scotty handler bodies inside each base path", tags: "functional" do
   service_a = tester.app.endpoints.find! { |endpoint| endpoint.url == "/a" && endpoint.method == "GET" }
   service_a.callees.map(&.name).should contain("serviceA")
 

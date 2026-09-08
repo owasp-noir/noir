@@ -16,7 +16,7 @@ tester = FunctionalTester.new("fixtures/javascript/nestjs_multi_app/", {
 
 tester.perform_tests
 
-describe "NestJS analyzer across two applications" do
+describe "NestJS analyzer across two applications", tags: "functional" do
   it "gives each application its own global prefix" do
     urls = tester.app.endpoints.map(&.url).sort!
     urls.should eq ["/apiv1/alpha/ping", "/internal/beta/ping"]

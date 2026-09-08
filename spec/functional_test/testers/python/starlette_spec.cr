@@ -75,7 +75,7 @@ tester = FunctionalTester.new("fixtures/python/starlette/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "marks Starlette WebSocketRoute endpoints with ws protocol" do
+it "marks Starlette WebSocketRoute endpoints with ws protocol", tags: "functional" do
   chat = tester.app.endpoints.find { |endpoint| endpoint.url == "/ws/{room}" }
   chat.should_not be_nil
   chat.try(&.protocol).should eq("ws")

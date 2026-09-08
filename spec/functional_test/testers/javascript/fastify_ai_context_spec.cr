@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Fastify auth fixtures" do
+describe "--ai-context on Fastify auth fixtures", tags: "functional" do
   fixture_path = "fixtures/javascript/fastify_auth/"
 
   before_each do

@@ -48,7 +48,7 @@ tester = FunctionalTester.new("fixtures/cpp/drogon_controllers/", {
 
 tester.perform_tests
 
-describe "Drogon controller routing edge cases" do
+describe "Drogon controller routing edge cases", tags: "functional" do
   it "ignores macros inside block comments" do
     tester.app.endpoints.any? { |e| e.url == "/ghost" }.should be_false
   end
