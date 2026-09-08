@@ -322,8 +322,25 @@ jobs:
           key: crystal-${{ runner.os }}-1.21.0-lint-${{ hashFiles('shard.lock') }}
           restore-keys: |
             crystal-${{ runner.os }}-1.21.0-lint-
+      - name: Cache the compiled Ameba binary
+        id: ameba-cache
+        uses: actions/cache@v6
+        with:
+          # 126s of this job's 155s was compiling Ameba, and it recompiled the
+          # same source on every run. The shard ships only
+          # lib/ameba/bin/ameba.cr, no prebuilt binary, so something has to
+          # compile it once. `shard.lock` pins the Ameba version, and the
+          # Crystal version is in the key too, so a hit means the binary was
+          # built from exactly this source by exactly this compiler.
+          path: bin/ameba
+          key: ameba-${{ runner.os }}-1.21.0-${{ hashFiles('shard.lock') }}
       - name: Install dependencies
         run: shards install
+      - name: Build Ameba
+        if: steps.ameba-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p bin
+          crystal build lib/ameba/bin/ameba.cr -o bin/ameba
       - name: Run Ameba linter
         # Run the Ameba pinned in shard.lock rather than
         # crystal-ameba/github-action@master, whose image tracks an
@@ -331,7 +348,7 @@ jobs:
         # (and tightened Lint/UselessAssign), failing CI on unrelated,
         # already-merged code. shard.lock keeps the rule set stable and
         # reproducible with local `ameba` runs.
-        run: crystal run lib/ameba/bin/ameba.cr
+        run: ./bin/ameba
   tests:
     needs: changes
     if: needs.changes.outputs.spec == 'true'

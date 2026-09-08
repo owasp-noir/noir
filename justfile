@@ -80,17 +80,32 @@ docs-i18n-check:
 docs-dependencies:
     brew install hahwul/hwaro/hwaro
 
+# The Ameba shard ships source only, so running it means compiling it: about
+# two minutes here and 126s of CI's 155s lint job. Build it once and the
+# recipes below use the binary instead. CI caches the same binary keyed on
+# shard.lock.
+#
+# Build the pinned Ameba linter into bin/ameba.
+[group('development')]
+ameba-build:
+    mkdir -p bin
+    crystal build lib/ameba/bin/ameba.cr -o bin/ameba
+
 # Auto-format code and fix lint issues.
 [group('development')]
 fix:
+    #!/usr/bin/env bash
+    set -euo pipefail
     crystal tool format
-    lib/ameba/bin/ameba.cr --fix
+    if [ -x bin/ameba ]; then ./bin/ameba --fix; else lib/ameba/bin/ameba.cr --fix; fi
 
 # Check code format and lint without changes.
 [group('development')]
 check:
+    #!/usr/bin/env bash
+    set -euo pipefail
     crystal tool format --check
-    lib/ameba/bin/ameba.cr
+    if [ -x bin/ameba ]; then ./bin/ameba; else lib/ameba/bin/ameba.cr; fi
 
 # Compiling src/ is nearly the whole cost of a spec run, and that cost does not
 # grow when both suites go into one program: unit alone compiles in ~20s and
@@ -104,10 +119,13 @@ spec-build:
     mkdir -p bin
     crystal build spec/suite.cr -o bin/noir_spec
 
-# Run all tests, as two processes split on the `functional` tag. The run is
-# single-threaded and takes only ~0.3GB, so the halves are ~18s together and
-# ~10s in parallel (the unit half is the slower of the two, at 9.7s). Each writes to its own log because two spec runners sharing
-# a terminal interleave their progress dots and their failure reports.
+# The run is single-threaded and takes only ~0.3GB, so splitting it on the
+# `functional` tag turns ~18s of examples into ~10s of wall time (the unit half
+# is the slower of the two, at 9.7s). Each half writes to its own log, because
+# two spec runners sharing a terminal interleave their progress dots and their
+# failure reports.
+#
+# Run all tests, as two parallel processes.
 [group('development')]
 test: spec-build
     #!/usr/bin/env bash
@@ -125,11 +143,13 @@ test: spec-build
     done
     exit $failed
 
-# Re-run the already-built suite in a randomized example order, which is how an
-# accidental order dependency between examples surfaces. Deliberately one
-# process over the whole suite rather than the tagged halves, so it can also
-# catch a unit example that depends on a functional one, or the reverse. The
-# seed is printed at the end; reproduce it with `just test-seed <seed>`.
+# A randomized example order is how an accidental order dependency between
+# examples surfaces. Deliberately one process over the whole suite rather than
+# the tagged halves, so it can also catch a unit example that depends on a
+# functional one, or the reverse. The seed is printed at the end; reproduce it
+# with `just test-seed <seed>`.
+#
+# Re-run the built suite in a randomized example order.
 [group('development')]
 test-random: spec-build
     ./bin/noir_spec --order random
