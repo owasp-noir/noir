@@ -7,7 +7,7 @@ This document explains the test directory structure and how to add new test case
 ```
 spec/
 ├── spec_helper.cr              # Shared test helpers
-├── noir_spec.cr                # Main spec entry point
+├── suite.cr                    # Entry point: both CI suites in one binary
 ├── unit_test/                  # Unit tests (included in CI)
 ├── functional_test/            # Functional/integration tests (included in CI)
 │   ├── func_spec.cr            # FunctionalTester class
@@ -47,11 +47,53 @@ A staging area for test cases that are **not yet fully covered** or are **expect
 ## How to Run Tests
 
 ```bash
-just test              # Run all CI tests (unit + functional)
-just test-unit         # Run unit tests only
-just test-func         # Run functional tests only
+just spec-build        # Build the whole suite as bin/noir_spec
+just test              # spec-build, then run every CI example once
+just test-random       # Re-run the built binary in randomized example order
+just test-seed 12345   # Re-run it in one specific order
+just test-unit         # Run unit tests only (compiles just that directory)
+just test-func         # Run functional tests only (compiles just that directory)
 just test-uncovered    # Run uncovered tests only (not in CI)
 ```
+
+`spec/suite.cr` requires `unit_test/**` plus `functional_test/testers/**` and
+nothing else, so `bin/noir_spec` holds exactly the 30,356 examples CI runs
+(5,697 unit and 24,659 functional). `uncovered_test/` is deliberately outside
+it, which is also why `crystal spec` with no arguments is the wrong command
+here: its default glob sweeps up `uncovered_test/` too, and those examples are
+expected to fail.
+
+Two constraints come with the binary:
+
+- **Run it from the repository root.** `FunctionalTester` resolves fixtures
+  through a relative `./spec/functional_test/...` path.
+- **It takes no positional paths.** `bin/noir_spec spec/unit_test` fails with
+  `unknown argument`. Narrow a run with a filter instead:
+
+```bash
+./bin/noir_spec -e hono                                   # ~49 examples
+./bin/noir_spec --location spec/unit_test/foo_spec.cr:42   # one example
+./bin/noir_spec --dry-run                                  # list without running
+```
+
+### Why one binary
+
+Compiling `src/` is essentially the whole cost of a spec run, and it does not
+grow when the suites are combined. Measured locally on a warm compiler cache:
+
+| Command | wall | running examples | peak RSS |
+|---|---|---|---|
+| `crystal spec spec/unit_test` (5,697 ex) | 28.7s | 9.1s | 6.1 GB |
+| `crystal spec spec/functional_test` (24,659 ex) | 23.5s | 8.3s | 5.2 GB |
+| both suites compiled together | 20.9s | - | 6.1 GB |
+| `crystal build spec/suite.cr -o bin/noir_spec` | 20.0s | - | 6.6 GB |
+| `./bin/noir_spec` (30,356 ex) | 18.9s | 18.0s | 0.3 GB |
+
+So the compile is paid once and every re-run after that is 18s on 0.3GB. Two
+runs of the binary in parallel finish in 19s wall against 36s sequential, which
+is what CI does with the default and randomized orders. CI previously compiled
+the same program four times (unit, functional, and both again randomized) for
+about 90s each.
 
 ### While working on one analyzer
 
@@ -62,22 +104,24 @@ just test-func-one javascript/hono    # crystal spec spec/functional_test/tester
 just test-func-lang python            # every tester under testers/python/
 ```
 
-Measured on this repo: one tester **~8.5s**, one language directory ~10.5s,
-the whole functional suite ~16.5s.
+Measured on this repo: one tester **~8.5s**, one language directory ~10.5s.
+Compiling one file is still ~10s cheaper than compiling the suite, so these
+recipes stay on `crystal spec`. If `bin/noir_spec` is already built and your
+change is in a spec rather than in `src/`, `./bin/noir_spec -e hono` beats both.
 
 Two things worth knowing before you try to make that faster:
 
 - **Compiling `src/` is essentially the whole cost.** The single-tester run
   above executes its 78 examples in ~0.06s; the other ~8.5s is the compiler.
-  The number of spec files barely matters — 55 python testers compile in about
-  the same time as all 576. So narrowing the target below one file, or
-  sharding the suite across jobs, buys nothing.
+  The number of spec files barely matters: 55 python testers compile in about
+  the same time as all 576. So narrowing the target below one file, or sharding
+  the suite across jobs, buys nothing.
 - **`--example` works too, and is cheap.** `FunctionalTester` scans lazily: the
   first example to run triggers its tester's scan, so a filter only pays for the
   testers it selects. `--example hono` costs ~0.2s of run time against ~6.9s
   before the scans moved out of collection time. It still pays the ~8.5s
-  compile, so a path and a filter cost about the same — use whichever names what
-  you want.
+  compile, so a path and a filter cost about the same with `crystal spec`; use
+  whichever names what you want.
 
 ### Assertions go inside the example
 

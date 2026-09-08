@@ -92,11 +92,34 @@ check:
     crystal tool format --check
     lib/ameba/bin/ameba.cr
 
+# Compiling src/ is nearly the whole cost of a spec run, and that cost does not
+# grow when both suites go into one program: unit alone compiles in ~20s and
+# unit+functional together compiles in the same ~20s. Building once gives a
+# binary that runs all 30,356 examples in 18s on 0.3GB, so re-running in
+# randomized order or under a filter costs nothing more.
+#
+# Build the whole suite as one binary at bin/noir_spec.
+[group('development')]
+spec-build:
+    mkdir -p bin
+    crystal build spec/suite.cr -o bin/noir_spec
+
 # Run all tests.
 [group('development')]
-test:
-    crystal spec spec/unit_test
-    crystal spec spec/functional_test
+test: spec-build
+    ./bin/noir_spec
+
+# Re-run the already-built suite in a randomized example order, which is how an
+# accidental order dependency between examples surfaces. The seed is printed on
+# failure; reproduce it with `just test-seed <seed>`.
+[group('development')]
+test-random: spec-build
+    ./bin/noir_spec --order random
+
+# Re-run the suite in one specific order: `just test-seed 12345`.
+[group('development')]
+test-seed SEED: spec-build
+    ./bin/noir_spec --order {{SEED}}
 
 # Run unit tests only.
 [group('development')]
@@ -113,10 +136,11 @@ test-func:
 test-uncovered:
     crystal spec spec/uncovered_test
 
-# The fastest feedback loop while working on a single analyzer — ~8.5s
-# against ~16.5s for the whole suite. Almost all of that is compiling src/,
-# not running the test (the run itself is ~0.06s), so narrowing further
-# buys nothing.
+# The fastest feedback loop while working on a single analyzer: ~8.5s, against
+# ~38s for a full `just test` (a ~20s build plus an 18s run). Almost all of the
+# 8.5s is compiling src/, not running the test (the run itself is ~0.06s), so
+# narrowing further buys nothing. Once bin/noir_spec is built, though,
+# `./bin/noir_spec -e hono` is cheaper still, because it skips the compiler.
 #
 # Run one functional tester, e.g. `just test-func-one javascript/hono`.
 [group('development')]

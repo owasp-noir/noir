@@ -374,27 +374,53 @@ jobs:
             crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
-      - name: Run unit tests
-        run: crystal spec spec/unit_test
-      - name: Run functional tests
-        run: crystal spec spec/functional_test
+      # This job used to run four `crystal spec` steps (unit, functional, and
+      # both again in randomized order) and so compiled the same program four
+      # times: measured at 92s, 87s, 91s and 86s, of which only 17.7s, 21.0s,
+      # 17.8s and 20.4s was actually running examples. Compiling both suites
+      # into one binary costs no more than compiling the unit suite alone, so
+      # build once here and re-run the binary below as many times as the
+      # ordering fences need.
+      #
+      # `--stats` prints the per-phase compile times, which costs nothing and
+      # is what makes a regression in the Crystal cache below visible in the
+      # log rather than only in the job's total.
+      - name: Build the spec binary
+        run: |
+          mkdir -p bin
+          crystal build spec/suite.cr -o bin/noir_spec --stats
       # Spec files load in directory order, which differs between macOS and
-      # Linux — so an example that depends on state another example left
-      # behind passes locally and fails here, on an unrelated PR. Four such
-      # couplings had accumulated. Randomizing on purpose turns "flaky CI"
-      # into a named failure: crystal prints the seed, and
-      # `crystal spec spec/unit_test --order <seed>` reproduces it exactly.
-      - name: Run unit tests in randomized order
-        run: crystal spec spec/unit_test --order random
-      # The functional suite passes randomized today, which is worth fencing
-      # even though the property is currently cheap to hold: `FunctionalTester`
-      # runs each scan at *collection* time and the examples only assert over
-      # already-materialized structs, so shuffling examples shuffles no work.
-      # The fence matters for what comes next — moving those scans inside the
-      # examples is what makes ordering load-bearing, and this step is what
-      # will catch it if that change introduces an order dependency.
-      - name: Run functional tests in randomized order
-        run: crystal spec spec/functional_test --order random
+      # Linux, so an example that depends on state another example left behind
+      # passes locally and fails here, on an unrelated PR. Four such couplings
+      # had accumulated. Randomizing on purpose turns "flaky CI" into a named
+      # failure: the runner prints the seed, and `bin/noir_spec --order <seed>`
+      # reproduces it exactly.
+      #
+      # The randomized run is a real fence rather than a formality now that
+      # `FunctionalTester` scans lazily from inside the first example that
+      # needs it: which example runs first decides which tester pays for the
+      # scan, so ordering is load-bearing and this step is what catches a new
+      # order dependency.
+      #
+      # Both runs are the same binary and take ~0.3GB each, so they go in
+      # parallel: measured locally at 19s wall against 36s sequential.
+      #
+      # Each run's output goes to its own file and is replayed in a collapsed
+      # group afterwards, because two runners writing to the same stdout
+      # interleave their progress dots and their failure reports.
+      - name: Run the suite in default and randomized order
+        run: |
+          ./bin/noir_spec > /tmp/spec-default.log 2>&1 & default_pid=$!
+          ./bin/noir_spec --order random > /tmp/spec-random.log 2>&1 & random_pid=$!
+          failed=0
+          wait $default_pid || failed=1
+          wait $random_pid || failed=1
+          for order in default random; do
+            echo "::group::bin/noir_spec ($order order)"
+            cat "/tmp/spec-$order.log"
+            echo "::endgroup::"
+          done
+          exit $failed
   nix:
     # Nix is one of the documented install paths (`nix profile add
     # github:owasp-noir/noir`), and nothing in CI ever looked at it — so the
