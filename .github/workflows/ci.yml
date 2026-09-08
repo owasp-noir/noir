@@ -396,10 +396,20 @@ jobs:
       # `--stats` prints the per-phase compile times, which costs nothing and
       # is what makes a regression in the Crystal cache below visible in the
       # log rather than only in the job's total.
+      #
+      # `--no-debug` is CI-only. Measured locally on this program: a cold build
+      # goes from 23.2s to 19.9s and 6.84GB to 6.59GB, and a warm one from 10.1s
+      # to 8.4s. It also takes the ~/.cache/crystal payload from 236MB to 195MB,
+      # though only on the runs where the step above re-saves it, which after
+      # the src-only key means the runs that changed src/. What it costs is
+      # file:line in the backtrace when an analyzer raises during a scan, so a
+      # raise here names the exception but not where it came from. Spec assertion failures are unaffected, because
+      # the spec DSL passes its own file and line. Reproduce such a failure with
+      # `just spec-build`, which keeps debug info on purpose.
       - name: Build the spec binary
         run: |
           mkdir -p bin
-          crystal build spec/suite.cr -o bin/noir_spec --stats
+          crystal build spec/suite.cr -o bin/noir_spec --stats --no-debug
       # Spec files load in directory order, which differs between macOS and
       # Linux, so an example that depends on state another example left behind
       # passes locally and fails here, on an unrelated PR. Four such couplings
