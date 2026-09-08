@@ -84,7 +84,7 @@ tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_modern/", {
 
 tester.perform_tests
 
-describe "ASP.NET Core MVC modern controller edge cases" do
+describe "ASP.NET Core MVC modern controller edge cases", tags: "functional" do
   it "resolves actions on a primary-constructor controller" do
     list = tester.app.endpoints.find { |e| e.url == "/articles" && e.method == "GET" }
     list.should_not be_nil

@@ -95,7 +95,7 @@ check:
 # Compiling src/ is nearly the whole cost of a spec run, and that cost does not
 # grow when both suites go into one program: unit alone compiles in ~20s and
 # unit+functional together compiles in the same ~20s. Building once gives a
-# binary that runs all 30,356 examples in 18s on 0.3GB, so re-running in
+# binary that runs all 30,357 examples in 18s on 0.3GB, so re-running in
 # randomized order or under a filter costs nothing more.
 #
 # Build the whole suite as one binary at bin/noir_spec.
@@ -104,14 +104,32 @@ spec-build:
     mkdir -p bin
     crystal build spec/suite.cr -o bin/noir_spec
 
-# Run all tests.
+# Run all tests, as two processes split on the `functional` tag. The run is
+# single-threaded and takes only ~0.3GB, so the halves are ~18s together and
+# ~10s in parallel. Each writes to its own log because two spec runners sharing
+# a terminal interleave their progress dots and their failure reports.
 [group('development')]
 test: spec-build
-    ./bin/noir_spec
+    #!/usr/bin/env bash
+    set -uo pipefail
+    logs=$(mktemp -d)
+    trap 'rm -rf "$logs"' EXIT
+    ./bin/noir_spec --tag '~functional' > "$logs/unit.log" 2>&1 & unit_pid=$!
+    ./bin/noir_spec --tag functional > "$logs/functional.log" 2>&1 & functional_pid=$!
+    failed=0
+    wait $unit_pid || failed=1
+    wait $functional_pid || failed=1
+    for half in unit functional; do
+      echo "--- $half half ---"
+      cat "$logs/$half.log"
+    done
+    exit $failed
 
 # Re-run the already-built suite in a randomized example order, which is how an
-# accidental order dependency between examples surfaces. The seed is printed on
-# failure; reproduce it with `just test-seed <seed>`.
+# accidental order dependency between examples surfaces. Deliberately one
+# process over the whole suite rather than the tagged halves, so it can also
+# catch a unit example that depends on a functional one, or the reverse. The
+# seed is printed at the end; reproduce it with `just test-seed <seed>`.
 [group('development')]
 test-random: spec-build
     ./bin/noir_spec --order random
@@ -137,10 +155,10 @@ test-uncovered:
     crystal spec spec/uncovered_test
 
 # The fastest feedback loop while working on a single analyzer: ~8.5s, against
-# ~38s for a full `just test` (a ~20s build plus an 18s run). Almost all of the
-# 8.5s is compiling src/, not running the test (the run itself is ~0.06s), so
-# narrowing further buys nothing. Once bin/noir_spec is built, though,
-# `./bin/noir_spec -e hono` is cheaper still, because it skips the compiler.
+# ~21s for a full `just test` (a ~12s build plus a ~10s parallel run). Almost
+# all of the 8.5s is compiling src/, not running the test (the run itself is
+# ~0.06s), so narrowing further buys nothing. Once bin/noir_spec is built,
+# though, `./bin/noir_spec -e hono` is cheaper still: it skips the compiler.
 #
 # Run one functional tester, e.g. `just test-func-one javascript/hono`.
 [group('development')]

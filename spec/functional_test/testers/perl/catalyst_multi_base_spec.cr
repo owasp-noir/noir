@@ -23,7 +23,7 @@ tester = FunctionalTester.new("fixtures/perl/catalyst_multi_base/", {
 })
 tester.perform_tests
 
-it "keeps Catalyst chained actions inside each base path" do
+it "keeps Catalyst chained actions inside each base path", tags: "functional" do
   tester.app.endpoints.any? { |endpoint| endpoint.url == "/a/:root_capture/item" }.should be_true
   tester.app.endpoints.any? { |endpoint| endpoint.url == "/b/:root_capture/item" }.should be_true
 end

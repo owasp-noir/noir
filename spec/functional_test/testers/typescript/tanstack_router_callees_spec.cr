@@ -16,7 +16,7 @@ FunctionalTester.new("fixtures/typescript/tanstack_router/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-it "does not attach callees from unrelated objects after empty file routes" do
+it "does not attach callees from unrelated objects after empty file routes", tags: "functional" do
   config_init = ConfigInitializer.new
   noir_options = config_init.default_options
   noir_options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/typescript/tanstack_router/")])

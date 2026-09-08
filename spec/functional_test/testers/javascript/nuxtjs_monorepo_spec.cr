@@ -33,7 +33,7 @@ tester = FunctionalTester.new("fixtures/javascript/nuxtjs_monorepo/", {
 
 tester.perform_tests
 
-describe "nuxtjs monorepo route folding" do
+describe "nuxtjs monorepo route folding", tags: "functional" do
   it "keeps every contributing file in code_paths" do
     fixture = "./spec/functional_test/fixtures/javascript/nuxtjs_monorepo"
 

@@ -108,7 +108,7 @@ tester = FunctionalTester.new("fixtures/python/aiohttp/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "marks aiohttp WebSocketResponse handlers with ws protocol" do
+it "marks aiohttp WebSocketResponse handlers with ws protocol", tags: "functional" do
   feed = tester.app.endpoints.find { |endpoint| endpoint.url == "/feed/{channel}" }
   feed.should_not be_nil
   feed.try(&.protocol).should eq("ws")

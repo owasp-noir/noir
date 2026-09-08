@@ -52,7 +52,7 @@ tester = FunctionalTester.new("fixtures/python/tornado/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "marks Tornado WebSocketHandler endpoints with ws protocol" do
+it "marks Tornado WebSocketHandler endpoints with ws protocol", tags: "functional" do
   websocket_route = tester.app.endpoints.find { |endpoint| endpoint.url == "/ws/([^/]+)" }
   websocket_route.should_not be_nil
   websocket_route.try(&.protocol).should eq("ws")

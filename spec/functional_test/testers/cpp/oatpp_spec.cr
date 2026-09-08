@@ -39,7 +39,7 @@ tester = FunctionalTester.new("fixtures/cpp/oatpp/", {
 
 tester.perform_tests
 
-describe "oat++ ENDPOINT macro edge cases" do
+describe "oat++ ENDPOINT macro edge cases", tags: "functional" do
   it "ignores ENDPOINT_INFO metadata macros" do
     # getUserById appears in both ENDPOINT_INFO and ENDPOINT; only one route.
     tester.app.endpoints.count { |e| e.url == "/users/{userId}" && e.method == "GET" }.should eq 1

@@ -191,7 +191,7 @@ FunctionalTester.new("fixtures/go/cli_mitchellh_fp/", {
 # blocks above even on the old buggy code. Assert the exact negative
 # directly so these regressions truly fail on the old fallback/sticky-cursor
 # behavior and pass only once the leak is gone.
-describe "go CLI attribution false-positive guards" do
+describe "go CLI attribution false-positive guards", tags: "functional" do
   it "does not leak an unrelated envconfig-tagged struct's fields onto the kong root command" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/go/cli_kong_fp/")])

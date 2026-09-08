@@ -46,7 +46,7 @@ tester = FunctionalTester.new("fixtures/cpp/httplib/", {
 
 tester.perform_tests
 
-describe "cpp-httplib route discovery edge cases" do
+describe "cpp-httplib route discovery edge cases", tags: "functional" do
   it "does not treat a Client verb call as a route" do
     tester.app.endpoints.any? { |e| e.url == "/external" }.should be_false
   end

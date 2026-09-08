@@ -124,7 +124,7 @@ tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc/", {
 
 tester.perform_tests
 
-describe "ASP.NET Core MVC analyzer edge cases" do
+describe "ASP.NET Core MVC analyzer edge cases", tags: "functional" do
   it "extracts expression-bodied MapGet endpoints without leaking params" do
     ping = tester.app.endpoints.find { |e| e.url == "/mapped/ping" && e.method == "GET" }
     ping.should_not be_nil

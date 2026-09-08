@@ -34,7 +34,7 @@ FunctionalTester.new("fixtures/php/laravel_nested_handlers/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "Laravel routes nested in a handler body" do
+describe "Laravel routes nested in a handler body", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

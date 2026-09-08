@@ -54,7 +54,7 @@ tester = FunctionalTester.new("fixtures/csharp/aspnet_core_minimal_api/", {
 
 tester.perform_tests
 
-describe "ASP.NET Core Minimal API analyzer edge cases" do
+describe "ASP.NET Core Minimal API analyzer edge cases", tags: "functional" do
   it "does not register routes written inside comments" do
     tester.app.endpoints.any?(&.url.includes?("doc-only")).should be_false
     tester.app.endpoints.any?(&.url.includes?("commented-out")).should be_false

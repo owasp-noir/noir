@@ -26,12 +26,12 @@ tester = FunctionalTester.new("fixtures/go/cli_monorepo/", {
 })
 tester.perform_tests
 
-it "keeps each command's flags on its own binary" do
+it "keeps each command's flags on its own binary", tags: "functional" do
   alpha = tester.endpoints.find! { |endpoint| endpoint.url == "cli://alpha" }
   alpha.params.map(&.name).should_not contain("beta-only-flag")
 end
 
-it "records every file that contributed to a command" do
+it "records every file that contributed to a command", tags: "functional" do
   alpha = tester.endpoints.find! { |endpoint| endpoint.url == "cli://alpha" }
   paths = alpha.details.code_paths.map { |code_path| File.basename(code_path.path) }
   paths.should contain("main.go")

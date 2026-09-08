@@ -47,7 +47,7 @@ robo_tester = FunctionalTester.new("fixtures/php/cli_robo_fp/", {
 }, robo_endpoints)
 robo_tester.perform_tests
 
-it "does not attach the constructor's or the untagged helper's params to the Robo command" do
+it "does not attach the constructor's or the untagged helper's params to the Robo command", tags: "functional" do
   ep = robo_tester.app.endpoints.find { |e| e.url == "cli://cli_robo_fp/foo:bar" }
   ep.should_not be_nil
   ep.try(&.params.map(&.name)).should eq(["arg"])
@@ -78,7 +78,7 @@ wp_cli_tester = FunctionalTester.new("fixtures/php/cli_wp_cli_fp/", {
 }, wp_cli_endpoints)
 wp_cli_tester.perform_tests
 
-it "does not leak the unrelated helper's $args[7] into the WP-CLI command's params" do
+it "does not leak the unrelated helper's $args[7] into the WP-CLI command's params", tags: "functional" do
   ep = wp_cli_tester.app.endpoints.find { |e| e.url == "cli://cli_wp_cli_fp/foo bar" }
   ep.should_not be_nil
   ep.try(&.params.map(&.name).sort!).should eq(["arg0", "format"])
@@ -106,7 +106,7 @@ artisan_tester = FunctionalTester.new("fixtures/php/cli_artisan_fp/", {
 }, artisan_endpoints)
 artisan_tester.perform_tests
 
-it "strips the ' : description' suffix from described Artisan signature tokens" do
+it "strips the ' : description' suffix from described Artisan signature tokens", tags: "functional" do
   ep = artisan_tester.app.endpoints.find { |e| e.url == "cli://cli_artisan_fp/mail:send" }
   ep.should_not be_nil
   names = ep.try(&.params.map(&.name)).not_nil!

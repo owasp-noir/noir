@@ -14,7 +14,7 @@ FunctionalTester.new("fixtures/python/django_multivalue/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "Django multi-value accessor negatives" do
+describe "Django multi-value accessor negatives", tags: "functional" do
   it "does not report dynamic keys as params" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/python/django_multivalue/")])

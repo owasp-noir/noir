@@ -28,6 +28,6 @@ tester = FunctionalTester.new("fixtures/python/django_optional_slash/", {
 }, extracted_endpoints)
 tester.perform_tests
 
-it "leaves no regex quantifier in the emitted paths" do
+it "leaves no regex quantifier in the emitted paths", tags: "functional" do
   tester.app.endpoints.map(&.url).select(&.includes?('?')).should be_empty
 end

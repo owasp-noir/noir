@@ -22,7 +22,7 @@ FunctionalTester.new("fixtures/kotlin/spring_interface/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "--ai-context on Kotlin Spring interface controller fixtures" do
+describe "--ai-context on Kotlin Spring interface controller fixtures", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "Restify route source attribution" do
+describe "Restify route source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

@@ -49,7 +49,7 @@ tester = FunctionalTester.new("fixtures/crystal/amber_callees/", {
 })
 tester.perform_tests
 
-describe "Amber callee extraction" do
+describe "Amber callee extraction", tags: "functional" do
   it "keeps controller-less fallback routes callee-empty" do
     health_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/health" }
     health_endpoint.should_not be_nil

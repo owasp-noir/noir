@@ -35,7 +35,7 @@ serverpod_tester = FunctionalTester.new("fixtures/dart/serverpod/", {
 })
 serverpod_tester.perform_tests
 
-it "extracts callees from a Serverpod web-route handler body" do
+it "extracts callees from a Serverpod web-route handler body", tags: "functional" do
   endpoint = serverpod_tester.app.endpoints.find { |found| found.url == "/webhook" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|

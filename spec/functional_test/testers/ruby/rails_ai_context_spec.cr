@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Rails auth fixtures" do
+describe "--ai-context on Rails auth fixtures", tags: "functional" do
   fixture_path = "fixtures/ruby/rails_auth/"
   controller_suffix = "spec/functional_test/fixtures/ruby/rails_auth/app/controllers/posts_controller.rb"
 

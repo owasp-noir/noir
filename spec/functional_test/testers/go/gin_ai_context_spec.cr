@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Gin auth fixtures" do
+describe "--ai-context on Gin auth fixtures", tags: "functional" do
   fixture_path = "fixtures/go/gin_auth/"
   main_suffix = "spec/functional_test/fixtures/go/gin_auth/main.go"
 

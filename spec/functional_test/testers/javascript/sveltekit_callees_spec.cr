@@ -39,7 +39,7 @@ FunctionalTester.new("fixtures/javascript/sveltekit_callees/", {
   "include_callee" => YAML::Any.new(true),
 }).perform_tests
 
-describe "SvelteKit callee source attribution" do
+describe "SvelteKit callee source attribution", tags: "functional" do
   before_each do
     CodeLocator.instance.clear_all
   end

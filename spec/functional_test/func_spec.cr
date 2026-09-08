@@ -157,17 +157,25 @@ class FunctionalTester
     nil
   end
 
+  # Everything this class registers carries the `functional` tag, and so does
+  # every hand-written `describe` in a tester file (see
+  # `spec/unit_test/functional_tag_coverage_spec.cr`, which fails if one does
+  # not). The whole suite lives in one binary now, so the tag is what lets
+  # `bin/noir_spec --tag functional` and `bin/noir_spec --tag '~functional'`
+  # split it into two processes that run in parallel. Crystal merges a parent's
+  # tags into its children (`Spec::Item#all_tags`), so tagging the `describe`
+  # below covers the examples inside it.
   def test_detect
     return unless @expected_count.has_key?(:techs)
 
-    it "test detect using count check [#{@path}]" do
+    it "test detect using count check [#{@path}]", tags: "functional" do
       app.techs.size.should eq @expected_count[:techs]
     end
   end
 
   def test_analyze
     if @expected_count.has_key?(:endpoints)
-      it "test analyze using count check [#{@path}]" do
+      it "test analyze using count check [#{@path}]", tags: "functional" do
         endpoints.size.should eq @expected_count[:endpoints]
       end
     end
@@ -175,7 +183,7 @@ class FunctionalTester
     @expected_endpoints.each do |expected|
       key = expected.method.to_s + "::" + expected.url.to_s
 
-      describe "endpoint check [#{key}]" do
+      describe "endpoint check [#{key}]", tags: "functional" do
         it "check - url [K: #{key}]" do
           actual_endpoint(expected).url.should eq expected.url
         end

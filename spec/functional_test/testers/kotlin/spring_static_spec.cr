@@ -27,7 +27,7 @@ baseline = FunctionalTester.new("fixtures/kotlin/spring_static/", empty_count, n
 file_excluded = FunctionalTester.new("fixtures/kotlin/spring_static/", empty_count, no_endpoints, file_overrides)
 dir_excluded = FunctionalTester.new("fixtures/kotlin/spring_static/", empty_count, no_endpoints, dir_overrides)
 
-describe "Spring static-locations" do
+describe "Spring static-locations", tags: "functional" do
   it "serves classpath: and in-base file: locations" do
     urls = baseline.endpoints.map(&.url)
     urls.should contain("/index.html")

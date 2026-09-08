@@ -51,7 +51,7 @@ tester = FunctionalTester.new("fixtures/csharp/carter/", {
 
 tester.perform_tests
 
-describe "Carter analyzer edge cases" do
+describe "Carter analyzer edge cases", tags: "functional" do
   it "does not surface routes from /test/ fixtures" do
     tester.app.endpoints.any?(&.url.includes?("test-only")).should be_false
   end

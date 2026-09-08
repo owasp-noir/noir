@@ -56,7 +56,7 @@ FunctionalTester.new("fixtures/typescript/tanstack_router/", {
   :endpoints => expected_endpoints.size,
 }, expected_endpoints).perform_tests
 
-describe "TanStack Router source attribution" do
+describe "TanStack Router source attribution", tags: "functional" do
   it "keeps createFileRoute line numbers and skips test/string fixtures" do
     options = ConfigInitializer.new.default_options
     options["base"] = YAML::Any.new([YAML::Any.new("./spec/functional_test/fixtures/typescript/tanstack_router/")])

@@ -60,7 +60,7 @@ tester = FunctionalTester.new("fixtures/python/sanic/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "marks Sanic websocket endpoints with ws protocol" do
+it "marks Sanic websocket endpoints with ws protocol", tags: "functional" do
   feed = tester.app.endpoints.find { |endpoint| endpoint.url == "/feed/{channel}" }
   feed.should_not be_nil
   feed.try(&.protocol).should eq("ws")

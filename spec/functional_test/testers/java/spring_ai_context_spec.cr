@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Spring auth fixtures" do
+describe "--ai-context on Spring auth fixtures", tags: "functional" do
   fixture_path = "fixtures/java/spring_auth/"
 
   before_each do

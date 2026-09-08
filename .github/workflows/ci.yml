@@ -402,22 +402,36 @@ jobs:
       # scan, so ordering is load-bearing and this step is what catches a new
       # order dependency.
       #
-      # Both runs are the same binary and take ~0.3GB each, so they go in
-      # parallel: measured locally at 19s wall against 36s sequential.
+      # The randomized run stays over the *whole* suite rather than the tagged
+      # halves below. Before both suites shared a binary they were separate
+      # processes, so a unit example could not possibly depend on state a
+      # functional one left behind; now it can, and this is the only run that
+      # would notice.
       #
-      # Each run's output goes to its own file and is replayed in a collapsed
-      # group afterwards, because two runners writing to the same stdout
-      # interleave their progress dots and their failure reports.
-      - name: Run the suite in default and randomized order
+      # The two tagged halves fence what the tags claim: that each half stands
+      # alone. `just test` runs them as its two parallel processes, so a
+      # cross-half dependency has to fail here rather than only on a
+      # contributor's machine.
+      #
+      # Every run is single-threaded and takes ~0.3GB, so all four go at once
+      # and the full randomized run (~18s) sets the wall time. Each writes to
+      # its own file, replayed in a collapsed group afterwards, because runners
+      # sharing a stdout interleave their progress dots and their failure
+      # reports.
+      - name: Run the suite
         run: |
-          ./bin/noir_spec > /tmp/spec-default.log 2>&1 & default_pid=$!
-          ./bin/noir_spec --order random > /tmp/spec-random.log 2>&1 & random_pid=$!
+          ./bin/noir_spec > /tmp/spec-default.log 2>&1 & pid_default=$!
+          ./bin/noir_spec --order random > /tmp/spec-random.log 2>&1 & pid_random=$!
+          ./bin/noir_spec --tag functional > /tmp/spec-functional.log 2>&1 & pid_functional=$!
+          ./bin/noir_spec --tag '~functional' > /tmp/spec-unit.log 2>&1 & pid_unit=$!
           failed=0
-          wait $default_pid || failed=1
-          wait $random_pid || failed=1
-          for order in default random; do
-            echo "::group::bin/noir_spec ($order order)"
-            cat "/tmp/spec-$order.log"
+          for name in default random functional unit; do
+            pid_var="pid_$name"
+            wait "${!pid_var}" || failed=1
+          done
+          for name in default random functional unit; do
+            echo "::group::bin/noir_spec ($name)"
+            cat "/tmp/spec-$name.log"
             echo "::endgroup::"
           done
           exit $failed

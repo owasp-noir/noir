@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on Express auth fixtures" do
+describe "--ai-context on Express auth fixtures", tags: "functional" do
   fixture_path = "fixtures/javascript/express_auth/"
 
   before_each do

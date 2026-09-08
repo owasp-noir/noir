@@ -62,7 +62,7 @@ tester = FunctionalTester.new("fixtures/php/codeigniter_callees/", {
 })
 tester.perform_tests
 
-describe "CodeIgniter callee extraction" do
+describe "CodeIgniter callee extraction", tags: "functional" do
   it "keeps resource convention routes callee-empty in the first pass" do
     photos = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/photos" }
     photos.should_not be_nil

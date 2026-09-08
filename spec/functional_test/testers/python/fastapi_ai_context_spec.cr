@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context on FastAPI auth fixtures" do
+describe "--ai-context on FastAPI auth fixtures", tags: "functional" do
   fixture_path = "fixtures/python/fastapi_auth/"
 
   before_each do

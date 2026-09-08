@@ -64,7 +64,7 @@ tester = FunctionalTester.new("fixtures/php/laravel_callees/", {
 })
 tester.perform_tests
 
-describe "Laravel callee extraction" do
+describe "Laravel callee extraction", tags: "functional" do
   it "resolves callees for controller-array handlers from the controller file" do
     reports_endpoint = tester.app.endpoints.find { |e| e.method == "GET" && e.url == "/reports" }
 

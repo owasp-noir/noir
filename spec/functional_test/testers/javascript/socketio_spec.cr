@@ -29,7 +29,7 @@ socketio_tester.perform_tests
 # calls, and `.on` handlers on non-socket receivers (`httpServer.on("error")`,
 # `process.on("SIGTERM")`) are not inbound attack surface and must not be
 # emitted.
-it "excludes reserved events, outbound emits and non-socket .on handlers" do
+it "excludes reserved events, outbound emits and non-socket .on handlers", tags: "functional" do
   urls = socketio_tester.app.endpoints.map(&.url)
   urls.should_not contain("ws://disconnect")
   urls.should_not contain("ws://banned")

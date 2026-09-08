@@ -15,7 +15,7 @@ overrides["exclude_path"] = YAML::Any.new("config.yml")
 baseline = FunctionalTester.new("fixtures/java/dropwizard/", empty_count, no_endpoints)
 excluded = FunctionalTester.new("fixtures/java/dropwizard/", empty_count, no_endpoints, overrides)
 
-describe "Dropwizard config discovery with --exclude-path" do
+describe "Dropwizard config discovery with --exclude-path", tags: "functional" do
   it "applies the server config when nothing is excluded" do
     baseline.endpoints.map(&.url).should contain("/service/api/hello")
   end

@@ -48,7 +48,7 @@ A staging area for test cases that are **not yet fully covered** or are **expect
 
 ```bash
 just spec-build        # Build the whole suite as bin/noir_spec
-just test              # spec-build, then run every CI example once
+just test              # spec-build, then run both halves in parallel
 just test-random       # Re-run the built binary in randomized example order
 just test-seed 12345   # Re-run it in one specific order
 just test-unit         # Run unit tests only (compiles just that directory)
@@ -57,8 +57,8 @@ just test-uncovered    # Run uncovered tests only (not in CI)
 ```
 
 `spec/suite.cr` requires `unit_test/**` plus `functional_test/testers/**` and
-nothing else, so `bin/noir_spec` holds exactly the 30,356 examples CI runs
-(5,697 unit and 24,659 functional). `uncovered_test/` is deliberately outside
+nothing else, so `bin/noir_spec` holds exactly the 30,357 examples CI runs
+(5,698 unit and 24,659 functional). `uncovered_test/` is deliberately outside
 it, which is also why `crystal spec` with no arguments is the wrong command
 here: its default glob sweeps up `uncovered_test/` too, and those examples are
 expected to fail.
@@ -71,10 +71,33 @@ Two constraints come with the binary:
   `unknown argument`. Narrow a run with a filter instead:
 
 ```bash
-./bin/noir_spec -e hono                                   # ~49 examples
-./bin/noir_spec --location spec/unit_test/foo_spec.cr:42   # one example
-./bin/noir_spec --dry-run                                  # list without running
+./bin/noir_spec -e hono                                    # ~49 examples
+./bin/noir_spec --location spec/unit_test/foo_spec.cr:42    # one example
+./bin/noir_spec --tag functional                            # functional half only
+./bin/noir_spec --tag '~functional'                         # unit half only
+./bin/noir_spec --dry-run                                   # list without running
 ```
+
+### Tags
+
+`functional` marks every example that drives a real scan over a fixture: the
+24,659 registered under `spec/functional_test/testers/`. The remaining 5,698
+are the unit half. `just test` runs the two as parallel processes, which is
+why the run drops from 18.6s to 9.7s.
+
+`FunctionalTester` tags what it registers. **A hand-written `describe`,
+`context` or `it` in a tester file has to spell the tag itself:**
+
+```crystal
+describe "TanStack Router source attribution", tags: "functional" do
+```
+
+Only top-level blocks need it, because Crystal merges a parent's tags into its
+children (`Spec::Item#all_tags`).
+`spec/unit_test/functional_tag_coverage_spec.cr` fails, naming the file and
+line, if one is missed. That guard exists because a missing tag breaks nothing
+visibly: the example simply joins the unit half and drags a full fixture scan
+into it, so the split quietly stops being a split.
 
 ### Why one binary
 
@@ -87,13 +110,14 @@ grow when the suites are combined. Measured locally on a warm compiler cache:
 | `crystal spec spec/functional_test` (24,659 ex) | 23.5s | 8.3s | 5.2 GB |
 | both suites compiled together | 20.9s | - | 6.1 GB |
 | `crystal build spec/suite.cr -o bin/noir_spec` | 20.0s | - | 6.6 GB |
-| `./bin/noir_spec` (30,356 ex) | 18.9s | 18.0s | 0.3 GB |
+| `./bin/noir_spec` (30,357 ex) | 18.9s | 18.0s | 0.3 GB |
 
-So the compile is paid once and every re-run after that is 18s on 0.3GB. Two
-runs of the binary in parallel finish in 19s wall against 36s sequential, which
-is what CI does with the default and randomized orders. CI previously compiled
-the same program four times (unit, functional, and both again randomized) for
-about 90s each.
+So the compile is paid once and every re-run after that is 18s on 0.3GB. Runs
+of the binary are single-threaded and cheap enough in memory to go in parallel:
+two at once finish in 19s wall against 36s sequential. CI builds once and then
+launches four (default order, randomized order, and each tag half on its own),
+where it previously compiled the same program four times, for about 90s each,
+to run unit, functional, and both again randomized.
 
 ### While working on one analyzer
 
@@ -130,7 +154,7 @@ reach past `perform_tests` for a one-off assertion, do the lookup in the `it`
 block:
 
 ```crystal
-it "keeps a single path param" do
+it "keeps a single path param", tags: "functional" do
   endpoint = tester.endpoints.find { |ep| ep.url == "/users/:id" }   # scans here
   ...
 end

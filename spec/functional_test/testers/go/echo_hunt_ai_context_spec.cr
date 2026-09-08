@@ -1,6 +1,6 @@
 require "../../func_spec.cr"
 
-describe "--ai-context Hunt signals on Echo fixtures" do
+describe "--ai-context Hunt signals on Echo fixtures", tags: "functional" do
   fixture_path = "fixtures/go/echo/"
 
   before_each do

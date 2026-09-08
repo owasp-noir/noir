@@ -17,7 +17,7 @@ tester = FunctionalTester.new("fixtures/csharp/httplistener_multi_service/", {
 
 tester.perform_tests
 
-describe "C# HttpListener analyzer across two services" do
+describe "C# HttpListener analyzer across two services", tags: "functional" do
   it "keeps a code path for every file that serves the route" do
     health = tester.app.endpoints.find { |e| e.url == "/health" && e.method == "GET" }
     health.should_not be_nil

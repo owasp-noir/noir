@@ -33,7 +33,7 @@ tester = FunctionalTester.new("fixtures/php/pure_webroot/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "does not emit files outside the document root" do
+it "does not emit files outside the document root", tags: "functional" do
   urls = tester.app.endpoints.map(&.url)
 
   # Both carry superglobals; neither is servable.

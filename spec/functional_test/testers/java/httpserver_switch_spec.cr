@@ -24,6 +24,6 @@ tester = FunctionalTester.new("fixtures/java/httpserver_switch/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "does not leak unrelated switch case labels as HTTP verbs" do
+it "does not leak unrelated switch case labels as HTTP verbs", tags: "functional" do
   tester.app.endpoints.any? { |e| e.url == "/actions" && (e.method == "DELETE" || e.method == "PUT") }.should be_false
 end

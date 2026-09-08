@@ -44,7 +44,7 @@ tester = FunctionalTester.new("fixtures/cpp/drogon/", {
 
 tester.perform_tests
 
-describe "Drogon analyzer edge cases" do
+describe "Drogon analyzer edge cases", tags: "functional" do
   it "does not leak registerHandler params across sibling lambdas" do
     ping = tester.app.endpoints.find { |e| e.url == "/ping" && e.method == "GET" }
     ping.should_not be_nil

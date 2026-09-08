@@ -21,7 +21,7 @@ tester = FunctionalTester.new("fixtures/javascript/fastify_two_services/", {
 }, expected_endpoints)
 tester.perform_tests
 
-it "keeps both services as code paths of the shared route" do
+it "keeps both services as code paths of the shared route", tags: "functional" do
   shared = tester.app.endpoints.find { |endpoint| endpoint.url == "/items/:id" && endpoint.method == "GET" }
   shared.should_not be_nil
   paths = shared.try(&.details.code_paths.map { |code_path| File.basename(File.dirname(code_path.path)) }) || [] of String

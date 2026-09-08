@@ -59,7 +59,7 @@ tester = FunctionalTester.new("fixtures/python/django_callees/", {
 })
 tester.perform_tests
 
-it "keeps Django class-based view callees scoped to each HTTP method" do
+it "keeps Django class-based view callees scoped to each HTTP method", tags: "functional" do
   get_endpoint = tester.app.endpoints.find { |endpoint| endpoint.url == "/profile" && endpoint.method == "GET" }
   post_endpoint = tester.app.endpoints.find { |endpoint| endpoint.url == "/profile" && endpoint.method == "POST" }
 

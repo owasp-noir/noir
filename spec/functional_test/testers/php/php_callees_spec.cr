@@ -37,7 +37,7 @@ tester = FunctionalTester.new("fixtures/php/php_callees/", {
 })
 tester.perform_tests
 
-describe "Pure PHP callee extraction" do
+describe "Pure PHP callee extraction", tags: "functional" do
   it "keeps file-level callees to top-level calls" do
     endpoint = tester.app.endpoints.find { |e| e.method == "POST" && e.url == "/create.php" }
     endpoint.should_not be_nil

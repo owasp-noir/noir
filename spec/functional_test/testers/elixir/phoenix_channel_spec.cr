@@ -30,7 +30,7 @@ phoenix_channel_tester.perform_tests
 
 # Regression: the catch-all handle_in clause carries no literal event name
 # and must not surface as an endpoint.
-it "does not emit an endpoint for a catch-all handle_in clause" do
+it "does not emit an endpoint for a catch-all handle_in clause", tags: "functional" do
   urls = phoenix_channel_tester.app.endpoints.map(&.url)
   urls.count(&.starts_with?("ws://room:*/")).should eq 2
 end

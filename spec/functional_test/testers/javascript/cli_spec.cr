@@ -119,7 +119,7 @@ FunctionalTester.new("fixtures/javascript/cli_command_line_args_fp/", {
   :endpoints => cla_fp_endpoints.size,
 }, cla_fp_endpoints).perform_tests
 
-describe "command-line-args scoping keeps unrelated fields out" do
+describe "command-line-args scoping keeps unrelated fields out", tags: "functional" do
   tester = FunctionalTester.new("fixtures/javascript/cli_command_line_args_fp/", {
     :techs => 1,
   }, [] of Endpoint)
@@ -167,7 +167,7 @@ FunctionalTester.new("fixtures/javascript/cli_getopts_fp/", {
   :endpoints => getopts_fp_endpoints.size,
 }, getopts_fp_endpoints).perform_tests
 
-describe "bare 'getopts' substring does not grant CLI evidence" do
+describe "bare 'getopts' substring does not grant CLI evidence", tags: "functional" do
   tester = FunctionalTester.new("fixtures/javascript/cli_getopts_fp/", {
     :techs => 1,
   }, [] of Endpoint)

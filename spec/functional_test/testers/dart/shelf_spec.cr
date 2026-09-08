@@ -53,7 +53,7 @@ callee_tester = FunctionalTester.new("fixtures/dart/shelf/", {} of Symbol => Int
 })
 callee_tester.perform_tests
 
-it "records bare function-reference handlers as callees" do
+it "records bare function-reference handlers as callees", tags: "functional" do
   endpoint = callee_tester.app.endpoints.find { |found| found.url == "/users" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -61,7 +61,7 @@ it "records bare function-reference handlers as callees" do
   end
 end
 
-it "extracts callees from @Route-annotated handler bodies" do
+it "extracts callees from @Route-annotated handler bodies", tags: "functional" do
   endpoint = callee_tester.app.endpoints.find { |found| found.url == "/tasks/{id}/done" && found.method == "POST" }
   endpoint.should_not be_nil
   endpoint.try do |actual|

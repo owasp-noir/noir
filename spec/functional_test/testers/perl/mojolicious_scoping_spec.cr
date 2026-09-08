@@ -21,7 +21,7 @@ tester = FunctionalTester.new("fixtures/perl/mojolicious_scoping/", {
 })
 tester.perform_tests
 
-it "does not read the neighbouring Dancer2 app as Mojolicious routes" do
+it "does not read the neighbouring Dancer2 app as Mojolicious routes", tags: "functional" do
   paths = tester.endpoints.flat_map { |endpoint| endpoint.details.code_paths.map(&.path) }
   paths.any?(&.includes?("dancer2app")).should be_false
 
@@ -31,7 +31,7 @@ it "does not read the neighbouring Dancer2 app as Mojolicious routes" do
   end
 end
 
-it "does not report data accessors spelled ->get('literal') as routes" do
+it "does not report data accessors spelled ->get('literal') as routes", tags: "functional" do
   urls = tester.endpoints.map(&.url)
   urls.should_not contain("/session_timeout")
   urls.should_not contain("/current_user")

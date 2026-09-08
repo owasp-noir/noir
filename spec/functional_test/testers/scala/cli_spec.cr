@@ -36,7 +36,7 @@ scallop_endpoints = [
 scallop_tester = FunctionalTester.new("fixtures/scala/cli_scallop/", {:techs => 1, :endpoints => scallop_endpoints.size}, scallop_endpoints)
 scallop_tester.perform_tests
 
-describe "scala scallop: subcommand-only opts must not leak onto the root endpoint" do
+describe "scala scallop: subcommand-only opts must not leak onto the root endpoint", tags: "functional" do
   it "cli://tool does not contain the subcommand-scoped 'port'/'file' params" do
     root = scallop_tester.app.endpoints.find { |e| e.url == "cli://tool" }
     root.should_not be_nil
@@ -67,7 +67,7 @@ scallop_object_endpoints = [
 scallop_object_tester = FunctionalTester.new("fixtures/scala/cli_scallop_object_fp/", {:techs => 1, :endpoints => scallop_object_endpoints.size}, scallop_object_endpoints)
 scallop_object_tester.perform_tests
 
-describe "scala scallop: 'object x extends Subcommand(...)' idiom creates a scoped subcommand endpoint" do
+describe "scala scallop: 'object x extends Subcommand(...)' idiom creates a scoped subcommand endpoint", tags: "functional" do
   it "cli://tool/serve exists and cli://tool does not contain its params" do
     endpoints_found = scallop_object_tester.app.endpoints
     serve = endpoints_found.find { |e| e.url == "cli://tool/serve" }

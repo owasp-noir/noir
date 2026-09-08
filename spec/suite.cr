@@ -9,7 +9,7 @@
 # randomized and functional randomized.
 #
 # Built as a binary instead, one 20s compile produces something that runs all
-# 30,356 examples in 18s using 0.3GB of RSS, so a second run in randomized
+# 30,357 examples in 18s using 0.3GB of RSS, so a second run in randomized
 # order, or a filtered re-run while debugging, is free of the compiler
 # entirely. Two runs in parallel finish in 19s wall against 36s sequential.
 #

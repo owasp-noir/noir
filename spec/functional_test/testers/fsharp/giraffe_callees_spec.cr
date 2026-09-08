@@ -59,7 +59,7 @@ tester = FunctionalTester.new("fixtures/fsharp/giraffe_callees/", {
 })
 tester.perform_tests
 
-it "reports exact Giraffe callees for multiline inline handlers" do
+it "reports exact Giraffe callees for multiline inline handlers", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/profile" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -67,7 +67,7 @@ it "reports exact Giraffe callees for multiline inline handlers" do
   end
 end
 
-it "recovers the handler callee for a constant-path route" do
+it "recovers the handler callee for a constant-path route", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/dashboard" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -75,7 +75,7 @@ it "recovers the handler callee for a constant-path route" do
   end
 end
 
-it "does not leak sibling Giraffe route callees into routef handlers" do
+it "does not leak sibling Giraffe route callees into routef handlers", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/users/:int" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -85,7 +85,7 @@ it "does not leak sibling Giraffe route callees into routef handlers" do
   end
 end
 
-it "populates Giraffe callee source paths" do
+it "populates Giraffe callee source paths", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/profile" && found.method == "GET" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
@@ -97,7 +97,7 @@ it "populates Giraffe callee source paths" do
   end
 end
 
-it "does not stop multiline Giraffe handlers at inner list delimiters" do
+it "does not stop multiline Giraffe handlers at inner list delimiters", tags: "functional" do
   endpoint = tester.app.endpoints.find { |found| found.url == "/pipeline" && found.method == "PATCH" }
   endpoint.should_not be_nil
   endpoint.try do |actual|
