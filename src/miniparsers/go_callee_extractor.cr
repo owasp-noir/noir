@@ -752,7 +752,10 @@ module Noir::GoCalleeExtractor
     import_aliases[Noir::TreeSitter.node_text(operand, source)]?
   end
 
-  private def extract_import_aliases(source : String) : Hash(String, String)
+  # `{alias => import path}` for every import in `source`. Public so the
+  # chi analyzer can turn `apiv1.Routes()` in a `.Mount(...)` call into
+  # the package directory that declares `Routes`.
+  def extract_import_aliases(source : String) : Hash(String, String)
     aliases = Hash(String, String).new
     Noir::TreeSitter.parse_go(source) do |root|
       walk(root) do |node|
