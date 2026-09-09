@@ -1,12 +1,8 @@
-require "../../spec_helper" # Common for Crystal spec setup
-require "../../../src/models/analyzer"
-require "../../../src/models/endpoint"                                    # Includes Param, Details, PathInfo
-require "../../../src/analyzer/analyzers/file_analyzers/graphql_analyzer" # This will register the hook
+require "../../spec_helper"            # Common for Crystal spec setup
+require "../../../src/models/endpoint" # Includes Param, Details, PathInfo
+require "../../../src/miniparsers/graphql_operation_parser"
 
-describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
-  # The file containing InternalGraphqlParser is loaded via the require statement at the top.
-  # We will call InternalGraphqlParser.parse_content directly.
-
+describe "Noir::GraphqlOperationParser.parse_content" do
   sample_graphql_content = <<-GRAPHQL
     # This is a comment
     query GetHero {
@@ -35,12 +31,12 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
     GRAPHQL
 
   # Note: The original subtask mentioned that the hook itself should filter for .graphql files.
-  # The InternalGraphqlParser.parse_content method itself does not (and should not) filter by filename,
+  # The Noir::GraphqlOperationParser.parse_content method itself does not (and should not) filter by filename,
   # as it's concerned with parsing content. The hook that calls it is responsible for file filtering.
   # These tests will focus on the content parsing logic of parse_content.
 
   it "processes an empty content string" do
-    endpoints = InternalGraphqlParser.parse_content("empty.graphql", "")
+    endpoints = Noir::GraphqlOperationParser.parse_content("empty.graphql", "")
     endpoints.should be_empty
   end
 
@@ -49,14 +45,14 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
       # Only comments
       # type User { name: String }
       GRAPHQL
-    endpoints = InternalGraphqlParser.parse_content("no_ops.graphql", content_no_ops)
+    endpoints = Noir::GraphqlOperationParser.parse_content("no_ops.graphql", content_no_ops)
     endpoints.should be_empty
   end
 
   describe "when processing valid GraphQL content" do
     path = "example.graphql" # Define path as a local variable
     # Calculate endpoints once for this describe block, making it a local variable
-    endpoints = InternalGraphqlParser.parse_content(path, sample_graphql_content)
+    endpoints = Noir::GraphqlOperationParser.parse_content(path, sample_graphql_content)
 
     it "extracts the correct number of endpoints" do
       endpoints.size.should eq(4)
@@ -189,5 +185,43 @@ describe "GraphQL Analyzer Logic (InternalGraphqlParser.parse_content)" do
     end
   end
 
-  # File read errors are handled by the hook, not by parse_content directly, so no test for that here.
+  # File read errors are handled by `SpecificationEngine#each_spec_file`, not
+  # by `parse_content`, so there is no example for them here.
+end
+
+# `operation_document?` is what `Detector::Specification::GraphqlOperation`
+# claims a file on, and the analyzer then re-parses that same file with
+# `parse_content`. The two must agree about every document, or the detector
+# registers files the analyzer reports nothing for (a tech in the report with
+# no endpoints behind it) or skips files that do carry operations.
+describe "Noir::GraphqlOperationParser.operation_document?" do
+  it "agrees with parse_content on an operation document" do
+    content = "query GetUser { user { id } }"
+    Noir::GraphqlOperationParser.operation_document?(content).should be_true
+    Noir::GraphqlOperationParser.parse_content("a.graphql", content).size.should eq 1
+  end
+
+  it "declines an SDL schema document" do
+    content = <<-GRAPHQL
+      type Query {
+        user(id: ID!): User
+      }
+
+      type User {
+        id: ID!
+      }
+      GRAPHQL
+    Noir::GraphqlOperationParser.operation_document?(content).should be_false
+    Noir::GraphqlOperationParser.parse_content("schema.graphql", content).should be_empty
+  end
+
+  it "declines an anonymous operation, which carries no name to report" do
+    content = "{ user { id } }"
+    Noir::GraphqlOperationParser.operation_document?(content).should be_false
+    Noir::GraphqlOperationParser.parse_content("anon.graphql", content).should be_empty
+  end
+
+  it "declines an empty document" do
+    Noir::GraphqlOperationParser.operation_document?("").should be_false
+  end
 end
