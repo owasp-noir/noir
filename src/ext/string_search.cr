@@ -50,7 +50,7 @@ module Noir::FastSearch
   def self.byte_index(hay : String, needle : String, offset : Int32) : Int32?
     hay_size = hay.bytesize
     needle_size = needle.bytesize
-    return nil if needle_size == 0 || offset < 0 || offset + needle_size > hay_size
+    return if needle_size == 0 || offset < 0 || offset + needle_size > hay_size
 
     hay_ptr = hay.to_unsafe
     needle_ptr = needle.to_unsafe
@@ -63,7 +63,7 @@ module Noir::FastSearch
     last = hay_ptr + (hay_size - needle_size) + pivot
     while scan <= last
       found = LibC.memchr(scan.as(Void*), target, (last - scan + 1).to_u64)
-      return nil if found.null?
+      return if found.null?
       candidate = found.as(UInt8*) - pivot
       if candidate.memcmp(needle_ptr, needle_size) == 0
         return (candidate - hay_ptr).to_i32
@@ -104,7 +104,7 @@ class String
   def index(search : String, offset = 0) : Int32?
     if offset == 0 && !search.empty?
       pos = Noir::FastSearch.byte_index(self, search, 0)
-      return nil unless pos
+      return unless pos
       return pos if Noir::FastSearch.ascii_prefix?(to_unsafe, pos)
     end
     previous_def

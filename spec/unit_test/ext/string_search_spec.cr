@@ -33,7 +33,7 @@ private def reference_index(hay : String, search : String, offset = 0) : Int32?
     pointer += 1
   end
 
-  while true
+  loop do
     if hash == search_hash && head_pointer.memcmp(search.to_unsafe, search.bytesize) == 0
       return char_index
     end
