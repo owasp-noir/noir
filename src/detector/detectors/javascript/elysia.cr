@@ -28,6 +28,9 @@ module Detector::Javascript
                           filename.ends_with?(".js") ||
                           filename.ends_with?(".mjs")
 
+      # Necessary condition for every marker below, which all spell `elysia`
+      # literally; a memchr scan is far cheaper than the alternation regex.
+      return false unless file_contents.includes?("elysia")
       content_matches?(file_contents, SOURCE_MARKERS)
     end
   end

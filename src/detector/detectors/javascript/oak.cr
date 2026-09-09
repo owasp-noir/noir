@@ -29,6 +29,11 @@ module Detector::Javascript
     )
 
     def detect(filename : String, file_contents : String) : Bool
+      # Necessary condition for every marker below: each spells `oak`
+      # literally (`@oak/oak`, `jsr:@oak/oak`, `deno.land/x/oak`), and a
+      # memchr scan is far cheaper than the alternation regex.
+      return false unless file_contents.includes?("oak")
+
       base = File.basename(filename)
       return content_matches?(file_contents, SIGNAL) if MANIFEST_BASENAMES.includes?(base)
 

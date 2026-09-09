@@ -32,6 +32,9 @@ module Detector::Javascript
 
       if filename.ends_with?(".js") || filename.ends_with?(".mjs") ||
          filename.ends_with?(".cjs") || filename.ends_with?(".ts")
+        # Necessary condition for every marker below, which all spell `sails`
+        # literally; a memchr scan is far cheaper than the alternation regex.
+        return false unless file_contents.includes?("sails")
         return content_matches?(file_contents, SOURCE_MARKERS)
       end
 

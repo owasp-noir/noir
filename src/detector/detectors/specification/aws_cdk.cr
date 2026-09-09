@@ -15,8 +15,16 @@ module Detector::Specification
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
 
-      hints = filename.ends_with?(".py") ? PYTHON_HINT_MARKER : TS_JS_HINT_MARKER
-      return false unless content_matches?(file_contents, hints)
+      # Every hint marker spells `aws_cdk` (Python) or `aws-cdk` (TS/JS)
+      # literally, so one memchr scan settles the overwhelming majority of
+      # files before the alternation regex runs.
+      if filename.ends_with?(".py")
+        return false unless file_contents.includes?("aws_cdk")
+        return false unless content_matches?(file_contents, PYTHON_HINT_MARKER)
+      else
+        return false unless file_contents.includes?("aws-cdk")
+        return false unless content_matches?(file_contents, TS_JS_HINT_MARKER)
+      end
 
       # Require at least one CDK API surface construct so we don't fire on
       # CDK utility files that contain imports but no endpoint declarations.

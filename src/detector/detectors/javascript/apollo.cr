@@ -22,6 +22,10 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless applicable?(filename)
+      # Necessary condition for every marker below, which all spell `apollo`
+      # or `Apollo` literally; a memchr scan is far cheaper than the
+      # alternation regex.
+      return false unless file_contents.includes?("apollo") || file_contents.includes?("Apollo")
       content_matches?(file_contents, SIGNAL)
     end
   end

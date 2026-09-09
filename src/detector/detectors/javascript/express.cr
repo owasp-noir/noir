@@ -30,6 +30,9 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless SOURCE_EXTENSIONS.any? { |ext| filename.ends_with?(ext) }
+      # Necessary condition for every marker below, which all spell `express`
+      # literally; a memchr scan is far cheaper than the alternation regex.
+      return false unless file_contents.includes?("express")
       content_matches?(file_contents, SIGNAL)
     end
   end

@@ -6,6 +6,10 @@ module Detector::Python
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
+      # Necessary condition for every pattern below, which all spell
+      # `masonite` literally: a memchr scan is far cheaper than the anchored
+      # import regexes, and a file without the word cannot match them.
+      return false unless file_contents.includes?("masonite")
 
       # Match framework imports (`masonite.routes`, `masonite.controllers`,
       # `masonite.views`, plain `import masonite`, ...) while avoiding

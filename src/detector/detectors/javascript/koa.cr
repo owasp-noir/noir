@@ -16,6 +16,10 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")
+      # Necessary condition for every marker below, which all spell `koa` or
+      # `Koa` literally; a memchr scan is far cheaper than the alternation
+      # regex.
+      return false unless file_contents.includes?("koa") || file_contents.includes?("Koa")
       content_matches?(file_contents, SIGNAL)
     end
   end

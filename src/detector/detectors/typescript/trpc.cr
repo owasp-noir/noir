@@ -29,6 +29,10 @@ module Detector::Typescript
         return file_contents.includes?("\"@trpc/server\"") || file_contents.includes?("\"@trpc/next\"")
       end
 
+      # Necessary condition for every marker below, which all spell `trpc` or
+      # `TRPC` or `fetchRequestHandler` or `createNextApiHandler` literally; a
+      # memchr scan is far cheaper than the alternation regex.
+      return false unless file_contents.includes?("trpc") || file_contents.includes?("TRPC") || file_contents.includes?("fetchRequestHandler") || file_contents.includes?("createNextApiHandler")
       if content_matches?(file_contents, SIGNAL)
         return true
       end

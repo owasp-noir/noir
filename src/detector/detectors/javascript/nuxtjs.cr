@@ -26,6 +26,7 @@ module Detector::Javascript
 
       # Check for Nuxt imports and patterns in JS/TS files
       if (filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts")) &&
+         (file_contents.includes?("nuxt") || file_contents.includes?("Nuxt") || file_contents.includes?("defineEventHandler") || file_contents.includes?("#app")) &&
          content_matches?(file_contents, SIGNAL)
         return true
       end

@@ -18,6 +18,9 @@ module Detector::Javascript
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".js") || filename.ends_with?(".mjs") || filename.ends_with?(".ts") ||
                           filename.ends_with?(".jsx") || filename.ends_with?(".tsx") || filename.ends_with?(".cjs")
+      # Necessary condition for every marker below, which all spell `fastify`
+      # literally; a memchr scan is far cheaper than the alternation regex.
+      return false unless file_contents.includes?("fastify")
       content_matches?(file_contents, SIGNAL)
     end
   end
