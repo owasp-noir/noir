@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package mixed.v1;
+
+import "google/api/annotations.proto";
+
+message GadgetRequest {
+  string gadget_id = 1;
+  string label = 2;
+}
+
+message GadgetResponse {
+  string gadget_id = 1;
+}
+
+service GadgetService {
+  // Brace form, sitting in the same file as the field form below.
+  rpc GetGadget(GadgetRequest) returns (GadgetResponse) {
+    option (google.api.http) = {
+      get: "/v1/gadgets/{gadget_id}"
+    };
+  }
+
+  // Field form.
+  rpc ListGadgets(GadgetRequest) returns (GadgetResponse) {
+    option (google.api.http).get = "/v1/gadgets";
+  }
+
+  // Both spellings on one rpc. protoc rejects that ("option was already
+  // set"), but a scanner reads whatever is on disk, so both routes are
+  // reported rather than one of them being silently dropped.
+  rpc ReplaceGadget(GadgetRequest) returns (GadgetResponse) {
+    option (google.api.http) = {
+      put: "/v1/gadgets/{gadget_id}"
+      body: "*"
+    };
+    option (google.api.http).post = "/v1/gadgets/{gadget_id}/replace";
+  }
+}
