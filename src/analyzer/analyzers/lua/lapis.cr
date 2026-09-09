@@ -449,7 +449,7 @@ module Analyzer::Lua
           next
         end
 
-        if depth == 1
+        if depth == 1 && table_key_position?(chars, index, open_index)
           if char == '['
             # `["GET"] = ...` — bracketed string key.
             quote_index = skip_ws_chars(chars, index + 1)
@@ -465,8 +465,7 @@ module Analyzer::Lua
                 end
               end
             end
-          elsif identifier_start?(char) && !identifier_part?(index > 0 ? chars[index - 1] : '\0') &&
-                (index == 0 || (chars[index - 1] != '.' && chars[index - 1] != ':'))
+          elsif identifier_start?(char)
             name_end = index
             while name_end < close_index && identifier_part?(chars[name_end])
               name_end += 1
@@ -488,6 +487,22 @@ module Analyzer::Lua
       end
 
       keys
+    end
+
+    # A key in a Lua table constructor can only follow the opening brace
+    # or a `,` / `;` separator. Requiring that keeps the scan off tokens
+    # that merely look like keys inside a handler body — `local POST = 1`,
+    # `t.PUT = 2`, `obj:DELETE` — which sit at the same brace depth
+    # because Lua function bodies are delimited by `function`/`end`, not
+    # by braces.
+    private def table_key_position?(chars : Array(Char), index : Int32, floor : Int32) : Bool
+      cursor = index - 1
+      while cursor > floor && chars[cursor].whitespace?
+        cursor -= 1
+      end
+      return true if cursor == floor
+      char = chars[cursor]
+      char == '{' || char == ',' || char == ';'
     end
 
     private def table_key_of_interest?(name : String) : Bool
