@@ -240,6 +240,27 @@ struct Details
   property status_code : Int32?
   property technology : String?
 
+  # Every technology that produced this endpoint, sorted, deduplicated.
+  #
+  # The optimizer collapses endpoints on `(method, url, scope)`, and the
+  # winning duplicate keeps `technology` while the loser's is discarded —
+  # `code_paths` records that a second file also declared the route, but
+  # nothing records which analyzer read that file. Scanning casdoor whole
+  # therefore attributed 9 endpoints to `oas2` when its swagger document
+  # alone yields 235: the fact was destroyed at the merge, in proportion to
+  # how well the sources agreed. This list keeps it. `technology` is
+  # unchanged (still the winner) and is always a member of this list.
+  #
+  # Serialized only when two or more technologies contributed. A single
+  # entry would repeat `technology` on every endpoint of every report, so
+  # suppressing it keeps the JSON/YAML/TOML documents byte-identical for the
+  # unmerged majority; a consumer reads `technologies` when present and
+  # falls back to `[technology]` when absent — the same fallback it needs
+  # for output from a Noir that predates the field.
+  @[JSON::Field(ignore_serialize: technologies.size < 2)]
+  @[YAML::Field(ignore_serialize: technologies.size < 2)]
+  property technologies : Array(String) = [] of String
+
   # New details types can be added in the future.
 
   def initialize(code_path : PathInfo? = nil)
@@ -259,7 +280,18 @@ struct Details
     if technology = @technology
       copy.technology = technology
     end
+    @technologies.each { |contributor| copy.add_technology(contributor) }
     copy
+  end
+
+  # Record a contributing technology. Idempotent; keeps the list sorted so
+  # the emitted order does not depend on which duplicate the optimizer saw
+  # first.
+  def add_technology(technology : String?) : Nil
+    return if technology.nil? || technology.empty?
+    return if @technologies.includes?(technology)
+    @technologies << technology
+    @technologies.sort!
   end
 
   def status_code=(status_code : Int32)

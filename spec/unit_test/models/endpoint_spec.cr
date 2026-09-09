@@ -178,6 +178,72 @@ describe "Endpoint equality" do
   end
 end
 
+describe "Details contributing technologies" do
+  it "adds technologies once each, sorted, ignoring nil and blank" do
+    details = Details.new
+    details.add_technology("oas3")
+    details.add_technology("go_gin")
+    details.add_technology(nil)
+    details.add_technology("")
+    details.add_technology("oas3")
+    details.technologies.should eq(["go_gin", "oas3"])
+  end
+
+  it "copies the list on detached_copy without sharing it" do
+    details = Details.new
+    details.add_technology("go_gin")
+    copy = details.detached_copy
+    copy.add_technology("oas3")
+    details.technologies.should eq(["go_gin"])
+    copy.technologies.should eq(["go_gin", "oas3"])
+  end
+
+  # Serialized only when two or more technologies contributed, so the
+  # unmerged majority of endpoints keep their pre-existing JSON/YAML shape.
+  it "omits the list from JSON and YAML when it holds fewer than two entries" do
+    details = Details.new(PathInfo.new("router.go", 3))
+    details.technology = "go_gin"
+    details.add_technology("go_gin")
+    endpoint = Endpoint.new("/users", "GET", details)
+
+    json = JSON.parse(endpoint.to_json)
+    json["details"]["technology"].as_s.should eq("go_gin")
+    json["details"]["technologies"]?.should be_nil
+
+    yaml = YAML.parse(endpoint.to_yaml)
+    yaml["details"]["technology"].as_s.should eq("go_gin")
+    yaml["details"]["technologies"]?.should be_nil
+  end
+
+  it "round-trips a multi-technology list through JSON and YAML" do
+    details = Details.new(PathInfo.new("router.go", 3))
+    details.technology = "go_gin"
+    details.add_technology("go_gin")
+    details.add_technology("oas3")
+    endpoint = Endpoint.new("/users", "GET", details)
+
+    json = JSON.parse(endpoint.to_json)
+    json["details"]["technology"].as_s.should eq("go_gin")
+    json["details"]["technologies"].as_a.map(&.as_s).should eq(["go_gin", "oas3"])
+    from_json = Endpoint.from_json(endpoint.to_json)
+    from_json.details.technology.should eq("go_gin")
+    from_json.details.technologies.should eq(["go_gin", "oas3"])
+
+    yaml = YAML.parse(endpoint.to_yaml)
+    yaml["details"]["technologies"].as_a.map(&.as_s).should eq(["go_gin", "oas3"])
+    from_yaml = Endpoint.from_yaml(endpoint.to_yaml)
+    from_yaml.details.technology.should eq("go_gin")
+    from_yaml.details.technologies.should eq(["go_gin", "oas3"])
+  end
+
+  it "parses documents written before the field existed as an empty list" do
+    legacy = %({"url":"/users","method":"GET","params":[],"details":{"code_paths":[{"path":"router.go","line":3}],"technology":"go_gin"},"protocol":"http","kind":"","tags":[],"callees":[],"internal":false})
+    endpoint = Endpoint.from_json(legacy)
+    endpoint.details.technology.should eq("go_gin")
+    endpoint.details.technologies.should eq([] of String)
+  end
+end
+
 describe AIContext do
   it "is empty by default" do
     AIContext.new.empty?.should be_true
