@@ -37,6 +37,7 @@ sort_by = "weight"
 | Directus (schema snapshot) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | Envoy | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Envoy | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| GraphQL Operations | GRAPHQL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | GraphQL SDL | GRAPHQL_SDL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Grpc | PROTOBUF | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |
