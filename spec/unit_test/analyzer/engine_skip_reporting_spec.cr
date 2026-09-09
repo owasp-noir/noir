@@ -161,18 +161,22 @@ describe "engine per-file skip reporting" do
       File.write(bad, "query Q { a }\n")
 
       seen = [] of String
-      SpecFileAnalyzer.add_hook(->(path : String, _url : String) do
+      SpecFileAnalyzer.add_hook(tech: "spec_file_hook", func: ->(path : String, _url : String) do
         raise "hook exploded" if path == bad
         seen << path
         [] of Endpoint
-      end, requires_url: false)
+      end)
 
       locator = CodeLocator.instance
       locator.clear_all
       locator.register_path(good)
       locator.register_path(bad)
 
-      SpecFileAnalyzer.new(spec_options(temp_dir)).analyze
+      # Every hook matches what it finds against `-u/--url`, so the file
+      # analyzer runs no hook at all without one.
+      options = spec_options(temp_dir)
+      options["url"] = YAML::Any.new("https://ex.com")
+      SpecFileAnalyzer.new(options).analyze
 
       seen.should eq([good])
 

@@ -585,22 +585,19 @@ module Noir::CLI::ScanCommand
       app.logger.warning "No technologies detected."
       app.logger.sub "➔ If you know the technology, use the -t flag to specify it."
       app.logger.sub "➔ Browse the supported tech list with `noir list techs`."
-      if !app.options["url"].to_s.empty?
-        app.logger.info "Falling back to file-based analysis because -u was set."
+      if FileAnalyzer.new(app.options).hooks_count > 0
+        # Asks the analyzer that will actually run instead of re-deriving
+        # its activation rule here. `-u` is still what switches the file
+        # hooks on, but it is no longer sufficient: `--only-techs`
+        # restricts the scan to technologies these hooks are not among, and
+        # announcing a fallback that then produces nothing is how a
+        # CLI-side copy of an analyzer's rule goes wrong. The previous copy
+        # went wrong in the other direction — it gated the whole file
+        # analyzer on `-u`, so a code base whose only surface was a
+        # `.graphql` operation document reported zero endpoints.
+        app.logger.info "Falling back to file-based analysis."
       elsif ai_provider_active?(app.options)
         app.logger.info "Falling back to AI-based analysis because --ai-provider was set."
-      elsif FileAnalyzer.url_independent_hooks?
-        # No tech analyzer will run, but the url-independent file hooks
-        # (GraphQL operation documents) recognise endpoints from file
-        # syntax rather than by matching `-u`, so the analysis pass still
-        # has work to do. Bailing out here made a code base whose only
-        # surface is a `.graphql`/`.gql` operation document report zero
-        # endpoints on a plain `noir scan ./app`, even though the analyzer
-        # layer had already been fixed to run those hooks without `-u`.
-        # FunctionalTester drives `detect`/`analyze` directly, so this
-        # CLI-only gate slipped past the functional spec that asserts the
-        # endpoint is found on a default scan.
-        app.logger.info "Falling back to file-based analysis."
       elsif app.passive_results.size > 0
         app.logger.info "Noir found #{app.passive_results.size} passive results."
         # The detection walk still ran, so it can still have lost a subtree
