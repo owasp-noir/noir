@@ -1245,8 +1245,9 @@ module Analyzer::Python
     # pin `route_base = ""` (so `SupersetIndexView` really is mounted at
     # `/`, not `/supersetindexview`), and the security APIs pin resource
     # names that no application source spells out (`GroupApi` ->
-    # `security/groups`). Generated from Flask-AppBuilder 5.2.2; the values
-    # are unchanged in 3.4.x and 4.5.x.
+    # `security/groups`). Generated from Flask-AppBuilder 5.2.2, plus
+    # `BaseModelApi`, which 3.4.x and 4.5.x carry and 5.2.2 dropped; every
+    # value here is identical across those three releases.
     #
     # Tuple shape: {kind, route_base, resource_name, version}. `nil` means
     # "not set at this level, keep walking".
@@ -1281,7 +1282,6 @@ module Analyzer::Python
       "LocaleView"                 => {FAB_VIEW_KIND, "/lang", nil, nil},
       "MasterDetailView"           => {FAB_VIEW_KIND, nil, nil, nil},
       "MenuApi"                    => {FAB_API_KIND, nil, "menu", "v1"},
-      "ModelApi"                   => {FAB_API_KIND, nil, nil, "v1"},
       "ModelRestApi"               => {FAB_API_KIND, nil, nil, "v1"},
       "ModelView"                  => {FAB_VIEW_KIND, nil, nil, nil},
       "MultipleView"               => {FAB_VIEW_KIND, nil, nil, nil},
@@ -1430,20 +1430,13 @@ module Analyzer::Python
         indent = line.size - stripped.size
 
         if stripped.starts_with?("class ")
-          # `class Foo(\n    Mixin, Base\n):` — Superset spells a third of
-          # its API classes that way. Joining is not enough: the
-          # continuation lines have to be consumed too, or the closing
-          # `):` reads as a dedent that ends the class body immediately.
-          header = strip_python_line_comment(stripped)
-          if python_paren_delta(line) > 0
-            skip_until = python_call_end_index(lines, index)
-            header = join_python_class_header(lines, index, skip_until)
-          end
+          header, header_end = python_class_header(lines, index)
           if class_match = header.match(FAB_CLASS_DEF_RE)
             flush.call
             class_name = class_match[1]
             class_indent = indent
             bases = parse_python_base_classes(class_match[2]?)
+            skip_until = header_end
             next
           end
         end
@@ -1482,7 +1475,7 @@ module Analyzer::Python
     end
 
     private def flask_appbuilder_import_aliases(source : ::String) : Hash(::String, ::String)?
-      return nil unless source.includes?("flask_appbuilder")
+      return unless source.includes?("flask_appbuilder")
 
       aliases = nil
       source.each_line do |line|
@@ -1578,22 +1571,40 @@ module Analyzer::Python
       end
 
       candidates = fab.by_name[base]?
-      return nil if candidates.nil?
+      return if candidates.nil?
       candidates.size == 1 ? candidates[0] : nil
     end
 
-    # Join a multi-line `class Foo(...)` header into one line, dropping each
-    # line's trailing `#` comment first. Superset writes
-    # `class CssTemplateModelView(  # pylint: disable=too-many-ancestors`,
-    # and a comment carried into the joined text swallows the first base
-    # name — which is the one that reaches Flask-AppBuilder.
-    private def join_python_class_header(lines : Array(::String), start_index : Int32,
-                                         end_index : Int32) : ::String
-      pieces = [] of ::String
-      (start_index..Math.min(end_index, lines.size - 1)).each do |i|
-        pieces << strip_python_line_comment(lines[i].strip)
+    # A `class Foo(...):` header joined into one logical line, with the
+    # index of its last source line.
+    #
+    # Superset spells a third of its API classes as `class Foo(\n
+    # Mixin, Base\n):`, and the caller has to consume those continuation
+    # lines — otherwise the closing `):` reads as a dedent that ends the
+    # class body before any `@expose` in it. Each line's `#` comment is
+    # dropped first: `class CssTemplateModelView(  # pylint: disable=...`
+    # otherwise swallows the first base name, which is the one that
+    # reaches Flask-AppBuilder.
+    private def python_class_header(lines : Array(::String), index : Int32) : Tuple(::String, Int32)
+      first = strip_python_line_comment(lines[index].strip)
+      delta = python_paren_delta(first)
+      return {first, index} if delta <= 0
+
+      pieces = [first]
+      i = index + 1
+      while i < lines.size
+        piece = strip_python_line_comment(lines[i].strip)
+        # A base list never contains another construct. Without this the
+        # unbalanced `(` of one malformed header swallows the rest of the
+        # file, taking every later class's routes with it.
+        break if piece.starts_with?("class ") || piece.starts_with?("def ") ||
+                 piece.starts_with?("async def ") || piece.starts_with?('@')
+        pieces << piece
+        delta += python_paren_delta(piece)
+        break if delta <= 0
+        i += 1
       end
-      pieces.join(' ').lstrip
+      {pieces.join(' '), Math.min(i, lines.size - 1)}
     end
 
     private def strip_python_line_comment(line : ::String) : ::String
@@ -1601,23 +1612,12 @@ module Analyzer::Python
       comment_index ? line[0, comment_index].rstrip : line
     end
 
-    # Index of the last line the parenthesised expression opened at
-    # `index` spans. Mirrors `join_until_python_call_closes`, which
-    # returns the joined text but not where it ended.
-    private def python_call_end_index(lines : Array(::String), index : Int32) : Int32
-      delta = python_paren_delta(lines[index])
-      i = index + 1
-      while i < lines.size && delta > 0
-        delta += python_paren_delta(lines[i])
-        return i if delta <= 0
-        i += 1
-      end
-      i
-    end
-
     # Phase two: resolve each `@expose`-carrying class against the chain
     # collected in phase one and emit its endpoints at the composed URL.
     private def emit_flask_appbuilder_endpoints(fab : FabState) : Nil
+      # Several route classes usually share one module; splitting its
+      # content once per class re-allocates every line of it.
+      lines_by_path = Hash(::String, Array(::String)).new
       fab.decls.each do |decl|
         next if decl.exposes.empty?
 
@@ -1655,7 +1655,7 @@ module Analyzer::Python
                  "/#{decl.name.downcase}"
                end
 
-        lines = fetch_file_content(decl.path).split("\n")
+        lines = lines_by_path[decl.path] ||= fetch_file_content(decl.path).split("\n")
         decl.exposes.each do |expose|
           normalized_path, path_params = normalize_flask_path_params(join_fab_paths(base, expose.route_path))
           expose.methods.each do |method|
