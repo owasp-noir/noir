@@ -59,6 +59,13 @@ describe "Initialize Analyzer" do
   end
 end
 
+private def with_url_options : Hash(String, YAML::Any)
+  options = create_test_options
+  options["base"] = YAML::Any.new([YAML::Any.new("noir")])
+  options["url"] = YAML::Any.new("https://ex.com")
+  options
+end
+
 describe "Initialize FileAnalyzer" do
   options = create_test_options
   options["base"] = YAML::Any.new([YAML::Any.new("noir")])
@@ -77,37 +84,40 @@ describe "Initialize FileAnalyzer" do
     object.base_path.should eq("noir")
   end
 
-  it "getter - hooks_count" do
-    object.hooks_count.should_not eq(0)
-  end
-
-  # Hooks that recognise an endpoint by matching against `-u/--url` cannot
-  # do anything without one, but the url-independent hooks (graphql
-  # operation documents) still have to run — a plain `noir scan ./app`
-  # used to skip the file analyzer wholesale and lose them.
-  it "keeps url-independent hooks active when no url is set" do
+  # Every hook recognises an endpoint by matching a URL it found against
+  # `-u/--url`, so with no url none of them can do anything but match
+  # everything.
+  it "activates no hook when no url is set" do
     object.url.should eq("")
-    object.active_hooks.should_not be_empty
-    object.active_hooks.all?(&.requires_url.!).should be_true
+    object.active_hooks.should be_empty
+    object.hooks_count.should eq(0)
   end
 
   it "activates every hook once a url is set" do
-    with_url = create_test_options
-    with_url["base"] = YAML::Any.new([YAML::Any.new("noir")])
-    with_url["url"] = YAML::Any.new("https://ex.com")
-
-    analyzer = FileAnalyzer.new(with_url)
-    analyzer.active_hooks.size.should be > object.active_hooks.size
+    analyzer = FileAnalyzer.new(with_url_options)
+    analyzer.active_hooks.should_not be_empty
+    analyzer.hooks_count.should eq(analyzer.active_hooks.size)
   end
 
-  # `noir scan` branches on this to decide whether a code base with zero
-  # detected technologies is still worth an analysis pass. If it ever goes
-  # false the CLI takes its "nothing left to do" exit and every
-  # url-independent hook silently stops contributing to a default scan —
-  # which is exactly the regression that made `.graphql`/`.gql` operation
-  # documents invisible to `noir scan ./app`.
-  it "reports that url-independent hooks exist" do
-    FileAnalyzer.url_independent_hooks?.should be_true
+  # Every endpoint that leaves the analysis phase carries the technology it
+  # came from; these hooks run outside `analysis_endpoints`' per-tech loop,
+  # so they have to stamp their own. An unset one is what put `POST /graphql`
+  # into a report as `"technology": null`.
+  it "gives every hook a technology to attribute its endpoints to" do
+    analyzer = FileAnalyzer.new(with_url_options)
+    analyzer.active_hooks.each(&.tech.should_not(be_empty))
+  end
+
+  # `--only-techs` restricts the scan to the technologies it names. These
+  # hooks are not among them (they have no catalog entry, so the flag cannot
+  # resolve one), so a restriction switches them off instead of leaving them
+  # running underneath it and adding endpoints the named analyzer never
+  # produced.
+  it "runs no hook when --only-techs restricts the scan" do
+    restricted = with_url_options
+    restricted["only_techs"] = YAML::Any.new("rust_axum")
+
+    FileAnalyzer.new(restricted).active_hooks.should be_empty
   end
 end
 

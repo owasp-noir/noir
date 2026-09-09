@@ -5,7 +5,12 @@ require "../../../utils/file_url_scanner"
 
 # Reports URLs hidden in base64-encoded literals whose decoded form contains
 # the user-supplied `-u/--url`.
-FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
+#
+# Attributed to `file_base64` rather than to the language of the file it was
+# found in: an endpoint recovered from an encoded blob is a different kind of
+# finding from a route the code declares, and the report should say so. See
+# `FileAnalyzer::Hook` for why this name is not in the tech catalog.
+FileAnalyzer.add_hook(tech: "file_base64", func: ->(path : String, url : String) : Array(Endpoint) {
   results = [] of Endpoint
 
   begin
