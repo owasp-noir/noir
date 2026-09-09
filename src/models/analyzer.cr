@@ -505,9 +505,9 @@ class FileAnalyzer < Analyzer
   # a membership test rather than "any restriction disables them" so it
   # stays correct if one of these ever does become nameable.
   #
-  # Before this, `--only-techs rust_axum` on a project with a `.graphql`
-  # operation document returned that document's endpoint too: eleven
-  # endpoints where the rust_axum analyzer had produced ten.
+  # Measured on flipt with `-u`: `--only-techs go_chi` returned four
+  # endpoints, three of them URL literals the string hook had found in
+  # unrelated files. It returns one now — the one go_chi produced.
   def active_hooks : Array(Hook)
     return [] of Hook if @url.empty?
     return @@hooks if @only_techs.empty?
