@@ -25,6 +25,19 @@ noir scan . -f json --no-log
 
 The result is an object with an `endpoints` array, a `passive_results` array, and an `errors` array. Each endpoint has the URL, HTTP method, parameters (typed as `cookie`, `form`, `header`, `json`, etc.), source code location in `details.code_paths`, the analyzer that produced it in `details.technology`, and any security tags from taggers. The sample below was produced with taggers enabled (`-T`), which is what fills the `tags` arrays.
 
+When more than one analyzer finds the same endpoint, for example a Go router and the project's OpenAPI document, Noir merges them into one entry. `details.technology` names the analyzer that won the merge, and `details.technologies` lists every analyzer that contributed, sorted and deduplicated. The list is only emitted when it holds two or more entries, so an endpoint seen by a single analyzer looks exactly as it did before. A consumer that wants every source should read `technologies` when present and fall back to `[technology]` when it is absent.
+
+```json
+"details": {
+  "code_paths": [
+    { "path": "routers/router.go", "line": 42 },
+    { "path": "swagger/swagger.json", "line": 1300 }
+  ],
+  "technology": "go_beego",
+  "technologies": ["go_beego", "oas2"]
+}
+```
+
 ```json
 {
   "endpoints": [
