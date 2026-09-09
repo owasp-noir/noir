@@ -4,6 +4,12 @@ require "../../../src/optimizer/optimizer"
 require "../../../src/models/endpoint"
 require "../../../src/models/logger"
 
+private def tech_endpoint(url : String, method : String, technology : String, path : String, line : Int32 = 1) : Endpoint
+  details = Details.new(PathInfo.new(path, line))
+  details.technology = technology
+  Endpoint.new(url, method, [] of Param, details)
+end
+
 describe "EndpointOptimizer" do
   options = create_test_options
   logger = NoirLogger.new(false, false, false, false)
@@ -709,6 +715,152 @@ describe "EndpointOptimizer" do
 
       result.size.should eq(1)
       result[0].internal.should be_true
+    end
+
+    # The dedup kept the winner's `technology` and discarded the loser's, so
+    # a route declared by both a Go router and the project's swagger document
+    # was reported as Go only. `code_paths` proved a second file existed, but
+    # nothing said which analyzer read it; scanning casdoor whole attributed
+    # 9 endpoints to `oas2` when its `swagger/` directory alone yields 235.
+    describe "contributing technologies" do
+      it "lists only the endpoint's own technology when nothing merged into it" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        result = optimizer.optimize_endpoints([tech_endpoint("/api/users", "GET", "go_gin", "router.go")])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("go_gin")
+        result[0].details.technologies.should eq(["go_gin"])
+      end
+
+      it "keeps both technologies when two analyzers report the same endpoint" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        # "routers/" sorts before "swagger/", so the Go route wins and the
+        # spec's technology is the one that used to be lost.
+        go = tech_endpoint("/api/users", "GET", "go_beego", "routers/router.go", 42)
+        spec = tech_endpoint("/api/users", "GET", "oas2", "swagger/swagger.json", 1300)
+
+        result = optimizer.optimize_endpoints([go, spec])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("go_beego")
+        result[0].details.technologies.should eq(["go_beego", "oas2"])
+        result[0].details.code_paths.map(&.path).should eq(["routers/router.go", "swagger/swagger.json"])
+      end
+
+      it "accumulates every technology when an endpoint absorbs three duplicates" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/api/users", "GET", "oas3", "d_openapi.yaml"),
+          tech_endpoint("/api/users", "GET", "go_beego", "a_router.go"),
+          tech_endpoint("/api/users", "GET", "k8s_ingress", "c_ingress.yaml"),
+          tech_endpoint("/api/users", "GET", "har", "b_capture.har"),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("go_beego")
+        result[0].details.technologies.should eq(["go_beego", "har", "k8s_ingress", "oas3"])
+      end
+
+      it "does not repeat a technology two files of the same framework share" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/health", "GET", "go_gin", "a.go"),
+          tech_endpoint("/health", "GET", "go_gin", "b.go"),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.size.should eq(1)
+        result[0].details.technologies.should eq(["go_gin"])
+      end
+
+      it "keeps distinct endpoints' technology lists apart" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        endpoints = [
+          tech_endpoint("/a", "GET", "go_gin", "a.go"),
+          tech_endpoint("/a", "GET", "oas3", "openapi.yaml"),
+          tech_endpoint("/b", "GET", "oas3", "openapi.yaml", 2),
+        ]
+
+        result = optimizer.optimize_endpoints(endpoints)
+
+        result.size.should eq(2)
+        by_url = result.to_h { |endpoint| {endpoint.url, endpoint.details.technologies} }
+        by_url["/a"].should eq(["go_gin", "oas3"])
+        by_url["/b"].should eq(["oas3"])
+      end
+
+      # `promote_source_context` replaces a collection winner's `technology`
+      # with the framework's. Both belong in the list: the promotion changes
+      # which one is "the" technology, not which ones contributed.
+      it "lists the collection technology after a source promotion replaced it" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        collection = tech_endpoint("/api/users", "GET", "postman", "a_collection.json")
+        source = tech_endpoint("/api/users", "GET", "kotlin_spring", "b_controller.kt")
+
+        result = optimizer.optimize_endpoints([collection, source])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("kotlin_spring")
+        result[0].details.technologies.should eq(["kotlin_spring", "postman"])
+      end
+
+      # Same for the GraphQL SDL promotion in `merge_graphql_params`.
+      it "lists the runtime technology after the SDL promotion replaced it" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        runtime = tech_endpoint("/graphql#Query.user", "POST", "javascript_graphql_yoga", "app.js")
+        runtime.params << Param.new("graphql_query", "query { user { id } }", "json")
+        sdl = tech_endpoint("/graphql#Query.user", "POST", "graphql_sdl", "schema.graphqls")
+        sdl.params << Param.new("graphql_query", "query Q($id: ID!) { user(id: $id) { id } }", "json")
+
+        result = optimizer.optimize_endpoints([runtime, sdl])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq("graphql_sdl")
+        result[0].details.technologies.should eq(["graphql_sdl", "javascript_graphql_yoga"])
+      end
+
+      # Collection concrete examples merge into templates in a second pass
+      # (`merge_concrete_example_endpoints`), not the main dedup loop.
+      it "records the collection technology when a concrete example folds into a template" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        template = tech_endpoint("/api/users/{id}", "GET", "kotlin_spring", "a_controller.kt")
+        example = tech_endpoint("/api/users/42", "GET", "postman", "b_collection.json")
+
+        result = optimizer.optimize_endpoints([template, example])
+
+        result.size.should eq(1)
+        result[0].url.should eq("/api/users/{id}")
+        result[0].details.technology.should eq("kotlin_spring")
+        result[0].details.technologies.should eq(["kotlin_spring", "postman"])
+      end
+
+      it "orders the list the same way whichever duplicate sorts first" do
+        optimizer = EndpointOptimizer.new(logger, options)
+
+        forward = optimizer.optimize_endpoints([
+          tech_endpoint("/x", "GET", "oas3", "a.yaml"),
+          tech_endpoint("/x", "GET", "go_gin", "b.go"),
+        ])
+        reverse = optimizer.optimize_endpoints([
+          tech_endpoint("/x", "GET", "go_gin", "a.go"),
+          tech_endpoint("/x", "GET", "oas3", "b.yaml"),
+        ])
+
+        forward[0].details.technology.should eq("oas3")
+        reverse[0].details.technology.should eq("go_gin")
+        forward[0].details.technologies.should eq(reverse[0].details.technologies)
+      end
     end
 
     it "still merges Kotlin Spring GraphQL endpoints with SDL when the controller is under a build module" do

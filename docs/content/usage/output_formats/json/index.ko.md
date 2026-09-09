@@ -25,6 +25,19 @@ noir scan . -f json --no-log
 
 결과는 `endpoints`, `passive_results`, `errors` 배열을 담은 객체입니다. 각 엔드포인트에는 URL, HTTP 메서드, 파라미터(타입: `cookie`, `form`, `header`, `json` 등), 소스 코드 위치(`details.code_paths`), 해당 엔드포인트를 만든 분석기(`details.technology`), 그리고 Tagger가 붙인 보안 태그가 들어갑니다. 아래 예시는 태거를 켠 상태(`-T`)로 만든 것이며, `tags` 배열이 채워진 이유도 그 때문입니다.
 
+같은 엔드포인트를 여러 분석기가 찾으면(예: Go 라우터와 프로젝트의 OpenAPI 문서) Noir는 하나의 항목으로 합칩니다. `details.technology`는 병합에서 이긴 분석기이고, `details.technologies`는 기여한 모든 분석기를 정렬·중복 제거해 담은 목록입니다. 이 목록은 항목이 둘 이상일 때만 출력되므로, 분석기 하나만 본 엔드포인트는 이전과 똑같은 모양입니다. 모든 출처가 필요한 소비자는 `technologies`가 있으면 그것을 읽고, 없으면 `[technology]`로 대체하면 됩니다.
+
+```json
+"details": {
+  "code_paths": [
+    { "path": "routers/router.go", "line": 42 },
+    { "path": "swagger/swagger.json", "line": 1300 }
+  ],
+  "technology": "go_beego",
+  "technologies": ["go_beego", "oas2"]
+}
+```
+
 ```json
 {
   "endpoints": [

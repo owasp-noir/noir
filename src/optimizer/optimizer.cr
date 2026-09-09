@@ -159,6 +159,11 @@ class EndpointOptimizer
         next
       end
 
+      # Seed the contributing-technology list with the endpoint's own
+      # analyzer, so the list is complete whether or not a duplicate ever
+      # merges into it.
+      tiny_tmp = record_own_technology(tiny_tmp)
+
       # Duplicate check
       absolute_url = tiny_tmp.url.matches?(ABSOLUTE_URL_RE)
 
@@ -199,6 +204,7 @@ class EndpointOptimizer
         end
         dup = promote_source_context(dup, tiny_tmp)
         dup = promote_scalar_context(dup, tiny_tmp)
+        dup = absorb_technologies(dup, tiny_tmp)
         final_map[key] = dup
       else
         final_map[key] = tiny_tmp
@@ -335,7 +341,35 @@ class EndpointOptimizer
       target.details.add_path(path_info) unless target.details.code_paths.any? { |existing| existing == path_info }
     end
     target = promote_source_context(target, source)
+    target = absorb_technologies(target, source)
 
+    target
+  end
+
+  private def record_own_technology(endpoint : Endpoint) : Endpoint
+    details = endpoint.details
+    details.add_technology(details.technology)
+    endpoint.details = details
+    endpoint
+  end
+
+  # Keep every technology that contributed to a merged endpoint.
+  #
+  # The dedup keeps the winner's `technology` and, until this list existed,
+  # discarded the loser's — so an endpoint declared by both a Go router and
+  # the project's swagger document was reported as Go only, and a consumer
+  # asking "which sources know this route" had to run one scan per
+  # technology to find out. Runs after the promotions above on purpose: a
+  # promotion may have replaced `technology`, and both the old and the new
+  # value belong in the list.
+  #
+  # Returns the endpoint for the same reason `promote_scalar_context` does.
+  private def absorb_technologies(target : Endpoint, source : Endpoint) : Endpoint
+    details = target.details
+    details.add_technology(details.technology)
+    details.add_technology(source.details.technology)
+    source.details.technologies.each { |technology| details.add_technology(technology) }
+    target.details = details
     target
   end
 
