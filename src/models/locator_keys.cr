@@ -36,6 +36,7 @@ module Noir::LocatorKeys
     {:DIRECTUS_SNAPSHOT, "directus-snapshot", :array, :detect_scoped, "detector/specification/directus"},
     {:ENVOY_JSON, "envoy-json", :array, :detect_scoped, "detector/specification/envoy"},
     {:ENVOY_YAML, "envoy-yaml", :array, :detect_scoped, "detector/specification/envoy"},
+    {:GRAPHQL_OPERATION, "graphql-operation", :array, :detect_scoped, "detector/specification/graphql_operation"},
     {:GRAPHQL_SDL, "graphql-sdl", :array, :detect_scoped, "detector/specification/graphql_sdl"},
     {:GRPC_PROTO, "grpc-proto", :array, :detect_scoped, "detector/specification/grpc"},
     {:HAR_PATH, "har-path", :array, :detect_scoped, "detector/specification/har"},

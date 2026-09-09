@@ -43,6 +43,7 @@ SPEC_FRIENDLY_NAMES = {
   "openrpc"              => "OpenRPC",
   "graphql"              => "GraphQL",
   "graphql_sdl"          => "GraphQL SDL",
+  "graphql_operation"    => "GraphQL Operations",
   "raml"                 => "RAML",
   "postman"              => "Postman Collection",
   "apache_httpd"         => "Apache httpd",

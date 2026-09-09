@@ -65,7 +65,7 @@ expected_endpoints = [
 ]
 
 tester = FunctionalTester.new("fixtures/etc/file_based/", {
-  :techs     => 1, # http_file (the `.http` request files)
+  :techs     => 2, # http_file (the `.http` request files) + graphql_operation (sample.graphql)
   :endpoints => expected_endpoints.size,
 }, expected_endpoints)
 

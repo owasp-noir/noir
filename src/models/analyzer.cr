@@ -9,6 +9,7 @@ require "../utils/media_filter"
 require "../utils/path_scope"
 require "../utils/text_file"
 require "../utils/utils"
+require "../techs/techs"
 
 class Analyzer
   include FileHelper
@@ -452,20 +453,37 @@ class Analyzer
 end
 
 class FileAnalyzer < Analyzer
-  # Most hooks (http, base64, string) recognise an endpoint by matching a
-  # URL they found in the file against the user-supplied `-u/--url`. With
-  # no url their `includes?(url)` test degenerates to "matches
-  # everything", so they must not run at all — that is what `requires_url`
-  # marks.
+  # A file hook recognises an endpoint by matching a URL it found in the
+  # file against the user-supplied `-u/--url`. With no url that
+  # `includes?(url)` test degenerates to "matches everything", so with no
+  # url no hook may run.
   #
-  # A hook that identifies endpoints from file syntax instead (graphql
-  # operation documents) is url-independent and has to run either way.
-  # Gating the whole FileAnalyzer on `-u` used to drop those from every
-  # default scan, so the requirement is now declared per hook rather than
-  # assumed for all of them.
-  record Hook, func : Proc(String, String, Array(Endpoint)), requires_url : Bool
+  # `tech` is the technology the hook's endpoints are attributed to. Every
+  # hook has to name one: an endpoint that leaves the analysis phase with
+  # `details.technology` unset belongs to no group in any report and to no
+  # view in a cross-view tool, which is exactly what the GraphQL
+  # operation-document hook used to produce before it became the
+  # `graphql_operation` analyzer.
+  #
+  # These names are deliberately *not* in `NoirTechs::TECHS`. A catalog
+  # entry has to be backed by a detector, and there is nothing to detect
+  # here — the hooks are activated by a flag, like `ai` is by
+  # `--ai-provider`, and they read every file in the scan rather than a
+  # recognisable one.
+  record Hook, func : Proc(String, String, Array(Endpoint)), tech : String
 
   @@hooks = [] of Hook
+
+  # The `--only-techs` restriction, resolved once. Read from the raw options
+  # rather than from `analysis_endpoints`' selected-tech list because a
+  # library embedder may drive this class on its own; an absent key (the
+  # shape most specs build) means "unrestricted".
+  @only_techs : Array(String)
+
+  def initialize(options : Hash(String, YAML::Any))
+    super
+    @only_techs = NoirTechs.resolve_tech_list(options["only_techs"]?.to_s)
+  end
 
   # Not registered through `analyzer_for` — the FileAnalyzer runs outside the
   # tech registry — but its per-file rescue needs a name to report a skipped
@@ -474,27 +492,30 @@ class FileAnalyzer < Analyzer
     "file_analyzer"
   end
 
-  def self.add_hook(func : Proc(String, String, Array(Endpoint)), requires_url : Bool = true)
-    @@hooks << Hook.new(func, requires_url)
+  def self.add_hook(func : Proc(String, String, Array(Endpoint)), tech : String)
+    @@hooks << Hook.new(func, tech)
   end
 
   # Hooks that can actually produce something for this scan.
+  #
+  # `--only-techs` names the technologies the scan is restricted to, and
+  # these hooks are not among them: their names have no catalog entry, so
+  # the flag cannot resolve one. A restriction therefore switches them off
+  # rather than leaving them running underneath it — the rule is written as
+  # a membership test rather than "any restriction disables them" so it
+  # stays correct if one of these ever does become nameable.
+  #
+  # Measured on flipt with `-u`: `--only-techs go_chi` returned four
+  # endpoints, three of them URL literals the string hook had found in
+  # unrelated files. It returns one now — the one go_chi produced.
   def active_hooks : Array(Hook)
-    url_present = !@url.empty?
-    @@hooks.select { |hook| url_present || !hook.requires_url }
+    return [] of Hook if @url.empty?
+    return @@hooks if @only_techs.empty?
+    @@hooks.select { |hook| @only_techs.includes?(hook.tech) }
   end
 
   def hooks_count
     active_hooks.size
-  end
-
-  # True when at least one hook recognises endpoints from file syntax
-  # alone. `noir scan` consults this before giving up on a code base the
-  # detector found no technologies in: with no techs *and* no
-  # url-independent hook there is genuinely nothing left to analyze, but
-  # with one there still is.
-  def self.url_independent_hooks? : Bool
-    @@hooks.any? { |hook| !hook.requires_url }
   end
 
   def analyze
@@ -533,6 +554,13 @@ class FileAnalyzer < Analyzer
               file_results = hook.func.call(path, @url)
               unless file_results.nil?
                 file_results.each do |file_result|
+                  # Same stamp `analysis_endpoints` applies to every tech
+                  # analyzer's output, applied here because these hooks run
+                  # outside that loop. `Details` is a struct, so the
+                  # assignment has to be written back through `details=`.
+                  details = file_result.details
+                  details.technology = hook.tech
+                  file_result.details = details
                   @result << file_result
                 end
               end
