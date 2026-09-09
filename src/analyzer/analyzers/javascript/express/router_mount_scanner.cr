@@ -727,6 +727,89 @@ module Analyzer::Javascript
       result ? result.content : ""
     end
 
+    # Where a mount's prefix lands in `CodeLocator`, and which local
+    # variable (if any) should remember it.
+    #
+    # Split out of `resolve_and_store_router_prefix` so the unplaced-mount
+    # pass can ask "would this mount land on a key that is still empty?"
+    # *before* any mount is written. Asking after the first write would
+    # make the pass order-dependent: two unplaced mounts onto the same
+    # child would let whichever ran first veto the other.
+    alias PrefixTarget = NamedTuple(
+      key: Noir::LocatorKey(Array(String))?,
+      note: String,
+      var: String?)
+
+    private def router_prefix_target(
+      router_var : String?,
+      router_file_direct : String?,
+      main_file : String,
+      require_map : Hash(String, String),
+      function_map : Hash(String, String),
+      var_to_function : Hash(String, String),
+    ) : PrefixTarget?
+      # Handle inline require('./path') directly
+      if router_file_direct
+        router_file = resolve_require_path(main_file, router_file_direct)
+        return unless router_file
+        return {key: ExpressConstants.file_key(router_file), note: " (inline require): #{router_file}", var: nil}
+      end
+
+      # Handle path-like router_var as inline require (for deferred mounts)
+      if router_var && (router_var.starts_with?("./") || router_var.starts_with?("../") ||
+         router_var.starts_with?("@/") || router_var.starts_with?("~/"))
+        router_file = resolve_require_path(main_file, router_var)
+        return unless router_file
+        return {key: ExpressConstants.file_key(router_file), note: " (inline require): #{router_file}", var: nil}
+      end
+
+      return unless router_var
+
+      # Check require_map (default imports)
+      if router_file = require_map[router_var]?
+        return {key: ExpressConstants.file_key(router_file), note: ": #{router_file}", var: router_var}
+      end
+
+      # Check var_to_function (factory variable assignments)
+      if func_name = var_to_function[router_var]?
+        router_file = function_map[func_name]?
+        return unless router_file
+        return {key:  ExpressConstants.function_key(router_file, func_name),
+                note: " (factory var): #{router_file}:#{func_name}",
+                var:  router_var}
+      end
+
+      # Check function_map (destructured imports / factory functions)
+      # Note: We do NOT store file-level keys here to avoid prefix bleed to other
+      # factory functions in the same file that were not mounted.
+      if router_file = function_map[router_var]?
+        return {key:  ExpressConstants.function_key(router_file, router_var),
+                note: " (factory direct): #{router_file}:#{router_var}",
+                var:  router_var}
+      end
+
+      # Handle property-based router access: routers.user or routers['user']
+      # Note: We do NOT store file-level keys here to avoid prefix bleed to other
+      # properties in the same module that were not mounted.
+      if router_var.includes?(".")
+        parts = router_var.split(".", 2)
+        base_obj = parts[0]
+        prop_name = parts[1]?
+        if prop_name
+          if router_file = require_map[base_obj]? || function_map[base_obj]?
+            return {key:  ExpressConstants.function_key(router_file, prop_name),
+                    note: " (property): #{router_file}:#{prop_name}",
+                    var:  router_var}
+          end
+        end
+        # No resolvable module behind the property, but the local variable
+        # still carries the prefix for same-file nested mounts.
+        return {key: nil, note: "", var: router_var}
+      end
+
+      nil
+    end
+
     # Unified helper: Resolve router variable and store prefix to CodeLocator
     private def resolve_and_store_router_prefix(
       locator : CodeLocator,
@@ -741,72 +824,16 @@ module Analyzer::Javascript
       log_prefix : String = "Mapped router prefix",
       include_file_level : Bool = false,
     )
-      # Handle inline require('./path') directly
-      if router_file_direct
-        router_file = resolve_require_path(main_file, router_file_direct)
-        if router_file
-          key = ExpressConstants.file_key(router_file)
-          push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (inline require): #{router_file} => #{prefix}")
-        end
-        return
+      target = router_prefix_target(router_var, router_file_direct, main_file,
+        require_map, function_map, var_to_function)
+      return unless target
+
+      if key = target[:key]
+        push_prefix_to_locator(locator, key, prefix, "#{log_prefix}#{target[:note]} => #{prefix}")
       end
 
-      # Handle path-like router_var as inline require (for deferred mounts)
-      if router_var && (router_var.starts_with?("./") || router_var.starts_with?("../") ||
-         router_var.starts_with?("@/") || router_var.starts_with?("~/"))
-        router_file = resolve_require_path(main_file, router_var)
-        if router_file
-          key = ExpressConstants.file_key(router_file)
-          push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (inline require): #{router_file} => #{prefix}")
-        end
-        return
-      end
-
-      return unless router_var
-
-      # Check require_map (default imports)
-      if router_file = require_map[router_var]?
-        key = ExpressConstants.file_key(router_file)
-        push_prefix_to_locator(locator, key, prefix, "#{log_prefix}: #{router_file} => #{prefix}")
-        var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
-        return
-      end
-
-      # Check var_to_function (factory variable assignments)
-      if func_name = var_to_function[router_var]?
-        if router_file = function_map[func_name]?
-          key = ExpressConstants.function_key(router_file, func_name)
-          push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (factory var): #{router_file}:#{func_name} => #{prefix}")
-          var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
-        end
-        return
-      end
-
-      # Check function_map (destructured imports / factory functions)
-      # Note: We do NOT store file-level keys here to avoid prefix bleed to other
-      # factory functions in the same file that were not mounted.
-      if router_file = function_map[router_var]?
-        key = ExpressConstants.function_key(router_file, router_var)
-        push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (factory direct): #{router_file}:#{router_var} => #{prefix}")
-        var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
-        return
-      end
-
-      # Handle property-based router access: routers.user or routers['user']
-      # Note: We do NOT store file-level keys here to avoid prefix bleed to other
-      # properties in the same module that were not mounted.
-      if router_var.includes?(".")
-        parts = router_var.split(".", 2)
-        base_obj = parts[0]
-        prop_name = parts[1]?
-        if prop_name
-          router_file = require_map[base_obj]? || function_map[base_obj]?
-          if router_file
-            key = ExpressConstants.function_key(router_file, prop_name)
-            push_prefix_to_locator(locator, key, prefix, "#{log_prefix} (property): #{router_file}:#{prop_name} => #{prefix}")
-          end
-        end
-        var_prefix[router_var] << prefix unless var_prefix[router_var].includes?(prefix)
+      if var = target[:var]
+        var_prefix[var] << prefix unless var_prefix[var].includes?(prefix)
       end
     end
 
@@ -910,6 +937,59 @@ module Analyzer::Javascript
 
         remaining = still_deferred
         break unless resolved_any
+      end
+
+      place_unplaced_mounts(remaining, file_contexts, locator)
+    end
+
+    # PASS 3: mounts whose parent router was never located.
+    #
+    # `store_nested_mount` refuses to guess: a mount written as
+    # `router.use('/api/v3/users', require('./users')())` only produces a
+    # prefix once we know where `router` itself is mounted. When the router
+    # arrives as a function parameter — NodeBB's
+    # `Write.reload = async (params) => { const { router } = params; ... }`
+    # is the shape — there is nothing in the file to resolve it against and
+    # the fix-point loop above spins out with the mount still deferred.
+    # Dropping it is not neutral: the child's routes are then emitted at the
+    # bare path (`/+bySlug/:userslug*?` instead of
+    # `/api/v3/users/+bySlug/:userslug*?`), which is strictly further from
+    # the truth than the mount prefix alone.
+    #
+    # So place what is left at the root, but only onto children that no
+    # other mount reached. The guard is what keeps this from inventing a
+    # second copy of an already-correctly-mounted router: a child with a
+    # prefix already recorded keeps it and the unplaced mount is discarded.
+    # Eligibility is decided for every remaining mount before the first
+    # write so the outcome does not depend on iteration order.
+    private def place_unplaced_mounts(
+      remaining : Array(Tuple(String, String, String, String)),
+      file_contexts : Hash(String, FileContext),
+      locator : CodeLocator,
+    )
+      return if remaining.empty?
+
+      eligible = [] of Tuple(String, String, String)
+      remaining.each do |main_file, _caller, prefix, router_var|
+        ctx = file_contexts[main_file]?
+        next unless ctx
+        target = router_prefix_target(router_var, nil, main_file,
+          ctx[:require_map], ctx[:function_map], ctx[:var_to_function])
+        next unless target
+        key = target[:key]
+        next unless key
+        next unless locator.all(key).empty?
+        eligible << {main_file, router_var, prefix}
+      end
+
+      eligible.each do |main_file, router_var, prefix|
+        ctx = file_contexts[main_file]?
+        next unless ctx
+        resolve_and_store_router_prefix(
+          locator, router_var, nil, prefix, main_file,
+          ctx[:require_map], ctx[:function_map], ctx[:var_to_function], ctx[:var_prefix],
+          log_prefix: "Mapped unplaced router prefix"
+        )
       end
     end
 
