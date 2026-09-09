@@ -7,7 +7,9 @@ require "../../../utils/file_url_scanner"
 # file in the scan, so a candidate is only an endpoint once it survives the
 # shared sanitising in `Noir::FileUrlScanner`: binary payload lines are
 # dropped, and prose/markup delimiters are trimmed off the URL.
-FileAnalyzer.add_hook(->(path : String, url : String) : Array(Endpoint) {
+# Attributed to `file_url`; see `FileAnalyzer::Hook` for why that name is not
+# in the tech catalog.
+FileAnalyzer.add_hook(tech: "file_url", func: ->(path : String, url : String) : Array(Endpoint) {
   results = [] of Endpoint
   return results if Noir::FileUrlScanner::REQUEST_FILE_EXTENSIONS.includes?(File.extname(path))
 

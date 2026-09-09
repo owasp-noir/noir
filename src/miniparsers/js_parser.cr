@@ -35,6 +35,11 @@ module Noir
     @current_route_start_pos : Int32? = nil
     @router_prefixes : Hash(String, Array(String)) = Hash(String, Array(String)).new { |h, k| h[k] = [] of String }
     @named_route_receivers = Set(String).new
+    # Receivers this file explicitly builds a router from (`x =
+    # express.Router()`, `x = new Router()`, `x = express()`), as opposed
+    # to the ones inferred from a verb call — every `request.get(...)`
+    # would otherwise vouch for itself as a router.
+    @explicit_router_vars = Set(String).new
     @supports_named_routes : Bool = false
 
     private struct PathEntry
@@ -104,6 +109,7 @@ module Noir
       # 1. Variables assigned from express.Router()
       # 2. Variables that have route methods called on them (.get, .post, etc.)
       @named_route_receivers.clear
+      @explicit_router_vars.clear
       identify_router_variables(router_variables)
       identify_named_route_receivers(router_variables)
       scan_router_constructor_prefixes(router_prefixes, router_variables)
@@ -657,6 +663,28 @@ module Noir
     # Routers are identified by:
     # 1. Assignment from express.Router(): const router = express.Router()
     # 2. Having route methods called on them: router.get(...)
+    # Receivers that are HTTP *clients*, never routers. `request.get(url,
+    # opts)` in a test file has the same token shape as `router.get(path,
+    # handler)` — an identifier, a verb, a path-ish first argument and a
+    # second argument — so `route_handler_arg?` cannot separate them and
+    # deliberately errs toward keeping the route. The receiver name can:
+    # none of these is ever assigned an Express/Koa/Fastify router, and
+    # NodeBB's `test/*.js` alone turns 385 such calls into routes that do
+    # not exist. Keep the list to library names that would be perverse to
+    # use for a router — a receiver named `api` or `client` may well be
+    # one, so neither is listed.
+    HTTP_CLIENT_RECEIVERS = Set{
+      "request", "axios", "superagent", "supertest", "got",
+      "needle", "unirest", "ky", "phin", "chai",
+    }
+
+    # A receiver is a client only when the file never builds a router
+    # from that name, so a project that genuinely names its router
+    # `request` keeps its routes.
+    private def http_client_receiver?(router_var : String) : Bool
+      HTTP_CLIENT_RECEIVERS.includes?(router_var) && !@explicit_router_vars.includes?(router_var)
+    end
+
     private def identify_router_variables(router_variables : Set(String))
       idx = 0
       while idx < @tokens.size - 4
@@ -668,6 +696,7 @@ module Noir
            idx + 3 < @tokens.size && @tokens[idx + 3].type == :dot &&
            idx + 4 < @tokens.size && @tokens[idx + 4].value == "Router"
           router_variables.add(@tokens[idx].value)
+          @explicit_router_vars.add(@tokens[idx].value)
         end
 
         # Pattern 2: identifier.get/post/put/delete/patch/all/head/options(
@@ -705,6 +734,7 @@ module Noir
              (@tokens[scan_idx].value == "Router" || @tokens[scan_idx].value.ends_with?("Router"))
             @named_route_receivers.add(receiver)
             router_variables.add(receiver)
+            @explicit_router_vars.add(receiver)
           end
         end
 
@@ -809,7 +839,7 @@ module Noir
            @tokens[idx + 1].type == :dot &&
            http_method?(@tokens[idx + 2]) &&
            @tokens[idx + 3].type == :lparen
-          unless route_handler_arg?(idx + 3)
+          if !route_handler_arg?(idx + 3) || http_client_receiver?(@tokens[idx].value)
             idx += 1
             next
           end
@@ -834,7 +864,7 @@ module Noir
            http_method_name?(@tokens[idx + 2].value) &&
            @tokens[idx + 3].type == :rbracket &&
            @tokens[idx + 4].type == :lparen
-          unless route_handler_arg?(idx + 4)
+          if !route_handler_arg?(idx + 4) || http_client_receiver?(@tokens[idx].value)
             idx += 1
             next
           end
@@ -1092,6 +1122,7 @@ module Noir
            path_idx + 1 < @tokens.size &&
            route_handler_arg?(path_idx)
           router_var = @tokens[idx - 1].type == :identifier ? @tokens[idx - 1].value : ""
+          return results if http_client_receiver?(router_var)
           path_entries = route_path_entries_from_args(path_idx + 1, allow_named_route: named_route_receiver?(router_var))
           @position = path_idx + 2 unless path_entries.empty?
 

@@ -107,22 +107,35 @@ module Analyzer::Python
         end
       end
 
-      # Fall back to scanning `urls.py` modules directly when the
-      # ROOT_URLCONF-anchored pass above produced nothing. Reusable
-      # Django apps and libraries (Wagtail, DRF, …) — and any project
-      # scanned at the app level — ship `urls.py` files with
-      # `urlpatterns` but no project `settings.py` declaring
-      # `ROOT_URLCONF`, so the anchored pass finds no root and the
-      # whole app silently maps to zero endpoints. Treating each
-      # unvisited, non-test `urls.py` as its own routing root recovers
-      # those routes (app-relative, since there is no host-project
-      # mount prefix to apply). Gated on an empty result so every
-      # project that DOES expose a ROOT_URLCONF keeps its fully
-      # prefixed paths and sees no behavior change.
-      if endpoints.empty?
-        extract_endpoints_from_orphan_urlconfs.each do |endpoint|
-          endpoints << endpoint
-        end
+      # Scan `urls.py` modules the ROOT_URLCONF-anchored pass never
+      # reached as routing roots of their own. Reusable Django apps and
+      # libraries (Wagtail, DRF, …) — and any project scanned at the app
+      # level — ship `urls.py` files with `urlpatterns` but no project
+      # `settings.py` declaring `ROOT_URLCONF`, so the anchored pass
+      # finds no root at all and the whole app silently maps to zero
+      # endpoints.
+      #
+      # The same hole opens when a root urlconf DOES exist but builds
+      # `urlpatterns` at import time instead of writing it out — for
+      # example authentik's `authentik/root/urls.py`, which mounts every
+      # app by looping over `get_apps()` and reading each app's
+      # `mountpoint` attribute. Static analysis cannot follow that loop,
+      # so the anchored pass returns only the handful of literal
+      # `path()` entries beside it. That is a non-empty result, so
+      # gating this pass on `endpoints.empty?` (as it used to be) made
+      # every other `urls.py` in the tree unreachable: authentik's 81
+      # urlconfs collapsed to three health/metrics routes. The loss was
+      # invisible from the outside, too — pointing the scanner at any
+      # one app directory reported that app's routes correctly, because
+      # then there was no settings module above it to anchor to.
+      #
+      # So the pass always runs now. What keeps a module the anchored
+      # pass already mounted from being reported a second time without
+      # its prefix is `@visited_url_paths`, which `extract_endpoints`
+      # fills in as it follows `include()` — a record of what was
+      # actually resolved, not a guess about which URLs look alike.
+      extract_endpoints_from_orphan_urlconfs.each do |endpoint|
+        endpoints << endpoint
       end
 
       # Find static files
@@ -143,7 +156,7 @@ module Analyzer::Python
 
     # Treat every unvisited, non-test `urls.py` (or `urls/` package
     # module) carrying a `urlpatterns` as its own routing root. Used
-    # only as a fallback when no ROOT_URLCONF anchor exists, so the
+    # only for modules the ROOT_URLCONF anchor never reached, so the
     # paths are app-relative — there is no host project to supply a
     # mount prefix. `extract_endpoints` marks each file (and anything
     # it `include()`s) visited, so a module pulled in by another is

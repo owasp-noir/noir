@@ -37,6 +37,7 @@ Beyond source code analysis, Noir can parse API and data specification formats s
 | Directus (schema snapshot) | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | Envoy | JSON | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
 | Envoy | YAML | ☑️ | ☑️ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| GraphQL Operations | GRAPHQL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | GraphQL SDL | GRAPHQL_SDL | ☑️ | ☑️ | ✗ | ✗ | ☑️ | ✗ | ✗ |
 | Grpc | PROTOBUF | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ✗ | ✗ |
 | HAR | JSON | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ | ☑️ |

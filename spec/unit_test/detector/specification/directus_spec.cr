@@ -87,6 +87,25 @@ describe "Detect Directus snapshot" do
     instance.detect("snapshot.yaml", "directus: 10\ncollections:\n  - : :\n\t bad").should be_false
   end
 
+  it "ignores snapshots inside test directories" do
+    instance.detect("tests/e2e/snapshot.json", snapshot).should be_false
+    instance.detect("tests/sandbox/snapshot.json", snapshot).should be_false
+    instance.detect("test/fixtures/snapshot.yaml", snapshot).should be_false
+    instance.detect("__tests__/snapshot.json", snapshot).should be_false
+    instance.detect("e2e/snapshot.json", snapshot).should be_false
+    instance.detect("cypress/snapshot.json", snapshot).should be_false
+    instance.detect("playwright/snapshot.json", snapshot).should be_false
+    instance.detect("spec/fixtures/snapshot.yaml", snapshot).should be_false
+    instance.detect("fixtures/snapshot.json", snapshot).should be_false
+  end
+
+  it "ignores snapshots with test file suffixes" do
+    instance.detect("snapshot.test.json", snapshot).should be_false
+    instance.detect("snapshot.spec.yaml", snapshot).should be_false
+    instance.detect("snapshot-test.json", snapshot).should be_false
+    instance.detect("snapshot_test.json", snapshot).should be_false
+  end
+
   it "registers the path in the code locator" do
     locator = CodeLocator.instance
     locator.clear Noir::LocatorKeys::DIRECTUS_SNAPSHOT
