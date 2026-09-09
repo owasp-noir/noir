@@ -757,7 +757,9 @@ module Noir
       # route.
       base_prefix = local_groups[router_name]? || prefix_stack.join
       unless raw_path.starts_with?("/")
-        return unless raw_path.empty? && path_was_literal && !base_prefix.empty? && !handler_text.empty?
+        group_root = raw_path.empty? && path_was_literal &&
+                     base_prefix.size > 0 && handler_text.size > 0
+        return unless group_root
       end
 
       # Tighten the broadened cases (selector receiver or a path resolved
