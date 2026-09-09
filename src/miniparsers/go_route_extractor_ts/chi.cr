@@ -101,6 +101,14 @@ module Noir
             return
           end
         when ChiCall::Verb
+          # `m.Combo("/x").Get(h).Post(h)` — one path, several verbs,
+          # each on its own chained call. The outermost call is the
+          # last verb; peel the chain down to `Combo` first, and only
+          # fall back to the single-verb decoder when there is none.
+          if combo = decode_chi_combo_chain(node, source, prefix_stack, local_groups, string_values)
+            routes.concat(combo)
+            return
+          end
           if route = decode_chi_verb_call(node, source, prefix_stack, local_groups, config, string_values)
             routes << route
           end
@@ -179,8 +187,10 @@ module Noir
       if config.net_http_methods?
         # `r.MethodFunc("GET", "/x", h)` — method as the first string
         # arg (the route path is the second). Also covers custom verbs
-        # registered via `chi.RegisterMethod`.
-        return ChiCall::MethodFunc if name == "MethodFunc"
+        # registered via `chi.RegisterMethod`. gitea's `modules/web`
+        # wrapper spells the same shape `m.Methods("GET, HEAD", "/x", h)`
+        # with a comma-separated method list.
+        return ChiCall::MethodFunc if name == "MethodFunc" || name == "Methods"
         # `r.HandleFunc("/x", h)` / `r.Handle("/x", h)` — match every
         # HTTP method (chi fans these over the full method set).
         return ChiCall::HandleAll if name == "HandleFunc" || name == "Handle"
@@ -258,6 +268,65 @@ module Noir
         return if NON_ROUTER_OPERANDS.includes?(Noir::TreeSitter.node_text(final_field, source))
         Noir::TreeSitter.node_text(operand, source)
       end
+    end
+
+    # Verb names a Combo chain may carry. `Combo` itself is chi's
+    # `chi.Router#Combo`-less cousin from gitea's `modules/web` (and
+    # macaron before it): `m.Combo("/path", mw...).Get(h).Post(h)`.
+    COMBO_VERBS = Set{"Get", "Post", "Put", "Delete", "Patch", "Head", "Options"}
+
+    # Decode `<router>.Combo("/path", ...).Get(h).Post(h)...` into one
+    # Route per chained verb. `call` is the outermost (last) verb call.
+    # Returns nil when the chain does not bottom out in a `Combo` call
+    # so the caller can try the single-verb decoder instead. Each route
+    # is attributed to the line its verb sits on, which for the usual
+    # one-verb-per-line layout is the line a reader would point at.
+    private def decode_chi_combo_chain(call : LibTreeSitter::TSNode,
+                                       source : String,
+                                       prefix_stack : Array(String),
+                                       local_groups : Hash(String, String),
+                                       string_values : Hash(String, String) = Hash(String, String).new) : Array(Route)?
+      verbs = [] of Tuple(String, String, Int32)
+      cursor = call
+      loop do
+        function = Noir::TreeSitter.field(cursor, "function")
+        return unless function
+        return unless Noir::TreeSitter.node_type(function) == "selector_expression"
+        field = Noir::TreeSitter.field(function, "field")
+        operand = Noir::TreeSitter.field(function, "operand")
+        return unless field && operand
+        name = Noir::TreeSitter.node_text(field, source)
+
+        if name == "Combo"
+          router_name = chi_router_operand_name(operand, source)
+          return unless router_name
+          raw_path = chi_first_string_arg(cursor, source, string_values)
+          return unless raw_path
+          return if verbs.empty?
+          base_prefix = local_groups[router_name]? || prefix_stack.join
+          resolved = base_prefix.empty? ? raw_path : "#{base_prefix}#{raw_path}"
+          return verbs.reverse.map do |verb, handler_text, row|
+            Route.new(router_name, verb, resolved, raw_path, handler_text, row)
+          end
+        end
+
+        return unless COMBO_VERBS.includes?(name)
+        verbs << {name.upcase, chi_last_arg_text(cursor, source), Noir::TreeSitter.node_start_row(field)}
+        return unless Noir::TreeSitter.node_type(operand) == "call_expression"
+        cursor = operand
+      end
+    end
+
+    # Text of a call's last argument — the handler in gitea's
+    # `Get(middleware..., handler)` convention.
+    private def chi_last_arg_text(call : LibTreeSitter::TSNode, source : String) : String
+      args = Noir::TreeSitter.field(call, "arguments")
+      return "" unless args
+      last = ""
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        last = Noir::TreeSitter.node_text(arg, source)
+      end
+      last
     end
 
     # Decode `r.MethodFunc("GET", "/path", handler)` — chi's net/http
@@ -506,7 +575,17 @@ module Noir
       # operand-type check above; this catches the bare-identifier
       # receivers (`genv`, `gmeta`, `r`) the operand check intentionally
       # allows through.
-      return unless raw_path.starts_with?("/")
+      #
+      # The one exception is the empty path: chi itself panics on it,
+      # but gitea's `modules/web` wrapper registers the group root as
+      # `m.Get("", handler)` inside `m.Group("/secrets", func(){...})`.
+      # It is accepted only when a group prefix is active and a handler
+      # is present, so a value getter (`r.Get("")`) still cannot mint a
+      # route.
+      base_prefix = local_groups[router_name]? || prefix_stack.join
+      unless raw_path.starts_with?("/")
+        return unless raw_path.empty? && path_was_literal && !base_prefix.empty? && !handler_text.empty?
+      end
 
       # Tighten the broadened cases (selector receiver or a path resolved
       # from a non-literal) so they can't surface noise: a real chi/gf
@@ -519,7 +598,6 @@ module Noir
       # Prefer the local binding (closure param / `v1 := group.Group(...)`)
       # when it exists, since Go scope rules say the nearest binding wins.
       # Otherwise fall back to the ambient prefix stack.
-      base_prefix = local_groups[router_name]? || prefix_stack.join
       resolved = String.build do |io|
         io << base_prefix
         io << chain_prefix

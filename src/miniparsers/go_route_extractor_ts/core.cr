@@ -42,7 +42,10 @@ module Noir
       when "ANY", "ALL"
         ANY_FAN_OUT_VERBS
       else
-        [verb]
+        # `Methods("GET, HEAD", ...)` carries a comma-separated list;
+        # a plain verb is a one-element list of itself.
+        return [verb] unless verb.includes?(',')
+        verb.split(',').map(&.strip.upcase).reject(&.empty?)
       end
     end
 
