@@ -643,7 +643,8 @@ module Noir
         # path is a constant resolves to its literal value.
         string_values = external_string_values.dup
         collect_string_values(root, source).each { |k, v| string_values[k] = v }
-        walk_chi(root, source, [] of String, local_groups, routes, skip_functions, config, string_values)
+        helpers = collect_route_helpers(root, source)
+        walk_chi(root, source, [] of String, local_groups, routes, skip_functions, config, string_values, helpers)
       end
       routes
     end

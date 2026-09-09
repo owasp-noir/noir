@@ -20,10 +20,155 @@ module Noir
     def walk_chi_public(node : LibTreeSitter::TSNode,
                         source : String,
                         sink : Array(Route),
-                        string_values : Hash(String, String) = Hash(String, String).new)
+                        string_values : Hash(String, String) = Hash(String, String).new,
+                        helpers : RouteHelperIndex = RouteHelperIndex.new)
       local_groups = Hash(String, String).new
       skip = Set(String).new
-      walk_chi(node, source, [] of String, local_groups, sink, skip, ScopedConfig.new(net_http_methods: true), string_values)
+      walk_chi(node, source, [] of String, local_groups, sink, skip, ScopedConfig.new(net_http_methods: true), string_values, helpers)
+    end
+
+    # A same-file function (or closure variable) that takes the router as
+    # a parameter and registers routes on it — gitea's
+    # `func addProjectRoutes(m *web.Router, ...)` called from three
+    # different groups, or `addActionsRoutes := func(m *web.Router, ...)`.
+    # Its body is walked at every call site with the caller's active
+    # prefix, and its declaration is skipped by the free-floating walk
+    # (which would otherwise report the routes at the helper's own,
+    # prefix-less, path).
+    class RouteHelper
+      getter body : LibTreeSitter::TSNode
+      getter router_param : String
+      getter router_index : Int32
+      property calls : Int32 = 0
+
+      def initialize(@body, @router_param, @router_index)
+      end
+    end
+
+    class RouteHelperIndex
+      getter helpers = Hash(String, RouteHelper).new
+      # Helpers whose bodies are being expanded right now (recursion guard).
+      getter active = Set(String).new
+
+      def empty? : Bool
+        helpers.empty?
+      end
+
+      def [](name : String) : RouteHelper?
+        helpers[name]?
+      end
+    end
+
+    # Router-typed parameter: `*web.Router`, `chi.Router`, `*chi.Mux`,
+    # `*Router`. `http.ServeMux` is deliberately not one (its `Mux` is not
+    # a whole segment) — helpers taking a stdlib mux register net/http
+    # handlers, not chi routes.
+    ROUTER_PARAM_TYPE_RE = /\A\*?(?:\w+\.)?(?:Router|Mux)\z/
+
+    # Scan a whole file for route helpers and count their call sites.
+    # Only a helper that is called at least once is skipped by the free
+    # walk; an uncalled one keeps its historical (prefix-less) routes so
+    # nothing that used to be reported disappears.
+    def collect_route_helpers(root : LibTreeSitter::TSNode, source : String) : RouteHelperIndex
+      index = RouteHelperIndex.new
+      walk(root) do |node|
+        case Noir::TreeSitter.node_type(node)
+        when "function_declaration"
+          name_node = Noir::TreeSitter.field(node, "name")
+          body = Noir::TreeSitter.field(node, "body")
+          next unless name_node && body
+          if param = router_parameter(node, source)
+            index.helpers[Noir::TreeSitter.node_text(name_node, source)] = RouteHelper.new(body, param[0], param[1])
+          end
+        when "short_var_declaration"
+          left = Noir::TreeSitter.field(node, "left")
+          right = Noir::TreeSitter.field(node, "right")
+          next unless left && right
+          name_node = first_named_child(left)
+          closure = first_named_child(right)
+          next unless name_node && closure
+          next unless Noir::TreeSitter.node_type(name_node) == "identifier"
+          next unless Noir::TreeSitter.node_type(closure) == "func_literal"
+          body = Noir::TreeSitter.field(closure, "body")
+          next unless body
+          if param = router_parameter(closure, source)
+            index.helpers[Noir::TreeSitter.node_text(name_node, source)] = RouteHelper.new(body, param[0], param[1])
+          end
+        end
+      end
+      return index if index.empty?
+      walk(root) do |node|
+        next unless Noir::TreeSitter.node_type(node) == "call_expression"
+        function = Noir::TreeSitter.field(node, "function")
+        next unless function && Noir::TreeSitter.node_type(function) == "identifier"
+        if helper = index[Noir::TreeSitter.node_text(function, source)]
+          helper.calls += 1
+        end
+      end
+      index
+    end
+
+    # `{name, position}` of the first router-typed parameter of a
+    # function declaration or func literal, or nil.
+    private def router_parameter(func : LibTreeSitter::TSNode, source : String) : Tuple(String, Int32)?
+      params = Noir::TreeSitter.field(func, "parameters")
+      return unless params
+      position = 0
+      Noir::TreeSitter.each_named_child(params) do |decl|
+        if Noir::TreeSitter.node_type(decl) == "parameter_declaration"
+          type_node = Noir::TreeSitter.field(decl, "type")
+          names = [] of String
+          Noir::TreeSitter.each_named_child(decl) do |child|
+            names << Noir::TreeSitter.node_text(child, source) if Noir::TreeSitter.node_type(child) == "identifier"
+          end
+          if type_node && !names.empty? && Noir::TreeSitter.node_text(type_node, source).matches?(ROUTER_PARAM_TYPE_RE)
+            return {names.first, position}
+          end
+          # `a, b *T` declares several names in one declaration.
+          position += names.empty? ? 1 : names.size
+        else
+          position += 1
+        end
+      end
+      nil
+    end
+
+    # Walk a helper's body as if its routes were registered at the call
+    # site: the router argument's active prefix becomes the base prefix
+    # and the helper's own parameter name resolves through the stack.
+    private def expand_route_helper(call : LibTreeSitter::TSNode,
+                                    helper : RouteHelper,
+                                    name : String,
+                                    source : String,
+                                    prefix_stack : Array(String),
+                                    local_groups : Hash(String, String),
+                                    routes : Array(Route),
+                                    skip_functions : Set(String),
+                                    config : ScopedConfig,
+                                    string_values : Hash(String, String),
+                                    helpers : RouteHelperIndex)
+      return if helpers.active.includes?(name) || helpers.active.size >= 8
+      args = Noir::TreeSitter.field(call, "arguments")
+      return unless args
+      router_arg = nil
+      position = 0
+      Noir::TreeSitter.each_named_child(args) do |arg|
+        if position == helper.router_index
+          router_arg = arg
+          break
+        end
+        position += 1
+      end
+      return unless router_arg
+      return unless Noir::TreeSitter.node_type(router_arg) == "identifier"
+      router_name = Noir::TreeSitter.node_text(router_arg, source)
+      base_prefix = local_groups[router_name]? || prefix_stack.join
+
+      inner_groups = local_groups.dup
+      inner_groups.delete(helper.router_param)
+      helpers.active << name
+      walk_chi(helper.body, source, [base_prefix], inner_groups, routes, skip_functions, config, string_values, helpers)
+      helpers.active.delete(name)
     end
 
     private def walk_chi(node : LibTreeSitter::TSNode,
@@ -33,8 +178,36 @@ module Noir
                          routes : Array(Route),
                          skip_functions : Set(String),
                          config : ScopedConfig,
-                         string_values : Hash(String, String) = Hash(String, String).new)
+                         string_values : Hash(String, String) = Hash(String, String).new,
+                         helpers : RouteHelperIndex = RouteHelperIndex.new)
       ty = Noir::TreeSitter.node_type(node)
+
+      # A called route helper is expanded at its call sites, never at
+      # its declaration (see `RouteHelper`).
+      unless helpers.empty?
+        case ty
+        when "function_declaration"
+          if name_node = Noir::TreeSitter.field(node, "name")
+            if (helper = helpers[Noir::TreeSitter.node_text(name_node, source)]) && helper.calls > 0
+              return
+            end
+          end
+        when "short_var_declaration"
+          if (left = Noir::TreeSitter.field(node, "left")) && (name_node = first_named_child(left))
+            if (helper = helpers[Noir::TreeSitter.node_text(name_node, source)]) && helper.calls > 0
+              return
+            end
+          end
+        when "call_expression"
+          if (function = Noir::TreeSitter.field(node, "function")) && Noir::TreeSitter.node_type(function) == "identifier"
+            name = Noir::TreeSitter.node_text(function, source)
+            if helper = helpers[name]
+              expand_route_helper(node, helper, name, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
+              return
+            end
+          end
+        end
+      end
 
       # Skip `func <skipped>() { ... }` bodies entirely — their routes are
       # emitted by a separate analysis pass (e.g. Mount expansion). A plain
@@ -83,7 +256,7 @@ module Noir
             active_prefix = prefix_stack.join
             saved_binding = local_groups[param_name]? if param_name
             local_groups[param_name] = active_prefix if param_name
-            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config, string_values)
+            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
             if param_name
               if saved_binding.nil?
                 local_groups.delete(param_name)
@@ -97,7 +270,7 @@ module Noir
         when ChiCall::Group
           if info = unpack_chi_scope_call(node, source, string_values, expect_prefix: false)
             _, body, _ = info
-            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config, string_values)
+            walk_chi(body, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
             return
           end
         when ChiCall::Verb
@@ -132,7 +305,7 @@ module Noir
       end
 
       Noir::TreeSitter.each_named_child(node) do |child|
-        walk_chi(child, source, prefix_stack, local_groups, routes, skip_functions, config, string_values)
+        walk_chi(child, source, prefix_stack, local_groups, routes, skip_functions, config, string_values, helpers)
       end
     end
 

@@ -536,7 +536,8 @@ module Analyzer::Go
             # is empty because any nested func literal inside is the inline
             # handler which the walker already ignores by convention.
             collected = [] of Noir::TreeSitterGoRouteExtractor::Route
-            Noir::TreeSitterGoRouteExtractor.walk_chi_public(body, content, collected, string_values)
+            helpers = Noir::TreeSitterGoRouteExtractor.collect_route_helpers(root, content)
+            Noir::TreeSitterGoRouteExtractor.walk_chi_public(body, content, collected, string_values, helpers)
             # Capture routes' original line numbers on the endpoint details.
             # `attach_router_function_params` uses those to bind parameter
             # lines to the correct endpoint instead of counting verb calls,
