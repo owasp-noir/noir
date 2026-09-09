@@ -162,6 +162,7 @@ module Analyzer::Python
 
     def analyze
       state = ScanState.empty
+      fab = FabState.new
 
       # Sequential: blueprint/namespace maps accumulate across files.
       # Pre-filter .py sources once (no site-packages/tests) instead of
@@ -175,11 +176,13 @@ module Analyzer::Python
 
           file_content = fetch_file_content(path)
           next unless flask_relevant_source?(file_content)
+          collect_flask_appbuilder_classes(path, current_base_path, file_content, fab)
           analyze_flask_source(path, current_base_path, file_content, state)
         end
       end
 
       resolve_blueprint_prefixes(state)
+      emit_flask_appbuilder_endpoints(fab)
       emit_route_endpoints(state)
       emit_class_view_endpoints(state)
 
@@ -218,9 +221,9 @@ module Analyzer::Python
     private def analyze_flask_source(path : ::String, current_base_path : ::String,
                                      file_content : ::String, state : ScanState) : Nil
       lines = file_content.lines
-      extract_flask_appbuilder_exposed_endpoints(path, file_content).each do |endpoint|
-        result << endpoint
-      end
+      # `@expose` routes are resolved in a second pass (the class that
+      # pins `route_base`/`resource_name` can live in any file); a source
+      # that carries nothing else has no work left here.
       return if flask_appbuilder_only_source?(file_content)
 
       api_instances = Hash(::String, ::String).new
@@ -1218,66 +1221,471 @@ module Analyzer::Python
       normalized == "/" ? "/*" : "#{normalized}/*"
     end
 
-    private def extract_flask_appbuilder_exposed_endpoints(path : ::String, source : ::String) : Array(Endpoint)
-      return [] of Endpoint unless source.includes?("@expose(")
+    # Flask-AppBuilder composes a URL from a class-level base and the
+    # method-level `@expose(...)` suffix; reading only the suffix reports
+    # `/data` where the route is `/api/v1/chart/data`. The base is
+    # (`flask_appbuilder/baseviews.py:281`, `api/__init__.py:562`):
+    #
+    #   BaseView subclass : `route_base`, else "/" + class_name.lower()
+    #   BaseApi subclass  : `route_base`, else "/api/<version>/<resource_name>",
+    #                       with resource_name defaulting to class_name.lower()
+    #                       and version defaulting to "v1"
+    #
+    # `route_base` and `resource_name` are separate knobs: `route_base` wins
+    # outright and is NOT prefixed with `/api/<version>/`, while
+    # `resource_name` only fills the last segment of the API default. Both
+    # are ordinary class attributes, so a subclass inherits them —
+    # Superset's `ChartDataRestApi(ChartRestApi)` takes `resource_name =
+    # "chart"` from a base class in another file.
+    #
+    # The chain therefore has to be walked, and it has to terminate
+    # somewhere: this table is the terminator, holding every
+    # Flask-AppBuilder class that can serve as a base together with the
+    # attributes FAB itself sets on it. `IndexView`/`AuthView`/`UtilView`
+    # pin `route_base = ""` (so `SupersetIndexView` really is mounted at
+    # `/`, not `/supersetindexview`), and the security APIs pin resource
+    # names that no application source spells out (`GroupApi` ->
+    # `security/groups`). Generated from Flask-AppBuilder 5.2.2; the values
+    # are unchanged in 3.4.x and 4.5.x.
+    #
+    # Tuple shape: {kind, route_base, resource_name, version}. `nil` means
+    # "not set at this level, keep walking".
+    FAB_API_KIND  = "api"
+    FAB_VIEW_KIND = "view"
 
-      endpoints = [] of Endpoint
+    FAB_BUILTIN_CLASSES = {
+      "ApiKeyApi"                  => {FAB_API_KIND, nil, "security/api_keys", "v1"},
+      "AuthDBView"                 => {FAB_VIEW_KIND, "", nil, nil},
+      "AuthLDAPView"               => {FAB_VIEW_KIND, "", nil, nil},
+      "AuthOAuthView"              => {FAB_VIEW_KIND, "", nil, nil},
+      "AuthRemoteUserView"         => {FAB_VIEW_KIND, "", nil, nil},
+      "AuthSAMLView"               => {FAB_VIEW_KIND, "", nil, nil},
+      "AuthView"                   => {FAB_VIEW_KIND, "", nil, nil},
+      "BaseApi"                    => {FAB_API_KIND, nil, nil, "v1"},
+      "BaseCRUDView"               => {FAB_VIEW_KIND, nil, nil, nil},
+      "BaseChartView"              => {FAB_VIEW_KIND, nil, nil, nil},
+      "BaseFormView"               => {FAB_VIEW_KIND, nil, nil, nil},
+      "BaseModelApi"               => {FAB_API_KIND, nil, nil, "v1"},
+      "BaseModelView"              => {FAB_VIEW_KIND, nil, nil, nil},
+      "BaseRegisterUser"           => {FAB_VIEW_KIND, "/register", nil, nil},
+      "BaseSimpleDirectChartView"  => {FAB_VIEW_KIND, nil, nil, nil},
+      "BaseSimpleGroupByChartView" => {FAB_VIEW_KIND, nil, nil, nil},
+      "BaseView"                   => {FAB_VIEW_KIND, nil, nil, nil},
+      "ChartView"                  => {FAB_VIEW_KIND, nil, nil, nil},
+      "CompactCRUDMixin"           => {FAB_VIEW_KIND, nil, nil, nil},
+      "DirectByChartView"          => {FAB_VIEW_KIND, nil, nil, nil},
+      "DirectChartView"            => {FAB_VIEW_KIND, nil, nil, nil},
+      "GroupApi"                   => {FAB_API_KIND, nil, "security/groups", "v1"},
+      "GroupByChartView"           => {FAB_VIEW_KIND, nil, nil, nil},
+      "IndexView"                  => {FAB_VIEW_KIND, "", nil, nil},
+      "LocaleView"                 => {FAB_VIEW_KIND, "/lang", nil, nil},
+      "MasterDetailView"           => {FAB_VIEW_KIND, nil, nil, nil},
+      "MenuApi"                    => {FAB_API_KIND, nil, "menu", "v1"},
+      "ModelApi"                   => {FAB_API_KIND, nil, nil, "v1"},
+      "ModelRestApi"               => {FAB_API_KIND, nil, nil, "v1"},
+      "ModelView"                  => {FAB_VIEW_KIND, nil, nil, nil},
+      "MultipleView"               => {FAB_VIEW_KIND, nil, nil, nil},
+      "OpenApi"                    => {FAB_API_KIND, "/api", nil, "v1"},
+      "PermissionApi"              => {FAB_API_KIND, nil, "security/permissions", "v1"},
+      "PermissionModelView"        => {FAB_VIEW_KIND, "/permissions", nil, nil},
+      "PermissionViewMenuApi"      => {FAB_API_KIND, nil, "security/permissions-resources", "v1"},
+      "PermissionViewModelView"    => {FAB_VIEW_KIND, "/permissionviews", nil, nil},
+      "PublicFormView"             => {FAB_VIEW_KIND, nil, nil, nil},
+      "RegisterUserDBView"         => {FAB_VIEW_KIND, "/register", nil, nil},
+      "RegisterUserModelView"      => {FAB_VIEW_KIND, "/registeruser", nil, nil},
+      "RegisterUserOAuthView"      => {FAB_VIEW_KIND, "/register", nil, nil},
+      "ResetMyPasswordView"        => {FAB_VIEW_KIND, "/resetmypassword", nil, nil},
+      "ResetPasswordView"          => {FAB_VIEW_KIND, "/resetpassword", nil, nil},
+      "RoleApi"                    => {FAB_API_KIND, nil, "security/roles", "v1"},
+      "RoleModelView"              => {FAB_VIEW_KIND, "/roles", nil, nil},
+      "SecurityApi"                => {FAB_API_KIND, nil, "security", "v1"},
+      "SimpleFormView"             => {FAB_VIEW_KIND, nil, nil, nil},
+      "SwaggerView"                => {FAB_VIEW_KIND, "/swagger", nil, nil},
+      "TimeChartView"              => {FAB_VIEW_KIND, nil, nil, nil},
+      "UserApi"                    => {FAB_API_KIND, nil, "security/users", "v1"},
+      "UserDBModelView"            => {FAB_VIEW_KIND, "/users", nil, nil},
+      "UserGroupModelView"         => {FAB_VIEW_KIND, "/groups", nil, nil},
+      "UserInfoEditView"           => {FAB_VIEW_KIND, nil, nil, nil},
+      "UserLDAPModelView"          => {FAB_VIEW_KIND, "/users", nil, nil},
+      "UserModelView"              => {FAB_VIEW_KIND, "/users", nil, nil},
+      "UserOAuthModelView"         => {FAB_VIEW_KIND, "/users", nil, nil},
+      "UserRemoteUserModelView"    => {FAB_VIEW_KIND, "/users", nil, nil},
+      "UserSAMLModelView"          => {FAB_VIEW_KIND, "/users", nil, nil},
+      "UserStatsChartView"         => {FAB_VIEW_KIND, nil, nil, nil},
+      "UtilView"                   => {FAB_VIEW_KIND, "", nil, nil},
+      "ViewMenuApi"                => {FAB_API_KIND, nil, "security/resources", "v1"},
+      "ViewMenuModelView"          => {FAB_VIEW_KIND, "/viewmenus", nil, nil},
+    }
+
+    # `from flask_appbuilder[.x] import A, B as C` / `import flask_appbuilder`.
+    # The import graph resolves names to files inside the scanned project, so
+    # a third-party base class never resolves through it; this maps the local
+    # name back to the Flask-AppBuilder name that `FAB_BUILTIN_CLASSES` keys on
+    # (`BaseView as AppBuilderBaseView`, the Airflow-plugin spelling).
+    FAB_FROM_IMPORT_RE = /^\s*from\s+flask_appbuilder(?:\.[A-Za-z0-9_.]+)?\s+import\s+(.+)$/
+
+    # `class Foo(Bar, Baz):` — the base list is optional (`class Foo:`).
+    FAB_CLASS_DEF_RE = /^class\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(([^)]*)\))?\s*:/
+
+    # One `@expose(...)`-decorated handler.
+    private record FabExpose,
+      route_path : ::String,
+      methods : Array(::String),
+      line_index : Int32
+
+    # One `class Foo(Bar):` declaration that may take part in a
+    # Flask-AppBuilder route chain. Collected for every class in a
+    # FAB-relevant file, not just the ones carrying `@expose` — the class
+    # that pins `route_base` is often a base with no routes of its own
+    # (Superset's `BaseSupersetView`).
+    private record FabClassDecl,
+      path : ::String,
+      base_path : ::String,
+      name : ::String,
+      bases : Array(::String),
+      route_base : ::String?,
+      resource_name : ::String?,
+      version : ::String?,
+      exposes : Array(FabExpose)
+
+    # Everything phase two needs about Flask-AppBuilder classes: the
+    # declarations themselves, an index by class name, and the per-file
+    # `flask_appbuilder` import aliases.
+    private class FabState
+      getter decls = [] of FabClassDecl
+      getter by_name = Hash(::String, Array(FabClassDecl)).new
+      getter aliases = Hash(::String, Hash(::String, ::String)).new
+      getter import_maps = Hash(::String, Hash(::String, Tuple(::String, Int32))).new
+      getter collected = Set(::String).new
+
+      def add(decl : FabClassDecl) : Nil
+        @decls << decl
+        (@by_name[decl.name] ||= [] of FabClassDecl) << decl
+      end
+    end
+
+    # The file walk collects the files that can DECLARE a Flask-AppBuilder
+    # route or name the library directly. Intermediate bases are picked up
+    # on demand in phase two (`resolve_flask_appbuilder_base`): Superset's
+    # `TemporaryCacheRestApi` sits between a route class and `BaseApi` and
+    # mentions neither `@expose` nor `flask_appbuilder`, so a source-text
+    # gate alone loses every route below it.
+    private def flask_appbuilder_relevant_source?(source : ::String) : Bool
+      source.includes?("@expose(") || source.includes?("flask_appbuilder")
+    end
+
+    # Collect `path` into `fab` if it has not been collected already.
+    private def ensure_flask_appbuilder_file(path : ::String, base_path : ::String, fab : FabState) : Nil
+      return if fab.collected.includes?(path)
+      return unless File.exists?(path)
+      collect_flask_appbuilder_classes(path, base_path, fetch_file_content(path), fab, force: true)
+    end
+
+    # Phase one: record this file's class declarations (bases, the three
+    # route attributes, and any `@expose` handlers) into `fab`. Nothing is
+    # emitted here — the base a class inherits its `resource_name` from may
+    # live in a file the walk has not reached yet.
+    private def collect_flask_appbuilder_classes(path : ::String, base_path : ::String,
+                                                 source : ::String, fab : FabState,
+                                                 force : Bool = false) : Nil
+      return if fab.collected.includes?(path)
+      return unless force || flask_appbuilder_relevant_source?(source)
+      fab.collected << path
+
+      if aliases = flask_appbuilder_import_aliases(source)
+        fab.aliases[path] = aliases
+      end
+
       lines = source.split("\n")
-      class_indent : Int32? = nil
-      route_base = ""
+      docstring = Helper.docstring_line_flags(lines)
 
+      class_name : ::String? = nil
+      class_indent = 0
+      body_indent : Int32? = nil
+      bases = [] of ::String
+      route_base : ::String? = nil
+      resource_name : ::String? = nil
+      version : ::String? = nil
+      exposes = [] of FabExpose
+
+      flush = -> do
+        if name = class_name
+          fab.add(FabClassDecl.new(path, base_path, name, bases, route_base, resource_name, version, exposes))
+        end
+        class_name = nil
+        body_indent = nil
+        bases = [] of ::String
+        route_base = nil
+        resource_name = nil
+        version = nil
+        exposes = [] of FabExpose
+      end
+
+      skip_until = -1
       lines.each_with_index do |line, index|
+        next if index <= skip_until
+        next if docstring[index]
         stripped = line.lstrip
         next if stripped.starts_with?("#")
         indent = line.size - stripped.size
 
-        if stripped.matches?(/^class\s+([A-Za-z_][A-Za-z0-9_]*)\b/)
-          class_indent = indent
-          route_base = ""
-          next
-        end
-
-        if current_indent = class_indent
-          if !stripped.empty? && indent <= current_indent && !stripped.starts_with?("@")
-            class_indent = nil
-            route_base = ""
+        if stripped.starts_with?("class ")
+          # `class Foo(\n    Mixin, Base\n):` — Superset spells a third of
+          # its API classes that way. Joining is not enough: the
+          # continuation lines have to be consumed too, or the closing
+          # `):` reads as a dedent that ends the class body immediately.
+          header = strip_python_line_comment(stripped)
+          if python_paren_delta(line) > 0
+            skip_until = python_call_end_index(lines, index)
+            header = join_python_class_header(lines, index, skip_until)
+          end
+          if class_match = header.match(FAB_CLASS_DEF_RE)
+            flush.call
+            class_name = class_match[1]
+            class_indent = indent
+            bases = parse_python_base_classes(class_match[2]?)
+            next
           end
         end
 
-        next unless class_indent
+        next unless class_name
 
-        if route_base_match = stripped.match(/^route_base\s*=\s*[rf]?['"]([^'"]*)['"]/)
-          route_base = route_base_match[1]
+        if !stripped.empty? && indent <= class_indent && !stripped.starts_with?("@")
+          flush.call
           next
         end
 
-        if resource_name_match = stripped.match(/^resource_name\s*=\s*[rf]?['"]([^'"]*)['"]/)
-          route_base = "/api/v1/#{resource_name_match[1]}"
-          next
+        # Class-body attributes only: anything more deeply indented than the
+        # first body line belongs to a method, not to the class.
+        current_body_indent = (body_indent ||= indent)
+
+        if indent == current_body_indent
+          if attr_match = stripped.match(/^(route_base|resource_name|version)\s*=\s*[rf]?['"]([^'"]*)['"]/)
+            case attr_match[1]
+            when "route_base"    then route_base = attr_match[2]
+            when "resource_name" then resource_name = attr_match[2]
+            when "version"       then version = attr_match[2]
+            end
+            next
+          end
         end
 
         next unless stripped.starts_with?("@expose")
 
         expose_call = python_paren_delta(line) > 0 ? join_until_python_call_closes(lines, index, line) : line
-        expose = parse_flask_appbuilder_expose_call(expose_call)
-        next unless expose
+        next unless expose = parse_flask_appbuilder_expose_call(expose_call)
 
-        expose_path, methods = expose
-        full_path = join_flask_paths(route_base, expose_path)
-        normalized_path, path_params = normalize_flask_path_params(full_path)
-        methods.each do |method|
-          params = path_params.dup
-          if def_line = find_def_line(lines, index)
-            if codeblock = parse_code_block(lines[def_line..])
-              params.concat(get_filtered_params(method, extract_request_params(codeblock.split("\n"))))
-            end
+        exposes << FabExpose.new(expose[0], expose[1], index)
+      end
+
+      flush.call
+    end
+
+    private def flask_appbuilder_import_aliases(source : ::String) : Hash(::String, ::String)?
+      return nil unless source.includes?("flask_appbuilder")
+
+      aliases = nil
+      source.each_line do |line|
+        next unless match = line.match(FAB_FROM_IMPORT_RE)
+        match[1].gsub(/[()]/, "").split(",").each do |name|
+          name = name.strip
+          next if name.empty?
+          if parts = name.match(/^([A-Za-z_][A-Za-z0-9_]*)\s+as\s+([A-Za-z_][A-Za-z0-9_]*)$/)
+            (aliases ||= Hash(::String, ::String).new)[parts[2]] = parts[1]
+          elsif name.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
+            (aliases ||= Hash(::String, ::String).new)[name] = name
           end
+        end
+      end
+      aliases
+    end
 
-          endpoints << Endpoint.new(normalized_path, method, params, Details.new(PathInfo.new(path, index + 1)))
+    # `Bar, Baz.Qux, metaclass=ABCMeta` -> ["Bar", "Qux"]. Keyword
+    # arguments are not base classes, and a dotted or subscripted base
+    # (`flask_appbuilder.BaseView`, `Generic[T]`) contributes its final
+    # identifier — the name `FAB_BUILTIN_CLASSES` and the class index key on.
+    private def parse_python_base_classes(bases : ::String?) : Array(::String)
+      return [] of ::String if bases.nil? || bases.empty?
+
+      names = [] of ::String
+      split_python_call_args(bases).each do |raw|
+        arg = raw.strip
+        next if arg.empty?
+        next if arg.matches?(/^[A-Za-z_][A-Za-z0-9_]*\s*=/)
+        next if arg.starts_with?("*")
+        arg = arg.split('[', 2)[0].strip
+        segment = arg.split('.').last.strip
+        names << segment if segment.matches?(/^[A-Za-z_][A-Za-z0-9_]*$/)
+      end
+      names
+    end
+
+    # The resolved head of a `class Foo(Bar)` chain: either another
+    # declaration in the scanned project or a Flask-AppBuilder built-in.
+    private alias FabChainLink = FabClassDecl | ::String
+
+    # Depth-first, left-to-right walk of the base chain. Not a true C3
+    # linearisation, but it agrees with one for the shapes FAB views take
+    # (single inheritance plus mixins), and the attributes being looked up
+    # are set on at most one class in a real chain anyway.
+    private def flask_appbuilder_chain(decl : FabClassDecl, fab : FabState) : Array(FabChainLink)
+      chain = [] of FabChainLink
+      visited = Set(::String).new
+      walk_flask_appbuilder_chain(decl, fab, chain, visited, 0)
+      chain
+    end
+
+    private def walk_flask_appbuilder_chain(decl : FabClassDecl, fab : FabState,
+                                            chain : Array(FabChainLink),
+                                            visited : Set(::String), depth : Int32) : Nil
+      return if depth > 16
+      key = "#{decl.path}\t#{decl.name}"
+      return if visited.includes?(key)
+      visited << key
+      chain << decl
+
+      decl.bases.each do |base|
+        builtin = fab.aliases[decl.path]?.try(&.[base]?) || base
+        if FAB_BUILTIN_CLASSES.has_key?(builtin)
+          chain << builtin
+          next
+        end
+        next unless resolved = resolve_flask_appbuilder_base(decl, base, fab)
+        walk_flask_appbuilder_chain(resolved, fab, chain, visited, depth + 1)
+      end
+    end
+
+    # Same file first (a base declared next to its subclass), then the
+    # file the import graph points at, then a project-unique name. The
+    # last fallback matters because Python re-exports (`from .base import
+    # BaseSupersetView` in a package `__init__`) do not always resolve to
+    # the file that carries the `class` statement.
+    private def resolve_flask_appbuilder_base(decl : FabClassDecl, base : ::String,
+                                              fab : FabState) : FabClassDecl?
+      if same_file = fab.by_name[base]?.try(&.find { |candidate| candidate.path == decl.path })
+        return same_file
+      end
+
+      import_map = fab.import_maps[decl.path] ||= find_imported_modules(decl.base_path, decl.path)
+      if import_info = import_map[base]?
+        source_file = import_info[0]
+        unless source_file.empty?
+          ensure_flask_appbuilder_file(source_file, decl.base_path, fab)
+          if imported = fab.by_name[base]?.try(&.find { |candidate| candidate.path == source_file })
+            return imported
+          end
         end
       end
 
-      endpoints
+      candidates = fab.by_name[base]?
+      return nil if candidates.nil?
+      candidates.size == 1 ? candidates[0] : nil
+    end
+
+    # Join a multi-line `class Foo(...)` header into one line, dropping each
+    # line's trailing `#` comment first. Superset writes
+    # `class CssTemplateModelView(  # pylint: disable=too-many-ancestors`,
+    # and a comment carried into the joined text swallows the first base
+    # name — which is the one that reaches Flask-AppBuilder.
+    private def join_python_class_header(lines : Array(::String), start_index : Int32,
+                                         end_index : Int32) : ::String
+      pieces = [] of ::String
+      (start_index..Math.min(end_index, lines.size - 1)).each do |i|
+        pieces << strip_python_line_comment(lines[i].strip)
+      end
+      pieces.join(' ').lstrip
+    end
+
+    private def strip_python_line_comment(line : ::String) : ::String
+      comment_index = line.index('#')
+      comment_index ? line[0, comment_index].rstrip : line
+    end
+
+    # Index of the last line the parenthesised expression opened at
+    # `index` spans. Mirrors `join_until_python_call_closes`, which
+    # returns the joined text but not where it ended.
+    private def python_call_end_index(lines : Array(::String), index : Int32) : Int32
+      delta = python_paren_delta(lines[index])
+      i = index + 1
+      while i < lines.size && delta > 0
+        delta += python_paren_delta(lines[i])
+        return i if delta <= 0
+        i += 1
+      end
+      i
+    end
+
+    # Phase two: resolve each `@expose`-carrying class against the chain
+    # collected in phase one and emit its endpoints at the composed URL.
+    private def emit_flask_appbuilder_endpoints(fab : FabState) : Nil
+      fab.decls.each do |decl|
+        next if decl.exposes.empty?
+
+        chain = flask_appbuilder_chain(decl, fab)
+        kind = nil
+        route_base = nil
+        resource_name = nil
+        version = nil
+        chain.each do |link|
+          case link
+          in ::String
+            builtin = FAB_BUILTIN_CLASSES[link]
+            kind ||= builtin[0]
+            route_base = route_base.nil? ? builtin[1] : route_base
+            resource_name ||= builtin[2]
+            version ||= builtin[3]
+          in FabClassDecl
+            route_base = route_base.nil? ? link.route_base : route_base
+            resource_name ||= link.resource_name
+            version ||= link.version
+          end
+        end
+
+        # A chain that never reaches a Flask-AppBuilder class is not a FAB
+        # view: `@expose` alone says nothing about where the class mounts,
+        # and guessing gives exactly the bare-suffix URL this pass exists
+        # to stop reporting.
+        next if kind.nil?
+
+        base = if explicit = route_base
+                 explicit
+               elsif kind == FAB_API_KIND
+                 "/api/#{version || "v1"}/#{(resource_name || decl.name).downcase}"
+               else
+                 "/#{decl.name.downcase}"
+               end
+
+        lines = fetch_file_content(decl.path).split("\n")
+        decl.exposes.each do |expose|
+          normalized_path, path_params = normalize_flask_path_params(join_fab_paths(base, expose.route_path))
+          expose.methods.each do |method|
+            params = path_params.dup
+            if def_line = find_def_line(lines, expose.line_index)
+              if codeblock = parse_code_block(lines[def_line..])
+                params.concat(get_filtered_params(method, extract_request_params(codeblock.split("\n"))))
+              end
+            end
+
+            result << Endpoint.new(normalized_path, method, params,
+              Details.new(PathInfo.new(decl.path, expose.line_index + 1)))
+          end
+        end
+      end
+    end
+
+    # `route_base` becomes the blueprint's `url_prefix`, so Flask joins it
+    # with the rule as `url_prefix.rstrip("/") + rule`: `@expose("/")` on
+    # `route_base = "/api/v1/chart"` is `/api/v1/chart/`, WITH the trailing
+    # slash, and Flask redirects the bare `/api/v1/chart` to it. Superset's
+    # own OpenAPI document spells all fifteen of its collection routes that
+    # way.
+    private def join_fab_paths(prefix : ::String, path : ::String) : ::String
+      return normalize_joined_flask_path(path) if prefix.empty?
+      return normalize_joined_flask_path(prefix) if path.empty?
+
+      normalized_prefix = prefix.ends_with?("/") ? prefix[0...-1] : prefix
+      normalized_path = path.starts_with?("/") ? path : "/#{path}"
+      normalize_joined_flask_path("#{normalized_prefix}#{normalized_path}")
     end
 
     private def parse_flask_appbuilder_expose_call(line : ::String) : Tuple(::String, Array(::String))?
