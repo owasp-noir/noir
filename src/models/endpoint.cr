@@ -280,7 +280,7 @@ struct Details
     if technology = @technology
       copy.technology = technology
     end
-    @technologies.each { |technology| copy.add_technology(technology) }
+    @technologies.each { |contributor| copy.add_technology(contributor) }
     copy
   end
 
