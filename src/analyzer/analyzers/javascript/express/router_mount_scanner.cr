@@ -6,6 +6,7 @@ require "../../../../utils/url_path"
 require "../express_constants"
 require "../../../../utils/text_file"
 require "../../../../miniparsers/js_route_extractor"
+require "./js_module_resolver"
 
 module Analyzer::Javascript
   # RouterMountScanner handles the two-pass scanning process for Express router mounts.
@@ -25,12 +26,6 @@ module Analyzer::Javascript
     MOUNT_BACKTICK_RES = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*`([^`$]+)`\s*,\s*/} }.to_h
     MOUNT_IDENT_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*(\w+)\s*,\s*/} }.to_h
     MOUNT_ARRAY_RES    = MOUNT_CALL_NAMES.map { |c| {c, /(\w+)\.#{c}\s*\(\s*\[([^\]]+)\]\s*,\s*/m} }.to_h
-
-    # TypeScript ESM (`moduleResolution: NodeNext`) imports a sibling `.ts`
-    # source through a `.js`-family specifier. Map each JS extension to the
-    # TS source extension(s) it can stand in for, so `resolve_require_path`
-    # can fall back to the real on-disk file when the literal path is absent.
-    JS_TO_TS_EXT = {".js" => [".ts", ".tsx"], ".jsx" => [".tsx"], ".mjs" => [".mts"], ".cjs" => [".cts"]}
 
     # Type alias for file context used in two-pass processing
     alias FileContext = NamedTuple(
@@ -1175,66 +1170,12 @@ module Analyzer::Javascript
 
     # Resolve a require path relative to the requiring file
     # Follows Node.js module resolution: file -> file+ext -> directory/index
+    # Delegates to the shared resolver so the helper scanner in this
+    # directory resolves `require('./x')` exactly the way the mount scanner
+    # does — the two passes have to agree on which file a specifier names
+    # or a helper's routes land under a prefix meant for a different file.
     private def resolve_require_path(from_file : String, require_path : String) : String?
-      is_relative = require_path.starts_with?(".")
-      is_root_alias = require_path.starts_with?("@/") || require_path.starts_with?("~/")
-      return unless is_relative || is_root_alias
-
-      resolved = if is_root_alias
-                   alias_path = require_path.starts_with?("@/") ? require_path.lchop("@/") : require_path.lchop("~/")
-                   File.expand_path(alias_path, base_path_for_file(from_file))
-                 else
-                   base_dir = File.dirname(from_file)
-                   File.expand_path(require_path, base_dir)
-                 end
-
-      # Case 1: The resolved path is a file that exists
-      return resolved if File.file?(resolved)
-
-      # Case 2: Try adding common JS/TS extensions.
-      # Using `File.extname(require_path).empty?` is wrong because files
-      # like `./auth.route` have `File.extname` = `.route`, which is not
-      # empty but also not a runnable JS extension. That incorrectly
-      # short-circuits the extension search and leaves common Express
-      # naming idioms (`foo.route`, `bar.controller`, `baz.service`)
-      # unresolvable. Instead, skip the extension search only when the
-      # path already ends with a recognized JS/TS extension.
-      known_js_exts = [".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs", ".mts", ".cts"]
-      unless known_js_exts.any? { |ext| require_path.ends_with?(ext) }
-        [".js", ".ts", ".jsx", ".tsx"].each do |ext|
-          with_ext = "#{resolved}#{ext}"
-          return with_ext if File.file?(with_ext)
-        end
-      end
-
-      # Case 2b: TypeScript ESM extension rewrite. With tsconfig
-      # `moduleResolution: NodeNext`, TS source imports its OWN sibling
-      # `.ts` modules through a `.js` (or `.mjs`/`.cjs`/`.jsx`) specifier:
-      #   import usersRouter from './controllers/users.js'  // file is users.ts
-      # The literal `.js` path doesn't exist on disk, so Case 1 misses and
-      # Case 2 is skipped (the specifier already ends in a known ext).
-      # Without this, every cross-file router mount in a modern TS project
-      # (directus mounts ~40 controllers this way) fails to resolve and the
-      # sub-routes lose their mount prefix (`/me` instead of `/users/me`).
-      # Swap the JS extension for its TS counterpart before giving up.
-      JS_TO_TS_EXT.each do |js_ext, ts_exts|
-        next unless require_path.ends_with?(js_ext)
-        base = resolved[0...(resolved.size - js_ext.size)]
-        ts_exts.each do |ts_ext|
-          candidate = "#{base}#{ts_ext}"
-          return candidate if File.file?(candidate)
-        end
-      end
-
-      # Case 3: The path is a directory, look for an index file
-      if File.directory?(resolved)
-        ["index.js", "index.ts", "index.jsx", "index.tsx"].each do |index_file|
-          index_path = File.join(resolved, index_file)
-          return index_path if File.file?(index_path)
-        end
-      end
-
-      nil
+      JsModuleResolver.resolve(from_file, require_path, base_path_for_file(from_file))
     end
 
     private def base_path_for_file(file : String) : String

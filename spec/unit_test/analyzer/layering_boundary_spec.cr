@@ -104,6 +104,9 @@ CONTENT_FALLBACK_ALLOWLIST = [
   # it is a plain helper class the Express adapter drives. Gains the
   # accessor if it ever grows an analyzer base.
   "src/analyzer/analyzers/javascript/express/router_mount_scanner.cr",
+  # Same story: a plain helper class the Express adapter drives, with no
+  # `Analyzer` base to inherit `read_file_content` from.
+  "src/analyzer/analyzers/javascript/express/route_helper_scanner.cr",
 ]
 
 # Every (allowlist, pattern) pair, so the staleness guard below covers all of
