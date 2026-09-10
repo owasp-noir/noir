@@ -157,7 +157,16 @@ jobs:
           path: |
             src/ext/tree_sitter/runtime/lib.o
             src/ext/tree_sitter/grammars/*/*.o
-          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
+          # The runner image is part of the key. These are compiled object
+          # files, and `runs-on: ubuntu-latest` is a rotating label: objects built
+          # against one image's glibc and libxml2 were being restored onto a
+          # later image and linked into the spec binary, which then died on exec
+          # with `symbol lookup error: undefined symbol: xmlFree` (and `stderr`),
+          # each naming a Crystal method signature as its ELF symbol version.
+          # The entry that caused it was compiled on 2026-08-13 and was still
+          # being restored a month later, because `runner.os` is only "Linux"
+          # and nothing else in the key described the toolchain.
+          key: treesitter-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
       - name: Refresh restored object mtimes
         if: steps.ts-cache.outputs.cache-hit == 'true'
         # `build.sh` decides staleness by mtime (`[ "$SRC" -nt "$OBJ" ]`), and
@@ -378,7 +387,16 @@ jobs:
           path: |
             src/ext/tree_sitter/runtime/lib.o
             src/ext/tree_sitter/grammars/*/*.o
-          key: treesitter-${{ runner.os }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
+          # The runner image is part of the key. These are compiled object
+          # files, and `runs-on: ubuntu-latest` is a rotating label: objects built
+          # against one image's glibc and libxml2 were being restored onto a
+          # later image and linked into the spec binary, which then died on exec
+          # with `symbol lookup error: undefined symbol: xmlFree` (and `stderr`),
+          # each naming a Crystal method signature as its ELF symbol version.
+          # The entry that caused it was compiled on 2026-08-13 and was still
+          # being restored a month later, because `runner.os` is only "Linux"
+          # and nothing else in the key described the toolchain.
+          key: treesitter-${{ runner.os }}-${{ env.ImageOS }}-${{ env.ImageVersion }}-${{ hashFiles('src/ext/tree_sitter/build.sh', 'src/ext/tree_sitter/runtime/src/**', 'src/ext/tree_sitter/runtime/include/**', 'src/ext/tree_sitter/grammars/*/*.c', 'src/ext/tree_sitter/grammars/*/tree_sitter/*.h') }}
       - name: Refresh restored object mtimes
         if: steps.ts-cache.outputs.cache-hit == 'true'
         # See the identical step in build-crystal for why this is needed and
