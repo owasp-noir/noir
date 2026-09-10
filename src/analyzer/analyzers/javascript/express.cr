@@ -5,6 +5,7 @@ require "../../../utils/js_literal_scanner"
 require "../../../utils/top_level_split"
 require "./express_constants"
 require "./express/router_mount_scanner"
+require "./express/route_helper_scanner"
 
 module Analyzer::Javascript
   class Express < JavascriptEngine
@@ -24,12 +25,28 @@ module Analyzer::Javascript
       # Phase 1: Pre-scan to build router mount map
       scan_for_router_mounts
 
+      # Phase 1b: index the project-local helpers that forward their
+      # arguments to `router[verb](path, …)`. Must follow the mount scan:
+      # the routes it recovers are prefixed from the same locator table.
+      helper_scanner = scan_for_route_helpers
+
       parallel_file_scan do |path|
         content = read_file_content(path)
         next if Noir::JSRouteExtractor.other_shared_extractor_framework?(content, :express)
         parser_endpoints = Noir::JSRouteExtractor.extract_routes(path, content, @is_debug,
           include_callees: include_callee)
+        # A forwarding helper's own body carries the *shape* of a route,
+        # not a route: `router.get(`/api${name}`, …)` inside
+        # `setupPageRoute` is a rewrite of the caller's path, and the
+        # generic parser turns it into a phantom `/api{name}` endpoint.
+        # The real registrations come from the call sites below.
+        helper_forward_lines = helper_scanner.forward_lines(path)
         parser_endpoints.each do |endpoint|
+          unless helper_forward_lines.empty?
+            first_line = endpoint.details.code_paths.first?.try(&.line)
+            next if first_line && helper_forward_lines.includes?(first_line)
+          end
+
           # Use the line number already set by the extractor; fall back to path-only if missing
           if endpoint.details.code_paths.empty?
             endpoint.details = Details.new(PathInfo.new(path))
@@ -58,6 +75,10 @@ module Analyzer::Javascript
         # `src/Routers/*.js` (AudiencesRouter, GlobalConfigRouter,
         # UsersRouter, ...) via this pattern.
         extract_parse_server_routes(path, content, result, include_callee)
+
+        # Routes registered by calling a forwarding helper
+        # (`setupApiRoute(router, 'get', '/:cid', …)`).
+        extract_route_helper_calls(helper_scanner, path, content, result, include_callee)
       rescue e
         logger.debug "Parser failed for #{path}: #{e.message}, falling back to regex"
 
@@ -980,6 +1001,41 @@ module Analyzer::Javascript
     private def scan_for_router_mounts
       scanner = RouterMountScanner.new(all_files, @base_paths, base_path, logger, :express)
       scanner.scan
+    end
+
+    private def scan_for_route_helpers : RouteHelperScanner
+      scanner = RouteHelperScanner.new(all_files, @base_paths, base_path, logger)
+      scanner.index
+      scanner
+    end
+
+    # Emit one endpoint per route recovered from a forwarding-helper call.
+    private def extract_route_helper_calls(scanner : RouteHelperScanner, path : String, content : String,
+                                           result : Array(Endpoint), include_callee : Bool)
+      return unless scanner.any_helpers?
+
+      scanner.routes_for(path, content).each do |route|
+        details = Details.new(PathInfo.new(path, route.line))
+        endpoint = Endpoint.new(route.url, route.method, details)
+        route.url.scan(/:(\w+)/) do |pm|
+          next unless pm.size > 0
+          endpoint.push_param(Param.new(pm[1], "", "path"))
+        end
+        attach_js_callees(endpoint, helper_call_callees(route, content, path)) if include_callee
+        result << endpoint
+      end
+    end
+
+    # Handlers passed to a helper sit after the path argument. Reuse the
+    # same inline-handler walk the Parse Server pass uses.
+    private def helper_call_callees(route : RouteHelperScanner::HelperRoute, content : String,
+                                    path : String) : Array(Noir::JSCalleeExtractor::Entry)
+      callees = [] of Noir::JSCalleeExtractor::Entry
+      route.args.each_with_index do |entry, idx|
+        next unless idx > route.path_arg
+        callees.concat(handler_callees(entry[0], entry[1], content, path))
+      end
+      callees
     end
   end
 end

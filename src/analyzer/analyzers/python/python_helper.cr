@@ -19,6 +19,67 @@ module Analyzer::Python
       normalize_path("#{prefix}/#{path}")
     end
 
+    # For each line, whether its first character sits inside a
+    # triple-quoted string (i.e. a docstring opened on an earlier line).
+    # A single linear scan tracks the open/close `"""`/`'''` delimiters at
+    # file scope; single-line strings and `#` comments are skipped so a
+    # stray `"""` inside them doesn't flip the state.
+    #
+    # Python API docs routinely spell a full worked example inside a
+    # docstring — Superset's `superset_core/rest_api/decorators.py` shows
+    # a `class MyExtensionAPI(RestApi)` with `@expose("/hello")` in prose —
+    # and a line-oriented route scanner reads those as real routes.
+    def docstring_line_flags(lines : Array(::String)) : Array(Bool)
+      flags = Array(Bool).new(lines.size, false)
+      in_triple = false
+      triple_char = '\0'
+      lines.each_with_index do |line, idx|
+        flags[idx] = in_triple
+        i = 0
+        # `chars`, not `line[i]`: `String#[](Int)` walks from the start of
+        # the string on every call once the content is not single-byte.
+        chars = line.chars
+        size = chars.size
+        while i < size
+          c = chars[i]
+          if in_triple
+            if c == triple_char && i + 2 < size && chars[i + 1] == triple_char && chars[i + 2] == triple_char
+              in_triple = false
+              i += 3
+              next
+            end
+            i += 1
+          elsif c == '#'
+            break # comment runs to end of line
+          elsif c == '"' || c == '\''
+            if i + 2 < size && chars[i + 1] == c && chars[i + 2] == c
+              in_triple = true
+              triple_char = c
+              i += 3
+              next
+            end
+            # Single-line string: skip to its closing quote, consuming a
+            # backslash and whatever follows it. An escape FLAG, not a
+            # one-character lookback: a lookback cannot tell an escaped
+            # quote from an escaped BACKSLASH followed by a quote.
+            i += 1
+            while i < size
+              if chars[i] == '\\'
+                i += 2
+                next
+              end
+              break if chars[i] == c
+              i += 1
+            end
+            i += 1
+          else
+            i += 1
+          end
+        end
+      end
+      flags
+    end
+
     def extract_python_string(expression : ::String) : ::String?
       string_match = expression.strip.match(/^[rf]?['"]([^'"]*)['"]/)
       string_match ? string_match[1] : nil
