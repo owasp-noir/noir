@@ -1,4 +1,5 @@
 require "file"
+require "../ext/string_search"
 
 # UTF-8 text reads for the scan pipeline.
 module Noir::TextFile

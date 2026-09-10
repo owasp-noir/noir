@@ -42,6 +42,10 @@ module Detector::Javascript
                           filename.ends_with?(".cjs") || filename.ends_with?(".ts") ||
                           filename.ends_with?(".tsx") || filename.ends_with?(".jsx")
 
+      # Necessary condition for every marker below, which all spell `feathers`
+      # or `.service` literally; a memchr scan is far cheaper than the
+      # alternation regex.
+      return false unless file_contents.includes?("feathers") || file_contents.includes?(".service")
       content_matches?(file_contents, SOURCE_MARKERS)
     end
   end

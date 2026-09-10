@@ -13,6 +13,7 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       [".js", ".mjs", ".ts", ".jsx", ".tsx", ".cjs"].any? { |ext| filename.ends_with?(ext) } &&
+        (file_contents.includes?("hono") || file_contents.includes?("Hono")) &&
         content_matches?(file_contents, SIGNAL)
     end
   end

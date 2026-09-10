@@ -41,6 +41,10 @@ module Detector::Typescript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".ts") || filename.ends_with?(".tsx")
+      # Necessary condition for every marker below, which all spell
+      # `@tanstack` or `Route` literally; a memchr scan is far cheaper than
+      # the alternation regex.
+      return false unless file_contents.includes?("@tanstack") || file_contents.includes?("Route")
       content_matches?(file_contents, SIGNAL)
     end
   end

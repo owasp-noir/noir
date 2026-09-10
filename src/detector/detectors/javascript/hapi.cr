@@ -15,6 +15,9 @@ module Detector::Javascript
                           filename.ends_with?(".mjs") ||
                           filename.ends_with?(".cjs") ||
                           filename.ends_with?(".ts")
+      # Necessary condition for every marker below, which all spell `hapi`
+      # literally; a memchr scan is far cheaper than the alternation regex.
+      return false unless file_contents.includes?("hapi")
       content_matches?(file_contents, MARKERS)
     end
   end

@@ -17,6 +17,10 @@ module Detector::Javascript
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless source_file?(filename)
+      # `createServer` is the one literal every accepting path needs
+      # (CREATE_SERVER_SIGNAL), and it is far rarer than the `http` the import
+      # regex would scan for.
+      return false unless file_contents.includes?("createServer")
       return false unless content_matches?(file_contents, CORE_HTTP_IMPORT)
       return false unless content_matches?(file_contents, CREATE_SERVER_SIGNAL)
 

@@ -47,6 +47,9 @@ module Detector::Javascript
       end
 
       return false unless source_file?(filename)
+      # Necessary condition for both branches below: the import markers spell
+      # `socket.io` and the API branch requires the literal `new Server(`.
+      return false unless file_contents.includes?("socket.io") || file_contents.includes?("new Server(")
       return true if content_matches?(file_contents, SIGNAL)
       content_matches?(file_contents, NEW_SERVER) && content_matches?(file_contents, SOCKET_IO_API)
     end

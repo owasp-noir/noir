@@ -6,6 +6,10 @@ module Detector::Python
 
     def detect(filename : String, file_contents : String) : Bool
       return false unless filename.ends_with?(".py")
+      # Necessary condition for every pattern below: each spells either
+      # `django` or `rest_framework` literally, and a memchr scan is far
+      # cheaper than four anchored import regexes over the whole file.
+      return false unless file_contents.includes?("django") || file_contents.includes?("rest_framework")
 
       # Match framework imports while avoiding django_* packages
       has_from_import = file_contents.match(/(^|\n)\s*from\s+django\./)
