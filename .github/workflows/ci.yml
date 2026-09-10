@@ -424,9 +424,34 @@ jobs:
       # the spec DSL passes its own file and line. Reproduce such a failure with
       # `just spec-build`, which keeps debug info on purpose.
       - name: Build the spec binary
+        # `--no-export-dynamic` is load-bearing, not tidiness. Crystal passes
+        # `-rdynamic` so backtraces can symbolize, which exports every Crystal
+        # symbol into `.dynsym`. For this binary that was 133,142 entries in
+        # `.gnu.version` over a 4.9 MB `.dynstr`, and at that size the loader
+        # read an out-of-range version index and dereferenced into `.dynstr`,
+        # which is full of Crystal names:
+        #
+        #   ./bin/noir_spec: symbol lookup error: ./bin/noir_spec:
+        #     undefined symbol: xmlFree, version Hash(K, V)#fetch<String, Nil>:(JSON::Any | Nil)
+        #
+        # A libc/libxml2 symbol carrying a Crystal method signature as its ELF
+        # symbol version is that read, not a corrupt binary. `ld` takes the last
+        # of `--export-dynamic` / `--no-export-dynamic`, so appending it here
+        # cancels the one Crystal adds. Nothing dlopens this binary.
         run: |
           mkdir -p bin
-          crystal build spec/suite.cr -o bin/noir_spec --stats --no-debug
+          crystal build spec/suite.cr -o bin/noir_spec --stats --no-debug \
+            --link-flags="-Wl,--no-export-dynamic"
+      # Guards the above: if `.dynsym` grows back, the suite starts failing at
+      # exec with a message that looks like anything but its cause.
+      - name: Check the spec binary's dynamic symbol count
+        run: |
+          count=$(readelf --dyn-syms bin/noir_spec | grep -c '^ *[0-9]*:' || true)
+          echo "dynamic symbols: $count"
+          if [ "$count" -gt 2000 ]; then
+            echo "::error::bin/noir_spec exports $count dynamic symbols; --no-export-dynamic is not taking effect"
+            exit 1
+          fi
       # Spec files load in directory order, which differs between macOS and
       # Linux, so an example that depends on state another example left behind
       # passes locally and fails here, on an unrelated PR. Four such couplings
