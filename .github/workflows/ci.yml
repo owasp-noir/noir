@@ -175,13 +175,10 @@ jobs:
           # Crystal fingerprints its own cache entries by content, so a
           # partially-stale restore is safe — it only ever means some entries
           # get recompiled. Hence the loose restore-keys ladder.
-          # The ladder stops at the `-build-` prefix: the bare
-          # `crystal-<os>-<version>-` prefix reaches the spec and lint jobs'
-          # caches, which are compilations of different programs. See the spec
-          # job's cache step for what that produced.
-          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-v2-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
           restore-keys: |
-            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-v2-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-build-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
       - name: Build
@@ -399,22 +396,10 @@ jobs:
           # hit the primary key instead. Note that a primary-key hit also means
           # actions/cache does not re-save, so the entry ages until src/ moves.
           # Watch the `--stats` lines on the build step for the effect.
-          #
-          # The ladder stops at the `-spec-` prefix on purpose. It used to end
-          # with the bare `crystal-<os>-<version>-` prefix, which reaches the
-          # *other* jobs' caches: `-build-` is a different program (the noir
-          # binary, not the spec suite) and `-lint-` is Ameba, whose own comment
-          # says its entries are disjoint from these. Restoring those produced a
-          # spec binary that linked but died on exec with
-          # `symbol lookup error: undefined symbol: <libc symbol>, version
-          # <a Crystal method signature>` — a corrupted dynamic symbol table,
-          # naming a different pair of symbols on each branch. It reproduced on
-          # main as well as on pull requests, and because a primary-key hit does
-          # not re-save, a poisoned entry then persisted under that key until
-          # src/ moved. The `-v2-` salt abandons the entries already poisoned.
-          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-v2-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
+          key: crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-${{ hashFiles('shard.lock', 'src/**/*.cr') }}
           restore-keys: |
-            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-v2-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-spec-
+            crystal-${{ runner.os }}-${{ matrix.crystal-version }}-
       - name: Install dependencies
         run: shards install
       # This job used to run four `crystal spec` steps (unit, functional, and
