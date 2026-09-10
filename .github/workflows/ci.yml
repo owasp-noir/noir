@@ -426,7 +426,31 @@ jobs:
       - name: Build the spec binary
         run: |
           mkdir -p bin
-          crystal build spec/suite.cr -o bin/noir_spec --stats --no-debug
+          crystal build spec/suite.cr -o bin/noir_spec --stats
+      # DIAGNOSTIC, not a permanent step. `bin/noir_spec` has been linking
+      # successfully and then dying on exec with
+      # `symbol lookup error: undefined symbol: xmlFree, version
+      # Hash(K, V)#fetch<String, Nil>:(JSON::Any | Nil)` — a libxml2 or libc
+      # symbol carrying a Crystal method signature as its ELF symbol version,
+      # which is a corrupted dynamic symbol table. It reproduces on main, and
+      # a fully cold build (no Crystal cache, every tree-sitter grammar
+      # recompiled) fails the same way, so it is neither stale objects nor the
+      # source. This prints what the loader is actually being handed.
+      - name: Inspect the spec binary
+        if: always()
+        run: |
+          ls -l bin/noir_spec
+          file bin/noir_spec
+          echo "--- ldd ---"
+          ldd bin/noir_spec || true
+          echo "--- dynamic section ---"
+          readelf -d bin/noir_spec | head -30 || true
+          echo "--- version requirements (.gnu.version_r) ---"
+          readelf -V bin/noir_spec | head -60 || true
+          echo "--- xmlFree / stderr in dynsym ---"
+          readelf --dyn-syms bin/noir_spec | grep -E 'xmlFree|stderr' || true
+          echo "--- libxml2 on this image ---"
+          dpkg -l | grep -i libxml2 || true
       # Spec files load in directory order, which differs between macOS and
       # Linux, so an example that depends on state another example left behind
       # passes locally and fails here, on an unrelated PR. Four such couplings
