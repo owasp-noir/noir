@@ -1351,69 +1351,55 @@ module Noir
       # Look for req.body.X or const/let/var { X } = req.body
       # First check the destructuring pattern
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\.body/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = clean_destructured_param(param)
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        params = match[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = clean_destructured_param(param)
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*ctx\.request\.body/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = clean_destructured_param(param)
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        params = match[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = clean_destructured_param(param)
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       # Check direct property access: req.body.X
       handler_body.scan(/(?:req|request)\.body\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "json"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "json"))
       end
 
       # Check array access: req.body['X'] or req.body["X"]
       handler_body.scan(/(?:req|request)\.body\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "json"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "json"))
       end
 
       # Hono-style: const { X } = await c.req.json()
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.json\s*\(/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = clean_destructured_param(param)
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        params = match[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = clean_destructured_param(param)
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       # Hono-style: const { X } = await c.req.parseBody()
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+\w+\.req\.parseBody\s*\(/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = clean_destructured_param(param)
-            endpoint.push_param(Param.new(clean_param, "", "form")) unless clean_param.empty?
-          end
+        params = match[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = clean_destructured_param(param)
+          endpoint.push_param(Param.new(clean_param, "", "form")) unless clean_param.empty?
         end
       end
 
       # Oak-style: const { X } = await ctx.request.body.json()
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*await\s+ctx\.request\.body\.json\s*\(/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = clean_destructured_param(param)
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        params = match[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = clean_destructured_param(param)
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
     end
@@ -1421,180 +1407,154 @@ module Noir
     def self.extract_query_params(handler_body : String, endpoint : Endpoint)
       # Look for destructuring: const/let/var { X } = req.query
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*(?:req|request)\.query/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = clean_destructured_param(param)
-            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
-          end
+        params = match[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = clean_destructured_param(param)
+          endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
         end
       end
 
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*ctx(?:\.request)?\.query/) do |match|
-        if match.size > 0
-          params = match[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = clean_destructured_param(param)
-            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
-          end
+        params = match[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = clean_destructured_param(param)
+          endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
         end
       end
 
       # Look for req.query.X
       handler_body.scan(/(?:req|request)\.query\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
       handler_body.scan(/(?:req|request)\.query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
       handler_body.scan(/ctx(?:\.request)?\.query\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
       handler_body.scan(/ctx(?:\.request)?\.query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
       # Hono-style: c.req.query('param')
       handler_body.scan(/\w+\.req\.query\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
       # Hono-style: c.req.queries('param')
       handler_body.scan(/\w+\.req\.queries\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "query"))
       end
 
       # Oak/Fetch-API-style: ctx.request.url.searchParams.get('param')
       handler_body.scan(/ctx\.request\.url\.searchParams\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(match[1], "", "query"))
       end
     end
 
     def self.extract_header_params(handler_body : String, endpoint : Endpoint)
       # Express/Fastify-style: req.headers / req.header
       handler_body.scan(/(?:req|request)\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.headers["x-token"]
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/(?:req|request)\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.headers[CONST] — unresolved
-        push_unresolved_param(endpoint, match[1], "header") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "header")
       end
       handler_body.scan(/(?:req|request)\.headers\.(\w+)/) do |match| # req.headers.authorization
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/(?:req|request)\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.header("x-token")
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/(?:req|request)\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # req.header(CONST) — unresolved
-        push_unresolved_param(endpoint, match[1], "header") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "header")
       end
       handler_body.scan(/(?:req|request)\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # req.get("x-token")
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
 
       # Koa-style: ctx.headers / ctx.header / ctx.get
       handler_body.scan(/ctx\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # ctx.headers["x-token"]
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/ctx\.headers\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # ctx.headers[CONST] — unresolved
-        push_unresolved_param(endpoint, match[1], "header") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "header")
       end
       handler_body.scan(/ctx\.header\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # ctx.header["x-token"]
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/ctx\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # ctx.get("x-token")
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
 
       # Hono-style: c.req.header
       handler_body.scan(/\w+\.req\.header\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # c.req.header("x-token")
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/\w+\.req\.header\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # c.req.header(CONST) — unresolved
-        push_unresolved_param(endpoint, match[1], "header") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "header")
       end
 
       # Oak/Fetch-API-style: ctx.request.headers.get('x-token')
       handler_body.scan(/ctx\.request\.headers\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        endpoint.push_param(Param.new(match[1], "", "header")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "header"))
       end
       handler_body.scan(/ctx\.request\.headers\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # unresolved
-        push_unresolved_param(endpoint, match[1], "header") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "header")
       end
     end
 
     def self.extract_cookie_params(handler_body : String, endpoint : Endpoint)
       # Express/Fastify-style: req.cookies
       handler_body.scan(/(?:req|request)\.cookies\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match| # req.cookies["session"]
-        endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
       handler_body.scan(/(?:req|request)\.cookies\s*\[\s*([A-Za-z_$]\w*)\s*\]/) do |match| # req.cookies[CONST] — unresolved
-        push_unresolved_param(endpoint, match[1], "cookie") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "cookie")
       end
       handler_body.scan(/(?:req|request)\.cookies\.(\w+)/) do |match| # req.cookies.session
-        endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
 
       # Koa-style: ctx.cookies.get
       handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match| # ctx.cookies.get("session")
-        endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
       handler_body.scan(/ctx\.cookies\.get\s*\(\s*([A-Za-z_$]\w*)\s*\)/) do |match| # ctx.cookies.get(CONST) — unresolved
-        push_unresolved_param(endpoint, match[1], "cookie") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "cookie")
       end
 
       # Hono-style: getCookie(c, 'name')
       handler_body.scan(/getCookie\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]\s*\)/) do |match| # getCookie(c, "name")
-        endpoint.push_param(Param.new(match[1], "", "cookie")) if match.size > 0
+        endpoint.push_param(Param.new(match[1], "", "cookie"))
       end
       handler_body.scan(/getCookie\s*\(\s*\w+\s*,\s*([A-Za-z_$]\w*)\s*\)/) do |match| # getCookie(c, CONST) — unresolved
-        push_unresolved_param(endpoint, match[1], "cookie") if match.size > 0
+        push_unresolved_param(endpoint, match[1], "cookie")
       end
     end
 
     def self.extract_path_params(handler_body : String, endpoint : Endpoint)
       # Express/Fastify-style: req.params.X
       handler_body.scan(/(?:req|request)\.params\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
-        end
+        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
       end
 
       # Express/Fastify-style: req.params['X']
       handler_body.scan(/(?:req|request)\.params\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
-        end
+        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
       end
 
       # Hono-style: c.req.param('id')
       handler_body.scan(/\w+\.req\.param\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
-        end
+        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
       end
 
       # Koa-style: ctx.params.X
       handler_body.scan(/ctx\.params\.(\w+)/) do |match|
-        if match.size > 0
-          endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
-        end
+        endpoint.push_param(Param.new(match[1], "", "path")) unless endpoint.params.any? { |p| p.name == match[1] && p.param_type == "path" }
       end
     end
 
