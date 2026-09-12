@@ -254,7 +254,7 @@ module Noir::JSCalleeExtractor
 
     return unless strings.size >= 2 && handler
     method = strings[0].upcase
-    return unless HTTP_VERB_METHODS.values.includes?(method)
+    return unless HTTP_VERB_METHODS.has_value?(method)
 
     {method, strings[1], handler}
   end

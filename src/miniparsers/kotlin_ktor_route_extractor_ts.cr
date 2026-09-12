@@ -815,7 +815,7 @@ module Noir
 
       return if candidate.empty?
       upcased = candidate.upcase
-      HTTP_VERB_NAMES.values.includes?(upcased) ? upcased : nil
+      HTTP_VERB_NAMES.has_value?(upcased) ? upcased : nil
     end
 
     private def routing_install_call?(call : LibTreeSitter::TSNode, source : String) : Bool
