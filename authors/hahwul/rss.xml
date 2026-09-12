@@ -1,0 +1,275 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>OWASP Noir - Authors: hahwul</title>
+    <link>https://owasp-noir.github.io/noir/authors/hahwul/</link>
+    <description>Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 193 frameworks, exposing shadow APIs and mapping the attack surface.</description>
+    <atom:link href="https://owasp-noir.github.io/noir/authors/hahwul/rss.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>alibi: the endpoints that can&apos;t account for themselves</title>
+      <link>https://owasp-noir.github.io/noir/blog/introducing-alibi/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/introducing-alibi/</guid>
+      <description>A companion tool that runs Noir once per view and cross-examines code, docs, traffic, gateway, and infra against each other.</description>
+      <content:encoded><![CDATA[<p>alibi is out: a companion tool that runs Noir once per view of your attack surface and cross-examines the results. It lives at <a href="https://github.com/owasp-noir/alibi">owasp-noir/alibi</a>.</p>
+<p>The premise fits in a paragraph. Noir reads the same surface from five directions:</p>
+<table>
+<thead>
+<tr>
+<th>View</th>
+<th>Read from</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>code</strong></td>
+<td>200+ analyzers across 33 languages</td>
+</tr>
+<tr>
+<td><strong>doc</strong></td>
+<td>OpenAPI, RAML, WSDL, GraphQL SDL, AsyncAPI, gRPC, Smithy, TypeSpec, OData, OpenRPC</td>
+</tr>
+<tr>
+<td><strong>traffic</strong></td>
+<td>HAR, mitmproxy, Burp, Caido, ZAP, Postman, Insomnia, Bruno, <code>.http</code></td>
+</tr>
+<tr>
+<td><strong>gateway</strong></td>
+<td>nginx, Apache, Envoy, Kong, Traefik, APISIX, Caddy, Istio, Kubernetes Ingress and Gateway API</td>
+</tr>
+<tr>
+<td><strong>infra</strong></td>
+<td>Terraform, CloudFormation, CDK, Serverless, Vercel, Netlify, Wrangler, Azure Functions, Kamal</td>
+</tr>
+</tbody>
+</table>
+<p>Each view is a claim about what exists. The code says &quot;this route is implemented.&quot; A contract says &quot;this endpoint is promised.&quot; A capture file says &quot;this URL took a real request.&quot; An endpoint that shows up in one view should be able to account for itself in the others, and when it can't, someone should go look: that gap is a shadow API, a phantom contract, a gateway rule that routes to nothing. Noir collects all five claims and stops there, by design. alibi asks whether they agree.</p>
+<h2 id="the-one-scan-plan-and-why-it-failed">The one-scan plan, and why it failed</h2>
+<p>My first plan was a single scan. Noir labels every endpoint with the technology that found it, so I figured the five views would fall out of one JSON for free.</p>
+<p>They don't. Noir deduplicates by <code>(method, url)</code> across every analyzer, and for a discovery tool that's correct: a Flask route and an OpenAPI path spelled identically <em>are</em> one endpoint. For a comparison it's fatal, and fatal in the worst direction, because the better two views agree, the more of their endpoints merge into single records and the more corroboration vanishes. Scan casdoor whole and you get 372 code endpoints against 9 documented ones. Scan its <code>swagger/</code> directory alone and the spec holds 235.</p>
+<p>So alibi runs Noir once per view, restricting each pass with <code>--only-techs</code>, and joins the results itself. Noir needed no changes for any of this, and alibi parses no API formats of its own. Its only input is Noir's JSON.</p>
+<p>That's also the reason it's a separate repository, and a Python one. Noir grew from 19k to 198k lines in about a year. I'd rather grow the ecosystem sideways than keep growing the binary, and the contribution bar for a comparison tool should be low.</p>
+<h2 id="what-a-run-looks-like">What a run looks like</h2>
+<pre><code class="language-console hljs">$ alibi scan ./casdoor
+alibi  ·  1 source  ·  377 endpoints
+
+  code 372   doc 235
+
+  230 corroborated -- vouched for by more than one view
+
+  19 endpoints nearly matched another view -- these may be matching failures, not real gaps
+
+SHADOW  Shadow API -- Implemented, but no contract describes it
+  134 findings  ·  4 critical, 57 high, 62 medium, 11 low
+
+  critical POST    /api/upload-groups        router.go:87
+           upload paths carry more consequence than reads
+  critical POST    /api/upload-permissions   router.go:208
+</code></pre>
+<p>Eight rules ship: <code>SHADOW</code>, <code>PHANTOM</code>, <code>ORPHAN</code>, <code>LIVE_UNDOC</code>, <code>DANGLING</code>, <code>DRIFT</code>, <code>UNEXPOSED</code>, <code>COLD</code>. Severity then shifts on what Noir's taggers saw on the endpoint: file uploads, personal data, state-changing methods, signs of authentication.</p>
+<h2 id="most-of-the-work-wasnt-the-comparison">Most of the work wasn't the comparison</h2>
+<p>Joining five endpoint lists is a weekend project. The real work was keeping the report honest, and every guard in alibi exists because a real repository produced a confident wrong answer first.</p>
+<p>The first full run on casdoor marked nearly half the findings critical. The promotion rule was &quot;no sign of authentication&quot;, and Noir's auth taggers had tagged nine endpoints out of almost four hundred, so &quot;no sign&quot; was true nearly everywhere and meant nothing. The rule now runs the other way: the presence of a signal moves severity, and an adjustment keyed to a missing tag applies only when that tag exists somewhere in the scan.</p>
+<p>Argo CD reported 58 shadow APIs and 198 phantom contracts, none of them real. Its Go code registers <code>/api</code>; its OpenAPI documents 198 paths beneath it. Same surface, two granularities, not a single shared endpoint. Zero overlap between two populated views now reads as &quot;this comparison failed&quot;, so the rules hold back and the report explains why instead of flooding.</p>
+<p>NetBox nearly shipped the worst answer of all. Its API documentation is one 12.35MB OpenAPI file, Noir skipped it for exceeding the file-size cap, and the draft report concluded that the project documents nothing. Not incomplete. Wrong, and confident about it. Noir now gives specification documents their own size budget (<a href="https://github.com/owasp-noir/noir/pull/2671">#2671</a>), and alibi prints whatever Noir reported it couldn't read above the findings, because a missing view and an empty view mean opposite things.</p>
+<p>The same caution runs through the rest. A finding whose endpoint nearly matches another view (same path under a different verb, a parameter where the other side has a literal) is demoted and flagged, because &quot;in code but not in the docs&quot; is indistinguishable from &quot;in both, but alibi failed to line them up&quot;. Snapshots record which rules actually evaluated, because dropping the contracts directory from one run makes <code>SHADOW</code> evaluate nothing, and to a naive diff that looks exactly like every shadow API having been closed.</p>
+<p>Under all of it sits one normalization rule: a path parameter's name is not part of its identity. <code>/users/&lt;int:user_id&gt;</code>, <code>/users/{id}</code> and <code>/users/:id</code> describe the same slot; what matters is its position and whether it spans a <code>/</code>. Before trusting that rule I ran it over every route fixture in Noir's own test tree, 3,195 URLs across 33 languages.</p>
+<h2 id="where-it-stops">Where it stops</h2>
+<p>alibi compares what Noir can read, and a view read at the wrong granularity is worse than one not read at all. Argo CD sits at that ceiling above. authentik assembles its URLconf at runtime by importing every installed app's <code>urls</code> module, which no static reader can follow. flipt mounts a gRPC gateway, so its Go source holds exactly one route. All three are held back by the overlap guard, and the report names the reason rather than inventing findings.</p>
+<p>NetBox is the case that shows the intended workflow, though. One repository, two surfaces: a server-rendered web UI and a DRF REST API, and only the second has a contract. Scanned whole it reports 746 findings, most of them the true but useless observation that a web UI is not in an API specification. Scoped to what the contract covers:</p>
+<pre><code class="language-console hljs">$ alibi scan ./netbox --ignore '^/(?!api/)'
+</code></pre>
+<p>Three shadow APIs remain (<code>/api/plugins</code>, <code>/api/schema/redoc</code>, <code>/api/schema/swagger-ui</code>), all genuinely served and all genuinely absent from the schema.</p>
+<p>Building this fed fixes back into Noir along the way: split OpenAPI documents that <code>$ref</code> their operations out to other files (<a href="https://github.com/owasp-noir/noir/pull/2673">#2673</a>), the DRF surface a Django project actually exposes (<a href="https://github.com/owasp-noir/noir/pull/2672">#2672</a>), and the spec size budget above. That loop, a companion tool stress-testing the scanner, may turn out to be alibi's second job.</p>
+<h2 id="try-it">Try it</h2>
+<pre><code class="language-bash hljs">uv tool install noir-alibi   # or: pipx install noir-alibi
+alibi scan ./service ./contracts ./prod.har
+</code></pre>
+<p>It needs noir 1.0.0 or newer on <code>PATH</code>. <code>-f sarif</code> uploads to code scanning, <code>--fail-on high</code> gates a build, and an <code>.alibi.yml</code> next to the source suppresses the gaps that are intentional.</p>
+<p>It's early. If alibi tells you something that isn't true, that's exactly the kind of bug the whole tool is organized around catching, so please <a href="https://github.com/owasp-noir/alibi/issues">open an issue</a>. Happy hunting :D</p>
+]]></content:encoded>
+      <pubDate>Sun, 30 Aug 2026 00:00:00 +0000</pubDate>
+      <category>alibi</category>
+      <category>release</category>
+      <category>tooling</category>
+    </item>
+    <item>
+      <title>--ai-context and --include-callee: hint and sink for AI code review</title>
+      <link>https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/ai-context-and-callee-hints/</guid>
+      <description>Two v1 flags that ship structured security context to AI source-code analysis instead of raw code.</description>
+      <content:encoded><![CDATA[<p>Around November 2025, AI changed how software gets built, and source-code vulnerability analysis has been moving in the same direction ever since.</p>
+<p>A lot of AI-based source-code analysis tools and approaches follow the same shape: feed code in, ask an LLM, get a report back. To actually work well, the LLM needs to know <em>what to look at</em>. Drop the whole codebase on it and you burn tokens while still missing the spots that need attention.</p>
+<p>Noir v1 ships two flags that extract that &quot;what to look at&quot; upfront and pack it into the output.</p>
+<ul>
+<li><code>--include-callee</code>: adds a 1-hop callee graph to each endpoint as a <code>callees</code> array</li>
+<li><code>--ai-context</code>: includes the same callee data and sorts it into five security categories under <code>ai_context</code></li>
+</ul>
+<h2 id="include-callee-who-calls-whom">--include-callee: who calls whom</h2>
+<p>The simpler of the two. Parses each endpoint handler body with tree-sitter and pulls out 1-hop callees as <code>{name, path, line}</code>.</p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --include callee -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;callees&quot;: [
+    { &quot;name&quot;: &quot;get_hash&quot;,          &quot;path&quot;: &quot;app/utils.py&quot;, &quot;line&quot;: 3 },
+    { &quot;name&quot;: &quot;User.query.filter&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 21 },
+    { &quot;name&quot;: &quot;User&quot;,              &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 24 },
+    { &quot;name&quot;: &quot;db_session.add&quot;,    &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 25 },
+    { &quot;name&quot;: &quot;db_session.commit&quot;, &quot;path&quot;: &quot;app/app.py&quot;,   &quot;line&quot;: 26 }
+  ]
+}
+</code></pre>
+<p>To an LLM this reads as &quot;to review this endpoint, also look at <code>utils.py:3</code> and <code>app.py:21,24,25,26</code>&quot;. Token-efficient too: instead of shipping the entire codebase, you only need the handler plus those few referenced lines.</p>
+<h2 id="ai-context-same-data-sorted-into-security-categories">--ai-context: same data, sorted into security categories</h2>
+<p><code>--ai-context</code> takes the same callee information and runs further analysis to bucket it into five categories.</p>
+<ul>
+<li><strong>guards</strong>: auth middleware / decorators / access-control checks</li>
+<li><strong>callees</strong>: same as above but enriched with a code snippet and a confidence score</li>
+<li><strong>sinks</strong>: potential SQL / command-exec / file-I/O / redirect / template-render endpoints</li>
+<li><strong>validators</strong>: input-validation calls</li>
+<li><strong>signals</strong>: heuristic flags like <code>state_change</code>, <code>credential_input</code>, <code>guard_absence</code></li>
+</ul>
+<p>Running the same Flask <code>/sign</code> POST endpoint with <code>--ai-context</code></p>
+<pre><code class="language-bash hljs">$ noir -b ./flask_app --ai-context -f json
+</code></pre>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/sign&quot;,
+  &quot;method&quot;: &quot;POST&quot;,
+  &quot;ai_context&quot;: {
+    &quot;sinks&quot;: [
+      {
+        &quot;kind&quot;: &quot;sql&quot;,
+        &quot;name&quot;: &quot;query&quot;,
+        &quot;description&quot;: &quot;Potential SQL/data-store sink inferred from code or callee name&quot;,
+        &quot;path&quot;: &quot;app/app.py&quot;, &quot;line&quot;: 21, &quot;confidence&quot;: 78,
+        &quot;snippet&quot;: &quot;20: password = get_hash(request.form['password'], ...) | 21: if User.query.filter(...).first(): | 22: return render_template('error.html')&quot;
+      }
+    ],
+    &quot;signals&quot;: [
+      { &quot;kind&quot;: &quot;state_change&quot;,     &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 88 },
+      { &quot;kind&quot;: &quot;credential_input&quot;, &quot;name&quot;: &quot;form.password&quot;, &quot;confidence&quot;: 86 },
+      { &quot;kind&quot;: &quot;guard_absence&quot;,    &quot;name&quot;: &quot;POST&quot;,          &quot;confidence&quot;: 28,
+        &quot;description&quot;: &quot;No auth guard was detected for this state-changing endpoint.&quot; }
+    ]
+  }
+}
+</code></pre>
+<p>What the LLM gets from this single endpoint</p>
+<ol>
+<li>There's a <code>credential_input</code>: a password arrives via form</li>
+<li>It's a <code>state_change</code>: POST</li>
+<li>There's a <code>guard_absence</code>: no auth decorator detected</li>
+<li>There's a <code>sql</code> sink: <code>User.query.filter</code></li>
+</ol>
+<p>For a human reviewer and an LLM alike, four signals stacked on one handler send a clear message: review this first. A credential-handling endpoint with no auth on top is priority 1, no further reasoning needed.</p>
+<p>For contrast, here's a case where <code>--ai-context</code> did pick up auth (flask_auth fixture)</p>
+<pre><code class="language-json hljs">{
+  &quot;url&quot;: &quot;/profile&quot;,
+  &quot;method&quot;: &quot;GET&quot;,
+  &quot;ai_context&quot;: {
+    &quot;guards&quot;: [{
+      &quot;kind&quot;: &quot;auth_guard&quot;,
+      &quot;name&quot;: &quot;flask-login login_required&quot;,
+      &quot;description&quot;: &quot;Protected by flask-login login_required&quot;,
+      &quot;confidence&quot;: 86,
+      &quot;snippet&quot;: &quot;12: | 13: @login_required | 14: @app.route('/profile') | 15: def profile():&quot;
+    }]
+  }
+}
+</code></pre>
+<p>The <code>@login_required</code> decorator landed in <code>guards</code>. To an LLM that's a negative signal: &quot;this endpoint already has an auth check, focus on other vuln classes instead&quot;.</p>
+<h2 id="hint-and-sink-at-the-same-time">Hint and sink at the same time</h2>
+<p>The interesting bit is that these flags work as both hint and sink at once.</p>
+<ul>
+<li>As a <strong>hint</strong>: pre-curated per-endpoint context narrows the LLM's attention. Instead of &quot;review the entire codebase&quot;, it's &quot;this handler plus these files&quot;.</li>
+<li>As a <strong>sink</strong> (the source-to-sink kind): the <code>sinks</code> bucket lists framework-aware candidates for where data might land. A generic LLM <em>can</em> reason that <code>User.query.filter</code> is SQL, but it burns tokens doing so every time. Noir pre-labels them so the LLM can skip that reasoning step.</li>
+</ul>
+<p>The framework-aware part is the big one. The same callee name <code>query</code> means different things in different contexts.</p>
+<ul>
+<li>Flask + SQLAlchemy: <code>User.query.filter</code> → SQL sink</li>
+<li>Express + MongoDB: <code>User.find</code> → NoSQL sink</li>
+<li>A plain LLM either misses the distinction or re-derives it on every pass</li>
+</ul>
+<p>Noir identifies the framework in the detector phase, and the augmentor applies that framework's idioms when matching sink / guard patterns. The LLM consumes pre-labeled, framework-aware context instead of raw code.</p>
+<h2 id="recommended-use">Recommended use</h2>
+<p>For an AI-driven code review pipeline</p>
+<pre><code class="language-bash hljs"># Every category
+noir -b ./app --ai-context -f json
+
+# Narrow to the categories you actually want (saves tokens)
+noir -b ./app --ai-context=guards,sinks,signals -f json
+
+# Just callees (lightweight hint)
+noir -b ./app --include callee -f json
+</code></pre>
+<p>The full category set is best for the first audit pass. For incremental review or PR-level checks, <code>guards,sinks,signals</code> is usually enough.</p>
+<h2 id="whats-next">What's next</h2>
+<p><code>--ai-context</code>'s sink and guard patterns are currently regex-based heuristics. We don't do real data-flow tracing; we mark &quot;this looks like a sink&quot; based on callee names and code patterns, and stop there. That's a deliberate trade-off. Precise taint analysis has dedicated tooling, and Noir aims to be the layer that gives that tool (or an LLM) a fast focus point to start from.</p>
+<p>From here, the plan is to make the pattern catalogue more framework-aware and add new signal kinds. Feedback and new pattern proposals are always welcome.</p>
+]]></content:encoded>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <category>v1</category>
+      <category>ai-context</category>
+      <category>callee</category>
+      <category>design</category>
+    </item>
+    <item>
+      <title>Noir v1.0: Major bump, compat-first</title>
+      <link>https://owasp-noir.github.io/noir/blog/noir-v1-release/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/noir-v1-release/</guid>
+      <description>Why 1.x now, and how the v0 surface stayed intact.</description>
+      <content:encoded><![CDATA[<p>Noir v1.0 is out.</p>
+<p>It's been roughly four years since the first commit landed in my personal repo, and now we're cutting it as an official release.</p>
+<p>I could have kept extending the 0.x line, but there were two reasons to bump the major.</p>
+<ol>
+<li>Stability: around v0.30 it reached the point where adding a new framework no longer breaks existing analysis results. Analyzer contracts, output schema, on-disk paths: the core interfaces have settled, and it felt like the right time to call it 1.x.</li>
+<li>Sub-commands: v0's CLI was flag-only. With more ancillary features coming (cache, rules, config), flags alone were hitting their limits. v1 introduces a verb-based structure: <code>noir scan / list / cache / config / rules / completion / version / help</code>.</li>
+</ol>
+<p>Outside those two decisions, almost every change was designed around <strong>v0 compatibility</strong>. v0 call shapes like <code>noir -b ./app -P -f json</code> route automatically into the <code>scan</code> subcommand, and renamed flags keep their old names as silent aliases. The only thing that breaks explicitly is <code>--ollama</code> / <code>--ollama-model</code>, both deprecated since 2024.</p>
+<p>Most v0 scripts run on v1 without modification. That's the whole point of this release.</p>
+<p>The full change list and the few items that need migration are collected in the <a href="https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100">CHANGELOG v1.0.0</a>.</p>
+<p>Upgrades use the same paths as always:</p>
+<pre><code class="language-bash hljs">brew upgrade noir
+# or
+docker pull ghcr.io/owasp-noir/noir:1.0.0
+# or
+gh release download v1.0.0 -R owasp-noir/noir
+</code></pre>
+<p>Spot a bug or have feedback? File it on <a href="https://github.com/owasp-noir/noir/issues">GitHub Issues</a>. Happy hunting :D</p>
+]]></content:encoded>
+      <pubDate>Sun, 24 May 2026 00:00:00 +0000</pubDate>
+      <category>release</category>
+      <category>v1</category>
+    </item>
+    <item>
+      <title>Welcome to the Noir blog</title>
+      <link>https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/</link>
+      <guid>https://owasp-noir.github.io/noir/blog/welcome-to-the-noir-blog/</guid>
+      <description>A new space for release deep dives, performance notes, design rationale, and the writing that doesn&apos;t fit in a changelog.</description>
+      <content:encoded><![CDATA[<p>Hi, this is hahwul. I've been writing Noir tips and notes on my personal blog for a while, but it felt better to have an official channel for it, so we're opening a blog space inside the project docs.</p>
+<p>It's a small experimental section sitting alongside the documentation, meant to collect the kinds of writing that don't quite fit into release notes or reference pages. Better here than scattered across PR descriptions.</p>
+<h2 id="what-youll-find-here">What you'll find here</h2>
+<ul>
+<li><strong>Release deep dives</strong>: what landed in recent versions, the background, and the trade-offs we picked.</li>
+<li><strong>Performance and accuracy investigations</strong>: when a benchmark or a false-positive sweep turns up something worth writing about, we'll post it.</li>
+<li><strong>Framework coverage notes</strong>: the parsing edge cases we run into while adding support for a new Rust/Python/JVM framework.</li>
+<li><strong>Design rationale</strong>: why the analyzer pipeline, optimizer passes, and AI context ended up shaped the way they are.</li>
+<li><strong>Tips</strong>: practical know-how for getting more out of Noir in everyday use.</li>
+</ul>
+<h2 id="how-it-fits-the-rest-of-the-docs">How it fits the rest of the docs</h2>
+<ul>
+<li>The <a href="https://owasp-noir.github.io/noir/get_started/">Get Started</a> guide stays the canonical place to learn the tool.</li>
+<li>The <a href="https://owasp-noir.github.io/noir/usage/">Usage</a> section keeps reference material: flags, supported frameworks, output formats.</li>
+<li>The blog supplements both with narrative content. If a topic graduates into something every user should know, it migrates into the docs.</li>
+</ul>
+<h2 id="cadence">Cadence</h2>
+<p>There's no schedule. Posts go up when there's something to write about. For regular updates, follow the GitHub <a href="https://github.com/owasp-noir/noir/releases">releases</a>; check back here once in a while for the longer reads.</p>
+<p>If you'd like to contribute a post (write about how you use Noir, share a CI integration, or unpack a framework's routing model), open a PR with a draft. Authors get a card next to the post.</p>
+]]></content:encoded>
+      <pubDate>Sun, 17 May 2026 00:00:00 +0000</pubDate>
+      <category>meta</category>
+      <category>announcements</category>
+    </item>
+  </channel>
+</rss>
