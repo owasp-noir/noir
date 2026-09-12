@@ -37,6 +37,19 @@ describe Noir::ScalaLexer do
       lexer.masked_lines[1].should_not contain("comment")
       lexer.code_lines[3].should contain("val b")
     end
+
+    it "keeps regular strings in the code view but blanks them structurally" do
+      src = "path(\"users\")"
+      lex = Noir::ScalaLexer.new(src)
+      lex.code_lines[0].should eq("path(\"users\")") # routes are string args
+      lex.masked_lines[0].should eq("path(       )") # blanked for brace matching
+    end
+
+    it "blanks a char literal but leaves a `'symbol` as code" do
+      lex = Noir::ScalaLexer.new("val c = '}'; val s = 'sym")
+      lex.masked_lines[0].count('}').should eq(0) # char literal masked
+      lex.in_code?("val c = '}'; val s = 'sym".index!("sym")).should be_true
+    end
   end
 
   describe "matching_delimiter" do
@@ -99,6 +112,21 @@ describe Noir::ScalaLexer do
       tokens[0].line.should eq(1)
       tokens[3].line.should eq(2)
       tokens[-1].line.should eq(2)
+    end
+  end
+
+  describe "masked_lines / code_lines" do
+    it "match String#lines element count and per-line length (incl. CRLF)" do
+      {"a\nb\n", "x\r\ny\r\n", "p(\"q\")\nr()", "only"}.each do |src|
+        raw = src.lines
+        lex = Noir::ScalaLexer.new(src)
+        lex.masked_lines.size.should eq(raw.size)
+        lex.code_lines.size.should eq(raw.size)
+        raw.each_with_index do |l, i|
+          lex.masked_lines[i].size.should eq(l.size)
+          lex.code_lines[i].size.should eq(l.size)
+        end
+      end
     end
   end
 
