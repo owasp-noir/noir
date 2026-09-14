@@ -80,6 +80,10 @@ forms still work as silent aliases throughout v1.x.
 | `--export-es URL`                          | `--send-es URL`                         |
 | `--pvalue query=FOO`                       | `--set-pvalue-query FOO`                |
 | `--pvalue header=X`                        | `--set-pvalue-header X`                 |
+| `--pvalue cookie=X`                        | `--set-pvalue-cookie X`                 |
+| `--pvalue form=X`                          | `--set-pvalue-form X`                   |
+| `--pvalue json=X`                          | `--set-pvalue-json X`                   |
+| `--pvalue path=X`                          | `--set-pvalue-path X`                   |
 | `--pvalue FOO` (no `TYPE=`)                | `--set-pvalue FOO`                      |
 | `--include path,techs,callee`              | `--include-path --include-techs --include-callee` |
 | `--ai-context guards,sinks`                | `--ai-context` (no filter, all features) |
