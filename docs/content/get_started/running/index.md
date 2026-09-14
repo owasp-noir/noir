@@ -160,6 +160,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--verbose`           | Detailed logging |
 | `--no-log`            | Suppress all logs |
 | `--no-color`          | Disable ANSI colors in plain output |
+| `--no-spinner`        | Disable loading spinner animations |
 
 For build details (Crystal / LLVM / target), run `noir version --verbose`. Run `noir help` for the top-level overview or `noir help <command>` for any command's full flag list.
 
