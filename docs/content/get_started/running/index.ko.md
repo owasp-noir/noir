@@ -163,6 +163,7 @@ noir scan . --ai-context guards,sinks
 | `--verbose`           | 상세 로깅 |
 | `--no-log`            | 모든 로그 억제 |
 | `--no-color`          | plain 출력의 ANSI 색상 비활성화 |
+| `--no-spinner`        | 로딩 스피너 애니메이션 비활성화 |
 
 빌드 세부 정보(Crystal / LLVM / 타깃)는 `noir version --verbose` 로 확인할 수 있습니다. `noir help` 는 최상위 개요를, `noir help <command>` 는 해당 명령어의 전체 플래그 목록을 보여줍니다.
 
