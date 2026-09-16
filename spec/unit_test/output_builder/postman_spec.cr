@@ -472,4 +472,43 @@ describe "OutputBuilderPostman Parameters and Bodies" do
     body["urlencoded"].as_a[0]["key"].as_s.should eq("remember")
     body["urlencoded"].as_a[0]["value"].as_s.should eq("1")
   end
+
+  it "emits raw application/xml body instead of query for xml params" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # Play `request.body.asXml` / Tapir `xmlBody` arrive as param_type `xml`
+    # with name `body`. merged_query_pairs used to emit `?body=`.
+    xml_ep = Endpoint.new("/xml", "POST")
+    xml_ep.push_param(Param.new("body", "", "xml"))
+
+    builder.print([xml_ep])
+    item = JSON.parse(builder.io.to_s)["item"][0]
+    request = item["request"]
+    body = request["body"]
+
+    body["mode"].as_s.should eq("raw")
+    body["raw"].as_s.should eq("<body/>")
+    body["options"]["raw"]["language"].as_s.should eq("xml")
+
+    headers = request["header"].as_a
+    headers.any? { |h| h["key"].as_s == "Content-Type" && h["value"].as_s == "application/xml" }.should be_true
+
+    url = request["url"]
+    url["raw"].as_s.should eq("{{baseUrl}}/xml")
+    url.as_h.has_key?("query").should be_false
+  end
+
+  it "uses an xml snippet as the raw body when the param already has a value" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    xml_ep = Endpoint.new("/payload", "POST")
+    xml_ep.push_param(Param.new("payload", "<root/>", "xml"))
+
+    builder.print([xml_ep])
+    body = JSON.parse(builder.io.to_s)["item"][0]["request"]["body"]
+    body["raw"].as_s.should eq("<root/>")
+    body["options"]["raw"]["language"].as_s.should eq("xml")
+  end
 end
