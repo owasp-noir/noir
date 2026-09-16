@@ -112,7 +112,7 @@ module Analyzer::Go
     end
 
     private def add_endpoint(route_path : String, method : String, details : Details) : Endpoint
-      if route_path.size > 0
+      if !route_path.empty?
         new_endpoint = Endpoint.new(route_path, method, details)
         result << new_endpoint
         new_endpoint
@@ -124,7 +124,7 @@ module Analyzer::Go
     private def extract_param(line : String, regex : Regex, param_type : String, endpoint : Endpoint)
       if param_match = line.match(regex)
         param_name = param_match[1]
-        if param_name.size > 0 && !endpoint.url.empty?
+        if !param_name.empty? && !endpoint.url.empty?
           endpoint.params << Param.new(param_name, "", param_type)
         end
       end
