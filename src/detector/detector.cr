@@ -316,7 +316,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
   # Handle --only-techs: filter detector_list to only specified techs
   only_techs_value = options["only_techs"]?.to_s
-  if only_techs_value.size > 0
+  if !only_techs_value.empty?
     only_techs_list = NoirTechs.resolve_tech_list(only_techs_value)
 
     if only_techs_list.empty?
@@ -332,7 +332,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   end
 
   # Handle -t/--techs: add techs directly (without detection validation)
-  if options["techs"].to_s.size > 0
+  if !options["techs"].to_s.empty?
     # Stripped, like `--only-techs` and like the CLI validator: without it
     # `-t "js_express, python_flask"` resolved `" python_flask"` against the
     # alias table, found nothing, and added only the first tech — while the
@@ -766,7 +766,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         # it's empty (passive scan disabled or every rule pruned).
         if !active_passive_scans.empty?
           results = NoirPassiveScan.detect(file, content, active_passive_scans, logger)
-          if results.size > 0
+          if !results.empty?
             mutex.synchronize do
               passive_result.concat(results)
             end
