@@ -99,6 +99,7 @@ class OutputBuilderPostman < OutputBuilder
       has_json_body = endpoint.params.any? { |p| p.request_type == "json" }
       has_form_body = endpoint.params.any? { |p| p.request_type == "form" }
       has_file_body = endpoint.params.any? { |p| p.request_type == "file" }
+      has_xml_body = endpoint.params.any? { |p| p.request_type == "xml" }
 
       if has_json_body
         json_body = {} of String => JSON::Any
@@ -197,6 +198,28 @@ class OutputBuilderPostman < OutputBuilder
           "mode"       => JSON::Any.new("urlencoded"),
           "urlencoded" => JSON::Any.new(form_data),
         } of String => JSON::Any
+      elsif has_xml_body
+        # Play `asXml` / Tapir `xmlBody` record a whole request body as
+        # `param_type: xml` (name typically `body`). `merged_query_pairs`
+        # used to treat anything outside KNOWN_NON_QUERY_TYPES as query,
+        # so `/xml` imported as `?body=` while `-f json` kept the type.
+        # OAS already emits application/xml; this is the Postman counterpart.
+        unless headers.any? { |h| h["key"].as_s.downcase == "content-type" }
+          headers << JSON::Any.new({
+            "key"   => JSON::Any.new("Content-Type"),
+            "value" => JSON::Any.new("application/xml"),
+          } of String => JSON::Any)
+        end
+
+        body = {
+          "mode"    => JSON::Any.new("raw"),
+          "raw"     => JSON::Any.new(xml_raw_body(endpoint.params)),
+          "options" => JSON::Any.new({
+            "raw" => JSON::Any.new({
+              "language" => JSON::Any.new("xml"),
+            } of String => JSON::Any),
+          } of String => JSON::Any),
+        } of String => JSON::Any
       end
 
       expand_synthetic_http_methods(endpoint.method).each do |method|
@@ -262,7 +285,7 @@ class OutputBuilderPostman < OutputBuilder
     url.empty? ? "http://localhost" : url
   end
 
-  KNOWN_NON_QUERY_TYPES = {"path", "header", "cookie", "json", "form", "file"}
+  KNOWN_NON_QUERY_TYPES = {"path", "header", "cookie", "json", "form", "file", "xml"}
 
   # The query string the emitted request actually carries: the one the route
   # itself spells out, plus the query params the analyzer recorded.
@@ -336,6 +359,33 @@ class OutputBuilderPostman < OutputBuilder
   # `raw` is the field a human reads in the URL bar and the one most
   # non-Postman importers key off, so it has to agree with the structured
   # `query` list built from the same pairs.
+  # Serialize `param_type: xml` fields as a raw XML document. A single
+  # param whose value is already a snippet (`<root/>`) is the body; an
+  # empty Play/Tapir `body` becomes a self-closing tag so the XML tab is
+  # non-empty and the field stays visible.
+  private def xml_raw_body(params : Array(Param)) : String
+    xml_params = params.select { |p| p.request_type == "xml" }
+    return "" if xml_params.empty?
+
+    if xml_params.size == 1
+      param = xml_params.first
+      return param.value unless param.value.empty?
+      return "<#{param.name}/>"
+    end
+
+    String.build do |io|
+      io << "<request>"
+      xml_params.each do |param|
+        if param.value.empty?
+          io << "<#{param.name}/>"
+        else
+          io << "<#{param.name}>" << param.value << "</#{param.name}>"
+        end
+      end
+      io << "</request>"
+    end
+  end
+
   private def with_query(raw : String, query_pairs : Array(Tuple(String, String))) : String
     return raw if query_pairs.empty?
 
