@@ -54,7 +54,6 @@ module Noir
       source = original_line || line
 
       line.scan(/@(#{PYTHON_VAR_NAME})\.route\([rf]?['"]([^'"]*)['"](.*)/) do |match|
-        next unless match.size > 0
         router_name = match[1]
         path = match[2]
         if original_line
@@ -70,7 +69,6 @@ module Noir
 
       HTTP_METHODS.each do |method|
         line.scan(/@(#{PYTHON_VAR_NAME})\.#{method}\([rf]?['"]([^'"]*)['"](.*)/) do |match|
-          next unless match.size > 0
           router_name = match[1]
           path = match[2]
           if original_line
