@@ -357,4 +357,30 @@ describe "OutputBuilderOas2" do
     operation["x-noir-operations"].as_a
       .should eq([JSON::Any.new("Query.user"), JSON::Any.new("Mutation.createUser")])
   end
+  it "puts file params in formData type:file under multipart/form-data" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    upload = Endpoint.new("/legacy-upload.php", "POST")
+    upload.push_param(Param.new("token", "", "form"))
+    upload.push_param(Param.new("doc", "", "file"))
+
+    builder.print([upload])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/legacy-upload.php"]["post"]
+
+    operation["consumes"].as_a.map(&.as_s).should eq(["multipart/form-data"])
+    form = operation["parameters"].as_a.select { |p| p["in"].as_s == "formData" }
+    form.map { |p| {p["name"].as_s, p["type"].as_s} }.sort_by!(&.[0])
+      .should eq([{"doc", "file"}, {"token", "string"}])
+    operation["parameters"].as_a
+      .none? { |p| p["in"].as_s == "query" && p["name"].as_s == "doc" }.should be_true
+  end
 end

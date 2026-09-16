@@ -22,6 +22,7 @@ class OutputBuilderOas3 < OutputBuilder
       parameters = [] of Hash(String, JSON::Any)
       json_properties = {} of String => JSON::Any
       form_properties = {} of String => JSON::Any
+      file_properties = {} of String => JSON::Any
 
       url_parts = split_route_url(endpoint.url)
       route_query = route_query_parameters(url_parts[:query], endpoint)
@@ -43,6 +44,14 @@ class OutputBuilderOas3 < OutputBuilder
           # Form data parameters go into requestBody
           form_properties[param.name] = JSON::Any.new({
             "type" => JSON::Any.new("string"),
+          } of String => JSON::Any)
+        when "file"
+          # Upload fields used to fall through to `in: query` (same class of
+          # bug `body` → `json` already fixed). Postman already emits them as
+          # formdata files; OAS must put them in multipart/form-data.
+          file_properties[param.name] = JSON::Any.new({
+            "type"   => JSON::Any.new("string"),
+            "format" => JSON::Any.new("binary"),
           } of String => JSON::Any)
         when "header"
           # Header parameters
@@ -108,8 +117,19 @@ class OutputBuilderOas3 < OutputBuilder
         } of String => JSON::Any)
       end
 
-      # Add requestBody for form data
-      unless form_properties.empty?
+      # Add requestBody for form / file uploads. A file field forces
+      # multipart/form-data and co-located text form fields ride along —
+      # urlencoded cannot carry a binary part. File-only uploads still get
+      # multipart rather than a misleading query parameter.
+      if !file_properties.empty?
+        multipart_properties = form_properties.merge(file_properties)
+        request_content["multipart/form-data"] = JSON::Any.new({
+          "schema" => JSON::Any.new({
+            "type"       => JSON::Any.new("object"),
+            "properties" => JSON::Any.new(multipart_properties),
+          } of String => JSON::Any),
+        } of String => JSON::Any)
+      elsif !form_properties.empty?
         request_content["application/x-www-form-urlencoded"] = JSON::Any.new({
           "schema" => JSON::Any.new({
             "type"       => JSON::Any.new("object"),

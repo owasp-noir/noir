@@ -27,6 +27,7 @@ class OutputBuilderOas2 < OutputBuilder
       cookie_names = [] of String
       json_properties = {} of String => JSON::Any
       has_form = false
+      has_file = false
 
       url_parts = split_route_url(endpoint.url)
       route_query = route_query_parameters(url_parts[:query], endpoint)
@@ -49,7 +50,23 @@ class OutputBuilderOas2 < OutputBuilder
           # Form data parameters
           has_form = true
           append_unique_parameter(parameters, swagger_parameter(param.name, "formData", false))
-          consumes << "application/x-www-form-urlencoded" unless consumes.includes?("application/x-www-form-urlencoded")
+          # Prefer multipart once a file field is present; otherwise urlencoded.
+          unless has_file || consumes.includes?("application/x-www-form-urlencoded") || consumes.includes?("multipart/form-data")
+            consumes << "application/x-www-form-urlencoded"
+          end
+        when "file"
+          # Upload fields used to fall through to `in: query`. Swagger 2.0
+          # represents them as `formData` with `type: file` under multipart.
+          has_file = true
+          has_form = true
+          append_unique_parameter(parameters, {
+            "name"     => JSON::Any.new(param.name),
+            "in"       => JSON::Any.new("formData"),
+            "type"     => JSON::Any.new("file"),
+            "required" => JSON::Any.new(false),
+          } of String => JSON::Any)
+          consumes.reject! { |c| c == "application/x-www-form-urlencoded" }
+          consumes << "multipart/form-data" unless consumes.includes?("multipart/form-data")
         when "header"
           # Header parameters
           append_unique_parameter(parameters, swagger_parameter(param.name, "header", false))
