@@ -6,19 +6,16 @@ class OutputBuilderOnlyTag < OutputBuilder
   def print(endpoints : Array(Endpoint))
     tags = [] of Tag
     endpoints.each do |endpoint|
-      unless endpoint.tags.nil?
-        endpoint.tags.each do |tag|
-          tags << tag
-        end
+      # `tags` is a non-nilable Array(Tag), so the old `unless endpoint.tags.nil?`
+      # guard could never be false (same class of dead check markdown-table
+      # already fixed for `params`).
+      endpoint.tags.each do |tag|
+        tags << tag
       end
 
-      if !endpoint.params.empty?
-        endpoint.params.each do |param|
-          if !param.tags.empty?
-            param.tags.each do |tag|
-              tags << tag
-            end
-          end
+      endpoint.params.each do |param|
+        param.tags.each do |tag|
+          tags << tag
         end
       end
     end
