@@ -49,6 +49,16 @@ describe OutputBuilderOasCommon do
       helper.test_normalize_oas_path("/files/*").should eq("/files/{wildcard}")
     end
 
+    it "keeps hyphens inside colon and bracket path placeholders" do
+      # Compojure / Pedestal spell kebab-case params (`:item-id`). `\w+` used to
+      # stop at the hyphen and emit `/items/{item}-id` with `item-id` unmapped.
+      helper.test_normalize_oas_path("/items/:item-id").should eq("/items/{item-id}")
+      helper.test_normalize_oas_path("/api/orders/:order-id").should eq("/api/orders/{order-id}")
+      helper.test_normalize_oas_path("/users/[user-id]").should eq("/users/{user-id}")
+      # A trailing `.ext` stays literal — Express `:id.json` is `{id}.json`.
+      helper.test_normalize_oas_path("/docs/:slug.json").should eq("/docs/{slug}.json")
+    end
+
     it "names each bare wildcard distinctly" do
       # A path template variable may not repeat, so `/api/*/v1/*` cannot emit
       # `{wildcard}` twice.

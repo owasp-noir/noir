@@ -56,11 +56,12 @@ module OutputBuilderOasCommon
     # Express-style optional segments (`/:id{/:op}`) are not representable as
     # optional in OpenAPI path templates. Drop the route-syntax braces so the
     # emitted path remains a valid template instead of `/users/{id}{/{op}}`.
-    path = path.gsub(/\{\/:(\w+)\}/, "/:\\1")
+    # The name class matches the colon pass below (letters/digits/_/hyphen).
+    path = path.gsub(/\{\/:([A-Za-z_][A-Za-z0-9_-]*)\}/, "/:\\1")
     path = path.gsub(/\{\/([^{}]+)\}/, "/\\1")
 
     # Bracket-style path params (`.NET` / Rails-ish `/users/[id]`) → `{id}`.
-    path = path.gsub(/\[(\w+)\]/, "{\\1}")
+    path = path.gsub(/\[([A-Za-z_][A-Za-z0-9_-]*)\]/, "{\\1}")
 
     # Play's routes file spells a constrained param `$path<.+>`. The regex is
     # a constraint, not a name, and neither `<…>` pass below matches it, so
@@ -85,7 +86,12 @@ module OutputBuilderOasCommon
     path = path.gsub(/\{\*+(\w+)\}/, "{\\1}")
 
     path = path.gsub(/\*(\w+)/, "{\\1}")
-    path = path.gsub(/:(\w+)/, "{\\1}")
+    # Colon placeholders allow hyphens (`:item-id`, `:order-id`). `\w+` stopped
+    # at `-` and turned `/items/:item-id` into `/items/{item}-id` with the
+    # declared `item-id` path param left unmapped (`x-noir-unmapped-path-params`).
+    # Leading digit is rejected so a host port (`:8080`) is never a placeholder
+    # if a full URL ever reaches this helper.
+    path = path.gsub(/:([A-Za-z_][A-Za-z0-9_-]*)/, "{\\1}")
 
     # Bare wildcard segments (`/api/*`, `/files/**`) have no name and are not
     # a valid OAS path template char; collapse a run of `*` to a named var.
