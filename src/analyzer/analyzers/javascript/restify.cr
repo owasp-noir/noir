@@ -24,10 +24,8 @@ module Analyzer::Javascript
           # Parse path parameters from the URL path itself
           if endpoint.url.includes?(":")
             endpoint.url.scan(/:(\w+)/) do |m|
-              if m.size > 0
-                param = Param.new(m[1], "", "path")
-                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-              end
+              param = Param.new(m[1], "", "path")
+              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
             end
           end
 
@@ -123,10 +121,8 @@ module Analyzer::Javascript
         # Extract path parameters from the URL
         if endpoint.url.includes?(":")
           endpoint.url.scan(/:(\w+)/) do |m|
-            if m.size > 0
-              param = Param.new(m[1], "", "path")
-              endpoint.push_param(param)
-            end
+            param = Param.new(m[1], "", "path")
+            endpoint.push_param(param)
           end
         end
 
@@ -170,10 +166,8 @@ module Analyzer::Javascript
         # Extract parameters from the URL path itself
         if !last_endpoint.method.empty? && !last_endpoint.url.empty? && last_endpoint.url.includes?(":")
           last_endpoint.url.scan(/:(\w+)/) do |m|
-            if m.size > 0
-              param = Param.new(m[1], "", "path")
-              last_endpoint.push_param(param)
-            end
+            param = Param.new(m[1], "", "path")
+            last_endpoint.push_param(param)
           end
         end
 
@@ -245,20 +239,16 @@ module Analyzer::Javascript
 
                 # Extract string paths
                 function_body.scan(string_pattern) do |route_m|
-                  if route_m.size > 0
-                    path = route_m[1]
-                    method_normalized = method == "del" ? "DELETE" : method.upcase
-                    routes << Endpoint.new(path, method_normalized)
-                  end
+                  path = route_m[1]
+                  method_normalized = method == "del" ? "DELETE" : method.upcase
+                  routes << Endpoint.new(path, method_normalized)
                 end
 
                 # Extract object paths
                 function_body.scan(object_pattern) do |route_m|
-                  if route_m.size > 0
-                    path = route_m[1]
-                    method_normalized = method == "del" ? "DELETE" : method.upcase
-                    routes << Endpoint.new(path, method_normalized)
-                  end
+                  path = route_m[1]
+                  method_normalized = method == "del" ? "DELETE" : method.upcase
+                  routes << Endpoint.new(path, method_normalized)
                 end
               end
 
@@ -288,66 +278,62 @@ module Analyzer::Javascript
       # Process the entire file looking for explicit router definitions with prefixes
       router_pattern = /(?:const|let|var)\s+(\w+Router)\s*=\s*(?:new\s+)?(?:restify\.)?Router/
       content.scan(router_pattern) do |m|
-        if m.size > 0
-          router_name = m[1]
+        router_name = m[1]
 
-          # Look for the applyRoutes call for this router
-          apply_pattern = /#{router_name}\.applyRoutes\s*\(\s*\w+(?:\s*,\s*['"]([^'"]+)['"]\s*)?/
-          apply_match = content.match(apply_pattern)
+        # Look for the applyRoutes call for this router
+        apply_pattern = /#{router_name}\.applyRoutes\s*\(\s*\w+(?:\s*,\s*['"]([^'"]+)['"]\s*)?/
+        apply_match = content.match(apply_pattern)
 
-          prefix = ""
-          if apply_match && apply_match.size > 1 && apply_match[1]?
-            prefix = apply_match[1]
+        prefix = ""
+        if apply_match && apply_match.size > 1 && apply_match[1]?
+          prefix = apply_match[1]
+        end
+
+        # For each router (with or without a prefix), find all its route handlers
+        http_methods = %w[get post put delete patch options head del]
+
+        http_methods.each do |method|
+          # Look for route handlers on this router
+          handler_pattern = cached_regex("restify:router_handler:#{router_name}:#{method}") do
+            /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
           end
 
-          # For each router (with or without a prefix), find all its route handlers
-          http_methods = %w[get post put delete patch options head del]
+          content.scan(handler_pattern) do |route_m|
+            if route_m.size > 1
+              route_path = route_m[1]
+              handler_body = route_m[2]
+              method_normalized = method == "del" ? "DELETE" : method.upcase
 
-          http_methods.each do |method|
-            # Look for route handlers on this router
-            handler_pattern = cached_regex("restify:router_handler:#{router_name}:#{method}") do
-              /#{router_name}\.#{method}\s*\(\s*['"]([^'"]+)['"][^{]*\{([^}]*)\}/m
-            end
-
-            content.scan(handler_pattern) do |route_m|
-              if route_m.size > 1
-                route_path = route_m[1]
-                handler_body = route_m[2]
-                method_normalized = method == "del" ? "DELETE" : method.upcase
-
-                # Create full path with prefix if applicable
-                full_path = if prefix.empty?
-                              route_path
+              # Create full path with prefix if applicable
+              full_path = if prefix.empty?
+                            route_path
+                          else
+                            if route_path.starts_with?("/") && prefix.ends_with?("/")
+                              "#{prefix[0..-2]}#{route_path}"
+                            elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
+                              "#{prefix}/#{route_path}"
                             else
-                              if route_path.starts_with?("/") && prefix.ends_with?("/")
-                                "#{prefix[0..-2]}#{route_path}"
-                              elsif !route_path.starts_with?("/") && !prefix.ends_with?("/")
-                                "#{prefix}/#{route_path}"
-                              else
-                                "#{prefix}#{route_path}"
-                              end
+                              "#{prefix}#{route_path}"
                             end
+                          end
 
-                # Create endpoint and add to results
-                endpoint = Endpoint.new(full_path, method_normalized)
-                details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-                endpoint.details = details
+              # Create endpoint and add to results
+              endpoint = Endpoint.new(full_path, method_normalized)
+              details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
+              endpoint.details = details
 
-                # Extract path parameters
-                if full_path.includes?(":")
-                  full_path.scan(/:(\w+)/) do |param_m|
-                    if param_m.size > 0
-                      param = Param.new(param_m[1], "", "path")
-                      endpoint.push_param(param)
-                    end
-                  end
+              # Extract path parameters
+              if full_path.includes?(":")
+                full_path.scan(/:(\w+)/) do |param_m|
+                  param = Param.new(param_m[1], "", "path")
+                  endpoint.push_param(param)
                 end
-
-                # Extract parameters from handler body
-                extract_params_from_handler(handler_body, endpoint)
-
-                result << endpoint
               end
+
+              # Extract parameters from handler body
+              extract_params_from_handler(handler_body, endpoint)
+
+              result << endpoint
             end
           end
         end
@@ -392,10 +378,8 @@ module Analyzer::Javascript
               # Extract path parameters
               if full_path.includes?(":")
                 full_path.scan(/:(\w+)/) do |param_m|
-                  if param_m.size > 0
-                    param = Param.new(param_m[1], "", "path")
-                    endpoint.push_param(param)
-                  end
+                  param = Param.new(param_m[1], "", "path")
+                  endpoint.push_param(param)
                 end
               end
 
@@ -413,57 +397,43 @@ module Analyzer::Javascript
     private def extract_params_from_handler(handler_body : String, endpoint : Endpoint)
       # Extract query parameters
       handler_body.scan(/req\.query\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "query"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "query"))
       end
 
       # Extract body parameters
       handler_body.scan(/req\.body\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "json"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "json"))
       end
 
       # Extract header parameters - improved patterns
       handler_body.scan(/req\.headers\s*(?:\[\s*['"]([^'"]+)['"]\s*\]|\.\s*(\w+))/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1] || param_match[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
-        end
+        param_name = param_match[1] || param_match[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
       end
 
       handler_body.scan(/req\.header\s*\(\s*['"]([^'"]+)['"]/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "header"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "header"))
       end
 
       # Extract cookie parameters
       handler_body.scan(/req\.cookies\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          endpoint.push_param(Param.new(param_match[1], "", "cookie"))
-        end
+        endpoint.push_param(Param.new(param_match[1], "", "cookie"))
       end
 
       # Extract path parameters
       handler_body.scan(/req\.params\.(\w+)/) do |param_match|
-        if param_match.size > 0
-          param_name = param_match[1]
-          if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path"))
-          end
+        param_name = param_match[1]
+        if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+          endpoint.push_param(Param.new(param_name, "", "path"))
         end
       end
 
       # Extract from destructuring - improved to handle more patterns
       handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |param_match|
-        if param_match.size > 0
-          param_vars = param_match[1].split(",").map(&.strip)
-          param_vars.each do |param_var|
-            clean_param = param_var.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        param_vars = param_match[1].split(",").map(&.strip)
+        param_vars.each do |param_var|
+          clean_param = param_var.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
     end
