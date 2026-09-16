@@ -55,10 +55,8 @@ module Analyzer::Javascript
           # Parse path parameters from the URL path itself
           if endpoint.url.includes?(":")
             endpoint.url.scan(/:(\w+)/) do |m|
-              if m.size > 0
-                param = Param.new(m[1], "", "path")
-                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-              end
+              param = Param.new(m[1], "", "path")
+              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
             end
           end
 
@@ -126,7 +124,6 @@ module Analyzer::Javascript
         details = Details.new(PathInfo.new(path, line))
         endpoint = Endpoint.new(url, method, details)
         url.scan(/:(\w+)/) do |pm|
-          next unless pm.size > 0
           endpoint.push_param(Param.new(pm[1], "", "path"))
         end
         attach_js_callees(endpoint, parse_server_route_callees(content, path, call_start)) if include_callee
@@ -395,12 +392,10 @@ module Analyzer::Javascript
 
                 # Body parameters from destructuring
                 handler_body.scan(/\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |bm|
-                  if bm.size > 0
-                    param_list = bm[1].split(",").map(&.strip)
-                    param_list.each do |body_param|
-                      clean_param = body_param.split("=").first.strip.split(":").first.strip
-                      endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-                    end
+                  param_list = bm[1].split(",").map(&.strip)
+                  param_list.each do |body_param|
+                    clean_param = body_param.split("=").first.strip.split(":").first.strip
+                    endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
                   end
                 end
 
@@ -442,10 +437,8 @@ module Analyzer::Javascript
 
       # Find router declarations with more patterns to detect express Router
       content.scan(/(?:const|let|var)\s+(\w+)\s*=\s*(?:express\.Router\(\)|Router\(\)|[a-zA-Z0-9_]+\.Router\(\))/) do |m|
-        if m.size > 0
-          router_name = m[1]
-          router_declarations[router_name] = true
-        end
+        router_name = m[1]
+        router_declarations[router_name] = true
       end
 
       # Find router.use statements with a path prefix - expanded pattern to catch more formats
@@ -500,35 +493,31 @@ module Analyzer::Javascript
           end
 
           content.scan(pattern) do |m|
-            if m.size > 0
-              route_path = m[1]
-              method_upper = method.upcase
+            route_path = m[1]
+            method_upper = method.upcase
 
-              # Combine the prefix with the path
-              full_path = Noir::URLPath.join(router_prefix, route_path)
+            # Combine the prefix with the path
+            full_path = Noir::URLPath.join(router_prefix, route_path)
 
-              # Create endpoint and add to results
-              endpoint = Endpoint.new(full_path, method_upper)
-              details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
-              endpoint.details = details
+            # Create endpoint and add to results
+            endpoint = Endpoint.new(full_path, method_upper)
+            details = Details.new(PathInfo.new(path, 1)) # Line number is approximate
+            endpoint.details = details
 
-              # Extract path parameters
-              if full_path.includes?(":")
-                full_path.scan(/:(\w+)/) do |param_m|
-                  if param_m.size > 0
-                    param = Param.new(param_m[1], "", "path")
-                    endpoint.push_param(param)
-                  end
-                end
+            # Extract path parameters
+            if full_path.includes?(":")
+              full_path.scan(/:(\w+)/) do |param_m|
+                param = Param.new(param_m[1], "", "path")
+                endpoint.push_param(param)
               end
+            end
 
-              # Extract params from handler body
-              extract_handler_params_from_content(content, router_prefix_router_name, method, route_path, endpoint)
+            # Extract params from handler body
+            extract_handler_params_from_content(content, router_prefix_router_name, method, route_path, endpoint)
 
-              # Add endpoint to results if it's not already there with same method and path
-              unless route_recorded_for_file?(result, path, full_path, method_upper)
-                result << endpoint
-              end
+            # Add endpoint to results if it's not already there with same method and path
+            unless route_recorded_for_file?(result, path, full_path, method_upper)
+              result << endpoint
             end
           end
         end
@@ -561,55 +550,43 @@ module Analyzer::Javascript
             # Extract path parameters
             if full_path.includes?(":")
               full_path.scan(/:(\w+)/) do |param_m|
-                if param_m.size > 0
-                  param = Param.new(param_m[1], "", "path")
-                  endpoint.push_param(param)
-                end
+                param = Param.new(param_m[1], "", "path")
+                endpoint.push_param(param)
               end
             end
 
             # Extract parameters from handler body
             # Query parameters
             handler_body.scan(/req\.query\.(\w+)|req\.query\[['"](\w+)['"]\]|format\s*=\s*req\.query\.(\w+)/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || p_m[3] || ""
-                endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || p_m[3] || ""
+              endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
             end
 
             # Header parameters
             handler_body.scan(/req\.headers(?:\[['"]([^'"]+)['"]\]|\.(\w+))|req\.header\s*\(\s*['"]([^'"]+)['"]\)|(\w+)\s*=\s*req\.header\s*\(['"]([^'"]+)['"]\)/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || p_m[3] || p_m[5] || ""
-                endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || p_m[3] || p_m[5] || ""
+              endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
             end
 
             # Body parameters
             handler_body.scan(/req\.body\.(\w+)|req\.body\[['"](\w+)['"]\]/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || ""
-                endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || ""
+              endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
             end
 
             # Body parameters from destructuring
             handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |p_m|
-              if p_m.size > 0
-                param_list = p_m[1].split(",").map(&.strip)
-                param_list.each do |param_var|
-                  clean_param = param_var.split("=").first.strip.split(":").first.strip
-                  endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-                end
+              param_list = p_m[1].split(",").map(&.strip)
+              param_list.each do |param_var|
+                clean_param = param_var.split("=").first.strip.split(":").first.strip
+                endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
               end
             end
 
             # Cookie parameters
             handler_body.scan(/req\.cookies\.(\w+)|req\.cookies\[['"](\w+)['"]\]|(\w+)\s*=\s*req\.cookies\.(\w+)/) do |p_m|
-              if p_m.size > 0
-                param_name = p_m[1] || p_m[2] || p_m[4] || ""
-                endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
-              end
+              param_name = p_m[1] || p_m[2] || p_m[4] || ""
+              endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
             end
 
             # Add endpoint to results if it's not already there with same method and path
@@ -645,72 +622,56 @@ module Analyzer::Javascript
 
       # Extract query parameters
       handler_body.scan(/req\.query\.(\w+)|req\.query\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "query")) unless param_name.empty?
       end
 
       # Extract query parameters from destructuring
       handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.query/) do |m|
-        if m.size > 0
-          param_list = m[1].split(",").map(&.strip)
-          param_list.each do |param_var|
-            clean_param = param_var.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
-          end
+        param_list = m[1].split(",").map(&.strip)
+        param_list.each do |param_var|
+          clean_param = param_var.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "query")) unless clean_param.empty?
         end
       end
 
       # Extract body parameters
       handler_body.scan(/req\.body\.(\w+)|req\.body\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "json")) unless param_name.empty?
       end
 
       # Extract body parameters from destructuring
       handler_body.scan(/(?:const|let|var)?\s*\{\s*([^}]+)\s*\}\s*=\s*req\.body/) do |m|
-        if m.size > 0
-          param_list = m[1].split(",").map(&.strip)
-          param_list.each do |param_var|
-            clean_param = param_var.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        param_list = m[1].split(",").map(&.strip)
+        param_list.each do |param_var|
+          clean_param = param_var.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       # Extract header parameters - improved pattern
       handler_body.scan(/req\.headers(?:\[['"]([^'"]+)['"]\]|\.(\w+))/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "header")) unless param_name.empty?
       end
 
       # Handle req.header pattern
       handler_body.scan(/req\.header\s*\(\s*['"]([^'"]+)['"]/) do |m|
-        if m.size > 0
-          endpoint.push_param(Param.new(m[1], "", "header"))
-        end
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       # Extract cookie parameters
       handler_body.scan(/req\.cookies\.(\w+)|req\.cookies\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
-        end
+        param_name = m[1] || m[2] || ""
+        endpoint.push_param(Param.new(param_name, "", "cookie")) unless param_name.empty?
       end
 
       # Extract path parameters
       handler_body.scan(/req\.params\.(\w+)|req\.params\[['"](\w+)['"]\]/) do |m|
-        if m.size > 0
-          param_name = m[1] || m[2] || ""
-          if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
-            endpoint.push_param(Param.new(param_name, "", "path")) unless param_name.empty?
-          end
+        param_name = m[1] || m[2] || ""
+        if !endpoint.params.any? { |p| p.name == param_name && p.param_type == "path" }
+          endpoint.push_param(Param.new(param_name, "", "path")) unless param_name.empty?
         end
       end
     end
@@ -1018,7 +979,6 @@ module Analyzer::Javascript
         details = Details.new(PathInfo.new(path, route.line))
         endpoint = Endpoint.new(route.url, route.method, details)
         route.url.scan(/:(\w+)/) do |pm|
-          next unless pm.size > 0
           endpoint.push_param(Param.new(pm[1], "", "path"))
         end
         attach_js_callees(endpoint, helper_call_callees(route, content, path)) if include_callee
