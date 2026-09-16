@@ -21,6 +21,7 @@ class OutputBuilderOas3 < OutputBuilder
       next if endpoint.non_http? # deep links / CLI commands aren't HTTP paths; keep them out of the spec
       parameters = [] of Hash(String, JSON::Any)
       json_properties = {} of String => JSON::Any
+      xml_properties = {} of String => JSON::Any
       form_properties = {} of String => JSON::Any
       file_properties = {} of String => JSON::Any
 
@@ -52,6 +53,14 @@ class OutputBuilderOas3 < OutputBuilder
           file_properties[param.name] = JSON::Any.new({
             "type"   => JSON::Any.new("string"),
             "format" => JSON::Any.new("binary"),
+          } of String => JSON::Any)
+        when "xml"
+          # Play `asXml` / Tapir `xmlBody` record a whole request body as
+          # `param_type: xml` (name typically `body`). The default branch
+          # used to emit `in: query`. Mirror the JSON requestBody shape
+          # under `application/xml`.
+          xml_properties[param.name] = JSON::Any.new({
+            "type" => JSON::Any.new("string"),
           } of String => JSON::Any)
         when "header"
           # Header parameters
@@ -113,6 +122,16 @@ class OutputBuilderOas3 < OutputBuilder
           "schema" => JSON::Any.new({
             "type"       => JSON::Any.new("object"),
             "properties" => JSON::Any.new(json_properties),
+          } of String => JSON::Any),
+        } of String => JSON::Any)
+      end
+
+      # Add requestBody for XML content (Play asXml / Tapir xmlBody)
+      unless xml_properties.empty?
+        request_content["application/xml"] = JSON::Any.new({
+          "schema" => JSON::Any.new({
+            "type"       => JSON::Any.new("object"),
+            "properties" => JSON::Any.new(xml_properties),
           } of String => JSON::Any),
         } of String => JSON::Any)
       end

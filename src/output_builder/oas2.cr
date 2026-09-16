@@ -26,6 +26,7 @@ class OutputBuilderOas2 < OutputBuilder
       consumes = [] of String
       cookie_names = [] of String
       json_properties = {} of String => JSON::Any
+      xml_properties = {} of String => JSON::Any
       has_form = false
       has_file = false
 
@@ -67,6 +68,16 @@ class OutputBuilderOas2 < OutputBuilder
           } of String => JSON::Any)
           consumes.reject! { |c| c == "application/x-www-form-urlencoded" }
           consumes << "multipart/form-data" unless consumes.includes?("multipart/form-data")
+        when "xml"
+          # Play `asXml` / Tapir `xmlBody` record a whole request body as
+          # `param_type: xml` (name typically `body`). The default branch
+          # used to emit `in: query`, so `/xml` looked like `?body=` while
+          # `-f json` kept `param_type: xml`. Mirror the JSON body shape
+          # under `application/xml`.
+          xml_properties[param.name] = JSON::Any.new({
+            "type" => JSON::Any.new("string"),
+          } of String => JSON::Any)
+          consumes << "application/xml" unless consumes.includes?("application/xml")
         when "header"
           # Header parameters
           append_unique_parameter(parameters, swagger_parameter(param.name, "header", false))
@@ -122,32 +133,33 @@ class OutputBuilderOas2 < OutputBuilder
         }
       end
 
-      # Add body parameter for JSON content
+      # Add body parameter for JSON / XML content.
       # OAS2 does not allow body and formData parameters in the same operation.
       # If both are present, keep the formData shape because it preserves the
       # concrete field names as request parameters.
-      if !json_properties.empty? && !has_form
+      body_properties = json_properties.merge(xml_properties)
+      if !body_properties.empty? && !has_form
         append_unique_parameter(parameters, {
           "name"     => JSON::Any.new("body"),
           "in"       => JSON::Any.new("body"),
           "required" => JSON::Any.new(false),
           "schema"   => JSON::Any.new({
             "type"       => JSON::Any.new("object"),
-            "properties" => JSON::Any.new(json_properties),
+            "properties" => JSON::Any.new(body_properties),
           } of String => JSON::Any),
         } of String => JSON::Any)
-      elsif !json_properties.empty? && has_form
+      elsif !body_properties.empty? && has_form
         # OAS2 forbids `body` and `formData` in the same operation, so the
-        # JSON body is dropped in favor of the concrete formData fields. Rather
-        # than losing the JSON field names entirely, surface each as a query
+        # JSON/XML body is dropped in favor of the concrete formData fields.
+        # Rather than losing the field names entirely, surface each as a query
         # parameter (query + formData are allowed together) so they survive.
-        json_properties.each_key do |name|
+        body_properties.each_key do |name|
           append_unique_parameter(parameters, swagger_parameter(name, "query", false))
         end
       end
 
       if has_form
-        consumes.reject! { |content_type| content_type == "application/json" }
+        consumes.reject! { |content_type| {"application/json", "application/xml"}.includes?(content_type) }
       end
 
       unmapped_path_params = extract_unmapped_path_parameters(parameters, template_names)

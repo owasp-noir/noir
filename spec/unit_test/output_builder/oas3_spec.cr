@@ -477,4 +477,33 @@ describe "OutputBuilderOas3" do
     operation["parameters"].as_a
       .map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"header", "AUTHORIZATION"}])
   end
+
+  it "puts xml body params in application/xml requestBody instead of query" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # Play `request.body.asXml` / Tapir `xmlBody` arrive as param_type `xml`
+    # with name `body`. The default branch used to emit `in: query`.
+    xml_ep = Endpoint.new("/xml", "POST")
+    xml_ep.push_param(Param.new("body", "", "xml"))
+
+    builder.print([xml_ep])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/xml"]["post"]
+
+    content = operation["requestBody"]["content"].as_h
+    content.has_key?("application/xml").should be_true
+    props = content["application/xml"]["schema"]["properties"].as_h
+    props.keys.should eq(["body"])
+
+    operation["parameters"].as_a
+      .none? { |p| p["name"].as_s == "body" }.should be_true
+  end
 end
