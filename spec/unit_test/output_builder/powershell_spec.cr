@@ -111,4 +111,33 @@ describe "OutputBuilderPowershell" do
     connect_line = builder.io.to_s.split("\n").reject(&.empty?)[0]
     connect_line.should start_with("Invoke-WebRequest -CustomMethod \"CONNECT\"")
   end
+
+  it "emits -Form with Get-Item for file upload params" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderPowershell.new(options)
+    builder.io = IO::Memory.new
+
+    # PHP `$_FILES["avatar"]` arrives as param_type `file`. bake_endpoint
+    # never puts file fields into `-Body`, so the previous builder dropped
+    # them while curl/httpie already emitted multipart — same class of gap
+    # those formats just fixed.
+    upload = Endpoint.new("/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+    upload.push_param(Param.new("AUTHORIZATION", "", "header"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("-Form @{\"name\"=\"\"; \"avatar\"=Get-Item -Path \"avatar\"}")
+    line.should contain("AUTHORIZATION")
+    line.should_not contain("-Body ")
+    line.should_not contain("application/x-www-form-urlencoded")
+  end
 end

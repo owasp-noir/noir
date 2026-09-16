@@ -43,8 +43,33 @@ class OutputBuilderPowershell < OutputBuilder
           cmd += " -Headers @{#{header_parts.join("; ")}}"
         end
 
-        # Add body
-        if !baked[:body].empty?
+        # Upload endpoints (`param_type: file`) need `-Form` so PowerShell
+        # sends multipart/form-data. `-Body` cannot carry a file part, and
+        # bake_endpoint drops every file field — the same gap curl/httpie
+        # had before they grew `-F` / `--form`. Sibling form fields ride
+        # along; PowerShell sets the multipart Content-Type itself.
+        file_fields = [] of Tuple(String, String)
+        form_fields = [] of Tuple(String, String)
+        endpoint.params.each do |param|
+          case param.request_type
+          when "file"
+            file_fields << {param.name, param.value}
+          when "form"
+            form_fields << {param.name, param.value}
+          end
+        end
+
+        if !file_fields.empty?
+          form_parts = [] of String
+          form_fields.each do |name, value|
+            form_parts << "\"#{escape_powershell(name)}\"=\"#{escape_powershell(value)}\""
+          end
+          file_fields.each do |name, path_hint|
+            filename = path_hint.empty? ? name : path_hint
+            form_parts << "\"#{escape_powershell(name)}\"=Get-Item -Path \"#{escape_powershell(filename)}\""
+          end
+          cmd += " -Form @{#{form_parts.join("; ")}}"
+        elsif !baked[:body].empty?
           if baked[:body_type] == "json"
             # Escape for PowerShell string
             escaped_body = escape_powershell(baked[:body])
