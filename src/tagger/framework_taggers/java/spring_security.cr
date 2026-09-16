@@ -144,7 +144,7 @@ class SpringSecurityTagger < FrameworkTagger
   # scoped only by a non-literal matcher (e.g. EndpointRequest) we can't
   # resolve, rather than over-broadening it to global.
   private def record_scoped(target : Array(String), matchers : Array(String), block : String)
-    if matchers.size > 0
+    if !matchers.empty?
       matchers.each { |m| target << m }
     elsif !block.matches?(MATCHER_CALL)
       target << "/**"
@@ -152,7 +152,7 @@ class SpringSecurityTagger < FrameworkTagger
   end
 
   private def record_header_scope(kind : Symbol, matchers : Array(String), block : String)
-    if matchers.size > 0
+    if !matchers.empty?
       matchers.each { |m| @header_weak_scopes << {pattern: m, kind: kind} }
     elsif !block.matches?(MATCHER_CALL)
       @header_weak_scopes << {pattern: "/**", kind: kind}
