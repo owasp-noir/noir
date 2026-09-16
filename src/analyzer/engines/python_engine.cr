@@ -298,12 +298,8 @@ module Analyzer::Python
             matches = codeblock_line.scan(get_regex)
           end
 
-          unless matches.nil?
-            matches.each do |match|
-              if match.size > 0
-                params << Param.new(match[1], "", "json")
-              end
-            end
+          matches.each do |match|
+            params << Param.new(match[1], "", "json")
           end
         end
       end

@@ -1124,7 +1124,7 @@ module Analyzer::Python
     private def fastapi_path_param_names(route_path : ::String) : Array(::String)
       names = [] of ::String
       route_path.scan(PATH_PARAM_REGEX) do |match|
-        names << match[1] if match.size > 0 && !names.includes?(match[1])
+        names << match[1] unless names.includes?(match[1])
       end
       names
     end
