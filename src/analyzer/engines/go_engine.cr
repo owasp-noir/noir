@@ -452,7 +452,7 @@ module Analyzer::Go
     # --- Adapter helpers (shared across Go framework adapters) ----------
 
     def add_param_to_endpoint(param : Param, endpoint : Endpoint)
-      if param.name.size > 0 && !endpoint.method.empty? && !endpoint.url.empty?
+      if !param.name.empty? && !endpoint.method.empty? && !endpoint.url.empty?
         # Don't re-add an identical (name, type) param. go-zero's
         # handler-body getters (`httpx.ParseForm`, repeated across several
         # handlers in a single-file app) would otherwise stack four
@@ -464,7 +464,7 @@ module Analyzer::Go
     end
 
     def add_static_path_if_valid(static_path : Hash(String, String), public_dirs : Array(Hash(String, String)))
-      if static_path["static_path"].size > 0 && static_path["file_path"].size > 0
+      if !static_path["static_path"].empty? && !static_path["file_path"].empty?
         public_dirs << static_path
       end
     end
