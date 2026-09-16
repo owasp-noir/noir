@@ -30,13 +30,22 @@ class OutputBuilderPostman < OutputBuilder
       path_parts << "" if route_p.ends_with?("/") && !path_parts.empty?
       path_with_vars = path_parts.map do |part|
         if part.starts_with?("<") && part.ends_with?(">") && part.includes?(":")
-          # Handle <type:param> format - convert to :param
-          match = part.match(/<[^:>]+:(\w+)>/)
+          # Handle <type:param> format - convert to :param. Hyphens are legal
+          # in the name (`<int:item-id>`); `\w+` stopped at `-` and left the
+          # segment as a literal `<int:item-id>` that Postman cannot bind.
+          match = part.match(/<[^:>]+:([A-Za-z_][A-Za-z0-9_-]*)>/)
           match ? ":#{match[1]}" : part
         elsif part.starts_with?("{") && part.ends_with?("}")
           # Handle {name} / {name:constraint} - convert to Postman's :name so the
-          # `variable` entry actually links to the URL placeholder.
-          match = part.match(/\A\{(\w+)(?::[^}]+)?\}\z/)
+          # `variable` entry actually links to the URL placeholder. Same hyphen
+          # class as OAS (`{item-id}` / `{order-id:uuid}`).
+          match = part.match(/\A\{([A-Za-z_][A-Za-z0-9_-]*)(?::[^}]+)?\}\z/)
+          match ? ":#{match[1]}" : part
+        elsif part.starts_with?("[") && part.ends_with?("]")
+          # Bracket-style path params (`.NET` / Rails-ish `/users/[user-id]`),
+          # matching OAS `normalize_oas_path`. Left as `[user-id]` they are a
+          # literal segment, so the declared path variable never binds.
+          match = part.match(/\A\[([A-Za-z_][A-Za-z0-9_-]*)\]\z/)
           match ? ":#{match[1]}" : part
         else
           part
