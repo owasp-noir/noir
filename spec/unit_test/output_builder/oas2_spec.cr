@@ -383,4 +383,31 @@ describe "OutputBuilderOas2" do
     operation["parameters"].as_a
       .none? { |p| p["in"].as_s == "query" && p["name"].as_s == "doc" }.should be_true
   end
+
+  it "puts xml body params in body under application/xml instead of query" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas2.new(options)
+    builder.io = IO::Memory.new
+
+    # Play `request.body.asXml` / Tapir `xmlBody` arrive as param_type `xml`
+    # with name `body`. The default branch used to emit `in: query`.
+    xml_ep = Endpoint.new("/xml", "POST")
+    xml_ep.push_param(Param.new("body", "", "xml"))
+
+    builder.print([xml_ep])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/xml"]["post"]
+
+    operation["consumes"].as_a.map(&.as_s).should eq(["application/xml"])
+    body = operation["parameters"].as_a.find! { |p| p["in"].as_s == "body" }
+    body["schema"]["properties"].as_h.keys.should eq(["body"])
+    operation["parameters"].as_a
+      .none? { |p| p["in"].as_s == "query" && p["name"].as_s == "body" }.should be_true
+  end
 end
