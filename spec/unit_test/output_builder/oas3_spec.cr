@@ -440,4 +440,41 @@ describe "OutputBuilderOas3" do
       .map { |p| {p["in"].as_s, p["name"].as_s, p["required"].as_bool} }
       .should eq([{"path", "roomId", true}])
   end
+  it "puts file params in multipart/form-data instead of query" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+      "url"     => YAML::Any.new(""),
+    }
+    builder = OutputBuilderOas3.new(options)
+    builder.io = IO::Memory.new
+
+    # PHP `$_FILES["avatar"]` arrives as param_type `file`. The default branch
+    # used to emit `in: query`, while `-f postman` already treated it as a
+    # formdata file — the OpenAPI document disagreed with every other format.
+    upload = Endpoint.new("/php/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+    upload.push_param(Param.new("AUTHORIZATION", "", "header"))
+
+    builder.print([upload])
+    operation = JSON.parse(builder.io.to_s)["paths"]["/php/modern.php"]["post"]
+
+    content = operation["requestBody"]["content"].as_h
+    content.has_key?("multipart/form-data").should be_true
+    content.has_key?("application/x-www-form-urlencoded").should be_false
+
+    props = content["multipart/form-data"]["schema"]["properties"].as_h
+    props.keys.sort!.should eq(["avatar", "name"])
+    props["avatar"]["format"].as_s.should eq("binary")
+
+    # Still not a query parameter.
+    operation["parameters"].as_a
+      .none? { |p| p["name"].as_s == "avatar" }.should be_true
+    operation["parameters"].as_a
+      .map { |p| {p["in"].as_s, p["name"].as_s} }.should eq([{"header", "AUTHORIZATION"}])
+  end
 end
