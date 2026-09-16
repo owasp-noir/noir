@@ -356,7 +356,7 @@ module Noir::CliValidation
     unknown_taggers = NoirTaggers.unknown_tagger_names(use_taggers)
     return if unknown_taggers.empty?
 
-    raise Error.new("Unknown tagger(s): #{unknown_taggers.join(", ")}. Use --list-taggers to see available taggers.")
+    raise Error.new("Unknown tagger(s): #{unknown_taggers.join(", ")}. Use `noir list taggers` to see available taggers.")
   end
 
   def self.exit_with_error(message : String) : NoReturn

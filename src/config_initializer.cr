@@ -522,7 +522,7 @@ class ConfigInitializer
 
       # The taggers to use
       # e.g "tagger1,tagger2"
-      # To see the list of all taggers, please use the noir command with --list-taggers
+      # To see the list of all taggers, run: noir list taggers
       use_taggers: "#{options["use_taggers"]}"
 
       # The diff file to use

@@ -72,7 +72,9 @@ describe Noir::CliValidation do
     options = create_test_options
     options["use_taggers"] = YAML::Any.new("hunt,madeup")
 
-    expect_raises(Noir::CliValidation::Error, /Unknown tagger/) do
+    # Point at the v1 list command — `noir scan --list-taggers` is rejected
+    # by the scan parser (legacy rewrite only applies at the top level).
+    expect_raises(Noir::CliValidation::Error, /Unknown tagger.*noir list taggers/) do
       Noir::CliValidation.validate_tagger_names!(options)
     end
   end
