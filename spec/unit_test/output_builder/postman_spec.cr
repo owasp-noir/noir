@@ -195,6 +195,39 @@ describe "OutputBuilderPostman URLs" do
       .should eq("GET demo.example.com.evil/api/users/{id}")
   end
 
+  it "keeps hyphens in brace, angle, and bracket path placeholders" do
+    builder = OutputBuilderPostman.new(options)
+    builder.io = IO::Memory.new
+
+    # Compojure / Pedestal kebab-case (`:item-id`) is already Postman-native.
+    # Brace / angle / bracket forms used `\w+`, which stopped at `-` and left
+    # `{item-id}` as a literal segment, so the declared path variable never bound.
+    brace = Endpoint.new("/items/{item-id}", "GET")
+    brace.push_param(Param.new("item-id", "", "path"))
+    constrained = Endpoint.new("/orders/{order-id:uuid}", "GET")
+    constrained.push_param(Param.new("order-id", "", "path"))
+    angle = Endpoint.new("/sku/<int:item-id>", "GET")
+    angle.push_param(Param.new("item-id", "", "path"))
+    bracket = Endpoint.new("/users/[user-id]", "GET")
+    bracket.push_param(Param.new("user-id", "", "path"))
+
+    builder.print([brace, constrained, angle, bracket])
+    items = JSON.parse(builder.io.to_s)["item"].as_a
+
+    items[0]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["items", ":item-id"])
+    items[0]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/items/:item-id")
+    items[0]["request"]["url"]["variable"][0]["key"].as_s.should eq("item-id")
+
+    items[1]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["orders", ":order-id"])
+    items[1]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/orders/:order-id")
+
+    items[2]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["sku", ":item-id"])
+    items[2]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/sku/:item-id")
+
+    items[3]["request"]["url"]["path"].as_a.map(&.as_s).should eq(["users", ":user-id"])
+    items[3]["request"]["url"]["raw"].as_s.should eq("{{baseUrl}}/users/:user-id")
+  end
+
   it "still routes a relative endpoint through {{baseUrl}}" do
     builder = OutputBuilderPostman.new(options)
     builder.io = IO::Memory.new
