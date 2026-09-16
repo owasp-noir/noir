@@ -255,7 +255,9 @@ class OutputBuilderCommon < OutputBuilder
 
       if any_to_bool(@options["include_path"]?)
         details = endpoint.details
-        if details.code_paths && !details.code_paths.empty?
+        # `code_paths` is a non-nilable Array(PathInfo), so the old
+        # `code_paths && ...` truthiness half was always true (same fix as SARIF).
+        unless details.code_paths.empty?
           details.code_paths.each do |code_path|
             location = code_path.line.nil? ? code_path.path : "#{code_path.path} (line #{code_path.line})"
             # The one row printed without color; every sibling colorizes.

@@ -281,90 +281,90 @@ class OutputBuilder
       final_url = escape_route_question_marks(final_url, query_start)
     end
 
-    unless params.nil?
-      params.each do |param|
-        if param.request_type == "query"
-          pair = "#{param.name}=#{param.value}"
-          # A pair the route already spells out verbatim adds nothing, and
-          # neither does a value-less declaration of a name the route already
-          # pins — the analyzer records `action` precisely *because* the route
-          # spells `action=save_settings`. Appending `&action=` there would
-          # blank the value out, since the later pair is the one servers read:
-          # the URL would stop addressing the handler it was found on.
-          #
-          # A *different, non-empty* value is a real override (`--pvalue
-          # query=…`) and is still appended, for that same last-pair-wins
-          # reason. Skipping with `next` would also skip this param's tag
-          # collection at the bottom of the block.
-          redundant = existing_pairs.includes?(pair) ||
-                      (param.value.empty? && existing_names.includes?(param.name))
-          unless redundant
-            if first_query
-              # No inline query, so every `?` left in the URL is route
-              # syntax and all of it has to be encoded before this pair
-              # opens the real one.
-              final_url = escape_route_question_marks(final_url, final_url.size)
-              final_url += "?#{pair}"
-              first_query = false
-            else
-              final_url += "&#{pair}"
-            end
-          end
-        end
-
-        if param.request_type == "form"
-          if first_form
-            final_body += "#{param.name}=#{param.value}"
-            first_form = false
+    # `params` is a non-nilable Array(Param), so the old `unless params.nil?`
+    # wrapper could never be false (same class of dead check markdown-table fixed).
+    params.each do |param|
+      if param.request_type == "query"
+        pair = "#{param.name}=#{param.value}"
+        # A pair the route already spells out verbatim adds nothing, and
+        # neither does a value-less declaration of a name the route already
+        # pins — the analyzer records `action` precisely *because* the route
+        # spells `action=save_settings`. Appending `&action=` there would
+        # blank the value out, since the later pair is the one servers read:
+        # the URL would stop addressing the handler it was found on.
+        #
+        # A *different, non-empty* value is a real override (`--pvalue
+        # query=…`) and is still appended, for that same last-pair-wins
+        # reason. Skipping with `next` would also skip this param's tag
+        # collection at the bottom of the block.
+        redundant = existing_pairs.includes?(pair) ||
+                    (param.value.empty? && existing_names.includes?(param.name))
+        unless redundant
+          if first_query
+            # No inline query, so every `?` left in the URL is route
+            # syntax and all of it has to be encoded before this pair
+            # opens the real one.
+            final_url = escape_route_question_marks(final_url, final_url.size)
+            final_url += "?#{pair}"
+            first_query = false
           else
-            final_body += "&#{param.name}=#{param.value}"
+            final_url += "&#{pair}"
           end
         end
+      end
 
-        if param.request_type == "path"
-          # `name=value`, like the cookie row and the form body below. The
-          # value was dropped here, so the plain report printed a bare
-          # `path: userId` while `-f json` carried `"value": "Integer"` —
-          # 42 path params across the fixture tree lost the only thing the
-          # analyzer knew about them beyond the name.
-          #
-          # A value equal to the name is skipped: Giraffe's `%i`/`%s` route
-          # format names a segment after its own type, and `path: int=int`
-          # says nothing the name did not.
-          redundant_value = param.value.empty? || param.value == param.name
-          final_path_params << (redundant_value ? param.name : "#{param.name}=#{param.value}")
+      if param.request_type == "form"
+        if first_form
+          final_body += "#{param.name}=#{param.value}"
+          first_form = false
+        else
+          final_body += "&#{param.name}=#{param.value}"
         end
+      end
 
-        if param.request_type == "header"
-          final_headers << "#{param.name}: #{param.value}"
+      if param.request_type == "path"
+        # `name=value`, like the cookie row and the form body below. The
+        # value was dropped here, so the plain report printed a bare
+        # `path: userId` while `-f json` carried `"value": "Integer"` —
+        # 42 path params across the fixture tree lost the only thing the
+        # analyzer knew about them beyond the name.
+        #
+        # A value equal to the name is skipped: Giraffe's `%i`/`%s` route
+        # format names a segment after its own type, and `path: int=int`
+        # says nothing the name did not.
+        redundant_value = param.value.empty? || param.value == param.name
+        final_path_params << (redundant_value ? param.name : "#{param.name}=#{param.value}")
+      end
+
+      if param.request_type == "header"
+        final_headers << "#{param.name}: #{param.value}"
+      end
+
+      if param.request_type == "cookie"
+        final_cookies << "#{param.name}=#{param.value}"
+      end
+
+      if param.request_type == "json"
+        is_json = true
+      end
+
+      unless param.tags.empty?
+        param.tags.each do |tag|
+          final_tags << tag.name
         end
+      end
+    end
 
-        if param.request_type == "cookie"
-          final_cookies << "#{param.name}=#{param.value}"
-        end
+    if is_json
+      json_tmp = Hash(String, String).new
 
+      params.each do |param|
         if param.request_type == "json"
-          is_json = true
-        end
-
-        unless param.tags.empty?
-          param.tags.each do |tag|
-            final_tags << tag.name
-          end
+          json_tmp[param.name] = param.value
         end
       end
 
-      if is_json
-        json_tmp = Hash(String, String).new
-
-        params.each do |param|
-          if param.request_type == "json"
-            json_tmp[param.name] = param.value
-          end
-        end
-
-        final_body = json_tmp.to_json
-      end
+      final_body = json_tmp.to_json
     end
 
     @logger.debug { "Baked endpoints" }
