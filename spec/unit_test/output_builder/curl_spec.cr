@@ -112,4 +112,30 @@ describe "OutputBuilderCurl" do
     lines.size.should eq(1)
     output.should contain("-H 'X-New\\nLine: value\\r\\nwith\\nbreaks'")
   end
+
+  it "emits -F multipart fields for file uploads" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderCurl.new(options)
+    builder.io = IO::Memory.new
+
+    upload = Endpoint.new("/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+    upload.push_param(Param.new("AUTHORIZATION", "", "header"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("-F 'name='")
+    line.should contain("-F 'avatar=@avatar'")
+    line.should contain("-H 'AUTHORIZATION: '")
+    line.should_not contain("--data-raw")
+    line.should_not contain("Content-Type: application/x-www-form-urlencoded")
+  end
 end

@@ -167,4 +167,27 @@ describe "OutputBuilderHttpie" do
     lines.size.should eq(1)
     output.should contain("'X-New\\nLine: value\\r\\nwith\\nbreaks'")
   end
+
+  it "emits field@file items for file uploads" do
+    options = {
+      "debug"   => YAML::Any.new(false),
+      "verbose" => YAML::Any.new(false),
+      "color"   => YAML::Any.new(false),
+      "nolog"   => YAML::Any.new(false),
+      "output"  => YAML::Any.new(""),
+    }
+    builder = OutputBuilderHttpie.new(options)
+    builder.io = IO::Memory.new
+
+    upload = Endpoint.new("/modern.php", "POST")
+    upload.push_param(Param.new("name", "", "form"))
+    upload.push_param(Param.new("avatar", "", "file"))
+
+    builder.print([upload])
+    line = builder.io.to_s.split("\n").reject(&.empty?).first
+
+    line.should contain("--form")
+    line.should contain("'name='")
+    line.should contain("'avatar@avatar'")
+  end
 end

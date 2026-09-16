@@ -13,7 +13,22 @@ class OutputBuilderHttpie < OutputBuilder
       option_parts = [] of String
       request_items = [] of String
 
-      unless baked[:body].empty?
+      has_file = endpoint.params.any? { |p| p.request_type == "file" }
+
+      if has_file
+        # File uploads need `--form` with `field@filename`. Without this,
+        # HTTPie dropped every `param_type: file` the same way curl did.
+        option_parts << "--form"
+        endpoint.params.each do |param|
+          case param.request_type
+          when "form"
+            request_items << shell_quote("#{param.name}=#{param.value}")
+          when "file"
+            filename = param.value.empty? ? param.name : param.value
+            request_items << shell_quote("#{param.name}@#{filename}")
+          end
+        end
+      elsif !baked[:body].empty?
         if baked[:body_type] == "json"
           begin
             json_data = JSON.parse(baked[:body])

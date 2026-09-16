@@ -414,8 +414,23 @@ class OutputBuilderHtml < OutputBuilder
   private def curl_attribute_for(endpoint : Endpoint, baked) : String?
     return if endpoint.non_http?
 
+    file_fields = [] of Tuple(String, String)
+    text_fields = [] of Tuple(String, String)
+    endpoint.params.each do |param|
+      case param.request_type
+      when "file"
+        file_fields << {param.name, param.value}
+      when "form"
+        text_fields << {param.name, param.value}
+      end
+    end
+
     expand_synthetic_http_methods(endpoint.method).join("\n") do |method|
-      CurlCommand.build(method, baked[:url], baked[:body], baked[:body_type], baked[:header], baked[:cookie])
+      if file_fields.empty?
+        CurlCommand.build(method, baked[:url], baked[:body], baked[:body_type], baked[:header], baked[:cookie])
+      else
+        CurlCommand.build_multipart(method, baked[:url], text_fields, file_fields, baked[:header], baked[:cookie])
+      end
     end
   end
 
