@@ -28,14 +28,24 @@ module Analyzer::Kotlin
     # absolute path made the answer depend on where the checkout lived:
     # the same tree under `~/work/test/` reported 0 endpoints instead of
     # 93.
+    #
+    # One precompiled `Regex.union` (PCRE2 JIT, auto-escapes each literal)
+    # replaces the seven OR-ed `String#includes?` passes — equivalent to
+    # any of those substrings. Basename `Test.kt` / `Tests.kt` checks stay
+    # separate: putting them in the union would also match mid-path
+    # segments like `.../FooTest.kt/bar.kt`.
+    TEST_PATH_RE = Regex.union(
+      "/src/test/",
+      "/jvmTest/",
+      "/commonTest/",
+      "/jsTest/",
+      "/nativeTest/",
+      "/test/",
+      "/testData/",
+    )
+
     def self.test_path?(relative_path : String) : Bool
-      return true if relative_path.includes?("/src/test/")
-      return true if relative_path.includes?("/jvmTest/")
-      return true if relative_path.includes?("/commonTest/")
-      return true if relative_path.includes?("/jsTest/")
-      return true if relative_path.includes?("/nativeTest/")
-      return true if relative_path.includes?("/test/")
-      return true if relative_path.includes?("/testData/")
+      return true if relative_path.matches?(TEST_PATH_RE)
       base = File.basename(relative_path)
       return true if base.ends_with?("Test.kt")
       base.ends_with?("Tests.kt")
