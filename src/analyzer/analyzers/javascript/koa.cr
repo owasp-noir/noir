@@ -35,10 +35,8 @@ module Analyzer::Javascript
 
           if endpoint.url.includes?(":")
             endpoint.url.scan(/:(\w+)/) do |m|
-              if m.size > 0
-                param = Param.new(m[1], "", "path")
-                endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
-              end
+              param = Param.new(m[1], "", "path")
+              endpoint.push_param(param) if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
             end
           end
           result << endpoint
@@ -212,7 +210,6 @@ module Analyzer::Javascript
         endpoint = Endpoint.new(route_path, method, details)
         if route_path.includes?(":")
           route_path.scan(/:(\w+)/) do |pm|
-            next unless pm.size > 0
             endpoint.push_param(Param.new(pm[1], "", "path"))
           end
         end
@@ -283,7 +280,7 @@ module Analyzer::Javascript
 
         # Extract path parameters from the route_path itself
         route_path.scan(/:(\w+)/) do |m|
-          if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+          if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
             param = Param.new(m[1], "", "path")
             endpoint.push_param(param)
           end
@@ -311,53 +308,51 @@ module Analyzer::Javascript
 
       # Extract query parameters - Koa style: ctx.query.X, ctx.query['X'], ctx.request.query.X
       handler_body.scan(/ctx\.query\.(\w+)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       handler_body.scan(/ctx\.query\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       handler_body.scan(/ctx\.request\.query\.(\w+)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "query")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "query"))
       end
 
       # Extract body parameters - Koa style: ctx.request.body.X, const { X } = ctx.request.body
       handler_body.scan(/ctx\.request\.body\.(\w+)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "json")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "json"))
       end
 
       handler_body.scan(/(?:const|let|var)\s*\{\s*([^}]+)\s*\}\s*=\s*ctx\.request\.body/) do |m|
-        if m.size > 0
-          params = m[1].split(",").map(&.strip)
-          params.each do |param|
-            clean_param = param.split("=").first.strip.split(":").first.strip
-            endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
-          end
+        params = m[1].split(",").map(&.strip)
+        params.each do |param|
+          clean_param = param.split("=").first.strip.split(":").first.strip
+          endpoint.push_param(Param.new(clean_param, "", "json")) unless clean_param.empty?
         end
       end
 
       # Extract header parameters - Koa style: ctx.headers['X'], ctx.header['X'], ctx.get('X')
       handler_body.scan(/ctx\.headers\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       handler_body.scan(/ctx\.header\s*\[\s*['"]([^'"]+)['"]\s*\]/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       handler_body.scan(/ctx\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "header")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "header"))
       end
 
       # Extract cookie parameters - Koa style: ctx.cookies.get('X')
       handler_body.scan(/ctx\.cookies\.get\s*\(\s*['"]([^'"]+)['"]\s*\)/) do |m|
-        endpoint.push_param(Param.new(m[1], "", "cookie")) if m.size > 0
+        endpoint.push_param(Param.new(m[1], "", "cookie"))
       end
 
       # Extract path parameters from ctx.params.X
       handler_body.scan(/ctx\.params\.(\w+)/) do |m|
-        if m.size > 0 && !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
+        if !endpoint.params.any? { |p| p.name == m[1] && p.param_type == "path" }
           endpoint.push_param(Param.new(m[1], "", "path"))
         end
       end
