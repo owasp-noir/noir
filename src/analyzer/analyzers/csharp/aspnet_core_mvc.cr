@@ -1,4 +1,5 @@
 require "../../../models/analyzer"
+require "../../../miniparsers/csharp_type_extractor"
 require "./common"
 
 module Analyzer::CSharp
@@ -145,31 +146,54 @@ module Analyzer::CSharp
 
     private def analyze_controllers(route_patterns_by_scope : Hash(String, Array(String)),
                                     project_roots : Array(String), include_callee : Bool)
-      controller_files = get_files_by_extension(".cs").select do |file|
-        base = File.basename(file)
-        next false if Common.csharp_test_path?(base_relative_path(file))
-        base.includes?("Controller") && !base.ends_with?("RouteConfig.cs") && base != "Program.cs" && base != "Startup.cs"
+      types_by_scope = Hash(String, Array(Tuple(String, Noir::CSharpType))).new do |hash, key|
+        hash[key] = [] of Tuple(String, Noir::CSharpType)
+      end
+      get_files_by_extension(".cs").each do |file|
+        next if Common.csharp_test_path?(base_relative_path(file))
+        content = Noir::CSharpLexer.new(read_file_content(file)).code_source
+        next if Common.aspnet_framework_source?(content)
+        scope = route_scope_for(file, project_roots)
+        Noir::CSharpTypeExtractor.extract(content).each do |type|
+          types_by_scope[scope] << {file, type}
+        end
       end
 
-      controller_files.each do |file|
-        route_patterns = route_patterns_by_scope[route_scope_for(file, project_roots)]? || [DEFAULT_ROUTE]
-        analyze_controller_file(file, route_patterns, include_callee)
+      types_by_scope.each do |scope, entries|
+        types = entries.map(&.[1])
+        route_patterns = route_patterns_by_scope[scope]? || [DEFAULT_ROUTE]
+        entries.each do |file, type|
+          next unless type.modifiers.includes?("public")
+          next if type.generic || type.modifiers.includes?("abstract") || type.modifiers.includes?("static")
+          attributes = controller_attributes(type, types)
+          next if attributes.includes?("NonController")
+          next unless type.name.matches?(/Controller$/i) || attributes.includes?("Controller") || attributes.includes?("ApiController")
+          analyze_controller(file, type, route_patterns, include_callee)
+        end
       end
     end
 
-    private def analyze_controller_file(file : String, route_patterns : Array(String), include_callee : Bool)
-      return unless File.exists?(file)
+    private def controller_attributes(type : Noir::CSharpType, types : Array(Noir::CSharpType), visited = Set(String).new) : Array(String)
+      attributes = type.attributes.dup
+      return attributes if visited.includes?(type.name)
+      visited << type.name
+      if base = type.base_name
+        candidates = types.select { |candidate| candidate.name == base }
+        if candidates.size == 1
+          attributes.concat(controller_attributes(candidates.first, types, visited))
+        elsif candidates.empty? && {"Controller", "ControllerBase"}.includes?(base)
+          attributes << "Controller"
+        end
+      end
+      attributes
+    end
 
-      content = read_file_content(file)
-      return unless content.includes?("Controller")
-      return if Common.aspnet_framework_source?(content)
-
-      controller_name = extract_controller_name(content)
-      return if controller_name.empty?
-
-      controller_route = extract_controller_route(content)
-      lines = content.lines
-      masked_lines = Noir::CSharpLexer.new(content).masked_lines
+    private def analyze_controller(file : String, type : Noir::CSharpType, route_patterns : Array(String), include_callee : Bool)
+      controller_name = type.name.sub(/Controller$/i, "")
+      controller_route = extract_controller_route(type.content)
+      lexer = Noir::CSharpLexer.new(type.content)
+      lines = lexer.code_lines
+      masked_lines = lexer.masked_lines
 
       # Accumulate every `[Http<Verb>(...)]` on the pending action so a method
       # carrying more than one (`[HttpGet(...)]` + `[HttpHead(...)]` for image/
@@ -180,14 +204,14 @@ module Analyzer::CSharp
       route_attr = ""
       explicit_endpoint_attribute = false
       non_action_attribute = false
-      in_class = false
+      depth = 0
 
       i = 0
       while i < lines.size
+        start_index = i
         line = lines[i]
 
-        in_class = true if line.includes?("class") && line.includes?("Controller")
-        if in_class
+        if depth == 1
           # Stitch together a multi-line `[Http<Verb>(\n   "/path",\n
           # Order = 1\n)]` attribute before running the
           # single-line matcher. The `[Http*]` opener arrives without
@@ -213,9 +237,9 @@ module Analyzer::CSharp
           i += advance if advance > 0
         end
 
-        if in_class && potential_action_signature?(line)
+        if depth == 1 && potential_member_signature?(masked_lines[i])
           signature, end_index = build_signature(lines, masked_lines, i)
-          if !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
+          if signature.matches?(/\bpublic\b/) && !non_action_attribute && action_method?(signature, explicit_endpoint_attribute)
             action_name = extract_action_name(signature)
             unless action_name.empty?
               body_block, body_line, skip_first = extract_callable_body(lines, masked_lines, end_index)
@@ -238,33 +262,29 @@ module Analyzer::CSharp
                 routes = resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns)
 
                 routes.each do |route|
-                  details = Details.new(PathInfo.new(file, i + 1))
+                  details = Details.new(PathInfo.new(file, type.line_offset + i + 1))
                   endpoint = Endpoint.new(route, emit_verb, details)
 
                   align_params_with_route(parameters, route).each do |param|
                     endpoint.params << param
                   end
 
-                  attach_csharp_callees(endpoint, body_block, file, body_line + 1, include_callee, skip_first_line: skip_first)
+                  attach_csharp_callees(endpoint, body_block, file, type.line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
                   @result << endpoint
                 end
               end
-
-              verb_routes = [] of Tuple(String, String)
-              route_attr = ""
-              explicit_endpoint_attribute = false
-              non_action_attribute = false
             end
           end
-          if non_action_attribute
-            verb_routes = [] of Tuple(String, String)
-            route_attr = ""
-            explicit_endpoint_attribute = false
-          end
+          verb_routes.clear
+          route_attr = ""
+          explicit_endpoint_attribute = false
           non_action_attribute = false
           i = end_index
         end
 
+        (start_index..i).each do |index|
+          depth += masked_lines[index].count('{') - masked_lines[index].count('}')
+        end
         i += 1
       end
     end
@@ -370,8 +390,8 @@ module Analyzer::CSharp
       {nil, route_attr, route_attr, false}
     end
 
-    private def potential_action_signature?(line : String) : Bool
-      line.includes?("public") && line.includes?("(") && !line.includes?(" class ")
+    private def potential_member_signature?(line : String) : Bool
+      line.matches?(/\b(public|private|protected|internal)\b/) && line.includes?("(") && !line.matches?(/\b(class|struct|interface|record)\b/)
     end
 
     private def action_method?(signature : String, explicit_endpoint_attribute : Bool) : Bool
@@ -383,22 +403,6 @@ module Analyzer::CSharp
         signature.includes?("ViewResult") ||
         signature.includes?("IResult") ||
         signature.matches?(/Task\s*<\s*(?:IEnumerable|List|PagedResult|Result|Response|[A-Z]\w*)/)
-    end
-
-    private def extract_controller_name(content : String) : String
-      # Any class whose name ends in `Controller` is a controller in ASP.NET
-      # Core, regardless of its base list — so we no longer require a
-      # `: Controller`/`: ControllerBase` suffix. This covers:
-      #   * POCO controllers with no base class (`class UsersController { }`),
-      #   * custom base classes (`: BaseApiController`),
-      #   * C# 12 primary constructors (`class ArticlesController(IMediator m)`),
-      #   * generic controllers (`class CrudController<T>`).
-      # The enclosing file is already filtered to `*Controller.cs`, so the
-      # match is unambiguous. `\b` after `Controller` avoids matching
-      # `FooControllerOptions`-style helper types.
-      match = content.match(/\bclass\s+(\w+)Controller\b/)
-      return "" unless match
-      match[1]
     end
 
     private def extract_action_name(signature : String) : String
@@ -491,7 +495,7 @@ module Analyzer::CSharp
     private def extract_controller_route(content : String) : String
       lines = content.lines
       lines.each_with_index do |line, index|
-        if line =~ /class\s+\w+Controller/
+        if line =~ /\bclass\s+\w+/
           search_index = index - 1
           while search_index >= 0 && search_index >= index - 5
             candidate_line = lines[search_index]
