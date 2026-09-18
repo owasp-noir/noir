@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Add a released version to the OWASP project page's version list.
 #
-# The page at https://owasp.org/www-project-noir/ renders its download tab from
+# The page at https://owasp.org/projects/noir renders its download tab from
 # _data/release.yml in OWASP/www-project-noir, a plain list of the most recent
 # tags. This commits the new tag to the owasp-noir fork and prints the compare
 # URL for the upstream pull request, which stays a manual click: creating that

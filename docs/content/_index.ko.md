@@ -49,7 +49,7 @@ template = "landing"
 <section class="logowall">
   <h2 class="sr-only">함께 만든 기술</h2>
   <div class="wrap logowall-inner">
-    <a href="https://owasp.org/www-project-noir/" target="_blank" rel="noopener noreferrer">
+    <a href="https://owasp.org/projects/noir" target="_blank" rel="noopener noreferrer">
       <img src="../images/owasp.webp" alt="OWASP" width="500" height="174" loading="lazy" decoding="async">
     </a>
     <a href="https://crystal-lang.org/" target="_blank" rel="noopener noreferrer">
