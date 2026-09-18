@@ -72,7 +72,7 @@ From here:
 - Broaden language and framework coverage; keep accuracy honest with per-framework fixtures.
 - Lean harder on LLMs for the cases static analysis can't reach.
 - Enrich the per-endpoint review context (guards, callees, sinks, validators, signals) so human reviewers and AI auditors share the same focused view of each handler.
-- Keep DAST integration first-class — OpenAPI, proxy targets, and direct hand-offs to ZAP / Burp / Caido.
+- Keep DAST integration first-class — OpenAPI, proxy targets, and direct hand-offs to ZAP / Burp / Caido / Gori.
 
 ## OWASP Project
 
