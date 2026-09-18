@@ -51,6 +51,7 @@ module Noir
     @masked_lines : Array(String)?
     @code_lines : Array(String)?
     @code_source : String?
+    @masked_source : String?
 
     def initialize(source : String)
       @chars = source.chars
@@ -62,6 +63,7 @@ module Noir
       @masked_lines = nil
       @code_lines = nil
       @code_source = nil
+      @masked_source = nil
       scan
     end
 
@@ -377,11 +379,15 @@ module Noir
     # existing per-line `line.count('{')` / `line.count('(')` counters over
     # `masked_lines[i]` (structure) while emitting `lines[i]` (real text).
     def masked_lines : Array(String)
-      @masked_lines ||= begin
-        masked_str = String.build(@size) do |io|
-          @masked.each { |c| io << c }
-        end
-        masked_str.lines
+      @masked_lines ||= masked_source.lines
+    end
+
+    # The masked source as one string. Memoized because a caller that wants
+    # both a whole-source regex scan and the per-line view (the C# type
+    # extractor does) would otherwise materialise the same string twice.
+    def masked_source : String
+      @masked_source ||= String.build(@size) do |io|
+        @masked.each { |c| io << c }
       end
     end
 
