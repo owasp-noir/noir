@@ -12,7 +12,7 @@
 <img src="https://img.shields.io/github/v/release/owasp-noir/noir?style=for-the-badge&color=black&labelColor=black&logo=web"></a>
 <a href="https://crystal-lang.org">
 <img src="https://img.shields.io/badge/Crystal-000000?style=for-the-badge&logo=crystal&logoColor=white"></a>
-<a href="https://owasp.org/www-project-noir/">
+<a href="https://owasp.org/projects/noir">
 <img src="https://img.shields.io/badge/OWASP-000000?style=for-the-badge&logo=owasp&logoColor=white"></a>
 <a href="https://www.bestpractices.dev/projects/14203">
 <img src="https://img.shields.io/badge/OpenSSF-Best%20Practices-000000?style=for-the-badge&labelColor=black"></a>
@@ -78,7 +78,7 @@ From here:
 
 OWASP Noir joined the OWASP Foundation in **June 2024**.
 
-- Official project page: [https://owasp.org/www-project-noir/](https://owasp.org/www-project-noir/)
+- Official project page: [https://owasp.org/projects/noir](https://owasp.org/projects/noir)
 - OWASP Nest: [https://nest.owasp.org/projects/noir](https://nest.owasp.org/projects/noir)
 
 ## News & Updates
