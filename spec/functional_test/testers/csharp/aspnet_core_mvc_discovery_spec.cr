@@ -9,6 +9,14 @@ expected_endpoints = [
   Endpoint.new("/actions/live", "GET"),
   Endpoint.new("/actions/live", "POST"),
   Endpoint.new("/actions/documented", "GET"),
+  Endpoint.new("/returns/nullable", "GET"),
+  Endpoint.new("/returns/task-nullable", "GET"),
+  Endpoint.new("/returns/qualified", "GET"),
+  Endpoint.new("/returns/record-parameter", "POST"),
+  Endpoint.new("/paren/first", "GET"),
+  Endpoint.new("/paren/smile-(-face", "GET"),
+  Endpoint.new("/summary", "GET"),
+  Endpoint.new("/import", "POST"),
 ]
 
 tester = FunctionalTester.new("fixtures/csharp/aspnet_core_mvc_discovery/", {
@@ -46,5 +54,26 @@ describe "ASP.NET Core MVC controller discovery", tags: "functional" do
     tester.endpoints.any?(&.url.includes?("comment")).should be_false
     documented = tester.endpoints.find! { |endpoint| endpoint.url == "/actions/documented" }
     documented.details.code_paths.first.line.should eq 38
+  end
+
+  it "reads nullable and namespace-qualified return types" do
+    %w[/returns/nullable /returns/task-nullable /returns/qualified].each do |path|
+      tester.endpoints.any? { |endpoint| endpoint.url == path }.should be_true
+    end
+  end
+
+  it "treats record as a parameter name, not a type declaration" do
+    save = tester.endpoints.find! { |endpoint| endpoint.url == "/returns/record-parameter" }
+    save.details.code_paths.first.line.should eq 16
+  end
+
+  it "keeps a literal paren in a route template out of the attribute stitcher" do
+    smile = tester.endpoints.find! { |endpoint| endpoint.url == "/paren/smile-(-face" }
+    smile.details.code_paths.first.line.should eq 10
+  end
+
+  it "collects actions from every part of a partial controller" do
+    import = tester.endpoints.find! { |endpoint| endpoint.url == "/import" }
+    import.details.code_paths.first.path.should contain "PartialLedgerController.Generated.cs"
   end
 end

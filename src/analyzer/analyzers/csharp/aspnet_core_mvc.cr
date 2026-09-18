@@ -144,56 +144,209 @@ module Analyzer::CSharp
       patterns
     end
 
+    # Discovery reads the whole solution, so the gate in front of `CSharpLexer`
+    # decides what the analyzer costs: bitwarden/server ships 5,512 `.cs` files
+    # and 277 controllers, and lexing all of them is a 5-6x scan.
+    #
+    # Every intrinsic controller marker is visible in the declaring source —
+    # the `*Controller` name suffix, `[Controller]`/`[ApiController]`, and the
+    # `Controller`/`ControllerBase` framework bases. Those files are lexed
+    # up front. A type can still inherit a marker from a local base
+    # (`class Users : BaseApiEndpoint`), so the files that name one of the
+    # marked types are pulled in afterwards, and those that never spell
+    # `Controller` at all only have to be checked against marked names that
+    # do not spell it either — in practice none, so the bulk of a solution is
+    # never read past the substring test.
+    CONTROLLER_MARKER          = "Controller"
+    FRAMEWORK_CONTROLLER_BASES = {"Controller", "ControllerBase"}
+    CONTROLLER_SUFFIX_RE       = /Controller$/i
+    CONTROLLER_MARKER_RE       = /Controller/
+    CONTROLLER_DECLARATION_RE  = /\bclass\s+\w*Controller\b|[\[,]\s*(?:global::)?(?:\w+\.)*(?:Api)?Controller(?:Attribute)?\s*[\]\(,]|:\s*(?:global::)?(?:\w+\.)*Controller(?:Base)?\b/
+    # Only a class with a base list can inherit a marker it does not declare.
+    DERIVED_CLASS_RE = /\bclass\s+\w+[^{};]*+:/
+
     private def analyze_controllers(route_patterns_by_scope : Hash(String, Array(String)),
                                     project_roots : Array(String), include_callee : Bool)
-      types_by_scope = Hash(String, Array(Tuple(String, Noir::CSharpType))).new do |hash, key|
-        hash[key] = [] of Tuple(String, Noir::CSharpType)
-      end
+      queue = [] of String  # declares an intrinsic marker — lex now
+      marked = [] of String # mentions `Controller`; may derive from a marked type
+      plain = [] of String  # never mentions it; only a marker-free base can reach it
       get_files_by_extension(".cs").each do |file|
         next if Common.csharp_test_path?(base_relative_path(file))
-        content = Noir::CSharpLexer.new(read_file_content(file)).code_source
-        next if Common.aspnet_framework_source?(content)
-        scope = route_scope_for(file, project_roots)
-        Noir::CSharpTypeExtractor.extract(content).each do |type|
-          types_by_scope[scope] << {file, type}
+        source = file_source(file)
+        # `Controller` gates the expensive test: an intrinsic marker always
+        # contains it, so a file without it can only ever be reached through a
+        # marker-free base, and most of a solution stops here.
+        if source.matches?(CONTROLLER_MARKER_RE)
+          if source.matches?(CONTROLLER_DECLARATION_RE)
+            queue << file
+            next
+          end
+          marked << file if source.matches?(DERIVED_CLASS_RE)
+        elsif source.matches?(DERIVED_CLASS_RE)
+          plain << file
         end
       end
 
+      types_by_scope = Hash(String, Array(Tuple(String, Noir::CSharpType))).new do |hash, key|
+        hash[key] = [] of Tuple(String, Noir::CSharpType)
+      end
+      extracted = Set(String).new
+      all_types = [] of Noir::CSharpType
+
+      until queue.empty?
+        queue.each do |file|
+          next unless extracted.add?(file)
+          lexer = file_lexer(file)
+          next unless lexer
+          next if Common.aspnet_framework_source?(lexer.code_source)
+          scope = route_scope_for(file, project_roots)
+          Noir::CSharpTypeExtractor.extract(lexer).each do |type|
+            types_by_scope[scope] << {file, type}
+            all_types << type
+          end
+        end
+
+        queue = [] of String
+        names = marker_base_names(all_types)
+        next if names.empty?
+        queue.concat(take_files_naming(marked, names))
+        queue.concat(take_files_naming(plain, names.reject(&.includes?(CONTROLLER_MARKER))))
+      end
+
+      # Selected controllers grouped by file so a file holding several of them
+      # is lexed once, not once per class.
+      selected = Hash(String, Array(Tuple(Noir::CSharpType, Array(String)))).new do |hash, key|
+        hash[key] = [] of Tuple(Noir::CSharpType, Array(String))
+      end
       types_by_scope.each do |scope, entries|
-        types = entries.map(&.[1])
+        index = Hash(String, Array(Noir::CSharpType)).new
+        entries.each { |_, type| (index[type.name] ||= [] of Noir::CSharpType) << type }
         route_patterns = route_patterns_by_scope[scope]? || [DEFAULT_ROUTE]
         entries.each do |file, type|
-          next unless type.modifiers.includes?("public")
-          next if type.generic || type.modifiers.includes?("abstract") || type.modifiers.includes?("static")
-          attributes = controller_attributes(type, types)
+          # A `partial` controller splits its modifiers, base list and
+          # attributes across files: only one part carries `public class
+          # FooController : ControllerBase`, the rest are bare `partial class
+          # FooController`. Decide on the union, then analyze this part.
+          parts = declaration_parts(type, index)
+          modifiers = parts.flat_map(&.modifiers)
+          next unless modifiers.includes?("public")
+          next if parts.any?(&.generic) || modifiers.includes?("abstract") || modifiers.includes?("static")
+          attributes = controller_attributes(parts, index)
           next if attributes.includes?("NonController")
-          next unless type.name.matches?(/Controller$/i) || attributes.includes?("Controller") || attributes.includes?("ApiController")
-          analyze_controller(file, type, route_patterns, include_callee)
+          next unless CONTROLLER_SUFFIX_RE.matches?(type.name) ||
+                      attributes.includes?("Controller") || attributes.includes?("ApiController")
+          selected[file] << {type, route_patterns}
+        end
+      end
+
+      selected.each do |file, controllers|
+        lexer = file_lexer(file)
+        next unless lexer
+        controllers.each do |type, route_patterns|
+          analyze_controller(file, lexer, type, route_patterns, include_callee)
         end
       end
     end
 
-    private def controller_attributes(type : Noir::CSharpType, types : Array(Noir::CSharpType), visited = Set(String).new) : Array(String)
-      attributes = type.attributes.dup
-      return attributes if visited.includes?(type.name)
-      visited << type.name
-      if base = type.base_name
-        candidates = types.select { |candidate| candidate.name == base }
-        if candidates.size == 1
-          attributes.concat(controller_attributes(candidates.first, types, visited))
-        elsif candidates.empty? && {"Controller", "ControllerBase"}.includes?(base)
-          attributes << "Controller"
+    # Moves the files naming one of `names` out of `pool` and returns them.
+    private def take_files_naming(pool : Array(String), names : Array(String)) : Array(String)
+      return [] of String if pool.empty? || names.empty?
+      referenced = Regex.union(names.map { |name| /\b#{Regex.escape(name)}\b/ })
+      hits = [] of String
+      keep = [] of String
+      pool.each do |file|
+        if file_source(file).matches?(referenced)
+          hits << file
+        else
+          keep << file
         end
+      end
+      pool.replace(keep)
+      hits
+    end
+
+    private def file_source(file : String) : String
+      read_file_content(file)
+    rescue e
+      logger.debug "Failed to read #{file}: #{e.message}"
+      ""
+    end
+
+    private def file_lexer(file : String) : Noir::CSharpLexer?
+      Noir::CSharpLexer.new(read_file_content(file))
+    rescue e
+      logger.debug "Failed to read #{file}: #{e.message}"
+      nil
+    end
+
+    # Names whose subclasses inherit a controller marker. The `*Controller`
+    # name suffix is deliberately absent: ASP.NET Core reads it off the
+    # candidate type itself, never off a base (`class Unmarked :
+    # UnmarkedController` is not a controller).
+    private def marker_base_names(types : Array(Noir::CSharpType)) : Array(String)
+      names = Set(String).new
+      types.each do |type|
+        base = type.base_name
+        names << type.name if type.attributes.includes?("Controller") ||
+                              type.attributes.includes?("ApiController") ||
+                              (base && FRAMEWORK_CONTROLLER_BASES.includes?(base))
+      end
+      loop do
+        added = false
+        types.each do |type|
+          next if names.includes?(type.name)
+          base = type.base_name
+          next unless base && names.includes?(base)
+          names << type.name
+          added = true
+        end
+        break unless added
+      end
+      names.to_a
+    end
+
+    # The parts of one `partial` declaration, or just the type itself. Parts
+    # are matched by simple name, so only `partial` types are grouped: two
+    # unrelated `Helper` classes in different namespaces must not merge.
+    private def declaration_parts(type : Noir::CSharpType,
+                                  index : Hash(String, Array(Noir::CSharpType))) : Array(Noir::CSharpType)
+      return [type] unless type.modifiers.includes?("partial")
+      parts = (index[type.name]? || [type]).select(&.modifiers.includes?("partial"))
+      parts.empty? ? [type] : parts
+    end
+
+    private def controller_attributes(parts : Array(Noir::CSharpType),
+                                      index : Hash(String, Array(Noir::CSharpType)),
+                                      visited = Set(String).new) : Array(String)
+      attributes = [] of String
+      parts.each { |part| attributes.concat(part.attributes) }
+      return attributes unless visited.add?(parts.first.name)
+
+      parts.each do |part|
+        next unless base = part.base_name
+        candidates = index[base]?
+        if candidates.nil? || candidates.empty?
+          attributes << "Controller" if FRAMEWORK_CONTROLLER_BASES.includes?(base)
+          next
+        end
+        # More than one local declaration of the same simple name is ambiguous
+        # without namespace resolution — unless they are the parts of one
+        # `partial` type.
+        next unless candidates.size == 1 || candidates.all?(&.modifiers.includes?("partial"))
+        attributes.concat(controller_attributes(candidates, index, visited))
       end
       attributes
     end
 
-    private def analyze_controller(file : String, type : Noir::CSharpType, route_patterns : Array(String), include_callee : Bool)
-      controller_name = type.name.sub(/Controller$/i, "")
-      controller_route = extract_controller_route(type.content)
-      lexer = Noir::CSharpLexer.new(type.content)
-      lines = lexer.code_lines
-      masked_lines = lexer.masked_lines
+    private def analyze_controller(file : String, lexer : Noir::CSharpLexer, type : Noir::CSharpType,
+                                   route_patterns : Array(String), include_callee : Bool)
+      controller_name = type.name.sub(CONTROLLER_SUFFIX_RE, "")
+      # Slice the file's already-lexed views down to this class. `line_offset`
+      # puts the reported line back in file coordinates.
+      line_offset = type.start_line
+      lines = lexer.code_lines[type.start_line..type.end_line]
+      masked_lines = lexer.masked_lines[type.start_line..type.end_line]
+      controller_route = extract_controller_route(lines)
 
       # Accumulate every `[Http<Verb>(...)]` on the pending action so a method
       # carrying more than one (`[HttpGet(...)]` + `[HttpHead(...)]` for image/
@@ -218,7 +371,7 @@ module Analyzer::CSharp
           # a closing paren on the same line, the path literal lives
           # on a subsequent line; the per-line matcher only
           # saw `[HttpPost(` and recorded POST with an empty path.
-          attr_line, advance = stitch_multiline_attribute(lines, i)
+          attr_line, advance = stitch_multiline_attribute(lines, masked_lines, i)
           line = attr_line if advance > 0
 
           if accept = collect_accept_verbs(line, route_attr)
@@ -262,14 +415,14 @@ module Analyzer::CSharp
                 routes = resolve_routes(controller_route, effective_action_route, controller_name, action_name, parameters, route_patterns)
 
                 routes.each do |route|
-                  details = Details.new(PathInfo.new(file, type.line_offset + i + 1))
+                  details = Details.new(PathInfo.new(file, line_offset + i + 1))
                   endpoint = Endpoint.new(route, emit_verb, details)
 
                   align_params_with_route(parameters, route).each do |param|
                     endpoint.params << param
                   end
 
-                  attach_csharp_callees(endpoint, body_block, file, type.line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
+                  attach_csharp_callees(endpoint, body_block, file, line_offset + body_line + 1, include_callee, skip_first_line: skip_first)
                   @result << endpoint
                 end
               end
@@ -296,15 +449,18 @@ module Analyzer::CSharp
     # where `advance` is the number of *extra* lines consumed; the
     # caller adds that to its loop index. A non-multi-line case
     # returns `{line, 0}` so the existing fast path is preserved.
-    private def stitch_multiline_attribute(lines : Array(String), start : Int32) : Tuple(String, Int32)
+    private def stitch_multiline_attribute(lines : Array(String), masked : Array(String), start : Int32) : Tuple(String, Int32)
       line = lines[start]
       return {line, 0} unless line =~ /\[(Http(Post|Get|Put|Delete|Patch|Head|Options)|Route|AcceptVerbs)\b/
 
-      # The attribute closes when paren+bracket depth returns to
-      # zero. If the opening line is already balanced (paren and
-      # bracket both close on the same line), no stitching needed.
-      paren = line.count('(') - line.count(')')
-      bracket = line.count('[') - line.count(']')
+      # The attribute closes when paren+bracket depth returns to zero. Depth is
+      # counted over `masked` — a route template is free to carry a literal
+      # `(` or `[` (`[HttpGet("smile-(-face")]`), and counting those as
+      # structure leaves the attribute permanently unbalanced, swallowing every
+      # remaining line of the class. If the opening line is already balanced,
+      # no stitching is needed.
+      paren = delimiter_depth(masked, start, '(', ')')
+      bracket = delimiter_depth(masked, start, '[', ']')
       return {line, 0} if paren <= 0 && bracket <= 0
 
       joined = line.rstrip
@@ -314,15 +470,23 @@ module Analyzer::CSharp
       # unbalanced brackets can't blow up the scan.
       max_read = (start + 8).clamp(0, lines.size - 1)
       while idx <= max_read
-        nxt = lines[idx]
-        joined += " " + nxt.strip
-        paren += nxt.count('(') - nxt.count(')')
-        bracket += nxt.count('[') - nxt.count(']')
+        joined += " " + lines[idx].strip
+        paren += delimiter_depth(masked, idx, '(', ')')
+        bracket += delimiter_depth(masked, idx, '[', ']')
         break if paren <= 0 && bracket <= 0
         idx += 1
       end
 
-      {joined, idx - start}
+      # An attribute that never balances runs `idx` one past `max_read`, which
+      # is the last line. The caller indexes `lines`/`masked_lines` with the
+      # advanced cursor, so it must stay in range.
+      {joined, idx.clamp(start, lines.size - 1) - start}
+    end
+
+    private def delimiter_depth(masked : Array(String), index : Int32, open : Char, close : Char) : Int32
+      line = masked[index]?
+      return 0 unless line
+      line.count(open) - line.count(close)
     end
 
     # `[AcceptVerbs("PUT", "PATCH")]` / `[AcceptVerbs("PUT", Route = "Bank")]`
@@ -390,8 +554,15 @@ module Analyzer::CSharp
       {nil, route_attr, route_attr, false}
     end
 
+    ACCESS_MODIFIER_RE = /\b(?:public|private|protected|internal)\b/
+    # `class`/`struct`/`interface`/`enum` are reserved, so their presence alone
+    # marks a type declaration. `record` is contextual and a perfectly legal
+    # parameter name (`Save(AuditRecord record)`) — it only declares a type
+    # when an identifier follows it.
+    TYPE_DECLARATION_RE = /\b(?:class|struct|interface|enum)\b|\brecord\s+(?:class\s+|struct\s+)?\w+\s*[<({]/
+
     private def potential_member_signature?(line : String) : Bool
-      line.matches?(/\b(public|private|protected|internal)\b/) && line.includes?("(") && !line.matches?(/\b(class|struct|interface|record)\b/)
+      line.matches?(ACCESS_MODIFIER_RE) && line.includes?("(") && !line.matches?(TYPE_DECLARATION_RE)
     end
 
     private def action_method?(signature : String, explicit_endpoint_attribute : Bool) : Bool
@@ -406,7 +577,11 @@ module Analyzer::CSharp
     end
 
     private def extract_action_name(signature : String) : String
-      match = signature.match(/public\s+(?:async\s+)?(?:override\s+)?(?:virtual\s+)?[\w<>\[\],\s]+\s+(\w+)\s*\(/)
+      # `.` and `?` belong in the return type: `Task<long?>`,
+      # `ActionResult<UserItemDataDto?>` and
+      # `Task<Bit.HttpExtensions.ListResponseModel<T>>` are all real action
+      # signatures that a `[\w<>\[\],\s]` class cannot span.
+      match = signature.match(/public\s+(?:async\s+)?(?:override\s+)?(?:virtual\s+)?[\w<>\[\],\s.?]+\s+(\w+)\s*\(/)
       return "" unless match
       match[1]
     end
@@ -492,8 +667,7 @@ module Analyzer::CSharp
       merged
     end
 
-    private def extract_controller_route(content : String) : String
-      lines = content.lines
+    private def extract_controller_route(lines : Array(String)) : String
       lines.each_with_index do |line, index|
         if line =~ /\bclass\s+\w+/
           search_index = index - 1
