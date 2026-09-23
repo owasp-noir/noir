@@ -85,6 +85,49 @@ describe "EndpointOptimizer" do
       ])
     end
 
+    it "collapses body aliases into one canonical JSON param" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "POST", [
+          Param.new("name", "from-body", "body"),
+          Param.new("name", "from-json", "json"),
+        ]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result[0].params.map { |param| {param.name, param.value, param.param_type, param.request_type} }.should eq([
+        {"name", "from-body", "body", "json"},
+      ])
+    end
+
+    it "collapses body aliases when duplicate endpoints are merged" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/test", "POST", [Param.new("name", "from-body", "body")]),
+        Endpoint.new("/test", "POST", [Param.new("name", "from-json", "json")]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.size.should eq(1)
+      result[0].params.map { |param| {param.name, param.value, param.param_type, param.request_type} }.should eq([
+        {"name", "from-body", "body", "json"},
+      ])
+    end
+
+    it "collapses body aliases when duplicate GraphQL operations are merged" do
+      optimizer = EndpointOptimizer.new(logger, options)
+      endpoints = [
+        Endpoint.new("/graphql#Mutation.update", "POST", [Param.new("input", "from-body", "body")]),
+        Endpoint.new("/graphql#Mutation.update", "POST", [Param.new("input", "from-json", "json")]),
+      ]
+
+      result = optimizer.optimize_endpoints(endpoints)
+      result.size.should eq(1)
+      result[0].params.map { |param| {param.name, param.value, param.param_type, param.request_type} }.should eq([
+        {"input", "from-body", "body", "json"},
+      ])
+    end
+
     it "normalizes HTTP methods" do
       optimizer = EndpointOptimizer.new(logger, options)
       endpoints = [

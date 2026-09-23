@@ -121,14 +121,16 @@ struct Endpoint
     @tags << tag
   end
 
-  # Dedup by (name, param_type) like push_callee/add_tag do for their
-  # collections. A handler that reads the same input twice
-  # (`params[:id]` on two lines, a path param re-read in the body) used
-  # to surface the identical Param multiple times in the raw `params`
-  # list and the text output. `params_to_hash`/`==` already collapse on
-  # name+type, so deduping here only trims redundant entries.
+  # Dedup by (name, request_type) like push_callee/add_tag do for their
+  # collections. Aliases such as `body` and `json` share one request bucket,
+  # so a handler that reports the same field through both spellings must not
+  # emit it twice. A handler that reads the same canonical input twice
+  # (`params[:id]` on two lines, a path param re-read in the body) used to
+  # surface duplicate params in the raw list and text output.
+  # `params_to_hash`/`==` already collapse on name+request_type, so deduping
+  # here only trims redundant entries.
   def push_param(param : Param)
-    return if @params.any? { |existing| existing.name == param.name && existing.param_type == param.param_type }
+    return if @params.any? { |existing| existing.name == param.name && existing.request_type == param.request_type }
     @params << param
   end
 
