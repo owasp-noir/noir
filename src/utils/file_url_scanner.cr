@@ -1,3 +1,4 @@
+require "uri"
 require "./text_file"
 require "../models/code_locator"
 
@@ -85,8 +86,7 @@ module Noir
     end
 
     # Strips trailing punctuation and unbalanced brackets from a raw
-    # candidate. Returns nil when nothing addressable is left (no authority
-    # after the `://`).
+    # candidate. Returns nil when no host is addressable after the `://`.
     def self.trim(raw : String) : String?
       url = raw
       loop do
@@ -96,7 +96,23 @@ module Noir
       end
 
       scheme_end = url.index("://")
-      return if scheme_end.nil? || url.size <= scheme_end + 3
+      return if scheme_end.nil?
+
+      authority_start = scheme_end + 3
+      return if url.size <= authority_start
+      # URI.parse accepts an empty HTTP(S) host (`https:///path` or
+      # `https://:443/path`). Those candidates can then become endpoints
+      # when a query happens to contain the requested URL.
+      authority_first = url[authority_start]
+      return if authority_first == '/' || authority_first == '?' || authority_first == '#'
+
+      host = begin
+        URI.parse(url).host
+      rescue
+        nil
+      end
+      return if host.nil? || host.empty?
+
       url
     end
 
