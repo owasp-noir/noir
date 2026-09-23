@@ -123,13 +123,12 @@ class EndpointOptimizer
       # analyzer that knows a param exists but not what it is called must
       # not leak that hole into the report.
       #
-      # Repeats of the same (name, param_type) are collapsed here too,
+      # Repeats of the same (name, request_type) are collapsed here too,
       # first-wins. `Endpoint#push_param`, `merge_params` and the graphql
-      # merges all dedup on that key, and `params_to_hash` / `Endpoint#==`
-      # collapse on it unconditionally — but an analyzer that appends
-      # straight to `params` bypasses every one of those, and the duplicate
-      # then reaches the report. It renders as two conflicting values for one
-      # field (`-H 'Host: a' -H 'Host: b'`), which is not a request any
+      # merges dedup on this key, as do `params_to_hash` / `Endpoint#==`.
+      # An analyzer may append straight to `params`, bypassing those checks;
+      # duplicates then reach the report and render as conflicting values for
+      # one field (`-H 'Host: a' -H 'Host: b'`), which is not a request any
       # server can answer. Deduping here makes the emitted list agree with
       # what every consumer already computes from it.
       if endpoint.params.present?
@@ -137,7 +136,7 @@ class EndpointOptimizer
         seen_params = Set(Tuple(String, String)).new
         endpoint.params.each do |param|
           next if param.name.includes?(" ") || param.name.blank?
-          next unless seen_params.add?({param.name, param.param_type})
+          next unless seen_params.add?({param.name, param.request_type})
           # `request_type`, not `param_type`: the fourteen analyzers that
           # spell a request body `body` rather than `json` produce params no
           # `--pvalue json=` (or `--pvalue any=`) rule ever matched, so their
@@ -220,7 +219,7 @@ class EndpointOptimizer
     source.params.each do |param|
       next if drop_collection_noise && collection_noise_param?(source, param)
 
-      existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.param_type == param.param_type }
+      existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.request_type == param.request_type }
       target.params << param unless existing_param
     end
   end

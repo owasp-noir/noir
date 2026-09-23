@@ -151,7 +151,7 @@ describe "Endpoint equality" do
   end
 
   describe "#push_param" do
-    it "dedups by (name, param_type) but keeps distinct params" do
+    it "dedups by (name, request_type) but keeps distinct params" do
       endpoint = Endpoint.new("/p", "GET")
       endpoint.push_param(Param.new("id", "", "query"))
       endpoint.push_param(Param.new("id", "later", "query")) # dup (name, type) — dropped
@@ -161,6 +161,16 @@ describe "Endpoint equality" do
       endpoint.params.size.should eq 3
       endpoint.params.count { |p| p.name == "id" && p.param_type == "query" }.should eq 1
       endpoint.params.count { |p| p.name == "id" && p.param_type == "path" }.should eq 1
+    end
+
+    it "dedups aliases that map to the same request type" do
+      endpoint = Endpoint.new("/p", "POST")
+      endpoint.push_param(Param.new("name", "from-body", "body"))
+      endpoint.push_param(Param.new("name", "from-json", "json"))
+
+      endpoint.params.map { |param| {param.name, param.value, param.param_type} }.should eq([
+        {"name", "from-body", "body"},
+      ])
     end
   end
 

@@ -66,13 +66,13 @@ class EndpointOptimizer
 
     source.params.each do |param|
       if graphql_doc_param?(param)
-        if existing_index = target.params.index { |target_param| target_param.name == param.name && target_param.param_type == param.param_type }
+        if existing_index = target.params.index { |target_param| target_param.name == param.name && target_param.request_type == param.request_type }
           target.params[existing_index] = param if source_sdl && !target_sdl
         else
           target.params << param
         end
       else
-        existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.param_type == param.param_type }
+        existing_param = target.params.find { |target_param| target_param.name == param.name && target_param.request_type == param.request_type }
         target.params << param unless existing_param
       end
     end
