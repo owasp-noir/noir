@@ -51,6 +51,37 @@ describe Noir::FileUrlScanner do
       Noir::FileUrlScanner.each_url("https://") { |u| urls << u }
       urls.should be_empty
     end
+
+    it "rejects candidates whose parsed HTTP(S) host is empty" do
+      candidates = [
+        "https:///path",
+        "https://?next=https://target.example/path",
+        "https://#fragment",
+        "https://:443/path",
+        "https://user@:443/path",
+      ]
+
+      urls = [] of String
+      candidates.each do |candidate|
+        Noir::FileUrlScanner.each_url(candidate) { |url| urls << url }
+      end
+      urls.should be_empty
+    end
+
+    it "keeps candidates with a domain or IPv6 host" do
+      urls = [] of String
+      text = [
+        "https://target.example/path",
+        "https://[::1]/path",
+        "https://api.example/users/{id}",
+      ].join(" ")
+      Noir::FileUrlScanner.each_url(text) { |url| urls << url }
+      urls.should eq [
+        "https://target.example/path",
+        "https://[::1]/path",
+        "https://api.example/users/{id}",
+      ]
+    end
   end
 
   describe ".binary_line?" do
