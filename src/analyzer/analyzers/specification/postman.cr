@@ -218,6 +218,13 @@ module Analyzer::Specification
       stripped = url_string.strip
       return "" if stripped.empty?
 
+      if stripped.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(stripped)
+        return "" unless uri
+        return normalize_path(uri.path) unless uri.path.empty?
+        return "/"
+      end
+
       begin
         uri = URI.parse(stripped)
         if path = uri.path

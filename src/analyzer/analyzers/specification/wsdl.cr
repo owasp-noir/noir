@@ -292,6 +292,11 @@ module Analyzer::Specification
 
     private def base_path(location : String) : String
       return "" if location.empty?
+      if location.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(location)
+        return uri.try(&.path) || ""
+      end
+
       begin
         uri = URI.parse(location)
         if uri.scheme && uri.host

@@ -242,13 +242,10 @@ module Analyzer::Specification
       return "" if stripped.empty?
 
       if stripped =~ /^https?:\/\//i
-        begin
-          uri = URI.parse(stripped)
-          path = uri.path
-          return normalize_path(path.empty? ? "/" : path)
-        rescue e
-          logger.debug "Failed to parse .http URL '#{stripped}': #{e}"
-        end
+        uri = parse_absolute_url(stripped)
+        return "" unless uri
+        path = uri.path
+        return normalize_path(path.empty? ? "/" : path)
       elsif stripped =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
         return ""
       end

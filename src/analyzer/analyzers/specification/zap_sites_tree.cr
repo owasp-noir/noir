@@ -31,12 +31,16 @@ module Analyzer::Specification
         method = node["method"].as_s?.try(&.upcase) || "GET"
 
         if !path.empty?
-          uri = begin
-            URI.parse(path)
-          rescue e
-            logger.debug "Failed to parse ZAP site URL '#{path}': #{e}"
-            nil
-          end
+          uri = if path.matches?(ABSOLUTE_SERVER_URL)
+                  parse_absolute_url(path)
+                else
+                  begin
+                    URI.parse(path)
+                  rescue e
+                    logger.debug "Failed to parse ZAP site URL '#{path}': #{e}"
+                    nil
+                  end
+                end
 
           if uri
             params = [] of Param

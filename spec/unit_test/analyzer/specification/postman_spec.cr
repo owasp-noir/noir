@@ -315,4 +315,24 @@ describe "Postman Analyzer" do
     users.details.code_paths.map(&.path).should contain("UsersController.kt")
     graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
   end
+
+  it "skips absolute request URLs with an empty host" do
+    endpoints = analyze_postman <<-JSON
+      {
+        "info": { "name": "Empty Host Collection" },
+        "item": [
+          { "name": "Empty host", "request": "https:///users" },
+          { "name": "Empty host with a port", "request": "https://:443/orders" },
+          { "name": "Empty host with a query", "request": "https://?next=/query" },
+          {
+            "name": "Raw empty host",
+            "request": { "method": "GET", "url": { "raw": "https:///raw" } }
+          },
+          { "name": "Relative request", "request": "/health" }
+        ]
+      }
+      JSON
+
+    endpoints.map(&.url).should eq ["/health"]
+  end
 end

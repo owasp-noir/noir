@@ -155,6 +155,22 @@ module Analyzer::Specification
     # matched here — it is protocol-relative and handled separately.
     ABSOLUTE_SERVER_URL = /\A[A-Za-z][A-Za-z0-9+.\-]*:\/\//
 
+    # Parse an absolute URL only when it has a usable authority. Crystal's
+    # URI parser accepts malformed URLs such as `https:///users` and
+    # `https://:443/users`, returning a path with an empty host. Specification
+    # analyzers must not turn those paths into endpoints or server base paths.
+    protected def parse_absolute_url(raw_url : String) : URI?
+      return unless raw_url.matches?(ABSOLUTE_SERVER_URL)
+
+      uri = URI.parse(raw_url)
+      host = uri.host
+      return if host.nil? || host.empty?
+
+      uri
+    rescue
+      nil
+    end
+
     # Turns an OpenAPI-style `servers[].url` list into the base path every
     # endpoint in the document hangs off. Shared by OAS3 and OpenRPC, which
     # use the same `servers` object.
@@ -184,7 +200,8 @@ module Analyzer::Specification
       # like `/api.openapi-generator.tech`.
       absolute = server_url.matches?(ABSOLUTE_SERVER_URL)
       if absolute || server_url.starts_with?("//")
-        uri = URI.parse(absolute ? server_url : "http:#{server_url}")
+        uri = parse_absolute_url(absolute ? server_url : "http:#{server_url}")
+        return unless uri
         # With `--url` supplied, a multi-host document should only contribute
         # the server the user actually pointed at.
         unless @url.empty?

@@ -104,4 +104,22 @@ describe "HTTP/REST File Analyzer" do
     endpoints.first.url.should eq("/ping")
     endpoints.first.method.should eq("GET")
   end
+
+  it "skips absolute request URLs with an empty host" do
+    endpoints = analyze_http_file <<-HTTP
+      ### Empty host
+      GET https:///users
+
+      ### Empty host with a port
+      GET https://:443/orders
+
+      ### Empty host with a query
+      GET https://?next=/query
+
+      ### Relative request target
+      GET /health
+      HTTP
+
+    endpoints.map(&.url).should eq ["/health"]
+  end
 end

@@ -65,6 +65,10 @@ module Analyzer::Specification
         return unless item_url.includes?(@url)
       end
 
+      if target.matches?(/\Ahttps?:\/\//i)
+        return if parse_absolute_url(target).nil?
+      end
+
       path_only, query = split_target(target)
       key = {method, path_only}
       endpoint = seen[key]?
@@ -139,9 +143,10 @@ module Analyzer::Specification
     # entries.
     private def split_target(target : String) : Tuple(String, String)
       normalized = target
-      if normalized.starts_with?("http://") || normalized.starts_with?("https://")
+      if normalized.matches?(/\Ahttps?:\/\//i)
         begin
-          uri = URI.parse(normalized)
+          uri = parse_absolute_url(normalized)
+          return {"", ""} unless uri
           path = uri.path
           query = uri.query
           normalized = path.empty? ? "/" : path

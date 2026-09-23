@@ -164,4 +164,21 @@ describe "Insomnia Analyzer" do
     users.details.code_paths.map(&.path).should contain("UsersController.kt")
     graphql.details.code_paths.map(&.path).should_not contain("UsersController.kt")
   end
+
+  it "skips absolute request URLs with an empty host" do
+    endpoints = analyze_insomnia_json <<-JSON
+      {
+        "_type": "export",
+        "__export_format": 4,
+        "resources": [
+          { "_id": "req_1", "_type": "request", "method": "GET", "url": "https:///users" },
+          { "_id": "req_2", "_type": "request", "method": "GET", "url": "https://:443/orders" },
+          { "_id": "req_3", "_type": "request", "method": "GET", "url": "https://?next=/query" },
+          { "_id": "req_4", "_type": "request", "method": "GET", "url": "/health" }
+        ]
+      }
+      JSON
+
+    endpoints.map(&.url).should eq ["/health"]
+  end
 end
