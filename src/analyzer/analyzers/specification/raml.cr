@@ -92,13 +92,10 @@ module Analyzer::Specification
       base_uri = base_uri_value(yaml_obj[YAML::Any.new("baseUri")]?)
       return "" if base_uri.empty?
       base_uri = resolve_base_uri_parameters(base_uri, yaml_obj)
-      if base_uri.starts_with?("http")
-        begin
-          uri = URI.parse(base_uri)
-          return (uri.path || "").rstrip('/')
-        rescue
-          return ""
-        end
+      if base_uri.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(base_uri)
+        return "" unless uri
+        return (uri.path || "").rstrip('/')
       end
       base_uri.rstrip('/')
     end

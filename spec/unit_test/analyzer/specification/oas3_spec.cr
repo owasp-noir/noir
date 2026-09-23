@@ -34,4 +34,10 @@ describe "OAS3 Analyzer" do
 
     analyzer.get_base_path(servers).should eq("https://api.example.com")
   end
+
+  it "ignores absolute servers with an empty host" do
+    servers = JSON.parse(%([{"url":"https:///invalid"},{"url":"https://:443/also-invalid"},{"url":"https://api.example.com/v2"}]))
+
+    oas3_analyzer.get_base_path(servers).should eq("/v2")
+  end
 end

@@ -38,11 +38,17 @@ module Analyzer::Specification
       # Caido's `path` field already excludes the host/query string,
       # but some entries store the full request URI here. Normalize
       # both shapes through URI.parse, falling back to the raw value.
-      normalized_path = begin
-        uri = URI.parse(path)
-        uri.path.empty? ? path : uri.path
-      rescue
-        path
+      if path.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(path)
+        return unless uri
+        normalized_path = uri.path.empty? ? "/" : uri.path
+      else
+        normalized_path = begin
+          uri = URI.parse(path)
+          uri.path.empty? ? path : uri.path
+        rescue
+          path
+        end
       end
 
       # Defensive: Caido stores leading-slash paths, but normalize odd

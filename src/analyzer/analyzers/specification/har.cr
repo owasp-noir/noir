@@ -40,7 +40,7 @@ module Analyzer::Specification
         data = HAR.from_file(har_file)
         logger.debug "Open #{har_file} file"
         data.entries.each do |entry|
-          request_uri = parse_uri(entry.request.url)
+          request_uri = parse_absolute_url(entry.request.url)
           next unless request_uri
 
           path = endpoint_path(request_uri)

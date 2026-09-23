@@ -83,13 +83,10 @@ module Analyzer::Specification
       return "" unless m
       url = m[1]
       return "" if url.empty?
-      if url.starts_with?("http")
-        begin
-          uri = URI.parse(url)
-          return (uri.path || "").rstrip('/')
-        rescue
-          return ""
-        end
+      if url.matches?(ABSOLUTE_SERVER_URL)
+        uri = parse_absolute_url(url)
+        return "" unless uri
+        return (uri.path || "").rstrip('/')
       end
       url.rstrip('/')
     end
