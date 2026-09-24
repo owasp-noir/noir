@@ -53,7 +53,7 @@ color: true
 # 기본 출력 형식
 format: "json"
 
-# 프로브 대상 기본 URL. exclude_codes / status_codes 에도 필요합니다
+# 프로브 대상 기본 URL. exclude_codes / status_codes / probe 에도 필요합니다
 url: "https://api.example.com"
 
 # 특정 상태 코드 제외 (대상 URL이 있어야 하므로 위 `url`과 함께 씁니다)
@@ -71,6 +71,22 @@ ai_context: true
 # 기본 AI 제공업체 및 모델
 ai_provider: "openai"
 ai_model: "gpt-5.5"
+
+# 패시브 보안 스캔 (-P / --passive-scan 과 동일)
+passive_scan: false
+passive_scan_severity: "high"
+
+# 분석기가 실패했거나 건너뛴 파일이 있으면 종료 코드 2
+strict: false
+
+# 로딩 스피너 애니메이션 비활성화
+no_spinner: false
+
+# 발견된 엔드포인트에 HTTP 프로브 실행 (`url` 필요)
+probe: false
+
+# 프로브/내보내기 시 TLS 인증서 검증 건너뛰기 (비보안)
+tls_skip_verify: false
 ```
 
 위 설정은 다음 명령과 동일합니다:
@@ -80,4 +96,6 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
   --include callee --ai-context \
   --ai-provider openai --ai-model gpt-5.5
 ```
+
+`noir config init` 는 지원하는 모든 키에 주석이 달린 파일을 만듭니다. 위 예시는 자주 쓰는 기본값만 보여 주며, CLI 플래그가 항상 설정 파일보다 우선합니다.
 

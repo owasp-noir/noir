@@ -18,10 +18,11 @@ Tags are my magnifying glass. A parameter named `redirect_url` gets flagged as s
 
 Tagger is disabled by default.
 
-**Enable all taggers**
+**Enable all taggers** (`-T` / `--use-all-taggers`)
 
 ```bash
 noir scan <BASE_PATH> -T
+# equivalent: noir scan <BASE_PATH> --use-all-taggers
 ```
 
 **Enable specific taggers** (list available ones with `noir list taggers`)

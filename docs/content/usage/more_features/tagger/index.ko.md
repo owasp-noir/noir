@@ -18,10 +18,11 @@ sort_by = "weight"
 
 Tagger는 기본적으로 비활성화되어 있습니다.
 
-**모든 태거 활성화**
+**모든 태거 활성화** (`-T` / `--use-all-taggers`)
 
 ```bash
 noir scan <BASE_PATH> -T
+# 동치: noir scan <BASE_PATH> --use-all-taggers
 ```
 
 **특정 태거만 활성화** (`noir list taggers`로 목록 확인)
