@@ -130,6 +130,8 @@ noir scan . -f postman -u https://api.example.com
 
 Generates a Postman Collection v2.1 JSON file. Save the output and import it into Postman for interactive API testing.
 
+Request bodies follow the parameter types Noir recorded: `json` becomes a raw JSON body, `form` becomes `urlencoded`, `file` (with any sibling form fields) becomes `formdata` with `type: file`, and `xml` becomes a raw body with `Content-Type: application/xml` (and the Postman raw language set to `xml`). Without those body types, requests stay header/URL-only as in the sample below.
+
 ```json
 {
   "info": {

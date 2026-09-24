@@ -10,7 +10,7 @@ Turn discovered endpoints into ready-to-run commands for popular HTTP clients. U
 
 ## cURL
 
-[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-X` (HTTP method), `--data-raw` (request body, with the matching `Content-Type` header), `-H` (headers), and `--cookie` as appropriate.
+[cURL](https://curl.se/) is the most widely used command-line HTTP client. The generated commands include `-i` (show response headers), `-X` (HTTP method), `--data-raw` (urlencoded or JSON bodies, with the matching `Content-Type` header), `-F` (multipart uploads), `-H` (headers), and `--cookie` as appropriate.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -52,6 +52,32 @@ Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/" -Headers @{"x-ap
 Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
 Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
+
+
+## File uploads (multipart)
+
+When an endpoint has a `param_type: file` field (a multipart upload discovered in the code), the HTTP-client formats switch from a urlencoded/`--data-raw`/`-Body` shape to multipart so the file part is not dropped:
+
+| Format | Shape |
+|--------|-------|
+| cURL (`-f curl`) | `-F 'field=value'` for sibling form fields, `-F 'avatar=@avatar'` for each file (empty path hint uses the field name as the `@filename`) |
+| HTTPie (`-f httpie`) | `--form` with `field=value` and `avatar@avatar` |
+| PowerShell (`-f powershell`) | `-Form @{ "field"="…"; "avatar"=Get-Item -Path "avatar" }` (PowerShell sets the multipart `Content-Type` itself) |
+
+Example (`POST /upload` with form field `title` and file field `avatar`):
+
+```bash
+# cURL
+curl -i -X 'POST' 'https://www.example.com/upload' -F 'title=' -F 'avatar=@avatar'
+
+# HTTPie
+http --form 'POST' 'https://www.example.com/upload' 'title=' 'avatar@avatar'
+
+# PowerShell
+Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/upload" -Form @{"title"=""; "avatar"=Get-Item -Path "avatar"}
+```
+
+Seed the `@filename` / `Get-Item` path with `--pvalue` when you want a real path instead of the field-name placeholder (for example `--pvalue "any=avatar=./fixture.png"`). Without a file field, output stays on the urlencoded examples above.
 
 ## ADB (Android)
 

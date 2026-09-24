@@ -10,7 +10,7 @@ sort_by = "weight"
 
 ## cURL
 
-[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령어에는 `-i`(응답 헤더 포함), `-X`(HTTP 메서드), `--data-raw`(요청 바디, 해당 `Content-Type` 헤더와 함께), `-H`(헤더), `--cookie`(쿠키) 등의 플래그가 적절히 들어갑니다.
+[cURL](https://curl.se/)은 가장 널리 쓰이는 커맨드라인 HTTP 클라이언트입니다. 생성되는 명령어에는 `-i`(응답 헤더 포함), `-X`(HTTP 메서드), `--data-raw`(urlencoded 또는 JSON 바디, 해당 `Content-Type` 헤더와 함께), `-F`(multipart 업로드), `-H`(헤더), `--cookie`(쿠키) 등의 플래그가 적절히 들어갑니다.
 
 ```bash
 noir scan . -f curl -u https://www.example.com
@@ -52,6 +52,32 @@ Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/" -Headers @{"x-ap
 Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/query" -Headers @{"Cookie"="my_auth="} -Body "query=" -ContentType "application/x-www-form-urlencoded"
 Invoke-WebRequest -Method "GET" -Uri "https://www.example.com/token" -Body "client_id=&redirect_url=&grant_type=" -ContentType "application/x-www-form-urlencoded"
 ```
+
+
+## 파일 업로드 (multipart)
+
+엔드포인트에 `param_type: file` 필드(코드에서 발견한 multipart 업로드)가 있으면, HTTP 클라이언트 포맷은 urlencoded/`--data-raw`/`-Body` 형태 대신 multipart로 바뀌어 파일 파트가 빠지지 않습니다.
+
+| 포맷 | 형태 |
+|------|------|
+| cURL (`-f curl`) | 형제 form 필드는 `-F 'field=value'`, 각 파일은 `-F 'avatar=@avatar'` (경로 힌트가 비어 있으면 필드 이름을 `@filename`으로 사용) |
+| HTTPie (`-f httpie`) | `--form` 과 함께 `field=value`, `avatar@avatar` |
+| PowerShell (`-f powershell`) | `-Form @{ "field"="…"; "avatar"=Get-Item -Path "avatar" }` (multipart `Content-Type`은 PowerShell이 설정) |
+
+예시 (`title` form 필드와 `avatar` 파일 필드가 있는 `POST /upload`):
+
+```bash
+# cURL
+curl -i -X 'POST' 'https://www.example.com/upload' -F 'title=' -F 'avatar=@avatar'
+
+# HTTPie
+http --form 'POST' 'https://www.example.com/upload' 'title=' 'avatar@avatar'
+
+# PowerShell
+Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/upload" -Form @{"title"=""; "avatar"=Get-Item -Path "avatar"}
+```
+
+필드 이름 placeholder 대신 실제 경로를 쓰려면 `--pvalue`로 `@filename` / `Get-Item` 경로를 채우면 됩니다 (예: `--pvalue "any=avatar=./fixture.png"`). 파일 필드가 없으면 위 urlencoded 예시 형태가 그대로 유지됩니다.
 
 ## ADB (Android)
 
