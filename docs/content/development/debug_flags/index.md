@@ -33,35 +33,35 @@ Examples
 Short literal prompt (single file analysis override)
 
 ```bash
-./bin/noir -b spec/functional_test/fixtures/crystal \
+./bin/noir scan spec/functional_test/fixtures/crystal \
   --override-analyze-prompt 'Identify HTTP endpoints and parameters. Return concise structured results.'
 ```
 
 Read a multi-line prompt from a file (analyze override)
 
 ```bash
-./bin/noir -b spec/functional_test/fixtures/crystal \
+./bin/noir scan spec/functional_test/fixtures/crystal \
   --override-analyze-prompt "$(cat prompts/analyze_prompt.txt)"
 ```
 
 Override the LLM optimizer prompt
 
 ```bash
-./bin/noir -b spec/functional_test/fixtures/crystal \
+./bin/noir scan spec/functional_test/fixtures/crystal \
   --override-llm-optimize-prompt "$(cat prompts/llm_optimize_prompt.txt)"
 ```
 
 Override the bundled analysis prompt (multi-file reasoning)
 
 ```bash
-./bin/noir -b spec/functional_test/fixtures/crystal \
+./bin/noir scan spec/functional_test/fixtures/crystal \
   --override-bundle-analyze-prompt "$(cat prompts/bundle_analyze_prompt.txt)"
 ```
 
 Override the file filtering prompt
 
 ```bash
-./bin/noir -b spec/functional_test/fixtures/crystal \
+./bin/noir scan spec/functional_test/fixtures/crystal \
   --override-filter-prompt 'Select only application source files that may declare HTTP routes or middleware.'
 ```
 
@@ -76,7 +76,7 @@ Screenshot examples
 Without override flag
 
 ```bash
-./bin/noir -b ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable
+./bin/noir scan ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable
 ```
 
 <img src="images/noflag.jpg" alt="No hidden flag result" width="3730" height="906" loading="lazy" decoding="async">
@@ -84,7 +84,7 @@ Without override flag
 With --override-analyze-prompt
 
 ```bash
-./bin/noir -b ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable --override-analyze-prompt "This is custom prompt for testttttt"
+./bin/noir scan ./spec/functional_test/fixtures/crystal/kemal --ai-provider=lmstudio --ai-model=kanana-nano-2.1b-instruct --exclude-techs kemal --cache-disable --override-analyze-prompt "This is custom prompt for testttttt"
 ```
 
 <img src="images/withflag.jpg" alt="With hidden flag result" width="3730" height="906" loading="lazy" decoding="async">

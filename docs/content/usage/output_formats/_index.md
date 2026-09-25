@@ -24,6 +24,19 @@ Scan results can come out in whatever shape the next step needs: machine-readabl
 | API structure visualization | [Mermaid](mermaid/) | `-f mermaid` |
 | Just list URLs or params | [More](more/) (Filters) | `-f only-url` |
 
+## Request body coverage by format
+
+Not every format turns every `param_type` into a wire body. Use this as a quick map (✅ = emitted as a request body / multipart part, ➖ = kept on the endpoint record only, or not applicable):
+
+| `param_type` | `json` / `yaml` / plain | `oas2` / `oas3` | `postman` | `curl` / `httpie` / `powershell` / HTML copy-as-curl |
+|---|---|---|---|---|
+| `json` | ✅ (typed field) | ✅ `application/json` | ✅ raw JSON | ✅ JSON body |
+| `form` | ✅ (typed field) | ✅ urlencoded or multipart | ✅ `urlencoded` | ✅ urlencoded body |
+| `file` | ✅ (typed field) | ✅ multipart `format: binary` | ✅ `formdata` file | ✅ multipart upload |
+| `xml` | ✅ (typed field) | ✅ `application/xml` | ✅ raw XML (`<name/>` if empty) | ➖ not baked into the command — use OAS / Postman / JSON |
+
+Details: [cURL](curl/#xml-request-bodies), [OpenAPI](openapi/), [Postman](more/#postman-collection).
+
 ## Available Formats
 
 *   **[HTTP Client Commands](curl/)**: Executable cURL, HTTPie, and PowerShell commands for testing endpoints, plus [ADB](curl/#adb-android) (Android) and [simctl](curl/#simctl-ios) (iOS) commands for launching mobile deep links, intents, and content providers.

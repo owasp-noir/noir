@@ -24,6 +24,19 @@ sort_by = "weight"
 | API 구조 시각화 | [Mermaid](mermaid/) | `-f mermaid` |
 | URL이나 파라미터만 추출 | [기타](more/) (필터) | `-f only-url` |
 
+## 형식별 요청 본문 지원
+
+모든 형식이 모든 `param_type` 을 와이어 본문으로 내리는 것은 아닙니다. 빠른 표입니다 (✅ = 요청 본문/multipart 파트로 출력, ➖ = 엔드포인트 기록에만 남거나 해당 없음):
+
+| `param_type` | `json` / `yaml` / plain | `oas2` / `oas3` | `postman` | `curl` / `httpie` / `powershell` / HTML copy-as-curl |
+|---|---|---|---|---|
+| `json` | ✅ (타입 필드) | ✅ `application/json` | ✅ raw JSON | ✅ JSON 본문 |
+| `form` | ✅ (타입 필드) | ✅ urlencoded 또는 multipart | ✅ `urlencoded` | ✅ urlencoded 본문 |
+| `file` | ✅ (타입 필드) | ✅ multipart `format: binary` | ✅ `formdata` file | ✅ multipart 업로드 |
+| `xml` | ✅ (타입 필드) | ✅ `application/xml` | ✅ raw XML (비어 있으면 `<name/>`) | ➖ 명령에 본문으로 넣지 않음 — OAS / Postman / JSON 사용 |
+
+자세한 내용: [cURL](curl/), [OpenAPI](openapi/), [Postman](more/).
+
 ## 사용 가능한 형식
 
 *   **[HTTP 클라이언트 명령](curl/)**: 엔드포인트 테스트용 cURL, HTTPie, PowerShell 명령. 모바일 딥링크·인텐트·콘텐츠 프로바이더를 실행하는 [ADB](curl/#adb-android)(Android)·[simctl](curl/#simctl-ios)(iOS) 명령도 만들어 줍니다.

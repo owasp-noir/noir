@@ -104,7 +104,7 @@ Large monorepos may contain many frameworks. You can narrow the scan to what mat
 # Run only the Rails and Django detectors (skip everything else)
 noir scan . --only-techs rails,django
 
-# Force-tag the project with these techs without running their detectors
+# Also run the Rails and Django analyzers (in addition to whatever auto-detection finds)
 noir scan . --techs rails,django
 
 # Scan everything except Express
@@ -114,7 +114,7 @@ noir scan . --exclude-techs express
 noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
-`--only-techs` and `--techs` look similar but do different things: `--only-techs` filters the detector list (faster scan, only those detectors run), while `--techs` adds techs to the result without running detection (useful when you already know the stack and want to skip discovery).
+`--only-techs` and `--techs` look similar but do different things: `--only-techs` restricts which tech detectors run (faster scan, only those detectors fire), while `--techs` *adds* techs to the analyzer set on top of auto-detection (so their analyzers still run even if detection missed them). Combine both when you want "only these techs, and run them even if undetected".
 
 ## Enrich the Output
 
@@ -147,7 +147,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--ai-context [LIST]` | Attach AI review context (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`; or `all`) |
 | `--pvalue TYPE=VAL`   | Fill parameter values in output (TYPE: any / header / cookie / query / form / json / path) |
 | `--only-techs`        | Run only these tech detectors (skip the rest) |
-| `--techs`             | Force-tag these techs without running their detectors |
+| `--techs`             | Add these techs to the analyzer set (in addition to auto-detected ones) |
 | `--exclude-techs`     | Skip these frameworks |
 | `--exclude-path`      | Skip files matching a comma-separated glob list |
 | `--status-codes`      | Probe each endpoint and attach the observed HTTP status code |
@@ -155,6 +155,19 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `-P, --passive-scan`  | Enable passive security scan |
 | `-T, --use-all-taggers` | Activate all taggers |
 | `--probe`             | Fire HTTP requests at discovered endpoints (needs `-u`) |
+| `--probe-via <url>`   | Route probes through this proxy URL |
+| `--probe-header VAL`  | Add a header to each probe (repeatable) |
+| `--tls-skip-verify`   | Skip TLS certificate verification for probe/export/webhook (insecure) |
+| `--use-taggers LIST`  | Activate specific taggers (comma-separated; see `noir list taggers`) |
+| `--export-es <url>`   | Index endpoints in Elasticsearch |
+| `--export-opensearch <url>` | Index endpoints in OpenSearch (same wire shape as `--export-es`) |
+| `--export-webhook <url>` | POST the endpoint catalog as JSON to a webhook |
+| `--ai-provider`        | AI provider prefix or full URL (see [AI Power](@/get_started/ai_power/index.md)) |
+| `--ai-model NAME`     | AI model name |
+| `--ai-key KEY`        | AI API key (or set `NOIR_AI_KEY`) |
+| `--diff-path <path>`  | Old code version for `noir` diff output |
+| `--passive-scan-severity LVL` | Min passive-scan severity (`critical`, `high`, `medium`, or `low`; default `high`) |
+| `-d, --debug`         | Enable debug messages |
 | `--config-file <path>`| Load default options from a YAML config file |
 | `--concurrency <N>`   | Worker count (default: CPU cores) |
 | `--cache-disable`     | Disable the LLM response cache for this run |
