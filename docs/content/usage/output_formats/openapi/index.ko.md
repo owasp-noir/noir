@@ -102,7 +102,14 @@ noir scan . -f oas2
 }
 ```
 
-헤더, 쿠키, path, query 파라미터는 `parameters`로 나가고, form과 JSON 바디는 해당 미디어 타입의 `requestBody`가 됩니다. `-f oas2`는 Swagger 2.0 형태로 출력하며, 바디 파라미터는 `in: formData` / `in: body` 항목이 되고 쿠키는 `Cookie` 헤더로 실립니다.
+헤더, 쿠키, path, query 파라미터는 `parameters`로 나가고, 바디는 해당 미디어 타입의 `requestBody`가 됩니다.
+
+* `json` → `application/json`
+* `form` → `application/x-www-form-urlencoded` (형제 `file` 필드가 있으면 `multipart/form-data`)
+* `file` → `multipart/form-data` 와 `format: binary` (형제 form 필드는 함께 실리고, 파일만 있어도 query가 아니라 multipart로 나감)
+* `xml` → `application/xml` (Play `asXml` / Tapir `xmlBody`처럼 바디 전체를 담는 XML 파라미터)
+
+`-f oas2`는 Swagger 2.0 형태로 출력하며, 바디 파라미터는 `in: formData` / `in: body` 항목이 되고(업로드는 multipart 아래 `type: file`), 쿠키는 `Cookie` 헤더로 실립니다.
 
 문서는 OpenAPI `3.0.3`으로 출력됩니다. 스캔 결과에 [HTTP QUERY](https://www.rfc-editor.org/rfc/rfc10008.html) 라우트가 있으면 `3.2.0`으로 나가는데, 3.0.x에는 `query` 오퍼레이션이 없기 때문입니다.
 

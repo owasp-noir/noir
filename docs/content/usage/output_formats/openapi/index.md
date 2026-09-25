@@ -102,7 +102,14 @@ Follows the standard OpenAPI structure: `info` holds metadata, and `paths` maps 
 }
 ```
 
-Headers, cookies, path and query parameters are emitted under `parameters`; form and JSON bodies become a `requestBody` with the matching media type. `-f oas2` produces the Swagger 2.0 shape instead, where a body parameter is an `in: formData` / `in: body` entry and cookies ride along as a `Cookie` header.
+Headers, cookies, path and query parameters are emitted under `parameters`; bodies become a `requestBody` with the matching media type:
+
+* `json` → `application/json`
+* `form` → `application/x-www-form-urlencoded` (or `multipart/form-data` when a sibling `file` field is present)
+* `file` → `multipart/form-data` with `format: binary` (co-located form fields ride along; file-only uploads still get multipart rather than a misleading query parameter)
+* `xml` → `application/xml` (Play `asXml` / Tapir `xmlBody` and similar whole-body XML params)
+
+`-f oas2` produces the Swagger 2.0 shape instead, where a body parameter is an `in: formData` / `in: body` entry (`type: file` under multipart for uploads) and cookies ride along as a `Cookie` header.
 
 Documents are emitted as OpenAPI `3.0.3`. A scan that discovers an [HTTP QUERY](https://www.rfc-editor.org/rfc/rfc10008.html) route is emitted as `3.2.0` instead, because 3.0.x has no `query` operation.
 

@@ -130,6 +130,8 @@ noir scan . -f postman -u https://api.example.com
 
 Postman Collection v2.1 형식의 JSON 파일을 생성합니다. 출력을 저장한 뒤 Postman에 가져오면 바로 API를 테스트할 수 있습니다.
 
+요청 바디는 Noir가 기록한 파라미터 타입을 따릅니다. `json`은 raw JSON 바디, `form`은 `urlencoded`, `file`(형제 form 필드 포함)은 `type: file`인 `formdata`, `xml`은 `Content-Type: application/xml`인 raw 바디(Postman raw language는 `xml`)가 됩니다. 이런 바디 타입이 없으면 아래 예시처럼 헤더/URL만 있는 요청으로 남습니다.
+
 ```json
 {
   "info": {
