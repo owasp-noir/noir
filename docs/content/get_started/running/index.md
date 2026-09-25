@@ -142,7 +142,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `-b <path>`           | Same as positional; v0-compatible |
 | `-f <format>`         | Output format (json, yaml, oas3, curl, etc.) |
 | `-o <file>`           | Write output to a file |
-| `-u <url>`            | Base URL for cURL/HTTPie output |
+| `-u <url>`            | Base URL prepended to paths; required for `--status-codes`, `--probe`, and `--probe-via` |
 | `--include LIST`      | Enrich plain output with `path`, `techs`, `callee` (comma-separated) |
 | `--ai-context [LIST]` | Attach AI review context (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`; or `all`) |
 | `--pvalue TYPE=VAL`   | Fill parameter values in output (TYPE: any / header / cookie / query / form / json / path) |
@@ -152,6 +152,9 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--exclude-path`      | Skip files matching a comma-separated glob list |
 | `--status-codes`      | Probe each endpoint and attach the observed HTTP status code |
 | `--exclude-codes`     | Drop endpoints whose probed status matches (comma-separated; pairs with `--status-codes`) |
+| `-P, --passive-scan`  | Enable passive security scan |
+| `-T, --use-all-taggers` | Activate all taggers |
+| `--probe`             | Fire HTTP requests at discovered endpoints (needs `-u`) |
 | `--config-file <path>`| Load default options from a YAML config file |
 | `--concurrency <N>`   | Worker count (default: CPU cores) |
 | `--cache-disable`     | Disable the LLM response cache for this run |

@@ -53,7 +53,7 @@ color: true
 # Default output format
 format: "json"
 
-# Base URL for probing; also required by exclude_codes / status_codes
+# Base URL for probing; also required by exclude_codes / status_codes / probe
 url: "https://api.example.com"
 
 # Exclude certain status codes (needs a target URL, so it pairs with `url` above)
@@ -71,6 +71,22 @@ ai_context: true
 # Default AI provider and model
 ai_provider: "openai"
 ai_model: "gpt-5.5"
+
+# Passive security scan (equivalent to -P / --passive-scan)
+passive_scan: false
+passive_scan_severity: "high"
+
+# Exit with code 2 if any analyzer failed or skipped a file
+strict: false
+
+# Disable loading spinner animations
+no_spinner: false
+
+# Fire HTTP probes at discovered endpoints (needs `url`)
+probe: false
+
+# Skip TLS certificate verification for probe/export (insecure)
+tls_skip_verify: false
 ```
 
 This is equivalent to running:
@@ -80,4 +96,6 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
   --include callee --ai-context \
   --ai-provider openai --ai-model gpt-5.5
 ```
+
+`noir config init` writes a fully commented file with every supported key. The example above highlights common defaults; CLI flags always override the file.
 

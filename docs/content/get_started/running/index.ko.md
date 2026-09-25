@@ -145,7 +145,7 @@ noir scan . --ai-context guards,sinks
 | `-b <경로>`           | positional 과 동치, v0 호환 |
 | `-f <형식>`           | 출력 형식 (json, yaml, oas3, curl 등) |
 | `-o <파일>`           | 출력을 파일로 저장 |
-| `-u <URL>`            | cURL/HTTPie 출력의 기본 URL |
+| `-u <URL>`            | 경로 앞에 붙는 기본 URL. `--status-codes`, `--probe`, `--probe-via` 에 필요 |
 | `--include LIST`      | plain 출력에 `path`, `techs`, `callee` 추가 (쉼표 구분) |
 | `--ai-context [LIST]` | AI 리뷰 컨텍스트 첨부 (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`, 또는 `all`) |
 | `--pvalue TYPE=VAL`   | 출력에 파라미터 값 채우기 (TYPE: any / header / cookie / query / form / json / path) |
@@ -155,6 +155,9 @@ noir scan . --ai-context guards,sinks
 | `--exclude-path`      | 쉼표 구분 glob 패턴에 매치되는 파일 제외 |
 | `--status-codes`      | 각 엔드포인트를 호출해 응답 HTTP 상태 코드를 첨부 |
 | `--exclude-codes`     | 응답 상태가 매치되는 엔드포인트 제외 (쉼표 구분, `--status-codes` 와 함께) |
+| `-P, --passive-scan`  | 패시브 보안 스캔 활성화 |
+| `-T, --use-all-taggers` | 모든 태거 활성화 |
+| `--probe`             | 발견된 엔드포인트에 HTTP 요청 실행 (`-u` 필요) |
 | `--config-file <경로>`| YAML 설정 파일에서 기본 옵션 로드 |
 | `--concurrency <N>`   | 워커 수 (기본값: CPU 코어 수) |
 | `--cache-disable`     | 이번 실행에 한해 LLM 응답 캐시 비활성화 |
