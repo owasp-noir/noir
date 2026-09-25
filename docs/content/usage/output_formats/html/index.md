@@ -37,7 +37,7 @@ For large scans, switch to the **compact table view** from the Cards / Table con
 - **Dashboard Summary**: A high-level overview of total endpoints, HTTP methods, parameters, and passive scan findings.
 - **Endpoint Details**: Every discovered endpoint as a collapsible card with a semantically colored method badge (GET emerald, POST amber, PUT blue, PATCH violet, DELETE red) and a protocol badge for non-HTTP endpoints such as WebSockets.
 - **Path Groups**: Endpoints are grouped by their first path segment (or host for absolute URLs), with collapsible group headers and per-group counts.
-- **Parameter Breakdown**: Per-endpoint tables listing each parameter, its type (query, form, json, header, cookie, path), and value.
+- **Parameter Breakdown**: Per-endpoint tables listing each parameter, its type (query, form, json, header, cookie, path, file, xml, and related), and value.
 - **Passive Scan Results**: When passive scanning is enabled (`-P`), findings are displayed with descriptions, color-coded severity badges, and the matched code snippet.
 - **Source Code Links**: The file path and line number where each endpoint was defined.
 

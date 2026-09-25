@@ -37,7 +37,7 @@ noir scan -b spec/functional_test/fixtures/crystal/kemal -f html -o report.html
 - **대시보드 요약**: 전체 엔드포인트, HTTP 메서드, 파라미터, 패시브 스캔 결과 요약
 - **엔드포인트 세부 정보**: 모든 엔드포인트를 접을 수 있는 카드로 표시하며, 시맨틱 컬러 메서드 배지(GET 에메랄드, POST 앰버, PUT 블루, PATCH 바이올렛, DELETE 레드)와 WebSocket 등 비-HTTP 엔드포인트를 위한 프로토콜 배지를 함께 제공
 - **경로 그룹**: 첫 번째 경로 세그먼트(절대 URL은 호스트 기준)로 엔드포인트를 묶고, 접을 수 있는 그룹 헤더와 그룹별 카운트를 표시
-- **파라미터 분석**: 엔드포인트별로 각 파라미터의 이름, 타입(query, form, json, header, cookie, path), 값을 보여주는 테이블
+- **파라미터 분석**: 엔드포인트별로 각 파라미터의 이름, 타입(query, form, json, header, cookie, path, file, xml 등), 값을 보여주는 테이블
 - **패시브 스캔 결과**: 패시브 스캐닝(`-P`) 활성화 시 설명, 심각도별 컬러 배지, 매칭된 코드 스니펫 표시
 - **소스 코드 링크**: 각 엔드포인트가 정의된 파일 경로와 줄 번호
 

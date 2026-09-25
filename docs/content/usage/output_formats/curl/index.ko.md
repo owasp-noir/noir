@@ -79,6 +79,18 @@ Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/upload" -Form @{"
 
 필드 이름 placeholder 대신 실제 경로를 쓰려면 `--pvalue`로 `@filename` / `Get-Item` 경로를 채우면 됩니다 (예: `--pvalue "any=avatar=./fixture.png"`). 파일 필드가 없으면 위 urlencoded 예시 형태가 그대로 유지됩니다.
 
+## XML 요청 본문
+
+`param_type: xml`(Play `asXml`, Tapir `xmlBody` 등 전체 본문 XML 파라미터)은 HTTP 클라이언트 형식(`curl`, `httpie`, `powershell`)에서 요청 본문으로 내려가지 **않습니다**. 이 빌더들은 `form` / `json` 본문과 위의 multipart `file` 업로드만 구성합니다. XML 본문 파라미터만 있는 엔드포인트는 이 형식들에서 헤더/URL 만 있는 명령으로 출력됩니다.
+
+XML 본문이 필요하면 다음을 사용하세요.
+
+- `-f oas2` / `-f oas3` — `application/xml` requestBody ([OpenAPI](@/usage/output_formats/openapi/index.ko.md) 참고)
+- `-f postman` — `Content-Type: application/xml` 인 raw 본문 ([추가 형식](@/usage/output_formats/more/index.ko.md#postman-collection) 참고)
+- `-f json` / `-f yaml` / plain — 엔드포인트 기록에 `xml` 파라미터 타입이 그대로 유지됨
+
+HTML 리포트의 "curl로 복사" 버튼도 같은 curl 빌더를 쓰므로 동일한 제약이 있습니다.
+
 ## ADB (Android)
 
 모바일 진입점은 HTTP 요청이 아니라 앱 URL이므로 위의 HTTP 클라이언트들은 이를 건너뜁니다. `-f adb` 는 그 반대로 동작합니다. Noir가 찾아낸 Android 딥링크, 인텐트 컴포넌트, 콘텐츠 프로바이더를 연결된 기기나 에뮬레이터에서 바로 실행할 수 있는 [Android Debug Bridge](https://developer.android.com/tools/adb) 명령어로 변환합니다.

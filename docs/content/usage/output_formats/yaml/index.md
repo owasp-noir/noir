@@ -16,7 +16,7 @@ noir scan . -f yaml --no-log
 
 ## Example Output
 
-The structure mirrors the JSON format: an `endpoints` list with URL, HTTP method, parameters, source code paths, and tags for each entry.
+The structure mirrors the JSON format: an `endpoints` list with URL, HTTP method, parameters (`param_type` values include `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml`, and related — same vocabulary as [JSON](@/usage/output_formats/json/index.md)), source code paths, and tags for each entry.
 
 ```yaml
 ---

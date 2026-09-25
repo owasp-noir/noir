@@ -79,6 +79,18 @@ Invoke-WebRequest -Method "POST" -Uri "https://www.example.com/upload" -Form @{"
 
 Seed the `@filename` / `Get-Item` path with `--pvalue` when you want a real path instead of the field-name placeholder (for example `--pvalue "any=avatar=./fixture.png"`). Without a file field, output stays on the urlencoded examples above.
 
+## XML request bodies
+
+`param_type: xml` (Play `asXml`, Tapir `xmlBody`, and similar whole-body XML params) is **not** turned into a request body in the HTTP-client formats (`curl`, `httpie`, `powershell`). Those builders only bake `form` / `json` bodies (and multipart `file` uploads above). An endpoint that only has XML body params therefore prints as a header/URL-only command in these formats.
+
+For XML bodies, use one of:
+
+- `-f oas2` / `-f oas3` — `application/xml` requestBody (see [OpenAPI](@/usage/output_formats/openapi/index.md))
+- `-f postman` — raw body with `Content-Type: application/xml` (see [Additional Formats](@/usage/output_formats/more/index.md#postman-collection))
+- `-f json` / `-f yaml` / plain — the `xml` param type is preserved on the endpoint record
+
+The HTML report's "copy as curl" button uses the same curl builder, so it has the same limitation.
+
 ## ADB (Android)
 
 Mobile entry points are app URLs, not HTTP requests, so the HTTP clients above skip them. `-f adb` does the inverse: it turns the Android deep links, intent components, and content providers Noir discovers into [Android Debug Bridge](https://developer.android.com/tools/adb) commands you can run against a connected device or emulator.

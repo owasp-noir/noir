@@ -16,7 +16,7 @@ noir scan . -f yaml --no-log
 
 ## 출력 예제
 
-구조는 JSON과 동일합니다. `endpoints` 목록 아래에 URL, HTTP 메서드, 파라미터, 소스 경로, 태그 정보가 들어갑니다.
+구조는 JSON과 동일합니다. `endpoints` 목록 아래에 URL, HTTP 메서드, 파라미터(`param_type` 은 `query`, `path`, `header`, `cookie`, `form`, `json`, `file`, `xml` 등 — [JSON](@/usage/output_formats/json/index.ko.md) 과 같은 어휘), 소스 경로, 태그 정보가 들어갑니다.
 
 ```yaml
 ---

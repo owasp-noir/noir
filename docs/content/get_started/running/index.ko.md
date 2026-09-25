@@ -104,7 +104,7 @@ noir scan . --include path,techs -f json -o results.json
 # Rails 와 Django 디텍터만 실행 (나머지는 건너뜀)
 noir scan . --only-techs rails,django
 
-# 디텍터는 실행하지 않고 결과에 기술 태그만 강제로 추가
+# 자동 탐지 결과에 더해 Rails·Django 분석기도 함께 실행
 noir scan . --techs rails,django
 
 # Express 만 제외하고 나머지 전부 스캔
@@ -115,9 +115,10 @@ noir scan . --exclude-path "*_test.go,vendor/*,**/node_modules/**"
 ```
 
 `--only-techs` 와 `--techs` 는 비슷해 보이지만 다릅니다.
-`--only-techs` 는 디텍터 목록을 필터링해서 지정한 항목만 탐지를
-실행하고(스캔 속도 향상), `--techs` 는 탐지를 건너뛰고 결과에 기술
-태그만 강제로 추가합니다(스택을 이미 알고 있을 때 사용).
+`--only-techs` 는 실행할 기술 디텍터를 제한하고(스캔 속도 향상, 지정한 디텍터만 동작),
+`--techs` 는 자동 탐지 결과에 *추가로* 분석기 집합에 기술을 넣습니다
+(탐지가 놓쳐도 해당 분석기는 실행됨).
+"이 기술만, 그리고 미탐지여도 실행"이 필요하면 둘을 함께 씁니다.
 
 ## 출력 보강하기
 
@@ -150,7 +151,7 @@ noir scan . --ai-context guards,sinks
 | `--ai-context [LIST]` | AI 리뷰 컨텍스트 첨부 (`guards`, `callee`, `sources`, `sinks`, `validators`, `signals`, 또는 `all`) |
 | `--pvalue TYPE=VAL`   | 출력에 파라미터 값 채우기 (TYPE: any / header / cookie / query / form / json / path) |
 | `--only-techs`        | 이 디텍터만 실행 (나머지 건너뜀) |
-| `--techs`             | 디텍터는 건너뛰고 결과에 기술 태그만 강제 추가 |
+| `--techs`             | 자동 탐지 결과에 더해 이 기술들을 분석기 집합에 추가 |
 | `--exclude-techs`     | 이 프레임워크 건너뛰기 |
 | `--exclude-path`      | 쉼표 구분 glob 패턴에 매치되는 파일 제외 |
 | `--status-codes`      | 각 엔드포인트를 호출해 응답 HTTP 상태 코드를 첨부 |
@@ -158,6 +159,19 @@ noir scan . --ai-context guards,sinks
 | `-P, --passive-scan`  | 패시브 보안 스캔 활성화 |
 | `-T, --use-all-taggers` | 모든 태거 활성화 |
 | `--probe`             | 발견된 엔드포인트에 HTTP 요청 실행 (`-u` 필요) |
+| `--probe-via <url>`   | 프로브를 이 프록시 URL 로 라우팅 |
+| `--probe-header VAL`  | 각 프로브에 헤더 추가 (반복 가능) |
+| `--tls-skip-verify`   | 프로브/내보내기/웹훅의 TLS 인증서 검증 건너뛰기 (비보안) |
+| `--use-taggers LIST`  | 특정 태거만 활성화 (쉼표 구분; `noir list taggers` 참고) |
+| `--export-es <url>`   | 엔드포인트를 Elasticsearch 에 인덱싱 |
+| `--export-opensearch <url>` | 엔드포인트를 OpenSearch 에 인덱싱 (`--export-es` 와 동일 와이어 형태) |
+| `--export-webhook <url>` | 엔드포인트 카탈로그를 JSON 으로 웹훅에 POST |
+| `--ai-provider`        | AI 제공업체 접두사 또는 전체 URL ([AI 파워](@/get_started/ai_power/index.ko.md) 참고) |
+| `--ai-model NAME`     | AI 모델 이름 |
+| `--ai-key KEY`        | AI API 키 (`NOIR_AI_KEY` 환경 변수로도 가능) |
+| `--diff-path <path>`  | diff 출력용 이전 코드 경로 |
+| `--passive-scan-severity LVL` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low` 중 하나; 기본 `high`) |
+| `-d, --debug`         | 디버그 메시지 활성화 |
 | `--config-file <경로>`| YAML 설정 파일에서 기본 옵션 로드 |
 | `--concurrency <N>`   | 워커 수 (기본값: CPU 코어 수) |
 | `--cache-disable`     | 이번 실행에 한해 LLM 응답 캐시 비활성화 |

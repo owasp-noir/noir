@@ -256,7 +256,7 @@ just test                  # unit + functional spec pass
 just check                 # crystal tool format --check + ameba
 
 # Manual smoke test
-./bin/noir -b spec/functional_test/fixtures/{lang}/{framework}
+./bin/noir scan spec/functional_test/fixtures/{lang}/{framework}
 ```
 
 ## Adding a new language engine
