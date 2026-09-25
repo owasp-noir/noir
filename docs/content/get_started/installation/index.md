@@ -65,7 +65,7 @@ docker pull ghcr.io/owasp-noir/noir:latest
 Scan the current directory:
 
 ```bash
-docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir -b /tmp
+docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp
 ```
 
 Image tags follow the OCI/Docker convention without the `v` prefix, e.g. `:0.30.0`, `:0.30`, and `:latest`. (Versions up to v0.29.1 used the `:vX.Y.Z` form; update any pinned references.) All available tags are on the [GitHub Packages page](https://github.com/owasp-noir/noir/pkgs/container/noir).

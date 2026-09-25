@@ -54,7 +54,7 @@ noir -h
 
 Example
 ```bash
-noir -b <source_dir>
+noir scan <source_dir>
 ```
 
 If you use it with Github Action, please refer to this [document](/github-action) .
