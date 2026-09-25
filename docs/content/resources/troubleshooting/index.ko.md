@@ -49,7 +49,7 @@ sort_by = "weight"
 
 **증상:** Docker로 실행 시 권한 거부 오류가 발생합니다.
 
-- 디렉토리가 올바르게 마운트되었는지 확인하세요: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest scan /tmp`
+- 디렉토리가 올바르게 마운트되었는지 확인하세요: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp`
 - SELinux 시스템에서는 볼륨 마운트에 `:z`를 추가하세요: `-v $(pwd):/tmp:z`
 
 ## 셸 자동완성이 작동하지 않음

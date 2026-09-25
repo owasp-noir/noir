@@ -49,7 +49,7 @@ Something on fire? Start with the symptom below that matches. Most of these have
 
 **Symptom:** Permission denied errors when running via Docker.
 
-- Ensure your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest scan /tmp`
+- Ensure your directory is mounted correctly: `docker run --rm -v $(pwd):/tmp ghcr.io/owasp-noir/noir:latest noir scan /tmp`
 - On SELinux systems, add `:z` to the volume mount: `-v $(pwd):/tmp:z`
 
 ## Shell Completion Not Working
