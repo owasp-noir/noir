@@ -19,10 +19,50 @@ module Noir
   module PathScope
     extend self
 
+    @@pinned_cwd : String? = nil
+
+    # `File.expand_path(path)`, without the per-call cost of finding the
+    # working directory.
+    #
+    # Crystal's `File.expand_path(path)` evaluates `Dir.current` on every
+    # call — even for an absolute path, which never uses it — and
+    # `Dir.current` stats both `$PWD` and `.` to confirm they agree. The
+    # analyzers expand paths inside per-file loops, so on a large scan
+    # those two syscalls per call were a measurable share of the run.
+    #
+    # An absolute path is expanded against `/` (the base is ignored), and
+    # a relative one against the directory pinned by `with_pinned_cwd`,
+    # falling back to `Dir.current` outside a pinned scope. The result is
+    # identical to `File.expand_path(path)` as long as nothing changes the
+    # working directory inside the pinned scope, which noir never does.
+    def expand(path : String) : String
+      if Path.new(path).absolute?
+        File.expand_path(path, File::SEPARATOR_STRING)
+      else
+        File.expand_path(path, @@pinned_cwd || Dir.current)
+      end
+    end
+
+    # Resolves the working directory once and reuses it for every `expand`
+    # inside the block. Scoped rather than cached for the process: specs
+    # (and embedders) `Dir.cd` between scans, and a process-wide cache
+    # would resolve their paths against a stale directory. Re-entrant: a
+    # nested call keeps the outer pin.
+    def with_pinned_cwd(&)
+      return yield if @@pinned_cwd
+
+      @@pinned_cwd = Dir.current
+      begin
+        yield
+      ensure
+        @@pinned_cwd = nil
+      end
+    end
+
     # Canonical comparison form of a root: expanded, with any trailing
     # separator stripped (except the filesystem root itself).
     def normalize_root(root : String) : String
-      expanded = File.expand_path(root)
+      expanded = expand(root)
       expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
     end
 
@@ -85,7 +125,7 @@ module Noir
     # everything (mirrors the historical `starts_with?("")`).
     def under_root?(path : String, root : String) : Bool
       return true if root.empty?
-      under_normalized_root?(File.expand_path(path), normalize_root(root))
+      under_normalized_root?(expand(path), normalize_root(root))
     end
 
     # Boundary check against an already-expanded path and an
@@ -93,14 +133,19 @@ module Noir
     # loop-invariant (normalize it once with `normalize_root`).
     def under_normalized_root?(expanded_path : String, normalized_root : String) : Bool
       return expanded_path.starts_with?(File::SEPARATOR) if normalized_root == File::SEPARATOR
-      expanded_path == normalized_root || expanded_path.starts_with?(normalized_root + File::SEPARATOR)
+      return false unless expanded_path.starts_with?(normalized_root)
+      # Boundary test on the byte after the root rather than
+      # `starts_with?(normalized_root + File::SEPARATOR)`: this runs inside
+      # files x roots loops, and the concatenation allocated a string per call.
+      expanded_path.bytesize == normalized_root.bytesize ||
+        expanded_path.byte_at(normalized_root.bytesize) == File::SEPARATOR.ord
     end
 
     # The most specific (longest normalized) base in `bases` that contains
     # `path`, or nil if none does. Returns the ORIGINAL base string (not its
     # normalized form) so callers can use it as a stable map key.
     def longest_base(path : String, bases : Enumerable(String)) : String?
-      expanded_path = File.expand_path(path)
+      expanded_path = expand(path)
       best_base = nil
       best_size = -1
       bases.each do |base|
@@ -155,7 +200,7 @@ module Noir
     # path so nested fixture trees don't trip the `tests/`/`test/` filters.
     def relative_under(path : String, base_path : String?) : String
       return File.basename(path) if base_path.nil? || base_path.empty?
-      expanded_path = File.expand_path(path)
+      expanded_path = expand(path)
       normalized = normalize_root(base_path)
       return File.basename(path) unless under_normalized_root?(expanded_path, normalized)
       relative = expanded_path[normalized.size..].lchop(File::SEPARATOR)

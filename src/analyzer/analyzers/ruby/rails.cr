@@ -157,11 +157,13 @@ module Analyzer::Ruby
     @engine_mount_prefixes = Hash(EngineMountKey, String).new
     @known_files = Set(String).new
     @gemfile_public_roots : Array(Tuple(String, String))? = nil
+    @public_file_candidates : Array(PublicFileCandidate)? = nil
 
     def analyze
       files = all_files.reject { |file| ruby_non_production_path?(file) }
       @known_files = Set(String).new(files)
       @gemfile_public_roots = nil
+      @public_file_candidates = nil
       @engine_mount_prefixes = build_engine_mount_map(files)
 
       framework_roots = discover_framework_roots(files, "config/routes.rb")
@@ -250,38 +252,79 @@ module Analyzer::Ruby
       built
     end
 
+    # A scanned file that sits beneath some Gemfile's `public/` directory,
+    # with its expanded path and the expanded paths of every Gemfile whose
+    # `public/` contains it.
+    private record PublicFileCandidate, file : String, expanded : String, gemfiles : Array(String)
+
     private def get_public_files(files : Array(String), base_path : String) : Array(String)
-      project_public_roots = Set(String).new
+      # A file is served for this framework root when it lives under the
+      # root and under the `public/` of a Gemfile that also lives under the
+      # root. Which `public/` directories contain a file does not depend on
+      # the framework root, so that pass runs once (see
+      # `public_file_candidates`) and each root only filters the result —
+      # re-walking `files` per root was O(roots x files) on a monorepo with
+      # one Rails app per service.
+      public_file_candidates(files).compact_map do |candidate|
+        next unless expanded_under_root?(candidate.expanded, base_path)
+        next unless candidate.gemfiles.any? { |gemfile| expanded_under_root?(gemfile, base_path) }
+        candidate.file
+      end
+    end
+
+    # Built once per `analyze`, like `gemfile_public_roots`, and with the
+    # same caveat about a caller passing a different `files` list.
+    private def public_file_candidates(files : Array(String)) : Array(PublicFileCandidate)
+      cached = @public_file_candidates
+      return cached if cached
+
+      gemfiles_by_public_root = Hash(String, Array(String)).new
       gemfile_public_roots(files).each do |public_root, gemfile_expanded|
-        next unless expanded_under_root?(gemfile_expanded, base_path)
-        project_public_roots << public_root
+        (gemfiles_by_public_root[Noir::PathScope.normalize_root(public_root)] ||= [] of String) << gemfile_expanded
       end
 
-      # With no `public/` root under this framework root the filter below
-      # can only ever yield nothing (`Set#any?` on an empty set is
-      # false), so skip the full pass over `files` instead of walking it
-      # to produce an empty array.
-      return [] of String if project_public_roots.empty?
-
-      # Expand each path once and reuse it across the root tests below.
-      # `path_under_root?` re-hashes the full path string on every call,
-      # and this tests each file against every discovered `public/` root
-      # — on a monorepo with one Gemfile per service that was
-      # O(files x roots) hash lookups.
-      locator = CodeLocator.instance
-      files.select do |file|
-        expanded = locator.expanded_path_for(file)
-        next false unless expanded_under_root?(expanded, base_path)
-        next false if FileHelper::PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-        project_public_roots.any? { |root| file != root && expanded_under_root?(expanded, root) }
+      built = [] of PublicFileCandidate
+      unless gemfiles_by_public_root.empty?
+        locator = CodeLocator.instance
+        files.each do |file|
+          next if FileHelper::PUBLIC_FILE_IGNORE.includes?(File.basename(file))
+          expanded = locator.expanded_path_for(file)
+          gemfiles = gemfiles_containing(expanded, gemfiles_by_public_root)
+          built << PublicFileCandidate.new(file, expanded, gemfiles) unless gemfiles.empty?
+        end
       end
+      @public_file_candidates = built
+      built
+    end
+
+    # The Gemfiles whose `public/` directory `expanded` sits strictly
+    # beneath. Same strategy as `FileHelper#under_public_root?`: a linear
+    # boundary test for a few roots, otherwise a lookup of each prefix that
+    # ends at a `/public/` inside `expanded` (every key ends in `public`).
+    private def gemfiles_containing(expanded : String, gemfiles_by_public_root : Hash(String, Array(String))) : Array(String)
+      found = [] of String
+      if gemfiles_by_public_root.size <= FileHelper::PUBLIC_ROOT_LINEAR_LIMIT
+        gemfiles_by_public_root.each do |root, gemfiles|
+          found.concat(gemfiles) if expanded != root && Noir::PathScope.under_normalized_root?(expanded, root)
+        end
+        return found
+      end
+
+      offset = 0
+      while index = expanded.index(FileHelper::PUBLIC_SEGMENT, offset)
+        if gemfiles = gemfiles_by_public_root[expanded[0, index + FileHelper::PUBLIC_SEGMENT.size - 1]]?
+          found.concat(gemfiles)
+        end
+        offset = index + 1
+      end
+      found
     end
 
     private def parse_routes_file(routes_path : String, framework_root : String,
                                   parsed_route_files : Set(String),
                                   inherited_stack : Array(Frame),
                                   concern_resources : Hash(String, Array(ConcernResource)))
-      expanded_routes_path = File.expand_path(routes_path)
+      expanded_routes_path = Noir::PathScope.expand(routes_path)
       parse_key = route_file_parse_key(expanded_routes_path, inherited_stack)
       return if parsed_route_files.includes?(parse_key)
       parsed_route_files << parse_key

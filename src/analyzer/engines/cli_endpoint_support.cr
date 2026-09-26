@@ -194,7 +194,7 @@ module CliEndpointSupport
     # base directory itself is the best name available.
     base = configured_base_for(path)
     base = File.dirname(path) if base.empty?
-    name = File.basename(File.expand_path(base))
+    name = File.basename(Noir::PathScope.expand(base))
     name.empty? ? nil : name
   end
 end

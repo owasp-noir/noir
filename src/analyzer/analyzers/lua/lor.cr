@@ -97,12 +97,12 @@ module Analyzer::Lua
       base = File.basename(path)
       return true if base.ends_with?("_spec.lua") || base.ends_with?("_spec.moon")
       return true if base.ends_with?(".test.lua") || base.ends_with?(".test.moon")
-      expanded_path = File.expand_path(path)
+      expanded_path = Noir::PathScope.expand(path)
 
       base_paths.any? do |root|
         next false unless path_under_root?(expanded_path, root)
 
-        expanded_root = File.expand_path(root)
+        expanded_root = Noir::PathScope.expand(root)
         expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
         tail = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
         tail.split(File::SEPARATOR).any? do |seg|

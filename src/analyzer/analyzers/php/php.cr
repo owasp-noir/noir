@@ -52,7 +52,7 @@ module Analyzer::Php
         dir = File.dirname(file)
         next unless WEBROOT_DIR_NAMES.includes?(File.basename(dir).downcase)
 
-        expanded = File.expand_path(dir)
+        expanded = Noir::PathScope.expand(dir)
         next if roots.any? { |existing, _| existing == expanded }
         roots << {expanded, Noir::PathScope.normalize_root(expanded)}
       end
@@ -105,7 +105,7 @@ module Analyzer::Php
     # path as the URL, so the doc-root branch pairs the expanded root with
     # the expanded path, and the fallback keeps both as-given.
     private def php_url_base_for(path : String) : Tuple(String, String)?
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
 
       if inside = php_web_roots.find { |_, web_root| Noir::PathScope.under_normalized_root?(expanded, web_root) }
         return {inside[0], expanded}

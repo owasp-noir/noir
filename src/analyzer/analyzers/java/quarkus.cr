@@ -53,9 +53,9 @@ module Analyzer::Java
       end
 
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next unless quarkus_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
@@ -102,9 +102,9 @@ module Analyzer::Java
       roots = Set(String).new
 
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
         roots << project_root_for(path) if QUARKUS_MARKERS.any? { |marker| content.includes?(marker) }
@@ -117,9 +117,9 @@ module Analyzer::Java
       base_paths = Hash(ApplicationBaseKey, String).new
 
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next unless quarkus_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
@@ -178,9 +178,9 @@ module Analyzer::Java
       project_roots = Set(String).new
 
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         project_roots << project_root_for(path)
       end
 

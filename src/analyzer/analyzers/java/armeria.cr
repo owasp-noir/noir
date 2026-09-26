@@ -40,8 +40,9 @@ module Analyzer::Java
       # with no output. `scan_files` rescues `Exception` per file and closes
       # in an `ensure`, and records the skip so it reaches `errors`.
       scan_files(all_files) do |path|
+        next unless path.ends_with?(".java") || path.ends_with?(".kt")
         next if JavaEngine.test_path?(base_relative_path(path))
-        next unless File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
+        next unless File.exists?(path)
 
         content = read_file_content(path)
         base = configured_base_for(path)

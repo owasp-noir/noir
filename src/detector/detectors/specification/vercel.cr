@@ -31,14 +31,14 @@ module Detector::Specification
       parent = File.dirname(filename)
       return true if parent == "." || parent.empty?
 
-      absolute = File.expand_path(filename)
+      absolute = Noir::PathScope.expand(filename)
       expanded_base_paths.any? do |base_path|
         File.join(base_path, base) == absolute
       end
     end
 
     private def expanded_base_paths : Array(String)
-      @expanded_base_paths ||= @base_paths.map { |base_path| File.expand_path(base_path) }
+      @expanded_base_paths ||= @base_paths.map { |base_path| Noir::PathScope.expand(base_path) }
     end
   end
 end

@@ -57,7 +57,7 @@ module Analyzer::Crystal
     private def path_under_shard_roots?(path : String, roots : Array(String)) : Bool
       return true if roots.empty?
 
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
     end
 
@@ -89,12 +89,12 @@ module Analyzer::Crystal
     # the framework apps themselves live under a `spec/` ancestor.
     private def crystal_spec_path?(path : String) : Bool
       return true if File.basename(path).ends_with?("_spec.cr")
-      expanded_path = File.expand_path(path)
+      expanded_path = Noir::PathScope.expand(path)
 
       base_paths.any? do |root|
         next false unless path_under_root?(expanded_path, root)
 
-        expanded_root = File.expand_path(root)
+        expanded_root = Noir::PathScope.expand(root)
         expanded_root = expanded_root.rstrip('/') unless expanded_root == File::SEPARATOR
         relative = expanded_path[expanded_root.size..]?.try(&.lchop(File::SEPARATOR)) || ""
         relative.starts_with?("spec/")

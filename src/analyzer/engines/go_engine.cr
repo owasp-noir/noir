@@ -602,7 +602,7 @@ module Analyzer::Go
 
         match = content.match(/^\s*module\s+(\S+)/m)
         next unless match
-        modules << {match[1], File.expand_path(File.dirname(path))}
+        modules << {match[1], Noir::PathScope.expand(File.dirname(path))}
       end
 
       modules.sort_by! { |(_module_path, dir)| -dir.size }
@@ -610,7 +610,7 @@ module Analyzer::Go
     end
 
     private def import_path_for_dir(dir : String, modules : Array(Tuple(String, String))) : String?
-      expanded_dir = File.expand_path(dir)
+      expanded_dir = Noir::PathScope.expand(dir)
       modules.each do |module_path, module_dir|
         next unless expanded_dir == module_dir || expanded_dir.starts_with?("#{module_dir}/")
 

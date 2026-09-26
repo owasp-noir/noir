@@ -709,7 +709,7 @@ module Analyzer::Javascript
         parent_prefixes = locator.all(ExpressConstants.file_key(main_file)).dup
       end
       if parent_prefixes.empty?
-        absolute_main = File.expand_path(main_file)
+        absolute_main = Noir::PathScope.expand(main_file)
         parent_prefixes = locator.all(ExpressConstants.file_key(absolute_main)).dup
       end
 

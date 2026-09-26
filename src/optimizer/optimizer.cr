@@ -532,7 +532,7 @@ class EndpointOptimizer
 
       while dir && !dir.empty? && dir != "."
         if PROJECT_MANIFEST_FILES.any? { |manifest| File.exists?(File.join(dir, manifest)) }
-          scope = File.expand_path(dir)
+          scope = Noir::PathScope.expand(dir)
           break
         end
 

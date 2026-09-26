@@ -47,7 +47,7 @@ module Analyzer::Perl
       return true if cpan_dependencies.empty?
 
       framework_roots = perl_framework_roots
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       return true if framework_roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
 
       perl_manifest_roots.none? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }

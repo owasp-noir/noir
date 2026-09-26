@@ -90,7 +90,7 @@ module Analyzer::Rust
     end
 
     private def rust_binary_name(cargo : Array(Tuple(String, String)), path : String) : String
-      expanded = File.expand_path(File.dirname(path))
+      expanded = Noir::PathScope.expand(File.dirname(path))
       cargo.each do |name, dir|
         return name if expanded == dir || expanded.starts_with?("#{dir}/")
       end
@@ -261,7 +261,7 @@ module Analyzer::Rust
         name = content.match(/\[\[bin\]\][^\[]*?name\s*=\s*"([^"]+)"/m).try(&.[1]) ||
                content.match(/\[package\][^\[]*?name\s*=\s*"([^"]+)"/m).try(&.[1])
         next unless name
-        out << {name, File.expand_path(File.dirname(path))}
+        out << {name, Noir::PathScope.expand(File.dirname(path))}
       end
       out.sort_by! { |(_n, dir)| -dir.size }
       out

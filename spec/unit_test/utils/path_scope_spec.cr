@@ -1,6 +1,21 @@
 require "../../spec_helper"
 require "../../../src/utils/path_scope"
 
+# Yields the current directory and a fresh scratch directory, and restores
+# the working directory afterwards: the pin specs `Dir.cd` so that a lost pin
+# resolves against the wrong directory instead of silently agreeing.
+private def with_scratch_dir(&)
+  original = Dir.current
+  target = File.join(Dir.tempdir, "noir-path-scope-spec-#{Random.new.hex(6)}")
+  Dir.mkdir_p(target)
+  begin
+    yield original, File.realpath(target)
+  ensure
+    Dir.cd(original)
+    Dir.delete(target)
+  end
+end
+
 describe Noir::PathScope do
   describe ".normalize_base" do
     # `-b` is echoed verbatim into every reported `code_path`, so three
@@ -91,6 +106,62 @@ describe Noir::PathScope do
 
     it "does not match a sibling prefix" do
       Noir::PathScope.under_normalized_root?("/app2/x", "/app").should be_false
+    end
+
+    it "matches the root itself" do
+      Noir::PathScope.under_normalized_root?("/app", "/app").should be_true
+    end
+
+    it "does not match a path shorter than the root" do
+      Noir::PathScope.under_normalized_root?("/ap", "/app").should be_false
+    end
+
+    it "agrees with the concatenating boundary check it replaced" do
+      roots = ["/app", "/app/sub", "", "/a"]
+      paths = ["/app", "/app/", "/app/x", "/app2", "/ap", "/app/sub/y", "/a", "/ab", "", "/"]
+      roots.each do |root|
+        paths.each do |path|
+          expected = path == root || path.starts_with?(root + File::SEPARATOR)
+          Noir::PathScope.under_normalized_root?(path, root).should eq(expected)
+        end
+      end
+    end
+  end
+
+  describe ".expand" do
+    it "agrees with File.expand_path for absolute and relative paths" do
+      ["/app/./x/../y", "/", "/app/", "rel/./a/../b", ".", "..", "", "a//b/"].each do |path|
+        Noir::PathScope.expand(path).should eq(File.expand_path(path))
+      end
+    end
+
+    it "keeps resolving against the pinned directory after a Dir.cd inside the scope" do
+      with_scratch_dir do |original, target|
+        Noir::PathScope.with_pinned_cwd do
+          Dir.cd(target)
+          Noir::PathScope.expand("x").should eq(File.expand_path("x", original))
+          Noir::PathScope.expand("rel/../b").should eq(File.expand_path("rel/../b", original))
+          Noir::PathScope.expand("/app/./x").should eq("/app/x")
+        end
+      end
+    end
+
+    it "does not keep the pinned directory after the scope ends" do
+      with_scratch_dir do |_original, target|
+        Noir::PathScope.with_pinned_cwd { Noir::PathScope.expand("x") }
+        Dir.cd(target)
+        Noir::PathScope.expand("x").should eq(File.expand_path("x"))
+      end
+    end
+
+    it "keeps the outer pin through a nested scope" do
+      with_scratch_dir do |original, target|
+        Noir::PathScope.with_pinned_cwd do
+          Noir::PathScope.with_pinned_cwd { }
+          Dir.cd(target)
+          Noir::PathScope.expand("x").should eq(File.expand_path("x", original))
+        end
+      end
     end
   end
 

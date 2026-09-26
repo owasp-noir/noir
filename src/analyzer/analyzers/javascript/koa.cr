@@ -109,7 +109,7 @@ module Analyzer::Javascript
         prefixes.each do |router_var, router_prefixes|
           file = imports[router_var]?
           next unless file
-          key = Analyzer::Javascript::ExpressConstants.file_key(File.expand_path(file))
+          key = Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
           router_prefixes.each do |prefix|
             next if prefix.empty?
             locator.push(key, prefix) unless locator.all(key).includes?(prefix)

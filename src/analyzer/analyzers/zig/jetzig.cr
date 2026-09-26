@@ -138,7 +138,7 @@ module Analyzer::Zig
         endpoint = Endpoint.new(url, method, path_params(url), Details.new(PathInfo.new(path, line)))
 
         if include_callee
-          view_path = File.expand_path(File.join(dir, import_rel))
+          view_path = Noir::PathScope.expand(File.join(dir, import_rel))
           action_callees(view_path, action).tap do |callees|
             Noir::ZigCalleeExtractor.attach_to(endpoint, callees) unless callees.empty?
           end

@@ -106,7 +106,7 @@ module Analyzer::Zig
         next unless content.includes?("@import")
         dir = File.dirname(path)
         Noir::ZigCalleeExtractor.strip_comments(content).scan(IMPORT_RE) do |m|
-          map[m[1]] = File.expand_path(File.join(dir, m[2]))
+          map[m[1]] = Noir::PathScope.expand(File.join(dir, m[2]))
         end
       end
       map
@@ -158,7 +158,7 @@ module Analyzer::Zig
             stack << GroupFrame.new(ev[:prefix], close) if close
             next
           end
-          resolved = resolve_router_target(ev[:target], alias_to_file, File.expand_path(path), local_structs)
+          resolved = resolve_router_target(ev[:target], alias_to_file, Noir::PathScope.expand(path), local_structs)
           next if resolved.nil?
           target_file, scope = resolved
           prefix = stack.reduce("") { |acc, frame| Noir::URLPath.join(acc, frame.prefix) }
@@ -251,7 +251,7 @@ module Analyzer::Zig
       has_const = content.includes?("pub const @\"")
       return unless has_fn || has_const
 
-      file_mounts = mounts[File.expand_path(path)]?
+      file_mounts = mounts[Noir::PathScope.expand(path)]?
       regions = struct_regions(stripped, stripped_chars)
 
       if has_fn

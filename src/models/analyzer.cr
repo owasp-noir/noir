@@ -178,7 +178,7 @@ class Analyzer
   # answer is true — that is the shape specs drive analyzers in.
   protected def within_scan_base?(path : String) : Bool
     return true if @normalized_base_paths.empty?
-    expanded = File.expand_path(path)
+    expanded = Noir::PathScope.expand(path)
     @normalized_base_paths.any? do |_, normalized|
       Noir::PathScope.under_normalized_root?(expanded, normalized)
     end

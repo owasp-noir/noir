@@ -76,7 +76,7 @@ module Noir
         locator = CodeLocator.instance
 
         # Normalize file path to absolute path for consistent lookup
-        absolute_file_path = File.expand_path(file_path)
+        absolute_file_path = Noir::PathScope.expand(file_path)
         lookup_key = Analyzer::Javascript::ExpressConstants.file_key(absolute_file_path)
         # Use all() since routers can be mounted at multiple prefixes
         file_prefixes = locator.all(lookup_key)

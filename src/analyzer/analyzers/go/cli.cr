@@ -248,7 +248,7 @@ module Analyzer::Go
     PACKAGE_MAIN_RE = /^\s*package\s+main\b/m
 
     private def go_binary_name(modules : Array(Tuple(String, String)), path : String, content : String) : String
-      expanded = File.expand_path(File.dirname(path))
+      expanded = Noir::PathScope.expand(File.dirname(path))
       modules.each do |module_path, module_dir|
         if expanded == module_dir || expanded.starts_with?("#{module_dir}/")
           if expanded != module_dir && content.matches?(PACKAGE_MAIN_RE)
@@ -260,7 +260,7 @@ module Analyzer::Go
         end
       end
       base = @base_path.empty? ? File.dirname(path) : @base_path
-      File.basename(File.expand_path(base))
+      File.basename(Noir::PathScope.expand(base))
     end
 
     # Builds a `cmdVar => url` map for cobra by pairing each

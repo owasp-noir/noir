@@ -159,7 +159,7 @@ module Analyzer::Javascript
     # scan found no root for it. Deepest, not first: a nested app inside a
     # workspace root must win over the workspace.
     private def nest_app_root_for(path : String, roots : Array(String)) : String
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       best = ""
       roots.each do |root|
         next unless Noir::PathScope.under_normalized_root?(expanded, root)

@@ -77,8 +77,9 @@ module Analyzer::Java
       # non-IO failure in a worker (a tree-sitter parse timeout, for one)
       # killed the worker and hung the whole scan on a full channel.
       scan_files(all_files) do |path|
+        next unless path.ends_with?(".java") || path.ends_with?(".kt")
         next if JavaEngine.test_path?(base_relative_path(path))
-        next unless File.exists?(path) && (path.ends_with?(".java") || path.ends_with?(".kt"))
+        next unless File.exists?(path)
 
         content = read_file_content(path)
 

@@ -88,7 +88,7 @@ module Analyzer::Rust
     private def path_under_crate_roots?(path : String, roots : Array(String)) : Bool
       return true if roots.empty?
 
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       roots.any? { |root| Noir::PathScope.under_normalized_root?(expanded, root) }
     end
 

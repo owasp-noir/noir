@@ -128,7 +128,7 @@ module Analyzer::Javascript
         next unless content.matches?(AUTOLOAD_MARKERS_RE)
         next unless content.includes?("dir")
 
-        base_dir = File.dirname(File.expand_path(path))
+        base_dir = File.dirname(Noir::PathScope.expand(path))
         # Scan each `register(...)` call's argument list as a unit so the
         # `dirNameRoutePrefix` flag is associated with the right `dir:`
         # (a file may register several autoload trees).
@@ -148,7 +148,7 @@ module Analyzer::Javascript
           value.scan(/['"]([^'"]+)['"]/) { |sm| segments << sm[1] }
           next if segments.empty?
 
-          root = File.expand_path(File.join([base_dir] + segments))
+          root = Noir::PathScope.expand(File.join([base_dir] + segments))
           dir_prefix = !args.matches?(/dirNameRoutePrefix\s*:\s*false/)
           roots << AutoloadRoot.new(root, dir_prefix) unless roots.any? { |r| r.path == root }
         end
@@ -174,7 +174,7 @@ module Analyzer::Javascript
 
       dir_prefix = ""
       unless roots.empty?
-        file_dir = File.dirname(File.expand_path(path))
+        file_dir = File.dirname(Noir::PathScope.expand(path))
         roots.each do |root|
           next unless file_dir == root.path || file_dir.starts_with?("#{root.path}/")
           if root.dir_prefix && file_dir != root.path

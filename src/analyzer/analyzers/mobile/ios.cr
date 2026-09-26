@@ -125,7 +125,7 @@ module Analyzer::Mobile
         end
 
         if !primary_captured && !entry_schemes.empty?
-          plist_dir = File.dirname(File.expand_path(path))
+          plist_dir = File.dirname(Noir::PathScope.expand(path))
           entry_schemes.each do |scheme|
             @primary_schemes << scheme
             dirs = @primary_scheme_dirs[scheme] ||= [] of String
@@ -216,7 +216,7 @@ module Analyzer::Mobile
     # The nearest ancestor of the Info.plist that holds a `.xcodeproj` /
     # `.xcworkspace`; nil if none within the search depth.
     private def xcode_project_root(plist_path : String) : String?
-      dir = File.dirname(File.expand_path(plist_path))
+      dir = File.dirname(Noir::PathScope.expand(plist_path))
       XCCONFIG_SEARCH_DEPTH.times do
         has_project = xcode_project_bundle?(dir, "*.xcodeproj") ||
                       xcode_project_bundle?(dir, "*.xcworkspace")
@@ -491,7 +491,7 @@ module Analyzer::Mobile
     private def best_matching_schemes(reference_path : String) : Array(String)
       return @primary_schemes.to_a if @primary_scheme_dirs.empty?
 
-      reference_segments = File.expand_path(reference_path).split('/')
+      reference_segments = Noir::PathScope.expand(reference_path).split('/')
       best_score = -1
       best = [] of String
 

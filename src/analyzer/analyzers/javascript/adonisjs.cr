@@ -16,8 +16,8 @@ module Analyzer::Javascript
     def analyze
       file_list = all_files()
       file_list.each do |path|
-        next unless File.exists?(path)
         next unless JS_EXTENSIONS.any? { |ext| path.ends_with?(ext) }
+        next unless File.exists?(path)
 
         content = read_file_content(path)
         next unless content.matches?(ADONIS_MARKERS_RE)

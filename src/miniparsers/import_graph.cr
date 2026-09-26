@@ -1,4 +1,5 @@
 require "../utils/text_file"
+require "../utils/path_scope"
 require "./extraction_result_cache"
 
 module Noir
@@ -253,7 +254,7 @@ module Noir
     # misses under the current `src/main/{java,kotlin}` root, search
     # sibling module roots with the same source-set language.
     private def self.sibling_source_roots(source_root : String) : Array(String)
-      expanded = File.expand_path(source_root)
+      expanded = Noir::PathScope.expand(source_root)
       @@sibling_source_roots_mutex.synchronize do
         if cached = @@sibling_source_roots_cache[expanded]?
           return cached
@@ -269,7 +270,7 @@ module Noir
           workspace_root = File.dirname(module_root)
           safe_glob(File.join(workspace_root, "*", "src", "main", lang)) do |candidate|
             next unless Dir.exists?(candidate)
-            candidate_expanded = File.expand_path(candidate)
+            candidate_expanded = Noir::PathScope.expand(candidate)
             roots << candidate if candidate_expanded != expanded
           end
         end
@@ -355,7 +356,7 @@ module Noir
       return unless import_specifier.starts_with?("./") || import_specifier.starts_with?("../")
 
       base_dir = File.dirname(from_file)
-      combined = File.expand_path(File.join(base_dir, import_specifier))
+      combined = Noir::PathScope.expand(File.join(base_dir, import_specifier))
 
       # Boundary check — drop the resolution before any disk I/O so
       # we don't even fingerprint files outside the scan root.
@@ -423,7 +424,7 @@ module Noir
       # path starts with — every import would be (wrongly) rejected as
       # out-of-boundary. Chomp the trailing separator so the check is robust
       # to both `project` and `project/` forms.
-      boundary_abs = File.expand_path(boundary).chomp(File::SEPARATOR)
+      boundary_abs = Noir::PathScope.expand(boundary).chomp(File::SEPARATOR)
       combined == boundary_abs || combined.starts_with?(boundary_abs + File::SEPARATOR)
     end
 

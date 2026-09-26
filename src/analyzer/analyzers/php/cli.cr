@@ -119,7 +119,7 @@ module Analyzer::Php
 
     private def php_binary_name(path : String) : String
       base = @base_path.empty? ? File.dirname(path) : @base_path
-      name = File.basename(File.expand_path(base))
+      name = File.basename(Noir::PathScope.expand(base))
       name.empty? ? File.basename(path, ".php") : name
     end
 

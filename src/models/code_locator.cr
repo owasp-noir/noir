@@ -227,7 +227,7 @@ class CodeLocator
       return cached if cached
 
       files = @a_map[FILE_MAP]?
-      built = files ? files.map { |file| {file, File.expand_path(file)} } : [] of Tuple(String, String)
+      built = files ? files.map { |file| {file, Noir::PathScope.expand(file)} } : [] of Tuple(String, String)
       @expanded_file_map = built
       built
     end
@@ -240,7 +240,7 @@ class CodeLocator
   # relative path issues a `getcwd`). Unregistered paths fall back to a live
   # expansion. Shares the lazy lifecycle / invalidation of `expanded_file_map`.
   def expanded_path_for(path : String) : String
-    expanded_path_index[path]? || File.expand_path(path)
+    expanded_path_index[path]? || Noir::PathScope.expand(path)
   end
 
   private def expanded_path_index : Hash(String, String)

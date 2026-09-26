@@ -186,12 +186,12 @@ module Analyzer::Python
       # already pulled in — surfacing its routes a second time without
       # the include() prefix.
       visited = Set(::String).new
-      @visited_url_paths.each_key { |key| visited << File.expand_path(key) }
+      @visited_url_paths.each_key { |key| visited << Noir::PathScope.expand(key) }
 
       candidates.each do |file|
         candidate_base_path = base_path_for(file)
         @django_base_path = candidate_base_path
-        expanded = File.expand_path(file)
+        expanded = Noir::PathScope.expand(file)
         next if visited.includes?(expanded)
         begin
           content = read_file_content(file)
@@ -204,7 +204,7 @@ module Analyzer::Python
         extract_endpoints(django_urls).each do |endpoint|
           endpoints << endpoint
         end
-        @visited_url_paths.each_key { |key| visited << File.expand_path(key) }
+        @visited_url_paths.each_key { |key| visited << Noir::PathScope.expand(key) }
       end
 
       endpoints
@@ -598,7 +598,7 @@ module Analyzer::Python
                                                          app_config_path : ::String,
                                                          parent_route_path : PathInfo) : Array(Endpoint)
       endpoints = [] of Endpoint
-      expanded_key = "#{File.expand_path(app_config_path)}:#{prefix}"
+      expanded_key = "#{Noir::PathScope.expand(app_config_path)}:#{prefix}"
       return endpoints if @visited_app_config_paths.includes?(expanded_key)
       @visited_app_config_paths << expanded_key
 

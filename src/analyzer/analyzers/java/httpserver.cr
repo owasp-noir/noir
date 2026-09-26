@@ -61,8 +61,8 @@ module Analyzer::Java
       include_callee = callees_needed?
 
       all_files.each do |path|
-        next if JavaEngine.test_path?(base_relative_path(path))
         next unless path.ends_with?(".#{JAVA_EXTENSION}")
+        next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
 
         content = read_file_content(path)

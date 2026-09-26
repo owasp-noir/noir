@@ -25,7 +25,7 @@ module Analyzer::Haskell
           # as well recorded an absolute machine path in `code_paths`, while
           # the walker's own spelling (relative, when the scan base is) is
           # what every other analyzer records.
-          expanded_path = File.expand_path(path)
+          expanded_path = Noir::PathScope.expand(path)
           next if processed_route_files.includes?(expanded_path)
 
           process_route_content(path, read_file_content(path), include_callee, handler_bodies)

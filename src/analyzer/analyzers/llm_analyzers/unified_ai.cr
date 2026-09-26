@@ -274,7 +274,7 @@ module Analyzer::AI
     end
 
     private def filter_paths_with_llm(all_paths : Array(String), adapter : LLM::Adapter) : Array(String)
-      user_payload = all_paths.map { |p| "- #{File.expand_path(p)}" }.join("\n")
+      user_payload = all_paths.map { |p| "- #{Noir::PathScope.expand(p)}" }.join("\n")
 
       response = call_llm_with_cache(
         kind: "FILTER",
@@ -805,7 +805,7 @@ module Analyzer::AI
       end
 
       if normalized.starts_with?("/")
-        candidate = File.expand_path(normalized)
+        candidate = Noir::PathScope.expand(normalized)
         return [] of String unless File.exists?(candidate) && path_within_base?(candidate)
         return [candidate]
       end
@@ -845,7 +845,7 @@ module Analyzer::AI
     # Public rather than private so the rule can be asserted directly:
     # reaching it through a live LLM round trip is not a test.
     def path_within_base?(path : String) : Bool
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       return false unless contained_in?(expanded, @expanded_base_paths)
       return true unless File.symlink?(expanded) || symlinked_ancestor?(expanded)
 
@@ -886,7 +886,7 @@ module Analyzer::AI
     end
 
     private def agent_relative_path(path : String) : String
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       @expanded_base_paths.each do |base|
         return "." if expanded == base
 
@@ -897,7 +897,7 @@ module Analyzer::AI
     end
 
     private def normalized_agent_root(path : String) : String
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       expanded == File::SEPARATOR ? expanded : expanded.rstrip('/')
     end
 

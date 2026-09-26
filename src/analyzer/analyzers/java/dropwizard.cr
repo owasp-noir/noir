@@ -50,12 +50,14 @@ module Analyzer::Java
       custom_verb_cache = Hash(String, Hash(String, String)).new
 
       file_list = all_files()
-      path_configs = path_configs_for(file_list)
       dropwizard_roots = dropwizard_project_roots_for(file_list)
+      # Only files under a Dropwizard root ever look their config up, so
+      # resolving configs for every Java project root was wasted work.
+      path_configs = path_configs_for(dropwizard_roots)
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         project_root = project_root_for(path)
         next unless dropwizard_roots.includes?(project_root)
 
@@ -105,19 +107,13 @@ module Analyzer::Java
       @result
     end
 
-    private def path_configs_for(file_list : Array(String)) : Hash(String, DropwizardPathConfig)
+    private def path_configs_for(project_roots : Set(String)) : Hash(String, DropwizardPathConfig)
       configs = Hash(String, DropwizardPathConfig).new
-      project_roots = Set(String).new
+      return configs if project_roots.empty?
 
-      file_list.each do |path|
-        next if JavaEngine.test_path?(base_relative_path(path))
-        next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
-        project_roots << project_root_for(path)
-      end
-
+      config_index = yaml_files_by_dir
       project_roots.each do |root|
-        configs[root] = path_config_for(root)
+        configs[root] = path_config_for(root, config_index)
       end
 
       configs
@@ -127,9 +123,9 @@ module Analyzer::Java
       roots = Set(String).new
 
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
         roots << project_root_for(path) if content.matches?(DROPWIZARD_BOOTSTRAP_MARKER_RE)
@@ -143,8 +139,8 @@ module Analyzer::Java
     # replaced was.
     CONFIG_DIRS = ["", "config", "src/main/resources"]
 
-    private def path_config_for(project_root : String) : DropwizardPathConfig
-      config_paths = dropwizard_config_files(project_root)
+    private def path_config_for(project_root : String, config_index : Hash(String, Array(String))) : DropwizardPathConfig
+      config_paths = dropwizard_config_files(project_root, config_index)
 
       config_paths.sort.each do |config_path|
         config = read_path_config(config_path)
@@ -164,16 +160,25 @@ module Analyzer::Java
     # pruning, `--exclude-path`, the media/oversize filter and the content
     # cache. The glob form did none of that — it handed an excluded file,
     # at any size, straight to `read_file_content` + `YAML.parse`.
-    private def dropwizard_config_files(project_root : String) : Array(String)
-      candidates = get_files_by_extensions([".yml", ".yaml"])
-      return candidates if candidates.empty?
+    private def dropwizard_config_files(project_root : String, config_index : Hash(String, Array(String))) : Array(String)
       config_dirs = CONFIG_DIRS.map do |dir|
         Noir::PathScope.normalize_root(dir.empty? ? project_root : File.join(project_root, dir))
-      end.to_set
+      end.uniq!
 
-      candidates.select do |path|
-        config_dirs.includes?(Noir::PathScope.normalize_root(File.dirname(path)))
+      config_dirs.flat_map { |dir| config_index[dir]? || [] of String }
+    end
+
+    # Every scanned YAML file, keyed by its normalized parent directory.
+    # Built once per scan so each project root costs three Hash lookups;
+    # the previous shape re-normalized every YAML path once per project
+    # root, which was O(roots x yaml files) `File.expand_path` calls (each
+    # of which stats the working directory) and dominated monorepo scans.
+    private def yaml_files_by_dir : Hash(String, Array(String))
+      index = Hash(String, Array(String)).new
+      get_files_by_extensions([".yml", ".yaml"]).each do |path|
+        (index[Noir::PathScope.normalize_root(File.dirname(path))] ||= [] of String) << path
       end
+      index
     end
 
     private def read_path_config(path : String) : DropwizardPathConfig
