@@ -60,7 +60,7 @@ class KtorAuthTagger < FrameworkTagger
       next if content.nil?
       next unless content.includes?("authenticate")
 
-      scan_auth_blocks(File.expand_path(file), content)
+      scan_auth_blocks(Noir::PathScope.expand(file), content)
     end
   end
 
@@ -242,7 +242,7 @@ class KtorAuthTagger < FrameworkTagger
     return if @auth_scopes.empty?
 
     url = endpoint.url
-    locations = endpoint.details.code_paths.map { |info| {File.expand_path(info.path), info.line} }
+    locations = endpoint.details.code_paths.map { |info| {Noir::PathScope.expand(info.path), info.line} }
 
     @auth_scopes.each do |scope|
       local = locations.select { |path, _| path == scope[:file] }

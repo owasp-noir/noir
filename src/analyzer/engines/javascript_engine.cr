@@ -147,7 +147,7 @@ module Analyzer::Javascript
     protected def path_under_project_roots?(path : String, roots : Array(String)) : Bool
       return true if roots.empty?
 
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       roots.any? do |root|
         Noir::PathScope.under_normalized_root?(expanded, root)
       end
@@ -155,9 +155,9 @@ module Analyzer::Javascript
 
     private def resolve_static_file_path(source_path : String, raw_path : String) : String
       normalized = raw_path.strip.gsub("\\", "/")
-      return File.expand_path(normalized) if normalized.starts_with?("/")
+      return Noir::PathScope.expand(normalized) if normalized.starts_with?("/")
 
-      source_dir = File.dirname(File.expand_path(source_path))
+      source_dir = File.dirname(Noir::PathScope.expand(source_path))
       candidates = [] of String
       candidates << File.expand_path(normalized, source_dir)
 
@@ -174,9 +174,9 @@ module Analyzer::Javascript
     end
 
     private def nearest_js_project_root(start_dir : String) : String?
-      dir = File.expand_path(start_dir)
+      dir = Noir::PathScope.expand(start_dir)
       bases = @base_paths.map do |base|
-        expanded_base = File.expand_path(base)
+        expanded_base = Noir::PathScope.expand(base)
         expanded_base == File::SEPARATOR ? expanded_base : expanded_base.rstrip('/')
       end
 
@@ -193,7 +193,7 @@ module Analyzer::Javascript
     end
 
     private def add_project_root(roots : Array(String), root : String) : Nil
-      expanded = File.expand_path(root)
+      expanded = Noir::PathScope.expand(root)
       expanded = expanded.rstrip('/') unless expanded == File::SEPARATOR
       roots << expanded unless roots.includes?(expanded)
     end

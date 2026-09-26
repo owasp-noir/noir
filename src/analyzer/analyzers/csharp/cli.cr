@@ -110,7 +110,7 @@ module Analyzer::CSharp
     end
 
     private def csharp_binary_name(assemblies : Array(Tuple(String, String)), path : String) : String
-      expanded = File.expand_path(File.dirname(path))
+      expanded = Noir::PathScope.expand(File.dirname(path))
       assemblies.each do |name, dir|
         return name if expanded == dir || expanded.starts_with?("#{dir}/")
       end
@@ -291,7 +291,7 @@ module Analyzer::CSharp
         end
         name = content.match(/<AssemblyName>\s*([^<\s]+)\s*<\/AssemblyName>/).try(&.[1]) ||
                File.basename(path, ".csproj")
-        out << {name, File.expand_path(File.dirname(path))}
+        out << {name, Noir::PathScope.expand(File.dirname(path))}
       end
       out.sort_by! { |(_n, dir)| -dir.size }
       out

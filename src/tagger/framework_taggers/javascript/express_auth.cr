@@ -77,7 +77,7 @@ class ExpressAuthTagger < FrameworkTagger
       files.each do |file|
         lines = read_file_lines(file)
         next if lines.nil?
-        expanded = File.expand_path(file)
+        expanded = Noir::PathScope.expand(file)
 
         lines.each_with_index do |line, idx|
           stripped = line.strip
@@ -223,7 +223,7 @@ class ExpressAuthTagger < FrameworkTagger
     receiver = lines[line_idx].match(ROUTE_RECEIVER).try &.[1]
     return if receiver.nil?
 
-    expanded = File.expand_path(path)
+    expanded = Noir::PathScope.expand(path)
     line_num = line_idx + 1
 
     @receiver_auth_rules.each do |rule|

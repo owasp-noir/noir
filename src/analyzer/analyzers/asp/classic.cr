@@ -104,7 +104,7 @@ module Analyzer::Asp
               File.join(directory, reference)
             end
 
-          targets << File.expand_path(resolved)
+          targets << Noir::PathScope.expand(resolved)
         end
       rescue e
         logger.debug "Error collecting includes from #{path}: #{e}"
@@ -119,7 +119,7 @@ module Analyzer::Asp
       # `default.asp`, and both answer requests.
       return false if DIRECTORY_INDEXES.includes?(File.basename(path).downcase)
 
-      return true if included.includes?(File.expand_path(path))
+      return true if included.includes?(Noir::PathScope.expand(path))
 
       # Scan-base-relative, never absolute: the directory the checkout
       # happens to live in must not decide whether its pages are

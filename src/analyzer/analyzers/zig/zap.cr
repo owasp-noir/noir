@@ -95,7 +95,7 @@ module Analyzer::Zig
         if need_import
           dir = File.dirname(path)
           text.scan(IMPORT_RE) do |m|
-            resolved = File.expand_path(File.join(dir, m[2]))
+            resolved = Noir::PathScope.expand(File.join(dir, m[2]))
             list = aliases_by_file[resolved] ||= [] of String
             list << m[1] unless list.includes?(m[1])
           end
@@ -275,7 +275,7 @@ module Analyzer::Zig
     # the call site replaces with `.path = "/comment"`).
     private def resolve_paths(type : String, file_path : String, comment_stripped : String, start : Int32, stop : Int32, bindings : PathBindings) : Array(String)
       keys = [type]
-      if aliases = bindings.aliases_by_file[File.expand_path(file_path)]?
+      if aliases = bindings.aliases_by_file[Noir::PathScope.expand(file_path)]?
         aliases.each { |a| keys << a unless keys.includes?(a) }
       end
 

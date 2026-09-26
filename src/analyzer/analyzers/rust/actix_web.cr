@@ -587,7 +587,7 @@ module Analyzer::Rust
 
     private def ref_matches_file?(ref : String, file_path : String, source_path : String? = nil) : Bool
       context = ref_context_segments(ref)
-      return !!(source_path && File.expand_path(file_path) == File.expand_path(source_path)) if context.empty?
+      return !!(source_path && Noir::PathScope.expand(file_path) == Noir::PathScope.expand(source_path)) if context.empty?
       hints = module_hints(file_path)
       context.any? { |segment| hints.includes?(segment) }
     end

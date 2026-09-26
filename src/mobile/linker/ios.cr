@@ -140,7 +140,7 @@ module NoirMobileLinker
     def self.discover(scope_root : String? = nil) : Hash(Symbol, NoirMobileLinker::HandlerInfo)
       url = NoirMobileLinker::HandlerInfo.new
       activity = NoirMobileLinker::HandlerInfo.new
-      expanded_scope = scope_root.try { |root| File.expand_path(root).rstrip('/') }
+      expanded_scope = scope_root.try { |root| Noir::PathScope.expand(root).rstrip('/') }
 
       CodeLocator.instance.files_by_extension(".swift").each do |path|
         next unless in_scope?(path, expanded_scope)
@@ -168,7 +168,7 @@ module NoirMobileLinker
     end
 
     def self.xcode_project_root(path : String) : String?
-      dir = File.dirname(File.expand_path(path))
+      dir = File.dirname(Noir::PathScope.expand(path))
       XCODE_PROJECT_SEARCH_DEPTH.times do
         has_project = !Dir.glob(File.join(dir, "*.xcodeproj")).empty? ||
                       !Dir.glob(File.join(dir, "*.xcworkspace")).empty?
@@ -181,7 +181,7 @@ module NoirMobileLinker
     end
 
     def self.nearest_handler_source_root(path : String) : String?
-      dir = File.dirname(File.expand_path(path))
+      dir = File.dirname(Noir::PathScope.expand(path))
       XCODE_PROJECT_SEARCH_DEPTH.times do
         return dir if ios_handler_source_under?(dir)
 
@@ -195,12 +195,12 @@ module NoirMobileLinker
     private def self.in_scope?(path : String, scope_root : String?) : Bool
       return true unless scope_root
 
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       expanded == scope_root || expanded.starts_with?(scope_root + "/")
     end
 
     private def self.ios_handler_source_under?(root : String) : Bool
-      expanded_root = File.expand_path(root).rstrip('/')
+      expanded_root = Noir::PathScope.expand(root).rstrip('/')
 
       CodeLocator.instance.files_by_extension(".swift").each do |path|
         next unless in_scope?(path, expanded_root)

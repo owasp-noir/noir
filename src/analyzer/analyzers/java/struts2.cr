@@ -96,7 +96,7 @@ module Analyzer::Java
       seen = Set(String).new
 
       java_files = file_list.select do |path|
-        File.exists?(path) && path.ends_with?(".java") && !JavaEngine.test_path?(base_relative_path(path))
+        path.ends_with?(".java") && File.exists?(path) && !JavaEngine.test_path?(base_relative_path(path))
       end
 
       # Build a FQCN → source-path index up front so XML `<action
@@ -165,8 +165,8 @@ module Analyzer::Java
 
     private def struts_config_files(file_list : Array(String)) : Array(String)
       file_list.select do |path|
-        next false unless File.exists?(path)
         next false unless path.ends_with?(".xml")
+        next false unless File.exists?(path)
         # Test-source Struts config (`src/test/resources/struts.xml`,
         # `src/it/...`) exercises the framework itself and never backs a
         # deployed action — gate it the same way the `.java` selection at
@@ -182,7 +182,7 @@ module Analyzer::Java
                                     file_list : Array(String),
                                     convention_config : ConventionConfig,
                                     seen : Set(String))
-      expanded = File.expand_path(path)
+      expanded = Noir::PathScope.expand(path)
       return if seen.includes?(expanded)
       seen << expanded
 

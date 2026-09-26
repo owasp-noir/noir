@@ -185,7 +185,7 @@ module Analyzer::Aspnet
 
       while current = queue.shift?
         begin
-          key = File.expand_path(current).downcase
+          key = Noir::PathScope.expand(current).downcase
           next unless visited.add?(key)
           next if current.matches?(DESIGNER_FILE_RE)
 
@@ -254,7 +254,7 @@ module Analyzer::Aspnet
       end
 
       {".cs", ".vb"}.each do |extension|
-        if found = lookup_file("#{File.expand_path(path)}#{extension}")
+        if found = lookup_file("#{Noir::PathScope.expand(path)}#{extension}")
           return found
         end
       end
@@ -301,7 +301,7 @@ module Analyzer::Aspnet
           File.join(File.dirname(path), normalized)
         end
 
-      lookup_file(File.expand_path(candidate))
+      lookup_file(Noir::PathScope.expand(candidate))
     end
 
     private def scan_source(path : String, buckets : ParamBuckets)
@@ -484,7 +484,7 @@ module Analyzer::Aspnet
     private def file_index : Hash(String, String)
       @file_index ||= begin
         index = {} of String => String
-        all_files.each { |file| index[File.expand_path(file).downcase] = file }
+        all_files.each { |file| index[Noir::PathScope.expand(file).downcase] = file }
         index
       end
     end

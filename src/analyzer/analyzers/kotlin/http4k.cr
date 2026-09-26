@@ -13,8 +13,8 @@ module Analyzer::Kotlin
       include_callee = callees_needed?
       file_list = all_files()
       kotlin_files = file_list.select do |path|
-        File.exists?(path) &&
-          path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+        path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+          File.exists?(path) &&
           !KotlinEngine.test_path?(base_relative_path(path))
       end
       file_contents = Hash(String, String).new

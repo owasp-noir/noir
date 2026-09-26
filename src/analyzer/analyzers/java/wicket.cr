@@ -86,9 +86,9 @@ module Analyzer::Java
       files = [] of FileInfo
 
       all_files.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
         next unless WICKET_MARKERS.any? { |marker| content.includes?(marker) }

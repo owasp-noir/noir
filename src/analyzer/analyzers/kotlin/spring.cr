@@ -235,8 +235,8 @@ module Analyzer::Kotlin
 
     private def spring_kotlin_files(files : Array(String)) : Array(String)
       files.select do |path|
-        File.exists?(path) &&
-          path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+        path.ends_with?(".#{KOTLIN_EXTENSION}") &&
+          File.exists?(path) &&
           !KotlinEngine.test_path?(base_relative_path(path)) &&
           !spring_ignored_path?(path)
       end
@@ -379,7 +379,7 @@ module Analyzer::Kotlin
       index = SpringInterfaceRouteIndex.new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
         next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
@@ -407,7 +407,7 @@ module Analyzer::Kotlin
       index = SpringMethodIndex.new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
         next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
@@ -619,7 +619,7 @@ module Analyzer::Kotlin
       prefixes = Hash(String, Array(String)).new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
         next if KotlinEngine.test_path?(base_relative_path(path))
 
         content = read_file_content(path)
@@ -644,7 +644,7 @@ module Analyzer::Kotlin
       project_roots = Set(String).new
 
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
         next if KotlinEngine.test_path?(base_relative_path(path))
         project_roots << project_root_for(path)
       end
@@ -732,7 +732,7 @@ module Analyzer::Kotlin
       paths = Hash(String, String).new
       roots = Set(String).new
       file_list.each do |path|
-        next unless File.exists?(path) && path.ends_with?(".#{KOTLIN_EXTENSION}")
+        next unless path.ends_with?(".#{KOTLIN_EXTENSION}") && File.exists?(path)
         next if KotlinEngine.test_path?(base_relative_path(path))
         roots << project_root_for(path)
       end

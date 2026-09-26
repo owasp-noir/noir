@@ -35,9 +35,9 @@ module Analyzer::Java
       application_base_paths = application_base_paths_for(file_list, helidon_mp_roots)
 
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next unless helidon_mp_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)
@@ -86,8 +86,8 @@ module Analyzer::Java
 
       file_list.each do |path|
         next if JavaEngine.test_path?(base_relative_path(path))
-        next unless File.exists?(path)
         next unless helidon_mp_manifest_path?(path) || path.ends_with?(".#{JAVA_EXTENSION}")
+        next unless File.exists?(path)
 
         content = read_file_content(path)
         roots << project_root_for(path) if HELIDON_MP_MARKERS.any? { |marker| content.includes?(marker) }
@@ -105,9 +105,9 @@ module Analyzer::Java
       base_paths = Hash(ApplicationBaseKey, String).new
 
       file_list.each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next unless helidon_mp_roots.includes?(project_root_for(path))
 
         content = read_file_content(path)

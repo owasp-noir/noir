@@ -46,9 +46,9 @@ module Analyzer::Java
       edges_by_root = Hash(String, Array(RegisterEdge)).new
 
       all_files().each do |path|
+        next unless path.ends_with?(".#{JAVA_EXTENSION}")
         next if JavaEngine.test_path?(base_relative_path(path))
         next unless File.exists?(path)
-        next unless path.ends_with?(".#{JAVA_EXTENSION}")
 
         content = read_file_content(path)
         next unless content_matches?(content, HELIDON_SE_MARKER_RE)

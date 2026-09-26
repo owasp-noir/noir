@@ -581,7 +581,7 @@ module Analyzer::Mobile
     # vs `app/src/main/AndroidManifest.xml`); the nearest one wins so a
     # root-project script can't shadow the module's applicationId.
     private def find_gradle_file(manifest_path : String) : String?
-      dir = File.dirname(File.expand_path(manifest_path))
+      dir = File.dirname(Noir::PathScope.expand(manifest_path))
       4.times do
         {"build.gradle", "build.gradle.kts"}.each do |name|
           candidate = File.join(dir, name)
@@ -667,7 +667,7 @@ module Analyzer::Mobile
     end
 
     private def resolve_buildsrc_constant(def_re : Regex, gradle_path : String) : String?
-      dir = File.dirname(File.expand_path(gradle_path))
+      dir = File.dirname(Noir::PathScope.expand(gradle_path))
       BUILDSRC_SEARCH_DEPTH.times do
         buildsrc = File.join(dir, "buildSrc")
         if Dir.exists?(buildsrc)

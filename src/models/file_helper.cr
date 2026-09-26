@@ -176,9 +176,37 @@ module FileHelper
     pairs.each do |file, expanded|
       next unless base_root.nil? || Noir::PathScope.under_normalized_root?(expanded, base_root)
       next if PUBLIC_FILE_IGNORE.includes?(File.basename(file))
-      result << file if project_public_roots.any? { |root| expanded != root && Noir::PathScope.under_normalized_root?(expanded, root) }
+      result << file if under_public_root?(expanded, project_public_roots)
     end
     result
+  end
+
+  PUBLIC_SEGMENT = "#{File::SEPARATOR}public#{File::SEPARATOR}"
+
+  # Up to this many `public/` roots, testing a file against each root is
+  # cheaper than scanning the path for `/public/` segments (a boundary test
+  # is a few ns; the segment scan costs ~1 ns per path byte).
+  PUBLIC_ROOT_LINEAR_LIMIT = 8
+
+  # True when `expanded` sits strictly beneath one of `public_roots`: the
+  # normalized `<project>/public` directories collected above.
+  #
+  # Every such root ends in a `public` segment, so with many roots only the
+  # prefixes that end at a `/public/` inside `expanded` need a lookup —
+  # O(path depth) per file instead of O(roots), which kept a monorepo with
+  # one manifest per service from going quadratic.
+  protected def under_public_root?(expanded : String, public_roots : Set(String)) : Bool
+    return false if public_roots.empty?
+    if public_roots.size <= PUBLIC_ROOT_LINEAR_LIMIT
+      return public_roots.any? { |root| expanded != root && Noir::PathScope.under_normalized_root?(expanded, root) }
+    end
+
+    offset = 0
+    while index = expanded.index(PUBLIC_SEGMENT, offset)
+      return true if public_roots.includes?(expanded[0, index + PUBLIC_SEGMENT.size - 1])
+      offset = index + 1
+    end
+    false
   end
 
   # Helper to get public directories content from anywhere in the project

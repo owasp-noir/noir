@@ -205,7 +205,7 @@ module Analyzer::Javascript
         found = index_file(file, Noir::JSRouteExtractor.strip_js_comments(content))
         # Keyed absolute, because `JsModuleResolver` hands back absolute
         # paths and `@all_files` is relative whenever the scan base is.
-        @helpers[File.expand_path(file)] = found unless found.empty?
+        @helpers[Noir::PathScope.expand(file)] = found unless found.empty?
       end
     end
 
@@ -215,7 +215,7 @@ module Analyzer::Javascript
     # declares a rewrite, it does not register a path.
     def forward_lines(file : String) : Set(Int32)
       lines = Set(Int32).new
-      if specs = @helpers[File.expand_path(file)]?
+      if specs = @helpers[Noir::PathScope.expand(file)]?
         specs.each_value { |spec| spec.forwards.each { |forward| lines << forward.line } }
       end
       lines
@@ -502,7 +502,7 @@ module Analyzer::Javascript
     private def callable_helpers(file : String, content : String) : Array(Tuple(String, HelperSpec))
       callables = [] of Tuple(String, HelperSpec)
 
-      if own = @helpers[File.expand_path(file)]?
+      if own = @helpers[Noir::PathScope.expand(file)]?
         own.each { |name, spec| callables << {name, spec} }
       end
 
@@ -631,7 +631,7 @@ module Analyzer::Javascript
     # File-level mount prefixes recorded by `RouterMountScanner`, or a
     # single empty prefix when the file is not mounted anywhere.
     private def file_prefixes(file : String) : Array(String)
-      prefixes = CodeLocator.instance.all(ExpressConstants.file_key(File.expand_path(file)))
+      prefixes = CodeLocator.instance.all(ExpressConstants.file_key(Noir::PathScope.expand(file)))
       prefixes.empty? ? [""] : prefixes
     end
 

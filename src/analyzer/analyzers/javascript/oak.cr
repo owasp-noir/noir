@@ -134,7 +134,7 @@ module Analyzer::Javascript
         prefixes.each do |router_var, router_prefixes|
           file = imports[router_var]?
           next unless file
-          key = Analyzer::Javascript::ExpressConstants.file_key(File.expand_path(file))
+          key = Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(file))
           router_prefixes.each do |prefix|
             next if prefix.empty?
             locator.push(key, prefix) unless locator.all(key).includes?(prefix)
@@ -216,7 +216,7 @@ module Analyzer::Javascript
       end
 
       locator = CodeLocator.instance
-      lookup_key = Analyzer::Javascript::ExpressConstants.file_key(File.expand_path(path))
+      lookup_key = Analyzer::Javascript::ExpressConstants.file_key(Noir::PathScope.expand(path))
       file_prefixes = locator.all(lookup_key)
 
       file_content.scan(/(?:(\w+)\.|app\.)(get|post|put|delete|del|patch|options|head|all)\s*\(\s*['"]([^'"]+)['"]/) do |match|

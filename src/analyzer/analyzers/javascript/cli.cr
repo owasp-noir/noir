@@ -581,14 +581,14 @@ module Analyzer::Javascript
           name = m[1]
         end
         next unless name
-        names << {name.split('/').last, File.expand_path(File.dirname(path))}
+        names << {name.split('/').last, Noir::PathScope.expand(File.dirname(path))}
       end
       names.sort_by! { |(_n, dir)| -dir.size }
       names
     end
 
     private def js_binary_name(names : Array(Tuple(String, String)), path : String) : String
-      expanded = File.expand_path(File.dirname(path))
+      expanded = Noir::PathScope.expand(File.dirname(path))
       names.each do |name, dir|
         return name if expanded == dir || expanded.starts_with?("#{dir}/")
       end

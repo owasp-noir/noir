@@ -152,6 +152,12 @@ class NoirRunner
   end
 
   def detect
+    # Every path expansion in this phase resolves against one working
+    # directory lookup instead of two `stat`s per call; see `PathScope.expand`.
+    Noir::PathScope.with_pinned_cwd { detect_phase }
+  end
+
+  private def detect_phase
     base_paths = options["base"].as_a.map(&.to_s)
     # Publish the scan roots before anything walks a file: the shared
     # parser layer relativises convention filters against them (see
@@ -189,6 +195,11 @@ class NoirRunner
   end
 
   def analyze
+    # Same as `detect`: one working-directory lookup for the whole phase.
+    Noir::PathScope.with_pinned_cwd { analyze_phase }
+  end
+
+  private def analyze_phase
     # Cleared before the pass, not merely appended to. Diff mode builds a
     # second runner, but an embedder can call `analyze` twice on one runner —
     # and a failure list carrying the previous scan's entries would report a
