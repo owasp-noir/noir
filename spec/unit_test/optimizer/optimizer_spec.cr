@@ -14,6 +14,13 @@ describe "EndpointOptimizer" do
   options = create_test_options
   logger = NoirLogger.new(false, false, false, false)
 
+  # Examples below mutate `options` (url, set_pvalue*). Without a reset,
+  # `--order random` lets a pvalue example leak `name=FUZZ` into
+  # optimize_endpoints assertions that expect the original body value.
+  before_each do
+    create_test_options.each { |key, value| options[key] = value }
+  end
+
   describe "optimize_endpoints" do
     it "removes duplicated endpoints" do
       optimizer = EndpointOptimizer.new(logger, options)
