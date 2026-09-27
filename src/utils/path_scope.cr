@@ -36,11 +36,36 @@ module Noir
     # identical to `File.expand_path(path)` as long as nothing changes the
     # working directory inside the pinned scope, which noir never does.
     def expand(path : String) : String
+      return path if already_expanded?(path)
       if Path.new(path).absolute?
         File.expand_path(path, File::SEPARATOR_STRING)
       else
         File.expand_path(path, @@pinned_cwd || Dir.current)
       end
+    end
+
+    # True when `File.expand_path(path)` would return `path` unchanged: an
+    # absolute POSIX path with no empty, `.` or `..` segment and no trailing
+    # separator. Nearly every path a scan handles is one — the walk builds
+    # them with `File.join` under an expanded base — and `expand` sits in
+    # per-file loops of many analyzers, where rebuilding each one through
+    # `Path#normalize` (a char-by-char copy) was the single largest cost of
+    # a 50k-file scan outside the walk itself.
+    #
+    # The two remaining conditions mirror `normalize` exactly: it stops at a
+    # NUL, and it re-encodes invalid UTF-8 as U+FFFD, so either one means
+    # the result would differ from the input.
+    private def already_expanded?(path : String) : Bool
+      {% if flag?(:unix) %}
+        return false unless path.starts_with?('/')
+        return true if path == "/"
+        return false if path.ends_with?('/') || path.ends_with?("/.") || path.ends_with?("/..")
+        return false if path.includes?("//") || path.includes?("/./") || path.includes?("/../")
+        return false if path.includes?('\0')
+        path.valid_encoding?
+      {% else %}
+        false
+      {% end %}
     end
 
     # Resolves the working directory once and reuses it for every `expand`

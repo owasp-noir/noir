@@ -54,12 +54,14 @@ module Analyzer::Dart
       include_callee = callees_needed?
       const_map = {} of String => String
       raw_pages = [] of RawPage
-      mutex = Mutex.new
 
       begin
         files = get_files_by_extension(".dart")
 
-        parallel_analyze(files) do |path|
+        # Merged in file order, not worker-completion order: a constant two
+        # files define keeps the later file's value (see
+        # `Analyzer#ordered_scan_files`).
+        per_file = ordered_parallel_analyze(files) do |path|
           next unless path.ends_with?(".dart")
           next if Helper.test_path?(path, base_paths)
 
@@ -74,11 +76,11 @@ module Analyzer::Dart
           local_consts = collect_constants(cleaned)
           local_pages = collect_pages(cleaned, content, path)
           next if local_consts.empty? && local_pages.empty?
-
-          mutex.synchronize do
-            local_consts.each { |k, v| const_map[k] = v }
-            raw_pages.concat(local_pages)
-          end
+          {local_consts, local_pages}
+        end
+        per_file.each do |local_consts, local_pages|
+          local_consts.each { |k, v| const_map[k] = v }
+          raw_pages.concat(local_pages)
         end
       rescue e
         logger.debug e

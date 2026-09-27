@@ -47,8 +47,10 @@ module Analyzer::Perl
     def analyze
       actions = [] of RouteAction
       configs = {} of String => ControllerConfig
-      actions_mutex = Mutex.new
-      parallel_file_scan do |path|
+      # Merged in file order, not worker-completion order: a later file's
+      # config for the same package replaces an earlier one, so the order
+      # decides which wins (see `ordered_file_scan`).
+      per_file = ordered_file_scan do |path|
         next unless catalyst_source_file?(path)
 
         content = read_file_content(path)
@@ -56,11 +58,11 @@ module Analyzer::Perl
         # `collect_actions` re-sanitized and re-parsed configs for the
         # action walk, then the outer call did both again for composition.
         lines = sanitize_perl_lines(content.lines)
-        file_actions, file_configs = collect_actions_and_configs(content, lines, path)
-        actions_mutex.synchronize do
-          actions.concat(file_actions)
-          file_configs.each { |pkg, cfg| configs[pkg] = cfg }
-        end
+        collect_actions_and_configs(content, lines, path)
+      end
+      per_file.each do |file_actions, file_configs|
+        actions.concat(file_actions)
+        file_configs.each { |pkg, cfg| configs[pkg] = cfg }
       end
 
       @result.concat(analyze_actions(compose_actions(actions, configs)))

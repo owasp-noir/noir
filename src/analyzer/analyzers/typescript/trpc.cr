@@ -45,46 +45,40 @@ module Analyzer::Typescript
       routers = Hash(RouterKey, Router).new
       procedures = Hash(RouterKey, Procedure).new
       procedures_by_name = Hash(String, Procedure).new
-      routers_mu = Mutex.new
-      prefix_mu = Mutex.new
       url_prefixes = Hash(String, String).new
 
-      parallel_file_scan([".js", ".ts", ".jsx", ".tsx", ".cts", ".mts", ".cjs", ".mjs"]) do |path|
-        begin
-          next if trpc_test_fixture_path?(path)
+      # Merged in file order, not worker-completion order: two apps that name
+      # the same router or procedure leave the later file's in place, so the
+      # order decides which wins (see `Analyzer#ordered_scan_files`).
+      per_file = ordered_scan_files(get_files_by_extensions([".js", ".ts", ".jsx", ".tsx", ".cts", ".mts", ".cjs", ".mjs"])) do |path|
+        next if trpc_test_fixture_path?(path)
 
-          raw = read_file_content(path)
-          next unless trpc_candidate?(raw)
-          # tRPC router modules may import `react` (RSC/client helpers); the
-          # `createTRPCRouter`/procedure shape already gates detection, so
-          # don't let the client-side-framework markers skip them.
-          next if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
+        raw = read_file_content(path)
+        next unless trpc_candidate?(raw)
+        # tRPC router modules may import `react` (RSC/client helpers); the
+        # `createTRPCRouter`/procedure shape already gates detection, so
+        # don't let the client-side-framework markers skip them.
+        next if Noir::JSRouteExtractor.test_stub_only?(path, raw, include_client_frameworks: false)
 
-          content = Noir::JSRouteExtractor.strip_js_comments(raw)
-          next unless trpc_candidate?(content)
+        content = Noir::JSRouteExtractor.strip_js_comments(raw)
+        next unless trpc_candidate?(content)
 
-          literal_mask = string_literal_mask(content)
-          base_path = configured_base_for(path)
-          collected = collect_routers(content, path, base_path, literal_mask)
-          collected_procs = collect_procedures(content, path, base_path, literal_mask)
-          unless collected.empty? && collected_procs.empty?
-            routers_mu.synchronize do
-              collected.each { |r| routers[router_key(r)] = r }
-              collected_procs.each do |p|
-                procedures[router_key(p.base_path, p.name)] = p
-                procedures_by_name[p.name] = p
-              end
-            end
-          end
-          if found = extract_prefix(content, literal_mask)
-            prefix_mu.synchronize do
-              url_prefixes[base_path] = found
-            end
-          end
-        rescue e
-          logger.debug "Error analyzing tRPC file #{path}: #{e.message}"
-        end
+        literal_mask = string_literal_mask(content)
+        base_path = configured_base_for(path)
+        collected = collect_routers(content, path, base_path, literal_mask)
+        collected_procs = collect_procedures(content, path, base_path, literal_mask)
+        {collected, collected_procs, base_path, extract_prefix(content, literal_mask)}
+      rescue e
+        logger.debug "Error analyzing tRPC file #{path}: #{e.message}"
         nil
+      end
+      per_file.each do |collected, collected_procs, base_path, found|
+        collected.each { |r| routers[router_key(r)] = r }
+        collected_procs.each do |p|
+          procedures[router_key(p.base_path, p.name)] = p
+          procedures_by_name[p.name] = p
+        end
+        url_prefixes[base_path] = found if found
       end
 
       return result if routers.empty?

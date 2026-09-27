@@ -31,4 +31,10 @@ abstract class FileScanEngine < Analyzer
   protected def parallel_file_scan(&block : String -> Nil) : Nil
     scan_files(scan_target_files, &block)
   end
+
+  # `parallel_file_scan` with per-file results handed back in input order;
+  # see `Analyzer#ordered_scan_files`.
+  protected def ordered_file_scan(&block : String -> T?) : Array(T) forall T
+    ordered_scan_files(scan_target_files, &block)
+  end
 end

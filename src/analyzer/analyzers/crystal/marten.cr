@@ -39,17 +39,20 @@ module Analyzer::Crystal
       # the sub-routes bare and the mount line as a junk endpoint.
       main_maps = [] of MartenRouteMap
       named_maps = Hash(String, MartenRouteMap).new
-      mutex = Mutex.new
 
-      parallel_file_scan do |path|
+      # Merged in file order, not worker-completion order: two apps that
+      # declare the same map name leave the later file's map in place, so the
+      # order decides which wins (see `ordered_file_scan`).
+      per_file = ordered_file_scan do |path|
         local_main = [] of MartenRouteMap
         local_named = Hash(String, MartenRouteMap).new
         parse_route_maps_in_file(read_source_lines(path), path, local_main, local_named)
         next if local_main.empty? && local_named.empty?
-        mutex.synchronize do
-          main_maps.concat(local_main)
-          local_named.each { |fqn, map| named_maps[fqn] = map }
-        end
+        {local_main, local_named}
+      end
+      per_file.each do |local_main, local_named|
+        main_maps.concat(local_main)
+        local_named.each { |fqn, map| named_maps[fqn] = map }
       end
 
       emit_maps(main_maps, named_maps)
