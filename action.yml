@@ -183,12 +183,16 @@ runs:
       shell: bash
       env:
         NOIR_DIFF_REF: ${{ inputs.diff_ref }}
+        NOIR_BASE_PATH: ${{ inputs.base_path }}
       run: |
         set -euo pipefail
         case "$NOIR_DIFF_REF" in
           -*) echo "::error title=OWASP Noir::diff_ref must be a git revision, not an option: $NOIR_DIFF_REF"; exit 1 ;;
         esac
-        cd "$GITHUB_WORKSPACE"
+        # From the scanned path, not the workspace root: with
+        # `actions/checkout` `path: app` the repository is `app/`, and the
+        # workspace itself is not a git repository at all.
+        cd "$GITHUB_WORKSPACE/${NOIR_BASE_PATH:-.}"
         if ! sha="$(git rev-parse --verify --quiet "${NOIR_DIFF_REF}^{commit}")"; then
           echo "Fetching ${NOIR_DIFF_REF} (not in the checkout)"
           git fetch --no-tags --depth=1 origin "${NOIR_DIFF_REF#origin/}"

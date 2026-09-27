@@ -144,18 +144,30 @@ class OutputBuilderDiff < OutputBuilder
     common = OutputBuilderCommon.new(@options)
     common.io = io
 
+    if result[:added].empty? && result[:removed].empty? && result[:changed].empty?
+      # An empty report read as "did the diff even run?" — say it did.
+      ob_puts "No endpoint was added, removed or changed."
+      return
+    end
+
+    # Sections are separated by a blank line, but the first one starts the
+    # report: a removed-only diff used to open with an empty line.
+    separator = ""
+
     if !result[:added].empty?
-      ob_puts format_section_header("✚", "Added", result[:added].size, :green)
+      ob_puts "#{separator}#{format_section_header("✚", "Added", result[:added].size, :green)}"
       common.print(result[:added])
+      separator = "\n"
     end
 
     if !result[:removed].empty?
-      ob_puts "\n#{format_section_header("✖", "Removed", result[:removed].size, :red)}"
+      ob_puts "#{separator}#{format_section_header("✖", "Removed", result[:removed].size, :red)}"
       common.print(result[:removed])
+      separator = "\n"
     end
 
     if !result[:changed].empty?
-      ob_puts "\n#{format_section_header("≠", "Changed", result[:changed].size, :yellow)}"
+      ob_puts "#{separator}#{format_section_header("≠", "Changed", result[:changed].size, :yellow)}"
       result[:changed].zip(result[:changes]) do |endpoint, change|
         common.print([endpoint])
         ob_puts format_change(change)

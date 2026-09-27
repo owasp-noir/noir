@@ -79,6 +79,23 @@ describe Noir::GitSnapshot do
     end
   end
 
+  it "works from inside a git hook, which exports GIT_DIR and GIT_INDEX_FILE" do
+    with_repo do |repo|
+      saved = {"GIT_DIR" => ENV["GIT_DIR"]?, "GIT_INDEX_FILE" => ENV["GIT_INDEX_FILE"]?}
+      # What git hands a pre-push hook run from the repository root: both
+      # relative, so they break as soon as a call moves into a subdirectory.
+      ENV["GIT_DIR"] = ".git"
+      ENV["GIT_INDEX_FILE"] = ".git/index"
+      begin
+        with_snapshot("HEAD~1", [File.join(repo, "app")]) do |snapshot|
+          File.read(File.join(snapshot.bases.first, "routes.rb")).should contain("/old")
+        end
+      ensure
+        saved.each { |name, value| value ? (ENV[name] = value) : ENV.delete(name) }
+      end
+    end
+  end
+
   it "scans a base that did not exist at the revision as an empty directory" do
     with_repo do |repo|
       fresh = File.join(repo, "fresh")
@@ -141,5 +158,20 @@ describe Noir::GitSnapshot do
 
     relocated.map(&.details.code_paths.first.path).should eq(["./app/routes.rb", "./app2/x.rb", "/elsewhere/y.rb"])
     relocated.first.details.code_paths.first.line.should eq(3)
+  end
+
+  it "relocates callee and AI-context paths as well" do
+    snapshot = Noir::GitSnapshot::Snapshot.new(root: "/tmp/snap", commit: "abc", bases: ["/tmp/snap/tree/app"])
+    endpoint = Endpoint.new("/a", "GET")
+    endpoint.push_callee(Callee.new("User.find", "/tmp/snap/tree/app/models/user.rb", 7))
+    endpoint.push_callee(Callee.new("helper"))
+    context = AIContext.new
+    context.sinks << AIContextEntry.new("sink", "exec", path: "/tmp/snap/tree/app/run.rb", line: 2)
+    endpoint.ai_context = context
+
+    relocated = snapshot.relocate([endpoint], ["app"]).first
+
+    relocated.callees.map(&.path).should eq(["app/models/user.rb", nil])
+    relocated.ai_context.not_nil!.sinks.first.path.should eq("app/run.rb")
   end
 end

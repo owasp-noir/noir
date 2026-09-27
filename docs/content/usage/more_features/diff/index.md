@@ -117,6 +117,13 @@ noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-tabl
 
 `auth-removed` depends on the auth taggers, so it turns on all taggers unless you already passed `-T` or `--use-taggers`. The reason for the failure goes to stderr even with `--no-log`. Exit code `1` is still a usage error and `2` is `--strict`'s incomplete scan, which takes precedence over `3`.
 
+The same check works locally from a git `pre-push` hook:
+
+```bash
+#!/bin/sh
+exec noir scan . --diff-ref origin/main --fail-on auth-removed --no-log
+```
+
 For a complete pull request workflow, see [GitHub Action](../../github_action/).
 
 Especially useful in CI/CD: feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.

@@ -193,7 +193,7 @@ describe "OutputBuilderDiff" do
   # which skip a section entirely when its bucket is empty. Assert on the
   # rendered output so the gate is what's actually covered.
   describe "section gating" do
-    it "renders nothing when every bucket is empty" do
+    it "says there is nothing to report when every bucket is empty" do
       builder = OutputBuilderDiff.new(create_test_options)
       builder.io = IO::Memory.new
 
@@ -206,7 +206,19 @@ describe "OutputBuilderDiff" do
 
       builder.print(endpoints, diff_app)
 
-      builder.io.to_s.should eq("")
+      builder.io.to_s.should eq("No endpoint was added, removed or changed.\n")
+    end
+
+    it "does not open a report with a blank line when the first section is not Added" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      diff_app = NoirRunner.new(create_test_options)
+      diff_app.endpoints << Endpoint.new("/gone", "GET")
+      builder.print([] of Endpoint, diff_app)
+
+      builder.io.to_s.should start_with("─")
+      builder.io.to_s.should contain("Removed (1)")
     end
 
     it "renders only the sections whose bucket is populated" do

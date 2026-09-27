@@ -118,38 +118,50 @@ fi
 # refusal the entrypoint has to lift), the exit code a fail_on match ends
 # with, and that the outputs are still written when it does.
 # ---------------------------------------------------------------------------
-echo "[3] diff_ref + fail_on=added"
-ws="$(mktemp -d)"
-mkdir -p "$ws/src"
-touch "$ws/src/.keep"
-git -C "$ws" init -q
-git -C "$ws" add -A
-git -C "$ws" -c user.email=ci@noir -c user.name=ci -c commit.gpgsign=false commit -q -m base
-base_sha="$(git -C "$ws" rev-parse HEAD)"
-cp -R "$FIXTURE/." "$ws/src/"
-rc=0
-docker run --rm \
-  -v "$ws":/github/workspace \
-  -w /github/workspace \
-  -e GITHUB_OUTPUT=/github/workspace/.noir-output \
-  -e INPUT_BASE_PATH="src" \
-  -e INPUT_FORMAT=json \
-  -e INPUT_DIFF_REF="$base_sha" \
-  -e INPUT_FAIL_ON=added \
-  --entrypoint /entrypoint.sh \
-  "$IMAGE" >"$ws/stdout" 2>"$ws/stderr" || rc=$?
-if [[ "$rc" -eq 3 ]]; then
-  note_pass "exits 3 when fail_on matches"
-else
-  note_fail "expected exit 3, got $rc"
-  cat "$ws/stderr" >&2 || true
-fi
-ep="$(sed -n 's/^endpoints=//p' "$ws/.noir-output" 2>/dev/null || true)"
-if printf '%s' "$ep" | jq -e '(.added | length >= 1) and (.removed | length == 0)' >/dev/null 2>&1; then
-  note_pass "diff document is written and lists the new endpoints as added"
-else
-  note_fail "endpoints output is not a diff document with added endpoints"
-fi
+# $1: label, $2: where the repository sits in the workspace ("." or a
+# subdirectory, like `actions/checkout` with `path:`), $3: base_path.
+diff_scenario() {
+  local label="$1" repo_dir="$2" base="$3"
+  echo "$label"
+  local ws; ws="$(mktemp -d)"
+  local repo="$ws/$repo_dir"
+  local src="$ws/$base"
+  mkdir -p "$src"
+  touch "$src/.keep"
+  git -C "$repo" init -q
+  git -C "$repo" add -A
+  git -C "$repo" -c user.email=ci@noir -c user.name=ci -c commit.gpgsign=false commit -q -m base
+  local base_sha; base_sha="$(git -C "$repo" rev-parse HEAD)"
+  cp -R "$FIXTURE/." "$src/"
+  local rc=0
+  docker run --rm \
+    -v "$ws":/github/workspace \
+    -w /github/workspace \
+    -e GITHUB_OUTPUT=/github/workspace/.noir-output \
+    -e INPUT_BASE_PATH="$base" \
+    -e INPUT_FORMAT=json \
+    -e INPUT_DIFF_REF="$base_sha" \
+    -e INPUT_FAIL_ON=added \
+    --entrypoint /entrypoint.sh \
+    "$IMAGE" >"$ws/stdout" 2>"$ws/stderr" || rc=$?
+  if [[ "$rc" -eq 3 ]]; then
+    note_pass "exits 3 when fail_on matches"
+  else
+    note_fail "expected exit 3, got $rc"
+    cat "$ws/stderr" >&2 || true
+  fi
+  local ep; ep="$(sed -n 's/^endpoints=//p' "$ws/.noir-output" 2>/dev/null || true)"
+  if printf '%s' "$ep" | jq -e '(.added | length >= 1) and (.removed | length == 0)' >/dev/null 2>&1; then
+    note_pass "diff document is written and lists the new endpoints as added"
+  else
+    note_fail "endpoints output is not a diff document with added endpoints"
+  fi
+}
+
+diff_scenario "[3] diff_ref + fail_on=added" "." "src"
+# The repository is not the mount point, so git's ownership check has to
+# accept a repository root other than the working directory.
+diff_scenario "[4] diff_ref with the repository in a subdirectory" "app" "app/src"
 
 # NOTE: format=jsonl is intentionally not asserted here yet — the current
 # entrypoint mishandles the multi-object JSONL stream (emits multi-line

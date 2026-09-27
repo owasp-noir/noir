@@ -65,10 +65,10 @@ private BAD_TIMESTAMP_HAR = <<-HAR
   }
   HAR
 
-private def run_noir(args : Array(String)) : CliRun
+private def run_noir(args : Array(String), env : Hash(String, String)? = nil) : CliRun
   stdout = IO::Memory.new
   stderr = IO::Memory.new
-  status = Process.run(BINARY, args: args, output: stdout, error: stderr)
+  status = Process.run(BINARY, args: args, env: env, output: stdout, error: stderr)
   CliRun.new(stdout: stdout.to_s, stderr: stderr.to_s, exit_code: status.exit_code)
 end
 
@@ -425,14 +425,17 @@ describe "noir CLI surface (built binary)" do
         File.write(routes, File.read(routes) + "\npost '/diff-ref-added' do\nend\n")
         git.call(["commit", "-q", "-am", "add route"])
 
-        before = Dir.children(Dir.tempdir).count(&.starts_with?("noir-diff-ref-"))
+        # A private TMPDIR, so "nothing left behind" is not a count over a
+        # directory other runs (and other specs) write to as well.
+        tmp = File.join(repo, ".tmp")
+        Dir.mkdir(tmp)
         result = run_noir(["scan", File.join(repo, "app"), "--diff-ref", "HEAD~1",
-                           "--no-color", "--no-log", "-f", "json"])
+                           "--no-color", "--no-log", "-f", "json"], env: {"TMPDIR" => tmp})
         result.exit_code.should eq(0)
         diff = JSON.parse(result.stdout)
         diff["added"].as_a.map(&.["url"].as_s).should eq(["/diff-ref-added"])
         diff["removed"].as_a.should be_empty
-        Dir.children(Dir.tempdir).count(&.starts_with?("noir-diff-ref-")).should eq(before)
+        Dir.children(tmp).should be_empty
       ensure
         FileUtils.rm_rf(repo)
       end
@@ -458,6 +461,22 @@ describe "noir CLI surface (built binary)" do
       result = run_noir(["scan", FIXTURE, "--fail-on", "added", "--no-color", "--no-log"])
       result.exit_code.should eq(1)
       result.stderr.should contain("--fail-on needs a diff")
+    end
+
+    it "still diffs when the change removed every route" do
+      # Nothing left on the new side means no framework to detect, and the
+      # no-technologies path used to exit before the diff ran: the removed
+      # routes went unreported and `--fail-on removed` passed.
+      empty = File.tempname("noir-diff-empty-")
+      Dir.mkdir(empty)
+      begin
+        result = run_noir(["scan", empty, "--diff-path", FIXTURE, "--fail-on", "removed",
+                           "--no-color", "--no-log", "-f", "json"])
+        result.exit_code.should eq(3)
+        JSON.parse(result.stdout)["removed"].as_a.should_not be_empty
+      ensure
+        FileUtils.rm_rf(empty)
+      end
     end
 
     it "refuses --diff-ref together with --diff-path" do

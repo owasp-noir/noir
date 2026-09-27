@@ -637,6 +637,12 @@ module Noir::CLI::ScanCommand
         app.logger.info "Falling back to file-based analysis."
       elsif ai_provider_active?(app.options)
         app.logger.info "Falling back to AI-based analysis because --ai-provider was set."
+      elsif app_diff
+        # Nothing to analyze on this side is itself a diff result: a change
+        # that deletes every route leaves no framework to detect. Stopping
+        # here skipped the diff, so every removed endpoint went unreported
+        # and `--fail-on removed` passed the change that removed them all.
+        app.logger.info "Continuing so the diff can report what the old side had."
       elsif app.passive_results.size > 0
         app.logger.info "Noir found #{app.passive_results.size} passive results."
         # The detection walk still ran, so it can still have lost a subtree

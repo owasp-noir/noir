@@ -30,8 +30,33 @@ module Noir
             PathInfo.new(relocate_path(info.path, pairs), info.line)
           end
           endpoint.details = details
+          # `--include callee` and `--ai-context` carry file paths of their
+          # own, read out of the same scratch checkout.
+          endpoint.callees = endpoint.callees.map do |callee|
+            callee.path = callee.path.try { |path| relocate_path(path, pairs) }
+            callee
+          end
+          if context = endpoint.ai_context
+            endpoint.ai_context = relocate_context(context, pairs)
+          end
           endpoint
         end
+      end
+
+      private def relocate_context(context : AIContext, pairs : Array({String, String})) : AIContext
+        relocate = ->(entries : Array(AIContextEntry)) do
+          entries.map do |entry|
+            entry.path = entry.path.try { |path| relocate_path(path, pairs) }
+            entry
+          end
+        end
+        context.guards = relocate.call(context.guards)
+        context.callees = relocate.call(context.callees)
+        context.sources = relocate.call(context.sources)
+        context.sinks = relocate.call(context.sinks)
+        context.validators = relocate.call(context.validators)
+        context.signals = relocate.call(context.signals)
+        context
       end
 
       private def relocate_path(path : String, pairs : Array({String, String})) : String
@@ -44,6 +69,20 @@ module Noir
     end
 
     extend self
+
+    # Variables that tell git *which* repository and index to use. Git
+    # exports them to the hooks it runs, and a pre-push hook is a natural
+    # place for `noir scan --diff-ref origin/main --fail-on ...` — but there
+    # `GIT_DIR` is typically the relative `.git`, which stops resolving the
+    # moment `-C` moves into a subdirectory, and an inherited
+    # `GIT_INDEX_FILE` would point `read-tree` at the hook's own index. Each
+    # call names its repository with `-C`, so these are cleared for it.
+    # `GIT_CONFIG_PARAMETERS`/`GIT_CONFIG_COUNT` (the `-c` channel) are kept.
+    REPOSITORY_ENV = %w[
+      GIT_DIR GIT_WORK_TREE GIT_IMPLICIT_WORK_TREE GIT_COMMON_DIR GIT_PREFIX
+      GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+      GIT_SHALLOW_FILE GIT_GRAFT_FILE
+    ]
 
     def materialize(ref : String, base_paths : Array(String)) : Snapshot
       raise Error.new("--diff-ref needs a git revision, got an empty value") if ref.empty?
@@ -150,7 +189,10 @@ module Noir
     private def git(args : Array(String), env : Hash(String, String)? = nil, input : String? = nil)
       output = IO::Memory.new
       error = IO::Memory.new
-      status = Process.run("git", args: args, env: env, output: output, error: error,
+      full_env = {} of String => String?
+      REPOSITORY_ENV.each { |name| full_env[name] = nil }
+      env.try &.each { |name, value| full_env[name] = value }
+      status = Process.run("git", args: args, env: full_env, output: output, error: error,
         input: input ? IO::Memory.new(input) : Process::Redirect::Close)
       {ok: status.success?, output: output.to_s, error: error.to_s}
     rescue e : File::NotFoundError | IO::Error
