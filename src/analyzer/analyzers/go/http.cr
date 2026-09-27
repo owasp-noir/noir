@@ -7,6 +7,9 @@ module Analyzer::Go
 
     IMPORT_MARKER = "net/http"
 
+    # Registration calls that make a file worth the route parse.
+    ROUTE_METHODS = ["HandleFunc", "Handle"]
+
     def analyze
       # Source Analysis
       # Groups are irrelevant for net/http — this analyzer only ever wanted
@@ -33,23 +36,33 @@ module Analyzer::Go
       file_contents.each do |path, content|
         dir = File.dirname(path)
         next unless Noir::TreeSitterGoRouteExtractor.net_http_route_source?(content)
-        if framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
+        if framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ROUTE_METHODS)
           route_dirs << dir
         end
       end
       # Built per directory on first lookup, which only happens for a file
       # that produced routes — most of `route_dirs` never gets there.
       request_bodies = Noir::GoRequestParamExtractor.lazy_package_bodies_for_dirs(file_contents, route_dirs)
+      # Route parses of every candidate file, on the worker threads; the pass
+      # below consumes them (see `prefetch_route_sources`).
+      prefetched = prefetch_route_sources(file_contents, framework_dirs, IMPORT_MARKER, ROUTE_METHODS) do |path, content|
+        dir = File.dirname(path)
+        Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(
+          content,
+          external_functions: ts_function_bodies_for_directory(package_function_bodies, dir),
+          external_methods: ts_controller_method_bodies_for_directory(package_method_bodies, dir)
+        )
+      end
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
-        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["HandleFunc", "Handle"])
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ROUTE_METHODS)
 
         external_fns = ts_function_bodies_for_directory(package_function_bodies, dir)
         external_methods = ts_controller_method_bodies_for_directory(package_method_bodies, dir)
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(
+        ts_routes = prefetched[path]? || Noir::TreeSitterGoRouteExtractor.extract_net_http_routes(
           content,
           external_functions: external_fns,
           external_methods: external_methods

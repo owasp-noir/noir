@@ -1,5 +1,6 @@
 require "wait_group"
 require "./text_file"
+require "./worker_threads"
 require "../passive_scan/detect"
 
 # Reads files on a small pool of threads.
@@ -26,29 +27,10 @@ class Noir::ReadPool
     error : Exception? = nil,
     passive_results : Array(PassiveScanResult) = [] of PassiveScanResult
 
-  # Past four readers the gain flattens out (measured on a 26k-file tree:
-  # 1.29s sequential, 0.46s with 4, 0.40–0.44s with 8), and the pool only
-  # has to stay ahead of the single fiber consuming its results.
-  MAX_WORKERS = 4
-
-  # Execution contexts are the default runtime from Crystal 1.21 on; 1.19
-  # and 1.20 (which `shard.yml` still admits) only have them behind
-  # `-Dexecution_context`, and `-Dwithout_mt` turns them off. Without
-  # them the workers run as ordinary fibers on the calling thread: the
-  # reads are sequential again, but every other behaviour is the same.
-  {% if Fiber.has_constant?(:ExecutionContext) %}
-    @@context : Fiber::ExecutionContext::Parallel?
-
-    # One context for the process, created on first use. Contexts are not
-    # torn down, so a per-scan context would leak threads across the many
-    # scans a spec run performs.
-    def self.context : Fiber::ExecutionContext::Parallel
-      @@context ||= Fiber::ExecutionContext::Parallel.new("noir-read", worker_count)
-    end
-  {% end %}
-
+  # The threads are `Noir::WorkerThreads`', shared with the other pure work
+  # a scan hands off, so the process never runs more than one small pool.
   def self.worker_count : Int32
-    System.cpu_count.to_i.clamp(1, MAX_WORKERS)
+    Noir::WorkerThreads.count
   end
 
   @jobs : Channel(Tuple(String, Channel(Outcome)))
@@ -66,11 +48,7 @@ class Noir::ReadPool
   end
 
   private def spawn_worker : Nil
-    {% if Fiber.has_constant?(:ExecutionContext) %}
-      ReadPool.context.spawn(name: "noir-read") { work }
-    {% else %}
-      spawn(name: "noir-read") { work }
-    {% end %}
+    Noir::WorkerThreads.spawn("noir-read") { work }
   end
 
   private def work : Nil

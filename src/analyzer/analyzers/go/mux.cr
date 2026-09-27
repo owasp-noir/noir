@@ -13,6 +13,17 @@ module Analyzer::Go
     # internal routes — reported zero endpoints.
     IMPORT_MARKER = ["github.com/gorilla/mux", "github.com/minio/mux"]
 
+    # Registration calls that make a file worth the route parse.
+    ROUTE_METHODS = ["Handle", "HandleFunc", "Path", "PathPrefix", "Methods", "Queries"]
+
+    private def extract_mux_routes(content : String, cross_file_groups : Hash(String, String)) : Array(Noir::TreeSitterGoRouteExtractor::Route)
+      Noir::TreeSitterGoRouteExtractor.extract_routes(
+        content, cross_file_groups,
+        group_method: "Subrouter",
+        handlefunc_methods: true,
+      )
+    end
+
     def analyze
       # Source Analysis
       public_dirs = [] of (Hash(String, String))
@@ -31,21 +42,24 @@ module Analyzer::Go
       # their method bodies so callees/ai-context aren't empty.
       package_method_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
+      # Route and static-file parses of every candidate file, on the worker
+      # threads; the pass below consumes them (see `prefetch_route_sources`).
+      prefetched = prefetch_route_sources(file_contents, framework_dirs, IMPORT_MARKER, ROUTE_METHODS) do |path, content|
+        {extract_mux_routes(content, ts_groups_for_directory(package_groups, File.dirname(path))),
+         Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
+      end
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
         content = file_contents[path]? || read_file_content(path)
         dir = File.dirname(path)
-        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ["Handle", "HandleFunc", "Path", "PathPrefix", "Methods", "Queries"])
+        next unless framework_route_source_candidate?(content, dir, framework_dirs, IMPORT_MARKER, ROUTE_METHODS)
         lines = content.lines
         last_endpoint = Endpoint.new("", "")
 
-        cross_file_groups = ts_groups_for_directory(package_groups, dir)
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(
-          content, cross_file_groups,
-          group_method: "Subrouter",
-          handlefunc_methods: true,
-        )
+        ts_routes, statics = prefetched[path]? ||
+                             {extract_mux_routes(content, ts_groups_for_directory(package_groups, dir)),
+                              Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content)}
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
@@ -60,7 +74,7 @@ module Analyzer::Go
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
 
         # Mux static-file: `r.PathPrefix("/x/").Handler(... http.Dir("./x/") ...)`
-        Noir::TreeSitterGoRouteExtractor.extract_mux_statics(content).each do |sp|
+        statics.each do |sp|
           public_dirs << static_dir_entry(path, sp.url_prefix, sp.disk_path)
         end
 
