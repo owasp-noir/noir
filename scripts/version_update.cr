@@ -106,6 +106,36 @@ rescue ex
   false
 end
 
+# Update binary example version in an install doc (noir-vX.Y.Z-...)
+def update_install_doc_version(path : String, new_version : String) : Bool
+  content = File.read(path)
+  File.write(path, content.gsub(/noir-v[\d.]+-/, "noir-v#{new_version}-"))
+  true
+rescue ex
+  STDERR.puts "  Error updating #{path}: #{ex.message}"
+  false
+end
+
+# Update OWASP Noir driver version in a SARIF sample (not the SARIF schema version)
+def update_sarif_doc_version(path : String, new_version : String) : Bool
+  content = File.read(path)
+  File.write(path, content.gsub(/("name":\s*"OWASP Noir",\s*"version":\s*")[\d.]+(")/, "\\1#{new_version}\\2"))
+  true
+rescue ex
+  STDERR.puts "  Error updating #{path}: #{ex.message}"
+  false
+end
+
+# Update the yellow banner version in a terminal SVG (Running / landing)
+def update_terminal_svg_version(path : String, new_version : String) : Bool
+  content = File.read(path)
+  File.write(path, content.gsub(/(fill="#f5f543"[^>]*>)v[\d.]+(<)/, "\\1v#{new_version}\\2"))
+  true
+rescue ex
+  STDERR.puts "  Error updating #{path}: #{ex.message}"
+  false
+end
+
 # Show help
 if ARGV.includes?("-h") || ARGV.includes?("--help")
   puts "Usage: crystal run scripts/version_update.cr [-- NEW_VERSION]"
@@ -183,6 +213,12 @@ updates = [
   {"how_to_release/index.md", RELEASE_DOC, get_release_doc_version(RELEASE_DOC), -> { update_release_doc_version(RELEASE_DOC, new_version) }},
   {"how_to_release/index.ko.md", RELEASE_DOC_KO, get_release_doc_version(RELEASE_DOC_KO), -> { update_release_doc_version(RELEASE_DOC_KO, new_version) }},
   {"aur/PKGBUILD", PKGBUILD_FILE, get_pkgbuild_version, -> { update_pkgbuild_version(new_version) }},
+  {"installation/index.md", INSTALL_DOC, get_install_doc_version(INSTALL_DOC), -> { update_install_doc_version(INSTALL_DOC, new_version) }},
+  {"installation/index.ko.md", INSTALL_DOC_KO, get_install_doc_version(INSTALL_DOC_KO), -> { update_install_doc_version(INSTALL_DOC_KO, new_version) }},
+  {"sarif/index.md", SARIF_DOC, get_sarif_doc_version(SARIF_DOC), -> { update_sarif_doc_version(SARIF_DOC, new_version) }},
+  {"sarif/index.ko.md", SARIF_DOC_KO, get_sarif_doc_version(SARIF_DOC_KO), -> { update_sarif_doc_version(SARIF_DOC_KO, new_version) }},
+  {"running/scan.svg", RUNNING_SVG, get_terminal_svg_version(RUNNING_SVG), -> { update_terminal_svg_version(RUNNING_SVG, new_version) }},
+  {"landing/scan-terminal.svg", LANDING_SVG, get_terminal_svg_version(LANDING_SVG), -> { update_terminal_svg_version(LANDING_SVG, new_version) }},
 ]
 
 success = 0
