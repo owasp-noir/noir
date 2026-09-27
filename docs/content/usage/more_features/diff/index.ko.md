@@ -37,7 +37,7 @@ Noir는 스캔 경로 아래에서 REF가 추적하던 파일을 임시 디렉�
 
 ### 일반 텍스트 출력
 
-기본 출력에서는 변경사항을 **Added**(새 엔드포인트), **Removed**(삭제된 엔드포인트), **Changed**(두 버전 모두에 존재하지만 파라미터 등 세부 정보가 달라진 엔드포인트) 섹션으로 묶어 보여줍니다. 엔드포인트는 URL과 메서드 조합으로 매칭되므로, 메서드가 바뀐 경우에는 Changed가 아니라 Added 하나와 Removed 하나로 나타납니다. 각 섹션은 표준 일반 텍스트 형식으로 렌더링됩니다.
+기본 출력에서는 변경사항을 **Added**(새 엔드포인트), **Removed**(삭제된 엔드포인트), **Changed**(두 버전 모두에 존재하지만 파라미터나 태그가 달라진 엔드포인트) 섹션으로 묶어 보여줍니다. 엔드포인트는 URL과 메서드 조합으로 매칭되므로, 메서드가 바뀐 경우에는 Changed가 아니라 Added 하나와 Removed 하나로 나타납니다. 각 섹션은 표준 일반 텍스트 형식으로 렌더링되고, Changed 엔드포인트 아래에는 무엇이 바뀌었는지가 표시됩니다.
 
 ```
 ───────────── ✚ Added (2) ─────────────
@@ -51,7 +51,21 @@ POST /update
 ──────────── ✖ Removed (1) ─────────────
 
 GET /secret.html
+
+──────────── ≠ Changed (2) ─────────────
+
+GET /public?q=
+  + query: q
+
+GET /profile
+  ! auth tag removed
 ```
+
+### 무엇을 변경으로 보는가
+
+- **파라미터**는 이름과 전달 위치(query, header, cookie, path, form, JSON 본문)로 비교합니다. 예시 값이나 기본값만 바뀐 파라미터는 클라이언트가 보내는 요청이 달라지지 않으므로 변경으로 보지 않습니다.
+- **태그**는 이름으로 비교합니다. 태그는 태거가 붙이므로 `-T`(또는 `--use-taggers`)와 함께 실행해야 보입니다.
+- **`auth` 제거**: 이전에는 `auth` 태그가 있었는데 지금은 없는 엔드포인트는 맨 위에 `! auth tag removed`로 표시됩니다. 로그인이 필요하던 라우트가 더 이상 요구하지 않는다는 뜻이라 리뷰에서 가장 먼저 봐야 할 변경입니다. auth 태거는 `-T`나 `--use-taggers`를 줄 때만 실행되므로, 이 줄을 보려면 둘 중 하나를 켜세요.
 
 ### JSON 및 YAML 출력
 
@@ -61,8 +75,21 @@ GET /secret.html
 {
   "added": [...],
   "removed": [...],
-  "changed": [...]
+  "changed": [...],
+  "changes": [
+    {
+      "method": "GET",
+      "url": "/profile",
+      "params_added": [],
+      "params_removed": [{ "name": "token", "param_type": "header" }],
+      "tags_added": [],
+      "tags_removed": ["auth"],
+      "auth_removed": true
+    }
+  ]
 }
 ```
+
+`changed`에는 현재 시점의 엔드포인트가 들어갑니다. `changes`에는 `changed`의 각 항목과 같은 순서로, 무엇이 달라졌는지를 담은 레코드가 하나씩 들어갑니다.
 
 CI/CD에서 활용하면 `added`와 `changed` 엔드포인트만 DAST 스캐너에 넘겨서, 변경된 공격 표면에 집중할 수 있습니다.

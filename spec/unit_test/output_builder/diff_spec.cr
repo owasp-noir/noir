@@ -82,6 +82,65 @@ describe "OutputBuilderDiff" do
       result[:removed].size.should eq(0)
       result[:changed].size.should eq(1)
       result[:changed][0].url.should eq("/test")
+      result[:changes].size.should eq(1)
+      result[:changes][0].params_added.map { |p| {p.name, p.param_type} }.should eq([{"id", "query"}])
+      result[:changes][0].params_removed.should be_empty
+    end
+
+    it "does not report a route whose params differ only in value" do
+      builder = OutputBuilderDiff.new(create_test_options)
+
+      new_endpoint = Endpoint.new("/test", "GET")
+      new_endpoint.push_param(Param.new("id", "2", "query"))
+      old_endpoint = Endpoint.new("/test", "GET")
+      old_endpoint.push_param(Param.new("id", "1", "query"))
+
+      result = builder.diff([new_endpoint], [old_endpoint])
+
+      result[:changed].should be_empty
+      result[:changes].should be_empty
+    end
+
+    it "matches params by name and request type, so body and json are one param" do
+      builder = OutputBuilderDiff.new(create_test_options)
+
+      new_endpoint = Endpoint.new("/test", "POST")
+      new_endpoint.push_param(Param.new("name", "", "json"))
+      new_endpoint.push_param(Param.new("id", "", "header"))
+      old_endpoint = Endpoint.new("/test", "POST")
+      old_endpoint.push_param(Param.new("name", "", "body"))
+      old_endpoint.push_param(Param.new("id", "", "query"))
+
+      change = builder.diff([new_endpoint], [old_endpoint])[:changes].first
+
+      change.params_added.map { |p| {p.name, p.param_type} }.should eq([{"id", "header"}])
+      change.params_removed.map { |p| {p.name, p.param_type} }.should eq([{"id", "query"}])
+    end
+
+    it "flags a route that lost its auth tag" do
+      builder = OutputBuilderDiff.new(create_test_options)
+
+      new_endpoint = Endpoint.new("/admin", "GET")
+      new_endpoint.add_tag(Tag.new("cors", "", "cors"))
+      old_endpoint = Endpoint.new("/admin", "GET")
+      old_endpoint.add_tag(Tag.new("auth", "Protected by login_required", "flask_auth"))
+
+      change = builder.diff([new_endpoint], [old_endpoint])[:changes].first
+
+      change.auth_removed?.should be_true
+      change.tags_removed.should eq(["auth"])
+      change.tags_added.should eq(["cors"])
+    end
+
+    it "ignores a tag that moved between taggers under the same name" do
+      builder = OutputBuilderDiff.new(create_test_options)
+
+      new_endpoint = Endpoint.new("/admin", "GET")
+      new_endpoint.add_tag(Tag.new("auth", "", "python_misc_auth"))
+      old_endpoint = Endpoint.new("/admin", "GET")
+      old_endpoint.add_tag(Tag.new("auth", "", "flask_auth"))
+
+      builder.diff([new_endpoint], [old_endpoint])[:changed].should be_empty
     end
 
     it "handles empty endpoint arrays" do
@@ -227,6 +286,66 @@ describe "OutputBuilderDiff" do
 
       output[0].should eq('[')
       output.should_not start_with("\n")
+    end
+  end
+
+  describe "change details in the rendered report" do
+    it "lists what changed under a changed endpoint in the text report" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      old_endpoint = Endpoint.new("/admin", "GET")
+      old_endpoint.push_param(Param.new("token", "", "header"))
+      old_endpoint.add_tag(Tag.new("auth", "", "flask_auth"))
+      diff_app = NoirRunner.new(create_test_options)
+      diff_app.endpoints << old_endpoint
+
+      new_endpoint = Endpoint.new("/admin", "GET")
+      new_endpoint.push_param(Param.new("q", "", "query"))
+      builder.print([new_endpoint], diff_app)
+      output = builder.io.to_s
+
+      output.should contain("Changed (1)")
+      output.should contain("! auth tag removed")
+      output.should contain("+ query: q")
+      output.should contain("- header: token")
+      # The auth row already says it; a second `- tag: auth` is noise.
+      output.should_not contain("- tag: auth")
+    end
+
+    it "emits the change records next to the endpoints in json" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      diff_app = NoirRunner.new(create_test_options)
+      diff_app.endpoints << Endpoint.new("/a", "GET")
+      new_endpoint = Endpoint.new("/a", "GET")
+      new_endpoint.push_param(Param.new("id", "", "path"))
+
+      builder.print_json([new_endpoint], diff_app)
+      json = JSON.parse(builder.io.to_s)
+
+      json["changed"].as_a.size.should eq(1)
+      change = json["changes"].as_a.first
+      change["url"].should eq("/a")
+      change["params_added"].as_a.first["name"].should eq("id")
+      change["auth_removed"].as_bool.should be_false
+    end
+
+    it "names change records as change tables in toml" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+
+      diff_app = NoirRunner.new(create_test_options)
+      diff_app.endpoints << Endpoint.new("/a", "GET")
+      new_endpoint = Endpoint.new("/a", "GET")
+      new_endpoint.push_param(Param.new("id", "", "query"))
+
+      builder.print_toml([new_endpoint], diff_app)
+      output = builder.io.to_s
+
+      output.should contain("[[changed.endpoint]]")
+      output.should contain("[[changes.change]]")
     end
   end
 end

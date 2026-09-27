@@ -37,7 +37,7 @@ A few things to keep in mind:
 
 ### Plain Output
 
-The default output groups changes into **Added** (new endpoints), **Removed** (deleted ones), and **Changed** (endpoints present in both versions whose parameters or other details were modified). Endpoints are matched by URL and method, so a method change shows up as one Added plus one Removed. Each section renders endpoints in the standard plain format:
+The default output groups changes into **Added** (new endpoints), **Removed** (deleted ones), and **Changed** (endpoints present in both versions whose parameters or tags differ). Endpoints are matched by URL and method, so a method change shows up as one Added plus one Removed. Each section renders endpoints in the standard plain format, and every Changed endpoint is followed by what changed:
 
 ```
 ───────────── ✚ Added (2) ─────────────
@@ -51,7 +51,21 @@ POST /update
 ──────────── ✖ Removed (1) ─────────────
 
 GET /secret.html
+
+──────────── ≠ Changed (2) ─────────────
+
+GET /public?q=
+  + query: q
+
+GET /profile
+  ! auth tag removed
 ```
+
+### What counts as changed
+
+- **Params** are compared by name and where they are sent (query, header, cookie, path, form, JSON body). A param that only changed its example or default value is not a change, since a client sends nothing different.
+- **Tags** are compared by name. Tags come from taggers, so run the diff with `-T` (or `--use-taggers`) to see them.
+- **`auth` removed**: when an endpoint had the `auth` tag before and doesn't now, the report puts `! auth tag removed` first. This is the change to look at hardest in a review: a route that used to require login and no longer does. The auth taggers only run with `-T` or `--use-taggers`, so enable one of them to get this line.
 
 ### JSON and YAML Output
 
@@ -61,8 +75,21 @@ Use `-f json` or `-f yaml` for structured output. Results are grouped into three
 {
   "added": [...],
   "removed": [...],
-  "changed": [...]
+  "changed": [...],
+  "changes": [
+    {
+      "method": "GET",
+      "url": "/profile",
+      "params_added": [],
+      "params_removed": [{ "name": "token", "param_type": "header" }],
+      "tags_added": [],
+      "tags_removed": ["auth"],
+      "auth_removed": true
+    }
+  ]
 }
 ```
+
+`changed` holds the endpoints as they are now. `changes` has one record per entry in `changed`, in the same order, saying what differs.
 
 Especially useful in CI/CD: feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.
