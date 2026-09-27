@@ -36,8 +36,25 @@ module Noir::WorkerThreads
     def self.spawn(name : String, &block : ->) : Nil
       context.spawn(name: name, &block)
     end
+
+    @@walk_context : Fiber::ExecutionContext::Parallel?
+
+    # A second context for the detect walk's directory listings. They are
+    # what the walk waits on next, so they must not queue behind the file
+    # reads the walk itself keeps feeding into `context`.
+    def self.walk_context : Fiber::ExecutionContext::Parallel
+      @@walk_context ||= Fiber::ExecutionContext::Parallel.new("noir-walk", count)
+    end
+
+    def self.spawn_walker(name : String, &block : ->) : Nil
+      walk_context.spawn(name: name, &block)
+    end
   {% else %}
     def self.spawn(name : String, &block : ->) : Nil
+      ::spawn(name: name, &block)
+    end
+
+    def self.spawn_walker(name : String, &block : ->) : Nil
       ::spawn(name: name, &block)
     end
   {% end %}

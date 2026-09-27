@@ -8,6 +8,7 @@ require "../utils/exclude_path"
 require "../utils/media_filter"
 require "../utils/text_file"
 require "../utils/read_pool"
+require "../utils/dir_listing"
 require "yaml"
 require "../models/locator_keys"
 require "../models/skipped_files"
@@ -459,6 +460,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     # list analyzers iterate, and some analyzers accumulate first-wins
     # state across files in that order.
     read_pool = Noir::ReadPool.new(passive_rules: active_passive_scans)
+    dir_pool = Noir::DirListing::Pool.new
     # Counted by the sequencer, folded into `skipped_files` once it is done.
     binary_files = 0
     pending = Channel(Noir::Detection::PendingFile).new(Noir::Detection::READ_WINDOW)
@@ -567,6 +569,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       pending.close
       sequencer.wait
       read_pool.close
+      dir_pool.close
     end
 
     base_paths.each do |base_path|
@@ -577,23 +580,33 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
       # file under ignored subtrees before any filter runs; on a Node
       # monorepo with a 100k-entry node_modules this was the dominant
       # cost of the detect phase.
+      #
+      # Each directory is listed (entries, their `lstat`, the `shard.yml`
+      # check) on `Noir::DirListing::Pool` from the moment it is pushed, and
+      # consumed here when it is popped; see `Noir::DirListing`.
       stack = [base_path]
+      pending_listings = {base_path => dir_pool.submit(base_path)}
       until stack.empty?
         dir = stack.pop
+        listing = pending_listings.delete(dir).try(&.receive) || Noir::DirListing.list(dir)
+        if (listing_error = listing.error) && !listing_error.is_a?(File::Error)
+          raise listing_error
+        end
         # Crystal's vendor convention is `lib/` next to `shard.yml`
         # (same shape as Node's node_modules / Ruby's vendor/bundle).
         # The directory name `lib` is too generic to put in the global
         # ignored set — Rails / Python / many other ecosystems use it
         # for source. Resolve the ambiguity contextually: skip `lib/`
         # only when a sibling `shard.yml` is present.
-        dir_has_shard = File.exists?(File.join(dir, "shard.yml"))
+        dir_has_shard = listing.has_shard
         if android_source_scope_active
           Noir::Detection.add_android_source_prefixes_from_dir(dir, android_source_prefixes)
         end
         begin
-          Dir.each_child(dir) do |entry|
+          listing.entries.each do |listed|
+            entry = listed.name
             full_path = File.join(dir, entry)
-            info = File.info?(full_path, follow_symlinks: false)
+            info = listed.info
             if info.nil?
               # `File.info?` turns every `stat(2)` failure into `nil`, and
               # the walk used to `next` on it without a word. The entry is
@@ -608,12 +621,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
               # and exit 0 under `--strict` — the same output as a clean
               # scan of an empty directory. Re-stat once (only on this
               # path, which is off the hot loop) to name the real errno.
-              reason = begin
-                File.info(full_path, follow_symlinks: false)
-                "stat returned no information"
-              rescue e : File::Error
-                e.message.presence || e.class.name
-              end
+              reason = listed.stat_error || "stat returned no information"
               unstattable_entries += 1
               logger.debug "Skipping #{full_path}: #{reason}"
               Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, reason,
@@ -629,6 +637,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
                 next
               end
               stack << full_path
+              pending_listings[full_path] = dir_pool.submit(full_path)
               next
             end
 
@@ -710,6 +719,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
 
             reply = read_pool.submit(full_path)
             pending.send(Noir::Detection::PendingFile.new(full_path, candidate_detector_indices, android_source_file, reply))
+          end
+          # A listing that failed part-way: the entries it did yield were
+          # handled above, and the failure lands in the rescue below, as it
+          # did when `Dir.each_child` raised here directly.
+          if listing_error
+            raise listing_error
           end
         rescue e : File::Error
           # `Dir.each_child` itself failed: the directory vanished between
