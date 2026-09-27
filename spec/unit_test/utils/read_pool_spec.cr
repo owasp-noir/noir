@@ -88,6 +88,9 @@ describe "detect_techs with parallel reads" do
       locator.all_files.select(&.ends_with?(".py")).should eq(expected)
       expected.each { |path| locator.content_for(path).should eq(File.read(path)) }
     ensure
+      # The locator is process-wide: leaving these files registered hands
+      # them to whichever example runs next in a randomized order.
+      CodeLocator.instance.clear_all
       FileUtils.rm_rf(dir)
     end
   end
