@@ -348,4 +348,78 @@ describe "OutputBuilderDiff" do
       output.should contain("[[changes.change]]")
     end
   end
+
+  describe "pull request formats" do
+    # new: GET /profile lost auth, POST /new added, GET /search gained `q`;
+    # old: DELETE /gone removed.
+    fixture = -> do
+      old_profile = Endpoint.new("/profile", "GET", Details.new(PathInfo.new("app.py", 14)))
+      old_profile.add_tag(Tag.new("auth", "", "flask_auth"))
+      old_endpoints = [old_profile, Endpoint.new("/search", "GET"), Endpoint.new("/gone", "DELETE")]
+
+      new_search = Endpoint.new("/search", "GET", Details.new(PathInfo.new("app.py", 20)))
+      new_search.push_param(Param.new("q", "", "query"))
+      new_added = Endpoint.new("/new|pipe", "POST", Details.new(PathInfo.new("app.py", 30)))
+      new_added.push_param(Param.new("x", "", "form"))
+      new_endpoints = [Endpoint.new("/profile", "GET", Details.new(PathInfo.new("app.py", 14))), new_search, new_added]
+
+      OutputBuilderDiff.new(create_test_options).diff(new_endpoints, old_endpoints)
+    end
+
+    it "counts each --fail-on category" do
+      counts = OutputBuilderDiff.gate_counts(fixture.call)
+      counts.should eq({"added" => 1, "removed" => 1, "changed" => 2, "auth-removed" => 1})
+    end
+
+    it "renders a markdown summary with the lost-auth routes first" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+      builder.print_markdown(fixture.call)
+      output = builder.io.to_s
+
+      output.should contain("| 1 | 1 | 2 | 1 |")
+      output.index!("Auth removed").should be < output.index!("### Added")
+      output.should contain("| `GET /profile` | app.py:14 |")
+      # A pipe in a route must not split the table row.
+      output.should contain("`POST /new\\|pipe`")
+      output.should contain("| `POST /new\\|pipe` | `x (form)` | app.py:30 |")
+      output.should contain("| `DELETE /gone` | - |")
+      output.should contain("added `q (query)`")
+    end
+
+    it "says so when nothing changed" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+      builder.print_markdown(builder.diff([Endpoint.new("/a", "GET")], [Endpoint.new("/a", "GET")]))
+
+      builder.io.to_s.should contain("No endpoint was added, removed or changed.")
+      builder.io.to_s.should_not contain("| Added |")
+    end
+
+    it "annotates only the new surface in sarif" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+      builder.print_sarif(fixture.call)
+      run = JSON.parse(builder.io.to_s)["runs"][0]
+
+      results = run["results"].as_a.map { |r| {r["ruleId"].as_s, r["level"].as_s} }
+      results.should eq([
+        {"diff-endpoint-added", "note"},
+        {"diff-auth-removed", "warning"},
+        {"diff-params-added", "note"},
+      ])
+      # DELETE /gone has no line left in the reviewed tree to point at.
+      run["results"].as_a.none? { |r| r["message"]["text"].as_s.includes?("/gone") }.should be_true
+      run["results"][1]["locations"][0]["physicalLocation"]["region"]["startLine"].should eq(14)
+    end
+
+    it "marks the sarif run unsuccessful when either scan lost an analyzer" do
+      builder = OutputBuilderDiff.new(create_test_options)
+      builder.io = IO::Memory.new
+      builder.analyzer_failures = [AnalyzerFailure.new("python_flask", "boom")]
+      builder.print_sarif(fixture.call)
+
+      JSON.parse(builder.io.to_s)["runs"][0]["invocations"][0]["executionSuccessful"].as_bool.should be_false
+    end
+  end
 end

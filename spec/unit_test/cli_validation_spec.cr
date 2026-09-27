@@ -416,4 +416,37 @@ describe Noir::CliValidation do
       end
     end
   end
+
+  describe "validate_fail_on!" do
+    it "accepts known categories when a diff is configured" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new("added, Auth-Removed")
+      options["diff_ref"] = YAML::Any.new("main")
+
+      Noir::CliValidation.validate_fail_on!(options)
+    end
+
+    it "rejects an unknown category and lists the valid ones" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new("added,new")
+      options["diff"] = YAML::Any.new("/tmp/old")
+
+      expect_raises(Noir::CliValidation::Error, /Unknown --fail-on value\(s\): new\. Valid: added, removed, changed, auth-removed/) do
+        Noir::CliValidation.validate_fail_on!(options)
+      end
+    end
+
+    it "rejects --fail-on without a diff, where it could never fire" do
+      options = create_test_options
+      options["fail_on"] = YAML::Any.new("added")
+
+      expect_raises(Noir::CliValidation::Error, /needs a diff/) do
+        Noir::CliValidation.validate_fail_on!(options)
+      end
+    end
+
+    it "does nothing when --fail-on is unset" do
+      Noir::CliValidation.validate_fail_on!(create_test_options)
+    end
+  end
 end

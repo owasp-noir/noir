@@ -64,6 +64,8 @@ jobs:
 | `export_es` | Index endpoints in Elasticsearch or OpenSearch (`--export-es`) | No | `` |
 | `export_webhook` | POST endpoint catalog as JSON to a webhook URL (`--export-webhook`) | No | `` |
 | `diff_path` | Old code version path for diff analysis (`--diff-path`) | No | `` |
+| `diff_ref` | Git revision to diff the checkout against, e.g. the pull request base; fetched if the checkout lacks it (`--diff-ref`) | No | `` |
+| `fail_on` | Fail the step (exit code `3`) when the diff has any of `added`, `removed`, `changed`, `auth-removed` (`--fail-on`) | No | `` |
 | `no_log` | Hide execution logs and show only results (`--no-log`) | No | `true` |
 
 **Notes:**
@@ -153,6 +155,42 @@ jobs:
           format: 'json'
           include_path: 'true'
 ~~~
+
+### Attack Surface Review on Pull Requests
+
+Diff the pull request against its base branch, post the result as a comment, and fail the check when a route loses its authentication:
+
+~~~yaml
+name: Attack Surface Review
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  noir-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Diff the attack surface
+        uses: owasp-noir/noir@main
+        with:
+          base_path: '.'
+          diff_ref: ${{ github.event.pull_request.base.sha }}
+          format: 'markdown-table'
+          output_file: 'noir-diff.md'
+          fail_on: 'auth-removed'
+
+      - name: Comment on the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file noir-diff.md
+~~~
+
+`actions/checkout` fetches a single commit by default. If `diff_ref` isn't in the checkout, the action fetches that revision before scanning. The step fails with exit code `3` when the diff matches `fail_on`, and the report file is still written, so the comment step above runs with `if: always()`. For inline annotations instead of a comment, use `format: 'sarif'` and upload the file with `github/codeql-action/upload-sarif`.
 
 ### Framework-Specific Scans
 

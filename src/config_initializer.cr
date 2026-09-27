@@ -376,6 +376,7 @@ class ConfigInitializer
       "use_taggers"                  => YAML::Any.new(""),
       "diff"                         => YAML::Any.new(""),
       "diff_ref"                     => YAML::Any.new(""),
+      "fail_on"                      => YAML::Any.new(""),
       "passive_scan"                 => YAML::Any.new(false),
       "passive_scan_path"            => YAML::Any.new([] of YAML::Any),
       "passive_scan_severity"        => YAML::Any.new("high"),
@@ -532,6 +533,10 @@ class ConfigInitializer
       # A git revision to diff against instead of a directory (--diff-ref)
       # e.g "main", "origin/main", "HEAD~1"
       diff_ref: "#{options["diff_ref"]}"
+
+      # Exit 3 when the diff has any of these (--fail-on)
+      # e.g "added,auth-removed" (added, removed, changed, auth-removed)
+      fail_on: "#{options["fail_on"]}"
 
       # The passive rules to use
       # e.g /path/to/rules

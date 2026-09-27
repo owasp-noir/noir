@@ -92,4 +92,31 @@ GET /profile
 
 `changed`에는 현재 시점의 엔드포인트가 들어갑니다. `changes`에는 `changed`의 각 항목과 같은 순서로, 무엇이 달라졌는지를 담은 레코드가 하나씩 들어갑니다.
 
+### Markdown 및 SARIF 출력
+
+`-f markdown-table`은 diff를 pull request 코멘트 형태로 보여줍니다. 개수 요약 표, 인증이 빠진 라우트, 그리고 추가/삭제/변경된 엔드포인트 표가 차례로 나옵니다.
+
+`-f sarif`는 코드 스캐닝용으로 새로 생긴 공격 표면을 보고합니다. 추가된 엔드포인트와 새 파라미터는 note, 인증이 빠진 라우트는 warning입니다. 삭제된 엔드포인트는 리뷰 대상 코드에 가리킬 줄이 없어서 제외합니다. 다른 포맷에는 그대로 나옵니다.
+
+TOML 출력도 지원합니다. 그 밖의 `-f`는 경고와 함께 텍스트 diff로 출력됩니다.
+
+## Diff 결과로 CI 실패시키기
+
+`--fail-on`을 주면 리포트를 쓴 뒤, diff에 지정한 종류가 하나라도 있을 때 종료 코드 `3`으로 끝납니다.
+
+```bash
+noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-table -o diff.md
+```
+
+| 종류 | 조건 |
+|---|---|
+| `added` | 이전에는 없던 엔드포인트가 생김 |
+| `removed` | 이전에 있던 엔드포인트가 사라짐 |
+| `changed` | 양쪽에 모두 있는 엔드포인트의 파라미터나 태그가 달라짐 |
+| `auth-removed` | `auth` 태그가 있던 엔드포인트에서 태그가 사라짐 |
+
+`auth-removed`는 auth 태거 결과에 의존하므로, `-T`나 `--use-taggers`를 주지 않았다면 모든 태거를 자동으로 켭니다. 실패 사유는 `--no-log`여도 stderr로 출력됩니다. 종료 코드 `1`은 여전히 사용법 오류, `2`는 `--strict`의 불완전 스캔이며 `2`가 `3`보다 우선합니다.
+
+pull request 워크플로 전체 예시는 [GitHub Action](../../github_action/)을 참고하세요.
+
 CI/CD에서 활용하면 `added`와 `changed` 엔드포인트만 DAST 스캐너에 넘겨서, 변경된 공격 표면에 집중할 수 있습니다.

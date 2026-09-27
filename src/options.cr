@@ -622,6 +622,9 @@ def run_options_parser
     parser.on "--diff-ref REF", "Git revision to diff against (e.g. main, HEAD~1)" do |v|
       noir_options["diff_ref"] = YAML::Any.new(v)
     end
+    parser.on "--fail-on LIST", "Exit 3 when the diff has: added, removed, changed, auth-removed (comma-separated; repeatable)" do |v|
+      append_to_csv_option(noir_options, "fail_on", v, reset_seen: csv_reset_seen)
+    end
 
     # Three flags act at different stages of the tech pipeline:
     #   --techs        — append to the analyzer set after detection

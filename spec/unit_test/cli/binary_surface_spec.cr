@@ -392,9 +392,9 @@ describe "noir CLI surface (built binary)" do
     # as the other "your flag was ignored" notices.
     it "warns on stderr even under --no-log" do
       result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
-                         "--no-color", "--no-log", "-f", "sarif"])
-      result.stderr.should contain("diff mode does not support -f sarif")
-      result.stdout.should_not contain("\"$schema\"")
+                         "--no-color", "--no-log", "-f", "oas3"])
+      result.stderr.should contain("diff mode does not support -f oas3")
+      result.stdout.should_not contain("\"openapi\"")
     end
 
     it "stays quiet for a format diff mode does implement" do
@@ -436,6 +436,28 @@ describe "noir CLI surface (built binary)" do
       ensure
         FileUtils.rm_rf(repo)
       end
+    end
+
+    it "exits 3 and says why when --fail-on matches" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", DIFF_FIXTURE,
+                         "--fail-on", "added", "--no-color", "--no-log", "-f", "json"])
+      result.exit_code.should eq(3)
+      result.stderr.should contain("--fail-on matched:")
+      # The report is written before the gate fires.
+      JSON.parse(result.stdout)["added"].as_a.should_not be_empty
+    end
+
+    it "exits 0 when --fail-on names only categories the diff does not have" do
+      result = run_noir(["scan", FIXTURE, "--diff-path", FIXTURE,
+                         "--fail-on", "added,removed", "--no-color", "--no-log", "-f", "json"])
+      result.exit_code.should eq(0)
+      result.stderr.should_not contain("--fail-on matched")
+    end
+
+    it "refuses --fail-on without a diff" do
+      result = run_noir(["scan", FIXTURE, "--fail-on", "added", "--no-color", "--no-log"])
+      result.exit_code.should eq(1)
+      result.stderr.should contain("--fail-on needs a diff")
     end
 
     it "refuses --diff-ref together with --diff-path" do

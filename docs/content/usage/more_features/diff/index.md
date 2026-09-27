@@ -92,4 +92,31 @@ Use `-f json` or `-f yaml` for structured output. Results are grouped into three
 
 `changed` holds the endpoints as they are now. `changes` has one record per entry in `changed`, in the same order, saying what differs.
 
+### Markdown and SARIF Output
+
+`-f markdown-table` renders the diff as a pull request comment: a count table, then the routes that lost auth, then one table each for added, removed and changed endpoints.
+
+`-f sarif` reports the new attack surface for code scanning: added endpoints and new params as notes, lost auth as a warning. Removed endpoints are left out because they have no line in the reviewed code to point at. The other formats still list them.
+
+TOML output is also supported. Any other `-f` falls back to the text diff with a warning.
+
+## Failing CI on a Diff
+
+`--fail-on` makes the scan exit with code `3` when the diff contains any of the listed categories, after the report is written:
+
+```bash
+noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-table -o diff.md
+```
+
+| Category | Fires when |
+|---|---|
+| `added` | an endpoint exists now that didn't at the old side |
+| `removed` | an endpoint existed at the old side and doesn't now |
+| `changed` | an endpoint on both sides has different params or tags |
+| `auth-removed` | an endpoint had the `auth` tag and doesn't now |
+
+`auth-removed` depends on the auth taggers, so it turns on all taggers unless you already passed `-T` or `--use-taggers`. The reason for the failure goes to stderr even with `--no-log`. Exit code `1` is still a usage error and `2` is `--strict`'s incomplete scan, which takes precedence over `3`.
+
+For a complete pull request workflow, see [GitHub Action](../../github_action/).
+
 Especially useful in CI/CD: feed only the `added` and `changed` endpoints into a DAST scanner to focus on modified attack surface.

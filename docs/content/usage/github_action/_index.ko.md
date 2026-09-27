@@ -62,6 +62,8 @@ jobs:
 | `export_es` | Elasticsearch 또는 OpenSearch에 엔드포인트 색인 (`--export-es`) | 아니오 | `` |
 | `export_webhook` | 엔드포인트 카탈로그를 웹훅 URL로 JSON POST (`--export-webhook`) | 아니오 | `` |
 | `diff_path` | 차이 분석을 위한 이전 코드 경로 (`--diff-path`) | 아니오 | `` |
+| `diff_ref` | 체크아웃과 비교할 git 리비전(예: pull request의 base). 체크아웃에 없으면 가져옴 (`--diff-ref`) | 아니오 | `` |
+| `fail_on` | diff에 `added`, `removed`, `changed`, `auth-removed` 중 하나라도 있으면 스텝 실패(종료 코드 `3`) (`--fail-on`) | 아니오 | `` |
 | `no_log` | 실행 로그를 숨기고 결과만 표시 (`--no-log`) | 아니오 | `true` |
 
 **참고:**
@@ -151,6 +153,42 @@ jobs:
           format: 'json'
           include_path: 'true'
 ~~~
+
+### Pull Request 공격 표면 리뷰
+
+Pull request를 base 브랜치와 비교해 결과를 코멘트로 남기고, 인증이 빠진 라우트가 생기면 체크를 실패시킵니다.
+
+~~~yaml
+name: Attack Surface Review
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  noir-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Diff the attack surface
+        uses: owasp-noir/noir@main
+        with:
+          base_path: '.'
+          diff_ref: ${{ github.event.pull_request.base.sha }}
+          format: 'markdown-table'
+          output_file: 'noir-diff.md'
+          fail_on: 'auth-removed'
+
+      - name: Comment on the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment "${{ github.event.pull_request.number }}" --body-file noir-diff.md
+~~~
+
+`actions/checkout`은 기본으로 커밋 하나만 가져옵니다. `diff_ref`가 체크아웃에 없으면 Action이 스캔 전에 그 리비전을 가져옵니다. diff가 `fail_on`에 걸리면 스텝은 종료 코드 `3`으로 실패하지만 리포트 파일은 그대로 쓰이므로, 위 코멘트 스텝은 `if: always()`로 실행됩니다. 코멘트 대신 코드 라인에 주석을 달고 싶다면 `format: 'sarif'`로 출력하고 `github/codeql-action/upload-sarif`로 업로드하세요.
 
 ### 프레임워크별 스캔
 
