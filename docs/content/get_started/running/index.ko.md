@@ -169,8 +169,8 @@ noir scan . --ai-context guards,sinks
 | `--ai-provider`        | AI 제공업체 접두사 또는 전체 URL ([AI 파워](@/get_started/ai_power/index.ko.md) 참고) |
 | `--ai-model NAME`     | AI 모델 이름 |
 | `--ai-key KEY`        | AI API 키 (`NOIR_AI_KEY` 환경 변수로도 가능) |
-| `--diff-path <path>`  | diff 출력용 이전 코드 경로 |
-| `--diff-ref <ref>`    | 작업 트리와 비교할 git 리비전 (예: `main`, `HEAD~1`) |
+| `--diff-path <path>`  | [Diff 모드](@/usage/more_features/diff/index.ko.md)용 이전 코드 경로 |
+| `--diff-ref <ref>`    | 비교할 git 리비전 (예: `main`, `HEAD~1`; [Diff 모드](@/usage/more_features/diff/index.ko.md) 참고) |
 | `--fail-on <list>`    | diff에 `added`, `removed`, `changed`, `auth-removed` 중 하나라도 있으면 종료 코드 `3` |
 | `--passive-scan-severity LVL` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low` 중 하나; 기본 `high`) |
 | `-d, --debug`         | 디버그 메시지 활성화 |
@@ -193,5 +193,6 @@ noir scan . --ai-context guards,sinks
 - **[CLI 명령어](@/usage/cli_commands/_index.ko.md)**: v1 서브커맨드(scan, list, cache, config, rules 등) 전체 레퍼런스
 - **[설정](@/usage/configurations/configuration_file/index.ko.md)**: 매번 플래그를 반복하지 않도록 기본 옵션 설정
 - **[출력 형식](@/usage/output_formats/_index.ko.md)**: 모든 출력 형식 자세히 알아보기
+- **[Diff 모드](@/usage/more_features/diff/index.ko.md)**: 경로나 git 리비전과 공격 표면을 비교하고 `--fail-on`으로 CI를 게이트
 - **[패시브 스캔](@/usage/passive_scan/_index.ko.md)**: 하드코딩된 비밀키, 잘못된 설정 등 보안 이슈 스캔
 - **[AI 기반 분석](@/get_started/ai_power/index.ko.md)**: AI로 미지원 프레임워크의 엔드포인트 탐지

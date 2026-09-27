@@ -42,7 +42,7 @@ SARIF 파일은 `runs` 배열로 구성됩니다. 각 run에는 도구 정보(`d
       "tool": {
         "driver": {
           "name": "OWASP Noir",
-          "version": "1.3.0",
+          "version": "1.4.0",
           "informationUri": "https://github.com/owasp-noir/noir",
           "rules": [
             {

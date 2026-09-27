@@ -106,7 +106,7 @@ nix run github:owasp-noir/noir -- -h
 
 설치 및 업데이트:
 
-1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.3.0-linux-x86_64`, macOS는 `noir-v1.3.0-osx-arm64.tar.gz`).
+1. 플랫폼에 맞는 바이너리를 다운로드합니다(예: Linux는 `noir-v1.4.0-linux-x86_64`, macOS는 `noir-v1.4.0-osx-arm64.tar.gz`).
 2. **Linux**: 실행 권한을 부여한 뒤 `PATH`로 옮깁니다.
 
     ```bash
