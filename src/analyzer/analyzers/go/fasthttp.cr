@@ -36,10 +36,10 @@ module Analyzer::Go
             # skip
           end
         end
-        package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents)
+        package_function_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
         # Resolve method-value handlers (`h.Index`) to their bodies too,
         # so callees aren't empty when handlers hang off a struct.
-        package_method_bodies = Noir::GoCalleeExtractor.package_method_bodies_if(callees_needed?, file_contents)
+        package_method_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
 
         base_paths.each do |current_base_path|
           go_files.each do |path|

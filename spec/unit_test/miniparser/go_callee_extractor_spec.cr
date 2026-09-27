@@ -580,4 +580,31 @@ describe Noir::GoCalleeExtractor do
       callees[second_row].map(&.[0]).should contain("pprof.Handler")
     end
   end
+
+  describe "LazyPackageBodies" do
+    it "matches the eager callee tables for every directory" do
+      contents = {
+        "/svc/h.go" => "package svc\n\nfunc Handle() { helper() }\nfunc (c *Ctl) Index() {}\n",
+        "/svc/i.go" => "package svc\n\nfunc Handle() {}\nfunc (d *Dup) Index() {}\n",
+        "/svc/t.go" => "package svc\n\nfunc\tTabbed() {}\n",
+        "/lib/l.go" => "package lib\n\nfunc Lib() {}\n",
+      }
+      functions = Noir::GoCalleeExtractor.package_function_bodies_if(true, contents)
+      methods = Noir::GoCalleeExtractor.package_method_bodies_if(true, contents)
+      lazy = Noir::GoCalleeExtractor.lazy_package_bodies_if(true, contents)
+
+      ["/svc", "/lib", "/missing"].each do |dir|
+        Noir::GoCalleeExtractor.function_bodies_for_directory(lazy, dir)
+          .should eq(Noir::GoCalleeExtractor.function_bodies_for_directory(functions, dir))
+        Noir::GoCalleeExtractor.method_bodies_for_directory(lazy, dir)
+          .should eq(Noir::GoCalleeExtractor.method_bodies_for_directory(methods, dir))
+      end
+    end
+
+    it "is empty when callees are not needed" do
+      lazy = Noir::GoCalleeExtractor.lazy_package_bodies_if(false, {"/svc/h.go" => "package svc\n\nfunc Handle() {}\n"})
+      lazy.functions_for("/svc").should be_empty
+      lazy.methods_for("/svc").should be_empty
+    end
+  end
 end

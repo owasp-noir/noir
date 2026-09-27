@@ -19,8 +19,8 @@ module Analyzer::Go
       # extension index, same `_test.go` filter, same reads) with no
       # parses at all.
       file_contents = read_package_file_contents
-      package_function_bodies = collect_package_function_bodies(file_contents)
-      package_method_bodies = collect_package_controller_method_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
+      package_method_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       # `route_dirs` exists only to bound the two request-param pre-passes
       # below, and those maps are consulted exclusively from
@@ -37,8 +37,9 @@ module Analyzer::Go
           route_dirs << dir
         end
       end
-      request_function_bodies = Noir::GoRequestParamExtractor.package_function_bodies_for_dirs(file_contents, route_dirs)
-      request_method_bodies = Noir::GoRequestParamExtractor.package_method_bodies_for_dirs(file_contents, route_dirs)
+      # Built per directory on first lookup, which only happens for a file
+      # that produced routes — most of `route_dirs` never gets there.
+      request_bodies = Noir::GoRequestParamExtractor.lazy_package_bodies_for_dirs(file_contents, route_dirs)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -78,8 +79,8 @@ module Analyzer::Go
           route_methods_by_row[row] = routes.first.verb
         end
         callees_by_route = Noir::GoCalleeExtractor.callees_for_routes_if(callees_needed?, content, path, route_rows, external_fns, external_methods)
-        request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_function_bodies, dir)
-        request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_method_bodies, dir)
+        request_fns = Noir::GoRequestParamExtractor.function_bodies_for_directory(request_bodies, dir)
+        request_methods = Noir::GoRequestParamExtractor.method_bodies_for_directory(request_bodies, dir)
         params_by_route = Noir::GoRequestParamExtractor.params_for_routes(content, route_rows, route_methods_by_row, request_fns, request_methods)
 
         lines.each_with_index do |line, index|

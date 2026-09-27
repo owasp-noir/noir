@@ -22,7 +22,7 @@ module Analyzer::Go
       # (its closure-scoped walker handles groups directly), so we
       # build the file_contents hash via a dedicated helper.
       file_contents = read_package_file_contents
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)

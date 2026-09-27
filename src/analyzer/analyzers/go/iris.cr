@@ -19,7 +19,7 @@ module Analyzer::Go
       # engine's fixpoint group collection and the per-file extractor.
       package_groups, file_contents = collect_package_groups_ts("Party")
       # Pre-pass for cross-file identifier-handler resolution (see Gin).
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)

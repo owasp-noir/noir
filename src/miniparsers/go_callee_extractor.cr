@@ -60,6 +60,86 @@ module Noir::GoCalleeExtractor
     "bool", "error",
   }
 
+  # Per-directory function/method tables, built for a directory only when
+  # someone asks for it.
+  #
+  # The eager builders below (`package_function_bodies`,
+  # `package_method_bodies_if`, `GoEngine#collect_package_*`) parse every
+  # `.go` file of the scan, but most callers only ever look up the
+  # directories that hold a route file — Go's name resolution is scoped to
+  # one package, so nothing else is consulted. On minio that was a parse of
+  # every file in the repo to answer lookups for a handful of router
+  # packages.
+  #
+  # A directory's table is exactly what the eager builder would have stored
+  # for it: the same files, in the same order (grouped from `file_contents`
+  # insertion order), behind the same per-file substring gate, merged the
+  # same way (`||=` for functions, `concat` for methods). A directory with
+  # nothing in it yields an empty table, as the `*_for_directory` lookups
+  # already did. `only_dirs`, when given, keeps a builder's own restriction
+  # to a directory set: any other directory answers empty without parsing.
+  #
+  # Use it only where the tables are looked up per directory. Callers that
+  # iterate every directory (the import-path indexes) still need the eager
+  # form.
+  class LazyPackageBodies
+    @files_by_dir = Hash(String, Array(Tuple(String, String))).new
+    @functions = Hash(String, Hash(String, FunctionBody)).new
+    @methods = Hash(String, Hash(String, Array(FunctionBody))).new
+    @mutex = Mutex.new
+
+    def initialize(file_contents : Hash(String, String),
+                   @function_gate : String? = nil,
+                   @method_gate : String? = "func (",
+                   @only_dirs : Set(String)? = nil)
+      file_contents.each do |path, content|
+        (@files_by_dir[File.dirname(path)] ||= [] of Tuple(String, String)) << {path, content}
+      end
+    end
+
+    # An instance with no files: every lookup is empty. What callers get
+    # when the tables are not needed at all.
+    def self.empty : LazyPackageBodies
+      new(Hash(String, String).new)
+    end
+
+    def functions_for(dir : String) : Hash(String, FunctionBody)
+      @mutex.synchronize do
+        @functions[dir] ||= begin
+          table = Hash(String, FunctionBody).new
+          each_file_in(dir, @function_gate) do |path, content|
+            GoCalleeExtractor.collect_function_bodies(content, path).each { |name, fb| table[name] ||= fb }
+          end
+          table
+        end
+      end
+    end
+
+    def methods_for(dir : String) : Hash(String, Array(FunctionBody))
+      @mutex.synchronize do
+        @methods[dir] ||= begin
+          table = Hash(String, Array(FunctionBody)).new
+          each_file_in(dir, @method_gate) do |path, content|
+            GoCalleeExtractor.collect_method_bodies(content, path).each do |name, list|
+              (table[name] ||= [] of FunctionBody).concat(list)
+            end
+          end
+          table
+        end
+      end
+    end
+
+    private def each_file_in(dir : String, gate : String?, &)
+      if only = @only_dirs
+        return unless only.includes?(dir)
+      end
+      @files_by_dir[dir]?.try &.each do |path, content|
+        next if gate && !content.includes?(gate)
+        yield path, content
+      end
+    end
+  end
+
   # Walk every cached `.go` source in `file_contents` and collect
   # top-level `function_declaration` nodes into a per-directory map
   # so cross-file identifier-handler resolution is O(1) at lookup
@@ -94,6 +174,19 @@ module Noir::GoCalleeExtractor
     package_bodies[dir]? || Hash(String, FunctionBody).new
   end
 
+  def function_bodies_for_directory(package_bodies : LazyPackageBodies, dir : String) : Hash(String, FunctionBody)
+    package_bodies.functions_for(dir)
+  end
+
+  # Lazy twins of `package_function_bodies_if` / `package_method_bodies_if`
+  # for callers that only look tables up per directory (see
+  # `LazyPackageBodies`). Same gates as the eager builders: none for
+  # functions, `func (` for methods.
+  def lazy_package_bodies_if(enabled : Bool, file_contents : Hash(String, String)) : LazyPackageBodies
+    return LazyPackageBodies.empty unless enabled
+    LazyPackageBodies.new(file_contents, function_gate: nil, method_gate: "func (")
+  end
+
   # Per-directory `{method_name => [FunctionBody, ...]}` map so a
   # method-value handler (`as.Campaigns`, `ctrl.Index`) can be resolved
   # to its method body for callee extraction. Module-level twin of
@@ -119,6 +212,10 @@ module Noir::GoCalleeExtractor
   # Returns the per-directory method-body map, or an empty map.
   def method_bodies_for_directory(package_method_bodies : Hash(String, Hash(String, Array(FunctionBody))), dir : String) : Hash(String, Array(FunctionBody))
     package_method_bodies[dir]? || Hash(String, Array(FunctionBody)).new
+  end
+
+  def method_bodies_for_directory(package_method_bodies : LazyPackageBodies, dir : String) : Hash(String, Array(FunctionBody))
+    package_method_bodies.methods_for(dir)
   end
 
   # Process-wide memo for the two top-level-declaration tables.

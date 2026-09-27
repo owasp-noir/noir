@@ -30,7 +30,7 @@ module Analyzer::Go
       # callee resolution wires identical to Gin/Echo/etc. Beego doesn't
       # use group routes, so we just need file_contents — no fixpoint.
       file_contents = read_package_file_contents
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       # Per-directory controller-method map so mapping-less
       # `web.Router("/x", &Ctrl{})` registrations resolve to the exact
       # HTTP methods the controller implements.
@@ -39,7 +39,7 @@ module Analyzer::Go
       # handler (a controller method named in the mapping string) gets its
       # 1-hop callees walked even though the call doesn't pass it as an
       # argument. Empty unless callees are requested.
-      package_controller_method_bodies = collect_package_controller_method_bodies(file_contents)
+      package_controller_method_bodies = lazy_package_bodies(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)

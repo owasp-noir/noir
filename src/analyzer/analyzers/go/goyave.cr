@@ -22,11 +22,11 @@ module Analyzer::Go
       # we build the file_contents hash via a dedicated helper rather
       # than piggy-backing on `collect_package_groups_ts`.
       file_contents = read_package_file_contents
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       # Goyave handlers are controller method values (`ctrl.Index`,
       # `ctrl.Show`); resolve them to their method bodies so callees and
       # ai-context aren't empty.
-      package_method_bodies = collect_package_controller_method_bodies(file_contents)
+      package_method_bodies = lazy_package_bodies(file_contents)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
