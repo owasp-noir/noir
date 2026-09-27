@@ -800,5 +800,12 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   end
 
   logger.debug "Added #{locator.all_files.size} files to file_map"
+
+  # Findings arrive in whatever order the detect workers finish, which is
+  # not the same from one run to the next: the same scan of discourse gave
+  # three different `passive_results` orders in three runs. They are part of
+  # the `-f json` / `-f sarif` document, so order them by location — one
+  # rule reports at most one finding per line, so the key is unique.
+  passive_result.sort_by! { |result| {result.file_path, result.line_number, result.id} }
   {techs.uniq, passive_result}
 end
