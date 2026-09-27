@@ -188,8 +188,15 @@ module Noir::SkippedFiles
     end
   end
 
+  # Tallies are ordered by phase, scope and noun rather than by which one
+  # was recorded first. Recording happens on several fibers at once — the
+  # detect walk and the fiber consuming its reads, every analyzer — so
+  # first-recorded order was a race, and it is part of the `-f json` /
+  # `-f sarif` document. `(scope, noun)` is the tally's key, so the order
+  # is total.
   private def build_failures(tallies : Array(Tally), gaps : Array(Gap)) : Array(AnalyzerFailure)
-    result = tallies.map { |tally| AnalyzerFailure.new(tally.scope, message_for(tally)) }
+    ordered = tallies.sort_by { |tally| {tally.phase.value, tally.scope, tally.noun} }
+    result = ordered.map { |tally| AnalyzerFailure.new(tally.scope, message_for(tally)) }
     gaps.each { |gap| result << AnalyzerFailure.new(gap.scope, gap.message) }
     result
   end
