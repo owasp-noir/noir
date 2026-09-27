@@ -203,5 +203,21 @@ describe NoirPassiveScan do
       results.size.should eq(2)
       results.map(&.id).should eq(["test-upper-word", "test-upper-regex"])
     end
+
+    it "matches word patterns literally, under both conditions" do
+      rule_for = ->(condition : String) do
+        PassiveScan.new(YAML.parse(
+          "id: literal-#{condition}\ncategory: sec\ntechs: []\n" \
+          "info: {name: literal, author: [], severity: high, description: literal, reference: []}\n" \
+          "matchers-condition: or\nmatchers:\n  - {type: word, condition: #{condition}, patterns: ['a.b', 'x+y']}\n"))
+      end
+      or_rule = rule_for.call("or")
+      and_rule = rule_for.call("and")
+
+      NoirPassiveScan.detect("f", "axb\nxxy", [or_rule, and_rule], logger).should be_empty
+      NoirPassiveScan.detect("f", "a.b", [or_rule], logger).map(&.line_number).should eq([1])
+      NoirPassiveScan.detect("f", "a.b\nx+y", [and_rule], logger).should be_empty
+      NoirPassiveScan.detect("f", "a.b x+y\nnone", [and_rule], logger).map(&.line_number).should eq([1])
+    end
   end
 end
