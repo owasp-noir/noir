@@ -342,6 +342,40 @@ class Analyzer
   # isolating failures so one unreadable or unparsable file costs only
   # itself (logged at debug), never the whole scan. Before this existed,
   # nine engines carried byte-identical copies of the double-rescue body.
+  # `scan_files` for analyzers that merge per-file results into shared
+  # state before emitting: each file's non-nil result comes back in input
+  # order, whatever order the workers finished in.
+  #
+  # Worker completion order is not stable. When a worker blocks in a slow
+  # syscall, Crystal's runtime moves the scheduler to another thread and
+  # lets the next worker finish first. A merge that lets one file override
+  # another — two services in one scan that both define
+  # `MyApp::Controller::Root`, two tRPC apps that both name a `user`
+  # router — then picks a different winner from run to run.
+  protected def ordered_scan_files(files : Array(String), &block : String -> T?) : Array(T) forall T
+    results = Hash(String, T).new
+    mutex = Mutex.new
+    scan_files(files) do |path|
+      if value = block.call(path)
+        mutex.synchronize { results[path] = value }
+      end
+    end
+    files.compact_map { |path| results[path]? }
+  end
+
+  # `ordered_scan_files` over plain `parallel_analyze`: no `scan_accepts?`
+  # veto, for the callers that never had one.
+  protected def ordered_parallel_analyze(files : Array(String), &block : String -> T?) : Array(T) forall T
+    results = Hash(String, T).new
+    mutex = Mutex.new
+    parallel_analyze(files) do |path|
+      if value = block.call(path)
+        mutex.synchronize { results[path] = value }
+      end
+    end
+    files.compact_map { |path| results[path]? }
+  end
+
   protected def scan_files(files : Array(String), &block : String -> Nil) : Nil
     parallel_analyze(files) do |path|
       next unless scan_accepts?(path)
