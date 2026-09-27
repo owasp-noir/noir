@@ -140,4 +140,4 @@ CLI `--pvalue` still overrides the file when a one-off needs a different id. See
 
 ## Short wrap
 
-Discovery without values is a map with no street numbers. `--pvalue` is how you number them once and reuse the same numbering in curl, collections, OpenAPI, status-code filters, and proxy replay. Put named overrides before catch-alls, keep write verbs explicit, and park the defaults in a config file when the team agrees on the placeholders.
+Discovery without values is a map with no street numbers. `--pvalue` is how you number them once and reuse the same numbering in curl, collections, OpenAPI, status-code filters, and proxy replay. Put named overrides before catch-all rules, keep write verbs explicit, and park the defaults in a config file when the team agrees on the placeholders.
