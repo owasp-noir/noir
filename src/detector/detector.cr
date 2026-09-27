@@ -7,6 +7,7 @@ require "wait_group"
 require "../utils/exclude_path"
 require "../utils/media_filter"
 require "../utils/text_file"
+require "../utils/read_pool"
 require "yaml"
 require "../models/locator_keys"
 require "../models/skipped_files"
@@ -294,6 +295,20 @@ module Noir::Detection
   # fibers and the optimizer sorts endpoints before output — but a stable
   # order keeps debug logs and `detector_list` indices comparable between
   # runs.
+
+  # One file the detect walk kept, on its way from the walker to the
+  # sequencer (see `detect_techs`). `reply` is nil for a file whose content
+  # nothing will inspect: it is registered by path only, never read.
+  record PendingFile,
+    path : String,
+    detector_indices : Array(Int32),
+    android_source_file : Bool,
+    reply : Channel(Noir::ReadPool::Outcome)?
+
+  # How far the walker may run ahead of the sequencer. Every pending file
+  # past the head holds its content in memory until the sequencer reaches
+  # it, and the content cache keeps most of them anyway.
+  READ_WINDOW = 64
 end
 
 def build_detector_list(options : Hash(String, YAML::Any)) : Array(Detector)
@@ -435,6 +450,115 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     exclude_path = Noir::ExcludePath.new(options["exclude_path"]?.to_s)
     skipped_exclude_path = 0
 
+    # Reads run on `Noir::ReadPool`'s threads; everything done with a file
+    # once it is read happens on the sequencer fiber below, one file at a
+    # time and in walk order. The walk used to read each file inline, on
+    # the thread detection runs on, so every open/read/close stalled the
+    # scan. Keeping the post-read work in walk order is what keeps the
+    # result identical: `register_path` / `register_file` build the file
+    # list analyzers iterate, and some analyzers accumulate first-wins
+    # state across files in that order.
+    read_pool = Noir::ReadPool.new
+    # Counted by the sequencer, folded into `skipped_files` once it is done.
+    binary_files = 0
+    pending = Channel(Noir::Detection::PendingFile).new(Noir::Detection::READ_WINDOW)
+    sequencer = WaitGroup.new(1)
+
+    spawn(name: "detect-sequencer") do
+      while item = pending.receive?
+        full_path = item.path
+        candidate_detector_indices = item.detector_indices
+
+        reply = item.reply
+        if reply.nil?
+          # Keep the path visible to analyzers without paying to
+          # read/cache content that neither detection nor passive
+          # scan will inspect. Analyzer reads still fall back to
+          # a disk read when a file was not cached here.
+          locator.register_path(full_path)
+          next
+        end
+
+        # Per-file read isolation.
+        #
+        # This read used to sit bare inside `Dir.each_child`, and the
+        # nearest rescue is the *directory*-level one below. So one
+        # unreadable file aborted the whole directory listing and every
+        # remaining sibling went unregistered — no detection, no
+        # analysis, no message, exit 0. Measured on a flat 501-file Gin
+        # project: `chmod 000` on a single `.go` file took the scan from
+        # 501 endpoints to 277. Files deleted mid-walk take the same
+        # path (`File::NotFoundError`), which a live repo hits without
+        # anyone doing anything unusual.
+        #
+        # A file we cannot read must cost only itself. That now holds for
+        # any error the read raises, not only `IO::Error`: an exception
+        # escaping here would end the sequencer, and with it the walk.
+        outcome = reply.receive
+        if error = outcome.error
+          logger.debug "Skipping #{full_path}: #{error.message}"
+          unreadable_files += 1
+          Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path,
+            error.message.presence || error.class.name, phase: Noir::SkippedFiles::Phase::Scan)
+          next
+        end
+        content = outcome.content
+        next if content.nil?
+
+        if outcome.binary
+          binary_reason = "binary content (file is text-extension but bytes look binary)"
+          logger.debug "Skipping #{full_path}: #{binary_reason}"
+          binary_files += 1
+          Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, binary_reason,
+            phase: Noir::SkippedFiles::Phase::Scan)
+          next
+        end
+
+        # Apply the Android-source narrowing now that content is
+        # available: drop the server-framework detectors unless the
+        # file carries a real server-routing construct (an embedded
+        # on-device server).
+        if item.android_source_file && !content.matches?(Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER)
+          candidate_detector_indices.reject! do |idx|
+            !Noir::Detection.mobile_detector?(detector_list[idx].name)
+          end
+          if candidate_detector_indices.empty? && active_passive_scans.empty?
+            # Nothing left to detect and no passive scan to run.
+            # register_file already records the path in file_map and
+            # caches the (already-read) content for the analyzers.
+            locator.register_file(full_path, content)
+            next
+          end
+        end
+
+        if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)
+          candidate_detector_indices = candidate_detector_indices.reject do |idx|
+            generic_json_spec_detector_names.includes?(detector_list[idx].name)
+          end
+        end
+
+        channel.send({full_path, content, candidate_detector_indices})
+        # Register the path in file_map and (budget permitting)
+        # cache the content so analyzers can skip the re-read.
+        locator.register_file(full_path, content)
+      end
+    ensure
+      # A sequencer that died must not leave the walker blocked on a full
+      # `pending`: closing it makes the walker's next send raise instead.
+      pending.close
+      sequencer.done
+    end
+
+    # Drain in order: the sequencer finishes every file already walked (the
+    # pool is still reading them), and only then is the pool shut down.
+    # Idempotent, so the `ensure` below can repeat it when the walk raises —
+    # neither fiber may be left waiting on the other.
+    drain_reads = -> do
+      pending.close
+      sequencer.wait
+      read_pool.close
+    end
+
     base_paths.each do |base_path|
       # Pre-compute base path prefix for fast relative path calculation
       base_prefix = base_path.ends_with?("/") ? base_path : base_path + "/"
@@ -569,77 +693,13 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
             end
 
             if candidate_detector_indices.empty? && active_passive_scans.empty? && !android_source_file
-              # Keep the path visible to analyzers without paying to
-              # read/cache content that neither detection nor passive
-              # scan will inspect. Analyzer reads still fall back to
-              # a disk read when a file was not cached here.
-              locator.register_path(full_path)
+              pending.send(Noir::Detection::PendingFile.new(full_path, candidate_detector_indices, false, nil))
               skipped_content_reads += 1
               next
             end
 
-            # Per-file read isolation.
-            #
-            # This read used to sit bare inside `Dir.each_child`, and the
-            # nearest rescue is the *directory*-level one below. So one
-            # unreadable file aborted the whole directory listing and every
-            # remaining sibling went unregistered — no detection, no
-            # analysis, no message, exit 0. Measured on a flat 501-file Gin
-            # project: `chmod 000` on a single `.go` file took the scan from
-            # 501 endpoints to 277. Files deleted mid-walk take the same
-            # path (`File::NotFoundError`), which a live repo hits without
-            # anyone doing anything unusual.
-            #
-            # A file we cannot read must cost only itself.
-            # `IO::Error`, not `File::Error`: it is the supertype
-            # (`File::Error < IO::Error`), so it also covers a read that
-            # fails for a reason the file layer does not name. The point
-            # here is that *nothing* about one file may end the walk.
-            content = begin
-              Noir::TextFile.read(full_path)
-            rescue e : IO::Error
-              logger.debug "Skipping #{full_path}: #{e.message}"
-              unreadable_files += 1
-              Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path,
-                e.message.presence || e.class.name, phase: Noir::SkippedFiles::Phase::Scan)
-              next
-            end
-            if content.to_slice.includes?(0_u8)
-              binary_reason = "binary content (file is text-extension but bytes look binary)"
-              logger.debug "Skipping #{full_path}: #{binary_reason}"
-              skipped_files += 1
-              Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, binary_reason,
-                phase: Noir::SkippedFiles::Phase::Scan)
-              next
-            end
-
-            # Apply the Android-source narrowing now that content is
-            # available: drop the server-framework detectors unless the
-            # file carries a real server-routing construct (an embedded
-            # on-device server).
-            if android_source_file && !content.matches?(Noir::Detection::ANDROID_EMBEDDED_SERVER_MARKER)
-              candidate_detector_indices.reject! do |idx|
-                !Noir::Detection.mobile_detector?(detector_list[idx].name)
-              end
-              if candidate_detector_indices.empty? && active_passive_scans.empty?
-                # Nothing left to detect and no passive scan to run.
-                # register_file already records the path in file_map and
-                # caches the (already-read) content for the analyzers.
-                locator.register_file(full_path, content)
-                next
-              end
-            end
-
-            if full_path.ends_with?(".json") && !content.matches?(generic_json_spec_marker)
-              candidate_detector_indices = candidate_detector_indices.reject do |idx|
-                generic_json_spec_detector_names.includes?(detector_list[idx].name)
-              end
-            end
-
-            channel.send({full_path, content, candidate_detector_indices})
-            # Register the path in file_map and (budget permitting)
-            # cache the content so analyzers can skip the re-read.
-            locator.register_file(full_path, content)
+            reply = read_pool.submit(full_path)
+            pending.send(Noir::Detection::PendingFile.new(full_path, candidate_detector_indices, android_source_file, reply))
           end
         rescue e : File::Error
           # `Dir.each_child` itself failed: the directory vanished between
@@ -672,6 +732,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
         end
       end
     end
+
+    # The counters below are final only once the sequencer has caught up.
+    drain_reads.call
+    skipped_files += binary_files
 
     if skipped_files > 0
       logger.info "Skipped #{skipped_files} media/large files out of #{total_files} total files"
@@ -712,6 +776,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
   rescue e : File::BadPatternError
     exclude_pattern_error = e.message || "invalid pattern"
   ensure
+    drain_reads.try &.call
     channel.close
     wg.done
   end
