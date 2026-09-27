@@ -26,14 +26,21 @@ class Noir::ReadPool
   # has to stay ahead of the single fiber consuming its results.
   MAX_WORKERS = 4
 
-  @@context : Fiber::ExecutionContext::Parallel?
+  # Execution contexts are the default runtime from Crystal 1.21 on; 1.19
+  # and 1.20 (which `shard.yml` still admits) only have them behind
+  # `-Dexecution_context`, and `-Dwithout_mt` turns them off. Without
+  # them the workers run as ordinary fibers on the calling thread: the
+  # reads are sequential again, but every other behaviour is the same.
+  {% if Fiber.has_constant?(:ExecutionContext) %}
+    @@context : Fiber::ExecutionContext::Parallel?
 
-  # One context for the process, created on first use. Contexts are not
-  # torn down, so a per-scan context would leak threads across the many
-  # scans a spec run performs.
-  def self.context : Fiber::ExecutionContext::Parallel
-    @@context ||= Fiber::ExecutionContext::Parallel.new("noir-read", worker_count)
-  end
+    # One context for the process, created on first use. Contexts are not
+    # torn down, so a per-scan context would leak threads across the many
+    # scans a spec run performs.
+    def self.context : Fiber::ExecutionContext::Parallel
+      @@context ||= Fiber::ExecutionContext::Parallel.new("noir-read", worker_count)
+    end
+  {% end %}
 
   def self.worker_count : Int32
     System.cpu_count.to_i.clamp(1, MAX_WORKERS)
@@ -45,17 +52,24 @@ class Noir::ReadPool
   def initialize(workers : Int32 = ReadPool.worker_count)
     @jobs = Channel(Tuple(String, Channel(Outcome))).new(workers * 16)
     @done = WaitGroup.new(workers)
-    context = ReadPool.context
-    workers.times do
-      context.spawn(name: "noir-read") do
-        while job = @jobs.receive?
-          path, reply = job
-          reply.send(read(path))
-        end
-      ensure
-        @done.done
-      end
+    workers.times { spawn_worker }
+  end
+
+  private def spawn_worker : Nil
+    {% if Fiber.has_constant?(:ExecutionContext) %}
+      ReadPool.context.spawn(name: "noir-read") { work }
+    {% else %}
+      spawn(name: "noir-read") { work }
+    {% end %}
+  end
+
+  private def work : Nil
+    while job = @jobs.receive?
+      path, reply = job
+      reply.send(read(path))
     end
+  ensure
+    @done.done
   end
 
   # Queue `path` for reading. The returned channel yields its `Outcome`.

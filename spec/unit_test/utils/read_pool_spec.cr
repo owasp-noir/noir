@@ -2,6 +2,7 @@ require "file_utils"
 require "../../spec_helper"
 require "../../../src/utils/read_pool"
 require "../../../src/detector/detector"
+require "../../../src/models/analyzer"
 require "../../../src/models/code_locator"
 require "../../../src/models/logger"
 
