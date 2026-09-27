@@ -1,5 +1,6 @@
 require "wait_group"
 require "./text_file"
+require "../passive_scan/detect"
 
 # Reads files on a small pool of threads.
 #
@@ -19,7 +20,11 @@ require "./text_file"
 # and every submitted path gets exactly one outcome, errors included: a
 # missing reply would leave the receiver waiting forever.
 class Noir::ReadPool
-  record Outcome, content : String? = nil, binary : Bool = false, error : Exception? = nil
+  record Outcome,
+    content : String? = nil,
+    binary : Bool = false,
+    error : Exception? = nil,
+    passive_results : Array(PassiveScanResult) = [] of PassiveScanResult
 
   # Past four readers the gain flattens out (measured on a 26k-file tree:
   # 1.29s sequential, 0.46s with 4, 0.40–0.44s with 8), and the pool only
@@ -49,7 +54,12 @@ class Noir::ReadPool
   @jobs : Channel(Tuple(String, Channel(Outcome)))
   @done : WaitGroup
 
-  def initialize(workers : Int32 = ReadPool.worker_count)
+  # `passive_rules` run on every file that reads as text, on the pool's
+  # threads: matching is a pure function of the content and the (immutable)
+  # rules, and it was most of what the detect workers spent their time on
+  # under `-P`.
+  def initialize(workers : Int32 = ReadPool.worker_count,
+                 @passive_rules : Array(PassiveScan) = [] of PassiveScan)
     @jobs = Channel(Tuple(String, Channel(Outcome))).new(workers * 16)
     @done = WaitGroup.new(workers)
     workers.times { spawn_worker }
@@ -86,11 +96,21 @@ class Noir::ReadPool
   end
 
   # `Noir::TextFile.read` plus the binary sniff the walk applies right
-  # after it, both pure functions of the bytes.
+  # after it, both pure functions of the bytes, and the passive rules.
   private def read(path : String) : Outcome
     content = Noir::TextFile.read(path)
-    Outcome.new(content: content, binary: content.to_slice.includes?(0_u8))
+    return Outcome.new(content: content, binary: true) if content.to_slice.includes?(0_u8)
+    Outcome.new(content: content, passive_results: passive_results(path, content))
   rescue e
     Outcome.new(error: e)
+  end
+
+  # A rule that raises costs only this file's findings, never the file
+  # itself — the same as when the detect workers ran the rules.
+  private def passive_results(path : String, content : String) : Array(PassiveScanResult)
+    return [] of PassiveScanResult if @passive_rules.empty?
+    NoirPassiveScan.detect(path, content, @passive_rules, nil)
+  rescue
+    [] of PassiveScanResult
   end
 end

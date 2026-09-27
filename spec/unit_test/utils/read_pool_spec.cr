@@ -32,6 +32,36 @@ describe Noir::ReadPool do
   end
 end
 
+describe Noir::ReadPool do
+  it "runs the passive rules on text files only" do
+    dir = File.tempname("noir-read-pool-passive")
+    Dir.mkdir_p(dir)
+    begin
+      text = File.join(dir, "config.env")
+      blob = File.join(dir, "blob.env")
+      File.write(text, "a=1\nAPI_SECRET_TOKEN=abc\n")
+      File.write(blob, "API_SECRET_TOKEN=abc\u0000\n")
+      rule = PassiveScan.new(YAML.parse(
+        "id: pool-test\ncategory: secret\ntechs: ['*']\n" \
+        "info: {name: pool, author: [], severity: high, description: pool, reference: []}\n" \
+        "matchers-condition: or\nmatchers:\n  - {type: word, condition: or, patterns: [API_SECRET_TOKEN]}\n"))
+
+      pool = Noir::ReadPool.new(passive_rules: [rule])
+      text_outcome = pool.submit(text).receive
+      blob_outcome = pool.submit(blob).receive
+      pool.close
+
+      text_outcome.passive_results.map { |r| {r.id, r.line_number} }.should eq([{"pool-test", 2}])
+      text_outcome.passive_results
+        .should eq(NoirPassiveScan.detect(text, File.read(text), [rule], nil))
+      blob_outcome.binary.should be_true
+      blob_outcome.passive_results.should be_empty
+    ensure
+      FileUtils.rm_rf(dir)
+    end
+  end
+end
+
 describe "detect_techs with parallel reads" do
   # Reads complete out of order on the pool; everything after the read must
   # still see files in walk order. For a flat directory that is the order

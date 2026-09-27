@@ -458,7 +458,7 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
     # result identical: `register_path` / `register_file` build the file
     # list analyzers iterate, and some analyzers accumulate first-wins
     # state across files in that order.
-    read_pool = Noir::ReadPool.new
+    read_pool = Noir::ReadPool.new(passive_rules: active_passive_scans)
     # Counted by the sequencer, folded into `skipped_files` once it is done.
     binary_files = 0
     pending = Channel(Noir::Detection::PendingFile).new(Noir::Detection::READ_WINDOW)
@@ -512,6 +512,16 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           Noir::SkippedFiles.record(Noir::SkippedFiles::DETECT_SCOPE, full_path, binary_reason,
             phase: Noir::SkippedFiles::Phase::Scan)
           next
+        end
+
+        # Passive findings were computed on the read thread; record them in
+        # walk order, logging each matched rule once per file as the rules
+        # themselves used to.
+        unless outcome.passive_results.empty?
+          outcome.passive_results.uniq(&.id).each do |result|
+            logger.sub "├── Passive rule matched: #{result.info.name}"
+          end
+          passive_result.concat(outcome.passive_results)
         end
 
         # Apply the Android-source narrowing now that content is
@@ -826,17 +836,10 @@ def detect_techs(base_paths : Array(String), options : Hash(String, YAML::Any), 
           end
         end
 
-        # Severity is already filtered above; pass the pre-pruned
-        # rule list through and let `detect` short-circuit when
-        # it's empty (passive scan disabled or every rule pruned).
-        if !active_passive_scans.empty?
-          results = NoirPassiveScan.detect(file, content, active_passive_scans, logger)
-          if !results.empty?
-            mutex.synchronize do
-              passive_result.concat(results)
-            end
-          end
-        end
+        # Passive rules no longer run here: `Noir::ReadPool` runs them on
+        # its threads and the sequencer records the findings.
+
+
       rescue File::NotFoundError
         logger.debug "File not found: #{file}"
       rescue e : Exception

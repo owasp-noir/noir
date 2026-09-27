@@ -28,7 +28,10 @@ module NoirPassiveScan
   # patterns into one alternation looks cheaper but measured ~6x slower:
   # the union has no common first byte, so PCRE2 loses the literal-prefix
   # skip that lets each separate matcher jump straight to candidates.
-  def self.detect(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger) : Array(PassiveScanResult)
+  #
+  # Pass a nil `logger` to run silently — the detect walk runs this on its
+  # read threads and logs the matches itself, in walk order.
+  def self.detect(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger?) : Array(PassiveScanResult)
     results = [] of PassiveScanResult
     return results if rules.empty?
 
@@ -54,7 +57,7 @@ module NoirPassiveScan
             # secret. See NoirPassiveScan::FalsePositive for the invariant.
             unless FalsePositive.suppress?(rule, line)
               unless detected_logged
-                logger.sub "├── Passive rule matched: #{rule.info.name}"
+                logger.try &.sub "├── Passive rule matched: #{rule.info.name}"
                 detected_logged = true
               end
               results << PassiveScanResult.new(rule, file_path, index + 1, line)
@@ -84,7 +87,7 @@ module NoirPassiveScan
               # secret. See NoirPassiveScan::FalsePositive.
               break if FalsePositive.suppress?(rule, line)
               unless detected_logged
-                logger.sub "├── Passive rule matched: #{rule.info.name}"
+                logger.try &.sub "├── Passive rule matched: #{rule.info.name}"
                 detected_logged = true
               end
               results << PassiveScanResult.new(rule, file_path, index + 1, line)
