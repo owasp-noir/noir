@@ -15,7 +15,7 @@ module Analyzer::Go
     def analyze
       public_dirs = [] of Hash(String, String)
       package_groups, file_contents = collect_package_groups_ts(import_marker: IMPORT_MARKER)
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))

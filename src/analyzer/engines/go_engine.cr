@@ -372,6 +372,22 @@ module Analyzer::Go
       package_function_bodies[dir]? || Hash(String, Noir::GoCalleeExtractor::FunctionBody).new
     end
 
+    def ts_function_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies, dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
+      package_bodies.functions_for(dir)
+    end
+
+    # Per-directory function and method tables, built for a directory only
+    # when an analyzer looks it up. Holds exactly what
+    # `collect_package_function_bodies` / `collect_package_controller_method_bodies`
+    # would store for that directory, and is empty unless callees are
+    # requested — see `Noir::GoCalleeExtractor::LazyPackageBodies`. Use it
+    # wherever the tables are only read through the `ts_*_for_directory`
+    # lookups; the import-path indexes iterate every directory and still
+    # need the eager maps.
+    def lazy_package_bodies(file_contents : Hash(String, String)) : Noir::GoCalleeExtractor::LazyPackageBodies
+      Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents)
+    end
+
     # --- Beego controller-method pre-pass --------------------------------
     #
     # Builds a per-directory `{controller_type => [http_verb_methods]}` map
@@ -430,6 +446,10 @@ module Analyzer::Go
 
     def ts_controller_method_bodies_for_directory(package_controller_method_bodies : Hash(String, Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))), dir : String) : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))
       package_controller_method_bodies[dir]? || Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new
+    end
+
+    def ts_controller_method_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies, dir : String) : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))
+      package_bodies.methods_for(dir)
     end
 
     # Read every `.go` file once into a `{path => source}` hash. Used by

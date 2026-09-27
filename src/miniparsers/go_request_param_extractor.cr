@@ -55,6 +55,25 @@ module Noir::GoRequestParamExtractor
     package_bodies[dir]? || Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody)).new
   end
 
+  # Lazy form of `package_function_bodies_for_dirs` and
+  # `package_method_bodies_for_dirs` together: same `dirs` restriction,
+  # same per-file gates, but a directory is parsed only when a route file
+  # in it asks for its table. See `Noir::GoCalleeExtractor::LazyPackageBodies`.
+  def lazy_package_bodies_for_dirs(file_contents : Hash(String, String),
+                                   dirs : Set(String)) : Noir::GoCalleeExtractor::LazyPackageBodies
+    Noir::GoCalleeExtractor::LazyPackageBodies.new(file_contents, function_gate: "func ", method_gate: "func (", only_dirs: dirs)
+  end
+
+  def function_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies,
+                                    dir : String) : Hash(String, Noir::GoCalleeExtractor::FunctionBody)
+    package_bodies.functions_for(dir)
+  end
+
+  def method_bodies_for_directory(package_bodies : Noir::GoCalleeExtractor::LazyPackageBodies,
+                                  dir : String) : Hash(String, Array(Noir::GoCalleeExtractor::FunctionBody))
+    package_bodies.methods_for(dir)
+  end
+
   def params_for_routes(source : String,
                         route_rows : Set(Int32),
                         route_methods : Hash(Int32, String),

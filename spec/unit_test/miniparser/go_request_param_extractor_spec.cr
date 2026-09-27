@@ -60,4 +60,31 @@ describe Noir::GoRequestParamExtractor do
       params.any? { |p| p.name == "X-API-Key" && p.param_type == "header" }.should be_true
     end
   end
+
+  describe "#lazy_package_bodies_for_dirs" do
+    it "holds exactly what the eager builders store, directory by directory" do
+      contents = {
+        "/app/a.go"     => "package app\n\nfunc Shared() int { return 1 }\nfunc (s *S) Get() {}\n",
+        "/app/b.go"     => "package app\n\nfunc Shared() int { return 2 }\nfunc Only() {}\nfunc (t *T) Get() {}\n",
+        "/app/tab.go"   => "package app\n\nfunc\tTabbed() {}\n",
+        "/app/sub/c.go" => "package sub\n\nfunc Sub() {}\n",
+        "/other/d.go"   => "package other\n\nfunc Other() {}\n",
+      }
+      dirs = Set{"/app", "/app/sub"}
+
+      functions = Noir::GoRequestParamExtractor.package_function_bodies_for_dirs(contents, dirs)
+      methods = Noir::GoRequestParamExtractor.package_method_bodies_for_dirs(contents, dirs)
+      lazy = Noir::GoRequestParamExtractor.lazy_package_bodies_for_dirs(contents, dirs)
+
+      ["/app", "/app/sub", "/other", "/missing"].each do |dir|
+        Noir::GoRequestParamExtractor.function_bodies_for_directory(lazy, dir)
+          .should eq(Noir::GoRequestParamExtractor.function_bodies_for_directory(functions, dir))
+        Noir::GoRequestParamExtractor.method_bodies_for_directory(lazy, dir)
+          .should eq(Noir::GoRequestParamExtractor.method_bodies_for_directory(methods, dir))
+      end
+      # First definition wins, methods on different receivers accumulate.
+      lazy.functions_for("/app")["Shared"].file_path.should eq("/app/a.go")
+      lazy.methods_for("/app")["Get"].size.should eq(2)
+    end
+  end
 end

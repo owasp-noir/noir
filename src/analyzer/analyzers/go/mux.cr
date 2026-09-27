@@ -25,11 +25,11 @@ module Analyzer::Go
       # Mux's HandleFunc/Methods chain stores `route.line` on the
       # HandleFunc call_expression itself, so the row-keyed callee
       # lookup matches it cleanly.
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       # Mux handlers are almost always method values (`as.Campaigns`) or
       # wrapped method values (`mid.Use(as.Users, ...)`); resolve them to
       # their method bodies so callees/ai-context aren't empty.
-      package_method_bodies = collect_package_controller_method_bodies(file_contents)
+      package_method_bodies = lazy_package_bodies(file_contents)
       framework_dirs = framework_package_dirs(file_contents, IMPORT_MARKER)
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))

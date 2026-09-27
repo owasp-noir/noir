@@ -32,7 +32,7 @@ module Analyzer::Go
       # `read_package_file_contents` already filters to `.go`, so the
       # function-body map naturally skips `.api`.
       file_contents = read_package_file_contents
-      package_function_bodies = collect_package_function_bodies(file_contents)
+      package_function_bodies = lazy_package_bodies(file_contents)
       # Both `.go` files and gozero's `.api` DSL files. The per-path
       # `File.extname` re-check the inlined walk carried is redundant:
       # `get_files_by_extensions` resolves the same `File.extname` index,

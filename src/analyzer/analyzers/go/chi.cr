@@ -84,11 +84,11 @@ module Analyzer::Go
       # isolated route walk and would need separate wiring. Tracking
       # that as a follow-up; for now Mount endpoints keep an empty
       # callees list.
-      package_function_bodies = Noir::GoCalleeExtractor.package_function_bodies_if(callees_needed?, file_contents_cache)
+      package_function_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents_cache)
       # Method-value handlers (`s.handleOIDCRedirect`, `router.Get(p,
       # h.Show)`) resolve to their method bodies so callees aren't empty
       # when chi apps hang handlers off a server/controller struct.
-      package_method_bodies = Noir::GoCalleeExtractor.package_method_bodies_if(callees_needed?, file_contents_cache)
+      package_method_bodies = Noir::GoCalleeExtractor.lazy_package_bodies_if(callees_needed?, file_contents_cache)
 
       # Per-directory string-constant map so a route registered in one
       # file (`server.go`: `r.Get(tokenPath, h)`) resolves a path
