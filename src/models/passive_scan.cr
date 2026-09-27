@@ -51,6 +51,13 @@ struct PassiveScan
     property condition : String
     property compiled_regex : Regex?
     property compiled_regexes : Array(Regex)?
+    # `word` patterns as escaped literal regexes: one union for `or`,
+    # one regex per pattern for `and`. A literal regex matches exactly
+    # where `String#includes?` does, and PCRE2 (with
+    # `Noir::TextFile::MATCH_OPTIONS`) scans a whole file far faster
+    # than `includes?`'s rolling hash, which restarts per pattern.
+    getter word_regex : Regex?
+    getter word_regexes : Array(Regex)?
     # Why this matcher's regexes failed to compile, or nil when they
     # compiled. Held as the message rather than a bare flag so the
     # loader can name the pattern in the warning it prints — the
@@ -87,6 +94,19 @@ struct PassiveScan
             @compiled_regexes = nil
             @regex_error = "#{ex.message} (#{ex.class}); patterns=#{@string_patterns.inspect}"
           end
+        end
+      elsif @type == "word" && !@string_patterns.empty?
+        # Escaped literals cannot fail to compile, but a pathological
+        # pattern list could still exceed PCRE2's size limits; leave the
+        # regexes nil and `match_content?` falls back to `includes?`.
+        begin
+          case @condition
+          when "or"  then @word_regex = Regex.union(@string_patterns)
+          when "and" then @word_regexes = @string_patterns.map { |p| Regex.new(Regex.escape(p)) }
+          end
+        rescue
+          @word_regex = nil
+          @word_regexes = nil
         end
       end
     end

@@ -2,6 +2,7 @@ require "../models/passive_scan"
 require "../models/logger"
 require "./severity"
 require "./false_positive"
+require "../utils/text_file"
 require "yaml"
 
 module NoirPassiveScan
@@ -18,6 +19,15 @@ module NoirPassiveScan
   # `filter_rules_by_severity`). Returns an empty array (no allocation
   # beyond the literal) when there are no rules to run, so callers can
   # short-circuit on `passive_scans.empty?` before reading the file.
+  #
+  # `file_content` must be valid UTF-8 — the scan reads it through
+  # `Noir::TextFile.read` — because matching skips PCRE2's per-call
+  # re-validation (`Noir::TextFile::MATCH_OPTIONS`).
+  #
+  # Each matcher keeps its own whole-file pre-check. Folding every rule's
+  # patterns into one alternation looks cheaper but measured ~6x slower:
+  # the union has no common first byte, so PCRE2 loses the literal-prefix
+  # skip that lets each separate matcher jump straight to candidates.
   def self.detect(file_path : String, file_content : String, rules : Array(PassiveScan), logger : NoirLogger) : Array(PassiveScanResult)
     results = [] of PassiveScanResult
     return results if rules.empty?
@@ -103,9 +113,17 @@ module NoirPassiveScan
     when "word"
       case matcher.condition
       when "and"
-        patterns.all? { |pattern| content.includes?(pattern) }
+        if regexes = matcher.word_regexes
+          regexes.all? { |regex| regex.matches?(content, options: Noir::TextFile::MATCH_OPTIONS) }
+        else
+          patterns.all? { |pattern| content.includes?(pattern) }
+        end
       when "or"
-        patterns.any? { |pattern| content.includes?(pattern) }
+        if regex = matcher.word_regex
+          regex.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
+        else
+          patterns.any? { |pattern| content.includes?(pattern) }
+        end
       else
         false
       end
@@ -118,13 +136,13 @@ module NoirPassiveScan
       case matcher.condition
       when "and"
         if regexes = matcher.compiled_regexes
-          regexes.all? { |regex| !!content.match(regex) }
+          regexes.all? { |regex| regex.matches?(content, options: Noir::TextFile::MATCH_OPTIONS) }
         else
           false
         end
       when "or"
         if regex = matcher.compiled_regex
-          !!content.match(regex)
+          regex.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
         else
           false
         end
