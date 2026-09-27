@@ -1,6 +1,7 @@
 require "../../models/analyzer"
 require "../../miniparsers/go_callee_extractor"
 require "../../miniparsers/go_route_extractor_ts"
+require "../../utils/worker_threads"
 
 module Analyzer::Go
   abstract class GoEngine < Analyzer
@@ -151,15 +152,37 @@ module Analyzer::Go
         end
       end
 
+      relevant_by_dir = Hash(String, Array(String)).new
       files_by_dir.each do |dir, paths|
-        relevant = if import_marker
-                     markers = import_markers(import_marker)
-                     paths.select do |p|
-                       (c = file_contents[p]?) && markers.any? { |marker| c.includes?(marker) }
-                     end
-                   else
-                     paths
-                   end
+        relevant_by_dir[dir] = if import_marker
+                                 markers = import_markers(import_marker)
+                                 paths.select do |p|
+                                   (c = file_contents[p]?) && markers.any? { |marker| c.includes?(marker) }
+                                 end
+                               else
+                                 paths
+                               end
+      end
+
+      # Every relevant file's own-file parse, done up front on the worker
+      # threads: it is a pure function of the source, and it is the bulk of
+      # this pre-pass. The package logic below consumes the results in the
+      # same order it always did; a file whose parse came back nil (it
+      # raised on the pool) is parsed again inline, where it behaves as
+      # before.
+      parse_paths = relevant_by_dir.values.flatten.select { |p| file_contents.has_key?(p) }
+      parsed = Noir::WorkerThreads.map(parse_paths) do |p|
+        Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(file_contents[p], group_method)
+      end
+      engine_names_and_groups = Hash(String, Tuple(Set(String), Hash(String, String))).new
+      parse_paths.each_with_index do |p, i|
+        if result = parsed[i]
+          engine_names_and_groups[p] = result
+        end
+      end
+
+      files_by_dir.each do |dir, _paths|
+        relevant = relevant_by_dir[dir]
         next if relevant.empty?
 
         # Detect group-variable names that resolve to DIFFERENT prefixes
@@ -189,7 +212,8 @@ module Analyzer::Go
         relevant.each do |path|
           content = file_contents[path]?
           next if content.nil?
-          names, own = Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(content, group_method)
+          names, own = engine_names_and_groups[path]? ||
+                       Noir::TreeSitterGoRouteExtractor.extract_engine_names_and_groups(content, group_method)
           names.each { |n| ambiguous << n }
           own_groups_by_file[path] = own
           own.each do |k, v|
@@ -288,6 +312,46 @@ module Analyzer::Go
         method_regex = @extra_method_regexes[method] ||= /\.#{Regex.escape(method)}\s*\(/
         content_matches?(content, method_regex)
       end
+    end
+
+    # Runs `extract` for every file the route pass will parse — the same
+    # test-file and `framework_route_source_candidate?` gates, evaluated here
+    # on the analyzer's own fiber — on `Noir::WorkerThreads`, and returns
+    # the results by path.
+    #
+    # `extract` must be pure: tree-sitter extraction over the file's source
+    # and read-only tables built before this call. The route pass then
+    # takes each file's result from here instead of parsing it itself, and
+    # parses inline for any file missing (a gate it evaluates differently,
+    # or an extraction that raised on the pool) — so what the pass emits,
+    # and in what order, is unchanged.
+    def prefetch_route_sources(file_contents : Hash(String, String),
+                               framework_dirs : Set(String),
+                               import_marker : String | Array(String),
+                               extra_methods : Array(String),
+                               &extract : String, String -> T) : Hash(String, T) forall T
+      candidates = get_files_by_extension(".go").select do |path|
+        next false if GoEngine.go_test_file?(base_relative_path(path))
+        content = file_contents[path]?
+        next false if content.nil?
+        framework_route_source_candidate?(content, File.dirname(path), framework_dirs, import_marker, extra_methods)
+      end
+      prefetch_sources(candidates, file_contents, &extract)
+    end
+
+    # `extract` for each of `paths` (all keys of `file_contents`) on
+    # `Noir::WorkerThreads`, by path; a path whose extraction raised is
+    # left out, so the caller computes it inline as before.
+    def prefetch_sources(paths : Array(String), file_contents : Hash(String, String),
+                         &extract : String, String -> T) : Hash(String, T) forall T
+      results = Noir::WorkerThreads.map(paths) { |path| extract.call(path, file_contents[path]) }
+      prefetched = Hash(String, T).new
+      paths.each_with_index do |path, index|
+        if result = results[index]
+          prefetched[path] = result
+        end
+      end
+      prefetched
     end
 
     def framework_route_source_candidate?(content : String,
@@ -398,13 +462,18 @@ module Analyzer::Go
     # still found.
     def collect_package_controller_methods(file_contents : Hash(String, String)) : Hash(String, Hash(String, Array(String)))
       result = Hash(String, Hash(String, Array(String))).new
+      # Cheap gate: a file with controller methods must contain a method
+      # receiver. gofmt always writes those as `func (recv Type) Name(`,
+      # so files without `func (` can't define controller methods and
+      # are skipped before paying for a tree-sitter parse. The parses run
+      # on the worker threads; the merge below stays in file order.
+      receivers = file_contents.keys.select { |path| file_contents[path].includes?("func (") }
+      parsed = prefetch_sources(receivers, file_contents) do |_path, content|
+        Noir::TreeSitterGoRouteExtractor.extract_controller_methods(content)
+      end
       file_contents.each do |path, content|
-        # Cheap gate: a file with controller methods must contain a method
-        # receiver. gofmt always writes those as `func (recv Type) Name(`,
-        # so files without `func (` can't define controller methods and
-        # are skipped before paying for a tree-sitter parse.
         next unless content.includes?("func (")
-        methods = Noir::TreeSitterGoRouteExtractor.extract_controller_methods(content)
+        methods = parsed[path]? || Noir::TreeSitterGoRouteExtractor.extract_controller_methods(content)
         next if methods.empty?
         dir = File.dirname(path)
         dir_map = (result[dir] ||= Hash(String, Array(String)).new)

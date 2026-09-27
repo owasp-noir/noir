@@ -40,6 +40,15 @@ module Analyzer::Go
       # 1-hop callees walked even though the call doesn't pass it as an
       # argument. Empty unless callees are requested.
       package_controller_method_bodies = lazy_package_bodies(file_contents)
+      # Both route parses of every Beego-importing file, on the worker
+      # threads; the pass below consumes them (see `prefetch_sources`).
+      candidates = file_contents.keys.select do |path|
+        !GoEngine.go_test_file?(base_relative_path(path)) && content_matches?(file_contents[path], IMPORT_MARKER_RE)
+      end
+      prefetched = prefetch_sources(candidates, file_contents) do |path, content|
+        {Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, ts_controller_methods_for_directory(package_controller_methods, File.dirname(path))),
+         Noir::TreeSitterGoRouteExtractor.extract_routes(content)}
+      end
       parallel_analyze(get_files_by_extension(".go")) do |path|
         next if GoEngine.go_test_file?(base_relative_path(path))
         next unless File.exists?(path)
@@ -52,14 +61,16 @@ module Analyzer::Go
         # controller-style `web.Router("/x", &Ctrl{}, "get:M")`
         # registrations — the latter is Beego's dominant idiom.
         controller_methods = ts_controller_methods_for_directory(package_controller_methods, File.dirname(path))
-        beego_routes = Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, controller_methods)
+        beego_routes, verb_routes = prefetched[path]? ||
+                                    {Noir::TreeSitterGoRouteExtractor.extract_beego_routes(content, controller_methods),
+                                     Noir::TreeSitterGoRouteExtractor.extract_routes(content)}
         # Track which lines are `web.Router` registrations so the
         # controller-method callee fallback below only fires for
         # them — never for a `web.Get` verb route whose handler
         # text happens to collide with a method name.
         beego_router_lines = Set(Int32).new
         beego_routes.each { |r| beego_router_lines << r.line }
-        ts_routes = Noir::TreeSitterGoRouteExtractor.extract_routes(content) + beego_routes
+        ts_routes = verb_routes + beego_routes
         routes_by_line = Hash(Int32, Array(Noir::TreeSitterGoRouteExtractor::Route)).new
         ts_routes.each do |r|
           routes_by_line[r.line] ||= [] of Noir::TreeSitterGoRouteExtractor::Route
