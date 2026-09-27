@@ -56,16 +56,28 @@ module Noir::TextFile
   def self.transcode_utf16(content : String) : String
     io = IO::Memory.new(content.to_slice)
     io.set_encoding("UTF-16", invalid: :skip)
-    io.gets_to_end
+    ensure_valid(io.gets_to_end)
   rescue
     decode(content)
   end
 
   # `invalid: :skip` decode of bytes already in memory.
+  #
+  # iconv's idea of "invalid" is narrower than UTF-8's: macOS libiconv
+  # passes 5- and 6-byte sequences and code points above U+10FFFF
+  # straight through, so the "decoded" text could still be invalid. The
+  # scan matches file contents with `MATCH_OPTIONS`, which tells PCRE2
+  # not to check — on such a subject its behaviour is undefined, and
+  # without the flag the match raises instead. Drop whatever the decode
+  # left behind, so `read` really does return valid UTF-8.
   def self.decode(content : String) : String
     io = IO::Memory.new(content.to_slice)
     io.set_encoding("utf-8", invalid: :skip)
-    io.gets_to_end
+    ensure_valid(io.gets_to_end)
+  end
+
+  private def self.ensure_valid(text : String) : String
+    text.valid_encoding? ? text : text.scrub("")
   end
 
   # Match options for a subject that came from `read` (or from the
