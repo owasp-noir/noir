@@ -102,6 +102,14 @@ module Analyzer::Javascript
     # argument after the path".
     FORWARD_CALL_RE = /([A-Za-z_$][\w$]*)\s*(?:\[\s*([A-Za-z_$][\w$]*)\s*\]|\.\s*(get|post|put|delete|patch|head|options|all))\s*\(\s*(`[^`\n]*`|[A-Za-z_$][\w$]*)\s*,/
 
+    # `FORWARD_CALL_RE` minus its leading receiver: a necessary condition for
+    # it, checked first. The full pattern opens with an identifier class, so
+    # PCRE2 has no first byte to skip to and tries it at every position of
+    # the file; this one opens at a `[` or `.`, which it can search for.
+    # Over 15k JS/TS files (78 MB) the gate alone takes 23ms against 330ms
+    # for the full pattern, and it rejects all but a few hundred files.
+    FORWARD_CALL_GATE = /(?:\[\s*[A-Za-z_$][\w$]*\s*\]|\.\s*(?:get|post|put|delete|patch|head|options|all))\s*\(\s*(?:`[^`\n]*`|[A-Za-z_$][\w$]*)\s*,/
+
     # Function definitions whose parameter list can be read positionally.
     # The captured name is the local one; for `helpers.setupApiRoute = …`
     # it is the last dotted segment, which is also the name importers see
@@ -197,6 +205,7 @@ module Analyzer::Javascript
           next
         end
 
+        next unless content.matches?(FORWARD_CALL_GATE, options: Noir::TextFile::MATCH_OPTIONS)
         next unless content.matches?(FORWARD_CALL_RE, options: Noir::TextFile::MATCH_OPTIONS)
         next if Noir::JSRouteExtractor.minified_content?(content)
         next if test_tree?(file)
