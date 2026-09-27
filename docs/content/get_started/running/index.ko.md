@@ -170,6 +170,7 @@ noir scan . --ai-context guards,sinks
 | `--ai-model NAME`     | AI 모델 이름 |
 | `--ai-key KEY`        | AI API 키 (`NOIR_AI_KEY` 환경 변수로도 가능) |
 | `--diff-path <path>`  | diff 출력용 이전 코드 경로 |
+| `--diff-ref <ref>`    | 작업 트리와 비교할 git 리비전 (예: `main`, `HEAD~1`) |
 | `--passive-scan-severity LVL` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low` 중 하나; 기본 `high`) |
 | `-d, --debug`         | 디버그 메시지 활성화 |
 | `--config-file <경로>`| YAML 설정 파일에서 기본 옵션 로드 |

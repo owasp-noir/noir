@@ -375,6 +375,7 @@ class ConfigInitializer
       "all_taggers"                  => YAML::Any.new(false),
       "use_taggers"                  => YAML::Any.new(""),
       "diff"                         => YAML::Any.new(""),
+      "diff_ref"                     => YAML::Any.new(""),
       "passive_scan"                 => YAML::Any.new(false),
       "passive_scan_path"            => YAML::Any.new([] of YAML::Any),
       "passive_scan_severity"        => YAML::Any.new("high"),
@@ -527,6 +528,10 @@ class ConfigInitializer
 
       # The diff file to use
       diff: "#{options["diff"]}"
+
+      # A git revision to diff against instead of a directory (--diff-ref)
+      # e.g "main", "origin/main", "HEAD~1"
+      diff_ref: "#{options["diff_ref"]}"
 
       # The passive rules to use
       # e.g /path/to/rules

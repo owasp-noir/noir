@@ -45,6 +45,7 @@ class NoirRunner
   @scan_failures = [] of AnalyzerFailure
 
   getter options, techs, endpoints, logger, passive_results
+  setter endpoints
 
   # Everything this scan did not cover, from any phase. Empty is the positive
   # statement "the scan read what it was pointed at and delivered what it was

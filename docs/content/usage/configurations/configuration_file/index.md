@@ -188,6 +188,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | Key | Type | CLI equivalent | Notes |
 |---|---|---|---|
 | `diff` | string | `--diff-path` | Prior code path for diff output |
+| `diff_ref` | string | `--diff-ref` | Git revision to diff against |
 | `config_file` | string | `--config-file` | Usually set only via CLI |
 | `debug` | bool | `-d` / `--debug` | Debug logging |
 | `verbose` | bool | `--verbose` | Verbose logging (`--include path` + all taggers) |

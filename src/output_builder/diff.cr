@@ -14,9 +14,15 @@ class OutputBuilderDiff < OutputBuilder
     changed = [] of Endpoint
     removed = [] of Endpoint
 
+    # Indexed by (url, method) instead of a `find` per endpoint, which made
+    # the diff quadratic — a monorepo with a few thousand endpoints on each
+    # side spent longer here than in either scan. `put_if_absent` keeps the
+    # first endpoint for a key, the one `find` used to return.
+    old_index = index_by_route(old_endpoints)
+    new_index = index_by_route(new_endpoints)
+
     new_endpoints.each do |new_endpoint|
-      matching_old_endpoint = old_endpoints.find { |old_endpoint| old_endpoint.url == new_endpoint.url && old_endpoint.method == new_endpoint.method }
-      if matching_old_endpoint
+      if matching_old_endpoint = old_index[{new_endpoint.url, new_endpoint.method}]?
         changed << new_endpoint unless new_endpoint == matching_old_endpoint
       else
         added << new_endpoint
@@ -24,11 +30,16 @@ class OutputBuilderDiff < OutputBuilder
     end
 
     old_endpoints.each do |old_endpoint|
-      matching_new_endpoint = new_endpoints.find { |new_endpoint| new_endpoint.url == old_endpoint.url && new_endpoint.method == old_endpoint.method }
-      removed << old_endpoint unless matching_new_endpoint
+      removed << old_endpoint unless new_index.has_key?({old_endpoint.url, old_endpoint.method})
     end
 
     {added: added, removed: removed, changed: changed}
+  end
+
+  private def index_by_route(endpoints : Array(Endpoint)) : Hash({String, String}, Endpoint)
+    index = Hash({String, String}, Endpoint).new(initial_capacity: endpoints.size)
+    endpoints.each { |endpoint| index.put_if_absent({endpoint.url, endpoint.method}, endpoint) }
+    index
   end
 
   def print(endpoints : Array(Endpoint), diff_app : NoirRunner)
