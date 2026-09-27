@@ -527,12 +527,13 @@ module Analyzer::Elixir
       @route_macros.clear
 
       files = get_files_by_extension(".ex").reject { |path| elixir_test_path?(path) }
-      mutex = Mutex.new
 
-      # Macro bodies are independent per file; merge under a mutex.
+      # Macro bodies are independent per file, but the merge is last-wins on
+      # the bare macro name, so it runs in file order rather than in
+      # worker-completion order (see `Analyzer#ordered_scan_files`).
       # Parallelism matters on large Phoenix trees where most files are
       # rejected by the `defmacro` substring gate after a single read.
-      parallel_analyze(files) do |path|
+      per_file = ordered_parallel_analyze(files) do |path|
         content = read_file_content(path)
         # Vast majority of `.ex` files never define macros. Cheap
         # substring gate before line-splitting and signature assembly.
@@ -578,13 +579,13 @@ module Analyzer::Elixir
           index = macro_end + 1
         end
 
-        unless local.empty?
-          mutex.synchronize do
-            local.each { |key, mc| @route_macros[key] = mc }
-          end
-        end
+        local.empty? ? nil : local
       rescue e
         logger.debug "Error collecting Phoenix route macros from #{path}: #{e}"
+        nil
+      end
+      per_file.each do |local|
+        local.each { |key, mc| @route_macros[key] = mc }
       end
     end
 
