@@ -165,8 +165,8 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--ai-provider`        | AI provider prefix or full URL (see [AI Power](@/get_started/ai_power/index.md)) |
 | `--ai-model NAME`     | AI model name |
 | `--ai-key KEY`        | AI API key (or set `NOIR_AI_KEY`) |
-| `--diff-path <path>`  | Old code version for `noir` diff output |
-| `--diff-ref <ref>`    | Git revision to diff the working tree against (e.g. `main`, `HEAD~1`) |
+| `--diff-path <path>`  | Old code path for [Diff Mode](@/usage/more_features/diff/index.md) |
+| `--diff-ref <ref>`    | Git revision to diff against (e.g. `main`, `HEAD~1`; see [Diff Mode](@/usage/more_features/diff/index.md)) |
 | `--fail-on <list>`    | Exit `3` when the diff has any of `added`, `removed`, `changed`, `auth-removed` |
 | `--passive-scan-severity LVL` | Min passive-scan severity (`critical`, `high`, `medium`, or `low`; default `high`) |
 | `-d, --debug`         | Enable debug messages |
@@ -189,5 +189,6 @@ You've completed the Getting Started guide! Here's what to explore next:
 - **[CLI Commands](@/usage/cli_commands/_index.md)**: The full v1 subcommand reference (scan, list, cache, config, rules, and so on)
 - **[Configurations](@/usage/configurations/configuration_file/index.md)**: Set default options so you don't repeat flags every time
 - **[Output Formats](@/usage/output_formats/_index.md)**: Every output format in detail
+- **[Diff Mode](@/usage/more_features/diff/index.md)**: Compare the attack surface against a path or git revision, and gate CI with `--fail-on`
 - **[Passive Scan](@/usage/passive_scan/_index.md)**: Scan for security issues like hardcoded secrets and misconfigurations
 - **[AI Power](@/get_started/ai_power/index.md)**: Use AI to detect endpoints in unsupported frameworks
