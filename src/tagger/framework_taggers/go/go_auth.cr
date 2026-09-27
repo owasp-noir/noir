@@ -46,6 +46,12 @@ class GoAuthTagger < FrameworkTagger
     /\bGF[Aa]uth\b/,
   ]
 
+  # A scope is only ever recorded for a line `resolve_use_scope` resolves,
+  # and every form it resolves is a `.Use(` / `.Pre(` call — so a file with
+  # no such call anywhere registers nothing, and the pre-scan can skip its
+  # per-line group tracking outright.
+  USE_REGISTRATION = /\.\s*(?:Use|Pre)\s*\(/
+
   def initialize(options : Hash(String, YAML::Any))
     super
     @middleware_scopes = [] of {prefix: String, middleware: String, description: String, root_group: Bool}
@@ -85,6 +91,8 @@ class GoAuthTagger < FrameworkTagger
   end
 
   private def scan_group_middleware(content : String, file : String)
+    return unless USE_REGISTRATION.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
+
     each_group_scoped_line(content) do |stripped, scopes|
       register_auth_scopes(stripped, scopes)
     end

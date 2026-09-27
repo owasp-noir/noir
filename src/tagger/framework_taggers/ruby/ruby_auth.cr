@@ -83,6 +83,35 @@ class RubyAuthTagger < FrameworkTagger
     ["ruby_rails", "ruby_sinatra", "ruby_hanami", "ruby_grape", "ruby_roda"]
   end
 
+  def initialize(options : Hash(String, YAML::Any))
+    super
+    @controller_line_flags = Hash(String, Array(UInt8)).new
+  end
+
+  # Per-line flags for `check_controller_auth`, computed once per file.
+  #
+  # The walk runs from each action back to its enclosing `class`, so a
+  # controller with N actions re-examined the same lines N times — a regex
+  # and an `lstrip` allocation per line per action. Neither depends on the
+  # action, so classify each line once:
+  #   CONTROLLER_AUTH_LINE — matches `CONTROLLER_AUTH_ANY`; the walk runs the
+  #                          full pattern checks on it
+  #   CLASS_LINE           — any other line that opens a class; the walk stops
+  CONTROLLER_AUTH_LINE = 1_u8
+  CLASS_LINE           = 2_u8
+
+  private def controller_line_flags(path : String, lines : Array(String)) : Array(UInt8)
+    @controller_line_flags[path] ||= lines.map do |line|
+      if line.matches?(CONTROLLER_AUTH_ANY)
+        CONTROLLER_AUTH_LINE
+      elsif line.lstrip.starts_with?("class ")
+        CLASS_LINE
+      else
+        0_u8
+      end
+    end
+  end
+
   private def check_endpoint(endpoint : Endpoint)
     endpoint.details.code_paths.each do |path_info|
       lines = read_file_lines(path_info.path)
@@ -95,7 +124,7 @@ class RubyAuthTagger < FrameworkTagger
       line_idx = line_num - 1
 
       # For Rails: find enclosing class, check before_action
-      description = check_controller_auth(lines, line_idx)
+      description = check_controller_auth(lines, line_idx, controller_line_flags(path_info.path, lines))
       if description
         endpoint.add_tag(Tag.new("auth", "Protected by #{description}", "ruby_auth"))
         return
@@ -131,21 +160,19 @@ class RubyAuthTagger < FrameworkTagger
     end
   end
 
-  private def check_controller_auth(lines : Array(String), action_line : Int32) : String?
+  private def check_controller_auth(lines : Array(String), action_line : Int32, flags : Array(UInt8)) : String?
     # Walk backwards to find the controller class and before_action declarations
     idx = action_line
     action_name = extract_action_name(lines, action_line)
 
     while idx >= 0
-      current = lines[idx]
-
-      unless current.matches?(CONTROLLER_AUTH_ANY)
-        break if current.lstrip.starts_with?("class ")
+      unless flags[idx] == CONTROLLER_AUTH_LINE
+        break if flags[idx] == CLASS_LINE
         idx -= 1
         next
       end
 
-      current = current.strip
+      current = lines[idx].strip
 
       # Check for skip_before_action that applies to this action
       SKIP_PATTERNS.each do |pattern|

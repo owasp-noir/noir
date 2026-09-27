@@ -65,6 +65,15 @@ class GoSecurityTagger < FrameworkTagger
     {pattern: /\bencryptcookie\.New\s*\(/, tag: "secure-cookies", desc: "Fiber encrypted-cookie middleware", wrapper: false},
   ] of NamedTuple(pattern: Regex, tag: String, desc: String, wrapper: Bool)
 
+  # Union of every `SECURITY_MIDDLEWARE` pattern. A line can only register a
+  # scope when one of them matches it, and each line is a substring of its
+  # file (`strip` only trims whitespace, and none of the patterns is anchored
+  # or looks past a `\b`), so a file this does not match registers nothing.
+  # That lets the pre-scan skip the per-line group tracking — and its
+  # twenty-odd regexes per line — for every file with no security middleware,
+  # which is nearly all of them.
+  SECURITY_MIDDLEWARE_ANY = Regex.union(SECURITY_MIDDLEWARE.map(&.[:pattern]))
+
   # A route-definition call. Used only to *exclude* route lines from the
   # global-wrapper branch (inline route middleware is handled per-endpoint),
   # so an over-broad verb set here is safe.
@@ -105,12 +114,16 @@ class GoSecurityTagger < FrameworkTagger
   end
 
   private def scan_group_middleware(content : String)
+    return unless SECURITY_MIDDLEWARE_ANY.matches?(content, options: Noir::TextFile::MATCH_OPTIONS)
+
     each_group_scoped_line(content) do |stripped, scopes|
       register_security_scopes(stripped, scopes)
     end
   end
 
   private def register_security_scopes(stripped : String, scopes : GoRouteGroupScope::Scopes)
+    return unless stripped.matches?(SECURITY_MIDDLEWARE_ANY)
+
     use_scope = resolve_use_scope(stripped, scopes)
     # The middleware is registered on a group whose URL prefix could not be
     # read; scoping it to `/` would claim protection for the whole app.
