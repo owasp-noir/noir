@@ -318,3 +318,21 @@ describe PathInfo do
     JSON.parse(PathInfo.new("capture.har", 0).to_json).as_h.has_key?("line").should be_false
   end
 end
+
+describe "Details#detached_copy" do
+  it "copies into independent storage and normalizes technologies like add_technology" do
+    original = Details.new(PathInfo.new("a.rb", 1))
+    original.technology = "ruby_rails"
+    original.technologies = ["zeta", "", "alpha", "zeta", "mid"]
+    copy = original.detached_copy
+
+    copy.technologies.should eq(["alpha", "mid", "zeta"])
+    copy.technology.should eq("ruby_rails")
+    copy.code_paths.should eq(original.code_paths)
+
+    copy.add_path(PathInfo.new("b.rb", 2))
+    copy.add_technology("beta")
+    original.code_paths.size.should eq(1)
+    original.technologies.should eq(["zeta", "", "alpha", "zeta", "mid"])
+  end
+end

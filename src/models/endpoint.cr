@@ -273,16 +273,21 @@ struct Details
     @code_paths << code_path
   end
 
+  # Every `Endpoint#details=` goes through here, and the optimizer's dedup
+  # calls it once per merged duplicate, so it copies in bulk: `technologies`
+  # in one sort instead of re-sorting after every `add_technology`. The
+  # result is what those calls produced — empty names dropped, duplicates
+  # collapsed, sorted — whatever state the source list was left in.
   def detached_copy : Details
     copy = Details.new
-    @code_paths.each { |code_path| copy.add_path(code_path) }
+    copy.code_paths = @code_paths.dup
     if status_code = @status_code
       copy.status_code = status_code
     end
     if technology = @technology
       copy.technology = technology
     end
-    @technologies.each { |contributor| copy.add_technology(contributor) }
+    copy.technologies = @technologies.reject(&.empty?).uniq!.sort!
     copy
   end
 
