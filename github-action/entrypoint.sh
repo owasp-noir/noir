@@ -98,10 +98,13 @@ fi
 
 # The checkout is mounted from the runner and owned by the runner's user,
 # not by the container's root, so git refuses it as "dubious ownership"
-# unless the mount is marked safe. Only this directory, and only when
-# `--diff-ref` is about to run git in it.
+# unless it is marked safe. `*` rather than the workspace path: with
+# `actions/checkout` `path: app` the repository is a subdirectory, and
+# safe.directory matches the repository root exactly. The container is
+# throwaway and only runs noir's read-only git plumbing, and only when
+# `--diff-ref` is about to.
 if [ -n "$diff_ref" ]; then
-    git config --global --add safe.directory "$(pwd)"
+    git config --global --add safe.directory '*'
 fi
 
 # ==============================================================================

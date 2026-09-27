@@ -117,6 +117,13 @@ noir scan . --diff-ref origin/main --fail-on auth-removed,added -f markdown-tabl
 
 `auth-removed`는 auth 태거 결과에 의존하므로, `-T`나 `--use-taggers`를 주지 않았다면 모든 태거를 자동으로 켭니다. 실패 사유는 `--no-log`여도 stderr로 출력됩니다. 종료 코드 `1`은 여전히 사용법 오류, `2`는 `--strict`의 불완전 스캔이며 `2`가 `3`보다 우선합니다.
 
+같은 검사를 로컬의 git `pre-push` 훅에서도 쓸 수 있습니다.
+
+```bash
+#!/bin/sh
+exec noir scan . --diff-ref origin/main --fail-on auth-removed --no-log
+```
+
 pull request 워크플로 전체 예시는 [GitHub Action](../../github_action/)을 참고하세요.
 
 CI/CD에서 활용하면 `added`와 `changed` 엔드포인트만 DAST 스캐너에 넘겨서, 변경된 공격 표면에 집중할 수 있습니다.
