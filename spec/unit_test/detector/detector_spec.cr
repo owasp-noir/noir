@@ -274,3 +274,31 @@ describe "detect_techs file walker" do
     end
   end
 end
+
+describe "detect_techs passive results" do
+  it "orders findings by file, then line, then rule" do
+    temp_dir = File.tempname("noir_detector_passive_order")
+    Dir.mkdir_p(File.join(temp_dir, "sub"))
+
+    begin
+      files = ["z.env", "a.env", "sub/m.env"].map { |name| File.join(temp_dir, name) }
+      files.each { |path| File.write(path, "one\nSECRET_TOKEN=x\nthree\nSECRET_TOKEN=y\n") }
+      rule = PassiveScan.new(YAML.parse(
+        "id: order-test\ncategory: secret\ntechs: ['*']\n" \
+        "info: {name: order, author: [], severity: high, description: order, reference: []}\n" \
+        "matchers-condition: or\nmatchers:\n  - {type: word, condition: or, patterns: [SECRET_TOKEN]}\n"))
+
+      options = create_test_options
+      options["base"] = YAML::Any.new([YAML::Any.new(temp_dir)])
+      logger = NoirLogger.new(false, false, false, true)
+      CodeLocator.instance.clear_all
+
+      results = detect_techs([temp_dir], options, [rule], logger)[1]
+      locations = results.map { |result| {result.file_path, result.line_number} }
+      locations.size.should eq(6)
+      locations.should eq(locations.sort)
+    ensure
+      FileUtils.rm_rf(temp_dir)
+    end
+  end
+end
