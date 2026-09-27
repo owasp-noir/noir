@@ -6,6 +6,7 @@ require "../../options"
 require "../../cli_validation"
 require "../../banner"
 require "../../models/noir"
+require "../../utils/git_snapshot"
 require "../../techs/techs"
 require "../../llm/cache"
 require "../../llm/prompt_overrides"
@@ -517,6 +518,46 @@ module Noir::CLI::ScanCommand
     degraded && any_to_bool(app.options["strict"]?) ? 2 : 0
   end
 
+  # Where the old side of a diff scan lives: the base paths to scan, the flag
+  # that named them (for messages), and — for `--diff-ref` — the scratch
+  # checkout that has to be deleted afterwards. `nil` bases means no diff.
+  private def self.resolve_diff_side(noir_options : Hash(String, YAML::Any), logger) : {Array(String)?, String, Noir::GitSnapshot::Snapshot?}
+    diff_path = noir_options["diff"].to_s
+    diff_ref = noir_options["diff_ref"]?.to_s
+
+    if !diff_path.empty? && !diff_ref.empty?
+      Noir::CLI.die("--diff-path and --diff-ref both name the old side of the diff; pass one.")
+    end
+
+    unless diff_ref.empty?
+      snapshot = begin
+        Noir::GitSnapshot.materialize(diff_ref, noir_options["base"].as_a.map(&.to_s))
+      rescue e : Noir::GitSnapshot::Error
+        Noir::CLI.die(e.message || "--diff-ref could not check out #{diff_ref}")
+      end
+      # `exit` does not unwind `ensure` blocks, and run_scan exits from
+      # several places, so the cleanup is tied to the process instead.
+      at_exit { FileUtils.rm_rf(snapshot.root) }
+      logger.info "Checked out #{diff_ref} (#{snapshot.commit[0, 12]}) as the old side of the diff."
+      return {snapshot.bases, "--diff-ref #{diff_ref}", snapshot}
+    end
+
+    return {nil, "", nil} if diff_path.empty?
+
+    # Validate the diff target exists — without this, a misspelled
+    # `--diff-path` silently treats every current endpoint as
+    # "added" (because the missing directory analyzes to zero
+    # endpoints), which is indistinguishable from "we made huge
+    # changes" in CI diff pipelines.
+    unless File.exists?(diff_path)
+      Noir::CLI.die("--diff-path does not exist: #{diff_path}")
+    end
+    unless File.directory?(diff_path)
+      Noir::CLI.die("--diff-path is not a directory: #{diff_path}")
+    end
+    {[diff_path], "--diff-path", nil}
+  end
+
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
     app = NoirRunner.new noir_options
     start_time = Time.instant
@@ -534,22 +575,10 @@ module Noir::CLI::ScanCommand
     end
 
     app_diff = nil
-    unless noir_options["diff"].to_s.empty?
-      diff_path = noir_options["diff"].to_s
-      # Validate the diff target exists — without this, a misspelled
-      # `--diff-path` silently treats every current endpoint as
-      # "added" (because the missing directory analyzes to zero
-      # endpoints), which is indistinguishable from "we made huge
-      # changes" in CI diff pipelines.
-      unless File.exists?(diff_path)
-        Noir::CLI.die("--diff-path does not exist: #{diff_path}")
-      end
-      unless File.directory?(diff_path)
-        Noir::CLI.die("--diff-path is not a directory: #{diff_path}")
-      end
-
+    diff_bases, diff_label, snapshot = resolve_diff_side(noir_options, app.logger)
+    if bases = diff_bases
       diff_options = noir_options.dup
-      diff_options["base"] = YAML::Any.new([YAML::Any.new(diff_path)])
+      diff_options["base"] = YAML::Any.new(bases.map { |b| YAML::Any.new(b) })
       # `noir_options.dup` already carries over the parent's `nolog`
       # setting, so --no-log applies to both scans uniformly.
       # The previous shape force-set nolog=false for the diff side,
@@ -664,12 +693,19 @@ module Noir::CLI::ScanCommand
       locator.clear_all
       app_diff.detect
       app_diff.analyze
+      if snap = snapshot
+        # The old side was scanned out of a scratch checkout that is deleted
+        # on exit, so a removed endpoint's `code_paths` would point at a
+        # directory that no longer exists. Report them under the base the
+        # user actually passed, which is where that file lived at REF.
+        app_diff.endpoints = snap.relocate(app_diff.endpoints, noir_options["base"].as_a.map(&.to_s))
+      end
       # The diff is computed against the old codebase's endpoint list, so an
       # analyzer that died over there turns unscanned routes into phantom
       # "added" entries. Named separately from the base scan's failures —
       # the two scans have different code, and only one of them is the one
       # the user is about to act on.
-      report_coverage_gaps(app.logger, app_diff.analyzer_failures, " in the --diff-path codebase")
+      report_coverage_gaps(app.logger, app_diff.analyzer_failures, " in the #{diff_label} codebase")
 
       app.logger.info "Generating Diff Report."
       app.diff_report(app_diff)

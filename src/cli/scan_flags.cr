@@ -112,6 +112,7 @@ module Noir::CLI::ScanFlags
     Flag.new("--ai-native-tools-allowlist", "Provider allowlist for native tool-calling", Arg::Value, hint: "list"),
     Flag.new("--ai-max-token", "Max tokens per request", Arg::Value, hint: "n"),
     Flag.new("--diff-path", "Old code version for diff", Arg::File, hint: "path"),
+    Flag.new("--diff-ref", "Git revision to diff against", Arg::Value, hint: "ref"),
     Flag.new("--techs", "Specify technologies", Arg::Value, %w[-t], "techs"),
     Flag.new("--exclude-techs", "Exclude technologies", Arg::Value, hint: "techs"),
     Flag.new("--only-techs", "Only run these tech detectors", Arg::Value, hint: "techs"),

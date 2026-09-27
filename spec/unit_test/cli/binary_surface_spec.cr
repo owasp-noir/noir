@@ -405,6 +405,47 @@ describe "noir CLI surface (built binary)" do
     end
   end
 
+  describe "diff mode against a git revision" do
+    # `--diff-ref` checks REF out into a scratch directory and scans it as the
+    # old side. The route is added in the second commit, so diffing the
+    # working tree against HEAD~1 names it as added and nothing else.
+    it "reports what changed since REF and cleans up its checkout" do
+      repo = File.tempname("noir-diff-ref-spec-")
+      git = ->(args : Array(String)) do
+        Process.run("git", args: ["-C", repo, "-c", "user.email=spec@noir", "-c", "user.name=spec",
+                                  "-c", "commit.gpgsign=false"] + args).success?.should be_true
+      end
+      begin
+        Dir.mkdir(repo)
+        FileUtils.cp_r(FIXTURE, File.join(repo, "app"))
+        git.call(["init", "-q"])
+        git.call(["add", "-A"])
+        git.call(["commit", "-q", "-m", "base"])
+        routes = File.join(repo, "app", "app.rb")
+        File.write(routes, File.read(routes) + "\npost '/diff-ref-added' do\nend\n")
+        git.call(["commit", "-q", "-am", "add route"])
+
+        before = Dir.children(Dir.tempdir).count(&.starts_with?("noir-diff-ref-"))
+        result = run_noir(["scan", File.join(repo, "app"), "--diff-ref", "HEAD~1",
+                           "--no-color", "--no-log", "-f", "json"])
+        result.exit_code.should eq(0)
+        diff = JSON.parse(result.stdout)
+        diff["added"].as_a.map(&.["url"].as_s).should eq(["/diff-ref-added"])
+        diff["removed"].as_a.should be_empty
+        Dir.children(Dir.tempdir).count(&.starts_with?("noir-diff-ref-")).should eq(before)
+      ensure
+        FileUtils.rm_rf(repo)
+      end
+    end
+
+    it "refuses --diff-ref together with --diff-path" do
+      result = run_noir(["scan", FIXTURE, "--diff-ref", "HEAD", "--diff-path", DIFF_FIXTURE,
+                         "--no-color", "--no-log"])
+      result.exit_code.should eq(1)
+      result.stderr.should contain("pass one")
+    end
+  end
+
   describe "broken pipe" do
     # `noir list techs` writes far more than a pipe buffer holds, so a
     # reader that stops early (`| head`) closes the pipe mid-write. Scan's

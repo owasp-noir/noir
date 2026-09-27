@@ -619,6 +619,9 @@ def run_options_parser
     parser.on "--diff-path PATH", "Old code version for diff" do |v|
       noir_options["diff"] = YAML::Any.new(v)
     end
+    parser.on "--diff-ref REF", "Git revision to diff against (e.g. main, HEAD~1)" do |v|
+      noir_options["diff_ref"] = YAML::Any.new(v)
+    end
 
     # Three flags act at different stages of the tech pipeline:
     #   --techs        — append to the analyzer set after detection
