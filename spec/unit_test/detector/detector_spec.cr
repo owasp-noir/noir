@@ -298,6 +298,7 @@ describe "detect_techs passive results" do
       locations.size.should eq(6)
       locations.should eq(locations.sort)
     ensure
+      CodeLocator.instance.clear_all
       FileUtils.rm_rf(temp_dir)
     end
   end

@@ -10,6 +10,11 @@ require "../../../src/models/analyzer"
 require "../../../src/analyzer/analyzers/file_analyzers/base64"
 
 describe "Base64 FileAnalyzer hook" do
+  # The locator is process-wide, and the functional testers leave their
+  # fixture files registered: in a randomized order the hooks here would
+  # also read, say, the postman fixture and report its routes.
+  before_each { CodeLocator.instance.clear_all }
+
   it "detects base64-encoded URL in a file" do
     url = "http://example.com/api/secret"
     encoded = Base64.strict_encode(url)
