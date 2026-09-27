@@ -305,36 +305,47 @@ class NoirRunner
     end
   end
 
-  def diff_report(diff_app)
+  # Renders the diff in the requested format and returns it, so the caller
+  # can apply `--fail-on` to the same result instead of computing it twice.
+  def diff_report(diff_app) : OutputBuilderDiff::Result
     builder = OutputBuilderDiff.new @options
+    # Either scan dying makes the diff unreliable; SARIF says so through
+    # `executionSuccessful`.
+    builder.analyzer_failures = analyzer_failures + diff_app.analyzer_failures
+    result = builder.diff(@endpoints, diff_app.endpoints)
 
     case options["format"]
     when "yaml"
-      builder.print_yaml @endpoints, diff_app
+      builder.print_yaml result
     when "json"
-      builder.print_json @endpoints, diff_app
+      builder.print_json result
     when "toml"
-      builder.print_toml @endpoints, diff_app
+      builder.print_toml result
+    when "markdown-table"
+      builder.print_markdown result
+    when "sarif"
+      builder.print_sarif result
     else
-      # Diff mode only implements plain/json/yaml/toml. Any other explicit
-      # format (only-url, curl, sarif, oas3, …) was silently rendered as the
+      # Diff mode implements only the formats above. Any other explicit
+      # format (only-url, curl, oas3, …) was silently rendered as the
       # decorated text diff, corrupting automation pipelines that expected the
       # requested format.
       fmt = options["format"].to_s
       unless fmt.empty? || fmt == "plain"
         # Straight to STDERR rather than through `@logger.warning`, which
         # `--no-log` silences wholesale — and `--no-log` is exactly the run
-        # that needs to hear this. `noir scan new --diff-path old -f sarif
-        # --no-log -o report.sarif` in CI otherwise writes the text diff
-        # into a `.sarif` file with nothing on either stream saying the
+        # that needs to hear this. `noir scan new --diff-path old -f oas3
+        # --no-log -o report.json` in CI otherwise writes the text diff
+        # into the file with nothing on either stream saying the
         # format request was dropped. A "your flag was ignored" notice about
         # the result stream itself belongs with the `--concurrency` clamp
         # and the other always-visible CliValidation warnings, not with the
         # progress log.
-        STDERR.puts "WARNING: diff mode does not support -f #{fmt}; showing the text diff instead. Supported diff formats: plain, json, yaml, toml.".colorize(:yellow)
+        STDERR.puts "WARNING: diff mode does not support -f #{fmt}; showing the text diff instead. Supported diff formats: plain, json, yaml, toml, markdown-table, sarif.".colorize(:yellow)
       end
-      builder.print @endpoints, diff_app
+      builder.print result
     end
+    result
   end
 
   # Renders the report in the requested format. Which builder that is, and

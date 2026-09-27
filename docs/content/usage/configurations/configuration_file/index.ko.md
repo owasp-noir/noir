@@ -189,6 +189,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 |---|---|---|---|
 | `diff` | string | `--diff-path` | diff 출력용 이전 코드 경로 |
 | `diff_ref` | string | `--diff-ref` | 비교 기준이 될 git 리비전 |
+| `fail_on` | string | `--fail-on` | 종료 코드 `3`을 낼 diff 결과 종류 (쉼표 구분) |
 | `config_file` | string | `--config-file` | 보통 CLI 로만 지정 |
 | `debug` | bool | `-d` / `--debug` | 디버그 로깅 |
 | `verbose` | bool | `--verbose` | 상세 로깅 (`--include path` + 모든 태거) |

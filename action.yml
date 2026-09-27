@@ -105,6 +105,14 @@ inputs:
     description: Old code version path for diff analysis (equivalent to --diff-path)
     required: false
     default: ""
+  diff_ref:
+    description: Git revision to diff the checkout against, e.g. the pull request base (equivalent to --diff-ref). Fetched automatically when a shallow checkout lacks it
+    required: false
+    default: ""
+  fail_on:
+    description: Fail the step when the diff has any of these (comma-separated added, removed, changed, auth-removed; equivalent to --fail-on)
+    required: false
+    default: ""
   no_log:
     description: Hide execution progress/diagnostic logs and only show results (equivalent to --no-log)
     required: false
@@ -164,10 +172,39 @@ runs:
     # $GITHUB_OUTPUT inside the container points at a workspace path
     # so the runner host can read it back after the container exits —
     # the runner's real $GITHUB_OUTPUT lives outside the container.
+    # `--diff-ref` runs git inside the container, against the mounted
+    # checkout. The container has no credentials, so a revision the
+    # checkout lacks (the default `actions/checkout` is one commit deep) is
+    # fetched here on the runner, and the container gets the commit SHA —
+    # a bare `main` would still not resolve after a depth-1 fetch.
+    - name: Resolve diff base
+      id: diffbase
+      if: ${{ inputs.diff_ref != '' }}
+      shell: bash
+      env:
+        NOIR_DIFF_REF: ${{ inputs.diff_ref }}
+      run: |
+        set -euo pipefail
+        case "$NOIR_DIFF_REF" in
+          -*) echo "::error title=OWASP Noir::diff_ref must be a git revision, not an option: $NOIR_DIFF_REF"; exit 1 ;;
+        esac
+        cd "$GITHUB_WORKSPACE"
+        if ! sha="$(git rev-parse --verify --quiet "${NOIR_DIFF_REF}^{commit}")"; then
+          echo "Fetching ${NOIR_DIFF_REF} (not in the checkout)"
+          git fetch --no-tags --depth=1 origin "${NOIR_DIFF_REF#origin/}"
+          sha="$(git rev-parse --verify "FETCH_HEAD^{commit}")"
+        fi
+        echo "Diff base: ${NOIR_DIFF_REF} (${sha})"
+        echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
     - name: Run Noir
       id: noir
       shell: bash
       run: |
+        # Captured rather than left to `bash -e`: a `fail_on` match exits
+        # non-zero on purpose, and the outputs below still have to be
+        # promoted so a later step can read what failed the job.
+        rc=0
         docker run --rm \
           -v "${{ github.workspace }}":/github/workspace \
           -w /github/workspace \
@@ -200,9 +237,11 @@ runs:
           -e INPUT_EXPORT_ES="${{ inputs.export_es }}" \
           -e INPUT_EXPORT_WEBHOOK="${{ inputs.export_webhook }}" \
           -e INPUT_DIFF_PATH="${{ inputs.diff_path }}" \
+          -e INPUT_DIFF_REF="${{ steps.diffbase.outputs.sha }}" \
+          -e INPUT_FAIL_ON="${{ inputs.fail_on }}" \
           -e INPUT_NO_LOG="${{ inputs.no_log }}" \
           --entrypoint /entrypoint.sh \
-          "${{ steps.pull.outputs.image }}"
+          "${{ steps.pull.outputs.image }}" || rc=$?
 
         # The container wrote to /github/workspace/.noir-output (its
         # view of $GITHUB_OUTPUT); promote that into the composite
@@ -212,3 +251,4 @@ runs:
           cat "${{ github.workspace }}/.noir-output" >> "$GITHUB_OUTPUT"
           rm -f "${{ github.workspace }}/.noir-output"
         fi
+        exit "$rc"

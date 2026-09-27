@@ -51,6 +51,8 @@ probe_via="${INPUT_PROBE_VIA:-}"
 export_es="${INPUT_EXPORT_ES:-}"
 export_webhook="${INPUT_EXPORT_WEBHOOK:-}"
 diff_path="${INPUT_DIFF_PATH:-}"
+diff_ref="${INPUT_DIFF_REF:-}"
+fail_on="${INPUT_FAIL_ON:-}"
 no_log="${INPUT_NO_LOG:-true}"
 
 # ==============================================================================
@@ -91,6 +93,16 @@ fi
 [ -n "$export_es" ]              && set -- "$@" --export-es "$export_es"
 [ -n "$export_webhook" ]         && set -- "$@" --export-webhook "$export_webhook"
 [ -n "$diff_path" ]              && set -- "$@" --diff-path "$diff_path"
+[ -n "$diff_ref" ]               && set -- "$@" --diff-ref "$diff_ref"
+[ -n "$fail_on" ]                && set -- "$@" --fail-on "$fail_on"
+
+# The checkout is mounted from the runner and owned by the runner's user,
+# not by the container's root, so git refuses it as "dubious ownership"
+# unless the mount is marked safe. Only this directory, and only when
+# `--diff-ref` is about to run git in it.
+if [ -n "$diff_ref" ]; then
+    git config --global --add safe.directory "$(pwd)"
+fi
 
 # ==============================================================================
 # Execute
@@ -100,7 +112,15 @@ echo "Executing command: $*"
 "$@"
 exit_code=$?
 
-[ $exit_code -ne 0 ] && error_exit "Noir command failed with exit code $exit_code" $exit_code
+# 3 is `--fail-on` matching: the scan worked and the report is complete,
+# so the outputs are still written below and the exit code is passed on at
+# the end. Anything else non-zero is a failed run.
+fail_on_matched=false
+if [ $exit_code -eq 3 ] && [ -n "$fail_on" ]; then
+    fail_on_matched=true
+elif [ $exit_code -ne 0 ]; then
+    error_exit "Noir command failed with exit code $exit_code" $exit_code
+fi
 [ ! -f "$output_file" ] && error_exit "Output file $output_file not found" 1
 
 # ==============================================================================
@@ -139,6 +159,13 @@ fi
 # ==============================================================================
 # Summary
 # ==============================================================================
+
+if [ "$fail_on_matched" = "true" ]; then
+    echo "::error title=OWASP Noir::The diff matched fail_on ($fail_on)"
+    echo "Output format: $format"
+    echo "Output file:   $output_file"
+    exit 3
+fi
 
 echo "Noir analysis completed successfully"
 echo "Output format: $format"

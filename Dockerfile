@@ -11,7 +11,7 @@ RUN apk add --no-cache yaml-dev zstd-dev git && \
 # Snapshot the passive-rules repo so the runner stage can ship them
 # pre-baked at `/opt/noir/passive_rules`. `--depth=1` keeps the
 # tarball-sized clone tiny, then we drop `.git` so the runtime image
-# doesn't carry repo metadata it can't use (no git binary downstream).
+# doesn't carry repo metadata it has no use for.
 RUN git clone --depth=1 https://github.com/owasp-noir/noir-passive-rules.git /noir-passive-rules && \
     rm -rf /noir-passive-rules/.git
 
@@ -40,8 +40,10 @@ LABEL "com.github.actions.color"="purple"
 #     `endpoints` / `passive_results` action outputs.
 #   * ca-certificates — needed when noir or downstream tooling needs to
 #     hit HTTPS endpoints from inside the container.
+#   * git — `--diff-ref` checks the compared revision out of the mounted
+#     repository with git plumbing.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends jq ca-certificates && \
+    apt-get install -y --no-install-recommends jq ca-certificates git && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /noir/bin/noir /usr/local/bin/noir

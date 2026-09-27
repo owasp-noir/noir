@@ -167,6 +167,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--ai-key KEY`        | AI API key (or set `NOIR_AI_KEY`) |
 | `--diff-path <path>`  | Old code version for `noir` diff output |
 | `--diff-ref <ref>`    | Git revision to diff the working tree against (e.g. `main`, `HEAD~1`) |
+| `--fail-on <list>`    | Exit `3` when the diff has any of `added`, `removed`, `changed`, `auth-removed` |
 | `--passive-scan-severity LVL` | Min passive-scan severity (`critical`, `high`, `medium`, or `low`; default `high`) |
 | `-d, --debug`         | Enable debug messages |
 | `--config-file <path>`| Load default options from a YAML config file |

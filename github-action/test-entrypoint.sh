@@ -111,6 +111,46 @@ else
   fi
 fi
 
+# ---------------------------------------------------------------------------
+# Scenario 3: diff_ref + fail_on. The workspace is a git repository whose
+# only commit predates the fixture, so every endpoint is new. That exercises
+# git inside the image (including the root-vs-runner "dubious ownership"
+# refusal the entrypoint has to lift), the exit code a fail_on match ends
+# with, and that the outputs are still written when it does.
+# ---------------------------------------------------------------------------
+echo "[3] diff_ref + fail_on=added"
+ws="$(mktemp -d)"
+mkdir -p "$ws/src"
+touch "$ws/src/.keep"
+git -C "$ws" init -q
+git -C "$ws" add -A
+git -C "$ws" -c user.email=ci@noir -c user.name=ci -c commit.gpgsign=false commit -q -m base
+base_sha="$(git -C "$ws" rev-parse HEAD)"
+cp -R "$FIXTURE/." "$ws/src/"
+rc=0
+docker run --rm \
+  -v "$ws":/github/workspace \
+  -w /github/workspace \
+  -e GITHUB_OUTPUT=/github/workspace/.noir-output \
+  -e INPUT_BASE_PATH="src" \
+  -e INPUT_FORMAT=json \
+  -e INPUT_DIFF_REF="$base_sha" \
+  -e INPUT_FAIL_ON=added \
+  --entrypoint /entrypoint.sh \
+  "$IMAGE" >"$ws/stdout" 2>"$ws/stderr" || rc=$?
+if [[ "$rc" -eq 3 ]]; then
+  note_pass "exits 3 when fail_on matches"
+else
+  note_fail "expected exit 3, got $rc"
+  cat "$ws/stderr" >&2 || true
+fi
+ep="$(sed -n 's/^endpoints=//p' "$ws/.noir-output" 2>/dev/null || true)"
+if printf '%s' "$ep" | jq -e '(.added | length >= 1) and (.removed | length == 0)' >/dev/null 2>&1; then
+  note_pass "diff document is written and lists the new endpoints as added"
+else
+  note_fail "endpoints output is not a diff document with added endpoints"
+fi
+
 # NOTE: format=jsonl is intentionally not asserted here yet — the current
 # entrypoint mishandles the multi-object JSONL stream (emits multi-line
 # values that corrupt $GITHUB_OUTPUT). Add a jsonl scenario together with the

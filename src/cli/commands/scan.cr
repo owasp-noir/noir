@@ -7,6 +7,7 @@ require "../../cli_validation"
 require "../../banner"
 require "../../models/noir"
 require "../../utils/git_snapshot"
+require "../../diff_gate"
 require "../../techs/techs"
 require "../../llm/cache"
 require "../../llm/prompt_overrides"
@@ -559,8 +560,17 @@ module Noir::CLI::ScanCommand
   end
 
   private def self.run_scan(noir_options : Hash(String, YAML::Any))
+    fail_on = Noir::DiffGate.parse(noir_options["fail_on"]?.to_s)
+    implied_taggers = Noir::DiffGate.needs_taggers?(fail_on) &&
+                      !any_to_bool(noir_options["all_taggers"]?) &&
+                      noir_options["use_taggers"]?.to_s.empty?
+    # Set before either runner is built: both read the tagger options at
+    # construction, and the old side needs its auth tags as much as the new.
+    noir_options["all_taggers"] = YAML::Any.new(true) if implied_taggers
+
     app = NoirRunner.new noir_options
     start_time = Time.instant
+    app.logger.info "Running all taggers because --fail-on auth-removed reads the auth tags." if implied_taggers
 
     app.logger.debug("Start Debug mode")
     app.logger.debug("Noir version: #{Noir::VERSION}")
@@ -708,13 +718,27 @@ module Noir::CLI::ScanCommand
       report_coverage_gaps(app.logger, app_diff.analyzer_failures, " in the #{diff_label} codebase")
 
       app.logger.info "Generating Diff Report."
-      app.diff_report(app_diff)
+      diff_result = app.diff_report(app_diff)
     end
 
     # After the report, never before: a degraded scan still has results, and
     # the point of `--strict` is to flag them, not to withhold them.
     code = scan_exit_code(app, app_diff)
     exit(code) if code != 0
+
+    # Checked after `--strict`: an incomplete scan is the more fundamental
+    # failure, and its findings are the ones that cannot be trusted.
+    if diff_result && !fail_on.empty?
+      counts = OutputBuilderDiff.gate_counts(diff_result)
+      fired = Noir::DiffGate.fired(fail_on, counts)
+      unless fired.empty?
+        # STDERR, not the logger: `--no-log` is the CI shape, and the reason
+        # a job went red must not be the one line it hides.
+        summary = fired.join(", ") { |category| "#{counts[category]} #{category}" }
+        STDERR.puts "noir: --fail-on matched: #{summary}"
+        exit(Noir::DiffGate::EXIT_CODE)
+      end
+    end
   rescue e : Noir::InvalidExcludePathError
     # Raised from the detector's file walk once a malformed --exclude-path
     # glob is actually reached. Without this the process printed a raw

@@ -1,6 +1,8 @@
 require "../models/output_builder"
 require "../models/endpoint"
 require "./toml_serializer"
+require "./markdown_cell"
+require "sarif"
 
 require "json"
 require "yaml"
@@ -8,6 +10,7 @@ require "colorize"
 
 class OutputBuilderDiff < OutputBuilder
   include OutputBuilderTomlSerializer
+  include OutputBuilderMarkdownCell
 
   AUTH_TAG = "auth"
 
@@ -54,7 +57,9 @@ class OutputBuilderDiff < OutputBuilder
     end
   end
 
-  def diff(new_endpoints : Array(Endpoint), old_endpoints : Array(Endpoint))
+  alias Result = NamedTuple(added: Array(Endpoint), removed: Array(Endpoint), changed: Array(Endpoint), changes: Array(Change))
+
+  def diff(new_endpoints : Array(Endpoint), old_endpoints : Array(Endpoint)) : Result
     added = [] of Endpoint
     changed = [] of Endpoint
     removed = [] of Endpoint
@@ -121,8 +126,21 @@ class OutputBuilderDiff < OutputBuilder
     index
   end
 
+  # How many findings each `--fail-on` category has in `result`.
+  def self.gate_counts(result : Result) : Hash(String, Int32)
+    {
+      "added"        => result[:added].size,
+      "removed"      => result[:removed].size,
+      "changed"      => result[:changed].size,
+      "auth-removed" => result[:changes].count(&.auth_removed?),
+    }
+  end
+
   def print(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    result = diff(endpoints, diff_app.endpoints)
+    print(diff(endpoints, diff_app.endpoints))
+  end
+
+  def print(result : Result)
     common = OutputBuilderCommon.new(@options)
     common.io = io
 
@@ -172,17 +190,26 @@ class OutputBuilderDiff < OutputBuilder
   end
 
   def print_json(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    result = diff(endpoints, diff_app.endpoints)
+    print_json(diff(endpoints, diff_app.endpoints))
+  end
+
+  def print_json(result : Result)
     ob_puts result.to_json
   end
 
   def print_yaml(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    result = diff(endpoints, diff_app.endpoints)
+    print_yaml(diff(endpoints, diff_app.endpoints))
+  end
+
+  def print_yaml(result : Result)
     ob_puts result.to_yaml
   end
 
   def print_toml(endpoints : Array(Endpoint), diff_app : NoirRunner)
-    result = diff(endpoints, diff_app.endpoints)
+    print_toml(diff(endpoints, diff_app.endpoints))
+  end
+
+  def print_toml(result : Result)
     json_str = result.to_json
     json_obj = JSON.parse(json_str)
     toml_output = generate_toml_from_diff(json_obj.as_h)
@@ -205,5 +232,166 @@ class OutputBuilderDiff < OutputBuilder
       end
     end
     result
+  end
+
+  # A pull-request comment: counts first, then the lost-auth routes, then
+  # one table per section. Every cell is repo-derived text, so each goes
+  # through the same escaping `-f markdown-table` uses.
+  def print_markdown(result : Result)
+    auth_removed = result[:changed].zip(result[:changes]).select { |(_, change)| change.auth_removed? }
+
+    ob_puts "## Attack surface diff"
+    ob_puts ""
+    if result[:added].empty? && result[:removed].empty? && result[:changed].empty?
+      ob_puts "No endpoint was added, removed or changed."
+      return
+    end
+
+    ob_puts "| Added | Removed | Changed | Auth removed |"
+    ob_puts "| ----- | ------- | ------- | ------------ |"
+    ob_puts "| #{result[:added].size} | #{result[:removed].size} | #{result[:changed].size} | #{auth_removed.size} |"
+
+    unless auth_removed.empty?
+      ob_puts ""
+      ob_puts "### :warning: Auth removed"
+      ob_puts ""
+      ob_puts "These routes had an `auth` tag before this change and do not now."
+      ob_puts ""
+      ob_puts "| Endpoint | Location |"
+      ob_puts "| -------- | -------- |"
+      auth_removed.each do |(endpoint, _)|
+        ob_puts "| #{markdown_endpoint(endpoint)} | #{markdown_location(endpoint)} |"
+      end
+    end
+
+    unless result[:added].empty?
+      ob_puts ""
+      ob_puts "### Added"
+      ob_puts ""
+      ob_puts "| Endpoint | Params | Location |"
+      ob_puts "| -------- | ------ | -------- |"
+      result[:added].each do |endpoint|
+        params = endpoint.params.map { |param| ParamRef.new(param.name, param.param_type) }
+        ob_puts "| #{markdown_endpoint(endpoint)} | #{markdown_params(params)} | #{markdown_location(endpoint)} |"
+      end
+    end
+
+    unless result[:removed].empty?
+      ob_puts ""
+      ob_puts "### Removed"
+      ob_puts ""
+      ob_puts "| Endpoint | Location |"
+      ob_puts "| -------- | -------- |"
+      result[:removed].each do |endpoint|
+        ob_puts "| #{markdown_endpoint(endpoint)} | #{markdown_location(endpoint)} |"
+      end
+    end
+
+    unless result[:changed].empty?
+      ob_puts ""
+      ob_puts "### Changed"
+      ob_puts ""
+      ob_puts "| Endpoint | Change | Location |"
+      ob_puts "| -------- | ------ | -------- |"
+      result[:changed].zip(result[:changes]) do |endpoint, change|
+        ob_puts "| #{markdown_endpoint(endpoint)} | #{markdown_change(change)} | #{markdown_location(endpoint)} |"
+      end
+    end
+  end
+
+  private def markdown_endpoint(endpoint : Endpoint) : String
+    markdown_code_span(sanitize_code_span_cell("#{endpoint.method} #{endpoint.url}"))
+  end
+
+  private def markdown_params(params : Array(ParamRef)) : String
+    return "-" if params.empty?
+    params.join(" ") { |param| markdown_code_span(sanitize_code_span_cell("#{param.name} (#{param.param_type})")) }
+  end
+
+  private def markdown_location(endpoint : Endpoint) : String
+    code_path = endpoint.details.code_paths.first?
+    return "-" unless code_path
+    location = code_path.line ? "#{code_path.path}:#{code_path.line}" : code_path.path
+    sanitize_text_cell(location)
+  end
+
+  private def markdown_change(change : Change) : String
+    parts = [] of String
+    parts << "**auth tag removed**" if change.auth_removed?
+    parts << "added #{markdown_params(change.params_added)}" unless change.params_added.empty?
+    parts << "removed #{markdown_params(change.params_removed)}" unless change.params_removed.empty?
+    change.tags_added.each { |tag| parts << "tag #{markdown_code_span(sanitize_code_span_cell(tag))} added" }
+    change.tags_removed.each do |tag|
+      parts << "tag #{markdown_code_span(sanitize_code_span_cell(tag))} removed" unless tag == AUTH_TAG
+    end
+    parts.join("<br>")
+  end
+
+  # Code scanning annotations for the new surface only. A removed route has
+  # no line in the tree being reviewed to annotate, and a param that went
+  # away narrows the surface, so neither is reported here — the text, JSON
+  # and markdown reports still list both.
+  def print_sarif(result : Result)
+    log = Sarif::Builder.build do |b|
+      b.run("OWASP Noir", Noir::VERSION) do |r|
+        r.information_uri("https://github.com/owasp-noir/noir")
+        r.invocation(execution_successful: analyzer_failures.empty?)
+
+        r.rule("diff-endpoint-added",
+          name: "Endpoint Added",
+          short_description: "A new endpoint is reachable",
+          full_description: "This change adds an endpoint that did not exist in the revision it is compared against.",
+          level: Sarif::Level::Note,
+          help_uri: "https://owasp-noir.github.io/noir/usage/more_features/diff/")
+        r.rule("diff-params-added",
+          name: "Parameters Added",
+          short_description: "An existing endpoint accepts new parameters",
+          full_description: "This change makes an existing endpoint read parameters it did not read before.",
+          level: Sarif::Level::Note,
+          help_uri: "https://owasp-noir.github.io/noir/usage/more_features/diff/")
+        r.rule("diff-auth-removed",
+          name: "Auth Removed",
+          short_description: "An endpoint lost its authentication",
+          full_description: "The endpoint carried an auth tag in the compared revision and no longer does, so it may now be reachable without authentication.",
+          level: Sarif::Level::Warning,
+          help_uri: "https://owasp-noir.github.io/noir/usage/more_features/diff/")
+
+        result[:added].each do |endpoint|
+          sarif_result(r, endpoint, "diff-endpoint-added", Sarif::Level::Note,
+            "New endpoint #{endpoint.method} #{endpoint.url}#{sarif_params(endpoint.params.map { |p| ParamRef.new(p.name, p.param_type) })}")
+        end
+
+        result[:changed].zip(result[:changes]) do |endpoint, change|
+          if change.auth_removed?
+            sarif_result(r, endpoint, "diff-auth-removed", Sarif::Level::Warning,
+              "#{endpoint.method} #{endpoint.url} no longer has an auth tag")
+          end
+          unless change.params_added.empty?
+            sarif_result(r, endpoint, "diff-params-added", Sarif::Level::Note,
+              "#{endpoint.method} #{endpoint.url} accepts new parameters: #{sarif_param_list(change.params_added)}")
+          end
+        end
+      end
+    end
+    ob_puts log.to_json
+  end
+
+  private def sarif_result(run, endpoint : Endpoint, rule_id : String, level : Sarif::Level, message : String)
+    run.result do |rb|
+      rb.message(message)
+      rb.rule_id(rule_id)
+      rb.level(level)
+      endpoint.details.code_paths.each do |code_path|
+        rb.location(uri: code_path.path, start_line: code_path.line)
+      end
+    end
+  end
+
+  private def sarif_params(params : Array(ParamRef)) : String
+    params.empty? ? "" : " (Parameters: #{sarif_param_list(params)})"
+  end
+
+  private def sarif_param_list(params : Array(ParamRef)) : String
+    params.join(", ") { |param| "#{param.param_type}: #{param.name}" }
   end
 end

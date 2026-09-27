@@ -7,6 +7,7 @@ require "./llm/native_tool_calling"
 require "./output_builder/formats"
 require "./passive_scan/severity"
 require "./utils/path_scope"
+require "./diff_gate"
 
 module Noir::CliValidation
   class Error < Exception
@@ -25,6 +26,7 @@ module Noir::CliValidation
     validate_ai_integer_options!(options)
     validate_ai_provider_pair!(options)
     validate_ai_native_tools_allowlist!(options)
+    validate_fail_on!(options)
     warn_about_unused_delivery_flags(options)
     warn_about_contradictory_probe_filters(options)
   end
@@ -357,6 +359,22 @@ module Noir::CliValidation
     return if unknown_taggers.empty?
 
     raise Error.new("Unknown tagger(s): #{unknown_taggers.join(", ")}. Use `noir list taggers` to see available taggers.")
+  end
+
+  # `--fail-on` gates on what a diff found, so it means nothing without one:
+  # a plain scan would never fire it and a CI job would pass forever.
+  def self.validate_fail_on!(options : Hash(String, YAML::Any))
+    categories = DiffGate.parse(options["fail_on"]?.to_s)
+    return if categories.empty?
+
+    unknown = DiffGate.unknown(categories)
+    unless unknown.empty?
+      raise Error.new("Unknown --fail-on value(s): #{unknown.join(", ")}. Valid: #{DiffGate::CATEGORIES.join(", ")}")
+    end
+
+    if options["diff"]?.to_s.empty? && options["diff_ref"]?.to_s.empty?
+      raise Error.new("--fail-on needs a diff: pass --diff-ref <ref> or --diff-path <path>.")
+    end
   end
 
   def self.exit_with_error(message : String) : NoReturn
