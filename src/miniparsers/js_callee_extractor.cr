@@ -1,5 +1,6 @@
 require "../ext/tree_sitter/tree_sitter"
 require "./callee_extractor_base"
+require "./extraction_result_cache"
 
 module Noir::JSCalleeExtractor
   extend self
@@ -36,7 +37,24 @@ module Noir::JSCalleeExtractor
 
   alias Definitions = Hash(String, Int32?)
 
+  # Memo for `callees_for_routes`. Express, Koa, Fastify, Restify, Hono and
+  # Oak all hand the same file to `JSRouteExtractor.extract_routes`, and in
+  # callee mode each of those calls parsed it again. Keyed on the source and
+  # `file_path` (baked into every entry); callers only read the table.
+  @@routes_memo = Hash(UInt64, Hash(String, Array(Entry))).new
+  @@routes_order = [] of UInt64
+  @@routes_mutex = Mutex.new
+  @@routes_clearer_registered = false
+
   def callees_for_routes(source : String, file_path : String) : Hash(String, Array(Entry))
+    ensure_routes_clearer_registered
+    key = Noir::ExtractionResultCache.key(source, "js_route_callees", file_path)
+    Noir::ExtractionResultCache.fetch(@@routes_memo, @@routes_order, key, @@routes_mutex) do
+      parse_callees_for_routes(source, file_path)
+    end
+  end
+
+  private def parse_callees_for_routes(source : String, file_path : String) : Hash(String, Array(Entry))
     by_route = {} of String => Array(Entry)
     Noir::TreeSitter.parse_javascript(source) do |root|
       definitions = top_level_definitions(root, source)
@@ -45,6 +63,17 @@ module Noir::JSCalleeExtractor
     by_route
   rescue
     {} of String => Array(Entry)
+  end
+
+  private def ensure_routes_clearer_registered : Nil
+    return if @@routes_clearer_registered
+    @@routes_mutex.synchronize do
+      return if @@routes_clearer_registered
+      Noir::ExtractionResultCache.register_clearer do
+        Noir::ExtractionResultCache.clear(@@routes_memo, @@routes_order, @@routes_mutex)
+      end
+      @@routes_clearer_registered = true
+    end
   end
 
   def callees_for_function_body(body : String,

@@ -56,11 +56,6 @@ module Noir
         end
         parser = JSParser.new(content)
         route_patterns = parser.parse_routes
-        callees_by_route = if include_callees
-                             route_callees || JSCalleeExtractor.callees_for_routes(content, file_path)
-                           else
-                             {} of String => Array(JSCalleeExtractor::Entry)
-                           end
 
         if debug && parser.hit_max_iterations?
           STDERR.puts "Warning: Maximum iterations reached in JS parser, parsing may be incomplete"
@@ -71,6 +66,14 @@ module Noir
         # internal-mount scan, prefix propagation) exists to attribute
         # prefixes to routes the parser already found.
         return [] of Endpoint if route_patterns.empty?
+
+        # Only now: the callee table is a tree-sitter parse of the whole
+        # file, and it is only ever consulted for the routes found above.
+        callees_by_route = if include_callees
+                             route_callees || JSCalleeExtractor.callees_for_routes(content, file_path)
+                           else
+                             {} of String => Array(JSCalleeExtractor::Entry)
+                           end
 
         # Check if this file has a router prefix from cross-file mounting
         locator = CodeLocator.instance

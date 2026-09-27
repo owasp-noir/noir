@@ -204,4 +204,16 @@ describe Noir::JSCalleeExtractor do
 
     Noir::JSCalleeExtractor.callees_for_default_event_handler("export default { setup() { track() } }", "server/api/users.get.ts").should be_empty
   end
+
+  it "keys the route-callee memo on both the source and the file path" do
+    Noir::ExtractionResultCache.clear_all
+    source = "app.get('/a', (req, res) => { audit(req) })\n"
+    first = Noir::JSCalleeExtractor.callees_for_routes(source, "one.js")
+    again = Noir::JSCalleeExtractor.callees_for_routes(source, "one.js")
+    other = Noir::JSCalleeExtractor.callees_for_routes(source, "two.js")
+
+    again.should eq(first)
+    first.values.flatten.map(&.[1]).uniq!.should eq(["one.js"])
+    other.values.flatten.map(&.[1]).uniq!.should eq(["two.js"])
+  end
 end
