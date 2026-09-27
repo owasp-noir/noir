@@ -2,6 +2,31 @@
 
 All notable changes to [Noir](https://github.com/owasp-noir/noir) will be documented in this file.
 
+## v1.4.0
+
+Noir v1.4.0 adds a PR attack-surface diff mode for CI, and makes scans faster and deterministic.
+
+### Added
+- **Diff mode**: `--diff-ref` diffs the attack surface against a git revision, reports what changed on each endpoint, flags lost auth (`auth_removed`), and renders markdown/SARIF diff reports. `--fail-on` exits 3 on matching findings, and the GitHub Action exposes `diff_ref`/`fail_on` (#2775-#2778).
+- Merged endpoints keep every contributing technology (`details.technologies`) (#2700).
+- Express routes registered through a forwarding helper, and the field form of the gRPC `google.api.http` annotation (#2708, #2706).
+- File upload params emit multipart (curl/httpie, PowerShell, OAS2/OAS3), and xml params emit `application/xml` bodies (OAS, Postman) (#2734-#2737, #2739).
+
+### Performance
+- Directory listing, file reads, passive-scan rules, and Go route parses run on worker threads, with results kept in walk order. Default scans ~1.4x, full scans ~1.75x faster (#2757-#2773).
+
+### Fixed
+- Cross-file analyzer state and passive-scan findings are merged in a stable order, so results no longer vary run to run (#2770, #2765).
+- `TextFile.read` returns valid UTF-8 for every input (#2760).
+- Analyzer accuracy: route line numbers, a dynamic root urlconf hiding other Django urlconfs, Flask-AppBuilder route bases, Lapis methods, gitea's chi routes, ASP.NET Core MVC controller discovery, and Python param names (#2698, #2704, #2707, #2705, #2701, #2744, #2695).
+- Four detectors no longer fire on other libraries' markers, and Directus ignores test snapshots (#2697, #2703).
+- File-hook analyzers report a technology and honour `--only-techs` (#2702).
+- Params dedupe by canonical type, hostless spec/file URLs are rejected, and OAS/Postman path placeholders keep hyphens (#2751, #2750, #2748, #2733, #2742).
+
+### Changed
+- The spec suite compiles once and runs in parallel (#2699).
+- Documentation and README hero refresh with the new Hak mascot set (#2693, #2694, #2752-#2756).
+
 ## v1.3.1
 
 Noir v1.3.1 is a bug-fix release. It adds source line numbers to several analyzers, recovers whole route surfaces that detection or size limits were dropping, and fixes a class of scan-wide bugs where one application's endpoints overwrote another's.
