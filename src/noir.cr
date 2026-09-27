@@ -2,7 +2,7 @@ require "option_parser"
 require "colorize"
 
 module Noir
-  VERSION = "1.3.1"
+  VERSION = "1.4.0"
 end
 
 require "./cli/router"
