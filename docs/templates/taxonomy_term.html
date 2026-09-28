@@ -1,3 +1,8 @@
+{% set taxonomy_kind = "authors_term" %}
+{% set taxonomy_slug = page.url | replace("/ko/authors/", "") | replace("/authors/", "") | replace("/", "") %}
+{% set author_label = "authors.profile_title" | t %}
+{% set meta_title = author_label ~ ": " ~ taxonomy_slug %}
+{% set meta_description = "authors.profile_description" | t %}
 {% include "header.html" %}
 {% include "partials/nav.html" %}
 {% include "partials/search.html" %}

@@ -1,29 +1,24 @@
 +++
-title = "Using Noir with GitHub Marketplace Models"
-description = "Use AI models from GitHub Marketplace with Noir for code analysis."
+title = "GitHub Models Provider (Retired)"
+description = "GitHub Models was retired on July 30, 2026. Read the migration note and choose a supported Noir AI provider."
 weight = 6
 sort_by = "weight"
 
 +++
 
-Use AI models from the [GitHub Marketplace](https://github.com/marketplace/models) with Noir for code analysis.
+GitHub retired [GitHub Models](https://docs.github.com/en/github-models) on July 30, 2026. Its model catalog, inference API, playground, and bring-your-own-key flow are no longer available.
 
-## Setup
+This page remains as a migration note for older Noir configurations. Do not use the `github` provider for new scans.
 
-1.  **Generate a Personal Access Token**: Create a PAT following the [GitHub documentation](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens). Ensure it has permissions to access AI models.
-2.  **Choose a Model**: Browse the [GitHub Marketplace](https://github.com/marketplace/models) for available models.
+## Choose a supported provider
 
-## Usage
+Use one of Noir's supported providers instead:
 
-**Using the GitHub API**:
-
-```bash
-noir scan ./spec/functional_test/fixtures/hahwul \
-     --ai-provider=github \
-     --ai-model=gpt-5.5 \
-     --ai-key=github_pat_...
-```
+*   [Azure AI](../azure/): connect to a Microsoft Foundry resource.
+*   [OpenAI](../openai/): use OpenAI models through the OpenAI API.
+*   [OpenRouter](../openrouter/): access multiple models through one API.
+*   [ACP agents](../acp/): connect Noir to Codex, Gemini, Claude, or another ACP-compatible agent.
 
 {% alert_warning() %}
-GitHub Models used to be reachable through the shared Azure Inference endpoint (`--ai-provider=azure`), but that endpoint has been retired and `models.inference.ai.azure.com` no longer resolves in DNS. Use `--ai-provider=github` as shown above.
+The `github` provider is retained in Noir for compatibility with older configurations, but GitHub Models itself is no longer a working service. Use a supported provider from the list above.
 {% end %}

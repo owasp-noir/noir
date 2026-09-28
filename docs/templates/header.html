@@ -3,8 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="{{ page.description | default(site.description, true) | e }}">
-  <title>{% if page.title is present and page.title != site.title %}{{ page.title | e }} - {{ site.title | e }}{% else %}{{ site.title | e }}{% endif %}</title>
+  {% set head_title = meta_title | default(page.title, true) %}
+  {% set head_description = meta_description | default(page_description, true) %}
+  <meta name="description" content="{{ head_description | e }}">
+  <title>{% if head_title is present and head_title != site.title %}{{ head_title | e }} - {{ site.title | e }}{% else %}{{ site.title | e }}{% endif %}</title>
+  {% if noindex is present and noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
 
   {# Dark is the brand default, so the fallback theme-color is the dark surface.
      A visitor who prefers light gets the light one. #}
@@ -25,10 +28,34 @@
     })();
   </script>
 
+  {% if taxonomy_kind is present %}
+  <meta property="og:title" content="{{ head_title | e }}">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ seo.canonical_url | e }}">
+  <meta property="og:description" content="{{ head_description | e }}">
+  {% if seo.og_image is present %}<meta property="og:image" content="{{ seo.og_image | e }}">{% endif %}
+  <meta name="twitter:card" content="{{ seo.twitter_card | e }}">
+  <meta name="twitter:title" content="{{ head_title | e }}">
+  <meta name="twitter:description" content="{{ head_description | e }}">
+  {% if seo.og_image is present %}<meta name="twitter:image" content="{{ seo.og_image | e }}">{% endif %}
+  {% else %}
   {{ og_all_tags }}
+  {% endif %}
+  {% if not (noindex is present and noindex) %}
   {{ canonical_tag }}
   {{ jsonld }}
+  {% if taxonomy_kind is present %}
+  {% if taxonomy_kind == "authors_index" %}
+  <link rel="alternate" hreflang="en" href="{{ base_url }}/authors/">
+  <link rel="alternate" hreflang="ko" href="{{ base_url }}/ko/authors/">
+  {% elif taxonomy_kind == "authors_term" %}
+  <link rel="alternate" hreflang="en" href="{{ base_url }}/authors/{{ taxonomy_slug }}/">
+  <link rel="alternate" hreflang="ko" href="{{ base_url }}/ko/authors/{{ taxonomy_slug }}/">
+  {% endif %}
+  {% else %}
   {{ hreflang_tags }}
+  {% endif %}
+  {% endif %}
 
   <link rel="icon" href="{{ base_url }}/logos/favicon.ico" sizes="any">
   <link rel="icon" href="{{ base_url }}/logos/favicon.svg" type="image/svg+xml">

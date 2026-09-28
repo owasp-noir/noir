@@ -1,12 +1,12 @@
 +++
 title = "AI Providers"
-description = "Learn how to connect Noir to various AI providers, including OpenAI, xAI, and local/agent-based runtimes like Ollama, LM Studio, and ACP."
+description = "Learn how to connect Noir to supported AI providers such as OpenAI, Azure AI, OpenRouter, and local or ACP runtimes."
 weight = 3
 sort_by = "weight"
 
 +++
 
-Noir's LLM analysis works with any of the providers below: cloud APIs, local runtimes for offline or private use, and ACP agents.
+Noir's LLM analysis supports cloud APIs, local runtimes for offline or private use, and ACP agents. Legacy integrations are listed separately so existing configurations remain discoverable.
 
 ## Provider Comparison
 
@@ -15,7 +15,6 @@ Noir's LLM analysis works with any of the providers below: cloud APIs, local run
 | [OpenAI](openai/) | Cloud | Required | Required | High accuracy, latest models |
 | [xAI](xai/) | Cloud | Required | Required | Grok models |
 | [Azure AI](azure/) | Cloud | Required | Required | Enterprise, compliance |
-| [GitHub Marketplace](github_marketplace/) | Cloud | GitHub PAT | Required | GitHub ecosystem users |
 | [OpenRouter](openrouter/) | Cloud | Required | Required | Access to multiple models via one API |
 | [Ollama](ollama/) | Local | Not needed | Not needed | Privacy, offline, free |
 | [vLLM](vllm/) | Local | Not needed | Not needed | High-performance local inference |
@@ -28,7 +27,6 @@ Noir's LLM analysis works with any of the providers below: cloud APIs, local run
     *   [OpenAI](openai/)
     *   [xAI](xai/)
     *   [Azure AI](azure/)
-    *   [GitHub Marketplace](github_marketplace/)
     *   [OpenRouter](openrouter/)
 *   **Local Model Providers**:
     *   [Ollama](ollama/)
@@ -36,3 +34,7 @@ Noir's LLM analysis works with any of the providers below: cloud APIs, local run
     *   [LM Studio](lmstudio/)
 *   **ACP Agent Providers**:
     *   [ACP (Codex/Gemini/Claude/Custom)](acp/)
+
+## Retired integrations
+
+*   **[GitHub Models provider (retired)](github_marketplace/)**: GitHub retired GitHub Models on July 30, 2026. The page is kept as a migration note for older Noir configurations.
