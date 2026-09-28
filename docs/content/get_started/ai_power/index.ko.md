@@ -70,7 +70,7 @@ Noir는 다음 AI 제공업체 프리셋을 지원합니다:
 |---|---|
 | `openai` | `https://api.openai.com` |
 | `xai` | `https://api.x.ai` |
-| `github` | `https://models.github.ai` |
+| `github` (레거시) | `https://models.github.ai` |
 | `azure` | `https://models.inference.ai.azure.com` |
 | `openrouter` | `https://openrouter.ai/api/v1` |
 | `vllm` | `http://localhost:8000` |
@@ -83,6 +83,8 @@ Noir는 다음 AI 제공업체 프리셋을 지원합니다:
 사용자 정의 제공업체는 전체 API URL을 사용합니다: `--ai-provider=http://my-custom-api:9000`.
 
 `azure` 프리셋이 쓰던 공용 호스트는 상위에서 종료되었습니다. 대신 사용할 리소스별 URL은 [Azure AI](@/usage/ai_providers/azure/index.ko.md) 문서를 참고하세요.
+
+GitHub Models는 2026년 7월 30일 종료되었습니다. 기존 설정을 위해 `github` 레거시 프리셋은 이 표에 남아 있지만, 새 스캔에서는 사용할 수 없습니다. 마이그레이션 안내는 [GitHub Models 제공업체(종료)](@/usage/ai_providers/github_marketplace/index.ko.md)를 참고하세요.
 
 원본 ACP/에이전트 stderr 로그가 필요하면 `NOIR_ACP_RAW_LOG=1`을 설정합니다.
 

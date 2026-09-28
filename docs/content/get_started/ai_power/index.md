@@ -70,7 +70,7 @@ Noir has built-in presets for several popular AI providers:
 |---|---|
 | `openai` | `https://api.openai.com` |
 | `xai` | `https://api.x.ai` |
-| `github` | `https://models.github.ai` |
+| `github` (legacy) | `https://models.github.ai` |
 | `azure` | `https://models.inference.ai.azure.com` |
 | `openrouter` | `https://openrouter.ai/api/v1` |
 | `vllm` | `http://localhost:8000` |
@@ -83,6 +83,8 @@ Noir has built-in presets for several popular AI providers:
 For custom providers, use the full API URL: `--ai-provider=http://my-custom-api:9000`.
 
 The `azure` preset's shared host has been retired upstream; see [Azure AI](@/usage/ai_providers/azure/index.md) for the per-resource URL to use instead.
+
+GitHub Models was retired on July 30, 2026. The legacy `github` preset remains in this table for older configurations, but it is not a working provider for new scans. See [GitHub Models Provider (Retired)](@/usage/ai_providers/github_marketplace/index.md) for the migration note.
 
 For raw ACP and agent stderr logs, set `NOIR_ACP_RAW_LOG=1`.
 

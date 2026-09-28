@@ -3,7 +3,7 @@
 # =============================================================================
 
 title = "OWASP Noir"
-description = "Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 193 frameworks, exposing shadow APIs and mapping the attack surface."
+description = "Hunt every endpoint in your code. Noir statically analyses source across 29 languages and 205 frameworks, exposing shadow APIs and mapping the attack surface."
 base_url = "https://owasp-noir.github.io/noir"
 
 # =============================================================================
@@ -124,6 +124,14 @@ filename = "llms.txt"
 instructions = "OWASP Noir documentation."
 full_enabled = true
 full_filename = "llms-full.txt"
+
+# Use the latest commit touching each page as its last-modified date when the
+# page does not set `updated` explicitly. Hwaro carries it into the sitemap,
+# feeds, and JSON-LD without changing authored publication dates.
+[git]
+enabled = true
+use_lastmod = true
+use_date = false
 
 # =============================================================================
 # RSS Feeds
