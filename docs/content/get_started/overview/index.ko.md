@@ -17,7 +17,7 @@ Noir는 오픈 소스 SAST 도구입니다. 소스 코드를 읽어 애플리케
 이 인벤토리는 세 대상에게 전달됩니다:
 
 - **사람 리뷰어.** 보안 엔지니어와 코드 감사자는 저장소 전체를 훑는 대신, 공격자가 도달할 수 있는 진입점과 그 주변 파일/파라미터/태그에 곧바로 집중할 수 있습니다.
-- **AI 감사자.** LLM 기반 SAST 에이전트는 같은 진입점 목록에 더해, 엔드포인트별 리뷰 컨텍스트(`--include callee`로 1-hop callee, `--ai-context`로 guards/sources/sinks/validators/signals)까지 받습니다.
+- **AI 감사자.** LLM 기반 SAST 에이전트는 같은 진입점 목록에 더해, 엔드포인트별 리뷰 컨텍스트(`--include callee`로 plain 출력의 1-hop callee, `--ai-context`로 guards/callees/sources/sinks/validators/signals)까지 받습니다.
 - **DAST 도구.** ZAP, Burp Suite, Caido는 크롤링만으로는 절대 닿지 못했을 경로까지 포함된 실제 라우트 목록을 스캔 대상으로 받습니다.
 
 <img src="./noir-usage.jpg" alt="noir scan output: the demo app source on the left, the endpoint and passive results with parameters and tags on the right" width="1800" height="830" loading="lazy" decoding="async">

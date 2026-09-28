@@ -86,7 +86,7 @@ v0 설정 파일은 그대로 로드됩니다. `ConfigInitializer` 가 옵션 �
 
 플래그 이름은 그대로지만 스캔 결과가 달라지는 항목들입니다. 자세한 내용은 [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100) 를 참고하세요. 주요 항목:
 
-* **기본 동시성** 이 v0 의 고정값 `"20"` 대신 호스트 CPU 수에 맞춰집니다. `--concurrency N` 이나 설정 파일의 `concurrency:` 가 있으면 그쪽이 우선합니다.
+* **기본 동시성** 이 v0 의 고정값 `"20"` 대신 호스트 CPU 수에 맞춰지며 4–32로 clamp 됩니다. `--concurrency N`, 설정 파일의 `concurrency:`, 또는 `NOIR_CONCURRENCY` 환경 변수가 있으면 그쪽이 우선합니다.
 * **라우트 경로의 문자열 보간** (Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`) 이 `{name}` 자리표시자로 보존됩니다. v0 는 보간 구간을 조용히 버리거나 언어 문법을 URL 에 그대로 노출했습니다. v1 은 일관된 템플릿을 만들고 자리표시자를 path 파라미터로 등록합니다.
 * **`Any` / `All` 라우트** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All` 등) 가 비표준 `"ANY"` 메서드 하나 대신 실제 HTTP 메서드 (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, TRACE) 로 펼쳐집니다. SARIF, Postman 같은 후속 도구가 그대로 받아들일 수 있습니다. `QUERY` 는 의도적으로 제외되며, 라우트가 그 메서드를 명시적으로 선언한 경우에만 나옵니다.
 * **stdout 출력** 이 터미널이 아니면 색상이 자동으로 꺼집니다. `ls` / `git` 관례와 같으며, `--no-color` 와 `NO_COLOR=1` 도 그대로 동작합니다.

@@ -171,7 +171,7 @@ See [Callee Coverage](@/usage/supported/callee_coverage/index.md) and [AI Contex
 | `--passive-scan-severity LVL` | Min passive-scan severity (`critical`, `high`, `medium`, or `low`; default `high`) |
 | `-d, --debug`         | Enable debug messages |
 | `--config-file <path>`| Load default options from a YAML config file |
-| `--concurrency <N>`   | Worker count (default: CPU cores) |
+| `--concurrency <N>`   | Worker count (default: CPU count, clamped to 4–32; or set `NOIR_CONCURRENCY`) |
 | `--cache-disable`     | Disable the LLM response cache for this run |
 | `--cache-clear`       | Clear the LLM response cache before running |
 | `--strict`            | Exit with code 2 if any analyzer failed or skipped a file (the scan still reports its results) |

@@ -86,7 +86,7 @@ If both spellings are present in the same file (mid-migration), the v1 key wins.
 
 These don't change flag names, just what scans emit. Each is documented in detail in the [v1.0.0 CHANGELOG](https://github.com/owasp-noir/noir/blob/main/CHANGELOG.md#v100); the highlights:
 
-* **Default concurrency** scales with the host's CPU count instead of v0's fixed `"20"`. Explicit `--concurrency N` / `concurrency:` in config still take precedence.
+* **Default concurrency** scales with the host's CPU count (clamped to 4–32) instead of v0's fixed `"20"`. Explicit `--concurrency N` / `concurrency:` in config, or the `NOIR_CONCURRENCY` env var, still take precedence.
 * **String interpolation** in route paths (Python `f""`, Ruby/Crystal/Elixir `#{}`, PHP `$var`, Kotlin `${}`) is now preserved as a `{name}` placeholder. v0 silently dropped the interpolation segment or leaked the language syntax into the URL. v1 produces a consistent template and registers the placeholder as a path parameter.
 * **`Any` / `All` verbs** (Gin `r.Any`, axum `routing::any`, Echo `e.Any`, Fiber `app.All`, etc.) fan out into the concrete HTTP methods (GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD, TRACE) instead of emitting a non-HTTP `"ANY"` verb that SARIF and Postman can't ingest. `QUERY` is deliberately left out of the fan-out; it is emitted only where a route declares the verb explicitly.
 * **Output to stdout** has color disabled automatically when stdout isn't a terminal, matching `ls` / `git` convention. `--no-color` and `NO_COLOR=1` still force-disable.
