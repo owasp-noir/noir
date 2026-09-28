@@ -398,7 +398,7 @@ describe Noir::CliValidation do
       end
     end
 
-    it "accepts ai_max_token 0, the shipped default meaning \"no limit\"" do
+    it "accepts ai_max_token 0, the shipped default meaning \"provider/model default\"" do
       # `--ai-max-token 0` is rejected on the CLI, but 0 is what
       # default_options and the generated template both carry, so the config
       # path must keep accepting it.

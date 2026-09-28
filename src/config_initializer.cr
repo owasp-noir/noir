@@ -455,7 +455,7 @@ class ConfigInitializer
       ai_context: #{options["ai_context"]}
 
       # Optional comma-separated subset of AI-context categories to emit
-      # (empty = all). Valid: guards, sinks, validators, signals, callee.
+      # (empty = all). Valid: guards, callee, sources, sinks, validators, signals.
       ai_context_features: "#{options["ai_context_features"]}"
 
       # Whether to disable logging
@@ -571,7 +571,7 @@ class ConfigInitializer
       # Provider allowlist for native tool-calling (comma-separated)
       ai_native_tools_allowlist: "#{options["ai_native_tools_allowlist"]}"
 
-      # The maximum number of tokens for AI requests (0 = no limit)
+      # The maximum number of tokens for AI requests (0 = provider/model default)
       ai_max_token: #{options["ai_max_token"]}
 
       # CACHE:

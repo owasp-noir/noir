@@ -1,5 +1,6 @@
 require "../spec_helper"
 require "../../src/config_initializer"
+require "../../src/ai_context/features"
 require "file_utils"
 
 # Drives ConfigInitializer.read_config against on-disk config.yaml
@@ -241,6 +242,18 @@ describe ConfigInitializer do
       body = ConfigInitializer.new.generate_config_file
       body.should contain("only_techs:")
       body.should contain("tls_skip_verify:")
+    end
+
+    it "lists every --ai-context feature in the ai_context_features comment" do
+      # The Valid: line used to omit `sources`, which is a real FEATURES
+      # bucket — keep the generated template in lockstep with
+      # NoirAIContext::FEATURES so `noir config init` does not lie.
+      body = ConfigInitializer.new.generate_config_file
+      valid_line = body.lines.find { |line| line.includes?("Valid:") && line.includes?("guards") }
+      valid_line.should_not be_nil
+      NoirAIContext::FEATURES.each do |feature|
+        valid_line.not_nil!.should contain(feature)
+      end
     end
 
     it "omits the removed analyze_feign key" do

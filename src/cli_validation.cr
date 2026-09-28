@@ -156,8 +156,8 @@ module Noir::CliValidation
   # this point; all that's left is the range.
   #
   # Zero is meaningful for `ai_max_token` only — it is the shipped default
-  # and the generated template's own value, documented as "no limit" — so it
-  # is accepted here even though `--ai-max-token 0` is not.
+  # and the generated template's own value, documented as "provider/model
+  # default" — so it is accepted here even though `--ai-max-token 0` is not.
   def self.validate_ai_integer_options!(options : Hash(String, YAML::Any))
     {"ai_max_token" => 0, "ai_agent_max_steps" => 1}.each do |key, minimum|
       value = options[key]?
@@ -172,7 +172,7 @@ module Noir::CliValidation
       end
 
       if number < minimum
-        raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = no limit)" : "a positive integer"}.")
+        raise Error.new("Invalid #{flag} '#{number}'. Must be #{minimum == 0 ? "0 or greater (0 = provider/model default)" : "a positive integer"}.")
       end
     end
   end

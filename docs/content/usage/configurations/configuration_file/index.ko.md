@@ -112,7 +112,7 @@ noir scan /path/to/my/project -f json -u https://api.example.com --exclude-codes
 | `techs` | CSV | `-t` / `--techs` | 자동 탐지에 더해 분석기 집합에 기술 추가 |
 | `only_techs` | CSV | `--only-techs` | 실행할 기술 디텍터 제한 |
 | `exclude_techs` | CSV | `--exclude-techs` | 탐지 후 최종 집합에서 기술 제거 |
-| `concurrency` | int | `--concurrency` | 워커 수 |
+| `concurrency` | int | `--concurrency` / `NOIR_CONCURRENCY` | 워커 수 (기본값: CPU 수를 4–32로 clamp) |
 
 ### 출력
 

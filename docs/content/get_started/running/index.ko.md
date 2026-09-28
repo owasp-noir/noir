@@ -175,7 +175,7 @@ noir scan . --ai-context guards,sinks
 | `--passive-scan-severity LVL` | 패시브 스캔 최소 심각도 (`critical`, `high`, `medium`, `low` 중 하나; 기본 `high`) |
 | `-d, --debug`         | 디버그 메시지 활성화 |
 | `--config-file <경로>`| YAML 설정 파일에서 기본 옵션 로드 |
-| `--concurrency <N>`   | 워커 수 (기본값: CPU 코어 수) |
+| `--concurrency <N>`   | 워커 수 (기본값: CPU 수, 4–32로 clamp; 또는 `NOIR_CONCURRENCY`) |
 | `--cache-disable`     | 이번 실행에 한해 LLM 응답 캐시 비활성화 |
 | `--cache-clear`       | 실행 전에 LLM 응답 캐시 초기화 |
 | `--strict`            | 분석기가 실패했거나 건너뛴 파일이 있으면 종료 코드 2 반환 (결과 출력은 그대로) |
