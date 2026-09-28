@@ -13,13 +13,15 @@ template = "landing"
   <div class="hero-sentinel" aria-hidden="true"></div>
   <div class="hero-media">
     <picture class="hero-plate hero-plate-dark">
-      <source srcset="./images/noir-wallpaper.webp" type="image/webp">
+      <source type="image/webp" sizes="100vw"
+              srcset="./images/noir-wallpaper.webp 1168w, ./images/noir-wallpaper-2x.webp 2336w, ./images/noir-wallpaper-3x.webp 3504w">
       <img class="hero-art" src="./images/noir-wallpaper.jpg"
            alt="A deserted city street at night, shot in monochrome, with the OWASP Noir wordmark lit across it."
            width="1168" height="784" fetchpriority="high" decoding="async">
     </picture>
     <picture class="hero-plate hero-plate-light">
-      <source srcset="./images/noir-wallpaper-white.webp" type="image/webp">
+      <source type="image/webp" sizes="100vw"
+              srcset="./images/noir-wallpaper-white.webp 1248w, ./images/noir-wallpaper-white-2x.webp 2496w, ./images/noir-wallpaper-white-3x.webp 3744w">
       <img class="hero-art" src="./images/noir-wallpaper-white.jpg"
            alt="The same deserted city street in daylight fog, with the OWASP Noir wordmark cast across it in shadow."
            width="1248" height="832" fetchpriority="high" decoding="async">
