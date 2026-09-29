@@ -624,15 +624,19 @@ module NoirAIContext
       78,
       name_patterns: [/\b(email|e[-_]?mail|phone|mobile|ssn|tax[_-]?id|dob|date[_-]?of[_-]?birth|birthdate|nin|national[_-]?id|passport|driver[_-]?license)\b/i]
     ),
-    # Rich content fields. Common XSS source — body / description /
-    # comment / markdown almost always flow into a render path and
-    # need either escaping or a strict schema.
+    # Rich content fields. Common XSS source — description / comment /
+    # markdown almost always flow into a render path and need either
+    # escaping or a strict schema. A bare `body` is deliberately excluded:
+    # it is commonly the transport field in gRPC/protobuf and other request
+    # contracts, not evidence that the value is rendered as HTML. Keep body
+    # only when it is explicitly paired with a rich-content qualifier.
     PatternDefinition.new(
       "html_content_input",
       "Rich-content input may flow into HTML output; review escaping or schema validation",
       72,
       name_patterns: [
-        /\b(body|description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i,
+        /\b(description|html|message|comment|note|memo|markdown|rich[_-]?text)\b/i,
+        /\b(?:body[_-]?(?:html|markdown|rich[_-]?text|content)|(?:html|markdown|rich[_-]?text|content)[_-]?body)\b/i,
         /\b(html[_-]?content|content[_-]?html|markdown[_-]?content|content[_-]?markdown|rich[_-]?content|content[_-]?rich)\b/i,
       ]
     ),
