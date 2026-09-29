@@ -2021,6 +2021,22 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should_not contain("html_content_input")
   end
 
+  it "does not tag generic body params as html_content_input" do
+    endpoint = Endpoint.new("/posts", "POST")
+    endpoint.push_param(Param.new("body", "", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should_not contain("html_content_input")
+  end
+
+  it "tags explicitly rich body params as html_content_input" do
+    endpoint = Endpoint.new("/posts", "POST")
+    endpoint.push_param(Param.new("body_html", "<p>hello</p>", "json"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    context.signals.map(&.kind).should contain("html_content_input")
+  end
+
   it "tags explicit HTML content params as html_content_input" do
     endpoint = Endpoint.new("/posts", "POST")
     endpoint.push_param(Param.new("htmlContent", "hello <b>world</b>", "json"))
@@ -2152,6 +2168,19 @@ describe "NoirAIContext" do
 
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should contain("guard_absence")
+  end
+
+  it "does not treat pure gRPC POST endpoints as mutating HTTP" do
+    endpoint = Endpoint.new("/HealthService/Check", "POST")
+    endpoint.protocol = "grpc"
+    details = endpoint.details
+    details.technology = "grpc"
+    endpoint.details = details
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+    signal_kinds = context.signals.map(&.kind)
+    signal_kinds.should_not contain("state_change")
+    signal_kinds.should_not contain("guard_absence")
   end
 
   it "does not bleed Python route scope into the next decorator (regression)" do
