@@ -2787,6 +2787,29 @@ describe "NoirAIContext" do
     end
   end
 
+  it "retains derived risk signals and credential sources when params flood the context" do
+    # Param-derived entries are intentionally first here: before the cap
+    # became priority-aware, these entries filled both buckets and silently
+    # dropped the late SSRF / absence roll-ups and credential-bearing input.
+    names = %w[
+      url uri redirect return next continue dest callback
+      id user account order profile document project user_id
+      password token secret api_key file filename path search
+    ]
+    endpoint = Endpoint.new("/fetch", "POST", names.map { |name| Param.new(name, "", "json") })
+    endpoint.push_callee(Callee.new("fetch"))
+
+    context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+    context.signals.map(&.kind).should contain("ssrf")
+    context.signals.map(&.kind).should contain("guard_absence")
+    context.signals.map(&.kind).should contain("priority_review")
+    context.signals.map(&.kind).should contain("credential_input")
+    context.sources.map(&.name).should contain("json.password")
+    context.signals.size.should eq(AIContext::MAX_PER_SECTION)
+    context.sources.size.should eq(AIContext::MAX_PER_SECTION)
+  end
+
   it "emits ssrf for Rust reqwest direct HTTP callees with URL-like input" do
     source = <<-RUST
       async fn proxy(url: String) -> String {

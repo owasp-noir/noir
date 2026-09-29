@@ -441,9 +441,56 @@ struct AIContext
   end
 
   private def push_entry(bucket : Array(AIContextEntry), entry : AIContextEntry)
-    return if bucket.size >= MAX_PER_SECTION
     return if bucket.any? { |existing| existing == entry }
+
+    if bucket.size >= MAX_PER_SECTION
+      lowest_index = 0
+      lowest_priority = entry_priority(bucket[0])
+      bucket.each_with_index do |existing, index|
+        priority = entry_priority(existing)
+        next unless priority < lowest_priority
+
+        lowest_index = index
+        lowest_priority = priority
+      end
+
+      # Keep the original first-arrival behavior for equal-priority
+      # entries, but let a late high-value heuristic displace a noisy
+      # parameter-derived entry.
+      return if entry_priority(entry) <= lowest_priority
+      bucket[lowest_index] = entry
+      return
+    end
+
     bucket << entry
+  end
+
+  # AI context is populated in dependency order: parameter evidence arrives
+  # before the derived heuristics that interpret it. Once a bucket is full,
+  # preserve the late roll-ups and absence findings instead of letting the
+  # order of parameter names decide which security evidence survives.
+  private def entry_priority(entry : AIContextEntry) : Int32
+    case entry.kind
+    when "priority_review"
+      1000
+    when "ssrf", "open_redirect", "path_traversal", "sensitive_response",
+         "object_lookup", "object_write", "unsafe_method", "log_injection"
+      950
+      # Keep the prerequisite for the outbound/redirect roll-ups available
+      # even when that parameter arrives after other high-confidence inputs.
+      # The higher-priority derived entries can still displace duplicate
+      # redirect_input entries once they are emitted.
+    when "redirect_input"
+      920
+    when "guard_absence", "authz_absence", "rate_limit_absence", "idor_review",
+         "foreign_identifier_write"
+      900
+    when "csrf_exempt", "jwt_unsafe", "cors_open", "credential_input",
+         "server_secret_source"
+      850
+    else
+      entry.confidence || 0
+    end
   end
 end
 
