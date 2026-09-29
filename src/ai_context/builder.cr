@@ -1,4 +1,5 @@
 require "../models/endpoint"
+require "../utils/media_filter"
 require "../utils/http_symbols"
 require "./patterns"
 require "./pattern_matcher"
@@ -36,9 +37,31 @@ module NoirAIContext
       endpoints
     end
 
+    # A deduplicated endpoint can have both an implementation path and a
+    # specification path. The implementation is the useful anchor for route
+    # metadata; a YAML/JSON/proto/GraphQL document is only a fallback when no
+    # implementation path was found.
+    private def preferred_code_path(endpoint : Endpoint) : PathInfo?
+      endpoint.details.code_paths.find { |path_info| !MediaFilter.spec_document?(path_info.path) } ||
+        endpoint.details.code_paths.first?
+    end
+
+    # Specification documents can contain arbitrary examples and vendor
+    # extensions that happen to look like dangerous calls. When an endpoint
+    # also has implementation code, scan only that code so those strings do
+    # not become sinks. Pure specification endpoints still use their document
+    # as the fallback source.
+    private def source_scan_paths(endpoint : Endpoint) : Array(PathInfo)
+      implementation_paths = endpoint.details.code_paths.reject do |path_info|
+        MediaFilter.spec_document?(path_info.path)
+      end
+
+      implementation_paths.empty? ? endpoint.details.code_paths : implementation_paths
+    end
+
     private def build_context(endpoint : Endpoint) : AIContext
       context = AIContext.new
-      anchor = endpoint.details.code_paths.first?
+      anchor = preferred_code_path(endpoint)
       route_snippet = @reader.snippet_for(anchor.try(&.path), anchor.try(&.line), ROUTE_SNIPPET_RADIUS)
 
       add_route_signal(context, endpoint, anchor, route_snippet)
@@ -1275,7 +1298,7 @@ module NoirAIContext
     private def add_source_scan_entries(context : AIContext, endpoint : Endpoint)
       return if endpoint.details.code_paths.empty?
 
-      endpoint.details.code_paths.each do |path_info|
+      source_scan_paths(endpoint).each do |path_info|
         route_scope = @reader.route_scope_snippet_for(path_info.path, path_info.line)
 
         # Try each guard category independently — a route can be

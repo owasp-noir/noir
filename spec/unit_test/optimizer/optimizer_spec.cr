@@ -362,8 +362,36 @@ describe "EndpointOptimizer" do
       tags = result.find! { |endpoint| endpoint.url == "/api/tags" }
       users = result.find! { |endpoint| endpoint.url == "/api/users" }
 
-      tags.details.code_paths.map(&.path).should eq(["openapi.json", "tags.py"])
-      users.details.code_paths.map(&.path).should eq(["openapi.json", "users.py"])
+      tags.details.code_paths.map(&.path).should eq(["tags.py", "openapi.json"])
+      users.details.code_paths.map(&.path).should eq(["users.py", "openapi.json"])
+    end
+
+    it "promotes implementation context when a specification duplicate sorts first" do
+      optimizer = EndpointOptimizer.new(logger, options)
+
+      [
+        {
+          document_technology:       "oas3",
+          document_path:             "a-openapi.yaml",
+          implementation_technology: "java_spring",
+          implementation_path:       "b-Handler.java",
+        },
+        {
+          document_technology:       "grpc",
+          document_path:             "a-service.proto",
+          implementation_technology: "go_grpc",
+          implementation_path:       "b-handler.go",
+        },
+      ].each do |entry|
+        document = tech_endpoint("/users", "GET", entry[:document_technology], entry[:document_path])
+        implementation = tech_endpoint("/users", "GET", entry[:implementation_technology], entry[:implementation_path])
+
+        result = optimizer.optimize_endpoints([document, implementation])
+
+        result.size.should eq(1)
+        result[0].details.technology.should eq(entry[:implementation_technology])
+        result[0].details.code_paths.map(&.path).should eq([entry[:implementation_path], entry[:document_path]])
+      end
     end
 
     it "merges Postman colon path templates with Kotlin Spring brace templates" do
@@ -907,7 +935,7 @@ describe "EndpointOptimizer" do
           tech_endpoint("/x", "GET", "oas3", "b.yaml"),
         ])
 
-        forward[0].details.technology.should eq("oas3")
+        forward[0].details.technology.should eq("go_gin")
         reverse[0].details.technology.should eq("go_gin")
         forward[0].details.technologies.should eq(reverse[0].details.technologies)
       end

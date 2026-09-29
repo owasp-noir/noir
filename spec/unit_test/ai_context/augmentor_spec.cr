@@ -1,8 +1,8 @@
 require "../../spec_helper"
 require "../../../src/ai_context/augmentor"
 
-def with_temp_ai_context_source(content : String, & : String ->)
-  path = "/tmp/noir-ai-context-#{Random.rand(1_000_000)}.txt"
+def with_temp_ai_context_source(content : String, ext : String = ".txt", & : String ->)
+  path = "/tmp/noir-ai-context-#{Random.rand(1_000_000)}#{ext}"
   File.write(path, content)
   begin
     yield path
@@ -108,6 +108,37 @@ describe "NoirAIContext" do
       context.signals.map(&.kind).should contain("file_input")
       context.signals.map(&.kind).should contain("idor")
       context.signals.map(&.name).should contain("jwt")
+    end
+  end
+
+  it "ignores specification code paths when an implementation path is available" do
+    spec = <<-YAML
+      x-java: Runtime.getRuntime().exec("whoami")
+      x-sql: Statement.executeQuery("SELECT 1 FROM users")
+      YAML
+    handler = <<-JAVA
+      class Handler {
+        String get() {
+          statement.executeQuery("SELECT id FROM users");
+        }
+      }
+      JAVA
+
+    with_temp_ai_context_source(spec, ".yaml") do |spec_path|
+      with_temp_ai_context_source(handler, ".java") do |handler_path|
+        details = Details.new(PathInfo.new(spec_path, 1))
+        details.add_path(PathInfo.new(handler_path, 2))
+        details.technology = "java_spring"
+        endpoint = Endpoint.new("/users", "GET", details)
+
+        context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+
+        context.sinks.map(&.kind).should eq(["sql"])
+        context.sinks[0].path.should eq(handler_path)
+        context.sinks[0].name.should contain("SELECT id FROM")
+        route = context.signals.find! { |signal| signal.kind == "route_definition" }
+        route.path.should eq(handler_path)
+      end
     end
   end
 
