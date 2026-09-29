@@ -1789,6 +1789,33 @@ describe "NoirAIContext" do
     end
   end
 
+  it "keeps class-level Spring authorization from becoming authz_absence" do
+    source = <<-JAVA
+      @RestController
+      @PreAuthorize("hasRole('ADMIN')")
+      public class AdminController {
+        @DeleteMapping("/users/{id}")
+        public void deleteUser(Long id) {
+          service.delete(id);
+        }
+      }
+      JAVA
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/users/{id}", "DELETE")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 5))
+      endpoint.details = details
+      endpoint.push_param(Param.new("id", "1", "path"))
+      endpoint.add_tag(Tag.new("auth", "Protected by Spring @PreAuthorize on the controller class", "spring_auth"))
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.guards.map(&.kind).should contain("auth_guard")
+      context.guards.map(&.kind).should contain("authz_guard")
+      context.signals.map(&.kind).should_not contain("authz_absence")
+    end
+  end
+
   it "detects csrf_guard via protect_from_forgery" do
     source = <<-CODE
       class UsersController < ApplicationController

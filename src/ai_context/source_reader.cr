@@ -18,14 +18,26 @@ module NoirAIContext
     # function `def` rather than the decorator above it.
     MAX_LEAD_DECORATOR_LINES = 4
 
+    # Class annotations sit above the class declaration, not directly above
+    # the handler. Keep a separate budget so a controller with several
+    # framework annotations can still expose its security annotation without
+    # weakening the existing per-handler look-back limit.
+    MAX_CLASS_LEAD_DECORATOR_LINES = 8
+
+    CLASS_DECLARATION_PATTERN = /^((public|private|protected|internal|abstract|final|open|sealed|data|static|inner|nested)\s+)*(class|interface|object|enum)\b/
+
     @file_cache : Hash(String, Array(String))
     @snippet_cache : Hash(String, String)
     @route_scope_cache : Hash(String, String)
+    @brace_depth_cache : Hash(String, Array(Int32))
+    @class_declaration_cache : Hash(String, Array(NamedTuple(line: Int32, depth: Int32, annotations: Array(String))))
 
     def initialize
       @file_cache = {} of String => Array(String)
       @snippet_cache = {} of String => String
       @route_scope_cache = {} of String => String
+      @brace_depth_cache = {} of String => Array(Int32)
+      @class_declaration_cache = {} of String => Array(NamedTuple(line: Int32, depth: Int32, annotations: Array(String)))
     end
 
     def snippet_for(path : String?, line : Int32?, radius : Int32) : String?
@@ -101,6 +113,16 @@ module NoirAIContext
       lead_lines = decorator_lines_before(lines, line - 1)
       class_lead_lines = enclosing_python_class_decorator_lines(lines, line - 1)
       lead_lines = class_lead_lines + lead_lines
+
+      # A controller-level guard is separated from the handler by the class
+      # declaration and, for all but the first handler, by earlier methods.
+      # Find the class that contains this path line and prepend only the
+      # annotations immediately above that declaration. This keeps
+      # `@PreAuthorize` / `@Secured` / `@RolesAllowed` visible to the same
+      # source-scan that already handles method-level annotations, without
+      # treating an annotation on a sibling class as route evidence.
+      class_lead_lines = class_level_lead_lines(path, lines, line - 1)
+      lead_lines = class_lead_lines + lead_lines unless class_lead_lines.empty?
 
       start_idx = line - 1
       selected = lead_lines
@@ -245,6 +267,81 @@ module NoirAIContext
       end
 
       [] of String
+    end
+
+    private def class_level_lead_lines(path : String, lines : Array(String), endpoint_idx : Int32) : Array(String)
+      return [] of String if endpoint_idx < 1
+
+      depths = brace_depths(path, lines)
+      endpoint_depth = depths[endpoint_idx]? || 0
+      declarations = class_declarations(path, lines, depths)
+
+      declaration = nil
+      declarations.reverse_each do |candidate|
+        next if candidate[:line] >= endpoint_idx
+        if endpoint_depth > candidate[:depth]
+          declaration = candidate
+          break
+        end
+      end
+
+      declaration.try(&.[:annotations]) || [] of String
+    end
+
+    private def brace_depths(path : String, lines : Array(String)) : Array(Int32)
+      if cached = @brace_depth_cache[path]?
+        return cached
+      end
+
+      depths = [] of Int32
+      depth = 0
+      lines.each do |raw_line|
+        depths << depth
+        sanitized = sanitize_for_structure(raw_line)
+        depth += sanitized.count('{') - sanitized.count('}')
+      end
+
+      @brace_depth_cache[path] = depths
+    end
+
+    private def class_declarations(path : String,
+                                   lines : Array(String),
+                                   depths : Array(Int32)) : Array(NamedTuple(line: Int32, depth: Int32, annotations: Array(String)))
+      if cached = @class_declaration_cache[path]?
+        return cached
+      end
+
+      declarations = [] of NamedTuple(line: Int32, depth: Int32, annotations: Array(String))
+      lines.each_with_index do |raw_line, line_idx|
+        stripped = sanitize_for_structure(raw_line).strip
+        next unless stripped.matches?(CLASS_DECLARATION_PATTERN)
+
+        open_idx = line_idx
+        while open_idx < lines.size && open_idx <= line_idx + 3
+          break if sanitize_for_structure(lines[open_idx]).includes?("{")
+          open_idx += 1
+        end
+        next if open_idx >= lines.size || open_idx > line_idx + 3
+
+        annotations = [] of String
+        annotation_idx = line_idx - 1
+        MAX_CLASS_LEAD_DECORATOR_LINES.times do
+          break if annotation_idx < 0
+          annotation_line = lines[annotation_idx].strip
+          break unless annotation_line.empty? || annotation_line.starts_with?("@")
+
+          annotations.unshift("#{annotation_idx + 1}: #{annotation_line}") unless annotation_line.empty?
+          annotation_idx -= 1
+        end
+
+        declarations << {line: line_idx, depth: depths[open_idx], annotations: annotations}
+      end
+
+      @class_declaration_cache[path] = declarations
+    end
+
+    private def sanitize_for_structure(line : String) : String
+      line.gsub(/(['"]).*?\1/, "\"\"")
     end
 
     # Read-only view of a file's lines. The result is the cached array
