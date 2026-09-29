@@ -913,6 +913,8 @@ module NoirAIContext
     end
 
     private def param_source_confidence(param : Param) : Int32
+      return 96 if PatternMatcher.matches_any?(param.name, CREDENTIAL_INPUT_NAME_PATTERNS)
+
       case param.param_type
       when "path"
         88
