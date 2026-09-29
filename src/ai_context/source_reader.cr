@@ -98,16 +98,9 @@ module NoirAIContext
       # for the run of blank lines that precedes almost every handler,
       # which read as a bug and — worse — spent part of the snippet's
       # character budget, truncating real code off the end.
-      lead_lines = [] of String
-      back_idx = line - 2
-      MAX_LEAD_DECORATOR_LINES.times do
-        break if back_idx < 0
-        stripped = lines[back_idx].strip
-        break unless stripped.empty? || stripped.starts_with?("@")
-
-        lead_lines.unshift("#{back_idx + 1}: #{stripped}") unless stripped.empty?
-        back_idx -= 1
-      end
+      lead_lines = decorator_lines_before(lines, line - 1)
+      class_lead_lines = enclosing_python_class_decorator_lines(lines, line - 1)
+      lead_lines = class_lead_lines + lead_lines
 
       start_idx = line - 1
       selected = lead_lines
@@ -205,6 +198,53 @@ module NoirAIContext
       snippet = snippet.size > max_chars ? snippet[0, max_chars] : snippet
       @route_scope_cache[cache_key] = snippet
       snippet
+    end
+
+    private def decorator_lines_before(lines : Array(String), before_idx : Int32) : Array(String)
+      result = [] of String
+      back_idx = before_idx - 1
+      MAX_LEAD_DECORATOR_LINES.times do
+        break if back_idx < 0
+        stripped = lines[back_idx].strip
+        break unless stripped.empty? || stripped.starts_with?("@")
+
+        result.unshift("#{back_idx + 1}: #{stripped}") unless stripped.empty?
+        back_idx -= 1
+      end
+      result
+    end
+
+    # Django's `@method_decorator(..., name="dispatch")` is attached to the
+    # class, while the analyzer anchors a CBV endpoint on its `def post(...)`
+    # (or similar) method. The ordinary lead-in scan quite correctly stops at
+    # the class definition, so add the class's own decorators when the anchor
+    # is an indented Python method. This also carries class-level auth
+    # decorators into the method scope without changing the handler boundary.
+    private def enclosing_python_class_decorator_lines(lines : Array(String), line_idx : Int32) : Array(String)
+      return [] of String if line_idx < 0 || line_idx >= lines.size
+
+      method_indent = lines[line_idx].size - lines[line_idx].lstrip.size
+      return [] of String if method_indent <= 0
+
+      class_idx = line_idx - 1
+      while class_idx >= 0
+        raw_line = lines[class_idx]
+        stripped = raw_line.strip
+        if stripped.empty?
+          class_idx -= 1
+          next
+        end
+
+        line_indent = raw_line.size - raw_line.lstrip.size
+        if line_indent < method_indent
+          return [] of String unless stripped.starts_with?("class ")
+
+          return decorator_lines_before(lines, class_idx)
+        end
+        class_idx -= 1
+      end
+
+      [] of String
     end
 
     # Read-only view of a file's lines. The result is the cached array

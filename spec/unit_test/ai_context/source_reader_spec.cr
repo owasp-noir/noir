@@ -274,6 +274,21 @@ describe NoirAIContext::SourceReader do
         end
       end
 
+      it "captures decorators on the enclosing Python class" do
+        source = <<-PY
+          @method_decorator(csrf_exempt, name="dispatch")
+          class WebhookView(View):
+              def post(self, request):
+                  return process(request.body)
+          PY
+
+        with_source_file(source, ".py") do |path|
+          NoirAIContext::SourceReader.new
+            .route_scope_snippet_for(path, 3)
+            .not_nil!.should contain("1: @method_decorator(csrf_exempt, name=\"dispatch\")")
+        end
+      end
+
       it "looks back at most MAX_LEAD_DECORATOR_LINES decorator lines" do
         source = <<-PY
           @a
