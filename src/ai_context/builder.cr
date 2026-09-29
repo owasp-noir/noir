@@ -15,9 +15,10 @@ module NoirAIContext
     SOURCE_SCAN_RADIUS    = 6
     CALLEE_SNIPPET_RADIUS = 1
 
-    STATE_CHANGING_METHODS = Set{"POST", "PUT", "PATCH", "DELETE"}
-    BODY_LIKE_PARAM_TYPES  = Set{"json", "form"}
-    MOBILE_SOURCE_EXTS     = Set{".swift", ".m", ".mm", ".kt", ".java"}
+    STATE_CHANGING_METHODS   = Set{"POST", "PUT", "PATCH", "DELETE"}
+    BODY_LIKE_PARAM_TYPES    = Set{"json", "form"}
+    MOBILE_SOURCE_EXTS       = Set{".swift", ".m", ".mm", ".kt", ".java"}
+    PRIVILEGED_REALTIME_TAGS = Set{"admin"}
 
     @reader : SourceReader
 
@@ -227,9 +228,17 @@ module NoirAIContext
     end
 
     private def priority_scoring_sink_mitigated?(context : AIContext, sink_kind : String) : Bool
-      return false unless sink_kind.in?("sql", "data_store_query")
-
-      context.validators.any? { |validator| validator.kind == "query_parameter_binding" }
+      case sink_kind
+      when "sql", "data_store_query"
+        context.validators.any? { |validator| validator.kind == "query_parameter_binding" }
+      when "xss"
+        # Sanitization is the direct mitigation. Schema validation is also
+        # useful evidence here: a strict input model can reject unexpected
+        # markup-bearing fields before they reach an HTML sink.
+        context.validators.any? { |validator| validator.kind.in?("sanitization", "schema_validation") }
+      else
+        false
+      end
     end
 
     # HTTP method intent vs implementation mismatch. A GET/HEAD
@@ -562,7 +571,7 @@ module NoirAIContext
     private def object_lookup_identifier_param?(endpoint : Endpoint) : Bool
       return true if endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
       return true if endpoint.params.any? { |p| p.param_type == "query" && identifier_like?(p.name) }
-      return true if STATE_CHANGING_METHODS.includes?(endpoint.method) &&
+      return true if state_changing_endpoint?(endpoint) &&
                      endpoint.params.any? { |p| BODY_LIKE_PARAM_TYPES.includes?(p.param_type) && identifier_like?(p.name) }
       return true if graphql_field_endpoint?(endpoint)
       return false unless graphql_endpoint?(endpoint)
@@ -577,7 +586,7 @@ module NoirAIContext
     private def add_object_write_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
       return if context.signals.any? { |s| s.kind == "object_write" }
       return if context.signals.any? { |s| s.kind == "object_lookup" }
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return unless endpoint.params.any? { |p| p.param_type == "path" && identifier_like?(p.name) }
 
       mutating = endpoint.callees.find(&.name.matches?(MUTATING_CALLEE_PATTERN))
@@ -706,27 +715,50 @@ module NoirAIContext
     end
 
     private def add_method_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return if graphql_read_endpoint?(endpoint)
       return if read_only_post_endpoint?(endpoint)
 
-      description = case endpoint.method
-                    when "DELETE"
-                      "State-changing delete endpoint; review authorization, ownership, and destructive side effects"
+      description = if privileged_realtime_endpoint?(endpoint)
+                      "Privileged WebSocket message handler; review per-message authorization, origin checks, and state-changing side effects"
                     else
-                      "State-changing endpoint; review authz, validation, and side effects"
+                      case endpoint.method
+                      when "DELETE"
+                        "State-changing delete endpoint; review authorization, ownership, and destructive side effects"
+                      else
+                        "State-changing endpoint; review authz, validation, and side effects"
+                      end
                     end
 
       context.push_signal(AIContextEntry.new(
         "state_change",
         endpoint.method,
-        source: "http_method",
+        source: privileged_realtime_endpoint?(endpoint) ? "realtime_method" : "http_method",
         description: description,
         path: anchor.try(&.path),
         line: anchor.try(&.line),
         confidence: 88,
         snippet: route_snippet
       ))
+    end
+
+    # `SEND` is the shared synthetic verb for realtime message handlers. Most
+    # messages are not enough evidence of a server-side state change (for
+    # example, chat or room-join events), so only a privileged WebSocket
+    # surface is promoted to the same review path as POST/PUT/PATCH/DELETE.
+    private def state_changing_endpoint?(endpoint : Endpoint) : Bool
+      method = endpoint.method.upcase
+      return true if STATE_CHANGING_METHODS.includes?(method)
+
+      privileged_realtime_endpoint?(endpoint)
+    end
+
+    private def privileged_realtime_endpoint?(endpoint : Endpoint) : Bool
+      return false unless endpoint.method.upcase == "SEND"
+      return false unless endpoint.protocol.downcase == "ws" || endpoint.realtime?
+
+      endpoint.tags.any? { |tag| PRIVILEGED_REALTIME_TAGS.includes?(tag.name.downcase) } ||
+        endpoint.url.matches?(/(?:^|[\/.\-_])(?:admin|admins|administrator|superadmin)(?:[\/.\-_]|$)/i)
     end
 
     private def add_internal_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
@@ -1514,7 +1546,7 @@ module NoirAIContext
 
     private def add_foreign_identifier_write_signal(context : AIContext, endpoint : Endpoint, path_info : PathInfo, snippet : String)
       return if context.signals.any? { |s| s.kind == "foreign_identifier_write" }
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return if context.signals.any? { |s| s.kind == "object_lookup" }
       return if object_lookup_callee(endpoint)
       return if context.validators.any? { |v| v.kind == "existence_validation" }
@@ -1559,7 +1591,7 @@ module NoirAIContext
     end
 
     private def add_missing_guard_signal(context : AIContext, endpoint : Endpoint, anchor : PathInfo?, route_snippet : String?)
-      return unless STATE_CHANGING_METHODS.includes?(endpoint.method)
+      return unless state_changing_endpoint?(endpoint)
       return if graphql_read_endpoint?(endpoint)
       return if read_only_post_endpoint?(endpoint)
 

@@ -526,6 +526,9 @@ module NoirAIContext
       source_patterns: [
         /@csrf_exempt\b/,
         /\bcsrf_exempt\s*\(/,
+        # Django class-based views commonly apply the exemption to
+        # `dispatch` through `@method_decorator(csrf_exempt, ...)`.
+        /\bmethod_decorator\s*\([^)]*\bcsrf_exempt\b/i,
         /protect_from_forgery\s+with:\s*:null_session/,
         /\.disable\s*\(\s*\.?csrf/i,
         /csrfProtection:\s*false/i,

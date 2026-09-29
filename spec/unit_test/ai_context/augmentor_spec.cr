@@ -1100,6 +1100,26 @@ describe "NoirAIContext" do
     context.signals.map(&.kind).should_not contain("guard_absence")
   end
 
+  it "treats privileged WebSocket SEND endpoints as state-changing" do
+    privileged = Endpoint.new("ws://admin/ban user", "SEND")
+    privileged.protocol = "ws"
+    privileged.add_tag(Tag.new("websocket", "WebSocket endpoint", "websocket"))
+    privileged.add_tag(Tag.new("admin", "Administrative endpoint", "admin"))
+
+    ordinary = Endpoint.new("ws://chat message", "SEND")
+    ordinary.protocol = "ws"
+    ordinary.add_tag(Tag.new("websocket", "WebSocket endpoint", "websocket"))
+
+    endpoints = NoirAIContext.apply([privileged, ordinary])
+    privileged_context = endpoints[0].ai_context.should_not be_nil
+    ordinary_context = endpoints[1].ai_context.should_not be_nil
+
+    privileged_context.signals.map(&.kind).should contain("state_change")
+    privileged_context.signals.map(&.kind).should contain("guard_absence")
+    ordinary_context.signals.map(&.kind).should_not contain("state_change")
+    ordinary_context.signals.map(&.kind).should_not contain("guard_absence")
+  end
+
   it "keeps state-changing review signals for GraphQL mutations" do
     endpoint = Endpoint.new("/graphql#Mutation.createBook", "POST")
     endpoint.add_tag(Tag.new("graphql", "Mutation.createBook", "graphql_sdl_analyzer"))
@@ -1794,6 +1814,30 @@ describe "NoirAIContext" do
 
       context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
       context.signals.map(&.kind).should contain("csrf_exempt")
+    end
+  end
+
+  it "detects csrf_exempt on a Django method_decorator applied to a class" do
+    source = <<-CODE
+      from django.utils.decorators import method_decorator
+      from django.views.decorators.csrf import csrf_exempt
+      from django.views import View
+
+      @method_decorator(csrf_exempt, name="dispatch")
+      class WebhookView(View):
+          def post(self, request):
+              return process(request.body)
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/webhook", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 7))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.signals.map(&.kind).should contain("csrf_exempt")
+      context.signals.map(&.kind).should contain("priority_review")
     end
   end
 
@@ -2643,6 +2687,48 @@ describe "NoirAIContext" do
     # GET with no callees, no params, no guards needed.
     context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
     context.signals.map(&.kind).should_not contain("priority_review")
+  end
+
+  it "does not score an XSS sink when sanitization is present" do
+    source = <<-CODE
+      app.post('/render', (req, res) => {
+        const clean = sanitize_html(req.body.html)
+        element.innerHTML = clean
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/render", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("xss")
+      context.validators.map(&.kind).should contain("sanitization")
+      context.signals.map(&.kind).should_not contain("priority_review")
+    end
+  end
+
+  it "does not score an XSS sink when schema validation is present" do
+    source = <<-CODE
+      app.post('/render', (req, res) => {
+        const payload = UserInput.model_validate(req.body)
+        element.innerHTML = payload.name
+      })
+      CODE
+
+    with_temp_ai_context_source(source) do |path|
+      endpoint = Endpoint.new("/render", "POST")
+      details = endpoint.details
+      details.add_path(PathInfo.new(path, 1))
+      endpoint.details = details
+
+      context = NoirAIContext.apply([endpoint])[0].ai_context.should_not be_nil
+      context.sinks.map(&.kind).should contain("xss")
+      context.validators.map(&.kind).should contain("schema_validation")
+      context.signals.map(&.kind).should_not contain("priority_review")
+    end
   end
 
   it "does not inflate priority from duplicate sinks of the same kind" do
